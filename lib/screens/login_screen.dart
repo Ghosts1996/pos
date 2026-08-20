@@ -47,12 +47,13 @@ class _LoginScreenState extends State<LoginScreen> {
       });
       return;
     }
-    if (employee.role == AppConstants.roleAdmin) {
+    final loggedInEmployee = employee;
+    if (loggedInEmployee.role == AppConstants.roleAdmin) {
       Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: employee)));
+          MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: loggedInEmployee)));
     } else {
       Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => FloorPlanScreen(employee: employee)));
+          MaterialPageRoute(builder: (_) => FloorPlanScreen(employee: loggedInEmployee)));
     }
   }
 
