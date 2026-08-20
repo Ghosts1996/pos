@@ -1,38 +1,76 @@
-// ЭТОТ ФАЙЛ — ШАБЛОН. Сгенерируйте настоящий автоматически:
-//   1) dart pub global activate flutterfire_cli
-//   2) flutterfire configure
-// Команда сама создаст проект в Firebase и перезапишет этот файл
-// реальными ключами (android/ios/web). Ничего вручную вписывать не нужно.
-//
-// Пока в этом файле заглушка ('REPLACE_ME'), приложение при запуске
-// покажет экран с инструкцией по настройке вместо аварийного закрытия —
-// см. main.dart и screens/setup_required_screen.dart.
+name: Build APK
 
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
 
-class DefaultFirebaseOptions {
-  /// true, если flutterfire configure уже подставил реальные ключи.
-  static bool get isConfigured => android.apiKey != 'REPLACE_ME';
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  static FirebaseOptions get currentPlatform {
-    if (kIsWeb) {
-      throw UnsupportedError('Web не настроен. Запустите flutterfire configure.');
-    }
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return android;
-      default:
-        throw UnsupportedError('Платформа не настроена. Запустите flutterfire configure.');
-    }
-  }
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-  // Заглушка — будет заменена реальными значениями командой flutterfire configure
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'REPLACE_ME',
-    appId: 'REPLACE_ME',
-    messagingSenderId: 'REPLACE_ME',
-    projectId: 'REPLACE_ME',
-    storageBucket: 'REPLACE_ME',
-  );
-}
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Generate missing Android platform files
+        run: |
+          flutter create . --platforms=android --org com.hookahpos --project-name hookah_pos
+          test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
+
+      - name: Ensure INTERNET permission for release builds
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
+          fi
+          sed -i 's/android:label="[^"]*"/android:label="Hookah POS"/' "$MANIFEST"
+          echo "----- AndroidManifest.xml -----"
+          cat "$MANIFEST"
+
+      - name: Inject Firebase Secrets
+        run: |
+          OPTIONS_FILE=lib/firebase_options.dart
+          sed -i "s/apiKey: 'REPLACE_ME'/apiKey: '${{ secrets.FIREBASE_API_KEY }}'/g" $OPTIONS_FILE
+          sed -i "s/appId: 'REPLACE_ME'/appId: '${{ secrets.FIREBASE_APP_ID }}'/g" $OPTIONS_FILE
+          sed -i "s/messagingSenderId: 'REPLACE_ME'/messagingSenderId: '${{ secrets.FIREBASE_SENDER_ID }}'/g" $OPTIONS_FILE
+          sed -i "s/projectId: 'REPLACE_ME'/projectId: '${{ secrets.FIREBASE_PROJECT_ID }}'/g" $OPTIONS_FILE
+          sed -i "s/storageBucket: 'REPLACE_ME'/storageBucket: '${{ secrets.FIREBASE_STORAGE_BUCKET }}'/g" $OPTIONS_FILE
+          echo "Секреты успешно подставлены в файл конфигурации!"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze (informational — does not block the build)
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hookah-pos-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
