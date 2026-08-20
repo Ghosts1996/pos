@@ -1,45 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Простая модель: любой, кто вошёл (в т.ч. анонимно через приложение),
-    // может читать и писать данные заведения. Этого достаточно для одной
-    // небольшой кальянной с доверенным персоналом. Вход по PIN-коду в самом
-    // приложении — это уже дополнительный уровень допуска к экрану.
-    //
-    // Роль администратора проверяется только внутри приложения (по PIN),
-    // а не на уровне этих правил — Firebase Auth здесь анонимная и общая
-    // для всех. Поэтому доверяйте эти правила только небольшой команде,
-    // где нет смысла обходить приложение и обращаться к базе напрямую.
-
-    match /tables/{tableId} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /menuCategories/{categoryId} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /menuItems/{itemId} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /discountCards/{cardId} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /employees/{employeeId} {
-      allow read, write: if request.auth != null;
-    }
-
-    // Сеансы (счета) — единственный источник данных для отчётов, раз в
-    // приложении нет кассы. Поэтому закрытый счёт (status == 'closed')
-    // нельзя ни изменить, ни удалить — это защищает отчёты от случайной
-    // или намеренной подмены цифр задним числом.
-    match /sessions/{sessionId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && resource.data.status != 'closed';
-      allow delete: if false;
+    match /{document=**} {
+      allow read, write: if true;
     }
   }
 }
