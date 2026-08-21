@@ -214,6 +214,7 @@ class FirestoreService {
     String tableId, {
     required double cash,
     required double card,
+    double terminal = 0,
     required double comp,
     String guestContact = '',
     bool closedWithoutPayment = false,
@@ -225,6 +226,7 @@ class FirestoreService {
       'closedAt': Timestamp.fromDate(DateTime.now()),
       'paymentCash': cash,
       'paymentCard': card,
+      'paymentTerminal': terminal,
       'paymentComp': comp,
       'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
