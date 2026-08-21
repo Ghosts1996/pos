@@ -1,3 +1,4 @@
+import '../theme/app_colors.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
@@ -56,7 +57,7 @@ class _TimerDisplayState extends State<TimerDisplay> {
 
     Color color;
     if (isOver) {
-      color = Colors.red;
+      color = AppColors.danger;
     } else if (_remaining.inMinutes < AppConstants.warningThresholdMinutes) {
       color = Colors.orange;
     } else {
