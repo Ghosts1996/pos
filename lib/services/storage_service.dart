@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -80,50 +81,79 @@ class StorageService {
     required String folder,
     required String entityId,
   }) async {
+    // Защитная проверка: анонимная сессия Firebase Auth ставится один раз
+    // при старте приложения (main.dart). Если токен успел протухнуть/
+    // обнулиться (долгое пребывание в фоне без сети и т.п.), запись в
+    // Storage упадёт с [firebase_storage/unauthorized] ещё ДО того, как
+    // объект вообще появится — тогда следующий getDownloadURL() закономерно
+    // получает object-not-found. Поэтому перед каждой загрузкой на всякий
+    // случай убеждаемся, что подписаны анонимно.
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance.signInAnonymously();
+    }
+
     final bytes = await file.readAsBytes();
     final ext = _extensionOf(file.name);
     final path = 'menu_images/$folder/$entityId.$ext';
-    final ref = _storage.ref().child(path);
 
-    final task = await ref.putData(
-      Uint8List.fromList(bytes),
-      SettableMetadata(contentType: _contentTypeOf(ext)),
-    );
+    // Вся операция «залить и получить ссылку» оборачивается в ДО ДВУХ
+    // полных попыток. Раньше при неудаче getDownloadURL() (после серии
+    // ретраев) сразу пробрасывалась ошибка пользователю — но иногда сам
+    // putData() отчитывается state=success раньше, чем объект реально
+    // зафиксирован на стороне Storage (известная гонка SDK при нестабильной
+    // сети — на скриншоте одновременно активны Wi-Fi и мобильная сеть, это
+    // типичный триггер). Один повторный полный перезалив «лечит» такие
+    // случаи практически всегда.
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final ref = _storage.ref().child(path);
+        final task = await ref.putData(
+          Uint8List.fromList(bytes),
+          SettableMetadata(contentType: _contentTypeOf(ext)),
+        );
 
-    if (task.state != TaskState.success) {
-      throw StateError(
-          'Загрузка фото не завершилась успешно (состояние: ${task.state}).');
+        if (task.state != TaskState.success) {
+          throw StateError(
+              'Загрузка фото не завершилась успешно (состояние: ${task.state}).');
+        }
+
+        final downloadUrl = await _getDownloadUrlWithRetry(task.ref);
+
+        // Лучшими усилиями подчищаем файлы этой же сущности с ДРУГИМ
+        // расширением (единственный случай, когда путь мог измениться).
+        // Идёт строго после getDownloadURL уже загруженного файла — ошибка
+        // здесь никак не влияет на возвращаемую ссылку.
+        unawaited(_cleanupStaleExtensions(folder: folder, entityId: entityId, keepPath: path));
+
+        return downloadUrl;
+      } on FirebaseException catch (e) {
+        lastError = e;
+        if (e.code != 'object-not-found' || attempt == 1) rethrow;
+        // Даём Storage ещё немного времени и пробуем весь цикл заново.
+        await Future.delayed(const Duration(seconds: 2));
+      }
     }
-
-    // Известная гонка Firebase Storage: сразу после putData() задача уже в
-    // состоянии success, но на стороне Storage объект иногда ещё не успел
-    // стать видимым для getDownloadURL() (особенно на мобильной сети) —
-    // тогда getDownloadURL() бросает [firebase_storage/object-not-found],
-    // хотя файл только что реально записан. Раньше это пробрасывалось
-    // пользователю как ошибка загрузки, хотя фото уже лежало в Storage.
-    // Решение: несколько попыток с небольшой паузой перед тем, как
-    // считать это настоящей ошибкой.
-    final downloadUrl = await _getDownloadUrlWithRetry(task.ref);
-
-    // Лучшими усилиями подчищаем файлы этой же сущности с ДРУГИМ
-    // расширением (единственный случай, когда путь мог измениться).
-    // Идёт строго после getDownloadURL уже загруженного файла — ошибка
-    // здесь никак не влияет на возвращаемую ссылку.
-    unawaited(_cleanupStaleExtensions(folder: folder, entityId: entityId, keepPath: path));
-
-    return downloadUrl;
+    throw lastError ?? StateError('Не удалось загрузить фото.');
   }
 
-  Future<String> _getDownloadUrlWithRetry(Reference ref, {int attempts = 4}) async {
+  /// Ждём появления объекта на стороне Storage перед тем, как запрашивать
+  /// download URL. getMetadata() — более лёгкий вызов, чем getDownloadURL(),
+  /// и на практике быстрее отражает реально записанный объект.
+  Future<String> _getDownloadUrlWithRetry(Reference ref, {int attempts = 6}) async {
     Object? lastError;
     for (var i = 0; i < attempts; i++) {
       try {
+        await ref.getMetadata();
         return await ref.getDownloadURL();
       } on FirebaseException catch (e) {
         lastError = e;
         if (e.code != 'object-not-found') rethrow;
-        // Экспоненциальная пауза: 300мс, 600мс, 1200мс...
-        await Future.delayed(Duration(milliseconds: 300 * (1 << i)));
+        // Экспоненциальная пауза с потолком в 4с: 400, 800, 1600, 3200,
+        // 4000, 4000мс — суммарно даём объекту около 14 секунд на то,
+        // чтобы стать видимым, прежде чем считать это настоящей ошибкой.
+        final delayMs = (400 * (1 << i)).clamp(400, 4000);
+        await Future.delayed(Duration(milliseconds: delayMs));
       }
     }
     throw lastError ?? StateError('Не удалось получить ссылку на фото.');
