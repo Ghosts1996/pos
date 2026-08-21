@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../services/firestore_service.dart';
@@ -65,7 +66,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                               onPressed: () => Navigator.pop(ctx, false),
                               child: const Text('Отмена')),
                           FilledButton(
-                            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                             onPressed: () => Navigator.pop(ctx, true),
                             child: const Text('Удалить'),
                           ),
