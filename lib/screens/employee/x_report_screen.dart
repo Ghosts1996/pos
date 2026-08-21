@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/employee.dart';
@@ -109,7 +110,7 @@ class _XReportScreenState extends State<XReportScreen> {
               children: [
                 Expanded(
                   child: Text(_formatRange(range),
-                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ),
                 StreamBuilder<List<Employee>>(
                   stream: _fs.employeesStream(),
@@ -148,7 +149,7 @@ class _XReportScreenState extends State<XReportScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text('Не удалось загрузить отчёт: ${snap.error}',
-                          textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+                          textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
                     ),
                   );
                 }
@@ -169,7 +170,7 @@ class _XReportScreenState extends State<XReportScreen> {
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
                         child: Text('Оплаченных чеков за период нет',
-                            style: TextStyle(color: Colors.grey)),
+                            style: TextStyle(color: AppColors.textMuted)),
                       ),
                     if (data.items.isNotEmpty) ...[
                       const Padding(
@@ -178,22 +179,22 @@ class _XReportScreenState extends State<XReportScreen> {
                           children: [
                             Expanded(
                                 flex: 3,
-                                child: Text('Позиция', style: TextStyle(color: Colors.grey, fontSize: 12))),
+                                child: Text('Позиция', style: TextStyle(color: AppColors.textMuted, fontSize: 12))),
                             Expanded(
                                 flex: 1,
                                 child: Text('Кол-во',
                                     textAlign: TextAlign.right,
-                                    style: TextStyle(color: Colors.grey, fontSize: 12))),
+                                    style: TextStyle(color: AppColors.textMuted, fontSize: 12))),
                             Expanded(
                                 flex: 2,
                                 child: Text('Цена',
                                     textAlign: TextAlign.right,
-                                    style: TextStyle(color: Colors.grey, fontSize: 12))),
+                                    style: TextStyle(color: AppColors.textMuted, fontSize: 12))),
                             Expanded(
                                 flex: 2,
                                 child: Text('Сумма',
                                     textAlign: TextAlign.right,
-                                    style: TextStyle(color: Colors.grey, fontSize: 12))),
+                                    style: TextStyle(color: AppColors.textMuted, fontSize: 12))),
                           ],
                         ),
                       ),
