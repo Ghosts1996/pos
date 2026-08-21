@@ -1,3 +1,4 @@
+import '../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
 import 'timer_display.dart';
@@ -32,11 +33,11 @@ class TableTile extends StatelessWidget {
     if (!occupied) {
       bg = Colors.green.shade400;
     } else if (overdue) {
-      bg = Colors.red.shade400;
+      bg = AppColors.danger;
     } else if (nearEnd) {
       bg = Colors.orange.shade400;
     } else {
-      bg = Colors.blueGrey.shade400;
+      bg = AppColors.selection;
     }
 
     final tile = Container(
@@ -85,7 +86,7 @@ class TableTile extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.black87,
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.white, width: 1.5),
                 ),
