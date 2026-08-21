@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
@@ -16,8 +17,6 @@ class PaymentScreen extends StatefulWidget {
   State<PaymentScreen> createState() => _PaymentScreenState();
 }
 
-enum _Field { cash, card, comp, contact }
-
 class _PaymentScreenState extends State<PaymentScreen> {
   final _fs = FirestoreService();
 
@@ -26,7 +25,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final _compCtrl = TextEditingController(text: '0');
   final _contactCtrl = TextEditingController();
 
-  _Field _focused = _Field.cash;
   bool _closeWithoutPayment = false;
   bool _printReceipt = false;
   bool _printFiscalReceipt = false;
@@ -40,6 +38,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
     // По умолчанию вся сумма — наличными: сотрудник просто переносит часть
     // на карту, если гость платит смешанно (как на кассе Restik).
     _cashCtrl = TextEditingController(text: _fmt(_total));
+    for (final c in [_cashCtrl, _cardCtrl, _compCtrl]) {
+      c.addListener(() => setState(() {}));
+    }
   }
 
   @override
@@ -66,47 +67,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   bool get _canPay => _closeWithoutPayment || _diff.abs() < 0.01;
 
-  TextEditingController _controllerFor(_Field f) {
-    switch (f) {
-      case _Field.cash:
-        return _cashCtrl;
-      case _Field.card:
-        return _cardCtrl;
-      case _Field.comp:
-        return _compCtrl;
-      case _Field.contact:
-        return _contactCtrl;
-    }
-  }
-
-  void _tapDigit(String d) {
-    final ctrl = _controllerFor(_focused);
-    var text = ctrl.text;
-    if (_focused != _Field.contact && text == '0') text = '';
-    text += d;
-    ctrl.text = text;
-    ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
-    setState(() {});
-  }
-
-  void _tapComma() {
-    if (_focused == _Field.contact) return; // запятая имеет смысл только для сумм
-    final ctrl = _controllerFor(_focused);
-    if (!ctrl.text.contains(',')) {
-      ctrl.text = ctrl.text.isEmpty ? '0,' : '${ctrl.text},';
-      ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
-      setState(() {});
-    }
-  }
-
-  void _backspace() {
-    final ctrl = _controllerFor(_focused);
-    if (ctrl.text.isEmpty) return;
-    ctrl.text = ctrl.text.substring(0, ctrl.text.length - 1);
-    ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
-    setState(() {});
-  }
-
   /// Две подсказки быстрой суммы — округление вверх до сотни и до
   /// ближайшей "круглой" суммы. Удобно для приёма наличных и расчёта сдачи.
   List<double> get _quickAmounts {
@@ -118,9 +78,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   void _applyQuick(double v) {
-    final field = _focused == _Field.contact ? _Field.cash : _focused;
-    _controllerFor(field).text = _fmt(v);
-    setState(() => _focused = field);
+    _cashCtrl.text = _fmt(v);
   }
 
   Future<void> _pay() async {
@@ -157,75 +115,127 @@ class _PaymentScreenState extends State<PaymentScreen> {
         title: const Text('Назад'),
       ),
       body: SafeArea(
-        child: LayoutBuilder(builder: (context, c) {
-          final narrow = c.maxWidth < 700;
-          final left = _buildLeftPane();
-          final right = _buildKeypad();
-          if (narrow) {
-            return SingleChildScrollView(child: Column(children: [left, right]));
-          }
-          return Row(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(flex: 3, child: left),
-              const VerticalDivider(width: 1),
-              Expanded(flex: 2, child: right),
+              Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
+                  style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 16),
+              _amountField('Наличными:', _cashCtrl, enabled: !_closeWithoutPayment),
+              _amountField('Банковской картой:', _cardCtrl, enabled: !_closeWithoutPayment),
+              _amountField('За счёт заведения:', _compCtrl, enabled: !_closeWithoutPayment),
+              _contactField(),
+              if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Row(
+                    children: _quickAmounts.map((v) {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            shape: const StadiumBorder(),
+                            side: BorderSide(color: Colors.grey.shade400),
+                          ),
+                          onPressed: () => _applyQuick(v),
+                          child: Text(_fmt(v)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              if (!_closeWithoutPayment && _diff.abs() >= 0.01)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    _diff > 0
+                        ? 'Не хватает ${_fmt(_diff)} ${AppConstants.currencySymbol}'
+                        : 'Сдача ${_fmt(-_diff)} ${AppConstants.currencySymbol}',
+                    style: TextStyle(
+                      color: _diff > 0 ? Colors.red : Colors.green.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              const Divider(height: 28),
+              _toggleRow('Закрыть без оплаты', _closeWithoutPayment,
+                  (v) => setState(() => _closeWithoutPayment = v)),
+              _toggleRow('Распечатать чек', _printReceipt, (v) => setState(() => _printReceipt = v)),
+              _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
+                  (v) => setState(() => _printFiscalReceipt = v)),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 52,
+                width: double.infinity,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    disabledBackgroundColor: Colors.grey.shade400,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: _canPay && !_busy ? _pay : null,
+                  child: _busy
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Оплатить', style: TextStyle(fontSize: 18, color: Colors.white)),
+                ),
+              ),
+              const SizedBox(height: 20),
             ],
-          );
-        }),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildLeftPane() {
+  Widget _amountField(String label, TextEditingController ctrl, {required bool enabled}) {
     return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
         children: [
-          Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 16),
-          _amountRow('Наличными:', _cashCtrl, _Field.cash),
-          _amountRow('Банковской картой:', _cardCtrl, _Field.card),
-          _amountRow('За счёт заведения:', _compCtrl, _Field.comp),
-          _contactRow(),
-          if (!_closeWithoutPayment && _diff.abs() >= 0.01)
-            Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 4),
-              child: Text(
-                _diff > 0
-                    ? 'Не хватает ${_fmt(_diff)} ${AppConstants.currencySymbol}'
-                    : 'Сдача ${_fmt(-_diff)} ${AppConstants.currencySymbol}',
-                style: TextStyle(
-                  color: _diff > 0 ? Colors.red : Colors.green.shade700,
-                  fontWeight: FontWeight.w500,
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+          SizedBox(
+            width: 180,
+            child: TextField(
+              controller: ctrl,
+              enabled: enabled,
+              textAlign: TextAlign.right,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+              ],
+              style: TextStyle(fontSize: 16, color: enabled ? Colors.black : Colors.grey),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                filled: true,
+                fillColor: enabled ? Colors.white : Colors.grey.shade200,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: Colors.grey.shade400),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(color: Colors.black54),
+                ),
+                disabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
                 ),
               ),
-            ),
-          const Divider(height: 28),
-          _toggleRow('Закрыть без оплаты', _closeWithoutPayment,
-              (v) => setState(() => _closeWithoutPayment = v)),
-          _toggleRow('Распечатать чек', _printReceipt, (v) => setState(() => _printReceipt = v)),
-          _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
-              (v) => setState(() => _printFiscalReceipt = v)),
-          const SizedBox(height: 20),
-          SizedBox(
-            height: 52,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.black,
-                disabledBackgroundColor: Colors.grey.shade400,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: _canPay && !_busy ? _pay : null,
-              child: _busy
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Text('Оплатить', style: TextStyle(fontSize: 18, color: Colors.white)),
+              onTap: () {
+                // Удобно, если поле ещё содержит значение "0" по умолчанию —
+                // выделяем весь текст, чтобы первое нажатие цифры сразу его
+                // заменило, а не дописывалось к нулю.
+                if (ctrl.text == '0') {
+                  ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
+                }
+              },
             ),
           ),
         ],
@@ -233,65 +243,38 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Widget _amountRow(String label, TextEditingController ctrl, _Field field) {
-    final active = _focused == field;
-    final enabled = !_closeWithoutPayment;
+  Widget _contactField() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: InkWell(
-        onTap: enabled ? () => setState(() => _focused = field) : null,
-        child: Row(
-          children: [
-            Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
-            Container(
-              width: 180,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: !enabled
-                    ? Colors.grey.shade200
-                    : (active ? Colors.grey.shade300 : Colors.white),
-                border: Border.all(color: active && enabled ? Colors.black54 : Colors.grey.shade400),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                ctrl.text,
-                textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 16, color: enabled ? Colors.black : Colors.grey),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _contactRow() {
-    final active = _focused == _Field.contact;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: InkWell(
-        onTap: () => setState(() => _focused = _Field.contact),
-        child: Row(
-          children: [
-            const Expanded(
-                child: Text('Номер телефона / email гостя:', style: TextStyle(fontSize: 16))),
-            Container(
-              width: 180,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: active ? Colors.grey.shade300 : Colors.white,
-                border: Border.all(color: active ? Colors.black54 : Colors.grey.shade400),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                _contactCtrl.text.isEmpty ? '0' : _contactCtrl.text,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                    fontSize: 16, color: _contactCtrl.text.isEmpty ? Colors.grey : Colors.black),
+      child: Row(
+        children: [
+          const Expanded(
+              child: Text('Номер телефона / email гостя:', style: TextStyle(fontSize: 16))),
+          SizedBox(
+            width: 180,
+            child: TextField(
+              controller: _contactCtrl,
+              textAlign: TextAlign.right,
+              keyboardType: TextInputType.emailAddress,
+              style: const TextStyle(fontSize: 16, color: Colors.black),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '0',
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                filled: true,
+                fillColor: Colors.white,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: Colors.grey.shade400),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(color: Colors.black54),
+                ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -304,67 +287,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
         children: [
           Text(label, style: const TextStyle(fontSize: 16)),
           Switch(value: value, onChanged: onChanged),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildKeypad() {
-    const digits = ['7', '8', '9', '4', '5', '6', '1', '2', '3', ',', '0', '<'];
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.5,
-            children: digits.map((d) {
-              return OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  shape: const StadiumBorder(),
-                  side: BorderSide(color: Colors.grey.shade400),
-                ),
-                onPressed: () {
-                  if (d == '<') {
-                    _backspace();
-                  } else if (d == ',') {
-                    _tapComma();
-                  } else {
-                    _tapDigit(d);
-                  }
-                },
-                child: Text(d,
-                    style: const TextStyle(fontSize: 22, color: Colors.black, fontWeight: FontWeight.w500)),
-              );
-            }).toList(),
-          ),
-          if (_quickAmounts.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Row(
-              children: _quickAmounts.map((v) {
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.grey.shade300,
-                        shape: const StadiumBorder(),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        side: BorderSide.none,
-                      ),
-                      onPressed: () => _applyQuick(v),
-                      child: Text(_fmt(v),
-                          style: const TextStyle(fontSize: 18, color: Colors.black, fontWeight: FontWeight.w500)),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ],
         ],
       ),
     );
