@@ -352,6 +352,7 @@ class _XReportScreenState extends State<XReportScreen> {
                     const SizedBox(height: 8),
                     _totalRow('Оплачено картой', data.paymentCard),
                     _totalRow('Оплачено наличными', data.paymentCash),
+                    _totalRow('Оплачено с терминала', data.paymentTerminal),
                     _totalRow('За счёт заведения', data.paymentComp),
                     if (refunded.isNotEmpty) ...[
                       const Divider(height: 24),
@@ -532,6 +533,8 @@ class _XReportScreenState extends State<XReportScreen> {
     buf.writeln(
         'Оплачено наличными: ${data.paymentCash.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     buf.writeln(
+        'Оплачено с терминала: ${data.paymentTerminal.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    buf.writeln(
         'За счёт заведения: ${data.paymentComp.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     if (refundsCount > 0) buf.writeln('Возвратов: $refundsCount');
     Clipboard.setData(ClipboardData(text: buf.toString()));
@@ -554,6 +557,7 @@ class _XReportData {
   final double revenue;
   final double paymentCash;
   final double paymentCard;
+  final double paymentTerminal;
   final double paymentComp;
 
   _XReportData({
@@ -562,6 +566,7 @@ class _XReportData {
     required this.revenue,
     required this.paymentCash,
     required this.paymentCard,
+    required this.paymentTerminal,
     required this.paymentComp,
   });
 
@@ -571,12 +576,14 @@ class _XReportData {
     double revenue = 0;
     double cash = 0;
     double card = 0;
+    double terminal = 0;
     double comp = 0;
     for (final s in sessions) {
       orderTotal += s.orderTotal;
       revenue += s.totalWithDiscount;
       cash += s.paymentCash;
       card += s.paymentCard;
+      terminal += s.paymentTerminal;
       comp += s.paymentComp;
       for (final item in s.orderItems) {
         final key = '${item.menuItemId.isNotEmpty ? item.menuItemId : item.name}_${item.price}';
@@ -591,6 +598,7 @@ class _XReportData {
       revenue: revenue,
       paymentCash: cash,
       paymentCard: card,
+      paymentTerminal: terminal,
       paymentComp: comp,
     );
   }
