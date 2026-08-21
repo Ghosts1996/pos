@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// Правила Firebase Storage для фото категорий и блюд.
+// Читать фото (в т.ч. в самом приложении на экране "Меню") может кто угодно
+// по прямой ссылке — это открытые публичные картинки блюд, без секретов.
+// Загружать/менять/удалять — только авторизованные пользователи приложения
+// (сотрудники и администратор), т.к. вход в приложение уже защищён PIN и
+// Firebase Auth (см. lib/services/auth_service.dart). Файл ограничен по
+// размеру и типу, чтобы случайно не залить в Storage что-то кроме фото.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /menu_images/{folder}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+
+    // Всё остальное в бакете закрыто по умолчанию.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
