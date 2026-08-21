@@ -64,7 +64,7 @@ class SessionModel {
   final String status; // 'active' | 'closed'
   final DateTime? closedAt;
 
-  // ---- Оплата (заполняется на экране оплаты при закрытии стола) ----
+  // ---- Оплата (заполняется на экране оплаты при закрытии чека) ----
   final double paymentCash; // сколько оплачено наличными
   final double paymentCard; // сколько оплачено картой
   final double paymentComp; // сколько списано за счёт заведения
@@ -72,6 +72,10 @@ class SessionModel {
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   final bool receiptPrinted;
   final bool fiscalReceiptPrinted;
+
+  // ---- Возврат чека (раздел "История чеков и возврат" у сотрудника) ----
+  final bool refunded;
+  final DateTime? refundedAt;
 
   SessionModel({
     required this.id,
@@ -94,6 +98,8 @@ class SessionModel {
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
     this.fiscalReceiptPrinted = false,
+    this.refunded = false,
+    this.refundedAt,
   });
 
   factory SessionModel.fromDoc(DocumentSnapshot doc) {
@@ -126,6 +132,8 @@ class SessionModel {
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
       fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
+      refunded: data['refunded'] ?? false,
+      refundedAt: data['refundedAt'] != null ? (data['refundedAt'] as Timestamp).toDate() : null,
     );
   }
 
@@ -150,6 +158,8 @@ class SessionModel {
       'closedWithoutPayment': closedWithoutPayment,
       'receiptPrinted': receiptPrinted,
       'fiscalReceiptPrinted': fiscalReceiptPrinted,
+      'refunded': refunded,
+      'refundedAt': refundedAt != null ? Timestamp.fromDate(refundedAt!) : null,
     };
   }
 
