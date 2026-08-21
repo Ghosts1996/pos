@@ -156,7 +156,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 ],
               ),
               Text(
-                'Карта: ${s.paymentCard.toStringAsFixed(0)} · Наличные: ${s.paymentCash.toStringAsFixed(0)} · За счёт заведения: ${s.paymentComp.toStringAsFixed(0)}',
+                'Карта: ${s.paymentCard.toStringAsFixed(0)} · Наличные: ${s.paymentCash.toStringAsFixed(0)} · Терминал: ${s.paymentTerminal.toStringAsFixed(0)} · За счёт заведения: ${s.paymentComp.toStringAsFixed(0)}',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),
