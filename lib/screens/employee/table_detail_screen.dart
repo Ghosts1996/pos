@@ -4,6 +4,7 @@ import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/timer_display.dart';
+import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
 import 'payment_screen.dart';
@@ -197,7 +198,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           if (tablesSnap.hasError) {
             return Center(
               child: Text('Ошибка соединения: ${tablesSnap.error}',
-                  style: const TextStyle(color: Colors.red)),
+                  style: const TextStyle(color: AppColors.danger)),
             );
           }
           final t = tablesSnap.data?.firstWhere(
@@ -241,7 +242,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               if (sessSnap.hasError) {
                 return Center(
                   child: Text('Ошибка соединения: ${sessSnap.error}',
-                      style: const TextStyle(color: Colors.red)),
+                      style: const TextStyle(color: AppColors.danger)),
                 );
               }
               final session = sessSnap.data;
@@ -271,7 +272,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     Center(
                         child: Text(
                             'Открыл: ${session.employeeName} · Перезабивок: ${session.refillCount}',
-                            style: const TextStyle(color: Colors.grey))),
+                            style: const TextStyle(color: AppColors.textMuted))),
                     const SizedBox(height: 20),
                     Wrap(
                       spacing: 8,
@@ -306,7 +307,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('Заказ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        TextButton.icon(
+                        FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: AppColors.textPrimary,
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                          ),
                           onPressed: () async {
                             await Navigator.of(context).push(MaterialPageRoute(
                                 builder: (_) => MenuSelectionScreen(session: session)));
@@ -319,7 +326,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     if (session.orderItems.isEmpty)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Пока пусто', style: TextStyle(color: Colors.grey)),
+                        child: Text('Пока пусто', style: TextStyle(color: AppColors.textMuted)),
                       ),
                     ...session.orderItems.map((i) => ListTile(
                           dense: true,
@@ -357,7 +364,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     ),
                     const SizedBox(height: 12),
                     FilledButton.icon(
-                      style: FilledButton.styleFrom(backgroundColor: Colors.red.shade400),
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                       onPressed: () => _openPayment(session),
                       icon: const Icon(Icons.payment),
                       label: const Text('Закрыть стол'),
