@@ -10,7 +10,8 @@ enum _Period { today, week, month, custom }
 /// этом приложении. Считает выручку, средний чек, перезабивки, разбивку по
 /// сотрудникам и по позициям меню за выбранный период. Данные берутся из
 /// уже закрытых (status == 'closed') сеансов — активные счета в отчёт не
-/// попадают, пока стол не закрыт.
+/// попадают, пока стол не закрыт. Возвращённые чеки (refunded == true) в
+/// выручку не включаются и учитываются отдельной строкой "Возвраты".
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
 
@@ -197,6 +198,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           ),
                         ),
                       ],
+                      if (stats.refunds > 0) ...[
+                        const SizedBox(height: 8),
+                        _sectionTitle('Возвраты'),
+                        Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.undo, color: Colors.orange),
+                            title: Text('${stats.refunds} возвратов'),
+                            subtitle: Text(
+                                'На сумму ${stats.refundedAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (не входит в выручку)'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       Center(
                         child: OutlinedButton.icon(
@@ -277,6 +290,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
     buf.writeln('Визитов: ${stats.visits}');
     buf.writeln('Средний чек: ${stats.averageCheck.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     buf.writeln('Перезабивок: ${stats.refills}');
+    if (stats.refunds > 0) {
+      buf.writeln(
+          'Возвратов: ${stats.refunds} на сумму ${stats.refundedAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    }
     if (stats.byEmployee.isNotEmpty) {
       buf.writeln('\nПо сотрудникам:');
       for (final e in stats.byEmployee.entries) {
@@ -315,6 +332,8 @@ class _ReportStats {
   final List<_ItemStat> topItems;
   final int cardsUsed;
   final double totalDiscountGiven;
+  final int refunds;
+  final double refundedAmount;
 
   _ReportStats({
     required this.visits,
@@ -324,6 +343,8 @@ class _ReportStats {
     required this.topItems,
     required this.cardsUsed,
     required this.totalDiscountGiven,
+    required this.refunds,
+    required this.refundedAmount,
   });
 
   double get averageCheck => visits == 0 ? 0 : revenue / visits;
@@ -333,10 +354,20 @@ class _ReportStats {
     int refills = 0;
     int cardsUsed = 0;
     double discountGiven = 0;
+    int refunds = 0;
+    double refundedAmount = 0;
     final byEmployee = <String, _EmployeeStat>{};
     final byItem = <String, _ItemStat>{};
 
     for (final s in sessions) {
+      // Возвращённые чеки в выручку и статистику по товарам/сотрудникам не
+      // включаются — учитываются только отдельно, чтобы не искажать отчёт.
+      if (s.refunded) {
+        refunds++;
+        refundedAmount += s.totalWithDiscount;
+        continue;
+      }
+
       revenue += s.totalWithDiscount;
       refills += s.refillCount;
       discountGiven += (s.orderTotal - s.totalWithDiscount);
@@ -361,13 +392,15 @@ class _ReportStats {
     final itemsSorted = byItem.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
 
     return _ReportStats(
-      visits: sessions.length,
+      visits: sessions.length - refunds,
       revenue: revenue,
       refills: refills,
       byEmployee: employeesSorted,
       topItems: itemsSorted.take(15).toList(),
       cardsUsed: cardsUsed,
       totalDiscountGiven: discountGiven,
+      refunds: refunds,
+      refundedAmount: refundedAmount,
     );
   }
 }
