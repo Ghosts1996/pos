@@ -5,6 +5,7 @@ import '../models/session_model.dart';
 import '../models/menu_models.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
+import '../models/shift_model.dart';
 import '../utils/constants.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
@@ -279,6 +280,114 @@ class FirestoreService {
         .orderBy('closedAt', descending: true)
         .get();
     return snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+  }
+
+  // ---------- СМЕНЫ (КАССА) ----------
+  // Смена — период работы кассы: открывается при входе сотрудника (если ещё
+  // не открыта) и закрывается вручную кнопкой в X-отчёте. В один момент
+  // времени может быть открыта только одна смена — она общая для всех
+  // сотрудников заведения (как реальная кассовая смена), поэтому все чеки,
+  // закрытые пока смена открыта, относятся к ней, даже если смена шла через
+  // полночь.
+
+  /// Текущая открытая смена, если она есть. null, если ни одна смена сейчас
+  /// не открыта (например, самый первый вход в приложение или после
+  /// закрытия предыдущей смены).
+  Future<ShiftModel?> currentOpenShift() async {
+    final snap = await _db
+        .collection('shifts')
+        .where('status', isEqualTo: 'open')
+        .orderBy('openedAt', descending: true)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return ShiftModel.fromDoc(snap.docs.first);
+  }
+
+  /// Стрим текущей открытой смены — используется, чтобы X-отчёт и другие
+  /// экраны сразу видели открытие/закрытие смены без перезагрузки.
+  Stream<ShiftModel?> openShiftStream() {
+    return _db
+        .collection('shifts')
+        .where('status', isEqualTo: 'open')
+        .orderBy('openedAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first));
+  }
+
+  /// Открывает новую смену, если сейчас нет открытой. Вызывается при входе
+  /// сотрудника в приложение. Указатель на текущую открытую смену хранится
+  /// в отдельном документе meta/shiftState — транзакции клиентского SDK
+  /// умеют читать только конкретный документ (не запрос), поэтому именно
+  /// через этот документ безопасно проверяем и фиксируем, что смена уже
+  /// открыта, даже если два сотрудника входят почти одновременно.
+  /// Возвращает id открытой смены (новой или уже существующей).
+  Future<String> openShiftIfNeeded(String employeeName) async {
+    final stateRef = _db.collection('meta').doc('shiftState');
+    final shiftRef = _db.collection('shifts').doc();
+    final now = DateTime.now();
+
+    final resultId = await _db.runTransaction<String>((tx) async {
+      final stateDoc = await tx.get(stateRef);
+      final data = stateDoc.data();
+      final currentOpenId = data?['openShiftId'] as String?;
+      if (currentOpenId != null && currentOpenId.isNotEmpty) {
+        return currentOpenId;
+      }
+
+      final shift = ShiftModel(
+        id: shiftRef.id,
+        openedAt: now,
+        openedBy: employeeName,
+        status: 'open',
+      );
+      tx.set(shiftRef, shift.toMap());
+      tx.set(stateRef, {'openShiftId': shiftRef.id});
+      return shiftRef.id;
+    });
+
+    return resultId;
+  }
+
+  /// Закрывает смену (кнопка "Закрыть смену" в X-отчёте) и сбрасывает
+  /// указатель текущей открытой смены, чтобы следующий вход в приложение
+  /// открыл новую смену.
+  Future<void> closeShift(String shiftId, String employeeName) async {
+    final now = DateTime.now();
+    await _db.collection('shifts').doc(shiftId).update({
+      'status': 'closed',
+      'closedAt': Timestamp.fromDate(now),
+      'closedBy': employeeName,
+    });
+    final stateRef = _db.collection('meta').doc('shiftState');
+    await _db.runTransaction((tx) async {
+      final stateDoc = await tx.get(stateRef);
+      final data = stateDoc.data();
+      if (data?['openShiftId'] == shiftId) {
+        tx.set(stateRef, {'openShiftId': null});
+      }
+    });
+  }
+
+  /// Последние N смен (для просмотра прошлых смен в X-отчёте), отсортированы
+  /// от самой свежей к самой старой.
+  Future<List<ShiftModel>> recentShifts({int limit = 30}) async {
+    final snap = await _db
+        .collection('shifts')
+        .orderBy('openedAt', descending: true)
+        .limit(limit)
+        .get();
+    return snap.docs.map((d) => ShiftModel.fromDoc(d)).toList();
+  }
+
+  /// Закрытые (оплаченные) чеки, относящиеся к конкретной смене: всё, что
+  /// было закрыто в промежутке [shift.openedAt; shift.closedAt ?? сейчас).
+  /// Именно на этом строится X-отчёт — вместо календарных суток, из-за
+  /// которых отчёт "пропадал" ровно в полночь, если смена ещё не закрыта.
+  Future<List<SessionModel>> closedSessionsForShift(ShiftModel shift) {
+    final end = shift.closedAt ?? DateTime.now().add(const Duration(minutes: 1));
+    return closedSessionsInRange(shift.openedAt, end);
   }
 
   // ---------- МЕНЮ ----------
