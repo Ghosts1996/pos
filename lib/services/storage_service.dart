@@ -13,8 +13,15 @@ import 'package:image_picker/image_picker.dart';
 /// документа Firestore (см. FirestoreService.updateCategoryImage /
 /// updateMenuItemImage).
 class StorageService {
-  final FirebaseStorage _storage = FirebaseStorage.instance;
-  final ImagePicker _picker = ImagePicker();
+  final FirebaseStorage _storage;
+  final ImagePicker _picker;
+
+  /// [storage] позволяет подставить мок в тестах (см.
+  /// test/storage_service_test.dart) — по умолчанию используется реальный
+  /// синглтон FirebaseStorage.instance.
+  StorageService({FirebaseStorage? storage, ImagePicker? picker})
+      : _storage = storage ?? FirebaseStorage.instance,
+        _picker = picker ?? ImagePicker();
 
   /// Открывает системный выбор фото (галерея) с уменьшением размера, чтобы
   /// не грузить в Storage многометровые оригиналы с камеры телефона.
@@ -32,6 +39,14 @@ class StorageService {
   /// [folder] — 'categories' или 'items', [entityId] — id категории/позиции,
   /// используется как часть пути, чтобы повторная загрузка не плодила мусор
   /// бесконечно (старый файл этой сущности вычищается ниже).
+  ///
+  /// ВАЖНО: downloadURL получаем сразу после успешной записи, ДО очистки
+  /// старых файлов той же сущности. Раньше очистка стояла между записью и
+  /// getDownloadURL(), и при повторном/параллельном тапе по одной и той же
+  /// сущности могла успеть удалить только что записанный объект по его
+  /// keepPath раньше, чем этот же вызов дойдёт до getDownloadURL() —
+  /// результат: firebase_storage/object-not-found. Теперь очистка идёт
+  /// последней и её результат никак не влияет на возвращаемую ссылку.
   Future<String> uploadMenuImage({
     required XFile file,
     required String folder,
@@ -48,11 +63,16 @@ class StorageService {
       SettableMetadata(contentType: _contentTypeOf(ext)),
     );
 
+    final downloadUrl = await ref.getDownloadURL();
+
     // Подчищаем предыдущие файлы этой сущности в той же папке, чтобы в
     // Storage не копились неиспользуемые фото при каждой замене картинки.
+    // Идёт строго после getDownloadURL — падение или гонка здесь больше не
+    // может стереть только что загруженный файл до того, как мы получили
+    // на него ссылку.
     await _cleanupOldFiles(folder: folder, entityId: entityId, keepPath: path);
 
-    return ref.getDownloadURL();
+    return downloadUrl;
   }
 
   Future<void> _cleanupOldFiles({
