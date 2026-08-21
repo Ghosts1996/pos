@@ -1,127 +1,172 @@
-name: Super Multi-AI Safe Builder
-on:
-  workflow_dispatch:
-    inputs:
-      prompt:
-        required: true
+import 'dart:async';
+import 'dart:typed_data';
 
-permissions:
-  contents: write
-  actions: write
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 
-jobs:
-  super-ai-flow:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: true
+/// Тонкая обёртка над Firebase Storage для загрузки фото категорий и
+/// позиций меню (аналог фото-плиток "Бургеры", "Барная карта" в Restik POS).
+///
+/// Файлы кладутся по ФИКСИРОВАННОМУ пути на сущность (без временной метки):
+///   menu_images/categories/{categoryId}.jpg
+///   menu_images/items/{itemId}.jpg
+/// Публичный downloadURL сохраняется в поле imageUrl соответствующего
+/// документа Firestore (см. FirestoreService.updateCategoryImage /
+/// updateMenuItemImage).
+///
+/// RCA "не удалось загрузить фото: [firebase_storage/object-not-found]":
+/// раньше файл клался под путём с timestamp (…_{millis}.jpg), а старые
+/// файлы этой же сущности вычищались отдельным проходом listAll() +
+/// delete(). При повторной/двойной загрузке одной и той же сущности
+/// (двойной тап, повторная попытка после плохой сети и т.п.) две загрузки
+/// могли пересечься по времени и удалить объект, на который другая
+/// загрузка только что получила downloadURL — независимо от того, до или
+/// после getDownloadURL() стоит очистка, потому что это ДВА разных вызова
+/// uploadMenuImage() с двумя разными путями, и очистка одного вызова не
+/// знает о keepPath другого. Плюс сама схема "лист + точечное удаление"
+/// требовала прав на list в Storage Rules и лишний сетевой round-trip.
+///
+/// Исправление: путь на сущность фиксированный (без метки времени), запись
+/// идёт через putData на этот же путь, что в Storage — простая замена
+/// объекта, без листинга и без удаления. Firebase Storage при каждой
+/// перезаписи выдаёт файлу новый download-токен, поэтому URL всё равно
+/// меняется на новый и старая закэшированная картинка не "залипает" — при
+/// этом гонки между двумя загрузками одной сущности больше нет: последняя
+/// успешная запись просто выигрывает, и downloadURL всегда берётся у
+/// объекта, который только что реально записан (snapshot.ref), а не у
+/// URL, который могла успеть стереть чужая параллельная очистка.
+class StorageService {
+  final FirebaseStorage _storage;
+  final ImagePicker _picker;
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+  /// [storage] позволяет подставить мок в тестах (см.
+  /// test/storage_service_test.dart) — по умолчанию используется реальный
+  /// синглтон FirebaseStorage.instance.
+  StorageService({FirebaseStorage? storage, ImagePicker? picker})
+      : _storage = storage ?? FirebaseStorage.instance,
+        _picker = picker ?? ImagePicker();
 
-      - name: Set up Java Development Kit
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+  /// Открывает системный выбор фото (галерея) с уменьшением размера, чтобы
+  /// не грузить в Storage многометровые оригиналы с камеры телефона.
+  /// Возвращает null, если пользователь отменил выбор.
+  Future<XFile?> pickImage({ImageSource source = ImageSource.gallery}) {
+    return _picker.pickImage(
+      source: source,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+  }
 
-      - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
+  /// Загружает выбранное фото в Storage и возвращает публичный download URL.
+  /// [folder] — 'categories' или 'items', [entityId] — id категории/позиции.
+  ///
+  /// Путь на сущность фиксированный (см. RCA в комментарии класса выше) —
+  /// повторная загрузка просто перезаписывает объект по тому же пути, без
+  /// листинга и удаления старых файлов, поэтому гонка, приводившая к
+  /// firebase_storage/object-not-found, больше структурно невозможна.
+  ///
+  /// downloadURL берётся у snapshot.ref только после того, как
+  /// snapshot.state подтверждает успешную запись (TaskState.success) — это
+  /// защищает от редкого случая, когда putData() возвращает управление
+  /// раньше, чем задача реально дошла до финального состояния.
+  ///
+  /// Если у сущности раньше было фото с ДРУГИМ расширением (например,
+  /// заменили .png на .jpg), старый файл лучшими усилиями подчищается уже
+  /// после успешной загрузки нового — ошибка очистки не влияет на
+  /// результат и не пробрасывается наружу.
+  Future<String> uploadMenuImage({
+    required XFile file,
+    required String folder,
+    required String entityId,
+  }) async {
+    final bytes = await file.readAsBytes();
+    final ext = _extensionOf(file.name);
+    final path = 'menu_images/$folder/$entityId.$ext';
+    final ref = _storage.ref().child(path);
 
-      - name: Install Flutter Dependencies
-        run: |
-          cd app
-          flutter pub get
+    final task = await ref.putData(
+      Uint8List.fromList(bytes),
+      SettableMetadata(contentType: _contentTypeOf(ext)),
+    );
 
-      - name: 🧠 AI Code Optimization and Bug Fix (DeepSeek-R1)
-        env:
-          USER_PROMPT: ${{ github.event.inputs.prompt }}
-          AITUNNEL_BASE_URL: ${{ secrets.AITUNNEL_BASE_URL }}
-          AITUNNEL_API_KEY: ${{ secrets.AITUNNEL_API_KEY }}
-        run: |
-          echo "🚀 Кодируем файл и отправляем запрос на шлюз..."
+    if (task.state != TaskState.success) {
+      throw StateError(
+          'Загрузка фото не завершилась успешно (состояние: ${task.state}).');
+    }
 
-          if [ -f "app/lib/services/tunnel_service.dart" ]; then
-            TUNNEL_CODE_B64=$(base64 -w 0 < app/lib/services/tunnel_service.dart)
-          else
-            TUNNEL_CODE_B64=$(echo -n "Файл отсутствует, создай с нуля" | base64 -w 0)
-          fi
+    // Известная гонка Firebase Storage: сразу после putData() задача уже в
+    // состоянии success, но на стороне Storage объект иногда ещё не успел
+    // стать видимым для getDownloadURL() (особенно на мобильной сети) —
+    // тогда getDownloadURL() бросает [firebase_storage/object-not-found],
+    // хотя файл только что реально записан. Раньше это пробрасывалось
+    // пользователю как ошибка загрузки, хотя фото уже лежало в Storage.
+    // Решение: несколько попыток с небольшой паузой перед тем, как
+    // считать это настоящей ошибкой.
+    final downloadUrl = await _getDownloadUrlWithRetry(task.ref);
 
-          CLEAN_URL=$(echo "$AITUNNEL_BASE_URL" | sed 's/[/]*$//')
+    // Лучшими усилиями подчищаем файлы этой же сущности с ДРУГИМ
+    // расширением (единственный случай, когда путь мог измениться).
+    // Идёт строго после getDownloadURL уже загруженного файла — ошибка
+    // здесь никак не влияет на возвращаемую ссылку.
+    unawaited(_cleanupStaleExtensions(folder: folder, entityId: entityId, keepPath: path));
 
-          SYSTEM_PROMPT='Ты элитный Flutter разработчик. Исправь код sing-box VLESS Reality, настрой DNS, настрой маршрутизацию и почини вылеты на Android 14+. Твой ответ должен состоять СТРОГО только из чистого кода Dart. Запрещено использовать маркдаун-теги вроде ```dart или ```, пиши только сырой код файла.'
+    return downloadUrl;
+  }
 
-          USER_CONTENT="Задача: ${USER_PROMPT}. Базовый код текущего файла в Base64 (декодируй перед анализом): ${TUNNEL_CODE_B64}"
+  Future<String> _getDownloadUrlWithRetry(Reference ref, {int attempts = 4}) async {
+    Object? lastError;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        return await ref.getDownloadURL();
+      } on FirebaseException catch (e) {
+        lastError = e;
+        if (e.code != 'object-not-found') rethrow;
+        // Экспоненциальная пауза: 300мс, 600мс, 1200мс...
+        await Future.delayed(Duration(milliseconds: 300 * (1 << i)));
+      }
+    }
+    throw lastError ?? StateError('Не удалось получить ссылку на фото.');
+  }
 
-          # jq -n --arg сам корректно экранирует кавычки, переносы строк,
-          # обратные слэши и юникод — вручную строку JSON больше не собираем
-          PAYLOAD=$(jq -n \
-            --arg model "deepseek-r1" \
-            --arg sys "$SYSTEM_PROMPT" \
-            --arg usr "$USER_CONTENT" \
-            '{model: $model, messages: [{role:"system", content:$sys}, {role:"user", content:$usr}]}')
+  Future<void> _cleanupStaleExtensions({
+    required String folder,
+    required String entityId,
+    required String keepPath,
+  }) async {
+    try {
+      final dir = _storage.ref().child('menu_images/$folder');
+      final listing = await dir.listAll();
+      for (final item in listing.items) {
+        final isSameEntity = item.name.startsWith('$entityId.');
+        final isKept = item.fullPath == keepPath;
+        if (isSameEntity && !isKept) {
+          await item.delete();
+        }
+      }
+    } catch (_) {
+      // Не критично: нет прав/нестабильная сеть — новая картинка уже
+      // загружена и сохранена, просто останется один лишний файл с
+      // устаревшим расширением.
+    }
+  }
 
-          RESPONSE=$(curl -s -X POST "$CLEAN_URL/chat/completions" \
-            -H "Authorization: Bearer $AITUNNEL_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+  String _extensionOf(String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    if (dot == -1 || dot == fileName.length - 1) return 'jpg';
+    return fileName.substring(dot + 1).toLowerCase();
+  }
 
-          NEW_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
-
-          if [ "$NEW_CODE" == "null" ] || [ -z "$NEW_CODE" ]; then
-            echo "❌ Ошибка: Сервер вернул пустой ответ."
-            echo "Ответ сервера: $RESPONSE"
-            exit 1
-          fi
-
-          CLEAN_CODE=$(echo "$NEW_CODE" | sed '/^```/d')
-
-          echo "✅ Код успешно сгенерирован моделью DeepSeek-R1!"
-
-          mkdir -p app/lib/services
-          echo "$CLEAN_CODE" > app/lib/services/tunnel_service.dart
-
-          MANIFEST_PATH="app/android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST_PATH" ]; then
-            sed -i '/<service/ s/>/ android:foregroundServiceType="vpn">/' "$MANIFEST_PATH"
-            echo "✅ AndroidManifest.xml успешно пропатчен!"
-          fi
-
-      - name: 🔍 Validate Generated Code (compile + static analysis)
-        run: |
-          cd app
-          echo "🔎 Проверяем сгенерированный код на ошибки компиляции и типов..."
-
-          # dart compile kernel ловит те же ошибки типов/компиляции,
-          # что и полная сборка APK (как раз ту, что вызвала предыдущий баг),
-          # но занимает секунды, а не минуты, и не собирает сам APK.
-          if ! dart compile kernel lib/services/tunnel_service.dart -o /tmp/check.dill; then
-            echo "❌ Сгенерированный код не компилируется. Отменяем сохранение в репозиторий."
-            exit 1
-          fi
-
-          # flutter analyze дополнительно ловит ошибки типов и линт-предупреждения
-          # по всему проекту (не только по одному файлу)
-          if ! flutter analyze --no-fatal-infos; then
-            echo "❌ Статический анализ нашёл ошибки. Отменяем сохранение в репозиторий."
-            exit 1
-          fi
-
-          echo "✅ Код скомпилировался и прошёл статический анализ без ошибок."
-
-      - name: Push Code Changes
-        env:
-          USER_PROMPT: ${{ github.event.inputs.prompt }}
-        run: |
-          git config --global user.name "AITUNNEL-Bot"
-          git config --global user.email "bot@aitunnel.ru"
-          git add .
-          git commit -m "Super AI Safe Fix: $USER_PROMPT" || echo "No changes to commit"
-          git push
+  String _contentTypeOf(String ext) {
+    switch (ext) {
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+        return 'image/heic';
+      default:
+        return 'image/jpeg';
+    }
+  }
+}
