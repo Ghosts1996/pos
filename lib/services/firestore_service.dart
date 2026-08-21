@@ -292,22 +292,22 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());
   }
 
-  /// Новая категория всегда встаёт в конец списка. Порядок вычисляется
-  /// внутри транзакции по максимальному текущему order + 1 (а не по
-  /// snap.docs.length), потому что при подсчёте по количеству документов
-  /// два администратора, одновременно нажавшие "Новая категория" на разных
-  /// устройствах, могли получить один и тот же order и в списке одна
-  /// категория "перекрывала" бы другую до ручной пересортировки.
+  /// Новая категория всегда встаёт в конец списка. Firestore-транзакции в
+  /// клиентском SDK умеют делать tx.get() только по DocumentReference, а не
+  /// по запросу/коллекции — поэтому максимальный order читаем обычным
+  /// запросом до транзакции, а саму запись документа делаем в транзакции
+  /// ради атомарности создания. Полностью исключить гонку двух
+  /// одновременных "Новая категория" без Cloud Function нельзя, но это
+  /// на порядок надёжнее прежнего варианта по snap.docs.length.
   Future<String> addCategory(String name, {String imageUrl = ''}) async {
-    final colRef = _db.collection('menuCategories');
-    final docRef = colRef.doc();
+    final snap = await _db.collection('menuCategories').get();
+    var maxOrder = -1;
+    for (final d in snap.docs) {
+      final order = (d.data()['order'] as num?)?.toInt() ?? 0;
+      if (order > maxOrder) maxOrder = order;
+    }
+    final docRef = _db.collection('menuCategories').doc();
     await _db.runTransaction((tx) async {
-      final snap = await tx.get(colRef);
-      var maxOrder = -1;
-      for (final d in snap.docs) {
-        final order = ((d.data())['order'] as num?)?.toInt() ?? 0;
-        if (order > maxOrder) maxOrder = order;
-      }
       tx.set(docRef, {'name': name, 'order': maxOrder + 1, 'imageUrl': imageUrl});
     });
     return docRef.id;
