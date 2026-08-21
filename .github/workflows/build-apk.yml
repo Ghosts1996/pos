@@ -34,25 +34,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # В репозитории нет папки android/ (android-проект в него никогда не
-      # клали — обычно её создаёт сам Flutter SDK командой `flutter create`).
-      # `flutter create .` в директории, где уже есть pubspec.yaml и lib/,
-      # НЕ трогает существующие файлы — он только добирает недостающие
-      # платформенные файлы (android/, gradle-обёртку и т.д.), используя
-      # именно ту версию Flutter/Gradle/AGP, которая только что установлена
-      # на этом раннере, — так исключается рассинхрон версий.
       - name: Generate missing Android platform files
         run: |
           flutter create . --platforms=android --org com.hookahpos --project-name hookah_pos
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
 
-      # Flutter по умолчанию добавляет разрешение INTERNET только в
-      # debug-манифест (нужно для hot reload), а не в основной. Наше
-      # приложение целиком работает через Firebase/интернет, поэтому без
-      # этой строки в основном манифесте release-APK будет собираться
-      # без ошибок, но не сможет достучаться до сети — экраны будут вечно
-      # висеть на загрузке. Добавляем разрешение и заодно человеческое
-      # название приложения на экране телефона.
       - name: Ensure INTERNET permission for release builds
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
@@ -66,9 +52,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Анализ помогает ловить реальные ошибки в коде, но не должен мешать
-      # получить готовый APK из-за безобидного предупреждения линтера —
-      # поэтому не блокируем сборку, а просто печатаем результат в лог.
       - name: Analyze (informational — does not block the build)
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
