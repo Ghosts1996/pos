@@ -4,10 +4,12 @@ import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/table_tile.dart';
-import '../login_screen.dart';
+import '../../widgets/employee_drawer.dart';
 import 'table_detail_screen.dart';
 
-/// Карта зала для сотрудника — только просмотр и переход к столу.
+/// Карта зала для сотрудника — просмотр столов, переход к столу и доступ
+/// к меню сотрудника (X-отчёт, история чеков и возврат, смена сотрудника)
+/// через боковую панель.
 class FloorPlanScreen extends StatelessWidget {
   final Employee employee;
   const FloorPlanScreen({super.key, required this.employee});
@@ -18,15 +20,8 @@ class FloorPlanScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text('Зал · ${employee.name}'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Сменить сотрудника',
-            onPressed: () => Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false),
-          ),
-        ],
       ),
+      drawer: EmployeeDrawer(employee: employee),
       body: StreamBuilder<List<TableModel>>(
         stream: fs.tablesStream(),
         builder: (context, snap) {
