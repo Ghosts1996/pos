@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/session_model.dart';
@@ -89,7 +90,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade400),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Оформить возврат'),
           ),
@@ -129,7 +130,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               Text(
                 '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const Divider(),
               Expanded(
@@ -156,7 +157,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
               ),
               Text(
                 'Карта: ${s.paymentCard.toStringAsFixed(0)} · Наличные: ${s.paymentCash.toStringAsFixed(0)} · За счёт заведения: ${s.paymentComp.toStringAsFixed(0)}',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),
               if (s.refunded)
@@ -166,7 +167,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 )
               else
                 FilledButton.icon(
-                  style: FilledButton.styleFrom(backgroundColor: Colors.red.shade400),
+                  style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                   onPressed: () {
                     Navigator.pop(context);
                     _confirmRefund(s);
@@ -240,7 +241,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 if (snap.hasError) {
                   return Center(
                       child: Text('Ошибка загрузки: ${snap.error}',
-                          style: const TextStyle(color: Colors.red)));
+                          style: const TextStyle(color: AppColors.danger)));
                 }
                 final sessions = snap.data ?? [];
                 if (sessions.isEmpty) {
@@ -266,7 +267,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             decoration: s.refunded ? TextDecoration.lineThrough : null,
-                            color: s.refunded ? Colors.grey : null,
+                            color: s.refunded ? AppColors.textMuted : null,
                           ),
                         ),
                         onTap: () => _openDetails(s),
