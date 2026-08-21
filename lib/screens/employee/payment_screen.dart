@@ -6,10 +6,10 @@ import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
-/// разбить сумму на наличные / карту / за счёт заведения, указать контакт
-/// гостя и отметить печать чека. Сама печать физически не подключена (в
-/// проекте нет драйвера принтера/фискального регистратора) — переключатели
-/// только сохраняются в чек как флаги для отчётности.
+/// разбить сумму на наличные / карту / терминал / за счёт заведения,
+/// указать контакт гостя и отметить печать чека. Сама печать физически не
+/// подключена (в проекте нет драйвера принтера/фискального регистратора) —
+/// переключатели только сохраняются в чек как флаги для отчётности.
 class PaymentScreen extends StatefulWidget {
   final SessionModel session;
   const PaymentScreen({super.key, required this.session});
@@ -18,12 +18,40 @@ class PaymentScreen extends StatefulWidget {
   State<PaymentScreen> createState() => _PaymentScreenState();
 }
 
+/// Один способ оплаты на экране: подпись, контроллер суммы и фокус-нода,
+/// нужная, чтобы отследить первое нажатие на поле.
+class _PaymentMethod {
+  final String label;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  _PaymentMethod(this.label)
+      : controller = TextEditingController(text: '0'),
+        focusNode = FocusNode();
+
+  double parse() => double.tryParse(
+        controller.text.replaceAll(',', '.').replaceAll(' ', ''),
+      ) ??
+      0;
+
+  void dispose() {
+    controller.dispose();
+    focusNode.dispose();
+  }
+}
+
 class _PaymentScreenState extends State<PaymentScreen> {
   final _fs = FirestoreService();
 
-  late final TextEditingController _cashCtrl;
-  final _cardCtrl = TextEditingController(text: '0');
-  final _compCtrl = TextEditingController(text: '0');
+  late final _PaymentMethod _cash;
+  late final _PaymentMethod _card;
+  late final _PaymentMethod _terminal;
+  late final _PaymentMethod _comp;
+  late final List<_PaymentMethod> _methods;
+
+  // Поля, которые уже получали фокус хотя бы раз — чтобы автоподстановка
+  // суммы и выделение текста срабатывали только при самом первом тапе.
+  final Set<_PaymentMethod> _focusedOnce = {};
+
   final _contactCtrl = TextEditingController();
 
   bool _closeWithoutPayment = false;
@@ -36,21 +64,51 @@ class _PaymentScreenState extends State<PaymentScreen> {
   @override
   void initState() {
     super.initState();
+    _cash = _PaymentMethod('Наличными:');
+    _card = _PaymentMethod('Банковской картой:');
+    _terminal = _PaymentMethod('Оплата с терминала:');
+    _comp = _PaymentMethod('За счёт заведения:');
+    _methods = [_cash, _card, _terminal, _comp];
+
     // По умолчанию вся сумма — наличными: сотрудник просто переносит часть
-    // на карту, если гость платит смешанно (как на кассе Restik).
-    _cashCtrl = TextEditingController(text: _fmt(_total));
-    for (final c in [_cashCtrl, _cardCtrl, _compCtrl]) {
-      c.addListener(() => setState(() {}));
+    // на другой способ оплаты, если гость платит смешанно (как на кассе Restik).
+    _cash.controller.text = _fmt(_total);
+
+    for (final m in _methods) {
+      m.controller.addListener(() => setState(() {}));
+      m.focusNode.addListener(() => _onFocusChange(m));
     }
   }
 
   @override
   void dispose() {
-    _cashCtrl.dispose();
-    _cardCtrl.dispose();
-    _compCtrl.dispose();
+    for (final m in _methods) {
+      m.dispose();
+    }
     _contactCtrl.dispose();
     super.dispose();
+  }
+
+  /// При самом первом попадании фокуса в поле (первый тап пальцем) переносим
+  /// в него оставшуюся неоплаченной сумму — если поле ещё пустое/нулевое —
+  /// и выделяем весь текст, так что первая же цифра с открывшейся клавиатуры
+  /// сразу заменяет значение, а не дописывается к нему. Повторные тапы или
+  /// переключение фокуса между уже заполненными полями значение не трогают.
+  void _onFocusChange(_PaymentMethod method) {
+    if (!method.focusNode.hasFocus) return;
+    if (_focusedOnce.contains(method)) return;
+    _focusedOnce.add(method);
+
+    if (method.parse() == 0) {
+      final remaining = _total - _paidTotal;
+      if (remaining > 0.004) {
+        method.controller.text = _fmt(remaining);
+      }
+    }
+    method.controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: method.controller.text.length,
+    );
   }
 
   String _fmt(double v) {
@@ -58,12 +116,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     return v.toStringAsFixed(2).replaceAll('.', ',');
   }
 
-  double _parse(String s) => double.tryParse(s.replaceAll(',', '.').replaceAll(' ', '')) ?? 0;
-
-  double get _cash => _parse(_cashCtrl.text);
-  double get _card => _parse(_cardCtrl.text);
-  double get _comp => _parse(_compCtrl.text);
-  double get _paidTotal => _cash + _card + _comp;
+  double get _paidTotal => _methods.fold(0.0, (sum, m) => sum + m.parse());
   double get _diff => _total - _paidTotal;
 
   bool get _canPay => _closeWithoutPayment || _diff.abs() < 0.01;
@@ -79,7 +132,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   void _applyQuick(double v) {
-    _cashCtrl.text = _fmt(v);
+    _cash.controller.text = _fmt(v);
   }
 
   Future<void> _pay() async {
@@ -89,9 +142,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       await _fs.closeSessionWithPayment(
         widget.session.id,
         widget.session.tableId,
-        cash: _closeWithoutPayment ? 0 : _cash,
-        card: _closeWithoutPayment ? 0 : _card,
-        comp: _closeWithoutPayment ? 0 : _comp,
+        cash: _closeWithoutPayment ? 0 : _cash.parse(),
+        card: _closeWithoutPayment ? 0 : _card.parse(),
+        terminal: _closeWithoutPayment ? 0 : _terminal.parse(),
+        comp: _closeWithoutPayment ? 0 : _comp.parse(),
         guestContact: _contactCtrl.text.trim(),
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
@@ -124,9 +178,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
               const SizedBox(height: 16),
-              _amountField('Наличными:', _cashCtrl, enabled: !_closeWithoutPayment),
-              _amountField('Банковской картой:', _cardCtrl, enabled: !_closeWithoutPayment),
-              _amountField('За счёт заведения:', _compCtrl, enabled: !_closeWithoutPayment),
+              for (final m in _methods) _amountField(m, enabled: !_closeWithoutPayment),
               _contactField(),
               if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
                 Padding(
@@ -194,16 +246,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Widget _amountField(String label, TextEditingController ctrl, {required bool enabled}) {
+  Widget _amountField(_PaymentMethod method, {required bool enabled}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+          Expanded(child: Text(method.label, style: const TextStyle(fontSize: 16))),
           SizedBox(
             width: 180,
             child: TextField(
-              controller: ctrl,
+              controller: method.controller,
+              focusNode: method.focusNode,
               enabled: enabled,
               textAlign: TextAlign.right,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -229,14 +282,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   borderSide: const BorderSide(color: AppColors.border),
                 ),
               ),
-              onTap: () {
-                // Удобно, если поле ещё содержит значение "0" по умолчанию —
-                // выделяем весь текст, чтобы первое нажатие цифры сразу его
-                // заменило, а не дописывалось к нулю.
-                if (ctrl.text == '0') {
-                  ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
-                }
-              },
             ),
           ),
         ],
