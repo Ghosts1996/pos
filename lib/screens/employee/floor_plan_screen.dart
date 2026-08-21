@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
@@ -28,7 +29,7 @@ class FloorPlanScreen extends StatelessWidget {
           if (snap.hasError) {
             return Center(
               child: Text('Ошибка загрузки зала: ${snap.error}',
-                  textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+                  textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
             );
           }
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
