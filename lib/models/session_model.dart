@@ -66,7 +66,8 @@ class SessionModel {
 
   // ---- Оплата (заполняется на экране оплаты при закрытии чека) ----
   final double paymentCash; // сколько оплачено наличными
-  final double paymentCard; // сколько оплачено картой
+  final double paymentCard; // сколько оплачено картой (ручной ввод/сайт, без физического терминала)
+  final double paymentTerminal; // сколько оплачено через платёжный терминал (эквайринг)
   final double paymentComp; // сколько списано за счёт заведения
   final String guestContact; // телефон/email гостя, необязательно
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
@@ -93,6 +94,7 @@ class SessionModel {
     this.closedAt,
     this.paymentCash = 0,
     this.paymentCard = 0,
+    this.paymentTerminal = 0,
     this.paymentComp = 0,
     this.guestContact = '',
     this.closedWithoutPayment = false,
@@ -127,6 +129,7 @@ class SessionModel {
       closedAt: data['closedAt'] != null ? (data['closedAt'] as Timestamp).toDate() : null,
       paymentCash: (data['paymentCash'] ?? 0).toDouble(),
       paymentCard: (data['paymentCard'] ?? 0).toDouble(),
+      paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
       guestContact: data['guestContact'] ?? '',
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
@@ -153,6 +156,7 @@ class SessionModel {
       'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
       'paymentCash': paymentCash,
       'paymentCard': paymentCard,
+      'paymentTerminal': paymentTerminal,
       'paymentComp': paymentComp,
       'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
@@ -167,8 +171,8 @@ class SessionModel {
 
   double get totalWithDiscount => orderTotal * (1 - discountPercent / 100);
 
-  /// Сумма, фактически принятая при оплате (нал + карта + за счёт заведения)
-  double get paymentTotal => paymentCash + paymentCard + paymentComp;
+  /// Сумма, фактически принятая при оплате (нал + карта + терминал + за счёт заведения)
+  double get paymentTotal => paymentCash + paymentCard + paymentTerminal + paymentComp;
 
   Duration get remaining => plannedEnd.difference(DateTime.now());
 }
