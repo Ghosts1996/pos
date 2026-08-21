@@ -6,11 +6,23 @@ import '../../services/firestore_service.dart';
 import '../../widgets/timer_display.dart';
 import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
+import 'payment_screen.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
   final Employee employee;
-  const TableDetailScreen({super.key, required this.table, required this.employee});
+
+  /// Конкретный чек за столом, который нужно открыть. Если null (и на
+  /// столе есть открытые чеки), экран сам выберет первый из них — но
+  /// сотрудник сможет переключиться на другой через кнопку "Чеки за столом".
+  final String? sessionId;
+
+  const TableDetailScreen({
+    super.key,
+    required this.table,
+    required this.employee,
+    this.sessionId,
+  });
 
   @override
   State<TableDetailScreen> createState() => _TableDetailScreenState();
@@ -19,6 +31,13 @@ class TableDetailScreen extends StatefulWidget {
 class _TableDetailScreenState extends State<TableDetailScreen> {
   final _fs = FirestoreService();
   bool _busy = false;
+  String? _sessionId;
+
+  @override
+  void initState() {
+    super.initState();
+    _sessionId = widget.sessionId;
+  }
 
   void _showError(Object e) {
     if (!mounted) return;
@@ -29,8 +48,10 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   Future<void> _startSession() async {
     setState(() => _busy = true);
     try {
-      await _fs.openSession(table: widget.table, employeeName: widget.employee.name);
-    } on TableAlreadyOccupiedException catch (e) {
+      final id =
+          await _fs.openSession(table: widget.table, employeeName: widget.employee.name);
+      if (mounted) setState(() => _sessionId = id);
+    } on TableFullException catch (e) {
       _showError(e);
     } catch (e) {
       _showError('Не удалось начать сеанс — проверьте интернет');
@@ -93,27 +114,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
-  Future<void> _closeTable(String sessionId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Закрыть стол'),
-        content: const Text('Завершить сеанс и освободить стол? Изменить счёт после '
-            'закрытия будет нельзя — он попадёт в отчёты в неизменном виде.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Закрыть')),
-        ],
-      ),
+  /// Раньше здесь стол закрывался напрямую, без экрана оплаты гостя. Теперь
+  /// нажатие "Закрыть стол" открывает PaymentScreen (наличные/карта/за счёт
+  /// заведения, контакт гостя, печать чеков) — закрытие происходит уже там.
+  Future<void> _openPayment(SessionModel session) async {
+    final done = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => PaymentScreen(session: session)),
     );
-    if (confirm == true) {
-      try {
-        await _fs.closeSession(sessionId, widget.table.id);
-        if (mounted) Navigator.pop(context);
-      } catch (e) {
-        _showError('Не удалось закрыть стол — проверьте интернет');
-      }
-    }
+    if (done == true && mounted) Navigator.pop(context);
   }
 
   Future<void> _applyCard(String sessionId) async {
@@ -164,6 +172,21 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// Показывает список всех открытых чеков стола: можно переключиться на
+  /// другой чек или открыть новый (если позволяет лимит maxOpenSessions).
+  Future<void> _pickAnotherCheck(TableModel t) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => _CheckPickerSheet(table: t, fs: _fs, currentId: _sessionId),
+    );
+    if (choice == null) return;
+    if (choice == '__new__') {
+      await _startSession();
+    } else {
+      setState(() => _sessionId = choice);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -183,7 +206,17 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               ) ??
               widget.table;
 
-          if (t.status != 'occupied' || t.currentSessionId == null) {
+          // Если выбранного чека больше нет среди активных на этом столе
+          // (например, его закрыли с другого устройства) — переключаемся
+          // на первый оставшийся открытый чек или на экран "Начать сеанс".
+          if (_sessionId != null && !t.activeSessionIds.contains(_sessionId)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() => _sessionId = t.activeSessionIds.isEmpty ? null : t.activeSessionIds.first);
+            });
+          }
+
+          if (t.activeSessionIds.isEmpty || _sessionId == null) {
             return Center(
               child: _busy
                   ? const CircularProgressIndicator()
@@ -196,7 +229,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           }
 
           return StreamBuilder<SessionModel?>(
-            stream: _fs.sessionStream(t.currentSessionId!),
+            stream: _fs.sessionStream(_sessionId!),
             builder: (context, sessSnap) {
               if (sessSnap.hasError) {
                 return Center(
@@ -206,11 +239,26 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               }
               final session = sessSnap.data;
               if (session == null) return const Center(child: CircularProgressIndicator());
+
+              final hasOtherChecks = t.activeSessionIds.length > 1;
+              final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
+
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (hasOtherChecks || canAddMore)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: OutlinedButton.icon(
+                          onPressed: () => _pickAnotherCheck(t),
+                          icon: const Icon(Icons.receipt_long),
+                          label: Text(hasOtherChecks
+                              ? 'Чеки за столом (${t.activeSessionIds.length}/${t.maxOpenSessions})'
+                              : 'Открыть ещё один чек'),
+                        ),
+                      ),
                     Center(child: TimerDisplay(plannedEnd: session.plannedEnd, fontSize: 56)),
                     const SizedBox(height: 4),
                     Center(
@@ -303,14 +351,65 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     const SizedBox(height: 12),
                     FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: Colors.red.shade400),
-                      onPressed: () => _closeTable(session.id),
-                      icon: const Icon(Icons.stop_circle_outlined),
+                      onPressed: () => _openPayment(session),
+                      icon: const Icon(Icons.payment),
                       label: const Text('Закрыть стол'),
                     ),
                   ],
                 ),
               );
             },
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Нижний лист со списком открытых чеков стола + возможность открыть новый.
+class _CheckPickerSheet extends StatelessWidget {
+  final TableModel table;
+  final FirestoreService fs;
+  final String? currentId;
+
+  const _CheckPickerSheet({required this.table, required this.fs, required this.currentId});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: StreamBuilder<List<SessionModel>>(
+        stream: fs.activeSessionsStream(table.id),
+        builder: (context, snap) {
+          final sessions = snap.data ?? [];
+          return Wrap(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text('Чеки за столом', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              if (!snap.hasData)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ...sessions.asMap().entries.map((e) {
+                final index = e.key;
+                final s = e.value;
+                final isCurrent = s.id == currentId;
+                return ListTile(
+                  leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
+                  title: Text('Чек ${index + 1} · ${s.employeeName}'),
+                  subtitle: Text('${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+                  onTap: () => Navigator.pop(context, s.id),
+                );
+              }),
+              if (table.activeSessionIds.length < table.maxOpenSessions)
+                ListTile(
+                  leading: const Icon(Icons.add_circle_outline),
+                  title: const Text('Открыть новый чек'),
+                  onTap: () => Navigator.pop(context, '__new__'),
+                ),
+            ],
           );
         },
       ),
