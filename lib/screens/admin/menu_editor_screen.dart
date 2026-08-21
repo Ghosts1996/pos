@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/menu_models.dart';
@@ -119,8 +120,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                         onTap: () => _editItem(context, null, categoryId: cat.id),
                       ),
                       ListTile(
-                        leading: const Icon(Icons.delete_forever, color: Colors.red),
-                        title: const Text('Удалить категорию', style: TextStyle(color: Colors.red)),
+                        leading: const Icon(Icons.delete_forever, color: AppColors.danger),
+                        title: const Text('Удалить категорию', style: TextStyle(color: AppColors.danger)),
                         onTap: () => _confirmDelete(
                           context,
                           title: 'Удалить категорию?',
@@ -249,7 +250,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Удалить'),
           ),
@@ -309,15 +310,15 @@ class _EditableThumb extends StatelessWidget {
                 height: 44,
                 child: imageUrl.isEmpty
                     ? Container(
-                        color: Colors.grey.shade200,
-                        child: Icon(icon, size: 20, color: Colors.grey.shade400),
+                        color: AppColors.surfaceElevated,
+                        child: Icon(icon, size: 20, color: AppColors.textMuted),
                       )
                     : Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey.shade200,
-                          child: Icon(icon, size: 20, color: Colors.grey.shade400),
+                          color: AppColors.surfaceElevated,
+                          child: Icon(icon, size: 20, color: AppColors.textMuted),
                         ),
                       ),
               ),
