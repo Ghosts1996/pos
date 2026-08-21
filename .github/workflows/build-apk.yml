@@ -39,12 +39,22 @@ jobs:
           flutter create . --platforms=android --org com.hookahpos --project-name hookah_pos
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
 
-      - name: Ensure INTERNET permission for release builds
+      - name: Ensure required permissions for release builds
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
-            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
-          fi
+          add_permission() {
+            if ! grep -q "$1" "$MANIFEST"; then
+              sed -i "/<manifest /a\\    <uses-permission android:name=\"$1\" />" "$MANIFEST"
+            fi
+          }
+          # Сеть — Firestore/Storage.
+          add_permission "android.permission.INTERNET"
+          # Камера и медиатека — фото категорий/блюд в редакторе меню
+          # (image_picker). READ_MEDIA_IMAGES нужен на Android 13+, где
+          # старое READ_EXTERNAL_STORAGE уже не действует на изображения.
+          add_permission "android.permission.CAMERA"
+          add_permission "android.permission.READ_MEDIA_IMAGES"
+          add_permission "android.permission.READ_EXTERNAL_STORAGE"
           sed -i 's/android:label="[^"]*"/android:label="Hookah POS"/' "$MANIFEST"
           echo "----- AndroidManifest.xml -----"
           cat "$MANIFEST"
