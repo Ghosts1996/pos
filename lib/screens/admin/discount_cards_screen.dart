@@ -1,3 +1,4 @@
+import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/discount_card.dart';
 import '../../services/firestore_service.dart';
@@ -23,9 +24,9 @@ class DiscountCardsScreen extends StatelessWidget {
           return ListView(
             children: cards
                 .map((c) => ListTile(
-                      leading: Icon(Icons.card_giftcard, color: c.active ? null : Colors.grey),
+                      leading: Icon(Icons.card_giftcard, color: c.active ? null : AppColors.textMuted),
                       title: Text('${c.guestName} · №${c.cardNumber}',
-                          style: TextStyle(color: c.active ? null : Colors.grey)),
+                          style: TextStyle(color: c.active ? null : AppColors.textMuted)),
                       subtitle: Text(
                           'Скидка ${c.discountPercent.toStringAsFixed(0)}% ${c.notes}'
                           '${c.active ? '' : ' · отключена'}'),
@@ -49,7 +50,7 @@ class DiscountCardsScreen extends StatelessWidget {
                                         onPressed: () => Navigator.pop(ctx, false),
                                         child: const Text('Отмена')),
                                     FilledButton(
-                                      style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                                      style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                                       onPressed: () => Navigator.pop(ctx, true),
                                       child: const Text('Удалить'),
                                     ),
