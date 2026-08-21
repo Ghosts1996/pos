@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
+import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/table_tile.dart';
 import '../login_screen.dart';
@@ -50,7 +51,16 @@ class FloorPlanScreen extends StatelessWidget {
                   child: _TableWithTimer(
                     table: t,
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => TableDetailScreen(table: t, employee: employee))),
+                        builder: (_) => TableDetailScreen(
+                              table: t,
+                              employee: employee,
+                              // Если на столе уже есть открытые чеки — сразу
+                              // открываем первый из них; переключиться на
+                              // другой чек или открыть новый можно уже внутри
+                              // самого экрана стола.
+                              sessionId:
+                                  t.activeSessionIds.isNotEmpty ? t.activeSessionIds.first : null,
+                            ))),
                   ),
                 );
               }).toList(),
@@ -62,7 +72,8 @@ class FloorPlanScreen extends StatelessWidget {
   }
 }
 
-/// Подписывается на сеанс стола, чтобы показать живой таймер на плитке
+/// Подписывается на первый открытый чек стола, чтобы показать живой таймер
+/// и бейдж количества чеков прямо на плитке.
 class _TableWithTimer extends StatelessWidget {
   final TableModel table;
   final VoidCallback onTap;
@@ -70,17 +81,18 @@ class _TableWithTimer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (table.status != 'occupied' || table.currentSessionId == null) {
+    if (table.activeSessionIds.isEmpty) {
       return TableTile(table: table, onTap: onTap);
     }
     final fs = FirestoreService();
-    return StreamBuilder(
-      stream: fs.sessionStream(table.currentSessionId!),
+    return StreamBuilder<SessionModel?>(
+      stream: fs.sessionStream(table.activeSessionIds.first),
       builder: (context, snap) {
         final session = snap.data;
         return TableTile(
           table: table,
           plannedEnd: session?.plannedEnd,
+          checkCount: table.activeSessionIds.length,
           onTap: onTap,
         );
       },
