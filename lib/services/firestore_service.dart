@@ -36,16 +36,34 @@ class FirestoreService {
 
   String newTableId() => _uuid.v4();
 
-  // ---------- СЕССИИ (СЧЕТА) ----------
+  // ---------- СЕССИИ (ЧЕКИ) ----------
   Stream<SessionModel?> sessionStream(String sessionId) {
     return _db.collection('sessions').doc(sessionId).snapshots().map(
         (doc) => doc.exists ? SessionModel.fromDoc(doc) : null);
   }
 
-  /// Открыть новый сеанс за столом (Старт / Перезабивка после закрытия).
-  /// Обёрнуто в транзакцию: если два сотрудника одновременно нажмут "Начать"
-  /// на разных телефонах, только один действительно создаст сеанс — второй
-  /// получит ошибку TableAlreadyOccupiedException вместо дублирующего счёта.
+  /// Все сейчас открытые чеки конкретного стола, отсортированные по времени
+  /// открытия. Запрос состоит из двух равенств (tableId, status) — Firestore
+  /// умеет объединять такие простые условия без ручного составного
+  /// индекса, поэтому сортировку делаем на клиенте, а не в самом запросе.
+  Stream<List<SessionModel>> activeSessionsStream(String tableId) {
+    return _db
+        .collection('sessions')
+        .where('tableId', isEqualTo: tableId)
+        .where('status', isEqualTo: 'active')
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+      list.sort((a, b) => a.startTime.compareTo(b.startTime));
+      return list;
+    });
+  }
+
+  /// Открыть новый чек за столом (Старт / доп. чек / Перезабивка после
+  /// закрытия). Обёрнуто в транзакцию: читает актуальный список открытых
+  /// чеков стола и лимит maxOpenSessions — если лимит уже достигнут (в т.ч.
+  /// из-за одновременного нажатия "Начать" на двух устройствах), бросает
+  /// TableFullException вместо дублирующего/лишнего счёта.
   Future<String> openSession({
     required TableModel table,
     required String employeeName,
@@ -58,9 +76,15 @@ class FirestoreService {
     await _db.runTransaction((tx) async {
       final freshTable = await tx.get(tableRef);
       final data = freshTable.data() as Map<String, dynamic>?;
-      if (data != null && data['status'] == 'occupied' && data['currentSessionId'] != null) {
-        throw TableAlreadyOccupiedException();
+      final ids = ((data?['activeSessionIds'] ?? []) as List)
+          .map((e) => e.toString())
+          .toList();
+      final maxOpen = (data?['maxOpenSessions'] as num?)?.toInt() ?? table.maxOpenSessions;
+
+      if (ids.length >= maxOpen) {
+        throw TableFullException(maxOpen);
       }
+
       final session = SessionModel(
         id: sessionRef.id,
         tableId: table.id,
@@ -70,7 +94,9 @@ class FirestoreService {
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
       );
       tx.set(sessionRef, session.toMap());
-      tx.update(tableRef, {'status': 'occupied', 'currentSessionId': sessionRef.id});
+
+      ids.add(sessionRef.id);
+      tx.update(tableRef, {'activeSessionIds': ids, 'status': 'occupied'});
     });
 
     return sessionRef.id;
@@ -177,23 +203,52 @@ class FirestoreService {
     });
   }
 
-  /// Закрыть стол (без кассы — просто фиксируем закрытие счёта). После
-  /// закрытия сеанс становится доступен для отчётов и, согласно
-  /// firestore.rules, больше не может быть изменён или удалён.
-  Future<void> closeSession(String sessionId, String tableId) async {
+  /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты
+  /// и убирает его из списка открытых чеков стола. Если после этого на
+  /// столе не осталось открытых чеков — стол становится свободным; если
+  /// остались другие чеки (стол был открыт с несколькими одновременными
+  /// счетами) — стол остаётся занятым.
+  Future<void> closeSessionWithPayment(
+    String sessionId,
+    String tableId, {
+    required double cash,
+    required double card,
+    required double comp,
+    String guestContact = '',
+    bool closedWithoutPayment = false,
+    bool receiptPrinted = false,
+    bool fiscalReceiptPrinted = false,
+  }) async {
     await _db.collection('sessions').doc(sessionId).update({
       'status': 'closed',
       'closedAt': Timestamp.fromDate(DateTime.now()),
+      'paymentCash': cash,
+      'paymentCard': card,
+      'paymentComp': comp,
+      'guestContact': guestContact,
+      'closedWithoutPayment': closedWithoutPayment,
+      'receiptPrinted': receiptPrinted,
+      'fiscalReceiptPrinted': fiscalReceiptPrinted,
     });
-    await _db.collection('tables').doc(tableId).update({
-      'status': 'free',
-      'currentSessionId': null,
+
+    final tableRef = _db.collection('tables').doc(tableId);
+    await _db.runTransaction((tx) async {
+      final doc = await tx.get(tableRef);
+      final data = doc.data() as Map<String, dynamic>?;
+      final ids = ((data?['activeSessionIds'] ?? []) as List)
+          .map((e) => e.toString())
+          .toList();
+      ids.remove(sessionId);
+      tx.update(tableRef, {
+        'activeSessionIds': ids,
+        'status': ids.isEmpty ? 'free' : 'occupied',
+      });
     });
   }
 
-  /// Закрытые сеансы за период [start; end) — источник данных для отчётов.
+  /// Закрытые чеки за период [start; end) — источник данных для отчётов.
   /// Специально фильтруется только по диапазону closedAt (у активных
-  /// сеансов это поле всегда null и они никогда сюда не попадают), поэтому
+  /// чеков это поле всегда null и они никогда сюда не попадают), поэтому
   /// запросу достаточно автоматического одиночного индекса Firestore — не
   /// нужно вручную создавать составной индекс в консоли.
   Future<List<SessionModel>> closedSessionsInRange(DateTime start, DateTime end) async {
@@ -301,12 +356,13 @@ class FirestoreService {
     return snap.docs.any((d) => d.id != excludeId);
   }
 
-  /// Удаляет стол, только если он сейчас свободен — чтобы не потерять
-  /// активный сеанс с заказом гостя.
+  /// Удаляет стол, только если на нём сейчас нет открытых чеков — чтобы не
+  /// потерять активный сеанс с заказом гостя.
   Future<void> deleteTableSafe(String tableId) async {
     final doc = await _db.collection('tables').doc(tableId).get();
     final data = doc.data();
-    if (data != null && data['status'] == 'occupied') {
+    final ids = ((data?['activeSessionIds'] ?? []) as List);
+    if (data != null && (data['status'] == 'occupied' || ids.isNotEmpty)) {
       throw TableOccupiedDeleteException();
     }
     await _db.collection('tables').doc(tableId).delete();
@@ -328,12 +384,19 @@ class FirestoreService {
   }
 }
 
-class TableAlreadyOccupiedException implements Exception {
+/// Бросается при попытке открыть чек на столе, где уже открыто
+/// максимально допустимое (maxOpenSessions) число чеков.
+class TableFullException implements Exception {
+  final int maxOpenSessions;
+  TableFullException(this.maxOpenSessions);
+
   @override
-  String toString() => 'Стол уже занят — сеанс уже открыт на другом устройстве';
+  String toString() => maxOpenSessions <= 1
+      ? 'Стол уже занят — сеанс уже открыт на другом устройстве'
+      : 'На столе уже открыто максимум чеков ($maxOpenSessions) — закройте один из них';
 }
 
 class TableOccupiedDeleteException implements Exception {
   @override
-  String toString() => 'Нельзя удалить стол с активным сеансом — сначала закройте счёт';
+  String toString() => 'Нельзя удалить стол с активным чеком — сначала закройте счёт';
 }
