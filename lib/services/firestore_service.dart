@@ -292,15 +292,44 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());
   }
 
-  /// Новая категория всегда встаёт в конец списка — порядок вычисляется
-  /// автоматически по текущему количеству категорий.
-  Future<void> addCategory(String name) async {
-    final snap = await _db.collection('menuCategories').get();
-    await _db.collection('menuCategories').add({'name': name, 'order': snap.docs.length});
+  /// Новая категория всегда встаёт в конец списка. Порядок вычисляется
+  /// внутри транзакции по максимальному текущему order + 1 (а не по
+  /// snap.docs.length), потому что при подсчёте по количеству документов
+  /// два администратора, одновременно нажавшие "Новая категория" на разных
+  /// устройствах, могли получить один и тот же order и в списке одна
+  /// категория "перекрывала" бы другую до ручной пересортировки.
+  Future<String> addCategory(String name, {String imageUrl = ''}) async {
+    final colRef = _db.collection('menuCategories');
+    final docRef = colRef.doc();
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(colRef);
+      var maxOrder = -1;
+      for (final d in snap.docs) {
+        final order = ((d.data())['order'] as num?)?.toInt() ?? 0;
+        if (order > maxOrder) maxOrder = order;
+      }
+      tx.set(docRef, {'name': name, 'order': maxOrder + 1, 'imageUrl': imageUrl});
+    });
+    return docRef.id;
   }
 
   Future<void> renameCategory(String id, String name) {
     return _db.collection('menuCategories').doc(id).update({'name': name});
+  }
+
+  /// Сохраняет ссылку на фото-плитку категории (после загрузки в Storage
+  /// через StorageService) — используется в редакторе меню и на плитках
+  /// категорий у сотрудника.
+  Future<void> updateCategoryImage(String id, String imageUrl) {
+    return _db.collection('menuCategories').doc(id).update({'imageUrl': imageUrl});
+  }
+
+  Future<void> reorderCategories(List<MenuCategory> orderedCategories) async {
+    final batch = _db.batch();
+    for (var i = 0; i < orderedCategories.length; i++) {
+      batch.update(_db.collection('menuCategories').doc(orderedCategories[i].id), {'order': i});
+    }
+    await batch.commit();
   }
 
   Future<void> deleteCategory(String id) => _db.collection('menuCategories').doc(id).delete();
@@ -311,6 +340,11 @@ class FirestoreService {
 
   Future<void> updateMenuItem(MenuItem item) {
     return _db.collection('menuItems').doc(item.id).update(item.toMap());
+  }
+
+  /// Сохраняет фото конкретного блюда/позиции меню.
+  Future<void> updateMenuItemImage(String id, String imageUrl) {
+    return _db.collection('menuItems').doc(id).update({'imageUrl': imageUrl});
   }
 
   Future<void> deleteMenuItem(String id) => _db.collection('menuItems').doc(id).delete();
