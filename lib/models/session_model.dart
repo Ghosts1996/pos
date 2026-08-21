@@ -64,6 +64,15 @@ class SessionModel {
   final String status; // 'active' | 'closed'
   final DateTime? closedAt;
 
+  // ---- Оплата (заполняется на экране оплаты при закрытии стола) ----
+  final double paymentCash; // сколько оплачено наличными
+  final double paymentCard; // сколько оплачено картой
+  final double paymentComp; // сколько списано за счёт заведения
+  final String guestContact; // телефон/email гостя, необязательно
+  final bool closedWithoutPayment; // стол закрыт без фактической оплаты
+  final bool receiptPrinted;
+  final bool fiscalReceiptPrinted;
+
   SessionModel({
     required this.id,
     required this.tableId,
@@ -78,6 +87,13 @@ class SessionModel {
     this.orderItems = const [],
     this.status = 'active',
     this.closedAt,
+    this.paymentCash = 0,
+    this.paymentCard = 0,
+    this.paymentComp = 0,
+    this.guestContact = '',
+    this.closedWithoutPayment = false,
+    this.receiptPrinted = false,
+    this.fiscalReceiptPrinted = false,
   });
 
   factory SessionModel.fromDoc(DocumentSnapshot doc) {
@@ -103,6 +119,13 @@ class SessionModel {
           .toList(),
       status: data['status'] ?? 'active',
       closedAt: data['closedAt'] != null ? (data['closedAt'] as Timestamp).toDate() : null,
+      paymentCash: (data['paymentCash'] ?? 0).toDouble(),
+      paymentCard: (data['paymentCard'] ?? 0).toDouble(),
+      paymentComp: (data['paymentComp'] ?? 0).toDouble(),
+      guestContact: data['guestContact'] ?? '',
+      closedWithoutPayment: data['closedWithoutPayment'] ?? false,
+      receiptPrinted: data['receiptPrinted'] ?? false,
+      fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
     );
   }
 
@@ -120,12 +143,22 @@ class SessionModel {
       'orderItems': orderItems.map((e) => e.toMap()).toList(),
       'status': status,
       'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
+      'paymentCash': paymentCash,
+      'paymentCard': paymentCard,
+      'paymentComp': paymentComp,
+      'guestContact': guestContact,
+      'closedWithoutPayment': closedWithoutPayment,
+      'receiptPrinted': receiptPrinted,
+      'fiscalReceiptPrinted': fiscalReceiptPrinted,
     };
   }
 
   double get orderTotal => orderItems.fold(0.0, (sum, item) => sum + item.total);
 
   double get totalWithDiscount => orderTotal * (1 - discountPercent / 100);
+
+  /// Сумма, фактически принятая при оплате (нал + карта + за счёт заведения)
+  double get paymentTotal => paymentCash + paymentCard + paymentComp;
 
   Duration get remaining => plannedEnd.difference(DateTime.now());
 }
