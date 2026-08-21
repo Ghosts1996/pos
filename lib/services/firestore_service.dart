@@ -246,11 +246,31 @@ class FirestoreService {
     });
   }
 
-  /// Закрытые чеки за период [start; end) — источник данных для отчётов.
-  /// Специально фильтруется только по диапазону closedAt (у активных
-  /// чеков это поле всегда null и они никогда сюда не попадают), поэтому
-  /// запросу достаточно автоматического одиночного индекса Firestore — не
-  /// нужно вручную создавать составной индекс в консоли.
+  /// Возврат уже закрытого (оплаченного) чека — раздел "История чеков и
+  /// возврат" у сотрудника, аналог возврата чеков в Restik POS. Чек
+  /// остаётся в истории, но помечается как возвращённый и больше не
+  /// учитывается в выручке X- и обычных отчётов.
+  Future<void> refundSession(String sessionId) {
+    return _db.collection('sessions').doc(sessionId).update({
+      'refunded': true,
+      'refundedAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
+
+  /// Отменить возврат чека (если оформили по ошибке) — снова учитывается
+  /// в отчётах как обычный оплаченный чек.
+  Future<void> undoRefundSession(String sessionId) {
+    return _db.collection('sessions').doc(sessionId).update({
+      'refunded': false,
+      'refundedAt': null,
+    });
+  }
+
+  /// Закрытые чеки за период [start; end) — источник данных для отчётов и
+  /// X-отчёта. Специально фильтруется только по диапазону closedAt (у
+  /// активных чеков это поле всегда null и они никогда сюда не попадают),
+  /// поэтому запросу достаточно автоматического одиночного индекса
+  /// Firestore — не нужно вручную создавать составной индекс в консоли.
   Future<List<SessionModel>> closedSessionsInRange(DateTime start, DateTime end) async {
     final snap = await _db
         .collection('sessions')
