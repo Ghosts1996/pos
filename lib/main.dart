@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/setup_required_screen.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,16 +46,13 @@ class HookahPosApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
       locale: const Locale('ru', 'RU'),
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFFB026FF),
-        useMaterial3: true,
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        colorSchemeSeed: const Color(0xFFB026FF),
-        useMaterial3: true,
-        brightness: Brightness.dark,
-      ),
+      // POS-система работает на планшетах в зале с переменным освещением —
+      // фиксируем тёмную "Midnight Blue" тему как единственную, без
+      // системного light/dark переключения, чтобы кассир не терял привычную
+      // контрастность в течение смены.
+      theme: AppTheme.dark,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.dark,
       home: ready ? const LoginScreen() : SetupRequiredScreen(errorDetails: startupError),
     );
   }
