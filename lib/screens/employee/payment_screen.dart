@@ -89,21 +89,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
     super.dispose();
   }
 
-  /// При самом первом попадании фокуса в поле (первый тап пальцем) переносим
-  /// в него оставшуюся неоплаченной сумму — если поле ещё пустое/нулевое —
-  /// и выделяем весь текст, так что первая же цифра с открывшейся клавиатуры
-  /// сразу заменяет значение, а не дописывается к нему. Повторные тапы или
-  /// переключение фокуса между уже заполненными полями значение не трогают.
+  /// При самом первом попадании фокуса в поле (первый тап пальцем) в него
+  /// переносится вся сумма к оплате целиком — и сразу выделяется, так что
+  /// первая же цифра с открывшейся клавиатуры заменяет значение, а не
+  /// дописывается к нему. Повторные тапы в то же поле это уже не трогают —
+  /// иначе было бы невозможно поправить введённую сумму, кликнув мимо и
+  /// обратно в поле.
   void _onFocusChange(_PaymentMethod method) {
     if (!method.focusNode.hasFocus) return;
     if (_focusedOnce.contains(method)) return;
     _focusedOnce.add(method);
 
-    if (method.parse() == 0) {
-      final remaining = _total - _paidTotal;
-      if (remaining > 0.004) {
-        method.controller.text = _fmt(remaining);
-      }
+    if (_total > 0.004) {
+      method.controller.text = _fmt(_total);
     }
     method.controller.selection = TextSelection(
       baseOffset: 0,
