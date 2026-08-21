@@ -3,16 +3,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/session_model.dart';
+import '../../models/shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 
-enum _Period { shift, custom }
+enum _Period { shift, pastShift, custom }
 
-/// X-отчёт — как в Restik POS: сводка продаж за текущую смену без её
-/// закрытия. Список проданных позиций, итоговая сумма и разбивка оплаты по
-/// способам (наличные / карта / за счёт заведения). Считается по уже
-/// закрытым (оплаченным) чекам за период; возвращённые чеки в выручку не
-/// попадают и показываются отдельной строкой.
+/// X-отчёт — как в Restik POS: сводка продаж за смену без её закрытия.
+/// Список проданных позиций, итоговая сумма и разбивка оплаты по способам
+/// (наличные / карта / за счёт заведения). Считается по уже закрытым
+/// (оплаченным) чекам за период; возвращённые чеки в выручку не попадают и
+/// показываются отдельной строкой.
+///
+/// Период отчёта по умолчанию — "Текущая смена": не календарные сутки, а
+/// реальный промежуток времени между открытием и закрытием кассы. Именно
+/// поэтому смена может спокойно идти через полночь — раньше отчёт строился
+/// по календарному дню и ровно в 00:00 "обрывался", хотя смена ещё
+/// продолжалась.
 class XReportScreen extends StatefulWidget {
   final Employee employee;
   const XReportScreen({super.key, required this.employee});
@@ -25,37 +32,53 @@ class _XReportScreenState extends State<XReportScreen> {
   final _fs = FirestoreService();
   _Period _period = _Period.shift;
   DateTimeRange? _customRange;
+  ShiftModel? _selectedPastShift;
   String _employeeFilter = 'Все официанты';
+
+  Future<ShiftModel?>? _currentShiftFuture;
+  Future<List<ShiftModel>>? _recentShiftsFuture;
   Future<List<SessionModel>>? _future;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
+    _reloadShiftInfo();
+  }
+
+  /// Перечитывает текущую открытую смену и список последних смен, затем
+  /// пересчитывает отчёт под актуальный выбранный период.
+  void _reloadShiftInfo() {
+    setState(() {
+      _currentShiftFuture = _fs.currentOpenShift();
+      _recentShiftsFuture = _fs.recentShifts();
+    });
     _load();
   }
 
-  DateTimeRange _rangeFor() {
-    final now = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day);
-    final tomorrowStart = todayStart.add(const Duration(days: 1));
-    if (_period == _Period.custom && _customRange != null) {
-      final end =
-          DateTime(_customRange!.end.year, _customRange!.end.month, _customRange!.end.day)
-              .add(const Duration(days: 1));
-      return DateTimeRange(
-        start: DateTime(
-            _customRange!.start.year, _customRange!.start.month, _customRange!.start.day),
-        end: end,
-      );
-    }
-    return DateTimeRange(start: todayStart, end: tomorrowStart);
+  void _load() {
+    setState(() {
+      _future = _resolveSessions();
+    });
   }
 
-  void _load() {
-    final range = _rangeFor();
-    setState(() {
-      _future = _fs.closedSessionsInRange(range.start, range.end);
-    });
+  Future<List<SessionModel>> _resolveSessions() async {
+    switch (_period) {
+      case _Period.shift:
+        final shift = await _fs.currentOpenShift();
+        if (shift == null) return [];
+        return _fs.closedSessionsForShift(shift);
+      case _Period.pastShift:
+        if (_selectedPastShift == null) return [];
+        return _fs.closedSessionsForShift(_selectedPastShift!);
+      case _Period.custom:
+        if (_customRange == null) return [];
+        final start = DateTime(
+            _customRange!.start.year, _customRange!.start.month, _customRange!.start.day);
+        final end = DateTime(_customRange!.end.year, _customRange!.end.month, _customRange!.end.day)
+            .add(const Duration(days: 1));
+        return _fs.closedSessionsInRange(start, end);
+    }
   }
 
   Future<void> _pickCustomRange() async {
@@ -75,9 +98,96 @@ class _XReportScreenState extends State<XReportScreen> {
     }
   }
 
+  Future<void> _pickPastShift() async {
+    final shifts = await (_recentShiftsFuture ?? _fs.recentShifts());
+    final closedShifts = shifts.where((s) => !s.isOpen).toList();
+    if (!mounted) return;
+    if (closedShifts.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Закрытых смен пока нет')));
+      return;
+    }
+    final chosen = await showModalBottomSheet<ShiftModel>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: closedShifts.map((s) {
+              return ListTile(
+                leading: const Icon(Icons.event_note_outlined),
+                title: Text(_formatShiftRange(s)),
+                subtitle: Text('Открыл(а): ${s.openedBy}  ·  Закрыл(а): ${s.closedBy ?? '—'}'),
+                onTap: () => Navigator.pop(context, s),
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+    if (chosen != null) {
+      setState(() {
+        _selectedPastShift = chosen;
+        _period = _Period.pastShift;
+      });
+      _load();
+    }
+  }
+
+  Future<void> _openShift() async {
+    setState(() => _busy = true);
+    try {
+      await _fs.openShiftIfNeeded(widget.employee.name);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось открыть смену: $e')));
+      }
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _reloadShiftInfo();
+  }
+
+  Future<void> _closeShift(ShiftModel shift) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Закрыть смену?'),
+        content: const Text(
+            'После закрытия смены новые продажи будут учитываться уже в следующей смене. '
+            'Отчёт по этой смене останется доступен в разделе "Прошлые смены".'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true), child: const Text('Закрыть смену')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _busy = true);
+    try {
+      await _fs.closeShift(shift.id, widget.employee.name);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Смена закрыта')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: $e')));
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _period = _Period.shift;
+    });
+    _reloadShiftInfo();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final range = _rangeFor();
     return Scaffold(
       appBar: AppBar(title: const Text('X-отчёт')),
       body: Column(
@@ -97,6 +207,11 @@ class _XReportScreenState extends State<XReportScreen> {
                   },
                 ),
                 ChoiceChip(
+                  label: const Text('Прошлые смены'),
+                  selected: _period == _Period.pastShift,
+                  onSelected: (_) => _pickPastShift(),
+                ),
+                ChoiceChip(
                   label: const Text('По дате и времени'),
                   selected: _period == _Period.custom,
                   onSelected: (_) => _pickCustomRange(),
@@ -104,12 +219,13 @@ class _XReportScreenState extends State<XReportScreen> {
               ],
             ),
           ),
+          _buildShiftHeader(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(
-                  child: Text(_formatRange(range),
+                  child: Text(_formatSelectedRange(),
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ),
                 StreamBuilder<List<Employee>>(
@@ -160,7 +276,15 @@ class _XReportScreenState extends State<XReportScreen> {
                 final paid = sessions.where((s) => !s.refunded).toList();
                 final refunded = sessions.where((s) => s.refunded).toList();
                 if (paid.isEmpty && refunded.isEmpty) {
-                  return const Center(child: Text('За этот период закрытых чеков нет'));
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                    children: [
+                      const SizedBox(height: 40),
+                      Center(child: Text(_emptyMessage())),
+                      const SizedBox(height: 20),
+                      _buildShiftActions(centered: true),
+                    ],
+                  );
                 }
                 final data = _XReportData.fromSessions(paid);
                 return ListView(
@@ -245,12 +369,15 @@ class _XReportScreenState extends State<XReportScreen> {
                     const SizedBox(height: 20),
                     Center(
                       child: OutlinedButton.icon(
-                        onPressed:
-                            paid.isEmpty ? null : () => _copyReport(data, range, refunded.length),
+                        onPressed: paid.isEmpty
+                            ? null
+                            : () => _copyReport(data, refunded.length),
                         icon: const Icon(Icons.print_outlined, size: 16),
                         label: const Text('Распечатать отчёт'),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    _buildShiftActions(centered: true),
                   ],
                 );
               },
@@ -258,6 +385,76 @@ class _XReportScreenState extends State<XReportScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Блок над списком: показывает состояние текущей смены (открыта/нет,
+  /// кем и когда открыта) — только когда выбран период "Текущая смена".
+  Widget _buildShiftHeader() {
+    if (_period != _Period.shift) return const SizedBox.shrink();
+    return FutureBuilder<ShiftModel?>(
+      future: _currentShiftFuture,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+        final shift = snap.data;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: (shift == null ? AppColors.danger : AppColors.textMuted).withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(shift == null ? Icons.lock_outline : Icons.lock_open_outlined,
+                    size: 18,
+                    color: shift == null ? AppColors.danger : AppColors.textMuted),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    shift == null
+                        ? 'Смена сейчас не открыта'
+                        : 'Смена открыта ${_formatDateTime(shift.openedAt)} · ${shift.openedBy}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Кнопки "Открыть смену" / "Закрыть смену" — показываются только для
+  /// периода "Текущая смена", чтобы не закрыть смену случайно, находясь в
+  /// отчёте за прошлую смену или произвольный период.
+  Widget _buildShiftActions({bool centered = false}) {
+    if (_period != _Period.shift) return const SizedBox.shrink();
+    return FutureBuilder<ShiftModel?>(
+      future: _currentShiftFuture,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+        final shift = snap.data;
+        final child = shift == null
+            ? FilledButton.icon(
+                onPressed: _busy ? null : _openShift,
+                icon: const Icon(Icons.lock_open_outlined, size: 18),
+                label: const Text('Открыть смену'),
+              )
+            : OutlinedButton.icon(
+                onPressed: _busy ? null : () => _closeShift(shift),
+                style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
+                icon: const Icon(Icons.lock_outline, size: 18),
+                label: const Text('Закрыть смену'),
+              );
+        return centered ? Center(child: child) : child;
+      },
     );
   }
 
@@ -279,16 +476,48 @@ class _XReportScreenState extends State<XReportScreen> {
     );
   }
 
-  String _formatRange(DateTimeRange range) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    final lastDay = range.end.subtract(const Duration(days: 1));
-    final s = range.start;
-    return '${two(s.day)}.${two(s.month)}.${s.year} — ${two(lastDay.day)}.${two(lastDay.month)}.${lastDay.year}';
+  String _emptyMessage() {
+    switch (_period) {
+      case _Period.shift:
+        return 'За текущую смену закрытых чеков нет';
+      case _Period.pastShift:
+        return 'За выбранную смену закрытых чеков нет';
+      case _Period.custom:
+        return 'За этот период закрытых чеков нет';
+    }
   }
 
-  void _copyReport(_XReportData data, DateTimeRange range, int refundsCount) {
+  String _formatDateTime(DateTime dt) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(dt.day)}.${two(dt.month)}.${dt.year} ${two(dt.hour)}:${two(dt.minute)}';
+  }
+
+  String _formatShiftRange(ShiftModel shift) {
+    final start = _formatDateTime(shift.openedAt);
+    final end = shift.closedAt != null ? _formatDateTime(shift.closedAt!) : 'сейчас';
+    return '$start — $end';
+  }
+
+  String _formatSelectedRange() {
+    switch (_period) {
+      case _Period.shift:
+        return 'Смена ещё не открыта';
+      case _Period.pastShift:
+        return _selectedPastShift == null
+            ? 'Смена не выбрана'
+            : _formatShiftRange(_selectedPastShift!);
+      case _Period.custom:
+        if (_customRange == null) return '';
+        String two(int n) => n.toString().padLeft(2, '0');
+        final s = _customRange!.start;
+        final e = _customRange!.end;
+        return '${two(s.day)}.${two(s.month)}.${s.year} — ${two(e.day)}.${two(e.month)}.${e.year}';
+    }
+  }
+
+  void _copyReport(_XReportData data, int refundsCount) {
     final buf = StringBuffer();
-    buf.writeln('X-отчёт: ${_formatRange(range)}');
+    buf.writeln('X-отчёт: ${_formatSelectedRange()}');
     if (_employeeFilter != 'Все официанты') buf.writeln('Официант: $_employeeFilter');
     buf.writeln('');
     for (final i in data.items) {
