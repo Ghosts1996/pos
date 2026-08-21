@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
@@ -137,7 +138,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
                             shape: const StadiumBorder(),
-                            side: BorderSide(color: Colors.grey.shade400),
+                            side: BorderSide(color: AppColors.textMuted),
                           ),
                           onPressed: () => _applyQuick(v),
                           child: Text(_fmt(v)),
@@ -154,7 +155,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         ? 'Не хватает ${_fmt(_diff)} ${AppConstants.currencySymbol}'
                         : 'Сдача ${_fmt(-_diff)} ${AppConstants.currencySymbol}',
                     style: TextStyle(
-                      color: _diff > 0 ? Colors.red : Colors.green.shade700,
+                      color: _diff > 0 ? AppColors.danger : AppColors.success,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -171,8 +172,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 width: double.infinity,
                 child: FilledButton(
                   style: FilledButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    disabledBackgroundColor: Colors.grey.shade400,
+                    backgroundColor: AppColors.primary,
+                    disabledBackgroundColor: AppColors.disabled,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                   onPressed: _canPay && !_busy ? _pay : null,
@@ -180,9 +181,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       ? const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.textPrimary),
                         )
-                      : const Text('Оплатить', style: TextStyle(fontSize: 18, color: Colors.white)),
+                      : const Text('Оплатить', style: TextStyle(fontSize: 18, color: AppColors.textPrimary)),
                 ),
               ),
               const SizedBox(height: 20),
@@ -209,23 +210,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
               inputFormatters: [
                 FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
               ],
-              style: TextStyle(fontSize: 16, color: enabled ? Colors.black : Colors.grey),
+              style: TextStyle(fontSize: 16, color: enabled ? AppColors.textPrimary : AppColors.textMuted),
               decoration: InputDecoration(
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 filled: true,
-                fillColor: enabled ? Colors.white : Colors.grey.shade200,
+                fillColor: enabled ? AppColors.surface : AppColors.surfaceElevated,
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: Colors.grey.shade400),
+                  borderSide: BorderSide(color: AppColors.textMuted),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: Colors.black54),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
                 ),
                 disabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
+                  borderSide: const BorderSide(color: AppColors.border),
                 ),
               ),
               onTap: () {
@@ -256,20 +257,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
               controller: _contactCtrl,
               textAlign: TextAlign.right,
               keyboardType: TextInputType.emailAddress,
-              style: const TextStyle(fontSize: 16, color: Colors.black),
+              style: const TextStyle(fontSize: 16, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 isDense: true,
                 hintText: '0',
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: AppColors.surface,
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: Colors.grey.shade400),
+                  borderSide: BorderSide(color: AppColors.textMuted),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: Colors.black54),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
                 ),
               ),
             ),
