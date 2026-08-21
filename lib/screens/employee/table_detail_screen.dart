@@ -216,7 +216,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             });
           }
 
-          if (t.activeSessionIds.isEmpty || _sessionId == null) {
+          // Раньше здесь дополнительно проверялось t.activeSessionIds.isEmpty —
+          // из-за задержки обновления стрима столов после создания сеанса это
+          // могло на мгновение показать экран "Начать сеанс" ещё раз поверх
+          // уже созданного чека, и повторное нажатие создавало второй чек
+          // (и, соответственно, два чека при печати). Теперь ориентируемся
+          // только на локальный _sessionId, который выставляется сразу же
+          // после успешного создания сеанса.
+          if (_sessionId == null) {
             return Center(
               child: _busy
                   ? const CircularProgressIndicator()
