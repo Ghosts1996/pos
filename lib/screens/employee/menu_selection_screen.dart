@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
@@ -144,8 +145,8 @@ class _CheckoutBar extends StatelessWidget {
             height: 52,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.textPrimary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () => Navigator.of(context).pop(),
@@ -173,10 +174,10 @@ class _CategoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: AppColors.surface,
       borderRadius: BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
-      elevation: 1,
+      elevation: 0,
       child: InkWell(
         onTap: onTap,
         child: Opacity(
@@ -192,7 +193,11 @@ class _CategoryTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ),
             ],
@@ -273,10 +278,10 @@ class _MenuItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: AppColors.surface,
       borderRadius: BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
-      elevation: 1,
+      elevation: 0,
       child: InkWell(
         onTap: onAdd,
         child: Column(
@@ -289,7 +294,11 @@ class _MenuItemCard extends StatelessWidget {
                 item.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
             Padding(
@@ -298,13 +307,13 @@ class _MenuItemCard extends StatelessWidget {
                 children: [
                   Text(
                     '${item.price.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
-                    style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                   ),
                   const Spacer(),
                   if (qty == 0)
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.add_circle, color: Colors.black),
+                      icon: const Icon(Icons.add_circle, color: AppColors.primary),
                       onPressed: onAdd,
                     )
                   else
@@ -319,7 +328,7 @@ class _MenuItemCard extends StatelessWidget {
                         Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold)),
                         IconButton(
                           visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.add_circle, color: Colors.black),
+                          icon: const Icon(Icons.add_circle, color: AppColors.primary),
                           onPressed: onAdd,
                         ),
                       ],
@@ -352,7 +361,7 @@ class _SearchResultsList extends StatelessWidget {
       itemBuilder: (context, index) {
         final item = items[index];
         return Material(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(10),
           child: ListTile(
             leading: SizedBox(
@@ -394,7 +403,7 @@ class _MenuImage extends StatelessWidget {
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
         return Container(
-          color: Colors.grey.shade200,
+          color: AppColors.surfaceElevated,
           child: const Center(
             child: SizedBox(
               width: 20,
@@ -410,9 +419,9 @@ class _MenuImage extends StatelessWidget {
 
   Widget _placeholder() {
     return Container(
-      color: Colors.grey.shade200,
+      color: AppColors.surfaceElevated,
       alignment: Alignment.center,
-      child: Icon(icon, color: Colors.grey.shade400, size: 28),
+      child: Icon(icon, color: AppColors.textMuted, size: 28),
     );
   }
 }
