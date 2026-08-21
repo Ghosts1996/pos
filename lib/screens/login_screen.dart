@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
 import '../services/firestore_service.dart';
@@ -48,6 +49,11 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     final loggedInEmployee = employee;
+    // Открываем кассовую смену при входе, если сейчас нет открытой — это
+    // источник данных для X-отчёта. Делаем в фоне и не блокируем вход даже
+    // при сетевой ошибке: сотрудник всё равно должен попасть в приложение,
+    // а открыть смену можно будет вручную из X-отчёта.
+    unawaited(_fs.openShiftIfNeeded(loggedInEmployee.name));
     if (loggedInEmployee.role == AppConstants.roleAdmin) {
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: loggedInEmployee)));
