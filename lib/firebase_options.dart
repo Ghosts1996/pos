@@ -21,7 +21,7 @@ class DefaultFirebaseOptions {
     apiKey: 'AIzaSyCXrbD9OOUtJG1G7L06fj-TQC8tmNLvL4k', 
     appId: '1:1021237024665:android:4f2e1fe3e6c0e625756508',
     messagingSenderId: '1021237024665',
-    projectId: 'hooah-pos',
-    storageBucket: 'hooah-pos.firebasestorage.app',
+    projectId: 'hoocah-pos',
+    storageBucket: 'hoocah-pos.firebasestorage.app',
   );
 }
