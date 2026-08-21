@@ -36,8 +36,67 @@ jobs:
 
       - name: Generate missing Android platform files
         run: |
-          flutter create . --platforms=android --org com.hookahpos --project-name hookah_pos
+          # ВАЖНО: --org/--project-name подобраны так, чтобы итоговый
+          # applicationId был РОВНО "com.hookahpos" — это package_name,
+          # под которым Android-приложение зарегистрировано в Firebase
+          # (см. google-services.json). Раньше здесь стояло
+          # --org com.hookahpos --project-name hookah_pos, из-за чего
+          # реально получался "com.hookahpos.hookah_pos" — приложение не
+          # совпадало с регистрацией в Firebase, и нативный Firebase SDK на
+          # Android (в частности Storage) работал некорректно, из-за чего
+          # загрузка фото падала с [firebase_storage/object-not-found]
+          # независимо от Dart-кода.
+          flutter create . --platforms=android --org com --project-name hookahpos
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
+
+      - name: Add google-services.json (Firebase Android config)
+        run: |
+          # Файл нужен, чтобы нативный Firebase SDK на Android (Storage в
+          # первую очередь) корректно привязался к проекту hoocah-pos —
+          # без него Storage вела себя нестабильно даже при правильном
+          # applicationId. Секрет GOOGLE_SERVICES_JSON должен содержать
+          # СЫРОЕ содержимое google-services.json (Settings → Secrets and
+          # variables → Actions → New repository secret).
+          if [ -z "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
+            echo "::error::Секрет GOOGLE_SERVICES_JSON не задан в настройках репозитория (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          cat > android/app/google-services.json <<'EOF'
+          ${{ secrets.GOOGLE_SERVICES_JSON }}
+          EOF
+
+      - name: Apply Google Services Gradle plugin
+        run: |
+          # У Flutter есть два варианта шаблона android/ (Groovy и Kotlin
+          # DSL) в зависимости от версии — определяем, какой сгенерировался,
+          # и подключаем плагин google-services соответствующим способом.
+          SETTINGS=android/settings.gradle.kts
+          [ -f "$SETTINGS" ] || SETTINGS=android/settings.gradle
+          APP_GRADLE=android/app/build.gradle.kts
+          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
+          PROJECT_GRADLE=android/build.gradle.kts
+          [ -f "$PROJECT_GRADLE" ] || PROJECT_GRADLE=android/build.gradle
+
+          if grep -q "pluginManagement" "$SETTINGS" 2>/dev/null; then
+            echo "Обнаружен новый шаблон (plugins DSL в settings.gradle.kts)"
+            if ! grep -q "com.google.gms.google-services" "$SETTINGS"; then
+              sed -i '/id("dev.flutter.flutter-plugin-loader")/a\    id("com.google.gms.google-services") version "4.4.2" apply false' "$SETTINGS"
+            fi
+            if ! grep -q "com.google.gms.google-services" "$APP_GRADLE"; then
+              sed -i '/^plugins {/a\    id("com.google.gms.google-services")' "$APP_GRADLE"
+            fi
+          else
+            echo "Обнаружен старый шаблон (buildscript classpath)"
+            if ! grep -q "com.google.gms:google-services" "$PROJECT_GRADLE"; then
+              sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.2'" "$PROJECT_GRADLE"
+            fi
+            if ! grep -q "com.google.gms.google-services" "$APP_GRADLE"; then
+              echo "apply plugin: 'com.google.gms.google-services'" >> "$APP_GRADLE"
+            fi
+          fi
+
+          echo "----- $SETTINGS -----"; cat "$SETTINGS"
+          echo "----- $APP_GRADLE -----"; cat "$APP_GRADLE"
 
       - name: Ensure required permissions for release builds
         run: |
