@@ -294,10 +294,15 @@ class FirestoreService {
   /// не открыта (например, самый первый вход в приложение или после
   /// закрытия предыдущей смены).
   Future<ShiftModel?> currentOpenShift() async {
+    // Важно: фильтруем ТОЛЬКО по status, без orderBy по другому полю —
+    // сочетание where+orderBy по разным полям требует составного индекса
+    // в Firestore, которого в проекте нет, и запрос падал с
+    // FAILED_PRECONDITION. Открытая смена в системе всегда одна
+    // (гарантируется транзакцией в openShiftIfNeeded/closeShift через
+    // meta/shiftState), поэтому сортировка тут не нужна.
     final snap = await _db
         .collection('shifts')
         .where('status', isEqualTo: 'open')
-        .orderBy('openedAt', descending: true)
         .limit(1)
         .get();
     if (snap.docs.isEmpty) return null;
@@ -307,13 +312,22 @@ class FirestoreService {
   /// Стрим текущей открытой смены — используется, чтобы X-отчёт и другие
   /// экраны сразу видели открытие/закрытие смены без перезагрузки.
   Stream<ShiftModel?> openShiftStream() {
+    // См. комментарий в currentOpenShift() — без orderBy, чтобы не требовать
+    // составной индекс, из-за отсутствия которого стрим падал в ошибку
+    // сразу после открытия смены и переставал обновляться.
     return _db
         .collection('shifts')
         .where('status', isEqualTo: 'open')
-        .orderBy('openedAt', descending: true)
         .limit(1)
         .snapshots()
-        .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first));
+        .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first))
+        .handleError((_) {
+          // Не даём одиночной ошибке (например, временная проблема сети)
+          // намертво "заморозить" последнее состояние — считаем смену
+          // неизвестной/закрытой, и следующее изменение в базе снова
+          // разбудит стрим.
+          return null;
+        });
   }
 
   /// Открывает новую смену, если сейчас нет открытой. Вызывается при входе
