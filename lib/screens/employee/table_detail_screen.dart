@@ -207,23 +207,18 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               ) ??
               widget.table;
 
-          // Если выбранного чека больше нет среди активных на этом столе
-          // (например, его закрыли с другого устройства) — переключаемся
-          // на первый оставшийся открытый чек или на экран "Начать сеанс".
-          if (_sessionId != null && !t.activeSessionIds.contains(_sessionId)) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              setState(() => _sessionId = t.activeSessionIds.isEmpty ? null : t.activeSessionIds.first);
-            });
-          }
-
-          // Раньше здесь дополнительно проверялось t.activeSessionIds.isEmpty —
-          // из-за задержки обновления стрима столов после создания сеанса это
-          // могло на мгновение показать экран "Начать сеанс" ещё раз поверх
-          // уже созданного чека, и повторное нажатие создавало второй чек
-          // (и, соответственно, два чека при печати). Теперь ориентируемся
-          // только на локальный _sessionId, который выставляется сразу же
-          // после успешного создания сеанса.
+          // ВАЖНО: здесь намеренно НЕ сверяем _sessionId со списком
+          // t.activeSessionIds стола. tablesStream — это отдельный, более
+          // "медленный" стрим (коллекция tables), и сразу после создания
+          // чека транзакцией openSession() он ещё какое-то время отдаёт
+          // старый снимок без нового id. Если сверяться с ним прямо тут,
+          // только что созданный чек на мгновение "не находится" в
+          // activeSessionIds, экран сбрасывает _sessionId и снова
+          // показывает кнопку "Начать сеанс" — а повторное нажатие создаёт
+          // второй (и третий) чек. Поэтому единственный источник истины
+          // для текущего чека — локальный _sessionId, а закрытие чека с
+          // другого устройства отслеживается ниже напрямую по статусу
+          // документа самой сессии (см. sessSnap/session.status).
           if (_sessionId == null) {
             return Center(
               child: _busy
@@ -247,6 +242,22 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               }
               final session = sessSnap.data;
               if (session == null) return const Center(child: CircularProgressIndicator());
+
+              // Чек закрыли (в т.ч. с другого устройства через оплату) —
+              // переключаемся на другой открытый чек этого стола или на
+              // экран "Начать сеанс". Проверяем по статусу самого документа
+              // чека, а не по activeSessionIds стола: это тот же документ,
+              // что уже отображается на экране, поэтому здесь нет той
+              // задержки, что была бы при сверке с отдельным стримом столов.
+              if (session.status != 'active') {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  final others =
+                      t.activeSessionIds.where((id) => id != _sessionId).toList();
+                  setState(() => _sessionId = others.isEmpty ? null : others.first);
+                });
+                return const Center(child: CircularProgressIndicator());
+              }
 
               final hasOtherChecks = t.activeSessionIds.length > 1;
               final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
