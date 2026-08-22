@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
+
+// Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
+// Используется ТОЛЬКО для хранения фото меню (Storage) — anon key публичный
+// по своей природе (как web API key у Firebase), доступ к бакету
+// регулируется policy в Supabase, а не секретностью этого ключа.
+const _supabaseUrl = 'https://acmdrgwemtbbroedilnk.supabase.co';
+const _supabaseAnonKey =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjbWRyZ3dlbXRiYnJvZWRpbG5rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczNTIyODEsImV4cCI6MjEwMjkyODI4MX0.fHrTveYc2bj_WPy4OCOkwzipVFoEL7mQxmbAKYGEy3o';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +29,7 @@ void main() async {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AuthService().ensureSignedIn();
+      await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
       ready = true;
     } catch (e) {
       startupError = e.toString();
