@@ -121,6 +121,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Generate app launcher icon
+        run: dart run flutter_launcher_icons
+
       - name: Analyze (informational — does not block the build)
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
