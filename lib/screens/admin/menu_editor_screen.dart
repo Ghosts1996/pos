@@ -316,6 +316,11 @@ class _EditableThumb extends StatelessWidget {
                     : Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
+                        // Миниатюра всего 44×44 — без cacheWidth картинка до
+                        // 1600×1600 декодируется и держится в памяти в
+                        // полный размер на каждую строку списка.
+                        cacheWidth: (MediaQuery.of(context).devicePixelRatio * 44).round(),
+                        gaplessPlayback: true,
                         errorBuilder: (_, __, ___) => Container(
                           color: AppColors.surfaceElevated,
                           child: Icon(icon, size: 20, color: AppColors.textMuted),
