@@ -396,10 +396,22 @@ class _MenuImage extends StatelessWidget {
     if (url.isEmpty) {
       return _placeholder();
     }
+    // Плитки на экране маленькие (доли ширины экрана), а исходники после
+    // загрузки могут доходить до 1600×1600 (см. StorageService.pickImage).
+    // Без cacheWidth Flutter декодирует и держит в памяти картинку в
+    // полном разрешении на КАЖДУЮ плитку сетки — на слабых POS-планшетах
+    // это и есть основная причина лагов/фризов при скролле меню. Декодируем
+    // сразу под реальный размер плитки с учётом плотности экрана.
+    final cacheWidth = (MediaQuery.of(context).devicePixelRatio * 220).round();
     return Image.network(
       url,
       fit: BoxFit.cover,
       width: double.infinity,
+      cacheWidth: cacheWidth,
+      // Не показываем плейсхолдер поверх уже загруженной картинки при
+      // перерисовке виджета (например, при каждом обновлении стрима меню) —
+      // без этого фото на плитках заметно мигали.
+      gaplessPlayback: true,
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
         return Container(
