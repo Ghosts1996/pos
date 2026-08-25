@@ -116,6 +116,12 @@ class FirestoreService {
     });
   }
 
+  /// Установить/сменить подпись чека — кто сидит за столом (гость, номер
+  /// компании и т.п.). Пустая строка убирает подпись.
+  Future<void> setGuestTag(String sessionId, String tag) {
+    return _db.collection('sessions').doc(sessionId).update({'guestTag': tag});
+  }
+
   /// Обновить/продлить таймер на N минут (может быть отрицательным)
   Future<void> extendSession(String sessionId, DateTime currentPlannedEnd, int minutes) {
     final newEnd = currentPlannedEnd.add(Duration(minutes: minutes));
