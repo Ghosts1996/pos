@@ -54,6 +54,13 @@ class SessionModel {
   final String tableId;
   final String tableName;
   final String employeeName;
+
+  /// Подпись чека — кто сидит за столом / чей это счёт (например, имя
+  /// гостя или номер компании: "Аня", "Компания у окна"). Задаётся и
+  /// меняется сотрудником вручную на экране стола, не привязана к
+  /// госту/CRM — просто текстовая метка для наглядности на карте зала.
+  final String guestTag;
+
   final DateTime startTime;
   final DateTime plannedEnd;
   final int refillCount;
@@ -83,6 +90,7 @@ class SessionModel {
     required this.tableId,
     required this.tableName,
     required this.employeeName,
+    this.guestTag = '',
     required this.startTime,
     required this.plannedEnd,
     this.refillCount = 0,
@@ -114,6 +122,7 @@ class SessionModel {
       tableId: data['tableId'] ?? '',
       tableName: data['tableName'] ?? '',
       employeeName: data['employeeName'] ?? '',
+      guestTag: data['guestTag'] ?? '',
       startTime: start is Timestamp ? start.toDate() : now,
       plannedEnd: end is Timestamp ? end.toDate() : now,
       refillCount: data['refillCount'] ?? 0,
@@ -145,6 +154,7 @@ class SessionModel {
       'tableId': tableId,
       'tableName': tableName,
       'employeeName': employeeName,
+      'guestTag': guestTag,
       'startTime': Timestamp.fromDate(startTime),
       'plannedEnd': Timestamp.fromDate(plannedEnd),
       'refillCount': refillCount,
