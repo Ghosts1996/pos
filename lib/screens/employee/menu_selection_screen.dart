@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../models/menu_models.dart';
@@ -398,34 +399,38 @@ class _MenuImage extends StatelessWidget {
     }
     // Плитки на экране маленькие (доли ширины экрана), а исходники после
     // загрузки могут доходить до 1600×1600 (см. StorageService.pickImage).
-    // Без cacheWidth Flutter декодирует и держит в памяти картинку в
+    // Без memCacheWidth Flutter декодирует и держит в памяти картинку в
     // полном разрешении на КАЖДУЮ плитку сетки — на слабых POS-планшетах
     // это и есть основная причина лагов/фризов при скролле меню. Декодируем
     // сразу под реальный размер плитки с учётом плотности экрана.
     final cacheWidth = (MediaQuery.of(context).devicePixelRatio * 220).round();
-    return Image.network(
-      url,
+    // CachedNetworkImage вместо Image.network — фото кладутся в дисковый
+    // кэш (см. ImagePreloadScreen/ImagePreloadService, прогревающие его при
+    // запуске приложения), поэтому повторные открытия экрана меню читают
+    // фото с диска, а не качают их заново по сети — раньше именно повторные
+    // сетевые запросы на каждое открытие были причиной зависаний.
+    return CachedNetworkImage(
+      imageUrl: url,
       fit: BoxFit.cover,
       width: double.infinity,
-      cacheWidth: cacheWidth,
+      memCacheWidth: cacheWidth,
       // Не показываем плейсхолдер поверх уже загруженной картинки при
       // перерисовке виджета (например, при каждом обновлении стрима меню) —
       // без этого фото на плитках заметно мигали.
-      gaplessPlayback: true,
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child;
-        return Container(
-          color: AppColors.surfaceElevated,
-          child: const Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
+      useOldImageOnUrlChange: true,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      placeholder: (context, url) => Container(
+        color: AppColors.surfaceElevated,
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
-        );
-      },
-      errorBuilder: (context, error, stackTrace) => _placeholder(),
+        ),
+      ),
+      errorWidget: (context, url, error) => _placeholder(),
     );
   }
 
