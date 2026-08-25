@@ -157,6 +157,36 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// Открывает диалог для установки/смены подписи чека (кто сидит за
+  /// столом) — показывается затем прямо на плитке стола на карте зала.
+  Future<void> _editGuestTag(SessionModel session) async {
+    final controller = TextEditingController(text: session.guestTag);
+    final tag = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Кто сидит за столом'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 24,
+          decoration: const InputDecoration(hintText: 'Например: Аня, Компания у окна'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Сохранить')),
+        ],
+      ),
+    );
+    if (tag == null) return;
+    try {
+      await _fs.setGuestTag(session.id, tag);
+    } catch (e) {
+      _showError('Не удалось сохранить подпись — проверьте интернет');
+    }
+  }
+
   Future<void> _removeCard(String sessionId) async {
     try {
       await _fs.applyDiscountCard(sessionId, null);
@@ -284,6 +314,16 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                         child: Text(
                             'Открыл: ${session.employeeName} · Перезабивок: ${session.refillCount}',
                             style: const TextStyle(color: AppColors.textMuted))),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _editGuestTag(session),
+                        icon: const Icon(Icons.local_offer_outlined, size: 18),
+                        label: Text(session.guestTag.isEmpty
+                            ? 'Подписать стол'
+                            : 'Подпись: ${session.guestTag}'),
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     Wrap(
                       spacing: 8,
@@ -421,10 +461,14 @@ class _CheckPickerSheet extends StatelessWidget {
                 final index = e.key;
                 final s = e.value;
                 final isCurrent = s.id == currentId;
+                final title = s.guestTag.isEmpty
+                    ? 'Чек ${index + 1} · ${s.employeeName}'
+                    : 'Чек ${index + 1} · ${s.guestTag}';
                 return ListTile(
                   leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
-                  title: Text('Чек ${index + 1} · ${s.employeeName}'),
-                  subtitle: Text('${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+                  title: Text(title),
+                  subtitle: Text(
+                      '${s.employeeName} · ${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
                   onTap: () => Navigator.pop(context, s.id),
                 );
               }),
