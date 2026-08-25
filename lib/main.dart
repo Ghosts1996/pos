@@ -4,7 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
-import 'screens/login_screen.dart';
+import 'screens/image_preload_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -63,7 +63,10 @@ class HookahPosApp extends StatelessWidget {
       theme: AppTheme.dark,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.dark,
-      home: ready ? const LoginScreen() : SetupRequiredScreen(errorDetails: startupError),
+      // Перед экраном входа — прогрев дискового кэша фото меню (см.
+      // ImagePreloadScreen), чтобы дальше открытие меню не грузило фото по
+      // сети и не подвисало на слабых POS-планшетах.
+      home: ready ? const ImagePreloadScreen() : SetupRequiredScreen(errorDetails: startupError),
     );
   }
 }
