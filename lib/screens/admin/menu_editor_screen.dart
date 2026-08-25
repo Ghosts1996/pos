@@ -1,5 +1,6 @@
 import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
@@ -313,15 +314,17 @@ class _EditableThumb extends StatelessWidget {
                         color: AppColors.surfaceElevated,
                         child: Icon(icon, size: 20, color: AppColors.textMuted),
                       )
-                    : Image.network(
-                        imageUrl,
+                    : CachedNetworkImage(
+                        imageUrl: imageUrl,
                         fit: BoxFit.cover,
-                        // Миниатюра всего 44×44 — без cacheWidth картинка до
-                        // 1600×1600 декодируется и держится в памяти в
+                        // Миниатюра всего 44×44 — без memCacheWidth картинка
+                        // до 1600×1600 декодируется и держится в памяти в
                         // полный размер на каждую строку списка.
-                        cacheWidth: (MediaQuery.of(context).devicePixelRatio * 44).round(),
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => Container(
+                        memCacheWidth: (MediaQuery.of(context).devicePixelRatio * 44).round(),
+                        useOldImageOnUrlChange: true,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
+                        errorWidget: (_, __, ___) => Container(
                           color: AppColors.surfaceElevated,
                           child: Icon(icon, size: 20, color: AppColors.textMuted),
                         ),
