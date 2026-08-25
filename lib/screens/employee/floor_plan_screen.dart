@@ -89,6 +89,7 @@ class _TableWithTimer extends StatelessWidget {
           table: table,
           plannedEnd: session?.plannedEnd,
           checkCount: table.activeSessionIds.length,
+          guestTag: session?.guestTag,
           onTap: onTap,
         );
       },
