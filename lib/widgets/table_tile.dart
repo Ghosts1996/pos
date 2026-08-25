@@ -12,6 +12,12 @@ class TableTile extends StatelessWidget {
   final bool isDraggablePreview;
   final int checkCount; // сколько чеков сейчас открыто на столе
 
+  /// Подпись чека (кто сидит за столом) — показывается прямо на плитке,
+  /// чтобы сотрудник видел, чей это счёт, не открывая стол. Если на столе
+  /// несколько чеков, здесь подпись только первого/ближайшего — полный
+  /// список виден внутри стола ("Чеки за столом").
+  final String? guestTag;
+
   const TableTile({
     super.key,
     required this.table,
@@ -19,6 +25,7 @@ class TableTile extends StatelessWidget {
     this.onTap,
     this.isDraggablePreview = false,
     this.checkCount = 1,
+    this.guestTag,
   });
 
   @override
@@ -63,6 +70,20 @@ class TableTile extends StatelessWidget {
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
           ),
           Text('${table.seats} мест', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+          if (occupied && guestTag != null && guestTag!.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              guestTag!,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
           if (occupied && plannedEnd != null) ...[
             const SizedBox(height: 4),
             TimerDisplay(plannedEnd: plannedEnd!, fontSize: 13),
