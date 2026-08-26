@@ -88,6 +88,19 @@ class _XReportScreenState extends State<XReportScreen> {
       firstDate: DateTime(now.year - 2),
       lastDate: now,
       initialDateRange: _customRange ?? DateTimeRange(start: now, end: now),
+      // Глобальная тема задаёт TextButton'ам минимальную высоту 56 (под тач-таргеты
+      // кассы), из-за чего кнопка "Save" в аппбаре пикера дат перестаёт помещаться
+      // и визуально пропадает. Здесь возвращаем стандартный размер только для диалога.
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            textButtonTheme: const TextButtonThemeData(
+              style: ButtonStyle(),
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked != null) {
       setState(() {
