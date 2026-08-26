@@ -293,7 +293,17 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
 
               return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                // Обычный EdgeInsets.all(16) не учитывал системную зону снизу
+                // (жестовая навигация на части устройств) — кнопка "Закрыть
+                // стол", последняя в списке, обрезалась/перекрывалась
+                // системными иконками. Добавляем нижний safe-area отступ
+                // поверх обычного паддинга.
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  16 + MediaQuery.of(context).padding.bottom,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
