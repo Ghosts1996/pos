@@ -48,9 +48,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
   late final _PaymentMethod _comp;
   late final List<_PaymentMethod> _methods;
 
-  // Поля, которые уже получали фокус хотя бы раз — чтобы автоподстановка
-  // суммы и выделение текста срабатывали только при самом первом тапе.
-  final Set<_PaymentMethod> _focusedOnce = {};
+  // Поля, в которые уже перенесена сумма первым тапом (после этого поле
+  // становится редактируемым — второй тап откроет клавиатуру).
+  final Set<_PaymentMethod> _revealed = {};
+
+  // Поля, в которых уже открывалась клавиатура хотя бы раз — чтобы
+  // выделение текста (для замены одной цифрой) срабатывало только при
+  // самом первом открытии клавиатуры, а не при каждом повторном тапе.
+  final Set<_PaymentMethod> _editingStarted = {};
 
   final _contactCtrl = TextEditingController();
 
@@ -76,7 +81,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     for (final m in _methods) {
       m.controller.addListener(() => setState(() {}));
-      m.focusNode.addListener(() => _onFocusChange(m));
     }
   }
 
@@ -89,25 +93,33 @@ class _PaymentScreenState extends State<PaymentScreen> {
     super.dispose();
   }
 
-  /// При самом первом попадании фокуса в поле (первый тап пальцем) в него
-  /// переносится вся сумма к оплате целиком, а все остальные способы оплаты
-  /// сбрасываются в 0 — иначе сумма задваивалась бы (была видна и в старом
-  /// поле, и в новом). Текст сразу выделяется, так что первая же цифра с
-  /// открывшейся клавиатуры заменяет значение, а не дописывается к нему.
-  /// Повторные тапы в то же поле это уже не трогают — иначе было бы
-  /// невозможно поправить введённую сумму, кликнув мимо и обратно в поле.
-  void _onFocusChange(_PaymentMethod method) {
-    if (!method.focusNode.hasFocus) return;
-    if (_focusedOnce.contains(method)) return;
-    _focusedOnce.add(method);
+  /// Первый тап по полю: сумма к оплате переносится в поле, остальные
+  /// способы оплаты обнуляются (иначе сумма задваивалась бы — была бы
+  /// видна и в старом поле, и в новом), но клавиатура НЕ открывается и
+  /// ничего не выделяется — поле в этот момент ещё доступно только на
+  /// чтение (см. AbsorbPointer в _amountField).
+  void _revealAmount(_PaymentMethod method) {
+    setState(() {
+      _revealed.add(method);
+      for (final other in _methods) {
+        if (other != method) other.controller.text = '0';
+      }
+      if (_total > 0.004) {
+        method.controller.text = _fmt(_total);
+      }
+    });
+  }
 
-    for (final other in _methods) {
-      if (other != method) other.controller.text = '0';
-    }
-
-    if (_total > 0.004) {
-      method.controller.text = _fmt(_total);
-    }
+  /// Второй тап (и все последующие, пока не поменяли способ оплаты) —
+  /// поле уже редактируемое, стандартный тап по TextField сам открывает
+  /// клавиатуру. Отдельно нужно только один раз выделить текст целиком —
+  /// при самом первом открытии клавиатуры для этого поля — так, чтобы
+  /// первая же введённая цифра заменяла сумму, а не дописывалась к ней.
+  /// Дальнейшие повторные тапы выделение уже не трогают — иначе было бы
+  /// невозможно поправить сумму, кликнув в середину числа.
+  void _onEditingTap(_PaymentMethod method) {
+    if (_editingStarted.contains(method)) return;
+    _editingStarted.add(method);
     method.controller.selection = TextSelection(
       baseOffset: 0,
       extentOffset: method.controller.text.length,
@@ -135,6 +147,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   void _applyQuick(double v) {
+    // Кнопка быстрой суммы сама выступает как "первый тап" — сумма уже
+    // переносится в поле, поэтому дальнейший тап по полю "Наличными"
+    // должен сразу открывать клавиатуру, а не заново сбрасывать сумму.
+    _revealed.add(_cash);
     _cash.controller.text = _fmt(v);
   }
 
@@ -250,6 +266,44 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   Widget _amountField(_PaymentMethod method, {required bool enabled}) {
+    final revealed = _revealed.contains(method);
+    final field = TextField(
+      controller: method.controller,
+      focusNode: method.focusNode,
+      enabled: enabled,
+      // Пока сумма ещё не перенесена первым тапом, поле только на чтение —
+      // это не даёт системе показать клавиатуру, даже если поле получит
+      // фокус. После первого тапа (revealed == true) поле становится
+      // обычным редактируемым.
+      readOnly: !revealed,
+      showCursor: revealed,
+      onTap: revealed ? () => _onEditingTap(method) : null,
+      textAlign: TextAlign.right,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+      ],
+      style: TextStyle(fontSize: 16, color: enabled ? AppColors.textPrimary : AppColors.textMuted),
+      decoration: InputDecoration(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        filled: true,
+        fillColor: enabled ? AppColors.surface : AppColors.surfaceElevated,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: BorderSide(color: AppColors.textMuted),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: const BorderSide(color: AppColors.border),
+        ),
+      ),
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -257,33 +311,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
           Expanded(child: Text(method.label, style: const TextStyle(fontSize: 16))),
           SizedBox(
             width: 180,
-            child: TextField(
-              controller: method.controller,
-              focusNode: method.focusNode,
-              enabled: enabled,
-              textAlign: TextAlign.right,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
-              ],
-              style: TextStyle(fontSize: 16, color: enabled ? AppColors.textPrimary : AppColors.textMuted),
-              decoration: InputDecoration(
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                filled: true,
-                fillColor: enabled ? AppColors.surface : AppColors.surfaceElevated,
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: AppColors.textMuted),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
-                ),
-                disabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: AppColors.border),
-                ),
+            child: GestureDetector(
+              // Перехватываем самый первый тап поверх поля, пока оно ещё
+              // read-only: AbsorbPointer ниже не даёт этому тапу дойти до
+              // самого TextField (а значит — не даёт ему поймать фокус и
+              // открыть клавиатуру), а этот обработчик просто переносит
+              // сумму в поле. Как только сумма перенесена (revealed),
+              // GestureDetector.onTap отключается и тапы идут напрямую в
+              // TextField как обычно.
+              behavior: HitTestBehavior.translucent,
+              onTap: (!enabled || revealed) ? null : () => _revealAmount(method),
+              child: AbsorbPointer(
+                absorbing: enabled && !revealed,
+                child: field,
               ),
             ),
           ),
