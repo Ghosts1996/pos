@@ -35,7 +35,69 @@ class FirestoreService {
     return _db.collection('tables').doc(tableId).delete();
   }
 
+  /// Стрим ОДНОГО стола по id. В отличие от [tablesStream] не тянет всю
+  /// коллекцию столов — используется на экране конкретного стола, чтобы
+  /// открытие/изменение любого другого стола в зале не вызывало лишних
+  /// перестроений и сетевого трафика на этом экране.
+  Stream<TableModel?> tableStream(String tableId) {
+    return _db
+        .collection('tables')
+        .doc(tableId)
+        .snapshots()
+        .map((doc) => doc.exists ? TableModel.fromDoc(doc) : null);
+  }
+
   String newTableId() => _uuid.v4();
+
+  /// Пересадка гостя за другой стол вместе с открытым чеком: чек и вся его
+  /// история/заказ остаются теми же, меняется только его "прописка" —
+  /// tableId у сессии и activeSessionIds у обоих столов. Обёрнуто в одну
+  /// транзакцию, поэтому не бывает промежуточного состояния, когда чек
+  /// "потерян" (исчез со старого стола, но ещё не появился на новом).
+  ///
+  /// Бросает [TableFullException], если на целевом столе уже открыто
+  /// максимально допустимое число чеков — например, если два сотрудника
+  /// одновременно пересаживают гостей на один и тот же свободный стол.
+  Future<void> moveSessionToTable({
+    required String sessionId,
+    required String fromTableId,
+    required String toTableId,
+  }) async {
+    if (fromTableId == toTableId) return;
+
+    final sessionRef = _db.collection('sessions').doc(sessionId);
+    final fromRef = _db.collection('tables').doc(fromTableId);
+    final toRef = _db.collection('tables').doc(toTableId);
+
+    await _db.runTransaction((tx) async {
+      final toSnap = await tx.get(toRef);
+      final toData = toSnap.data() as Map<String, dynamic>?;
+      final toIds = ((toData?['activeSessionIds'] ?? []) as List)
+          .map((e) => e.toString())
+          .toList();
+      final toMax = (toData?['maxOpenSessions'] as num?)?.toInt() ?? 2;
+      if (toIds.length >= toMax) {
+        throw TableFullException(toMax);
+      }
+
+      final fromSnap = await tx.get(fromRef);
+      final fromData = fromSnap.data() as Map<String, dynamic>?;
+      final fromIds = ((fromData?['activeSessionIds'] ?? []) as List)
+          .map((e) => e.toString())
+          .toList();
+      fromIds.remove(sessionId);
+
+      final toName = (toData?['name'] as String?) ?? '';
+      toIds.add(sessionId);
+
+      tx.update(sessionRef, {'tableId': toTableId, 'tableName': toName});
+      tx.update(fromRef, {
+        'activeSessionIds': fromIds,
+        'status': fromIds.isEmpty ? 'free' : 'occupied',
+      });
+      tx.update(toRef, {'activeSessionIds': toIds, 'status': 'occupied'});
+    });
+  }
 
   // ---------- СЕССИИ (ЧЕКИ) ----------
   Stream<SessionModel?> sessionStream(String sessionId) {
