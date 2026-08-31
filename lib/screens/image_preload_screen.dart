@@ -2,19 +2,14 @@ import 'package:flutter/material.dart';
 import '../services/image_preload_service.dart';
 import 'login_screen.dart';
 
-/// Показывается один раз при каждом запуске приложения, сразу после
-/// инициализации Firebase, и заранее прогревает дисковый кэш всех фото
-/// категорий и позиций меню (см. ImagePreloadService).
-///
-/// При первом запуске на устройстве это реально качает все фото — экран
-/// покажет прогресс "Фото меню: N из M". На всех последующих запусках фото
-/// уже лежат в дисковом кэше, поэтому проверка пролетает почти мгновенно
-/// и экран входа открывается без задержки.
-///
-/// Общий таймаут на 40 секунд гарантирует, что даже при очень плохой сети
-/// или большом количестве фото приложение всё равно откроется, а не
-/// "зависнет" на этом экране — оставшиеся фото просто догрузятся по месту
-/// использования, как и раньше.
+/// Раньше этот экран блокировал вход в приложение до полной прогрузки всех
+/// фото меню в кэш (до 40 секунд на каждом запуске, даже если фото уже
+/// давно закэшированы, — именно это было причиной "зависания" при каждом
+/// открытии приложения). Теперь экран входа открывается СРАЗУ, а прогрев
+/// кэша фото идёт в фоне и никак не мешает работе: сотрудник может сразу
+/// войти по PIN-коду, а фото по мере скачивания просто станут появляться
+/// на плитках меню быстрее (без прогрева они и так подгрузятся по месту
+/// использования — см. ImagePreloadService).
 class ImagePreloadScreen extends StatefulWidget {
   const ImagePreloadScreen({super.key});
 
@@ -23,61 +18,44 @@ class ImagePreloadScreen extends StatefulWidget {
 }
 
 class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
-  int _done = 0;
-  int _total = 0;
-
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _run());
+    // Сразу переходим на экран входа, не дожидаясь ни кадра отрисовки этого
+    // экрана и уж тем более прогрева кэша. Специально используем push, а не
+    // pushReplacement: этот экран остаётся смонтированным (просто скрытым
+    // под экраном входа) — иначе его BuildContext уничтожился бы вместе с
+    // виджетом, а фоновому прогреву кэша (precacheImage) нужен живой
+    // context на всё время скачивания.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LoginScreen()));
+    });
+    // Прогрев кэша фото — полностью в фоне, не блокирует UI.
+    _warmUpInBackground();
   }
 
-  Future<void> _run() async {
-    await ImagePreloadService()
-        .preloadAll(
-          context,
-          onProgress: (done, total) {
-            if (!mounted) return;
-            setState(() {
-              _done = done;
-              _total = total;
-            });
-          },
-        )
-        .timeout(const Duration(seconds: 40), onTimeout: () {});
+  Future<void> _warmUpInBackground() async {
     if (!mounted) return;
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
+    try {
+      await ImagePreloadService()
+          .preloadAll(context)
+          .timeout(const Duration(seconds: 40), onTimeout: () {});
+    } catch (_) {
+      // Фоновый прогрев — любая ошибка (нет сети и т.п.) просто
+      // игнорируется, на работу приложения это не влияет.
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final progress = _total == 0 ? null : _done / _total;
-    return Scaffold(
-      backgroundColor: const Color(0xFF1B1B1F),
+    // Экран виден лишь долю секунды, пока не открылся LoginScreen —
+    // достаточно простого лого без прогресс-бара, который раньше создавал
+    // ложное впечатление, что нужно чего-то ждать.
+    return const Scaffold(
+      backgroundColor: Color(0xFF1B1B1F),
       body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
-            const SizedBox(height: 12),
-            const Text('Hookah POS',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: 180,
-              child: LinearProgressIndicator(
-                value: progress,
-                backgroundColor: Colors.white12,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _total == 0 ? 'Загрузка…' : 'Фото меню: $_done из $_total',
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-          ],
-        ),
+        child: Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
       ),
     );
   }
