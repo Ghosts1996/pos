@@ -187,6 +187,35 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// Пересадка гостя за другой стол: показывает карту зала со свободными
+  /// (и не заполненными до лимита) столами, переносит открытый чек на
+  /// выбранный стол вместе со всем заказом, таймером и историей.
+  Future<void> _moveTable(SessionModel session, TableModel currentTable) async {
+    final target = await Navigator.of(context).push<TableModel>(
+      MaterialPageRoute(
+        builder: (_) => _MoveTableScreen(currentTable: currentTable, fs: _fs),
+      ),
+    );
+    if (target == null) return;
+    try {
+      await _fs.moveSessionToTable(
+        sessionId: session.id,
+        fromTableId: currentTable.id,
+        toTableId: target.id,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Гость пересажен за стол «${target.name}»')),
+        );
+        Navigator.pop(context);
+      }
+    } on TableFullException catch (e) {
+      _showError(e);
+    } catch (e) {
+      _showError('Не удалось пересадить — проверьте интернет');
+    }
+  }
+
   Future<void> _removeCard(String sessionId) async {
     try {
       await _fs.applyDiscountCard(sessionId, null);
@@ -222,8 +251,11 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.table.name)),
-      body: StreamBuilder<List<TableModel>>(
-        stream: _fs.tablesStream(),
+      // Подписываемся только на ЭТОТ стол (а не на всю коллекцию столов,
+      // как было раньше) — так изменение любого другого стола в зале не
+      // грузит сеть и не перестраивает этот экран лишний раз.
+      body: StreamBuilder<TableModel?>(
+        stream: _fs.tableStream(widget.table.id),
         builder: (context, tablesSnap) {
           if (tablesSnap.hasError) {
             return Center(
@@ -231,11 +263,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   style: const TextStyle(color: AppColors.danger)),
             );
           }
-          final t = tablesSnap.data?.firstWhere(
-                (x) => x.id == widget.table.id,
-                orElse: () => widget.table,
-              ) ??
-              widget.table;
+          final t = tablesSnap.data ?? widget.table;
 
           // ВАЖНО: здесь намеренно НЕ сверяем _sessionId со списком
           // t.activeSessionIds стола. tablesStream — это отдельный, более
@@ -361,6 +389,11 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                               ? 'Скидка ${session.discountPercent.toStringAsFixed(0)}% (убрать)'
                               : 'Скидочная карта'),
                         ),
+                        OutlinedButton.icon(
+                          onPressed: () => _moveTable(session, t),
+                          icon: const Icon(Icons.sync_alt),
+                          label: const Text('Пересадить стол'),
+                        ),
                       ],
                     ),
                     const Divider(height: 32),
@@ -431,6 +464,60 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       label: const Text('Закрыть стол'),
                     ),
                   ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Карта зала для выбора стола, на который переносится гость. Показывает
+/// все столы; занятые до предела столы отмечены и недоступны для выбора —
+/// пересадить на уже полностью занятый стол нельзя.
+class _MoveTableScreen extends StatelessWidget {
+  final TableModel currentTable;
+  final FirestoreService fs;
+  const _MoveTableScreen({required this.currentTable, required this.fs});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Пересадить на стол')),
+      body: StreamBuilder<List<TableModel>>(
+        stream: fs.tablesStream(),
+        builder: (context, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final tables = snap.data!.where((t) => t.id != currentTable.id).toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
+          if (tables.isEmpty) {
+            return const Center(child: Text('Других столов в зале нет'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.all(12),
+            itemCount: tables.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final t = tables[index];
+              final full = t.isFull;
+              return Material(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(10),
+                child: ListTile(
+                  enabled: !full,
+                  leading: Icon(
+                    t.status == 'occupied' ? Icons.event_seat : Icons.chair_outlined,
+                    color: t.status == 'occupied' ? AppColors.danger : Colors.green,
+                  ),
+                  title: Text(t.name),
+                  subtitle: Text(t.status == 'occupied'
+                      ? full
+                          ? 'Занят, чеков: ${t.activeSessionIds.length}/${t.maxOpenSessions} — уже максимум'
+                          : 'Занят, но можно открыть ещё чек (${t.activeSessionIds.length}/${t.maxOpenSessions})'
+                      : 'Свободен · ${t.seats} мест'),
+                  onTap: full ? null : () => Navigator.pop(context, t),
                 ),
               );
             },
