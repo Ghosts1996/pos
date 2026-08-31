@@ -28,8 +28,15 @@ void main() async {
   if (DefaultFirebaseOptions.isConfigured) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-      await AuthService().ensureSignedIn();
-      await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+      // Вход в Firebase Auth и инициализация Supabase не зависят друг от
+      // друга — раньше шли строго последовательно (два похода в сеть один
+      // за другим), хотя оба нужны только к моменту первого обращения к
+      // базе/хранилищу. Запускаем параллельно, чтобы старт приложения не
+      // ждал их суммарное время, а только большее из двух.
+      await Future.wait([
+        AuthService().ensureSignedIn(),
+        Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
+      ]);
       ready = true;
     } catch (e) {
       startupError = e.toString();
