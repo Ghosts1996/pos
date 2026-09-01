@@ -273,11 +273,9 @@ class FirestoreService {
     });
   }
 
-  /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты
-  /// и убирает его из списка открытых чеков стола. Если после этого на
-  /// столе не осталось открытых чеков — стол становится свободным; если
-  /// остались другие чеки (стол был открыт с несколькими одновременными
-  /// счетами) — стол остаётся занятым.
+  /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты,
+  /// убирает его из списка открытых чеков стола, и автоматически списывает
+  /// со склада позиции, привязанные к проданным пунктам меню.
   Future<void> closeSessionWithPayment(
     String sessionId,
     String tableId, {
@@ -289,7 +287,10 @@ class FirestoreService {
     bool closedWithoutPayment = false,
     bool receiptPrinted = false,
     bool fiscalReceiptPrinted = false,
+    List<OrderItem> orderItems = const [],
+    String employeeName = '',
   }) async {
+    // 1. Закрываем чек
     await _db.collection('sessions').doc(sessionId).update({
       'status': 'closed',
       'closedAt': Timestamp.fromDate(DateTime.now()),
@@ -303,6 +304,7 @@ class FirestoreService {
       'fiscalReceiptPrinted': fiscalReceiptPrinted,
     });
 
+    // 2. Убираем сессию из стола
     final tableRef = _db.collection('tables').doc(tableId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(tableRef);
@@ -316,6 +318,64 @@ class FirestoreService {
         'status': ids.isEmpty ? 'free' : 'occupied',
       });
     });
+
+    // 3. Списываем склад по позициям заказа (игнорируем ошибки, чтобы не
+    //    блокировать оплату при временных сбоях сети или ненастроенных связях)
+    if (orderItems.isNotEmpty) {
+      await _deductInventoryForSale(orderItems, employeeName);
+    }
+  }
+
+  /// Списывает позиции склада по проданным пунктам меню.
+  /// Для каждого OrderItem получает MenuItem, проверяет наличие привязки к
+  /// складу (inventoryItemId) и ненулевой граммовки, затем вызывает
+  /// adjustInventoryQuantity. Ошибки по отдельным позициям не прерывают
+  /// списание остальных.
+  Future<void> _deductInventoryForSale(
+      List<OrderItem> orderItems, String employeeName) async {
+    // Собираем уникальные menuItemId из заказа
+    final menuItemIds =
+        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet();
+    if (menuItemIds.isEmpty) return;
+
+    // Загружаем данные позиций меню одним батчем
+    final menuDocs = await Future.wait(menuItemIds
+        .map((id) => _db.collection('menuItems').doc(id).get()));
+
+    // Строим карту menuItemId → MenuItem
+    final menuMap = <String, MenuItem>{};
+    for (final doc in menuDocs) {
+      if (doc.exists) menuMap[doc.id] = MenuItem.fromDoc(doc);
+    }
+
+    // Для каждой строки заказа — списываем склад если настроена привязка
+    for (final orderItem in orderItems) {
+      final menuItem = menuMap[orderItem.menuItemId];
+      if (menuItem == null || !menuItem.hasInventoryLink) continue;
+
+      final delta = -(menuItem.weight * orderItem.qty);
+      try {
+        // Получаем актуальное имя позиции склада для записи в движение
+        final invDoc = await _db
+            .collection('inventoryItems')
+            .doc(menuItem.inventoryItemId)
+            .get();
+        if (!invDoc.exists) continue;
+        final invItem = InventoryItem.fromDoc(invDoc);
+
+        await adjustInventoryQuantity(
+          itemId: menuItem.inventoryItemId,
+          itemName: invItem.name,
+          unit: invItem.unit,
+          delta: delta,
+          type: 'writeoff',
+          employeeName: employeeName,
+          reason: 'Продажа: ${orderItem.name} ×${orderItem.qty}',
+        );
+      } catch (_) {
+        // Не блокируем оплату из-за ошибок списания
+      }
+    }
   }
 
   /// Возврат уже закрытого (оплаченного) чека — раздел "История чеков и
