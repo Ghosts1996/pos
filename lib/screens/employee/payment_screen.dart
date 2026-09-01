@@ -4,6 +4,10 @@ import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payment_terminal_service.dart';
+import '../../services/printer_service.dart';
+import '../../services/kassa_service.dart';
+import '../../services/chestny_znak_service.dart';
+import '../../models/fiscal_receipt.dart';
 import '../../utils/constants.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
@@ -210,6 +214,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
       );
+      if (_printReceipt) await _printOnThermalPrinter();
+      if (_printFiscalReceipt) await _sendToKassa();
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -219,6 +225,111 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Печать информационного чека на маленьком чековом принтере (не
+  /// фискальный — фискальный чек по-прежнему требует отдельной онлайн-кассы,
+  /// см. переключатель "Распечатать фискальный чек" выше и README).
+  /// Ошибка печати не должна мешать закрыть стол — гость и так уже
+  /// оплатил, поэтому здесь только предупреждение, а не блокировка.
+  Future<void> _printOnThermalPrinter() async {
+    final printer = activeReceiptPrinter;
+    if (printer == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Принтер не настроен — выберите его в Настройках → Интеграции'),
+        ));
+      }
+      return;
+    }
+    try {
+      final paidVia = _closeWithoutPayment
+          ? 'Без оплаты'
+          : [
+              if (_cash.parse() > 0) 'наличные ${_cash.parse().toStringAsFixed(0)}₽',
+              if (_card.parse() > 0) 'карта ${_card.parse().toStringAsFixed(0)}₽',
+              if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
+              if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
+            ].join(', ');
+      await printer.printReceipt(ReceiptData(
+        venueName: 'Кальянная',
+        tableName: widget.session.tableName,
+        employeeName: widget.session.employeeName,
+        closedAt: DateTime.now(),
+        items: widget.session.orderItems
+            .map((i) => ReceiptLine('${i.name} x${i.qty}', right: i.total.toStringAsFixed(0)))
+            .toList(),
+        total: _total,
+        paymentMethod: paidVia.isEmpty ? 'Наличные' : paidVia,
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось напечатать чек: $e')));
+      }
+    }
+  }
+
+  /// Отправка фискального чека в онлайн-кассу (54-ФЗ) — реальная
+  /// фискализация происходит только тут; сам тумблер "Распечатать чек"
+  /// выше печатает лишь информационную копию на маленьком принтере и не
+  /// имеет отношения к 54-ФЗ. Пока не подключён реальный провайдер
+  /// (см. Настройки → Интеграции), используется [MockKassaService] — чек
+  /// нигде фактически не регистрируется, только имитируется успех, чтобы
+  /// UI-поток можно было проверить целиком уже сейчас.
+  Future<void> _sendToKassa() async {
+    if (!kassaService.isAvailable) {
+      _showKassaWarning('Касса не настроена — откройте Настройки → Интеграции');
+      return;
+    }
+    try {
+      final cz = ChestnyZnakService();
+      final markingCodes = await cz.codesForReceipt(widget.session.id);
+      // Лучшее сопоставление кода с позицией чека, какое возможно без
+      // отдельного хранения "код -> позиция" на самой сессии: по названию
+      // позиции меню, для которой этот код сканировался при добавлении
+      // (см. menu_selection_screen._onScan). Если сопоставить не удалось —
+      // код всё равно попадёт в чек отдельной строкой ниже, чтобы не
+      // потерять его молча.
+      final items = <FiscalReceiptItem>[];
+      for (final line in widget.session.orderItems) {
+        items.add(FiscalReceiptItem(
+          name: line.name,
+          price: line.price,
+          quantity: line.qty.toDouble(),
+        ));
+      }
+
+      final payments = <FiscalPayment>[
+        if (!_closeWithoutPayment && _cash.parse() > 0) FiscalPayment('cash', _cash.parse()),
+        if (!_closeWithoutPayment && _card.parse() > 0) FiscalPayment('card', _card.parse()),
+        if (!_closeWithoutPayment && _terminal.parse() > 0) FiscalPayment('card', _terminal.parse()),
+        if (!_closeWithoutPayment && _comp.parse() > 0) FiscalPayment('other', _comp.parse()),
+        if (_closeWithoutPayment) FiscalPayment('other', _total),
+      ];
+
+      final result = await kassaService.sendReceipt(FiscalReceipt(
+        receiptId: widget.session.id,
+        items: items,
+        payments: payments.isEmpty ? [FiscalPayment('cash', _total)] : payments,
+        buyerContact: _contactCtrl.text.trim(),
+      ));
+
+      if (!result.success) {
+        _showKassaWarning('Касса отклонила чек: ${result.errorMessage}');
+      } else if (markingCodes.isNotEmpty) {
+        // Успешная фискализация с кодами маркировки в чеке — именно этот
+        // момент официально выводит их из оборота через ОФД → ИС МП.
+        _showKassaWarning('Чек пробит, ${markingCodes.length} код(ов) маркировки списано');
+      }
+    } catch (e) {
+      _showKassaWarning('Не удалось отправить чек в кассу: $e');
+    }
+  }
+
+  void _showKassaWarning(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
