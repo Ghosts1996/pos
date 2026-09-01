@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'egais_models.dart';
 
 /// Единицы измерения остатков склада. Одного набора достаточно, чтобы вести
 /// в общем журнале и граммовку табака, и миллилитры/литры сиропов, ликёров,
@@ -108,6 +109,20 @@ class InventoryItem {
   final String note;
   final DateTime? updatedAt;
 
+  /// Алкогольные реквизиты для ЕГАИС (алкокод, крепость, объём тары) —
+  /// заполняется только если [alcohol.isAlcohol] == true, для остальных
+  /// позиций (табак, снеки) остаётся значением по умолчанию.
+  final AlcoholInfo alcohol;
+
+  /// Товар подлежит обязательной маркировке «Честный ЗНАК» — при продаже
+  /// такой позиции экран оплаты потребует отсканировать код DataMatrix,
+  /// а не просто выбрать позицию из меню.
+  final bool isMarked;
+
+  /// GTIN позиции — по нему отсканированный код маркировки (см.
+  /// [MarkingCode.gtin]) сверяется с конкретной позицией номенклатуры.
+  final String gtin;
+
   InventoryItem({
     required this.id,
     required this.name,
@@ -118,6 +133,9 @@ class InventoryItem {
     this.active = true,
     this.note = '',
     this.updatedAt,
+    this.alcohol = const AlcoholInfo(),
+    this.isMarked = false,
+    this.gtin = '',
   });
 
   /// Мало на складе — только если порог явно задан админом.
@@ -135,6 +153,9 @@ class InventoryItem {
       active: data['active'] ?? true,
       note: data['note'] ?? '',
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+      alcohol: AlcoholInfo.fromMap(data['alcohol'] as Map<String, dynamic>?),
+      isMarked: data['isMarked'] ?? false,
+      gtin: data['gtin'] ?? '',
     );
   }
 
@@ -147,6 +168,9 @@ class InventoryItem {
         'active': active,
         'note': note,
         'updatedAt': Timestamp.fromDate(DateTime.now()),
+        'alcohol': alcohol.toMap(),
+        'isMarked': isMarked,
+        'gtin': gtin,
       };
 
   InventoryItem copyWith({
@@ -157,6 +181,9 @@ class InventoryItem {
     double? minQuantity,
     bool? active,
     String? note,
+    AlcoholInfo? alcohol,
+    bool? isMarked,
+    String? gtin,
   }) =>
       InventoryItem(
         id: id,
@@ -168,6 +195,9 @@ class InventoryItem {
         active: active ?? this.active,
         note: note ?? this.note,
         updatedAt: updatedAt,
+        alcohol: alcohol ?? this.alcohol,
+        isMarked: isMarked ?? this.isMarked,
+        gtin: gtin ?? this.gtin,
       );
 }
 
