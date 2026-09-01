@@ -6,6 +6,7 @@ import '../models/menu_models.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
+import '../models/inventory_models.dart';
 import '../utils/constants.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
@@ -628,6 +629,266 @@ class FirestoreService {
     }
     batch.delete(_db.collection('menuCategories').doc(categoryId));
     await batch.commit();
+  }
+
+  // ---------- СКЛАД (ОСТАТКИ) ----------
+  // Склад — отдельный от меню справочник: позиции меню — это то, что
+  // продаётся гостю, а позиции склада — это то, что физически лежит в
+  // подсобке (граммы табака, литры сиропа, банки пива, угли и т.п.).
+  // Список позиций полностью произвольный и настраивается админом.
+
+  Stream<List<InventoryItem>> inventoryItemsStream() {
+    return _db.collection('inventoryItems').snapshots().map(
+        (snap) => snap.docs.map((d) => InventoryItem.fromDoc(d)).toList());
+  }
+
+  Stream<InventoryItem?> inventoryItemStream(String id) {
+    return _db
+        .collection('inventoryItems')
+        .doc(id)
+        .snapshots()
+        .map((doc) => doc.exists ? InventoryItem.fromDoc(doc) : null);
+  }
+
+  Future<String> addInventoryItem(InventoryItem item) async {
+    final ref = await _db.collection('inventoryItems').add(item.toMap());
+    return ref.id;
+  }
+
+  /// Обновляет только карточку позиции (название, категория, единица,
+  /// порог, заметка) — остаток через этот метод намеренно не меняется,
+  /// чтобы правка описания никогда случайно не затёрла текущее количество.
+  /// Для изменения остатка используйте [adjustInventoryQuantity].
+  Future<void> updateInventoryItem(InventoryItem item) {
+    final map = item.toMap()..remove('quantity');
+    return _db.collection('inventoryItems').doc(item.id).update(map);
+  }
+
+  /// Включить/выключить отслеживание позиции — на усмотрение админа.
+  /// Выключенная позиция остаётся в справочнике с историей и остатком, но
+  /// пропадает из активного списка и из будущих инвентаризаций, пока её не
+  /// включат обратно.
+  Future<void> setInventoryItemActive(String id, bool active) {
+    return _db.collection('inventoryItems').doc(id).update({'active': active});
+  }
+
+  Future<void> deleteInventoryItem(String id) =>
+      _db.collection('inventoryItems').doc(id).delete();
+
+  /// Изменяет остаток позиции склада (приход/списание/ручная корректировка)
+  /// и одновременно пишет строку в историю движений — остаток никогда не
+  /// правится "молча". Обёрнуто в транзакцию: читает актуальный остаток
+  /// прямо перед изменением, поэтому два одновременных изменения одной
+  /// позиции (например, с двух устройств) складываются, а не затирают друг
+  /// друга.
+  Future<void> adjustInventoryQuantity({
+    required String itemId,
+    required String itemName,
+    required InventoryUnit unit,
+    required double delta,
+    required String type, // receipt | writeoff | correction
+    required String employeeName,
+    String reason = '',
+  }) async {
+    final itemRef = _db.collection('inventoryItems').doc(itemId);
+    final moveRef = _db.collection('inventoryMovements').doc();
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(itemRef);
+      final current = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
+      final result = current + delta;
+      tx.update(itemRef, {
+        'quantity': result,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+      tx.set(
+        moveRef,
+        InventoryMovement(
+          id: moveRef.id,
+          itemId: itemId,
+          itemName: itemName,
+          unit: unit,
+          type: type,
+          delta: delta,
+          resultingQty: result,
+          reason: reason,
+          employeeName: employeeName,
+          createdAt: DateTime.now(),
+        ).toMap(),
+      );
+    });
+  }
+
+  /// История движений конкретной позиции, от самого свежего к старому.
+  Stream<List<InventoryMovement>> inventoryMovementsStream(String itemId, {int limit = 100}) {
+    return _db
+        .collection('inventoryMovements')
+        .where('itemId', isEqualTo: itemId)
+        .limit(limit)
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs.map((d) => InventoryMovement.fromDoc(d)).toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
+  }
+
+  // ---------- СКЛАД (ИНВЕНТАРИЗАЦИЯ) ----------
+  // Инвентаризация — отдельный процесс сверки: фиксируем системный остаток
+  // каждой активной позиции на момент старта, затем сотрудник вводит
+  // фактически посчитанное количество, а по завершении расхождения разом
+  // применяются к остаткам и попадают в историю движений с типом 'count'.
+
+  /// Стрим текущей незавершённой инвентаризации, если она есть — чтобы при
+  /// заходе на экран сразу продолжить, а не потерять уже введённые цифры.
+  Stream<InventoryCount?> openInventoryCountStream() {
+    return _db
+        .collection('inventoryCounts')
+        .where('status', isEqualTo: 'in_progress')
+        .limit(1)
+        .snapshots()
+        .map((snap) => snap.docs.isEmpty ? null : InventoryCount.fromDoc(snap.docs.first));
+  }
+
+  Future<InventoryCount?> currentOpenInventoryCount() async {
+    final snap = await _db
+        .collection('inventoryCounts')
+        .where('status', isEqualTo: 'in_progress')
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return InventoryCount.fromDoc(snap.docs.first);
+  }
+
+  /// Начинает новую инвентаризацию — снимает текущие остатки всех АКТИВНЫХ
+  /// позиций склада как ожидаемые значения. Позиции, выключенные из
+  /// отслеживания, в пересчёт не попадают.
+  Future<String> startInventoryCount(String employeeName) async {
+    final itemsSnap =
+        await _db.collection('inventoryItems').where('active', isEqualTo: true).get();
+    final entries = itemsSnap.docs.map((d) {
+      final item = InventoryItem.fromDoc(d);
+      return InventoryCountEntry(
+        itemId: item.id,
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        expectedQty: item.quantity,
+      );
+    }).toList();
+    // Группировка по категории и алфавиту делает лист пересчёта удобным
+    // для похода по подсобке — сотрудник идёт полкой за полкой, а не
+    // прыгает по случайному порядку добавления позиций в базу.
+    entries.sort((a, b) {
+      final catCmp = a.category.compareTo(b.category);
+      return catCmp != 0 ? catCmp : a.name.compareTo(b.name);
+    });
+
+    final ref = _db.collection('inventoryCounts').doc();
+    await ref.set(InventoryCount(
+      id: ref.id,
+      status: 'in_progress',
+      startedAt: DateTime.now(),
+      startedBy: employeeName,
+      entries: entries,
+    ).toMap());
+    return ref.id;
+  }
+
+  Stream<InventoryCount?> inventoryCountStream(String id) {
+    return _db
+        .collection('inventoryCounts')
+        .doc(id)
+        .snapshots()
+        .map((doc) => doc.exists ? InventoryCount.fromDoc(doc) : null);
+  }
+
+  /// Записывает фактически посчитанное количество для одной позиции внутри
+  /// текущей инвентаризации. countedQty == null стирает уже введённое
+  /// значение (если сотрудник хочет пересчитать позицию заново).
+  Future<void> setInventoryCountValue(String countId, String itemId, double? countedQty) async {
+    final ref = _db.collection('inventoryCounts').doc(countId);
+    await _db.runTransaction((tx) async {
+      final doc = await tx.get(ref);
+      final data = doc.data();
+      if (data == null) return;
+      final entries = ((data['entries'] ?? []) as List)
+          .map((e) => InventoryCountEntry.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      final idx = entries.indexWhere((e) => e.itemId == itemId);
+      if (idx < 0) return;
+      entries[idx] = entries[idx].copyWith(countedQty: countedQty, clear: countedQty == null);
+      tx.update(ref, {'entries': entries.map((e) => e.toMap()).toList()});
+    });
+  }
+
+  /// Завершает инвентаризацию: по каждой посчитанной позиции остаток в
+  /// справочнике склада приравнивается к фактически введённому количеству,
+  /// а расхождение (если оно есть) фиксируется отдельным движением типа
+  /// 'count' в истории — так же прозрачно, как приход или списание.
+  /// Позиции, которые никто не успел посчитать, остаются без изменений.
+  Future<void> completeInventoryCount(String countId, String employeeName) async {
+    final ref = _db.collection('inventoryCounts').doc(countId);
+    final doc = await ref.get();
+    final data = doc.data();
+    if (data == null) return;
+    final entries = ((data['entries'] ?? []) as List)
+        .map((e) => InventoryCountEntry.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+
+    final now = DateTime.now();
+    final batch = _db.batch();
+    for (final entry in entries) {
+      if (entry.countedQty == null) continue;
+      final diff = entry.countedQty! - entry.expectedQty;
+      final itemRef = _db.collection('inventoryItems').doc(entry.itemId);
+      batch.update(itemRef, {
+        'quantity': entry.countedQty,
+        'updatedAt': Timestamp.fromDate(now),
+      });
+      if (diff.abs() <= 0.0001) continue;
+      final moveRef = _db.collection('inventoryMovements').doc();
+      batch.set(
+        moveRef,
+        InventoryMovement(
+          id: moveRef.id,
+          itemId: entry.itemId,
+          itemName: entry.name,
+          unit: entry.unit,
+          type: 'count',
+          delta: diff,
+          resultingQty: entry.countedQty!,
+          reason: 'Инвентаризация',
+          employeeName: employeeName,
+          createdAt: now,
+        ).toMap(),
+      );
+    }
+    batch.update(ref, {
+      'status': 'completed',
+      'closedAt': Timestamp.fromDate(now),
+      'closedBy': employeeName,
+    });
+    await batch.commit();
+  }
+
+  /// Отменяет инвентаризацию без применения введённых цифр к остаткам —
+  /// на случай, если пересчёт начали по ошибке или его пришлось прервать.
+  Future<void> cancelInventoryCount(String countId, String employeeName) {
+    return _db.collection('inventoryCounts').doc(countId).update({
+      'status': 'cancelled',
+      'closedAt': Timestamp.fromDate(DateTime.now()),
+      'closedBy': employeeName,
+    });
+  }
+
+  /// Последние завершённые/отменённые инвентаризации — для истории.
+  Future<List<InventoryCount>> recentInventoryCounts({int limit = 20}) async {
+    final snap = await _db
+        .collection('inventoryCounts')
+        .orderBy('startedAt', descending: true)
+        .limit(limit)
+        .get();
+    return snap.docs.map((d) => InventoryCount.fromDoc(d)).toList();
   }
 }
 
