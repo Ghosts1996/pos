@@ -21,6 +21,14 @@ dependencies:
   intl: ^0.20.3
   uuid: ^4.4.2
 
+  # --- Интеграции: ЕГАИС / Честный знак / печать чека / сканеры ---
+  http: ^1.2.2                       # HTTP-клиент к локальному УТМ ЕГАИС
+  xml: ^6.5.0                        # сборка XML-документов для УТМ
+  mobile_scanner: ^6.0.2             # сканирование камерой телефона (EAN/QR/DataMatrix)
+  permission_handler: ^11.3.1        # запрос разрешения на камеру для сканера
+  esc_pos_utils_plus: ^1.0.1         # сборка ESC/POS-команд для чекового принтера
+  print_bluetooth_thermal: ^1.1.4    # печать на чековом принтере по Bluetooth
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
