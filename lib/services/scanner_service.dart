@@ -266,7 +266,32 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                         : Stack(
                             fit: StackFit.expand,
                             children: [
-                              MobileScanner(controller: _controller, onDetect: _onDetect),
+                              MobileScanner(
+                                controller: _controller,
+                                onDetect: _onDetect,
+                                // Без errorBuilder виджет сам показывает свою
+                                // англоязычную заглушку "An unexpected error
+                                // occurred" поверх диалога — это НЕ наш
+                                // _errorText из _startCamera(), а отдельная,
+                                // внутренняя ошибка самого MobileScanner,
+                                // всплывающая уже ПОСЛЕ успешного _startCamera()
+                                // (например, повторная инициализация камеры,
+                                // когда компактный диалог уже пересобирался).
+                                // Прокидываем её в тот же _errorText, чтобы
+                                // получить единый текст на русском и те же
+                                // кнопки "Повторить"/"На весь экран" снизу —
+                                // вместо дублирования UI прямо здесь.
+                                errorBuilder: (context, error) {
+                                  final text =
+                                      'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
+                                  if (_errorText != text) {
+                                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                                      if (mounted) setState(() => _errorText = text);
+                                    });
+                                  }
+                                  return _buildError(text);
+                                },
+                              ),
                               IgnorePointer(
                                 child: Container(
                                   margin: const EdgeInsets.all(12),
@@ -346,6 +371,12 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
     ],
   );
   bool _handled = false;
+  // Тот же класс ошибок, что и в компактном диалоге (см. комментарий там):
+  // без errorBuilder виджет MobileScanner сам показывает нередактируемую
+  // англоязычную заглушку "An unexpected error occurred", если разрешение
+  // не выдано или камера не смогла запуститься — а полноэкранный переход
+  // такую ошибку раньше вообще никак не обрабатывал.
+  String? _errorText;
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
@@ -381,27 +412,65 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
       ),
       body: Stack(
         children: [
-          MobileScanner(controller: _controller, onDetect: _onDetect),
-          Center(
-            child: Container(
-              width: 260,
-              height: 180,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white70, width: 2),
-                borderRadius: BorderRadius.circular(12),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+            errorBuilder: (context, error) {
+              final text =
+                  'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
+              if (_errorText != text) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) setState(() => _errorText = text);
+                });
+              }
+              return ColoredBox(
+                color: Colors.black,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.white70, size: 40),
+                        const SizedBox(height: 12),
+                        Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+                        const SizedBox(height: 16),
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _errorText = null);
+                            _controller.start();
+                          },
+                          child: const Text('Повторить'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          if (_errorText == null) ...[
+            Center(
+              child: Container(
+                width: 260,
+                height: 180,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white70, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
-          ),
-          const Positioned(
-            bottom: 32,
-            left: 0,
-            right: 0,
-            child: Text(
-              'Наведите камеру на штрихкод или DataMatrix-код',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white),
+            const Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: Text(
+                'Наведите камеру на штрихкод или DataMatrix-код',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
