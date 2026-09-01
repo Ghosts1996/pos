@@ -281,7 +281,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                                 // получить единый текст на русском и те же
                                 // кнопки "Повторить"/"На весь экран" снизу —
                                 // вместо дублирования UI прямо здесь.
-                                errorBuilder: (context, error) {
+                                errorBuilder: (context, error, child) {
                                   final text =
                                       'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
                                   if (_errorText != text) {
@@ -415,7 +415,7 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
           MobileScanner(
             controller: _controller,
             onDetect: _onDetect,
-            errorBuilder: (context, error) {
+            errorBuilder: (context, error, child) {
               final text =
                   'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
               if (_errorText != text) {
