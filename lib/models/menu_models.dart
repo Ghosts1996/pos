@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'inventory_models.dart';
 
 class MenuCategory {
   final String id;
@@ -48,6 +49,14 @@ class MenuItem {
   /// желании, как фото по умолчанию для категории.
   final String imageUrl;
 
+  /// Граммовка/объём порции в единицах [weightUnit] — тот же набор единиц,
+  /// что и на складе (г/кг/мл/л/шт). 0 — граммовка не задана (например, для
+  /// позиций, где она не имеет смысла). Хранится здесь просто как значение
+  /// на позиции меню — привязка к конкретной позиции склада и списание
+  /// делаются отдельно, вручную, самим админом.
+  final double weight;
+  final InventoryUnit weightUnit;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -55,6 +64,8 @@ class MenuItem {
     required this.price,
     this.available = true,
     this.imageUrl = '',
+    this.weight = 0,
+    this.weightUnit = InventoryUnit.g,
   });
 
   factory MenuItem.fromDoc(DocumentSnapshot doc) {
@@ -66,6 +77,8 @@ class MenuItem {
       price: (data['price'] ?? 0).toDouble(),
       available: data['available'] ?? true,
       imageUrl: data['imageUrl'] ?? '',
+      weight: (data['weight'] as num?)?.toDouble() ?? 0,
+      weightUnit: InventoryUnitX.fromName(data['weightUnit'] as String?),
     );
   }
 
@@ -75,6 +88,8 @@ class MenuItem {
         'price': price,
         'available': available,
         'imageUrl': imageUrl,
+        'weight': weight,
+        'weightUnit': weightUnit.name,
       };
 
   MenuItem copyWith({
@@ -83,6 +98,8 @@ class MenuItem {
     double? price,
     bool? available,
     String? imageUrl,
+    double? weight,
+    InventoryUnit? weightUnit,
   }) =>
       MenuItem(
         id: id,
@@ -91,5 +108,7 @@ class MenuItem {
         price: price ?? this.price,
         available: available ?? this.available,
         imageUrl: imageUrl ?? this.imageUrl,
+        weight: weight ?? this.weight,
+        weightUnit: weightUnit ?? this.weightUnit,
       );
 }
