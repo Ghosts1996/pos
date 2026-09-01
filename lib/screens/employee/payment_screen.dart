@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/payment_terminal_service.dart';
 import '../../utils/constants.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
@@ -63,6 +64,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _printReceipt = false;
   bool _printFiscalReceipt = false;
   bool _busy = false;
+  bool _terminalBusy = false;
 
   double get _total => widget.session.totalWithDiscount;
 
@@ -154,6 +156,42 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _cash.controller.text = _fmt(v);
   }
 
+  /// Отправляет недостающую сумму на физический терминал (через
+  /// [paymentTerminalService] — см. описание там про подключение
+  /// реального банковского SDK) и, при успехе, подставляет сумму в поле
+  /// "Оплата с терминала" сама — сотруднику останется только нажать
+  /// "Оплатить" ниже, как обычно.
+  Future<void> _payViaTerminal() async {
+    if (_terminalBusy || _busy) return;
+    final amount = _diff > 0.004 ? _diff : _total;
+    if (amount <= 0) return;
+    setState(() => _terminalBusy = true);
+    try {
+      final result = await paymentTerminalService.pay(amount);
+      if (!mounted) return;
+      if (result.success) {
+        setState(() {
+          _revealed.add(_terminal);
+          _terminal.controller.text = _fmt(_terminal.parse() + amount);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Оплата на терминале прошла успешно${result.maskedCardNumber != null ? ' · карта ${result.maskedCardNumber}' : ''}')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Терминал отклонил операцию: ${result.errorMessage ?? 'неизвестная ошибка'}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось связаться с терминалом: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _terminalBusy = false);
+    }
+  }
+
   Future<void> _pay() async {
     if (!_canPay || _busy) return;
     setState(() => _busy = true);
@@ -199,7 +237,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
               Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
               const SizedBox(height: 16),
-              for (final m in _methods) _amountField(m, enabled: !_closeWithoutPayment),
+              for (final m in _methods)
+                _amountField(
+                  m,
+                  enabled: !_closeWithoutPayment,
+                  trailing: m == _terminal ? _terminalPayButton() : null,
+                ),
               _contactField(),
               if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
                 Padding(
@@ -267,7 +310,36 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Widget _amountField(_PaymentMethod method, {required bool enabled}) {
+  /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа
+  /// "Оплата с терминала". Пока подключён [MockPaymentTerminalService],
+  /// нажатие просто имитирует поход к терминалу с задержкой; после
+  /// подключения реального банковского SDK поведение изменится само,
+  /// без правок этого экрана.
+  Widget _terminalPayButton() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: SizedBox(
+        height: 40,
+        width: 40,
+        child: _terminalBusy
+            ? const Padding(
+                padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : IconButton(
+                onPressed: _closeWithoutPayment ? null : _payViaTerminal,
+                tooltip: 'Оплатить с терминала',
+                icon: const Icon(Icons.point_of_sale_outlined),
+                style: IconButton.styleFrom(
+                  backgroundColor: AppColors.surfaceElevated,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _amountField(_PaymentMethod method, {required bool enabled, Widget? trailing}) {
     final revealed = _revealed.contains(method);
     final field = TextField(
       controller: method.controller,
@@ -329,6 +401,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               ),
             ),
           ),
+          if (trailing != null) trailing,
         ],
       ),
     );
