@@ -5,6 +5,8 @@ import '../screens/login_screen.dart';
 import '../screens/employee/floor_plan_screen.dart';
 import '../screens/employee/x_report_screen.dart';
 import '../screens/employee/receipts_history_screen.dart';
+import '../screens/employee/inventory_count_entry_screen.dart';
+import '../screens/employee/stock_view_screen.dart';
 import '../services/firestore_service.dart';
 
 /// Меню сотрудника — боковая панель с функциями, как в Restik POS:
@@ -161,6 +163,29 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => ReceiptsHistoryScreen(employee: widget.employee)),
+                );
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.inventory_2_outlined),
+              title: const Text('Остатки склада'),
+              subtitle: const Text('Просмотр текущих количеств', style: TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const StockViewScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.fact_check_outlined),
+              title: const Text('Инвентаризация'),
+              subtitle: const Text('Пересчёт фактических остатков склада', style: TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => InventoryCountEntryScreen(employee: widget.employee)),
                 );
               },
             ),
