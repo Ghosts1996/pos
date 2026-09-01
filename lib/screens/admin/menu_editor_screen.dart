@@ -231,3 +231,4 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final weightCtrl = TextEditingController(
         text: (item != null && item.weight > 0) ? item.weightUnit.format(item.weight) : '');
     var weightUnit = item?.weightUnit ?? InventoryUnit.g;
+    String? linkedInventoryId =
