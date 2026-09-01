@@ -20,8 +20,6 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 /// не тащить лишнюю нативную интеграцию, пока не известна конкретная
 /// модель принтера; подключается тем же способом, что и два ниже — через
 /// интерфейс [ReceiptPrinter].
-library printer_service;
-
 class ReceiptLine {
   final String left;
   final String right;
