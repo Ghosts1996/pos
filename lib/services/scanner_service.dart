@@ -147,12 +147,20 @@ class _CompactCameraScannerDialog extends StatefulWidget {
 }
 
 class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog> {
-  // autoStart: false — запускаем камеру сами, ПОСЛЕ первого кадра отрисовки
-  // диалога (см. initState). Если запустить камеру одновременно с
-  // анимацией появления диалога, на части устройств инициализация падает
-  // с общей "An unexpected error occurred" — именно это чаще всего и
-  // происходит в маленьком модальном окошке, в отличие от полноэкранного
-  // перехода, где к моменту показа кадра анимация перехода уже завершена.
+  // ВАЖНО: autoStart оставляем true (по умолчанию) и НЕ вызываем
+  // _controller.start() вручную до того, как виджет MobileScanner
+  // реально попал в дерево и его платформенная camera-view успела
+  // прикрепиться. Раньше здесь было autoStart: false + ручной
+  // await _controller.start() из initState, ПОКА на экране висел
+  // спиннер вместо MobileScanner — то есть start() дёргался для
+  // контроллера, у которого ещё не было ни одного attached виджета.
+  // На части устройств/версий CameraX это валится нативным NPE вида
+  // "Attempt to invoke virtual method ... on a null object reference",
+  // потому что CameraX пытается забиндить preview к ещё не созданному
+  // SurfaceProvider. Правильный порядок: сразу строим MobileScanner
+  // (он сам запускает камеру через autoStart, дожидаясь attach), а
+  // разрешение на камеру запрашиваем отдельно, параллельно, только
+  // чтобы показать понятный текст, если пользователь его не дал.
   final MobileScannerController _controller = MobileScannerController(
     formats: const [
       BarcodeFormat.dataMatrix,
@@ -162,47 +170,43 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
       BarcodeFormat.qrCode,
       BarcodeFormat.code39,
     ],
-    autoStart: false,
   );
   bool _handled = false;
   String? _errorText;
-  bool _starting = true;
+  bool _checkingPermission = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startCamera());
+    _checkPermission();
   }
 
-  Future<void> _startCamera() async {
-    setState(() {
-      _starting = true;
-      _errorText = null;
-    });
+  Future<void> _checkPermission() async {
     try {
-      // Запрашиваем разрешение явно, ДО запуска камеры — если системный
-      // диалог разрешения выскочит поверх уже открытого модального окна
-      // Flutter, часть устройств теряет фокус камеры и падает с общей
-      // ошибкой ниже. Отдельный запрос до старта надёжнее.
       final status = await Permission.camera.request();
-      if (!status.isGranted) {
-        if (!mounted) return;
-        setState(() {
-          _starting = false;
-          _errorText = 'Нет разрешения на камеру — разрешите доступ в настройках телефона';
-        });
-        return;
-      }
-      await _controller.start();
       if (!mounted) return;
-      setState(() => _starting = false);
+      setState(() {
+        _checkingPermission = false;
+        if (!status.isGranted) {
+          _errorText = 'Нет разрешения на камеру — разрешите доступ в настройках телефона';
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _starting = false;
-        _errorText = 'Не удалось запустить камеру: $e';
+        _checkingPermission = false;
+        _errorText = 'Не удалось запросить разрешение на камеру: $e';
       });
     }
+  }
+
+  /// Кнопка "Повторить" в состоянии ошибки — просто заново проверяет
+  /// разрешение и, если оно уже есть, сбрасывает _errorText, снова
+  /// показывая MobileScanner (он перезапустит камеру сам через autoStart
+  /// при следующей вставке в дерево/через встроенный lifecycle).
+  Future<void> _retry() async {
+    setState(() => _errorText = null);
+    await _checkPermission();
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -233,7 +237,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 Expanded(
                   child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w600)),
                 ),
-                if (_errorText == null && !_starting)
+                if (_errorText == null && !_checkingPermission)
                   IconButton(
                     icon: ValueListenableBuilder(
                       valueListenable: _controller,
@@ -256,7 +260,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 borderRadius: BorderRadius.circular(12),
                 child: _errorText != null
                     ? _buildError(_errorText!)
-                    : _starting
+                    : _checkingPermission
                         ? const ColoredBox(
                             color: Colors.black,
                             child: Center(
@@ -269,15 +273,23 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                               MobileScanner(
                                 controller: _controller,
                                 onDetect: _onDetect,
+                                // placeholderBuilder закрывает короткий
+                                // промежуток, пока сам виджет ещё
+                                // прикрепляется и запускает камеру через
+                                // autoStart — раньше в это время рендерился
+                                // отдельный "_starting" спиннер поверх ещё
+                                // не построенного MobileScanner, что и
+                                // приводило к преждевременному start().
+                                placeholderBuilder: (context, child) => const ColoredBox(
+                                  color: Colors.black,
+                                  child: Center(
+                                    child: CircularProgressIndicator(color: Colors.white70),
+                                  ),
+                                ),
                                 // Без errorBuilder виджет сам показывает свою
                                 // англоязычную заглушку "An unexpected error
-                                // occurred" поверх диалога — это НЕ наш
-                                // _errorText из _startCamera(), а отдельная,
-                                // внутренняя ошибка самого MobileScanner,
-                                // всплывающая уже ПОСЛЕ успешного _startCamera()
-                                // (например, повторная инициализация камеры,
-                                // когда компактный диалог уже пересобирался).
-                                // Прокидываем её в тот же _errorText, чтобы
+                                // occurred" поверх диалога. Ловим её здесь и
+                                // прокидываем в тот же _errorText, чтобы
                                 // получить единый текст на русском и те же
                                 // кнопки "Повторить"/"На весь экран" снизу —
                                 // вместо дублирования UI прямо здесь.
@@ -316,7 +328,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  TextButton(onPressed: _startCamera, child: const Text('Повторить')),
+                  TextButton(onPressed: _retry, child: const Text('Повторить')),
                   const SizedBox(width: 8),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(_fullscreenFallbackSentinel),
