@@ -6,6 +6,7 @@ import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scanner_service.dart';
 import '../../services/chestny_znak_service.dart';
+import '../../services/chestny_znak_api_service.dart';
 import '../../utils/constants.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
@@ -47,6 +48,29 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           _showSnack('Этот код маркировки уже был продан ранее — повторно продать нельзя');
           return;
         }
+        // Онлайн-проверка напрямую в ИС МП «Честный знак» — ловит код,
+        // проданный на другой точке, или подделку, чего локальный журнал
+        // выше не увидит. Работает только если в Настройках → Интеграции
+        // задан токен; иначе checkOnlineStatus вернёт null и сканирование
+        // продолжится как раньше, только на локальной проверке.
+        try {
+          final online = await _cz.checkOnlineStatus(marking);
+          if (online != null) {
+            if (!online.valid) {
+              _showSnack('Код не найден в системе «Честный знак» — похоже на подделку, продавать нельзя');
+              return;
+            }
+            if (online.alreadyRetired) {
+              _showSnack('По данным «Честного знака» этот код уже выведен из оборота — продавать нельзя');
+              return;
+            }
+          }
+        } on ChestnyZnakApiException catch (e) {
+          // Не блокируем продажу из-за сбоя связи с «Честным знаком» —
+          // локальной проверки выше достаточно, чтобы не продать код
+          // дважды с этой же кассы; просто предупреждаем.
+          _showSnack('Честный знак: онлайн-проверка недоступна ($e), код принят по локальной проверке');
+        }
       }
 
       final invItem = await _fs.findInventoryItemByGtin(gtin);
@@ -62,7 +86,12 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
 
       await _add(menuItem);
       if (marking != null) {
-        await _cz.attachToReceipt(marking, receiptId: widget.session.id);
+        await _cz.attachToReceipt(
+          marking,
+          receiptId: widget.session.id,
+          menuItemId: menuItem.id,
+          itemName: menuItem.name,
+        );
       }
     } catch (e) {
       _showSnack('Ошибка сканирования: $e');
