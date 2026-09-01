@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
+import 'services/printer_service.dart';
+import 'services/kassa_service.dart';
 import 'screens/image_preload_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
@@ -38,6 +41,10 @@ void main() async {
         Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
       ]);
       ready = true;
+      // Не блокирует старт приложения — принтер/касса подтянутся чуть
+      // позже, если настроены, а не настроены — ничего не сломается.
+      unawaited(loadSavedPrinterSettings());
+      unawaited(loadSavedKassaSettings());
     } catch (e) {
       startupError = e.toString();
     }
