@@ -5,6 +5,7 @@ import 'menu_editor_screen.dart';
 import 'discount_cards_screen.dart';
 import 'employees_screen.dart';
 import 'reports_screen.dart';
+import 'inventory_screen.dart';
 import '../login_screen.dart';
 
 class AdminHomeScreen extends StatelessWidget {
@@ -17,6 +18,7 @@ class AdminHomeScreen extends StatelessWidget {
       _AdminTile('Отчёты', Icons.bar_chart, (ctx) => const ReportsScreen()),
       _AdminTile('Карта зала', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
       _AdminTile('Меню', Icons.restaurant_menu, (ctx) => const MenuEditorScreen()),
+      _AdminTile('Склад', Icons.inventory_2_outlined, (ctx) => InventoryScreen(employee: employee)),
       _AdminTile('Скидочные карты', Icons.card_giftcard, (ctx) => const DiscountCardsScreen()),
       _AdminTile('Сотрудники', Icons.people, (ctx) => const EmployeesScreen()),
     ];
