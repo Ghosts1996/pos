@@ -116,6 +116,115 @@ Future<String?> showCameraScanner(BuildContext context, {String title = 'Ска�
   );
 }
 
+/// То же самое, что [showCameraScanner], но вместо полноэкранного перехода —
+/// небольшое окошко поверх текущего экрана (для разовой проверки кода в
+/// настройках, где не нужен весь экран под камеру). Закрывается тапом мимо
+/// окна или крестиком, как и обычный диалог.
+Future<String?> showCompactCameraScanner(BuildContext context, {String title = 'Сканирование'}) {
+  return showDialog<String>(
+    context: context,
+    builder: (_) => _CompactCameraScannerDialog(title: title),
+  );
+}
+
+class _CompactCameraScannerDialog extends StatefulWidget {
+  final String title;
+  const _CompactCameraScannerDialog({required this.title});
+
+  @override
+  State<_CompactCameraScannerDialog> createState() => _CompactCameraScannerDialogState();
+}
+
+class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog> {
+  final MobileScannerController _controller = MobileScannerController(
+    formats: const [
+      BarcodeFormat.dataMatrix,
+      BarcodeFormat.ean13,
+      BarcodeFormat.ean8,
+      BarcodeFormat.code128,
+      BarcodeFormat.qrCode,
+      BarcodeFormat.code39,
+    ],
+  );
+  bool _handled = false;
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handled) return;
+    final value = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
+    if (value == null || value.isEmpty) return;
+    _handled = true;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                IconButton(
+                  icon: ValueListenableBuilder(
+                    valueListenable: _controller,
+                    builder: (context, state, child) => Icon(
+                      state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                    ),
+                  ),
+                  onPressed: () => _controller.toggleTorch(),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            SizedBox(
+              width: 280,
+              height: 280,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    MobileScanner(controller: _controller, onDetect: _onDetect),
+                    IgnorePointer(
+                      child: Container(
+                        margin: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white70, width: 2),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Наведите камеру на код',
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CameraScannerScreen extends StatefulWidget {
   final String title;
   const _CameraScannerScreen({required this.title});
