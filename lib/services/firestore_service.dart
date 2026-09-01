@@ -327,10 +327,12 @@ class FirestoreService {
   }
 
   /// Списывает позиции склада по проданным пунктам меню.
-  /// Для каждого OrderItem получает MenuItem, проверяет наличие привязки к
-  /// складу (inventoryItemId) и ненулевой граммовки, затем вызывает
-  /// adjustInventoryQuantity. Ошибки по отдельным позициям не прерывают
-  /// списание остальных.
+  /// Поддерживает два режима:
+  /// 1. Простая позиция — одна привязка inventoryItemId + weight.
+  /// 2. Составная позиция (микс) — список components, каждый со своим
+  ///    inventoryItemId и weight. Например "Тарелка Снэков": орешки + чипсы
+  ///    + сухарики списываются независимо с указанными граммовками.
+  /// Ошибки по отдельным позициям не прерывают списание остальных.
   Future<void> _deductInventoryForSale(
       List<OrderItem> orderItems, String employeeName) async {
     // Собираем уникальные menuItemId из заказа
@@ -351,29 +353,55 @@ class FirestoreService {
     // Для каждой строки заказа — списываем склад если настроена привязка
     for (final orderItem in orderItems) {
       final menuItem = menuMap[orderItem.menuItemId];
-      if (menuItem == null || !menuItem.hasInventoryLink) continue;
+      if (menuItem == null || !menuItem.hasAnyInventoryLink) continue;
 
-      final delta = -(menuItem.weight * orderItem.qty);
-      try {
-        // Получаем актуальное имя позиции склада для записи в движение
-        final invDoc = await _db
-            .collection('inventoryItems')
-            .doc(menuItem.inventoryItemId)
-            .get();
-        if (!invDoc.exists) continue;
-        final invItem = InventoryItem.fromDoc(invDoc);
-
-        await adjustInventoryQuantity(
-          itemId: menuItem.inventoryItemId,
-          itemName: invItem.name,
-          unit: invItem.unit,
-          delta: delta,
-          type: 'writeoff',
-          employeeName: employeeName,
-          reason: 'Продажа: ${orderItem.name} ×${orderItem.qty}',
-        );
-      } catch (_) {
-        // Не блокируем оплату из-за ошибок списания
+      if (menuItem.isComposite) {
+        // Составная позиция: списываем каждый компонент отдельно
+        for (final component in menuItem.components) {
+          if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
+          final delta = -(component.weight * orderItem.qty);
+          try {
+            final invDoc = await _db
+                .collection('inventoryItems')
+                .doc(component.inventoryItemId)
+                .get();
+            if (!invDoc.exists) continue;
+            final invItem = InventoryItem.fromDoc(invDoc);
+            await adjustInventoryQuantity(
+              itemId: component.inventoryItemId,
+              itemName: invItem.name,
+              unit: invItem.unit,
+              delta: delta,
+              type: 'writeoff',
+              employeeName: employeeName,
+              reason: 'Продажа: ${orderItem.name} ×${orderItem.qty} (компонент)',
+            );
+          } catch (_) {
+            // Не блокируем оплату из-за ошибок списания компонента
+          }
+        }
+      } else {
+        // Простая позиция: одна привязка к складу
+        final delta = -(menuItem.weight * orderItem.qty);
+        try {
+          final invDoc = await _db
+              .collection('inventoryItems')
+              .doc(menuItem.inventoryItemId)
+              .get();
+          if (!invDoc.exists) continue;
+          final invItem = InventoryItem.fromDoc(invDoc);
+          await adjustInventoryQuantity(
+            itemId: menuItem.inventoryItemId,
+            itemName: invItem.name,
+            unit: invItem.unit,
+            delta: delta,
+            type: 'writeoff',
+            employeeName: employeeName,
+            reason: 'Продажа: ${orderItem.name} ×${orderItem.qty}',
+          );
+        } catch (_) {
+          // Не блокируем оплату из-за ошибок списания
+        }
       }
     }
   }
