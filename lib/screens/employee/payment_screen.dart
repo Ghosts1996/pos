@@ -7,7 +7,9 @@ import '../../services/payment_terminal_service.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_service.dart';
+import '../../services/egais_service.dart';
 import '../../models/fiscal_receipt.dart';
+import '../../models/egais_models.dart';
 import '../../utils/constants.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
@@ -284,20 +286,47 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
     try {
       final cz = ChestnyZnakService();
-      final markingCodes = await cz.codesForReceipt(widget.session.id);
-      // Лучшее сопоставление кода с позицией чека, какое возможно без
-      // отдельного хранения "код -> позиция" на самой сессии: по названию
-      // позиции меню, для которой этот код сканировался при добавлении
-      // (см. menu_selection_screen._onScan). Если сопоставить не удалось —
-      // код всё равно попадёт в чек отдельной строкой ниже, чтобы не
-      // потерять его молча.
+      final markingCodes = await cz.codesForReceiptDetailed(widget.session.id);
+      // Группируем отсканированные коды по menuItemId — каждая штука
+      // маркированного товара должна попасть в чек ОТДЕЛЬНОЙ строкой с
+      // quantity=1 и своим кодом в теге 1162 (так требует ФФД, нельзя
+      // "размазать" один код на несколько единиц в одной строке).
+      final codesByMenuItem = <String, List<String>>{};
+      for (final entry in markingCodes) {
+        if (entry.menuItemId.isEmpty) continue;
+        codesByMenuItem.putIfAbsent(entry.menuItemId, () => []).add(entry.code.raw);
+      }
+
       final items = <FiscalReceiptItem>[];
       for (final line in widget.session.orderItems) {
-        items.add(FiscalReceiptItem(
-          name: line.name,
-          price: line.price,
-          quantity: line.qty.toDouble(),
-        ));
+        final codes = List<String>.from(codesByMenuItem[line.menuItemId] ?? const []);
+        // Столько единиц позиции промаркировано отсканированными кодами —
+        // на них заводим отдельные строки chek'а с markingCode.
+        final markedCount = codes.length.clamp(0, line.qty);
+        for (var i = 0; i < markedCount; i++) {
+          items.add(FiscalReceiptItem(
+            name: line.name,
+            price: line.price,
+            quantity: 1,
+            paymentObject: FiscalPaymentObject.markedGood,
+            markingCode: codes[i],
+          ));
+        }
+        // Остаток количества этой позиции (не покрытый сканированием —
+        // например, официант выбрал позицию из меню тапом, а не сканером)
+        // идёт обычной строкой без кода. Если для этой позиции маркировка
+        // обязательна ([InventoryItem.isMarked]), такой остаток означает,
+        // что часть проданного товара не была отсканирована и официально
+        // не выведена из оборота — это не может починить код, только
+        // организационно (обязательное сканирование каждой единицы).
+        final rest = line.qty - markedCount;
+        if (rest > 0) {
+          items.add(FiscalReceiptItem(
+            name: line.name,
+            price: line.price,
+            quantity: rest.toDouble(),
+          ));
+        }
       }
 
       final payments = <FiscalPayment>[
@@ -317,13 +346,41 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       if (!result.success) {
         _showKassaWarning('Касса отклонила чек: ${result.errorMessage}');
-      } else if (markingCodes.isNotEmpty) {
-        // Успешная фискализация с кодами маркировки в чеке — именно этот
-        // момент официально выводит их из оборота через ОФД → ИС МП.
-        _showKassaWarning('Чек пробит, ${markingCodes.length} код(ов) маркировки списано');
+      } else {
+        if (markingCodes.isNotEmpty) {
+          // Успешная фискализация с кодами маркировки в чеке — именно этот
+          // момент официально выводит их из оборота через ОФД → ИС МП.
+          _showKassaWarning('Чек пробит, ${markingCodes.length} код(ов) маркировки списано');
+        }
+        await _sendToEgaisIfNeeded();
       }
     } catch (e) {
       _showKassaWarning('Не удалось отправить чек в кассу: $e');
+    }
+  }
+
+  /// Отправляет документ розничной продажи в ЕГАИС (УТМ) по алкогольным
+  /// позициям чека — вызывается сразу после успешной фискализации в кассе.
+  /// Не блокирует и не отменяет уже проведённую оплату при сбое: касса уже
+  /// пробила чек, стол уже закрыт, а неотправленный документ ЕГАИС — это
+  /// отдельная проблема, которую нужно решать (обычно повторной отправкой
+  /// после восстановления связи с УТМ), но не откатом уже состоявшейся
+  /// продажи. Поэтому при ошибке — только предупреждение на экране.
+  Future<void> _sendToEgaisIfNeeded() async {
+    try {
+      final lines = await _fs.resolveAlcoholSaleLines(widget.session.orderItems);
+      if (lines.isEmpty) return;
+      final egais = activeEgaisService;
+      if (egais == null) {
+        _showKassaWarning('В чеке есть алкоголь, но УТМ ЕГАИС не настроен — Настройки → Интеграции');
+        return;
+      }
+      await egais.sendRetailSale(lines: lines, receiptNumber: widget.session.id);
+      _showKassaWarning('Продажа алкоголя отправлена в ЕГАИС');
+    } on EgaisException catch (e) {
+      _showKassaWarning('Не удалось отправить продажу в ЕГАИС: $e');
+    } catch (e) {
+      _showKassaWarning('Не удалось отправить продажу в ЕГАИС: $e');
     }
   }
 
