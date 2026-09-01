@@ -4,6 +4,8 @@ import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/scanner_service.dart';
+import '../../services/chestny_znak_service.dart';
 import '../../utils/constants.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
@@ -23,7 +25,61 @@ class MenuSelectionScreen extends StatefulWidget {
 
 class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
   final _fs = FirestoreService();
+  final _cz = ChestnyZnakService();
   String _query = '';
+  bool _scanBusy = false;
+
+  /// Общий обработчик для обоих способов сканирования — HID-сканера
+  /// (see [HidScannerListener] в build()) и камеры (см. кнопку в AppBar).
+  /// Сначала пробуем распознать код как маркировку «Честного знака»
+  /// (DataMatrix), если это не она — ищем позицию склада по обычному
+  /// штрихкоду (GTIN) и добавляем связанную позицию меню.
+  Future<void> _onScan(String rawCode) async {
+    if (_scanBusy) return;
+    _scanBusy = true;
+    try {
+      final marking = _cz.parse(rawCode);
+      final gtin = marking?.gtin ?? rawCode;
+
+      if (marking != null) {
+        final alreadySold = await _cz.isAlreadySold(marking);
+        if (alreadySold) {
+          _showSnack('Этот код маркировки уже был продан ранее — повторно продать нельзя');
+          return;
+        }
+      }
+
+      final invItem = await _fs.findInventoryItemByGtin(gtin);
+      if (invItem == null) {
+        _showSnack('Позиция с этим кодом не найдена на складе');
+        return;
+      }
+      final menuItem = await _fs.findMenuItemByInventoryItemId(invItem.id);
+      if (menuItem == null) {
+        _showSnack('Для "${invItem.name}" нет связанной позиции меню');
+        return;
+      }
+
+      await _add(menuItem);
+      if (marking != null) {
+        await _cz.attachToReceipt(marking, receiptId: widget.session.id);
+      }
+    } catch (e) {
+      _showSnack('Ошибка сканирования: $e');
+    } finally {
+      _scanBusy = false;
+    }
+  }
+
+  void _showSnack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _scanWithCamera() async {
+    final code = await showCameraScanner(context, title: 'Сканировать позицию');
+    if (code != null) await _onScan(code);
+  }
 
   Future<void> _add(MenuItem item) async {
     try {
@@ -53,10 +109,22 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return HidScannerListener(
+      // HID-сканер (USB/BT "пистолет") работает в фоне на всём экране меню
+      // без отдельной кнопки — просто сканируешь, пока курсор ввода нигде
+      // не открыт в текстовом поле.
+      onCode: _onScan,
+      child: Scaffold(
       backgroundColor: const Color(0xFFF2F2F2),
       appBar: AppBar(
         title: const Text('Меню'),
+        actions: [
+          IconButton(
+            tooltip: 'Сканировать камерой',
+            icon: const Icon(Icons.qr_code_scanner),
+            onPressed: _scanWithCamera,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(56),
           child: Padding(
@@ -122,6 +190,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
         },
       ),
       bottomNavigationBar: _CheckoutBar(session: widget.session),
+      ),
     );
   }
 }
