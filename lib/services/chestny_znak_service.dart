@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/marking_code.dart';
+import 'chestny_znak_api_service.dart';
 
 /// Интеграция с системой маркировки «Честный ЗНАК».
 ///
@@ -44,9 +45,27 @@ class ChestnyZnakService {
   /// продан ранее — по локальному журналу списаний. Проверять нужно перед
   /// добавлением позиции в чек, чтобы не продать одну бутылку дважды по
   /// одному коду (частая причина штрафа при проверке).
+  ///
+  /// Это только локальная (на этом кассовом месте) защита. Если в
+  /// Настройках → Интеграции указан токен «Честного знака»
+  /// ([activeChestnyZnakApi] не null), дополнительно смотрим
+  /// [checkOnlineStatus] — он же в силах поймать код, проданный на ДРУГОЙ
+  /// кассе/точке или вовсе поддельный, чего локальный журнал не увидит.
   Future<bool> isAlreadySold(MarkingCode code) async {
     final doc = await _db.collection('marking_codes_sold').doc(_docId(code)).get();
     return doc.exists;
+  }
+
+  /// Онлайн-проверка кода напрямую в ИС МП «Честный знак» (методом
+  /// `codes/check` — см. `chestny_znak_api_service.dart`). Возвращает null,
+  /// если в Настройках → Интеграции не задан токен — тогда сканирование
+  /// продолжает работать только на локальной проверке [isAlreadySold], без
+  /// онлайн-части.
+  Future<ChestnyZnakCodeCheck?> checkOnlineStatus(MarkingCode code) async {
+    final api = activeChestnyZnakApi;
+    if (api == null) return null;
+    final results = await api.checkCodes([code.raw]);
+    return results.isEmpty ? null : results.first;
   }
 
   /// Помечает код как использованный в чеке [receiptId] и кладёт его в
@@ -54,12 +73,24 @@ class ChestnyZnakService {
   /// списание произойдёт при пробитии чека через онлайн-кассу, когда она
   /// будет подключена; до этого момента запись в очереди носит учётный
   /// характер и не является легальным выводом из оборота).
-  Future<void> attachToReceipt(MarkingCode code, {required String receiptId}) async {
+  ///
+  /// [menuItemId]/[itemName] — позиция меню, при сканировании которой был
+  /// считан этот код. Нужны, чтобы на экране оплаты сопоставить код именно
+  /// с той строкой чека (а не воткнуть его в чек "куда попало") — см.
+  /// [codesForReceiptDetailed] и `payment_screen.dart`.
+  Future<void> attachToReceipt(
+    MarkingCode code, {
+    required String receiptId,
+    String menuItemId = '',
+    String itemName = '',
+  }) async {
     await _db.collection('marking_codes_sold').doc(_docId(code)).set({
       'gtin': code.gtin,
       'serial': code.serial,
       'raw': code.raw,
       'receiptId': receiptId,
+      'menuItemId': menuItemId,
+      'itemName': itemName,
       'soldAt': FieldValue.serverTimestamp(),
       // 'retiredAtOfd' проставится true после того, как SDK кассы
       // подтвердит, что код ушёл в чек и передан в ОФД.
@@ -73,14 +104,36 @@ class ChestnyZnakService {
   /// стола) — используются при сборке фискального чека, чтобы подставить
   /// их в позиции (тег ФФД 1162, см. `fiscal_receipt.dart`).
   Future<List<MarkingCode>> codesForReceipt(String receiptId) async {
+    final detailed = await codesForReceiptDetailed(receiptId);
+    return detailed.map((e) => e.code).toList();
+  }
+
+  /// То же самое, что [codesForReceipt], но вместе с позицией меню, к
+  /// которой код был привязан при сканировании — по ней экран оплаты
+  /// сопоставляет код с конкретной строкой чека (см. `payment_screen.dart`,
+  /// `_sendToKassa`).
+  Future<List<AttachedMarkingCode>> codesForReceiptDetailed(String receiptId) async {
     final snap =
         await _db.collection('marking_codes_sold').where('receiptId', isEqualTo: receiptId).get();
     return snap.docs
-        .map((d) => MarkingCode(
-              raw: d['raw'] as String,
-              gtin: d['gtin'] as String,
-              serial: d['serial'] as String,
+        .map((d) => AttachedMarkingCode(
+              code: MarkingCode(
+                raw: d['raw'] as String,
+                gtin: d['gtin'] as String,
+                serial: d['serial'] as String,
+              ),
+              menuItemId: (d.data()['menuItemId'] as String?) ?? '',
+              itemName: (d.data()['itemName'] as String?) ?? '',
             ))
         .toList();
   }
+}
+
+/// Код маркировки вместе с позицией меню, к которой он был привязан при
+/// сканировании (см. [ChestnyZnakService.attachToReceipt]).
+class AttachedMarkingCode {
+  final MarkingCode code;
+  final String menuItemId;
+  final String itemName;
+  const AttachedMarkingCode({required this.code, required this.menuItemId, required this.itemName});
 }
