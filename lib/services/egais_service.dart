@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 import 'package:uuid/uuid.dart';
@@ -183,4 +184,24 @@ class EgaisException implements Exception {
   EgaisException(this.message);
   @override
   String toString() => message;
+}
+
+/// Единая точка получения активного клиента УТМ во всём приложении — как
+/// [kassaService]/[activeReceiptPrinter]. null, пока IP УТМ не указан в
+/// Настройках → Интеграции: тогда экран оплаты просто не пытается
+/// отправлять документ в ЕГАИС (см. `payment_screen.dart`), вместо падения.
+EgaisUtmService? activeEgaisService;
+
+/// Подтягивает сохранённый IP компьютера с УТМ (settings/integrations) и
+/// заполняет [activeEgaisService] — вызывается один раз при старте
+/// приложения, аналогично [loadSavedKassaSettings] в `kassa_service.dart`.
+Future<void> loadSavedEgaisSettings() async {
+  try {
+    final doc = await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+    final host = doc.data()?['utmHost'] as String?;
+    activeEgaisService = (host != null && host.isNotEmpty) ? EgaisUtmService(utmHost: host) : null;
+  } catch (_) {
+    // Нет сети/документа при первом запуске — activeEgaisService остаётся
+    // null до захода в Настройки → Интеграции.
+  }
 }
