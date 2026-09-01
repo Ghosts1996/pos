@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Два физически разных способа получить штрихкод/код маркировки, но
 /// один и тот же результат для остального приложения — строка [onCode].
@@ -119,13 +120,23 @@ Future<String?> showCameraScanner(BuildContext context, {String title = 'Ска�
 /// То же самое, что [showCameraScanner], но вместо полноэкранного перехода —
 /// небольшое окошко поверх текущего экрана (для разовой проверки кода в
 /// настройках, где не нужен весь экран под камеру). Закрывается тапом мимо
-/// окна или крестиком, как и обычный диалог.
-Future<String?> showCompactCameraScanner(BuildContext context, {String title = 'Сканирование'}) {
-  return showDialog<String>(
+/// окна или крестиком, как и обычный диалог. Если камера не заводится в
+/// маленьком окне на конкретном устройстве, в диалоге есть кнопка
+/// "Открыть на весь экран" — тогда прозрачно подхватывается проверенный
+/// [showCameraScanner].
+Future<String?> showCompactCameraScanner(BuildContext context, {String title = 'Сканирование'}) async {
+  final result = await showDialog<String>(
     context: context,
     builder: (_) => _CompactCameraScannerDialog(title: title),
   );
+  if (result == _fullscreenFallbackSentinel) {
+    if (!context.mounted) return null;
+    return showCameraScanner(context, title: title);
+  }
+  return result;
 }
+
+const _fullscreenFallbackSentinel = '__open_fullscreen_scanner__';
 
 class _CompactCameraScannerDialog extends StatefulWidget {
   final String title;
@@ -136,6 +147,12 @@ class _CompactCameraScannerDialog extends StatefulWidget {
 }
 
 class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog> {
+  // autoStart: false — запускаем камеру сами, ПОСЛЕ первого кадра отрисовки
+  // диалога (см. initState). Если запустить камеру одновременно с
+  // анимацией появления диалога, на части устройств инициализация падает
+  // с общей "An unexpected error occurred" — именно это чаще всего и
+  // происходит в маленьком модальном окошке, в отличие от полноэкранного
+  // перехода, где к моменту показа кадра анимация перехода уже завершена.
   final MobileScannerController _controller = MobileScannerController(
     formats: const [
       BarcodeFormat.dataMatrix,
@@ -145,8 +162,48 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
       BarcodeFormat.qrCode,
       BarcodeFormat.code39,
     ],
+    autoStart: false,
   );
   bool _handled = false;
+  String? _errorText;
+  bool _starting = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startCamera());
+  }
+
+  Future<void> _startCamera() async {
+    setState(() {
+      _starting = true;
+      _errorText = null;
+    });
+    try {
+      // Запрашиваем разрешение явно, ДО запуска камеры — если системный
+      // диалог разрешения выскочит поверх уже открытого модального окна
+      // Flutter, часть устройств теряет фокус камеры и падает с общей
+      // ошибкой ниже. Отдельный запрос до старта надёжнее.
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (!mounted) return;
+        setState(() {
+          _starting = false;
+          _errorText = 'Нет разрешения на камеру — разрешите доступ в настройках телефона';
+        });
+        return;
+      }
+      await _controller.start();
+      if (!mounted) return;
+      setState(() => _starting = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _starting = false;
+        _errorText = 'Не удалось запустить камеру: $e';
+      });
+    }
+  }
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
@@ -176,15 +233,16 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 Expanded(
                   child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w600)),
                 ),
-                IconButton(
-                  icon: ValueListenableBuilder(
-                    valueListenable: _controller,
-                    builder: (context, state, child) => Icon(
-                      state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                if (_errorText == null && !_starting)
+                  IconButton(
+                    icon: ValueListenableBuilder(
+                      valueListenable: _controller,
+                      builder: (context, state, child) => Icon(
+                        state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                      ),
                     ),
+                    onPressed: () => _controller.toggleTorch(),
                   ),
-                  onPressed: () => _controller.toggleTorch(),
-                ),
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () => Navigator.of(context).pop(),
@@ -196,29 +254,72 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
               height: 280,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    MobileScanner(controller: _controller, onDetect: _onDetect),
-                    IgnorePointer(
-                      child: Container(
-                        margin: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white70, width: 2),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                child: _errorText != null
+                    ? _buildError(_errorText!)
+                    : _starting
+                        ? const ColoredBox(
+                            color: Colors.black,
+                            child: Center(
+                              child: CircularProgressIndicator(color: Colors.white70),
+                            ),
+                          )
+                        : Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              MobileScanner(controller: _controller, onDetect: _onDetect),
+                              IgnorePointer(
+                                child: Container(
+                                  margin: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.white70, width: 2),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
               ),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Наведите камеру на код',
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
+            if (_errorText == null)
+              const Text(
+                'Наведите камеру на код',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton(onPressed: _startCamera, child: const Text('Повторить')),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(_fullscreenFallbackSentinel),
+                    child: const Text('Открыть на весь экран'),
+                  ),
+                ],
+              ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildError(String text) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white70, size: 32),
+              const SizedBox(height: 8),
+              Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            ],
+          ),
         ),
       ),
     );
