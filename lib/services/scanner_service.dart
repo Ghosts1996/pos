@@ -372,7 +372,16 @@ class _CameraScannerScreen extends StatefulWidget {
 }
 
 class _CameraScannerScreenState extends State<_CameraScannerScreen> {
-  final MobileScannerController _controller = MobileScannerController(
+  // _scannerKey меняется при каждом "Повторить" — это заставляет Flutter
+  // полностью пересоздать MobileScanner (и его internal state/controller
+  // lifecycle) с нуля, а не просто повторно дёрнуть .start() у уже
+  // существующего контроллера. Плагин mobile_scanner в разных версиях
+  // по-разному ведёт себя при повторном ручном start() (в некоторых
+  // версиях это даже кидает отдельную ошибку "controller is still
+  // initializing"), так что полное пересоздание — самый предсказуемый
+  // способ повторной попытки независимо от версии плагина.
+  Key _scannerKey = UniqueKey();
+  MobileScannerController _controller = MobileScannerController(
     formats: const [
       BarcodeFormat.dataMatrix,
       BarcodeFormat.ean13,
@@ -396,6 +405,28 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
     if (value == null || value.isEmpty) return;
     _handled = true;
     Navigator.of(context).pop(value);
+  }
+
+  void _retry() {
+    // Старый контроллер уже мог оказаться в неопределённом состоянии
+    // после сбоя нативной стороны — создаём полностью новый вместе с
+    // новым ключом виджета, а не пытаемся оживить прежний.
+    final oldController = _controller;
+    setState(() {
+      _errorText = null;
+      _scannerKey = UniqueKey();
+      _controller = MobileScannerController(
+        formats: const [
+          BarcodeFormat.dataMatrix,
+          BarcodeFormat.ean13,
+          BarcodeFormat.ean8,
+          BarcodeFormat.code128,
+          BarcodeFormat.qrCode,
+          BarcodeFormat.code39,
+        ],
+      );
+    });
+    oldController.dispose();
   }
 
   @override
@@ -425,6 +456,7 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
       body: Stack(
         children: [
           MobileScanner(
+            key: _scannerKey,
             controller: _controller,
             onDetect: _onDetect,
             errorBuilder: (context, error, child) {
@@ -448,10 +480,7 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
                         Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
                         const SizedBox(height: 16),
                         TextButton(
-                          onPressed: () {
-                            setState(() => _errorText = null);
-                            _controller.start();
-                          },
+                          onPressed: _retry,
                           child: const Text('Повторить'),
                         ),
                       ],
