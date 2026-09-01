@@ -2,6 +2,7 @@ import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
@@ -94,7 +95,9 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                               onTap: () => _pickAndUploadItemImage(item),
                             ),
                             title: Text(item.name),
-                            subtitle: Text('${item.price.toStringAsFixed(0)} ₽'),
+                            subtitle: Text(item.weight > 0
+                                ? '${item.price.toStringAsFixed(0)} ₽ · ${item.weightUnit.formatWithLabel(item.weight)}'
+                                : '${item.price.toStringAsFixed(0)} ₽'),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -206,34 +209,85 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   Future<void> _editItem(BuildContext context, MenuItem? item, {String? categoryId}) async {
     final nameCtrl = TextEditingController(text: item?.name ?? '');
     final priceCtrl = TextEditingController(text: item?.price.toStringAsFixed(0) ?? '');
-    final ok = await showDialog<bool>(
+    final weightCtrl = TextEditingController(
+        text: (item != null && item.weight > 0) ? item.weightUnit.format(item.weight) : '');
+    var weightUnit = item?.weightUnit ?? InventoryUnit.g;
+
+    final result = await showDialog<_ItemDialogResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(item == null ? 'Новая позиция' : 'Редактировать'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Название')),
-            TextField(
-              controller: priceCtrl,
-              decoration: const InputDecoration(labelText: 'Цена, ₽'),
-              keyboardType: TextInputType.number,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(item == null ? 'Новая позиция' : 'Редактировать'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Название')),
+              TextField(
+                controller: priceCtrl,
+                decoration: const InputDecoration(labelText: 'Цена, ₽'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 8),
+              // Граммовка/объём порции — те же единицы, что и на складе,
+              // чтобы в будущем можно было сопоставить позицию меню с
+              // конкретной позицией склада для списания.
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: weightCtrl,
+                      decoration: const InputDecoration(labelText: 'Граммовка (необязательно)'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  DropdownButton<InventoryUnit>(
+                    value: weightUnit,
+                    items: InventoryUnit.values
+                        .map((u) => DropdownMenuItem(value: u, child: Text(u.label)))
+                        .toList(),
+                    onChanged: (u) {
+                      if (u != null) setDialogState(() => weightUnit = u);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                  ctx,
+                  _ItemDialogResult(
+                    name: nameCtrl.text.trim(),
+                    price: double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0,
+                    weight: double.tryParse(weightCtrl.text.replaceAll(',', '.')) ?? 0,
+                    weightUnit: weightUnit,
+                  )),
+              child: const Text('Сохранить'),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сохранить')),
-        ],
       ),
     );
-    if (ok != true || nameCtrl.text.trim().isEmpty) return;
-    final price = double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0;
+    if (result == null || result.name.isEmpty) return;
     if (item == null) {
-      await _fs.addMenuItem(
-          MenuItem(id: '', categoryId: categoryId!, name: nameCtrl.text.trim(), price: price));
+      await _fs.addMenuItem(MenuItem(
+        id: '',
+        categoryId: categoryId!,
+        name: result.name,
+        price: result.price,
+        weight: result.weight,
+        weightUnit: result.weightUnit,
+      ));
     } else {
-      await _fs.updateMenuItem(item.copyWith(name: nameCtrl.text.trim(), price: price));
+      await _fs.updateMenuItem(item.copyWith(
+        name: result.name,
+        price: result.price,
+        weight: result.weight,
+        weightUnit: result.weightUnit,
+      ));
     }
   }
 
@@ -277,6 +331,21 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
       ),
     );
   }
+}
+
+/// Результат диалога создания/редактирования позиции меню.
+class _ItemDialogResult {
+  final String name;
+  final double price;
+  final double weight;
+  final InventoryUnit weightUnit;
+
+  _ItemDialogResult({
+    required this.name,
+    required this.price,
+    required this.weight,
+    required this.weightUnit,
+  });
 }
 
 /// Круглая миниатюра фото с кликабельным оверлеем-камерой поверх — тап
