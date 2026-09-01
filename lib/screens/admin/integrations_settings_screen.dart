@@ -4,6 +4,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import '../../services/printer_service.dart';
 import '../../services/egais_service.dart';
 import '../../services/kassa_service.dart';
+import '../../services/chestny_znak_api_service.dart';
 import '../../models/fiscal_receipt.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
@@ -29,9 +30,14 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaGroupCodeCtrl = TextEditingController();
   final _kassaLoginCtrl = TextEditingController();
   final _kassaPasswordCtrl = TextEditingController();
+  String _czCircuit = 'pilot'; // pilot | prod
+  final _czTokenCtrl = TextEditingController();
+  final _czTestCodeCtrl = TextEditingController();
   bool _loading = true;
   bool _testing = false;
   String? _testResult;
+  bool _czTesting = false;
+  String? _czTestResult;
 
   @override
   void initState() {
@@ -51,6 +57,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaGroupCodeCtrl.text = data['kassaGroupCode'] ?? '';
     _kassaLoginCtrl.text = data['kassaLogin'] ?? '';
     _kassaPasswordCtrl.text = data['kassaPassword'] ?? '';
+    _czCircuit = data['czCircuit'] ?? 'pilot';
+    _czTokenCtrl.text = data['czToken'] ?? '';
     _applyActivePrinter();
     setState(() => _loading = false);
   }
@@ -76,9 +84,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaGroupCode': _kassaGroupCodeCtrl.text.trim(),
       'kassaLogin': _kassaLoginCtrl.text.trim(),
       'kassaPassword': _kassaPasswordCtrl.text.trim(),
+      'czCircuit': _czCircuit,
+      'czToken': _czTokenCtrl.text.trim(),
     }, SetOptions(merge: true));
     _applyActivePrinter();
     _applyActiveKassa();
+    _applyActiveEgais();
+    _applyActiveChestnyZnak();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сохранено')));
     }
@@ -95,6 +107,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     } else {
       kassaService = MockKassaService();
     }
+  }
+
+  void _applyActiveEgais() {
+    final host = _utmHostCtrl.text.trim();
+    activeEgaisService = host.isNotEmpty ? EgaisUtmService(utmHost: host) : null;
+  }
+
+  void _applyActiveChestnyZnak() {
+    final token = _czTokenCtrl.text.trim();
+    activeChestnyZnakApi =
+        token.isNotEmpty ? ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod') : null;
   }
 
   Future<void> _pickBluetoothDevice() async {
@@ -211,6 +234,45 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     });
   }
 
+  /// Проверяет один код через реальный метод `codes/check` выбранного
+  /// контура «Честного знака» — удобно, чтобы прямо из настроек убедиться,
+  /// что токен и контур подобраны верно, до того как проверка заработает
+  /// на кассе при сканировании.
+  Future<void> _testChestnyZnak() async {
+    final code = _czTestCodeCtrl.text.trim();
+    if (code.isEmpty) {
+      setState(() => _czTestResult = 'Вставьте отсканированный код для проверки');
+      return;
+    }
+    final token = _czTokenCtrl.text.trim();
+    if (token.isEmpty) {
+      setState(() => _czTestResult = 'Укажите токен «Честного знака»');
+      return;
+    }
+    setState(() {
+      _czTesting = true;
+      _czTestResult = null;
+    });
+    try {
+      final api = ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod');
+      final results = await api.checkCodes([code]);
+      if (results.isEmpty) {
+        setState(() => _czTestResult = 'Пустой ответ от «Честного знака»');
+      } else {
+        final r = results.first;
+        setState(() => _czTestResult = !r.valid
+            ? 'Код не найден в системе (возможна подделка)'
+            : r.alreadyRetired
+                ? 'Код найден, но уже выведен из оборота ранее'
+                : 'Код найден и не продан — можно продавать');
+      }
+    } catch (e) {
+      setState(() => _czTestResult = 'Ошибка: $e');
+    } finally {
+      if (mounted) setState(() => _czTesting = false);
+    }
+  }
+
   void _showSnack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -224,6 +286,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaGroupCodeCtrl.dispose();
     _kassaLoginCtrl.dispose();
     _kassaPasswordCtrl.dispose();
+    _czTokenCtrl.dispose();
+    _czTestCodeCtrl.dispose();
     super.dispose();
   }
 
@@ -301,6 +365,58 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           if (_testResult != null) ...[
             const SizedBox(height: 12),
             Text(_testResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+          const Divider(height: 40),
+          const Text('Честный ЗНАК (маркировка)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text(
+            'Онлайн-проверка кода при сканировании (подлинность и статус выбытия '
+            'напрямую в ИС МП) — дополнительно к локальной защите от повторной '
+            'продажи, которая работает уже сейчас и без токена. Официальное '
+            'списание кода при продаже всё равно происходит через онлайн-кассу '
+            '(тег ОФД 1162) — см. раздел «Онлайн-касса» ниже.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          RadioListTile<String>(
+            title: const Text('Пилот (тестовый контур)'),
+            subtitle: const Text('markirovka.sandbox.crptech.ru — начните с него'),
+            value: 'pilot',
+            groupValue: _czCircuit,
+            onChanged: (v) => setState(() => _czCircuit = v!),
+          ),
+          RadioListTile<String>(
+            title: const Text('Боевой (продуктивный контур)'),
+            subtitle: const Text('markirovka.crpt.ru'),
+            value: 'prod',
+            groupValue: _czCircuit,
+            onChanged: (v) => setState(() => _czCircuit = v!),
+          ),
+          TextField(
+            controller: _czTokenCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Токен для ККТ',
+              hintText: 'из личного кабинета честныйзнак.рф → профиль',
+            ),
+            obscureText: true,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _czTestCodeCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Код для проверки (необязательно)',
+              hintText: 'отсканированный DataMatrix целиком',
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _czTesting ? null : _testChestnyZnak,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Проверить код'),
+          ),
+          if (_czTestResult != null) ...[
+            const SizedBox(height: 12),
+            Text(_czTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
           const Divider(height: 40),
           const Text('Онлайн-касса (54-ФЗ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
