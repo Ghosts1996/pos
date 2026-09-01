@@ -26,6 +26,24 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   // остальное меню без ожидания.
   final Set<String> _uploadingIds = {};
 
+  // Список активных позиций склада для дропдауна привязки в диалоге позиции.
+  List<InventoryItem> _inventoryItems = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Одноразовая загрузка — инвентарь меняется редко, для диалога достаточно
+    // снимка на момент открытия экрана.
+    _fs.inventoryItemsStream().first.then((items) {
+      if (mounted) {
+        setState(() {
+          _inventoryItems = items.where((i) => i.active).toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -97,6 +115,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                             title: Text(item.name),
                             subtitle: Text(item.weight > 0
                                 ? '${item.price.toStringAsFixed(0)} ₽ · ${item.weightUnit.formatWithLabel(item.weight)}'
+                                    '${item.inventoryItemId.isNotEmpty ? ' · 📦' : ''}'
                                 : '${item.price.toStringAsFixed(0)} ₽'),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -212,47 +231,86 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final weightCtrl = TextEditingController(
         text: (item != null && item.weight > 0) ? item.weightUnit.format(item.weight) : '');
     var weightUnit = item?.weightUnit ?? InventoryUnit.g;
+    // null — "не привязано", непустая строка — id InventoryItem
+    String? linkedInventoryId =
+        (item?.inventoryItemId.isNotEmpty == true) ? item!.inventoryItemId : null;
 
     final result = await showDialog<_ItemDialogResult>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: Text(item == null ? 'Новая позиция' : 'Редактировать'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Название')),
-              TextField(
-                controller: priceCtrl,
-                decoration: const InputDecoration(labelText: 'Цена, ₽'),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 8),
-              // Граммовка/объём порции — те же единицы, что и на складе,
-              // чтобы в будущем можно было сопоставить позицию меню с
-              // конкретной позицией склада для списания.
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: weightCtrl,
-                      decoration: const InputDecoration(labelText: 'Граммовка (необязательно)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: 'Название')),
+                TextField(
+                  controller: priceCtrl,
+                  decoration: const InputDecoration(labelText: 'Цена, ₽'),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: weightCtrl,
+                        decoration:
+                            const InputDecoration(labelText: 'Граммовка (необязательно)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    DropdownButton<InventoryUnit>(
+                      value: weightUnit,
+                      items: InventoryUnit.values
+                          .map((u) => DropdownMenuItem(value: u, child: Text(u.label)))
+                          .toList(),
+                      onChanged: (u) {
+                        if (u != null) setDialogState(() => weightUnit = u);
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // ---- Привязка к складу ----
+                const Text('Склад (автосписание)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 4),
+                if (_inventoryItems.isEmpty)
+                  const Text('Нет позиций склада',
+                      style: TextStyle(fontSize: 13, color: Colors.grey))
+                else
+                  DropdownButton<String?>(
+                    value: linkedInventoryId,
+                    isExpanded: true,
+                    hint: const Text('— не привязано —'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('— не привязано —'),
+                      ),
+                      ..._inventoryItems.map((inv) => DropdownMenuItem<String?>(
+                            value: inv.id,
+                            child: Text('${inv.name} (${inv.unit.label})'),
+                          )),
+                    ],
+                    onChanged: (v) => setDialogState(() => linkedInventoryId = v),
+                  ),
+                if (linkedInventoryId != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'При продаже спишется: граммовка × кол-во',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  DropdownButton<InventoryUnit>(
-                    value: weightUnit,
-                    items: InventoryUnit.values
-                        .map((u) => DropdownMenuItem(value: u, child: Text(u.label)))
-                        .toList(),
-                    onChanged: (u) {
-                      if (u != null) setDialogState(() => weightUnit = u);
-                    },
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
@@ -264,6 +322,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     price: double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0,
                     weight: double.tryParse(weightCtrl.text.replaceAll(',', '.')) ?? 0,
                     weightUnit: weightUnit,
+                    inventoryItemId: linkedInventoryId ?? '',
                   )),
               child: const Text('Сохранить'),
             ),
@@ -280,6 +339,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         price: result.price,
         weight: result.weight,
         weightUnit: result.weightUnit,
+        inventoryItemId: result.inventoryItemId,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -287,6 +347,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         price: result.price,
         weight: result.weight,
         weightUnit: result.weightUnit,
+        inventoryItemId: result.inventoryItemId,
       ));
     }
   }
@@ -339,12 +400,14 @@ class _ItemDialogResult {
   final double price;
   final double weight;
   final InventoryUnit weightUnit;
+  final String inventoryItemId;
 
   _ItemDialogResult({
     required this.name,
     required this.price,
     required this.weight,
     required this.weightUnit,
+    this.inventoryItemId = '',
   });
 }
 
@@ -425,5 +488,3 @@ class _EditableThumb extends StatelessWidget {
         ),
       ),
     );
-  }
-}
