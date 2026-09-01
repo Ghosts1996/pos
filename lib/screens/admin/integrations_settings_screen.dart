@@ -280,7 +280,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   /// "пистолетом" — он печатает как клавиатура), кнопка нужна именно для
   /// сканирования камерой телефона/планшета.
   Future<void> _scanTestCode() async {
-    final code = await showCameraScanner(context, title: 'Сканировать код маркировки');
+    final code = await showCompactCameraScanner(context, title: 'Сканирование кода');
     if (code != null && mounted) {
       setState(() => _czTestCodeCtrl.text = code);
     }
