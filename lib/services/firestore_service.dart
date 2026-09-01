@@ -763,6 +763,33 @@ class FirestoreService {
   Future<void> deleteInventoryItem(String id) =>
       _db.collection('inventoryItems').doc(id).delete();
 
+  /// Ищет позицию склада по GTIN (штрихкод/код маркировки) — используется
+  /// при сканировании на экране меню, чтобы найти, какую позицию добавить
+  /// в чек. GTIN хранится в поле [InventoryItem.gtin], которое заполняется
+  /// один раз при заведении позиции.
+  Future<InventoryItem?> findInventoryItemByGtin(String gtin) async {
+    final snap = await _db
+        .collection('inventoryItems')
+        .where('gtin', isEqualTo: gtin)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return InventoryItem.fromDoc(snap.docs.first);
+  }
+
+  /// Ищет позицию меню, привязанную к данной позиции склада — чтобы после
+  /// сканирования штрихкода/кода маркировки добавить в чек не саму
+  /// складскую позицию, а соответствующую ей позицию меню (с ценой).
+  Future<MenuItem?> findMenuItemByInventoryItemId(String inventoryItemId) async {
+    final snap = await _db
+        .collection('menuItems')
+        .where('inventoryItemId', isEqualTo: inventoryItemId)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return MenuItem.fromDoc(snap.docs.first);
+  }
+
   /// Изменяет остаток позиции склада (приход/списание/ручная корректировка)
   /// и одновременно пишет строку в историю движений — остаток никогда не
   /// правится "молча". Обёрнуто в транзакцию: читает актуальный остаток
