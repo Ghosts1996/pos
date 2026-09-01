@@ -5,6 +5,7 @@ import '../../services/printer_service.dart';
 import '../../services/egais_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
+import '../../services/scanner_service.dart';
 import '../../models/fiscal_receipt.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
@@ -273,6 +274,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     }
   }
 
+  /// Открывает камеру и подставляет отсканированный код в поле проверки —
+  /// чтобы не набирать длинную строку DataMatrix руками. HID-сканер тоже
+  /// работает сразу в это поле (можно просто кликнуть в поле и отсканировать
+  /// "пистолетом" — он печатает как клавиатура), кнопка нужна именно для
+  /// сканирования камерой телефона/планшета.
+  Future<void> _scanTestCode() async {
+    final code = await showCameraScanner(context, title: 'Сканировать код маркировки');
+    if (code != null && mounted) {
+      setState(() => _czTestCodeCtrl.text = code);
+    }
+  }
+
   void _showSnack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -403,9 +416,14 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           const SizedBox(height: 8),
           TextField(
             controller: _czTestCodeCtrl,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Код для проверки (необязательно)',
               hintText: 'отсканированный DataMatrix целиком',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.camera_alt),
+                tooltip: 'Сканировать камерой',
+                onPressed: _scanTestCode,
+              ),
             ),
           ),
           const SizedBox(height: 8),
