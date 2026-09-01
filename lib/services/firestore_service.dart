@@ -7,6 +7,7 @@ import '../models/discount_card.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
 import '../models/inventory_models.dart';
+import '../models/egais_models.dart';
 import '../utils/constants.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
@@ -404,6 +405,80 @@ class FirestoreService {
         }
       }
     }
+  }
+
+  /// Собирает строки для документа продажи ЕГАИС по позициям заказа —
+  /// вызывается на экране оплаты перед отправкой в кассу (см.
+  /// `payment_screen.dart`, `_sendToEgaisIfNeeded`). Работает по тому же
+  /// принципу, что и [_deductInventoryForSale]: находим позицию склада, на
+  /// которую ссылается позиция меню, и если у неё `alcohol.isAlcohol` —
+  /// включаем в результат.
+  ///
+  /// Для простой позиции (одна привязка `inventoryItemId` + `weight`)
+  /// считаем, что продан [OrderItem.qty] целых "тар" — объём берём из
+  /// `alcohol.volumeLiters` (эта величина как раз и означает объём тары,
+  /// см. докстринг `AlcoholInfo`). Для составных миксов (коктейль с
+  /// алкогольным компонентом в мл/г) точного стандарта нет — берём объём
+  /// компонента в литрах напрямую из его граммовки/объёма в составе,
+  /// приблизительно; при разлив-продаже коктейлей стоит свериться с тем,
+  /// как именно у вас заведён алкокод партии в ЕГАИС.
+  Future<List<EgaisSaleLine>> resolveAlcoholSaleLines(List<OrderItem> orderItems) async {
+    final menuItemIds =
+        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet();
+    if (menuItemIds.isEmpty) return [];
+
+    final menuDocs =
+        await Future.wait(menuItemIds.map((id) => _db.collection('menuItems').doc(id).get()));
+    final menuMap = <String, MenuItem>{};
+    for (final doc in menuDocs) {
+      if (doc.exists) menuMap[doc.id] = MenuItem.fromDoc(doc);
+    }
+
+    final invIds = <String>{};
+    for (final m in menuMap.values) {
+      if (m.hasInventoryLink) invIds.add(m.inventoryItemId);
+      for (final c in m.components) {
+        if (c.inventoryItemId.isNotEmpty) invIds.add(c.inventoryItemId);
+      }
+    }
+    if (invIds.isEmpty) return [];
+
+    final invDocs = await Future.wait(invIds.map((id) => _db.collection('inventoryItems').doc(id).get()));
+    final invMap = <String, InventoryItem>{};
+    for (final doc in invDocs) {
+      if (doc.exists) invMap[doc.id] = InventoryItem.fromDoc(doc);
+    }
+
+    final lines = <EgaisSaleLine>[];
+    for (final orderItem in orderItems) {
+      final menuItem = menuMap[orderItem.menuItemId];
+      if (menuItem == null) continue;
+
+      if (menuItem.isComposite) {
+        for (final component in menuItem.components) {
+          final invItem = invMap[component.inventoryItemId];
+          if (invItem == null || !invItem.alcohol.isAlcohol) continue;
+          final liters = (component.weight * orderItem.qty) / 1000;
+          if (liters <= 0) continue;
+          lines.add(EgaisSaleLine(
+            alcCode: invItem.alcohol.alcCode,
+            quantityLiters: liters,
+            isBeer: invItem.alcohol.isBeer,
+          ));
+        }
+      } else if (menuItem.hasInventoryLink) {
+        final invItem = invMap[menuItem.inventoryItemId];
+        if (invItem == null || !invItem.alcohol.isAlcohol) continue;
+        final liters = invItem.alcohol.volumeLiters * orderItem.qty;
+        if (liters <= 0) continue;
+        lines.add(EgaisSaleLine(
+          alcCode: invItem.alcohol.alcCode,
+          quantityLiters: liters,
+          isBeer: invItem.alcohol.isBeer,
+        ));
+      }
+    }
+    return lines;
   }
 
   /// Возврат уже закрытого (оплаченного) чека — раздел "История чеков и
