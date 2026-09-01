@@ -50,12 +50,15 @@ class MenuItem {
   final String imageUrl;
 
   /// Граммовка/объём порции в единицах [weightUnit] — тот же набор единиц,
-  /// что и на складе (г/кг/мл/л/шт). 0 — граммовка не задана (например, для
-  /// позиций, где она не имеет смысла). Хранится здесь просто как значение
-  /// на позиции меню — привязка к конкретной позиции склада и списание
-  /// делаются отдельно, вручную, самим админом.
+  /// что и на складе (г/кг/мл/л/шт). 0 — граммовка не задана.
   final double weight;
   final InventoryUnit weightUnit;
+
+  /// ID позиции склада (InventoryItem), с которой связана эта позиция меню.
+  /// Пустая строка — связь не задана, при продаже склад не списывается.
+  /// При наличии связи и weight > 0 при закрытии чека автоматически
+  /// списывается weight * qty единиц с соответствующей позиции склада.
+  final String inventoryItemId;
 
   MenuItem({
     required this.id,
@@ -66,7 +69,12 @@ class MenuItem {
     this.imageUrl = '',
     this.weight = 0,
     this.weightUnit = InventoryUnit.g,
+    this.inventoryItemId = '',
   });
+
+  /// Позиция привязана к складу и имеет ненулевую граммовку — будет
+  /// списана при продаже.
+  bool get hasInventoryLink => inventoryItemId.isNotEmpty && weight > 0;
 
   factory MenuItem.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -79,6 +87,7 @@ class MenuItem {
       imageUrl: data['imageUrl'] ?? '',
       weight: (data['weight'] as num?)?.toDouble() ?? 0,
       weightUnit: InventoryUnitX.fromName(data['weightUnit'] as String?),
+      inventoryItemId: data['inventoryItemId'] ?? '',
     );
   }
 
@@ -90,6 +99,7 @@ class MenuItem {
         'imageUrl': imageUrl,
         'weight': weight,
         'weightUnit': weightUnit.name,
+        'inventoryItemId': inventoryItemId,
       };
 
   MenuItem copyWith({
@@ -100,6 +110,7 @@ class MenuItem {
     String? imageUrl,
     double? weight,
     InventoryUnit? weightUnit,
+    String? inventoryItemId,
   }) =>
       MenuItem(
         id: id,
@@ -110,5 +121,6 @@ class MenuItem {
         imageUrl: imageUrl ?? this.imageUrl,
         weight: weight ?? this.weight,
         weightUnit: weightUnit ?? this.weightUnit,
+        inventoryItemId: inventoryItemId ?? this.inventoryItemId,
       );
 }
