@@ -169,6 +169,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
         fiscalReceiptPrinted: _printFiscalReceipt,
+        orderItems: widget.session.orderItems,
+        employeeName: widget.session.employeeName,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
