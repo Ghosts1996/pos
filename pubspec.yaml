@@ -25,6 +25,7 @@ dependencies:
   http: ^1.2.2                       # HTTP-клиент к локальному УТМ ЕГАИС
   xml: ^6.5.0                        # сборка XML-документов для УТМ
   mobile_scanner: ^5.2.3             # сканирование камерой телефона (EAN/QR/DataMatrix)
+  google_mlkit_barcode_scanning: ^0.14.1 # разовый статический анализ фото (без камеры/превью) — фикс NPE в analyzeImage
   permission_handler: ^11.3.1        # запрос разрешения на камеру для сканера
   esc_pos_utils_plus: ^2.0.4         # сборка ESC/POS-команд для чекового принтера
   print_bluetooth_thermal: ^1.1.4    # печать на чековом принтере по Bluetooth
