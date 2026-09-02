@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -145,6 +146,58 @@ const int _maxAutoRetries = 2;
 /// что "Повторный запуск камеры…" не может висеть вечно.
 const Duration _autoRetryHardDeadline = Duration(seconds: 5);
 
+/// Исключение "код не найден на фото" — отдельный тип, чтобы вызывающий
+/// код мог показать пользователю осмысленный текст, а не сырую ошибку.
+class _PhotoScanNoCodeException implements Exception {
+  const _PhotoScanNoCodeException();
+  @override
+  String toString() => 'Код не распознан на фото';
+}
+
+/// Запасной способ получить код, который принципиально НЕ использует живое
+/// превью камеры (CameraX) внутри нашего приложения — а значит не подвержен
+/// сбоям вида "Attempt to invoke virtual method ... on a null object
+/// reference", которые возникают именно при попытке привязать (bind) живое
+/// превью на некоторых устройствах/прошивках Android. Такие сбои — это
+/// несовместимость конкретного устройства с тем, как CameraX поднимает
+/// живой предпросмотр, а не что-то, что можно надёжно вылечить повторными
+/// попытками на стороне Flutter (см. историю правок этого файла).
+///
+/// Вместо живого превью здесь используется:
+/// 1. Системное приложение камеры Android через `image_picker` — совсем
+///    другой, штатный компонент ОС, который не имеет отношения к CameraX
+///    и работает практически на любом устройстве (это то же самое
+///    приложение камеры, которым пользователь фотографирует каждый день).
+/// 2. Одноразовый статический анализ полученного фото через
+///    `MobileScannerController.analyzeImage` — тот же движок ML Kit, что и
+///    у живого сканера, но без живого видеопотока и без привязки preview,
+///    поэтому сюда не может протечь тот же сбой.
+///
+/// Возвращает найденный код или null, если пользователь отменил
+/// фотографирование. Бросает [_PhotoScanNoCodeException], если код на фото
+/// не распознан, — вызывающая сторона показывает это как обычную ошибку.
+Future<String?> _scanBarcodeFromCameraPhoto() async {
+  final photo = await ImagePicker().pickImage(
+    source: ImageSource.camera,
+    maxWidth: 1920,
+    maxHeight: 1920,
+    imageQuality: 90,
+  );
+  if (photo == null) return null;
+  final controller = MobileScannerController(formats: _scannerFormats);
+  try {
+    final result = await controller.analyzeImage(photo.path);
+    final barcodes = result?.barcodes ?? const [];
+    final value = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
+    if (value == null || value.isEmpty) {
+      throw const _PhotoScanNoCodeException();
+    }
+    return value;
+  } finally {
+    controller.dispose();
+  }
+}
+
 /// Открывает модальный экран камеры и возвращает первый считанный код
 /// (или null, если пользователь закрыл экран без сканирования).
 ///
@@ -227,6 +280,9 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   // по тому же пути автоповтора/показа ошибки, что и настоящий сбой.
   Timer? _watchdogTimer;
   static const _watchdogTimeout = Duration(seconds: 4);
+  // true, пока открыто системное приложение камеры и/или идёт
+  // статический анализ снятого фото — см. [_scanBarcodeFromCameraPhoto].
+  bool _photoScanInProgress = false;
 
   @override
   void initState() {
@@ -378,6 +434,34 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     Navigator.of(context).pop(value);
   }
 
+  /// Запасной путь через системную камеру + статический анализ фото — см.
+  /// [_scanBarcodeFromCameraPhoto]. Используется, когда живое превью не
+  /// заводится на устройстве вообще (см. кнопку в [_buildErrorButtons]).
+  Future<void> _scanFromPhoto() async {
+    if (_photoScanInProgress) return;
+    setState(() => _photoScanInProgress = true);
+    try {
+      final value = await _scanBarcodeFromCameraPhoto();
+      if (!mounted) return;
+      if (value != null) {
+        _handled = true;
+        Navigator.of(context).pop(value);
+        return;
+      }
+      // value == null — пользователь отменил съёмку, просто возвращаемся
+      // к прежнему экрану ошибки без изменений.
+      setState(() => _photoScanInProgress = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _photoScanInProgress = false;
+        _errorText = e is _PhotoScanNoCodeException
+            ? 'Код не распознан на фото. Сфотографируйте код чётче и без бликов, либо введите его вручную.'
+            : 'Не удалось сделать фото: $e';
+      });
+    }
+  }
+
   @override
   void dispose() {
     _watchdogTimer?.cancel();
@@ -474,7 +558,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
               ),
 ),
             const SizedBox(height: 10),
-            if (_errorText == null && !_autoRetryPending)
+            if (_errorText == null && !_autoRetryPending && !_photoScanInProgress)
               const Text(
                 'Наведите камеру на код',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
@@ -484,15 +568,35 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 'Повторный запуск камеры…',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
+            if (_photoScanInProgress)
+              const Text(
+                'Обработка фото…',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
             if (_errorText != null) ...[
               const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
                 children: [
-                  TextButton(onPressed: _retry, child: const Text('Повторить')),
-                  const SizedBox(width: 8),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(_fullscreenFallbackSentinel),
+                    onPressed: _photoScanInProgress ? null : _retry,
+                    child: const Text('Повторить'),
+                  ),
+                  // Живое превью камеры (CameraX) на этом устройстве не
+                  // заводится — вместо него используем системную камеру
+                  // Android + разовый анализ снимка (analyzeImage), это
+                  // совсем другой, гораздо более надёжный путь. См.
+                  // комментарий у [_scanBarcodeFromCameraPhoto].
+                  TextButton(
+                    onPressed: _photoScanInProgress ? null : _scanFromPhoto,
+                    child: Text(_photoScanInProgress ? 'Обработка…' : 'Сделать фото'),
+                  ),
+                  TextButton(
+                    onPressed: _photoScanInProgress
+                        ? null
+                        : () => Navigator.of(context).pop(_fullscreenFallbackSentinel),
                     child: const Text('Открыть на весь экран'),
                   ),
                 ],
@@ -555,6 +659,9 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
   // от "тихого" зависания камеры без ошибки и без кадра.
   Timer? _watchdogTimer;
   static const _watchdogTimeout = Duration(seconds: 4);
+  // true, пока открыто системное приложение камеры и/или идёт
+  // статический анализ снятого фото — см. [_scanBarcodeFromCameraPhoto].
+  bool _photoScanInProgress = false;
 
   @override
 void initState() {
@@ -610,6 +717,30 @@ void initState() {
     _handled = true;
     _watchdogTimer?.cancel();
     Navigator.of(context).pop(value);
+  }
+
+  /// См. комментарий у аналогичного метода в компактном диалоге.
+  Future<void> _scanFromPhoto() async {
+    if (_photoScanInProgress) return;
+    setState(() => _photoScanInProgress = true);
+    try {
+      final value = await _scanBarcodeFromCameraPhoto();
+      if (!mounted) return;
+      if (value != null) {
+        _handled = true;
+        Navigator.of(context).pop(value);
+        return;
+      }
+      setState(() => _photoScanInProgress = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _photoScanInProgress = false;
+        _errorText = e is _PhotoScanNoCodeException
+            ? 'Код не распознан на фото. Сфотографируйте код чётче и без бликов, либо введите его вручную.'
+            : 'Не удалось сделать фото: $e';
+      });
+    }
   }
 
   /// Полностью пересоздаёт контроллер камеры вместе с новым ключом
@@ -721,9 +852,23 @@ void initState() {
                           Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
                           const SizedBox(height: 16),
                           if (_errorText != null)
-                            TextButton(
-                              onPressed: _retry,
-                              child: const Text('Повторить'),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                TextButton(
+                                  onPressed: _photoScanInProgress ? null : _retry,
+                                  child: const Text('Повторить'),
+                                ),
+                                // См. комментарий у [_scanBarcodeFromCameraPhoto] —
+                                // системная камера + разовый анализ фото вместо
+                                // сломанного на этом устройстве живого превью.
+                                TextButton(
+                                  onPressed: _photoScanInProgress ? null : _scanFromPhoto,
+                                  child: Text(_photoScanInProgress ? 'Обработка…' : 'Сделать фото'),
+                                ),
+                              ],
                             ),
                         ],
                       ),
@@ -739,6 +884,17 @@ void initState() {
               right: 0,
               child: Text(
                 'Повторный запуск камеры…',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          if (_photoScanInProgress)
+            const Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: Text(
+                'Обработка фото…',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white),
               ),
