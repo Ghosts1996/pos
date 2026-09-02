@@ -220,25 +220,25 @@ jobs:
           if ! grep -q "google.mlkit" "$RULES" 2>/dev/null; then
             cat >> "$RULES" <<'EOF'
 
-# --- ML Kit (распознавание штрихкодов/DataMatrix) и mobile_scanner/CameraX ---
-# Без этих правил R8 в релизной сборке ломает рефлексию/инициализацию
-# ML Kit — сканер падает с NullPointerException на реальных устройствах
-# (в debug-сборке без минификации всё работает нормально, поэтому баг
-# незаметен при обычной разработке).
--keep class com.google.mlkit.** { *; }
--keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
--keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
--keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
--keep class com.google.mlkit.vision.barcode.** { *; }
--keep class com.google.mlkit.vision.common.** { *; }
--keep class com.google.mlkit.common.** { *; }
--dontwarn com.google.mlkit.**
+          # --- ML Kit (распознавание штрихкодов/DataMatrix) и mobile_scanner/CameraX ---
+          # Без этих правил R8 в релизной сборке ломает рефлексию/инициализацию
+          # ML Kit — сканер падает с NullPointerException на реальных устройствах
+          # (в debug-сборке без минификации всё работает нормально, поэтому баг
+          # незаметен при обычной разработке).
+          -keep class com.google.mlkit.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
+          -keep class com.google.mlkit.vision.barcode.** { *; }
+          -keep class com.google.mlkit.vision.common.** { *; }
+          -keep class com.google.mlkit.common.** { *; }
+          -dontwarn com.google.mlkit.**
 
-# mobile_scanner (CameraX-based live preview scanner)
--keep class dev.steenbakker.mobile_scanner.** { *; }
--keep class androidx.camera.** { *; }
--dontwarn androidx.camera.**
-EOF
+          # mobile_scanner (CameraX-based live preview scanner)
+          -keep class dev.steenbakker.mobile_scanner.** { *; }
+          -keep class androidx.camera.** { *; }
+          -dontwarn androidx.camera.**
+          EOF
           fi
           # Убеждаемся, что release-сборка вообще подключает этот файл
           # правил (стандартный шаблон Flutter это делает по умолчанию,
