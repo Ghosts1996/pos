@@ -49,6 +49,16 @@ jobs:
           flutter create . --platforms=android --org com --project-name hookahpos
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
 
+      - name: Bump compileSdk for CameraX / mobile_scanner compatibility
+        run: |
+          # mobile_scanner 5.x+ требует compileSdk >= 34 из-за CameraX 1.3.x.
+          # flutter create генерирует compileSdk=33 (или ниже) — поднимаем до 35.
+          APP_GRADLE=android/app/build.gradle.kts
+          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
+          sed -i 's/compileSdk = [0-9]*/compileSdk = 35/' "$APP_GRADLE"
+          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/' "$APP_GRADLE"
+          echo "----- build.gradle compileSdk -----"; grep -E "compileSdk" "$APP_GRADLE"
+
       - name: Add google-services.json (Firebase Android config)
         run: |
           # Файл нужен, чтобы нативный Firebase SDK на Android (Storage в
@@ -114,6 +124,15 @@ jobs:
           add_permission "android.permission.CAMERA"
           add_permission "android.permission.READ_MEDIA_IMAGES"
           add_permission "android.permission.READ_EXTERNAL_STORAGE"
+          # mobile_scanner требует явного объявления фичи камеры
+          if ! grep -q "android.hardware.camera" "$MANIFEST"; then
+            sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
+          fi
+          # Android 11+ (API 30+): без <queries> приложение не видит системную
+          # камеру (image_picker), что ломает _scanBarcodeFromCameraPhoto.
+          if ! grep -q "<queries>" "$MANIFEST"; then
+            sed -i "/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n    </queries>" "$MANIFEST"
+          fi
           sed -i 's/android:label="[^"]*"/android:label="Hookah POS"/' "$MANIFEST"
           echo "----- AndroidManifest.xml -----"
           cat "$MANIFEST"
