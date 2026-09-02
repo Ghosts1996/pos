@@ -199,6 +199,14 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   // Защита от повторного срабатывания errorBuilder для одной и той же
   // попытки запуска (Flutter может вызвать builder несколько раз за кадр).
   bool _errorHandledForThisAttempt = false;
+  // Сторож на случай "тихого" зависания: на некоторых устройствах нативная
+  // сторона (CameraX) не вызывает ни onDetect, ни errorBuilder — preview
+  // просто никогда не подключается, и без этого таймера состояние
+  // "Повторный запуск камеры…" осталось бы навсегда. Если за отведённое
+  // время не пришло ни кадра, ни ошибки — считаем это ошибкой сами и идём
+  // по тому же пути автоповтора/показа ошибки, что и настоящий сбой.
+  Timer? _watchdogTimer;
+  static const _watchdogTimeout = Duration(seconds: 4);
 
   @override
   void initState() {
@@ -211,13 +219,19 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     final route = ModalRoute.of(context);
     final animation = route?.animation;
     if (animation == null || animation.isCompleted) {
-      if (mounted) setState(() => _transitionFinished = true);
+      if (mounted) {
+        setState(() => _transitionFinished = true);
+        _startWatchdog();
+      }
       return;
     }
     void onStatus(AnimationStatus status) {
       if (status == AnimationStatus.completed) {
         animation.removeStatusListener(onStatus);
-        if (mounted) setState(() => _transitionFinished = true);
+        if (mounted) {
+          setState(() => _transitionFinished = true);
+          _startWatchdog();
+        }
       }
     }
 
@@ -226,8 +240,23 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     // между addPostFrameCallback и завершением анимации).
     if (animation.isCompleted) {
       animation.removeStatusListener(onStatus);
-      if (mounted) setState(() => _transitionFinished = true);
+      if (mounted) {
+        setState(() => _transitionFinished = true);
+        _startWatchdog();
+      }
     }
+  }
+
+  /// Запускает (пере)отсчёт таймаута для текущей попытки запуска камеры.
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer(_watchdogTimeout, () {
+      if (!mounted || _handled) return;
+      // Камера не подала признаков жизни — ни кадра, ни ошибки от плагина.
+      _handleScannerError(
+        'Камера не отвечает — не удалось получить изображение с камеры',
+      );
+    });
   }
 
   Future<void> _checkPermission() async {
@@ -263,6 +292,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
       _controller = MobileScannerController(formats: _scannerFormats);
     });
     oldController.dispose();
+    if (_transitionFinished) _startWatchdog();
   }
 
   /// Кнопка "Повторить", нажатая пользователем вручную после того, как
@@ -301,11 +331,13 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     final value = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
     if (value == null || value.isEmpty) return;
     _handled = true;
+    _watchdogTimer?.cancel();
     Navigator.of(context).pop(value);
   }
 
   @override
   void dispose() {
+    _watchdogTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -475,6 +507,10 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
   int _retryCount = 0;
   bool _autoRetryPending = false;
   bool _errorHandledForThisAttempt = false;
+  // См. комментарий у аналогичного поля в компактном диалоге — страхует
+  // от "тихого" зависания камеры без ошибки и без кадра.
+  Timer? _watchdogTimer;
+  static const _watchdogTimeout = Duration(seconds: 4);
 
   @override
 void initState() {
@@ -486,21 +522,40 @@ void initState() {
     final route = ModalRoute.of(context);
     final animation = route?.animation;
     if (animation == null || animation.isCompleted) {
-      if (mounted) setState(() => _transitionFinished = true);
+      if (mounted) {
+        setState(() => _transitionFinished = true);
+        _startWatchdog();
+      }
       return;
     }
     void onStatus(AnimationStatus status) {
       if (status == AnimationStatus.completed) {
         animation.removeStatusListener(onStatus);
-        if (mounted) setState(() => _transitionFinished = true);
+        if (mounted) {
+          setState(() => _transitionFinished = true);
+          _startWatchdog();
+        }
       }
     }
 
     animation.addStatusListener(onStatus);
     if (animation.isCompleted) {
       animation.removeStatusListener(onStatus);
-      if (mounted) setState(() => _transitionFinished = true);
+      if (mounted) {
+        setState(() => _transitionFinished = true);
+        _startWatchdog();
+      }
     }
+  }
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer(_watchdogTimeout, () {
+      if (!mounted || _handled) return;
+      _handleScannerError(
+        'Камера не отвечает — не удалось получить изображение с камеры',
+      );
+    });
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -508,6 +563,7 @@ void initState() {
     final value = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
     if (value == null || value.isEmpty) return;
     _handled = true;
+    _watchdogTimer?.cancel();
     Navigator.of(context).pop(value);
   }
 
@@ -524,6 +580,7 @@ void initState() {
       _controller = MobileScannerController(formats: _scannerFormats);
     });
     oldController.dispose();
+    if (_transitionFinished) _startWatchdog();
   }
 
   /// Кнопка "Повторить" — ручная попытка после того, как автоматические
@@ -555,6 +612,7 @@ void initState() {
 
   @override
   void dispose() {
+    _watchdogTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
