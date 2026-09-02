@@ -4,6 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+// Отдельный пакет ML Kit — используется ТОЛЬКО для разового статического
+// анализа уже сделанного фото (см. _scanBarcodeFromCameraPhoto). У него свои
+// собственные классы BarcodeFormat/BarcodeScanner, поэтому импортируем с
+// префиксом mlkit, чтобы не конфликтовать с одноимёнными классами из
+// mobile_scanner, которые используются для живого превью камеры.
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart' as mlkit;
+import 'package:google_mlkit_commons/google_mlkit_commons.dart' as mlkit_commons;
 
 /// Два физически разных способа получить штрихкод/код маркировки, но
 /// один и тот же результат для остального приложения — строка [onCode].
@@ -195,17 +202,33 @@ Future<String?> _scanBarcodeFromCameraPhoto() async {
     imageQuality: 100,
   );
   if (photo == null) return null;
-  final controller = MobileScannerController(formats: _scannerFormats);
+  // ВАЖНО: раньше здесь использовался MobileScannerController.analyzeImage —
+  // он падает с NullPointerException на Android, если контроллер ни разу
+  // не был запущен через start() (нативный BarcodeScanner внутри плагина
+  // просто не создан). Мы намеренно не хотим запускать живое превью только
+  // ради разового анализа фото, поэтому используем ML Kit напрямую — тот
+  // же движок распознавания, но полностью независимый от камеры/превью и
+  // от состояния MobileScannerController.
+  final scanner = mlkit.BarcodeScanner(
+    formats: const [
+      mlkit.BarcodeFormat.dataMatrix,
+      mlkit.BarcodeFormat.ean13,
+      mlkit.BarcodeFormat.ean8,
+      mlkit.BarcodeFormat.code128,
+      mlkit.BarcodeFormat.qrCode,
+      mlkit.BarcodeFormat.code39,
+    ],
+  );
   try {
-    final result = await controller.analyzeImage(photo.path);
-    final barcodes = result?.barcodes ?? const [];
+    final inputImage = mlkit_commons.InputImage.fromFilePath(photo.path);
+    final barcodes = await scanner.processImage(inputImage);
     final value = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
     if (value == null || value.isEmpty) {
       throw const _PhotoScanNoCodeException();
     }
     return value;
   } finally {
-    controller.dispose();
+    await scanner.close();
   }
 }
 
