@@ -174,11 +174,54 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   bool _handled = false;
   String? _errorText;
   bool _checkingPermission = true;
+  // Остаётся true, пока не закончится анимация появления диалога
+  // (Dialog по умолчанию открывается с fade+scale переходом). Если
+  // смонтировать MobileScanner (а с ним и CameraX preview) прямо во
+  // время этой анимации, на части устройств/прошивок (в частности
+  // Android с кастомными сборками CameraX у некоторых производителей)
+  // получаем нативный NPE вида "Attempt to invoke virtual method ...
+  // on a null object reference" при попытке забиндить preview к ещё не
+  // до конца готовому view — именно то, что было на скриншоте бага.
+  // Дожидаемся, пока переход диалога полностью завершится, и только
+  // тогда строим сам виджет камеры.
+  bool _transitionFinished = false;
+  // Если камера всё равно не смогла запуститься нативно (ошибка пришла
+  // именно из errorBuilder MobileScanner, а не из проверки разрешения) —
+  // не оставляем пользователя один на один с непонятным текстом на
+  // английском/русском и кнопкой, которую надо заметить и нажать.
+  // Полноэкранный сценарий showCameraScanner уже проверен и надёжно
+  // работает на этом же устройстве (тот же плагин, та же камера), поэтому
+  // при таком сбое сразу и автоматически переключаемся на него.
+  bool _autoFallbackScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _checkPermission();
+WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
+  }
+
+  void _waitForTransition() {
+    final route = ModalRoute.of(context);
+    final animation = route?.animation;
+    if (animation == null || animation.isCompleted) {
+      if (mounted) setState(() => _transitionFinished = true);
+      return;
+    }
+    void onStatus(AnimationStatus status) {
+      if (status == AnimationStatus.completed) {
+        animation.removeStatusListener(onStatus);
+        if (mounted) setState(() => _transitionFinished = true);
+      }
+    }
+
+    animation.addStatusListener(onStatus);
+    // На случай, если статус уже completed к моменту подписки (гонка
+    // между addPostFrameCallback и завершением анимации).
+    if (animation.isCompleted) {
+      animation.removeStatusListener(onStatus);
+      if (mounted) setState(() => _transitionFinished = true);
+    }
   }
 
   Future<void> _checkPermission() async {
@@ -206,7 +249,23 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   /// при следующей вставке в дерево/через встроенный lifecycle).
   Future<void> _retry() async {
     setState(() => _errorText = null);
+    _autoFallbackScheduled = false;
     await _checkPermission();
+  }
+
+  /// Вызывается из errorBuilder MobileScanner — то есть при сбое именно
+  /// нативного запуска камеры (не разрешения). Один раз автоматически,
+  /// без участия пользователя, переоткрывает сканирование через уже
+  /// проверенный полноэкранный вариант, чтобы бага со скриншота
+  /// («Не удалось запустить камеру: ... null object reference») не было
+  /// видно пользователю вообще — сканер просто откроется на весь экран.
+  void _scheduleAutoFallback() {
+    if (_autoFallbackScheduled) return;
+    _autoFallbackScheduled = true;
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      Navigator.of(context).pop(_fullscreenFallbackSentinel);
+    });
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -260,7 +319,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 borderRadius: BorderRadius.circular(12),
                 child: _errorText != null
                     ? _buildError(_errorText!)
-                    : _checkingPermission
+                    : (_checkingPermission || !_transitionFinished)
                         ? const ColoredBox(
                             color: Colors.black,
                             child: Center(
@@ -301,6 +360,10 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                                       if (mounted) setState(() => _errorText = text);
                                     });
                                   }
+                                  // Автоматически подхватываем проверенный
+                                  // полноэкранный сканер — см. комментарий
+                                  // у _scheduleAutoFallback().
+                                  _scheduleAutoFallback();
                                   return _buildError(text);
                                 },
                               ),
@@ -323,11 +386,19 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 'Наведите камеру на код',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
-            if (_errorText != null) ...[
+            if (_errorText != null && _autoFallbackScheduled)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Открываем сканер на весь экран…',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+              ),
+            if (_errorText != null && !_autoFallbackScheduled) ...[
               const SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: [
+children: [
                   TextButton(onPressed: _retry, child: const Text('Повторить')),
                   const SizedBox(width: 8),
                   TextButton(
