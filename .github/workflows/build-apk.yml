@@ -201,6 +201,55 @@ jobs:
           echo "----- $APP_GRADLE (dependencies) -----"
           grep -A3 -E "^dependencies \{" "$APP_GRADLE" || true
 
+      - name: Add ProGuard/R8 keep rules for ML Kit and mobile_scanner
+        run: |
+          # ПРИЧИНА реальных сбоев камеры/сканера на РАЗНЫХ устройствах
+          # (одинаковая ошибка вида "Attempt to invoke virtual method
+          # 'fh2 bh2.a(gb)' ... null object reference" с обфусцированными
+          # именами классов/методов из 1-2 букв) — это R8/ProGuard,
+          # который в релизной сборке (flutter build apk --release)
+          # переименовывает и вырезает классы, включая внутренности
+          # ML Kit и mobile_scanner/CameraX, если не сказать ему явно их
+          # не трогать. ML Kit активно использует рефлексию и динамическую
+          # загрузку классов — без keep-правил R8 ломает именно этот путь,
+          # что выглядит как случайный сбой камеры, а на деле стабильно
+          # воспроизводится на любом устройстве с этой сборкой.
+          RULES=android/app/proguard-rules.pro
+          mkdir -p "$(dirname "$RULES")"
+          touch "$RULES"
+          if ! grep -q "google.mlkit" "$RULES" 2>/dev/null; then
+            cat >> "$RULES" <<'EOF'
+
+# --- ML Kit (распознавание штрихкодов/DataMatrix) и mobile_scanner/CameraX ---
+# Без этих правил R8 в релизной сборке ломает рефлексию/инициализацию
+# ML Kit — сканер падает с NullPointerException на реальных устройствах
+# (в debug-сборке без минификации всё работает нормально, поэтому баг
+# незаметен при обычной разработке).
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
+-keep class com.google.mlkit.vision.barcode.** { *; }
+-keep class com.google.mlkit.vision.common.** { *; }
+-keep class com.google.mlkit.common.** { *; }
+-dontwarn com.google.mlkit.**
+
+# mobile_scanner (CameraX-based live preview scanner)
+-keep class dev.steenbakker.mobile_scanner.** { *; }
+-keep class androidx.camera.** { *; }
+-dontwarn androidx.camera.**
+EOF
+          fi
+          # Убеждаемся, что release-сборка вообще подключает этот файл
+          # правил (стандартный шаблон Flutter это делает по умолчанию,
+          # но проверяем на случай нестандартного build.gradle).
+          APP_GRADLE=android/app/build.gradle.kts
+          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
+          if ! grep -q "proguard-rules.pro" "$APP_GRADLE"; then
+            echo "::warning::proguard-rules.pro не подключён в $APP_GRADLE — добавьте proguardFiles вручную в buildTypes.release"
+          fi
+          echo "----- $RULES -----"; cat "$RULES"
+
       - name: Install dependencies
         run: flutter pub get
 
