@@ -145,6 +145,19 @@ jobs:
           if ! grep -q "<queries>" "$MANIFEST"; then
             sed -i "/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n    </queries>" "$MANIFEST"
           fi
+          # google_mlkit_barcode_scanning по умолчанию докачивает модель
+          # распознавания штрихкодов через Play Services ЛЕНИВО, при первом
+          # обращении. Если докачка не успевает завершиться (нет интернета
+          # при первом запуске, медленная сеть и т.п.), любой вызов падает с
+          # NullPointerException внутри
+          # com.google.android.gms.internal.mlkit_vision_common.zzmj —
+          # именно эта ошибка была на скриншоте пользователя. Эта meta-data
+          # заставляет Play Store скачать модель СРАЗУ при установке
+          # приложения, а не при первом использовании камеры.
+          if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
+            sed -i "/<application/,/>/{/>/a\\    <meta-data android:name=\"com.google.mlkit.vision.DEPENDENCIES\" android:value=\"barcode\" />
+            }" "$MANIFEST"
+          fi
           sed -i 's/android:label="[^"]*"/android:label="Hookah POS"/' "$MANIFEST"
           echo "----- AndroidManifest.xml -----"
           cat "$MANIFEST"
