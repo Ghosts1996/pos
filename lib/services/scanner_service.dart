@@ -132,7 +132,7 @@ const List<BarcodeFormat> _scannerFormats = [
 /// действительно ли на телефоне стоит сборка с последними правками этого
 /// файла (автоповтор с жёстким дедлайном по времени), а не более старая
 /// версия APK. Увеличивайте при каждой следующей правке этого файла.
-const String _scannerServiceBuildTag = 'scanner-fix-v5';
+const String _scannerServiceBuildTag = 'scanner-fix-v6';
 
 const int _maxAutoRetries = 2;
 
