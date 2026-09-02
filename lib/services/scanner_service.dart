@@ -132,7 +132,7 @@ const List<BarcodeFormat> _scannerFormats = [
 /// действительно ли на телефоне стоит сборка с последними правками этого
 /// файла (автоповтор с жёстким дедлайном по времени), а не более старая
 /// версия APK. Увеличивайте при каждой следующей правке этого файла.
-const String _scannerServiceBuildTag = 'scanner-fix-v4';
+const String _scannerServiceBuildTag = 'scanner-fix-v5';
 
 const int _maxAutoRetries = 2;
 
@@ -176,12 +176,23 @@ class _PhotoScanNoCodeException implements Exception {
 /// Возвращает найденный код или null, если пользователь отменил
 /// фотографирование. Бросает [_PhotoScanNoCodeException], если код на фото
 /// не распознан, — вызывающая сторона показывает это как обычную ошибку.
+/// DataMatrix-код (в отличие от QR) состоит из гораздо более мелких и
+/// плотных модулей на той же физической площади — это следствие того, что
+/// сжатие до 1920×1920 c JPEG-качеством 90%, которое было тут раньше,
+/// съедало резкость границ модулей и мешало ML Kit их различить, даже
+/// когда на глаз фото выглядит чётким. Живой сканер (MobileScanner)
+/// анализирует десятки кадров подряд и почти всегда "цепляет" удачный
+/// кадр; разовое статическое фото такого второго шанса не даёт, поэтому
+/// именно для него разрешение и качество особенно важны. Здесь это
+/// разовое фото только для распознавания — никуда не загружается и не
+/// сохраняется, — поэтому нет причин экономить на размере файла ценой
+/// точности распознавания.
 Future<String?> _scanBarcodeFromCameraPhoto() async {
   final photo = await ImagePicker().pickImage(
     source: ImageSource.camera,
-    maxWidth: 1920,
-    maxHeight: 1920,
-    imageQuality: 90,
+    maxWidth: 4032,
+    maxHeight: 4032,
+    imageQuality: 100,
   );
   if (photo == null) return null;
   final controller = MobileScannerController(formats: _scannerFormats);
