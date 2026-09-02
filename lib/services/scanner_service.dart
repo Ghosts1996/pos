@@ -102,6 +102,32 @@ class _HidScannerListenerState extends State<HidScannerListener> {
   }
 }
 
+/// Форматы кодов, которые распознаёт камера — вынесены в константу и
+/// используются везде, где создаётся [MobileScannerController], чтобы не
+/// дублировать список и не разойтись между полноэкранным и компактным
+/// вариантами.
+const List<BarcodeFormat> _scannerFormats = [
+  BarcodeFormat.dataMatrix,
+  BarcodeFormat.ean13,
+  BarcodeFormat.ean8,
+  BarcodeFormat.code128,
+  BarcodeFormat.qrCode,
+  BarcodeFormat.code39,
+];
+
+/// Сколько раз автоматически, без участия пользователя, пересоздать
+/// камеру и попробовать снова, если нативная сторона (CameraX на
+/// Android) упала с ошибкой при запуске. Такие сбои (характерная ошибка —
+/// NullPointerException вида "Attempt to invoke virtual method ... on a
+/// null object reference" при попытке привязать preview) — это известная,
+/// хорошо задокументированная гонка между CameraX и ещё не до конца
+/// готовым native-view на части устройств/прошивок Android; она почти
+/// всегда не воспроизводится повторно на том же устройстве через доли
+/// секунды, поэтому автоматический повтор — самый надёжный способ
+/// добиться того, чтобы камера в итоге завелась без вмешательства
+/// пользователя.
+const int _maxAutoRetries = 2;
+
 /// Открывает модальный экран камеры и возвращает первый считанный код
 /// (или null, если пользователь закрыл экран без сканирования).
 ///
@@ -121,9 +147,10 @@ Future<String?> showCameraScanner(BuildContext context, {String title = 'Ска�
 /// небольшое окошко поверх текущего экрана (для разовой проверки кода в
 /// настройках, где не нужен весь экран под камеру). Закрывается тапом мимо
 /// окна или крестиком, как и обычный диалог. Если камера не заводится в
-/// маленьком окне на конкретном устройстве, в диалоге есть кнопка
-/// "Открыть на весь экран" — тогда прозрачно подхватывается проверенный
-/// [showCameraScanner].
+/// маленьком окне на конкретном устройстве даже после автоматических
+/// повторов, в диалоге есть кнопка "Открыть на весь экран" — тогда
+/// подхватывается полноэкранный [showCameraScanner] (со своими
+/// собственными автоматическими повторами).
 Future<String?> showCompactCameraScanner(BuildContext context, {String title = 'Сканирование'}) async {
   final result = await showDialog<String>(
     context: context,
@@ -141,64 +168,43 @@ const _fullscreenFallbackSentinel = '__open_fullscreen_scanner__';
 class _CompactCameraScannerDialog extends StatefulWidget {
   final String title;
   const _CompactCameraScannerDialog({required this.title});
-
-  @override
+@override
   State<_CompactCameraScannerDialog> createState() => _CompactCameraScannerDialogState();
 }
 
 class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog> {
   // ВАЖНО: autoStart оставляем true (по умолчанию) и НЕ вызываем
-  // _controller.start() вручную до того, как виджет MobileScanner
-  // реально попал в дерево и его платформенная camera-view успела
-  // прикрепиться. Раньше здесь было autoStart: false + ручной
-  // await _controller.start() из initState, ПОКА на экране висел
-  // спиннер вместо MobileScanner — то есть start() дёргался для
-  // контроллера, у которого ещё не было ни одного attached виджета.
-  // На части устройств/версий CameraX это валится нативным NPE вида
-  // "Attempt to invoke virtual method ... on a null object reference",
-  // потому что CameraX пытается забиндить preview к ещё не созданному
-  // SurfaceProvider. Правильный порядок: сразу строим MobileScanner
-  // (он сам запускает камеру через autoStart, дожидаясь attach), а
-  // разрешение на камеру запрашиваем отдельно, параллельно, только
-  // чтобы показать понятный текст, если пользователь его не дал.
-  final MobileScannerController _controller = MobileScannerController(
-    formats: const [
-      BarcodeFormat.dataMatrix,
-      BarcodeFormat.ean13,
-      BarcodeFormat.ean8,
-      BarcodeFormat.code128,
-      BarcodeFormat.qrCode,
-      BarcodeFormat.code39,
-    ],
-  );
+  // _controller.start() вручную — MobileScanner сам запускает камеру,
+  // дожидаясь attach нативного view.
+  Key _scannerKey = UniqueKey();
+  MobileScannerController _controller = MobileScannerController(formats: _scannerFormats);
   bool _handled = false;
   String? _errorText;
   bool _checkingPermission = true;
-  // Остаётся true, пока не закончится анимация появления диалога
-  // (Dialog по умолчанию открывается с fade+scale переходом). Если
-  // смонтировать MobileScanner (а с ним и CameraX preview) прямо во
-  // время этой анимации, на части устройств/прошивок (в частности
-  // Android с кастомными сборками CameraX у некоторых производителей)
-  // получаем нативный NPE вида "Attempt to invoke virtual method ...
-  // on a null object reference" при попытке забиндить preview к ещё не
-  // до конца готовому view — именно то, что было на скриншоте бага.
-  // Дожидаемся, пока переход диалога полностью завершится, и только
-  // тогда строим сам виджет камеры.
+  // Остаётся false, пока не закончится анимация появления диалога (Dialog
+  // по умолчанию открывается с fade+scale переходом). Если смонтировать
+  // MobileScanner (а с ним и CameraX preview) прямо во время этой
+  // анимации, на части устройств/прошивок получаем нативный сбой при
+  // попытке забиндить preview к ещё не до конца готовому view. Дожидаемся,
+  // пока переход диалога полностью завершится, и только тогда строим сам
+  // виджет камеры.
   bool _transitionFinished = false;
-  // Если камера всё равно не смогла запуститься нативно (ошибка пришла
-  // именно из errorBuilder MobileScanner, а не из проверки разрешения) —
-  // не оставляем пользователя один на один с непонятным текстом на
-  // английском/русском и кнопкой, которую надо заметить и нажать.
-  // Полноэкранный сценарий showCameraScanner уже проверен и надёжно
-  // работает на этом же устройстве (тот же плагин, та же камера), поэтому
-  // при таком сбое сразу и автоматически переключаемся на него.
-  bool _autoFallbackScheduled = false;
+  // Сколько автоматических попыток перезапуска камеры уже сделано после
+  // нативной ошибки — см. комментарий у [_maxAutoRetries].
+  int _retryCount = 0;
+  // true, пока идёт короткая пауза перед очередной автоматической
+  // попыткой — в это время показываем спиннер вместо текста ошибки, чтобы
+  // пользователь вообще не видел сбой, если он устранится сам.
+  bool _autoRetryPending = false;
+  // Защита от повторного срабатывания errorBuilder для одной и той же
+  // попытки запуска (Flutter может вызвать builder несколько раз за кадр).
+  bool _errorHandledForThisAttempt = false;
 
   @override
   void initState() {
     super.initState();
     _checkPermission();
-WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
   }
 
   void _waitForTransition() {
@@ -243,29 +249,51 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
     }
   }
 
-  /// Кнопка "Повторить" в состоянии ошибки — просто заново проверяет
-  /// разрешение и, если оно уже есть, сбрасывает _errorText, снова
-  /// показывая MobileScanner (он перезапустит камеру сам через autoStart
-  /// при следующей вставке в дерево/через встроенный lifecycle).
+  /// Полностью пересоздаёт контроллер и виджет камеры (новый [Key]) —
+  /// самый надёжный способ повторной попытки независимо от версии
+  /// плагина: некоторые версии mobile_scanner ведут себя непредсказуемо
+  /// при повторном ручном .start() уже использованного контроллера.
+  void _resetScanner() {
+    final oldController = _controller;
+    setState(() {
+      _errorText = null;
+      _autoRetryPending = false;
+      _errorHandledForThisAttempt = false;
+      _scannerKey = UniqueKey();
+      _controller = MobileScannerController(formats: _scannerFormats);
+    });
+    oldController.dispose();
+  }
+
+  /// Кнопка "Повторить", нажатая пользователем вручную после того, как
+  /// автоматические попытки закончились неудачей.
   Future<void> _retry() async {
-    setState(() => _errorText = null);
-    _autoFallbackScheduled = false;
+    _retryCount = 0;
+    _resetScanner();
     await _checkPermission();
   }
 
   /// Вызывается из errorBuilder MobileScanner — то есть при сбое именно
-  /// нативного запуска камеры (не разрешения). Один раз автоматически,
-  /// без участия пользователя, переоткрывает сканирование через уже
-  /// проверенный полноэкранный вариант, чтобы бага со скриншота
-  /// («Не удалось запустить камеру: ... null object reference») не было
-  /// видно пользователю вообще — сканер просто откроется на весь экран.
-  void _scheduleAutoFallback() {
-    if (_autoFallbackScheduled) return;
-    _autoFallbackScheduled = true;
-    Future.delayed(const Duration(milliseconds: 400), () {
-      if (!mounted) return;
-      Navigator.of(context).pop(_fullscreenFallbackSentinel);
-    });
+  /// нативного запуска камеры (не разрешения). Первые [_maxAutoRetries]
+  /// раз пробуем молча пересоздать камеру и запустить её снова — на
+  /// практике такие сбои почти всегда транзиентные и исчезают сами уже
+  /// со второй попытки. Только если и это не помогло, показываем текст
+  /// ошибки и ручные кнопки.
+  void _handleScannerError(String text) {
+    if (_errorHandledForThisAttempt) return;
+    _errorHandledForThisAttempt = true;
+    if (_retryCount < _maxAutoRetries) {
+      _retryCount++;
+      setState(() => _autoRetryPending = true);
+      Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
+        if (!mounted) return;
+        _resetScanner();
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _errorText = text);
+      });
+    }
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -284,6 +312,7 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
 
   @override
   Widget build(BuildContext context) {
+    final showSpinner = _checkingPermission || !_transitionFinished || _autoRetryPending;
     return Dialog(
       insetPadding: const EdgeInsets.all(24),
       child: Padding(
@@ -296,7 +325,7 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
                 Expanded(
                   child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w600)),
                 ),
-                if (_errorText == null && !_checkingPermission)
+                if (_errorText == null && !showSpinner)
                   IconButton(
                     icon: ValueListenableBuilder(
                       valueListenable: _controller,
@@ -319,7 +348,7 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
                 borderRadius: BorderRadius.circular(12),
                 child: _errorText != null
                     ? _buildError(_errorText!)
-                    : (_checkingPermission || !_transitionFinished)
+                    : showSpinner
                         ? const ColoredBox(
                             color: Colors.black,
                             child: Center(
@@ -330,15 +359,13 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
                             fit: StackFit.expand,
                             children: [
                               MobileScanner(
+                                key: _scannerKey,
                                 controller: _controller,
                                 onDetect: _onDetect,
                                 // placeholderBuilder закрывает короткий
                                 // промежуток, пока сам виджет ещё
                                 // прикрепляется и запускает камеру через
-                                // autoStart — раньше в это время рендерился
-                                // отдельный "_starting" спиннер поверх ещё
-                                // не построенного MobileScanner, что и
-                                // приводило к преждевременному start().
+                                // autoStart.
                                 placeholderBuilder: (context, child) => const ColoredBox(
                                   color: Colors.black,
                                   child: Center(
@@ -348,22 +375,13 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
                                 // Без errorBuilder виджет сам показывает свою
                                 // англоязычную заглушку "An unexpected error
                                 // occurred" поверх диалога. Ловим её здесь и
-                                // прокидываем в тот же _errorText, чтобы
-                                // получить единый текст на русском и те же
-                                // кнопки "Повторить"/"На весь экран" снизу —
-                                // вместо дублирования UI прямо здесь.
+                                // прогоняем через _handleScannerError —
+                                // первые несколько раз это молча пересоздаст
+                                // камеру, а не сразу покажет ошибку.
                                 errorBuilder: (context, error, child) {
                                   final text =
                                       'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
-                                  if (_errorText != text) {
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                      if (mounted) setState(() => _errorText = text);
-                                    });
-                                  }
-                                  // Автоматически подхватываем проверенный
-                                  // полноэкранный сканер — см. комментарий
-                                  // у _scheduleAutoFallback().
-                                  _scheduleAutoFallback();
+                                  _handleScannerError(text);
                                   return _buildError(text);
                                 },
                               ),
@@ -379,26 +397,23 @@ WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
                             ],
                           ),
               ),
-            ),
+),
             const SizedBox(height: 10),
-            if (_errorText == null)
+            if (_errorText == null && !_autoRetryPending)
               const Text(
                 'Наведите камеру на код',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
-            if (_errorText != null && _autoFallbackScheduled)
-              const Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text(
-                  'Открываем сканер на весь экран…',
-                  style: TextStyle(color: Colors.grey, fontSize: 13),
-                ),
+            if (_autoRetryPending)
+              const Text(
+                'Повторный запуск камеры…',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
-            if (_errorText != null && !_autoFallbackScheduled) ...[
+            if (_errorText != null) ...[
               const SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-children: [
+                children: [
                   TextButton(onPressed: _retry, child: const Text('Повторить')),
                   const SizedBox(width: 8),
                   TextButton(
@@ -443,32 +458,50 @@ class _CameraScannerScreen extends StatefulWidget {
 }
 
 class _CameraScannerScreenState extends State<_CameraScannerScreen> {
-  // _scannerKey меняется при каждом "Повторить" — это заставляет Flutter
+  // _scannerKey меняется при каждой попытке — это заставляет Flutter
   // полностью пересоздать MobileScanner (и его internal state/controller
   // lifecycle) с нуля, а не просто повторно дёрнуть .start() у уже
-  // существующего контроллера. Плагин mobile_scanner в разных версиях
-  // по-разному ведёт себя при повторном ручном start() (в некоторых
-  // версиях это даже кидает отдельную ошибку "controller is still
-  // initializing"), так что полное пересоздание — самый предсказуемый
-  // способ повторной попытки независимо от версии плагина.
+  // существующего контроллера.
   Key _scannerKey = UniqueKey();
-  MobileScannerController _controller = MobileScannerController(
-    formats: const [
-      BarcodeFormat.dataMatrix,
-      BarcodeFormat.ean13,
-      BarcodeFormat.ean8,
-      BarcodeFormat.code128,
-      BarcodeFormat.qrCode,
-      BarcodeFormat.code39,
-    ],
-  );
+  MobileScannerController _controller = MobileScannerController(formats: _scannerFormats);
   bool _handled = false;
-  // Тот же класс ошибок, что и в компактном диалоге (см. комментарий там):
-  // без errorBuilder виджет MobileScanner сам показывает нередактируемую
-  // англоязычную заглушку "An unexpected error occurred", если разрешение
-  // не выдано или камера не смогла запуститься — а полноэкранный переход
-  // такую ошибку раньше вообще никак не обрабатывал.
   String? _errorText;
+  // Тот же приём, что и в компактном диалоге: не монтируем камеру, пока
+  // не закончится анимация появления экрана (MaterialPageRoute тоже
+  // анимирует переход даже с fullscreenDialog: true) — запуск CameraX
+  // прямо во время этого перехода — частая причина нативного сбоя при
+  // старте камеры на некоторых устройствах.
+  bool _transitionFinished = false;
+  int _retryCount = 0;
+  bool _autoRetryPending = false;
+  bool _errorHandledForThisAttempt = false;
+
+  @override
+void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _waitForTransition());
+  }
+
+  void _waitForTransition() {
+    final route = ModalRoute.of(context);
+    final animation = route?.animation;
+    if (animation == null || animation.isCompleted) {
+      if (mounted) setState(() => _transitionFinished = true);
+      return;
+    }
+    void onStatus(AnimationStatus status) {
+      if (status == AnimationStatus.completed) {
+        animation.removeStatusListener(onStatus);
+        if (mounted) setState(() => _transitionFinished = true);
+      }
+    }
+
+    animation.addStatusListener(onStatus);
+    if (animation.isCompleted) {
+      animation.removeStatusListener(onStatus);
+      if (mounted) setState(() => _transitionFinished = true);
+    }
+  }
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
@@ -478,26 +511,46 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
     Navigator.of(context).pop(value);
   }
 
-  void _retry() {
-    // Старый контроллер уже мог оказаться в неопределённом состоянии
-    // после сбоя нативной стороны — создаём полностью новый вместе с
-    // новым ключом виджета, а не пытаемся оживить прежний.
+  /// Полностью пересоздаёт контроллер камеры вместе с новым ключом
+  /// виджета — см. комментарий у аналогичного метода в компактном
+  /// диалоге.
+  void _resetScanner() {
     final oldController = _controller;
     setState(() {
       _errorText = null;
+      _autoRetryPending = false;
+      _errorHandledForThisAttempt = false;
       _scannerKey = UniqueKey();
-      _controller = MobileScannerController(
-        formats: const [
-          BarcodeFormat.dataMatrix,
-          BarcodeFormat.ean13,
-          BarcodeFormat.ean8,
-          BarcodeFormat.code128,
-          BarcodeFormat.qrCode,
-          BarcodeFormat.code39,
-        ],
-      );
+      _controller = MobileScannerController(formats: _scannerFormats);
     });
     oldController.dispose();
+  }
+
+  /// Кнопка "Повторить" — ручная попытка после того, как автоматические
+  /// закончились неудачей.
+  void _retry() {
+    _retryCount = 0;
+    _resetScanner();
+  }
+
+  /// См. комментарий у [_maxAutoRetries] и у одноимённого метода в
+  /// компактном диалоге — сначала пробуем молча пересоздать камеру
+  /// несколько раз, и только потом показываем ошибку пользователю.
+  void _handleScannerError(String text) {
+    if (_errorHandledForThisAttempt) return;
+    _errorHandledForThisAttempt = true;
+    if (_retryCount < _maxAutoRetries) {
+      _retryCount++;
+      setState(() => _autoRetryPending = true);
+      Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
+        if (!mounted) return;
+        _resetScanner();
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _errorText = text);
+      });
+    }
   }
 
   @override
@@ -513,55 +566,72 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
-          IconButton(
-            icon: ValueListenableBuilder(
-              valueListenable: _controller,
-              builder: (context, state, child) => Icon(
-                state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+          if (_transitionFinished && _errorText == null && !_autoRetryPending)
+            IconButton(
+              icon: ValueListenableBuilder(
+                valueListenable: _controller,
+                builder: (context, state, child) => Icon(
+                  state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                ),
               ),
+              onPressed: () => _controller.toggleTorch(),
             ),
-            onPressed: () => _controller.toggleTorch(),
-          ),
         ],
       ),
       body: Stack(
         children: [
-          MobileScanner(
-            key: _scannerKey,
-            controller: _controller,
-            onDetect: _onDetect,
-            errorBuilder: (context, error, child) {
-              final text =
-                  'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
-              if (_errorText != text) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) setState(() => _errorText = text);
-                });
-              }
-              return ColoredBox(
-                color: Colors.black,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline, color: Colors.white70, size: 40),
-                        const SizedBox(height: 12),
-                        Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
-                        const SizedBox(height: 16),
-                        TextButton(
-                          onPressed: _retry,
-                          child: const Text('Повторить'),
-                        ),
-                      ],
+          if (!_transitionFinished || _autoRetryPending)
+            const ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.white70),
+              ),
+            )
+          else
+            MobileScanner(
+              key: _scannerKey,
+              controller: _controller,
+              onDetect: _onDetect,
+              errorBuilder: (context, error, child) {
+                final text =
+                    'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
+                _handleScannerError(text);
+                return ColoredBox(
+                  color: Colors.black,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.white70, size: 40),
+                          const SizedBox(height: 12),
+                          Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+                          const SizedBox(height: 16),
+                          if (_errorText != null)
+                            TextButton(
+                              onPressed: _retry,
+                              child: const Text('Повторить'),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
-          if (_errorText == null) ...[
+                );
+              },
+            ),
+          if (_autoRetryPending)
+            const Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: Text(
+                'Повторный запуск камеры…',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          if (_errorText == null && _transitionFinished && !_autoRetryPending) ...[
             Center(
               child: Container(
                 width: 260,
