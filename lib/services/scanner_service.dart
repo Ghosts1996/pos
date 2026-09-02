@@ -252,6 +252,10 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     _watchdogTimer?.cancel();
     _watchdogTimer = Timer(_watchdogTimeout, () {
       if (!mounted || _handled) return;
+      // Если камера уже реально запустилась (isInitialized) — это не
+      // зависание, а просто пользователь ещё не навёл её на код. Ложную
+      // ошибку в этом случае показывать нельзя.
+      if (_controller.value.isInitialized) return;
       // Камера не подала признаков жизни — ни кадра, ни ошибки от плагина.
       _handleScannerError(
         'Камера не отвечает — не удалось получить изображение с камеры',
@@ -310,20 +314,29 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   /// со второй попытки. Только если и это не помогло, показываем текст
   /// ошибки и ручные кнопки.
   void _handleScannerError(String text) {
+    // errorBuilder вызывается СИНХРОННО во время build() виджета камеры,
+    // поэтому вызывать setState прямо здесь нельзя — Flutter обрывает
+    // выполнение на первом же setState, вызванном во время построения
+    // дерева ("setState() called during build"), и весь код ниже (включая
+    // Future.delayed с автоповтором) просто никогда не выполняется. Из-за
+    // этого экран так и оставался с картинкой ошибки навсегда — ни
+    // автоповтор, ни финальные кнопки не срабатывали. Откладываем всё до
+    // конца текущего кадра.
     if (_errorHandledForThisAttempt) return;
     _errorHandledForThisAttempt = true;
-    if (_retryCount < _maxAutoRetries) {
-      _retryCount++;
-      setState(() => _autoRetryPending = true);
-      Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
-        if (!mounted) return;
-        _resetScanner();
-      });
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _errorText = text);
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_retryCount < _maxAutoRetries) {
+        _retryCount++;
+        setState(() => _autoRetryPending = true);
+        Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
+          if (!mounted) return;
+          _resetScanner();
+        });
+      } else {
+        setState(() => _errorText = text);
+      }
+    });
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -552,6 +565,7 @@ void initState() {
     _watchdogTimer?.cancel();
     _watchdogTimer = Timer(_watchdogTimeout, () {
       if (!mounted || _handled) return;
+      if (_controller.value.isInitialized) return;
       _handleScannerError(
         'Камера не отвечает — не удалось получить изображение с камеры',
       );
@@ -594,20 +608,24 @@ void initState() {
   /// компактном диалоге — сначала пробуем молча пересоздать камеру
   /// несколько раз, и только потом показываем ошибку пользователю.
   void _handleScannerError(String text) {
+    // См. подробный комментарий у одноимённого метода в компактном
+    // диалоге: errorBuilder вызывается синхронно во время build(), поэтому
+    // весь setState откладываем на конец кадра через addPostFrameCallback.
     if (_errorHandledForThisAttempt) return;
     _errorHandledForThisAttempt = true;
-    if (_retryCount < _maxAutoRetries) {
-      _retryCount++;
-      setState(() => _autoRetryPending = true);
-      Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
-        if (!mounted) return;
-        _resetScanner();
-      });
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _errorText = text);
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_retryCount < _maxAutoRetries) {
+        _retryCount++;
+        setState(() => _autoRetryPending = true);
+        Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
+          if (!mounted) return;
+          _resetScanner();
+        });
+      } else {
+        setState(() => _errorText = text);
+      }
+    });
   }
 
   @override
