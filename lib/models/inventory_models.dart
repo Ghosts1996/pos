@@ -66,6 +66,41 @@ extension InventoryUnitX on InventoryUnit {
   static InventoryUnit fromName(String? name) => InventoryUnit.values
       .firstWhere((u) => u.name == name, orElse: () => InventoryUnit.pcs);
 
+  /// Переводит [value] из ЭТОЙ единицы измерения в единицу [target].
+  ///
+  /// Нужен там, где число заведено в одной единице (например, граммовка
+  /// позиции меню — [MenuItem.weightUnit] / [MenuItemComponent.weightUnit]),
+  /// а применяется к остатку склада, который может вестись в другой,
+  /// физически совместимой единице ([InventoryItem.unit]) — например,
+  /// позиция меню задана в миллилитрах, а сам сироп на складе учитывается
+  /// в литрах. Без этой конвертации списание/начисление молча уходило бы
+  /// в 1000 раз мимо: `50` (мл) вычиталось бы как `50` (л).
+  ///
+  /// Поддерживает совместимые пары: граммы ↔ килограммы, миллилитры ↔
+  /// литры. Для физически несовместимых единиц (например «шт» и «г»)
+  /// конвертировать нечего — такая связка означает ошибку в настройке
+  /// самой позиции меню/компонента, а не то, что тут можно молча
+  /// досчитать; возвращаем значение как есть, ничего не додумывая.
+  double convertTo(double value, InventoryUnit target) {
+    if (this == target) return value;
+    switch (this) {
+      case InventoryUnit.g:
+        if (target == InventoryUnit.kg) return value / 1000;
+        return value;
+      case InventoryUnit.kg:
+        if (target == InventoryUnit.g) return value * 1000;
+        return value;
+      case InventoryUnit.ml:
+        if (target == InventoryUnit.l) return value / 1000;
+        return value;
+      case InventoryUnit.l:
+        if (target == InventoryUnit.ml) return value * 1000;
+        return value;
+      case InventoryUnit.pcs:
+        return value;
+    }
+  }
+
   /// Компактное отображение числа без лишних нулей после запятой —
   /// "1.5 кг", а не "1.500 кг"; "10 г", а не "10.000 г".
   String format(double value) {
