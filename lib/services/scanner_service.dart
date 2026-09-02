@@ -128,6 +128,16 @@ const List<BarcodeFormat> _scannerFormats = [
 /// пользователя.
 const int _maxAutoRetries = 2;
 
+/// Абсолютный потолок по времени на автоматические попытки — страховка на
+/// случай, если счётчик попыток [_maxAutoRetries] по каким-то причинам не
+/// сработает как ожидалось (например, повторные сбои приходят настолько
+/// плотно друг за другом, что реальное поведение на конкретном устройстве
+/// расходится с расчётной раскладкой по времени). Независимо от того, что
+/// происходит со счётчиком, через это время с МОМЕНТА ПЕРВОЙ ошибки мы
+/// принудительно показываем финальный экран с кнопками — гарантия того,
+/// что "Повторный запуск камеры…" не может висеть вечно.
+const Duration _autoRetryHardDeadline = Duration(seconds: 5);
+
 /// Открывает модальный экран камеры и возвращает первый считанный код
 /// (или null, если пользователь закрыл экран без сканирования).
 ///
@@ -199,6 +209,9 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   // Защита от повторного срабатывания errorBuilder для одной и той же
   // попытки запуска (Flutter может вызвать builder несколько раз за кадр).
   bool _errorHandledForThisAttempt = false;
+  // Момент ПЕРВОЙ ошибки в текущей серии попыток — см. комментарий у
+  // [_autoRetryHardDeadline].
+  DateTime? _firstErrorAt;
   // Сторож на случай "тихого" зависания: на некоторых устройствах нативная
   // сторона (CameraX) не вызывает ни onDetect, ни errorBuilder — preview
   // просто никогда не подключается, и без этого таймера состояние
@@ -303,6 +316,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
   /// автоматические попытки закончились неудачей.
   Future<void> _retry() async {
     _retryCount = 0;
+    _firstErrorAt = null;
     _resetScanner();
     await _checkPermission();
   }
@@ -324,9 +338,17 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     // конца текущего кадра.
     if (_errorHandledForThisAttempt) return;
     _errorHandledForThisAttempt = true;
+    _firstErrorAt ??= DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_retryCount < _maxAutoRetries) {
+      // Жёсткая страховка: если с первой ошибки в этой серии прошло больше
+      // [_autoRetryHardDeadline] — принудительно идём в финальную ветку,
+      // ЧТО БЫ НИ ПРОИСХОДИЛО со счётчиком попыток. Без этого при
+      // достаточно частых повторных сбоях экран мог технически никогда не
+      // дойти до показа кнопок — именно это происходило на видео.
+      final deadlinePassed =
+          DateTime.now().difference(_firstErrorAt!) >= _autoRetryHardDeadline;
+      if (_retryCount < _maxAutoRetries && !deadlinePassed) {
         _retryCount++;
         setState(() => _autoRetryPending = true);
         Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
@@ -334,6 +356,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
           _resetScanner();
         });
       } else {
+        _watchdogTimer?.cancel();
         setState(() => _errorText = text);
       }
     });
@@ -520,6 +543,7 @@ class _CameraScannerScreenState extends State<_CameraScannerScreen> {
   int _retryCount = 0;
   bool _autoRetryPending = false;
   bool _errorHandledForThisAttempt = false;
+  DateTime? _firstErrorAt;
   // См. комментарий у аналогичного поля в компактном диалоге — страхует
   // от "тихого" зависания камеры без ошибки и без кадра.
   Timer? _watchdogTimer;
@@ -601,6 +625,7 @@ void initState() {
   /// закончились неудачей.
   void _retry() {
     _retryCount = 0;
+    _firstErrorAt = null;
     _resetScanner();
   }
 
@@ -613,9 +638,12 @@ void initState() {
     // весь setState откладываем на конец кадра через addPostFrameCallback.
     if (_errorHandledForThisAttempt) return;
     _errorHandledForThisAttempt = true;
+    _firstErrorAt ??= DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_retryCount < _maxAutoRetries) {
+      final deadlinePassed =
+          DateTime.now().difference(_firstErrorAt!) >= _autoRetryHardDeadline;
+      if (_retryCount < _maxAutoRetries && !deadlinePassed) {
         _retryCount++;
         setState(() => _autoRetryPending = true);
         Future.delayed(Duration(milliseconds: 500 * _retryCount), () {
@@ -623,6 +651,7 @@ void initState() {
           _resetScanner();
         });
       } else {
+        _watchdogTimer?.cancel();
         setState(() => _errorText = text);
       }
     });
