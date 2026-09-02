@@ -223,7 +223,7 @@ Future<String?> _scanBarcodeFromCameraPhoto() async {
   // processImage(), и обычно проходит со второй попытки, когда модуль
   // догружается. Поэтому здесь короткий автоматический ретри с
   // пересозданием сканера, прежде чем показывать ошибку пользователю.
-  const maxAttempts = 3;
+  const maxAttempts = 5;
   Object? lastError;
   for (var attempt = 1; attempt <= maxAttempts; attempt++) {
     final scanner = mlkit.BarcodeScanner(
@@ -257,9 +257,13 @@ Future<String?> _scanBarcodeFromCameraPhoto() async {
       if (!isInitFailure || attempt == maxAttempts) {
         rethrow;
       }
-      // Модуль ML Kit ещё не готов — короткая пауза и повтор с чистым
-      // экземпляром сканера.
-      await Future.delayed(Duration(milliseconds: 400 * attempt));
+      // Модуль ML Kit ещё не готов (Play Services в фоне докачивает
+      // динамическую модель распознавания штрихкодов) — пауза с более
+      // выраженным нарастанием и повтор с чистым экземпляром сканера.
+      // Раньше здесь было 400мс * attempt (макс. 1.2с суммарно) — этого
+      // хватало не всегда, если докачка модели идёт дольше на медленном
+      // интернете. Теперь до 5 попыток и до ~2.5с паузы на последней.
+      await Future.delayed(Duration(milliseconds: 500 * attempt));
     } finally {
       await scanner.close();
     }
@@ -583,9 +587,17 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
       if (!mounted) return;
       setState(() {
         _photoScanInProgress = false;
+        final message = e.toString();
+        final isMlkitModuleFailure = message.contains('zzmj') ||
+            message.contains('getClass') ||
+            message.contains('NullPointerException');
         _errorText = e is _PhotoScanNoCodeException
             ? 'Код не распознан на фото. Сфотографируйте код чётче и без бликов, либо введите его вручную.'
-            : 'Не удалось сделать фото: $e';
+            : isMlkitModuleFailure
+                ? 'Модуль распознавания кодов ещё не загрузился на этом устройстве '
+                    '(нужно подключение к интернету при первом запуске). '
+                    'Проверьте интернет и повторите, либо введите код вручную.'
+                : 'Не удалось сделать фото: $e';
       });
     }
   }
@@ -880,9 +892,17 @@ void initState() {
       if (!mounted) return;
       setState(() {
         _photoScanInProgress = false;
+        final message = e.toString();
+        final isMlkitModuleFailure = message.contains('zzmj') ||
+            message.contains('getClass') ||
+            message.contains('NullPointerException');
         _errorText = e is _PhotoScanNoCodeException
             ? 'Код не распознан на фото. Сфотографируйте код чётче и без бликов, либо введите его вручную.'
-            : 'Не удалось сделать фото: $e';
+            : isMlkitModuleFailure
+                ? 'Модуль распознавания кодов ещё не загрузился на этом устройстве '
+                    '(нужно подключение к интернету при первом запуске). '
+                    'Проверьте интернет и повторите, либо введите код вручную.'
+                : 'Не удалось сделать фото: $e';
       });
     }
   }
