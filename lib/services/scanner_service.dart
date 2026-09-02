@@ -235,6 +235,63 @@ Future<String?> showCompactCameraScanner(BuildContext context, {String title = '
 
 const _fullscreenFallbackSentinel = '__open_fullscreen_scanner__';
 
+/// Небольшой диалог ручного ввода кода — последний, ни от чего не зависящий
+/// способ передать код в приложение, когда камера (живое превью ИЛИ разовый
+/// снимок через [_scanBarcodeFromCameraPhoto]) не работает на конкретном
+/// устройстве вообще никак. Не зависит от CameraX/ML Kit, поэтому не может
+/// упасть с той же ошибкой, что и остальные способы — использует только
+/// обычное текстовое поле.
+Future<String?> _showManualEntryDialog(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Ввести код вручную'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(hintText: 'Код маркировки или штрихкод'),
+        onSubmitted: (value) {
+          final trimmed = value.trim();
+          if (trimmed.isNotEmpty) Navigator.of(dialogContext).pop(trimmed);
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Отмена'),
+        ),
+        TextButton(
+          onPressed: () {
+            final trimmed = controller.text.trim();
+            if (trimmed.isNotEmpty) Navigator.of(dialogContext).pop(trimmed);
+          },
+          child: const Text('Готово'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Кнопка-ссылка "Ввести код вручную" — общая для компактного и
+/// полноэкранного сканера. Всегда доступна, а не только после сбоя камеры:
+/// на устройствах, где живое превью в принципе не заводится, не нужно
+/// заставлять пользователя сначала дождаться ошибки, чтобы найти этот путь.
+class _ManualEntryLink extends StatelessWidget {
+  final Future<void> Function() onManualEntry;
+  const _ManualEntryLink({required this.onManualEntry});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onManualEntry,
+      icon: const Icon(Icons.keyboard, size: 18),
+      label: const Text('Ввести код вручную'),
+    );
+  }
+}
+
 class _CompactCameraScannerDialog extends StatefulWidget {
   final String title;
   const _CompactCameraScannerDialog({required this.title});
@@ -462,6 +519,17 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
     }
   }
 
+  /// Ручной ввод — см. [_showManualEntryDialog]. Единственный путь, который
+  /// не зависит от камеры/ML Kit вообще и поэтому гарантированно работает
+  /// даже на устройствах, где ни живое превью, ни разовый снимок не
+  /// заводятся (см. видео с ошибкой [_scannerServiceBuildTag]).
+  Future<void> _enterManually() async {
+    final value = await _showManualEntryDialog(context);
+    if (!mounted || value == null) return;
+    _handled = true;
+    Navigator.of(context).pop(value);
+  }
+
   @override
   void dispose() {
     _watchdogTimer?.cancel();
@@ -573,6 +641,11 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                 'Обработка фото…',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
+            // Ссылка на ручной ввод доступна всегда, а не только после
+            // сбоя камеры — на устройствах, где живое превью в принципе не
+            // заводится (см. видео), не нужно заставлять пользователя ждать
+            // ошибку, чтобы найти рабочий способ ввести код.
+            if (!_photoScanInProgress) _ManualEntryLink(onManualEntry: _enterManually),
             if (_errorText != null) ...[
               const SizedBox(height: 4),
               Wrap(
@@ -743,6 +816,14 @@ void initState() {
     }
   }
 
+  /// См. комментарий у одноимённого метода в компактном диалоге.
+  Future<void> _enterManually() async {
+    final value = await _showManualEntryDialog(context);
+    if (!mounted || value == null) return;
+    _handled = true;
+    Navigator.of(context).pop(value);
+  }
+
   /// Полностью пересоздаёт контроллер камеры вместе с новым ключом
   /// виджета — см. комментарий у аналогичного метода в компактном
   /// диалоге.
@@ -868,6 +949,12 @@ void initState() {
                                   onPressed: _photoScanInProgress ? null : _scanFromPhoto,
                                   child: Text(_photoScanInProgress ? 'Обработка…' : 'Сделать фото'),
                                 ),
+                                // Гарантированно рабочий путь, не зависящий от
+                                // камеры/ML Kit вообще — см. [_showManualEntryDialog].
+                                TextButton(
+                                  onPressed: _photoScanInProgress ? null : _enterManually,
+                                  child: const Text('Ввести код вручную'),
+                                ),
                               ],
                             ),
                         ],
@@ -910,14 +997,23 @@ void initState() {
                 ),
               ),
             ),
-            const Positioned(
+            Positioned(
               bottom: 32,
               left: 0,
               right: 0,
-              child: Text(
-                'Наведите камеру на штрихкод или DataMatrix-код',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Наведите камеру на штрихкод или DataMatrix-код',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  // Доступно сразу, не дожидаясь сбоя — см. комментарий у
+                  // одноимённой ссылки в компактном диалоге.
+                  if (!_photoScanInProgress)
+                    _ManualEntryLink(onManualEntry: _enterManually),
+                ],
               ),
             ),
           ],
