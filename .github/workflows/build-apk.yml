@@ -53,10 +53,17 @@ jobs:
         run: |
           # mobile_scanner 5.x+ требует compileSdk >= 34 из-за CameraX 1.3.x.
           # flutter create генерирует compileSdk=33 (или ниже) — поднимаем до 35.
+          #
+          # ВАЖНО: свежий шаблон Flutter пишет "compileSdk = flutter.compileSdkVersion"
+          # (без цифр вообще). Старый sed с шаблоном "[0-9]*" совпадал с пустой
+          # строкой прямо перед "flutter.compileSdkVersion" и ВСТАВЛЯЛ "35" перед
+          # ним, а не заменял — получалось "compileSdk = 35flutter.compileSdkVersion"
+          # и сборка падала с "Expecting an element". Теперь заменяем весь хвост
+          # строки после "compileSdk =" целиком.
           APP_GRADLE=android/app/build.gradle.kts
           [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
-          sed -i 's/compileSdk = [0-9]*/compileSdk = 35/' "$APP_GRADLE"
-          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/' "$APP_GRADLE"
+          sed -i -E 's/compileSdk[[:space:]]*=.*/compileSdk = 35/' "$APP_GRADLE"
+          sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 35/' "$APP_GRADLE"
           echo "----- build.gradle compileSdk -----"; grep -E "compileSdk" "$APP_GRADLE"
 
       - name: Add google-services.json (Firebase Android config)
