@@ -319,7 +319,21 @@ class InventoryItemDetailScreen extends StatelessWidget {
                   items: InventoryUnit.values
                       .map((u) => DropdownMenuItem(value: u, child: Text(u.fullLabel)))
                       .toList(),
-                  onChanged: (v) => setSt(() => unit = v ?? unit),
+                  onChanged: (v) {
+                    if (v == null || v == unit) return;
+                    // Порог введён в старой единице — при смене единицы
+                    // пересчитываем и его, иначе то же число молча стало бы
+                    // означать другую величину (например, порог "200" (г)
+                    // превратился бы в порог "200" (кг)). Сам остаток
+                    // пересчитывает FirestoreService.updateInventoryItem.
+                    final oldMin = double.tryParse(minCtrl.text.trim().replaceAll(',', '.'));
+                    setSt(() {
+                      if (oldMin != null && oldMin > 0) {
+                        minCtrl.text = v.format(unit.convertTo(oldMin, v));
+                      }
+                      unit = v;
+                    });
+                  },
                 ),
                 const SizedBox(height: 12),
                 TextField(
