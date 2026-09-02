@@ -360,7 +360,6 @@ class FirestoreService {
         // Составная позиция: списываем каждый компонент отдельно
         for (final component in menuItem.components) {
           if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
-          final delta = -(component.weight * orderItem.qty);
           try {
             final invDoc = await _db
                 .collection('inventoryItems')
@@ -368,6 +367,14 @@ class FirestoreService {
                 .get();
             if (!invDoc.exists) continue;
             final invItem = InventoryItem.fromDoc(invDoc);
+            // Граммовка компонента задана в component.weightUnit, а остаток
+            // склада ведётся в invItem.unit — единицы могут не совпадать
+            // (например, компонент задан в мл, а сама позиция склада — в
+            // литрах), поэтому переводим количество в единицу склада перед
+            // тем, как вычесть его из остатка.
+            final qtyInStockUnit =
+                component.weightUnit.convertTo(component.weight, invItem.unit);
+            final delta = -(qtyInStockUnit * orderItem.qty);
             await adjustInventoryQuantity(
               itemId: component.inventoryItemId,
               itemName: invItem.name,
@@ -383,7 +390,6 @@ class FirestoreService {
         }
       } else {
         // Простая позиция: одна привязка к складу
-        final delta = -(menuItem.weight * orderItem.qty);
         try {
           final invDoc = await _db
               .collection('inventoryItems')
@@ -391,6 +397,11 @@ class FirestoreService {
               .get();
           if (!invDoc.exists) continue;
           final invItem = InventoryItem.fromDoc(invDoc);
+          // Аналогично компоненту выше: граммовка позиции меню задана в
+          // menuItem.weightUnit, который админ выбирает независимо от
+          // единицы привязанной позиции склада — переводим перед списанием.
+          final qtyInStockUnit = menuItem.weightUnit.convertTo(menuItem.weight, invItem.unit);
+          final delta = -(qtyInStockUnit * orderItem.qty);
           await adjustInventoryQuantity(
             itemId: menuItem.inventoryItemId,
             itemName: invItem.name,
@@ -458,7 +469,13 @@ class FirestoreService {
         for (final component in menuItem.components) {
           final invItem = invMap[component.inventoryItemId];
           if (invItem == null || !invItem.alcohol.isAlcohol) continue;
-          final liters = (component.weight * orderItem.qty) / 1000;
+          // component.weight задан в component.weightUnit (может быть г,
+          // кг, мл или л — админ выбирает независимо от позиции склада),
+          // поэтому сначала переводим в миллилитры и только потом в литры
+          // для ЕГАИС, вместо того чтобы всегда делить на 1000, как если бы
+          // единица была жёстко «мл».
+          final ml = component.weightUnit.convertTo(component.weight, InventoryUnit.ml);
+          final liters = (ml * orderItem.qty) / 1000;
           if (liters <= 0) continue;
           lines.add(EgaisSaleLine(
             alcCode: invItem.alcohol.alcCode,
@@ -818,13 +835,34 @@ class FirestoreService {
     return ref.id;
   }
 
-  /// Обновляет только карточку позиции (название, категория, единица,
-  /// порог, заметка) — остаток через этот метод намеренно не меняется,
-  /// чтобы правка описания никогда случайно не затёрла текущее количество.
-  /// Для изменения остатка используйте [adjustInventoryQuantity].
-  Future<void> updateInventoryItem(InventoryItem item) {
+  /// Обновляет карточку позиции (название, категория, единица, порог,
+  /// заметка). Текущий остаток через этот метод напрямую не переписывается
+  /// заново введённым числом — чтобы правка описания никогда случайно не
+  /// затёрла его. Для изменения остатка используйте [adjustInventoryQuantity].
+  ///
+  /// Исключение — сама единица измерения: если админ меняет её (например,
+  /// с граммов на килограммы) для позиции, где уже накоплен остаток,
+  /// хранящееся число остатка обязательно пересчитывается в новую единицу.
+  /// Иначе то же число молча начинает означать другую величину — например,
+  /// «500» (г) превратились бы в «500» (кг), то есть остаток мгновенно
+  /// вырос бы в 1000 раз, хотя физически на складе ничего не изменилось.
+  /// Порог «мало на складе» сюда не входит: он приходит уже пересчитанным
+  /// из формы редактирования (см. `_editItem` в UI), т.к. только там
+  /// известно, что именно ввёл админ — то же число в новой единице или
+  /// уже осознанно новое значение.
+  Future<void> updateInventoryItem(InventoryItem item) async {
+    final ref = _db.collection('inventoryItems').doc(item.id);
     final map = item.toMap()..remove('quantity');
-    return _db.collection('inventoryItems').doc(item.id).update(map);
+    final current = await ref.get();
+    final currentUnitName = current.data()?['unit'] as String?;
+    if (currentUnitName != null) {
+      final currentUnit = InventoryUnitX.fromName(currentUnitName);
+      if (currentUnit != item.unit) {
+        final currentQty = (current.data()?['quantity'] as num?)?.toDouble() ?? 0;
+        map['quantity'] = currentUnit.convertTo(currentQty, item.unit);
+      }
+    }
+    await ref.update(map);
   }
 
   /// Включить/выключить отслеживание позиции — на усмотрение админа.
