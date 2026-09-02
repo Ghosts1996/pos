@@ -139,7 +139,7 @@ const List<BarcodeFormat> _scannerFormats = [
 /// действительно ли на телефоне стоит сборка с последними правками этого
 /// файла (автоповтор с жёстким дедлайном по времени), а не более старая
 /// версия APK. Увеличивайте при каждой следующей правке этого файла.
-const String _scannerServiceBuildTag = 'scanner-fix-v6';
+const String _scannerServiceBuildTag = 'scanner-fix-v7';
 
 const int _maxAutoRetries = 2;
 
@@ -209,27 +209,64 @@ Future<String?> _scanBarcodeFromCameraPhoto() async {
   // ради разового анализа фото, поэтому используем ML Kit напрямую — тот
   // же движок распознавания, но полностью независимый от камеры/превью и
   // от состояния MobileScannerController.
-  final scanner = mlkit.BarcodeScanner(
-    formats: const [
-      mlkit.BarcodeFormat.dataMatrix,
-      mlkit.BarcodeFormat.ean13,
-      mlkit.BarcodeFormat.ean8,
-      mlkit.BarcodeFormat.code128,
-      mlkit.BarcodeFormat.qrCode,
-      mlkit.BarcodeFormat.code39,
-    ],
-  );
-  try {
-    final inputImage = mlkit_commons.InputImage.fromFilePath(photo.path);
-    final barcodes = await scanner.processImage(inputImage);
-    final value = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
-    if (value == null || value.isEmpty) {
-      throw const _PhotoScanNoCodeException();
+  //
+  // НО: пакет google_mlkit_barcode_scanning тоже может упасть с NPE вида
+  // "Attempt to invoke virtual method 'java.lang.Class
+  // java.lang.Object.getClass()' on a null object reference" внутри
+  // com.google.android.gms.internal.mlkit_vision_common.zzmj.<init> — это
+  // НЕ ошибка распознавания, а падение при первом обращении к нативному
+  // модулю ML Kit, если Google Play Services ещё не успел скачать/
+  // проинициализировать динамический модуль штрихкод-сканера на этом
+  // устройстве (частый случай на свежеустановленном APK или на устройствах
+  // с урезанным/не до конца готовым Play Services). Такое падение
+  // происходит уже ПОСЛЕ создания BarcodeScanner, при первом
+  // processImage(), и обычно проходит со второй попытки, когда модуль
+  // догружается. Поэтому здесь короткий автоматический ретри с
+  // пересозданием сканера, прежде чем показывать ошибку пользователю.
+  const maxAttempts = 3;
+  Object? lastError;
+  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    final scanner = mlkit.BarcodeScanner(
+      formats: const [
+        mlkit.BarcodeFormat.dataMatrix,
+        mlkit.BarcodeFormat.ean13,
+        mlkit.BarcodeFormat.ean8,
+        mlkit.BarcodeFormat.code128,
+        mlkit.BarcodeFormat.qrCode,
+        mlkit.BarcodeFormat.code39,
+      ],
+    );
+    try {
+      final inputImage = mlkit_commons.InputImage.fromFilePath(photo.path);
+      final barcodes = await scanner.processImage(inputImage);
+      final value = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
+      if (value == null || value.isEmpty) {
+        throw const _PhotoScanNoCodeException();
+      }
+      return value;
+    } on _PhotoScanNoCodeException {
+      // Код на фото не найден — это не сбой инициализации ML Kit, ретрай
+      // с новым фото не поможет, пробрасываем сразу.
+      rethrow;
+    } catch (e) {
+      lastError = e;
+      final message = e.toString();
+      final isInitFailure = message.contains('zzmj') ||
+          message.contains('getClass') ||
+          message.contains('NullPointerException');
+      if (!isInitFailure || attempt == maxAttempts) {
+        rethrow;
+      }
+      // Модуль ML Kit ещё не готов — короткая пауза и повтор с чистым
+      // экземпляром сканера.
+      await Future.delayed(Duration(milliseconds: 400 * attempt));
+    } finally {
+      await scanner.close();
     }
-    return value;
-  } finally {
-    await scanner.close();
   }
+  // Формально недостижимо (цикл либо возвращает значение, либо бросает),
+  // но нужно для полноты типа.
+  throw lastError ?? const _PhotoScanNoCodeException();
 }
 
 /// Открывает модальный экран камеры и возвращает первый считанный код
