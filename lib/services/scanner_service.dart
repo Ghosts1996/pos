@@ -126,6 +126,13 @@ const List<BarcodeFormat> _scannerFormats = [
 /// секунды, поэтому автоматический повтор — самый надёжный способ
 /// добиться того, чтобы камера в итоге завелась без вмешательства
 /// пользователя.
+/// Метка сборки — видна прямо в тексте ошибки на экране. Нужна ТОЛЬКО для
+/// диагностики: чтобы по скриншоту/видео с устройства сразу было понятно,
+/// действительно ли на телефоне стоит сборка с последними правками этого
+/// файла (автоповтор с жёстким дедлайном по времени), а не более старая
+/// версия APK. Увеличивайте при каждой следующей правке этого файла.
+const String _scannerServiceBuildTag = 'scanner-fix-v4';
+
 const int _maxAutoRetries = 2;
 
 /// Абсолютный потолок по времени на автоматические попытки — страховка на
@@ -271,7 +278,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
       if (_controller.value.isInitialized) return;
       // Камера не подала признаков жизни — ни кадра, ни ошибки от плагина.
       _handleScannerError(
-        'Камера не отвечает — не удалось получить изображение с камеры',
+        'Камера не отвечает [$_scannerServiceBuildTag] — не удалось получить изображение с камеры',
       );
     });
   }
@@ -448,7 +455,7 @@ class _CompactCameraScannerDialogState extends State<_CompactCameraScannerDialog
                                 // камеру, а не сразу покажет ошибку.
                                 errorBuilder: (context, error, child) {
                                   final text =
-                                      'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
+                                      'Не удалось запустить камеру [$_scannerServiceBuildTag]: ${error.errorDetails?.message ?? error.errorCode.name}';
                                   _handleScannerError(text);
                                   return _buildError(text);
                                 },
@@ -591,7 +598,7 @@ void initState() {
       if (!mounted || _handled) return;
       if (_controller.value.isInitialized) return;
       _handleScannerError(
-        'Камера не отвечает — не удалось получить изображение с камеры',
+        'Камера не отвечает [$_scannerServiceBuildTag] — не удалось получить изображение с камеры',
       );
     });
   }
@@ -699,7 +706,7 @@ void initState() {
               onDetect: _onDetect,
               errorBuilder: (context, error, child) {
                 final text =
-                    'Не удалось запустить камеру: ${error.errorDetails?.message ?? error.errorCode.name}';
+                    'Не удалось запустить камеру [$_scannerServiceBuildTag]: ${error.errorDetails?.message ?? error.errorCode.name}';
                 _handleScannerError(text);
                 return ColoredBox(
                   color: Colors.black,
