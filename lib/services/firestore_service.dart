@@ -597,8 +597,29 @@ class FirestoreService {
       final stateDoc = await tx.get(stateRef);
       final data = stateDoc.data();
       final currentOpenId = data?['openShiftId'] as String?;
+
+      // ВАЖНО: раньше здесь достаточно было непустого currentOpenId, чтобы
+      // решить "смена уже открыта" и ничего не делать. Но если предыдущее
+      // закрытие смены прервалось на середине (потеря сети/перезапуск между
+      // обновлением shifts/{id}.status и сбросом этого указателя), то
+      // openShiftId может ссылаться на уже ЗАКРЫТУЮ смену — и приложение
+      // "зависало": кнопка "Открыть смену" молча возвращала старый id,
+      // новая смена не создавалась, а UI (currentOpenShift/openShiftStream)
+      // по-прежнему не находил ни одной смены со status == 'open'.
+      //
+      // Поэтому теперь дополнительно читаем саму смену по currentOpenId и
+      // доверяем указателю, только если она на самом деле ещё открыта.
+      // Если нет (или сам документ не найден) — самовосстанавливаемся и
+      // открываем новую смену, как будто указатель был пуст.
       if (currentOpenId != null && currentOpenId.isNotEmpty) {
-        return currentOpenId;
+        final referencedShiftDoc = await tx.get(_db.collection('shifts').doc(currentOpenId));
+        final referencedData = referencedShiftDoc.data();
+        final referencedStatus = referencedData?['status'] as String?;
+        if (referencedShiftDoc.exists && referencedStatus == 'open') {
+          return currentOpenId;
+        }
+        // Указатель "протух" (протухший id закрытой/удалённой смены) —
+        // падаем через создание новой смены ниже.
       }
 
       final shift = ShiftModel(
@@ -618,16 +639,24 @@ class FirestoreService {
   /// Закрывает смену (кнопка "Закрыть смену" в X-отчёте) и сбрасывает
   /// указатель текущей открытой смены, чтобы следующий вход в приложение
   /// открыл новую смену.
+  ///
+  /// Оба изменения (статус смены + сброс указателя в meta/shiftState)
+  /// выполняются в ОДНОЙ транзакции — раньше это были два отдельных похода
+  /// в базу, и обрыв связи/перезапуск приложения между ними оставлял
+  /// meta/shiftState.openShiftId указывающим на уже закрытую смену (см.
+  /// комментарий в openShiftIfNeeded выше). Атомарность здесь убирает саму
+  /// возможность такого рассинхрона.
   Future<void> closeShift(String shiftId, String employeeName) async {
     final now = DateTime.now();
-    await _db.collection('shifts').doc(shiftId).update({
-      'status': 'closed',
-      'closedAt': Timestamp.fromDate(now),
-      'closedBy': employeeName,
-    });
+    final shiftRef = _db.collection('shifts').doc(shiftId);
     final stateRef = _db.collection('meta').doc('shiftState');
     await _db.runTransaction((tx) async {
       final stateDoc = await tx.get(stateRef);
+      tx.update(shiftRef, {
+        'status': 'closed',
+        'closedAt': Timestamp.fromDate(now),
+        'closedBy': employeeName,
+      });
       final data = stateDoc.data();
       if (data?['openShiftId'] == shiftId) {
         tx.set(stateRef, {'openShiftId': null});
