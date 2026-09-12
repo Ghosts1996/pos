@@ -91,7 +91,7 @@ class TableQrScreen extends StatelessWidget {
             Text(table.name,
                 style: const TextStyle(
                     color: Colors.black, fontSize: 18, fontWeight: FontWeight.w700)),
-            const Text('Сканируйте — увидите свой счёт',
+            const Text('Наведите камеру — откроется приложение',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.black54, fontSize: 11)),
           ],
