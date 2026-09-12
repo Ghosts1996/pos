@@ -259,11 +259,52 @@ class GuestLinkService {
 
   // ---------- БОНУСЫ ----------
 
-  // Начисление кешбэка живёт на сервере: Cloud Function `onSessionClosed`
-  // считает его при переходе чека в статус closed. С планшета начислять
-  // нельзя — два устройства закрыли бы чек и начислили бонусы дважды,
-  // а гость мог бы подделать сумму. Здесь осталось только списание,
-  // которое инициирует кассир на экране оплаты.
+  /// Начисление кешбэка после закрытия чека.
+  ///
+  /// Считается на кассе, а не на сервере: Cloud Functions требуют платного
+  /// тарифа Firebase. Защита от двойного начисления — отметка
+  /// bonusAccruedFor в профиле: повторный вызов с тем же чеком ничего не
+  /// сделает, даже если два планшета одновременно закрыли один чек.
+  Future<void> accrueBonuses({
+    required String clientUid,
+    required String sessionId,
+    required double paidAmount,
+  }) async {
+    if (clientUid.isEmpty || paidAmount <= 0) return;
+    final ref = _clients.doc(clientUid);
+    var bonus = 0.0;
+
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) return;
+
+      final data = snap.data() as Map<String, dynamic>;
+      if (data['bonusAccruedFor'] == sessionId) return; // уже начислено
+
+      final profile = ClientProfile.fromDoc(snap);
+      bonus = (paidAmount * profile.cashbackPercent / 100).roundToDouble();
+
+      tx.update(ref, {
+        'bonusBalance': profile.bonusBalance + bonus,
+        'totalSpent': profile.totalSpent + paidAmount,
+        'visits': profile.visits + 1,
+        'bonusAccruedFor': sessionId,
+        'activeSessionId': '',
+        'activeTableId': '',
+        'lastVisitAt': Timestamp.fromDate(DateTime.now()),
+      });
+    });
+
+    if (bonus <= 0) return;
+    await _db.collection('bonusOperations').add({
+      'clientUid': clientUid,
+      'sessionId': sessionId,
+      'type': 'accrual',
+      'amount': paidAmount,
+      'bonus': bonus,
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
 
   /// Списание бонусов в счёт оплаты. Возвращает фактически списанную сумму
   /// (не больше баланса и не больше [requested]).
