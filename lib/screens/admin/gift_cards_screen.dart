@@ -56,6 +56,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                 ),
                 const SizedBox(width: 10),
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: () async {
                     final card = await _service.find(_search.text);
                     if (!mounted) return;

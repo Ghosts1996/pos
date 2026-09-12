@@ -595,6 +595,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               ),
               const SizedBox(width: 10),
               OutlinedButton(
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                 onPressed: _busy ? null : _applyGiftCard,
                 child: const Text('Списать'),
               ),

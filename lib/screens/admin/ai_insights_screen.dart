@@ -109,6 +109,9 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
                   ),
                   const SizedBox(width: 8),
                   TextButton.icon(
+                    // Без явного minimumSize кнопка требует бесконечную
+                    // ширину (в теме Size.fromHeight) и схлопывает текст слева.
+                    style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
                     onPressed: _pickRange,
                     icon: const Icon(Icons.date_range, size: 18),
                     label: const Text('Выбрать'),
