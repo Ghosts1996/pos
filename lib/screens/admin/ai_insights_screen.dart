@@ -87,25 +87,34 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
               width: double.infinity,
               color: AppColors.warning.withValues(alpha: 0.15),
               padding: const EdgeInsets.all(12),
-              child: const Text('ИИ не подключён — откройте «Настройки ИИ» и введите ключ tooken.club.',
+              child: const Text('ИИ не подключён — откройте «Настройки ИИ» и введите API-ключ.',
                   style: TextStyle(color: AppColors.warning)),
             ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Период: ${_fmt(_range.start)} — ${_fmt(_range.end)}',
-                    style: const TextStyle(color: AppColors.textMuted),
+          // Ширина задаётся явно: без этого в некоторых сборках текст
+          // получал нулевую ширину и рассыпался по букве в строке.
+          SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.max,
+                children: [
+                  Flexible(
+                    child: Text(
+                      'Период: ${_fmt(_range.start)} — ${_fmt(_range.end)}',
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: AppColors.textMuted),
+                    ),
                   ),
-                ),
-                TextButton.icon(
-                  onPressed: _pickRange,
-                  icon: const Icon(Icons.date_range),
-                  label: const Text('Выбрать'),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: _pickRange,
+                    icon: const Icon(Icons.date_range, size: 18),
+                    label: const Text('Выбрать'),
+                  ),
+                ],
+              ),
             ),
           ),
           SizedBox(
