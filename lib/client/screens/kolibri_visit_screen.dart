@@ -6,6 +6,8 @@ import '../../models/session_model.dart';
 import '../../models/table_model.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
+import 'kolibri_hall_map_screen.dart';
+import 'kolibri_qr_scan_screen.dart';
 import '../theme/kolibri_theme.dart';
 
 /// «Мой стол»: живой счёт гостя.
@@ -75,13 +77,38 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
+            onPressed: () async {
+              // QR со стола — самый быстрый путь: гость сразу попадает
+              // на свой счёт без выбора из списка.
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const KolibriQrScanScreen()),
+              );
+              if (mounted) setState(() {});
+            },
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Сканировать QR стола'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const KolibriHallMapScreen()),
+              );
+              if (mounted) setState(() {});
+            },
+            icon: const Icon(Icons.map_outlined),
+            label: const Text('Карта зала'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
             onPressed: _pickTable,
-            icon: const Icon(Icons.table_restaurant),
-            label: const Text('Я за столом'),
+            icon: const Icon(Icons.list),
+            label: const Text('Выбрать стол из списка'),
           ),
           const SizedBox(height: 12),
           const Text(
-            'Выберите свой стол из списка или отсканируйте QR-код на столе.',
+            'Проще всего отсканировать код со стола. Если кода нет — '
+            'найдите свой стол на карте зала.',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
           ),
         ],
