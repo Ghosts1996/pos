@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
+import '../services/kolibri_deep_links.dart';
 import '../services/kolibri_image_cache.dart';
 import '../theme/kolibri_theme.dart';
 import '../widgets/kolibri_ai_chat.dart';
@@ -31,6 +32,28 @@ class _KolibriShellState extends State<KolibriShell> {
     // Фоном скачиваем все фото меню сразу при запуске: дальше меню
     // открывается мгновенно и работает даже без сети.
     KolibriImageCache.instance.warmUp();
+
+    // QR со стола, отсканированный обычной камерой телефона, открывает
+    // приложение и сразу привязывает стол.
+    final links = KolibriDeepLinks.instance
+      ..onTableBound = (_) {
+        if (!mounted) return;
+        setState(() => _index = 3);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Готово! Ваш счёт открыт')),
+        );
+      }
+      ..onFailed = (message) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      };
+    links.start();
+  }
+
+  @override
+  void dispose() {
+    KolibriDeepLinks.instance.stop();
+    super.dispose();
   }
 
   @override

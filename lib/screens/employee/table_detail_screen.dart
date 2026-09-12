@@ -3,7 +3,6 @@ import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/table_ai_tips_bar.dart';
 import '../../widgets/timer_display.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
@@ -336,10 +335,6 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Подсказки допродаж от ИИ: агент смотрит на чек, время
-                    // за столом и остатки склада. Полоса сама исчезает,
-                    // если ИИ выключен или предлагать нечего.
-                    TableAiTipsBar(session: session),
                     if (hasOtherChecks || canAddMore)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),

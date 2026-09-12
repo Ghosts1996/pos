@@ -172,15 +172,28 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         StreamBuilder<QuerySnapshot>(
+          // orderBy вместе с where требует составного индекса Firestore —
+          // без него запрос падал, и история «вечно грузилась». Сортируем
+          // на устройстве: операций у одного гостя всегда немного.
           stream: FirebaseFirestore.instance
               .collection('bonusOperations')
               .where('clientUid', isEqualTo: _auth.uid)
-              .orderBy('createdAt', descending: true)
-              .limit(30)
+              .limit(50)
               .snapshots(),
           builder: (context, snap) {
+            if (snap.hasError) {
+              return const Text('Не удалось загрузить историю',
+                  style: TextStyle(color: KolibriColors.textMuted));
+            }
             if (!snap.hasData) return const LinearProgressIndicator();
-            final docs = snap.data!.docs;
+
+            final docs = snap.data!.docs.toList()
+              ..sort((a, b) {
+                final x = (a.data() as Map<String, dynamic>)['createdAt'];
+                final y = (b.data() as Map<String, dynamic>)['createdAt'];
+                if (x is! Timestamp || y is! Timestamp) return 0;
+                return y.compareTo(x);
+              });
             if (docs.isEmpty) {
               return const Text('Операций пока нет',
                   style: TextStyle(color: KolibriColors.textMuted));
