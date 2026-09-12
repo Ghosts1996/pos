@@ -130,14 +130,20 @@ class AiContextService {
 
   /// Агрегат по закрытым чекам за период — основа для ИИ-аналитики.
   Future<String> salesSnapshot({required DateTime from, required DateTime to}) async {
+    // Фильтр только по дате: связка status + closedAt потребовала бы
+    // составного индекса Firestore, который пришлось бы создавать руками.
+    // Статус и возвраты отсеиваем уже на устройстве — чеков за период
+    // немного, и это дешевле, чем ручная настройка индексов.
     final snap = await _db
         .collection('sessions')
-        .where('status', isEqualTo: 'closed')
         .where('closedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
         .where('closedAt', isLessThan: Timestamp.fromDate(to))
         .get();
 
-    final sessions = snap.docs.map(SessionModel.fromDoc).where((s) => !s.refunded).toList();
+    final sessions = snap.docs
+        .map(SessionModel.fromDoc)
+        .where((s) => s.status == 'closed' && !s.refunded)
+        .toList();
     if (sessions.isEmpty) return 'Закрытых чеков за период нет.';
 
     var revenue = 0.0;
