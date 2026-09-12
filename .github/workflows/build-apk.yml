@@ -258,7 +258,7 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."
             exit 0
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          printf "%s" "$KEYSTORE_BASE64" | tr -d "\r\n \t" | base64 -d > android/app/upload-keystore.jks || { echo "::error::ANDROID_KEYSTORE_BASE64 повреждён — пересоздайте секрет командой base64 -w0"; exit 1; }
           cat > android/key.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
