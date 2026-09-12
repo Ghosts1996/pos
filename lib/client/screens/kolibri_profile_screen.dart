@@ -19,12 +19,14 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   final _auth = KolibriAuthService();
   final _link = GuestLinkService();
   final _name = TextEditingController();
+  final _phone = TextEditingController();
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     _name.text = widget.profile?.name ?? '';
+    _phone.text = widget.profile?.phone ?? '';
   }
 
   @override
@@ -33,11 +35,15 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     if (_name.text.isEmpty && (widget.profile?.name ?? '').isNotEmpty) {
       _name.text = widget.profile!.name;
     }
+    if (_phone.text.isEmpty && (widget.profile?.phone ?? '').isNotEmpty) {
+      _phone.text = widget.profile!.phone;
+    }
   }
 
   @override
   void dispose() {
     _name.dispose();
+    _phone.dispose();
     super.dispose();
   }
 
@@ -92,12 +98,24 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           decoration: const InputDecoration(labelText: 'Как к вам обращаться'),
         ),
         const SizedBox(height: 12),
+        TextField(
+          controller: _phone,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'Телефон',
+            helperText: 'Назовите его кальянщику при оплате — спишем и начислим бонусы',
+          ),
+        ),
+        const SizedBox(height: 12),
         FilledButton(
           onPressed: _saving
               ? null
               : () async {
                   setState(() => _saving = true);
-                  await _link.updateProfile(_auth.uid, {'name': _name.text.trim()});
+                  await _link.updateProfile(_auth.uid, {
+                    'name': _name.text.trim(),
+                    'phone': _phone.text.trim(),
+                  });
                   if (mounted) {
                     setState(() => _saving = false);
                     ScaffoldMessenger.of(context)
@@ -107,49 +125,33 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: const Text('Сохранить'),
         ),
 
-        const SizedBox(height: 24),
-        if (_auth.isAnonymous)
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: KolibriColors.surface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: KolibriColors.border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Войдите по номеру телефона',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 6),
-                const Text(
-                  'Бонусы и история визитов сохранятся на всех ваших устройствах.',
+        const SizedBox(height: 20),
+        // Телефонный вход по SMS намеренно не используется: он требует
+        // платного тарифа Firebase. Гость работает на анонимном входе, а
+        // узнаётся по номеру, который называет кассиру при оплате.
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: KolibriColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: KolibriColors.border),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Бонусы копятся на этом устройстве и находятся по вашему номеру '
+                  'на кассе. Сменили телефон — назовите номер кальянщику, и мы '
+                  'перенесём историю визитов.',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                 ),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: () => _phoneLogin(context),
-                  icon: const Icon(Icons.sms),
-                  label: const Text('Войти по SMS'),
-                ),
-              ],
-            ),
-          )
-        else
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.verified_user, color: KolibriColors.success),
-            title: Text(p?.phone ?? ''),
-            subtitle: const Text('Телефон подтверждён'),
-            trailing: TextButton(
-              onPressed: () async {
-                await _auth.signOut();
-                await _auth.ensureGuest();
-                if (mounted) setState(() {});
-              },
-              child: const Text('Выйти'),
-            ),
+              ),
+            ],
           ),
+        ),
 
         const SizedBox(height: 24),
         OutlinedButton.icon(
@@ -218,85 +220,5 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         ),
       ],
     );
-  }
-
-  /// Вход по SMS: номер → код. Firebase Phone Auth должен быть включён
-  /// в консоли Firebase (Authentication → Sign-in method → Phone).
-  Future<void> _phoneLogin(BuildContext context) async {
-    final phoneCtrl = TextEditingController(text: '+7');
-    final codeCtrl = TextEditingController();
-    String? verificationId;
-    String? error;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: KolibriColors.surface,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 24,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(verificationId == null ? 'Ваш номер' : 'Код из SMS',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 16),
-              if (verificationId == null)
-                TextField(
-                  controller: phoneCtrl,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Телефон'),
-                )
-              else
-                TextField(
-                  controller: codeCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Код из SMS'),
-                ),
-              if (error != null) ...[
-                const SizedBox(height: 10),
-                Text(error!, style: const TextStyle(color: KolibriColors.danger, fontSize: 13)),
-              ],
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: () async {
-                  if (verificationId == null) {
-                    await _auth.startPhoneSignIn(
-                      phone: phoneCtrl.text.trim(),
-                      onCodeSent: (id) => setLocal(() {
-                        verificationId = id;
-                        error = null;
-                      }),
-                      onError: (e) => setLocal(() => error = e),
-                      onAutoVerified: () => Navigator.pop(ctx),
-                    );
-                  } else {
-                    try {
-                      await _auth.confirmPhoneCode(
-                        verificationId: verificationId!,
-                        smsCode: codeCtrl.text.trim(),
-                        phone: phoneCtrl.text.trim(),
-                        name: _name.text.trim(),
-                      );
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    } catch (e) {
-                      setLocal(() => error = 'Неверный код');
-                    }
-                  }
-                },
-                child: Text(verificationId == null ? 'Получить код' : 'Подтвердить'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (mounted) setState(() {});
   }
 }
