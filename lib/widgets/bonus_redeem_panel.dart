@@ -152,6 +152,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                 ),
                 const SizedBox(width: 10),
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: _busy ? null : _findByPhone,
                   child: const Text('Найти'),
                 ),

@@ -187,6 +187,7 @@ class GuestRequestsBanner extends StatelessWidget {
               if (c.tableId.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: () {
                     Navigator.pop(context);
                     onOpenTable?.call(c.tableId, c.sessionId);
@@ -255,6 +256,7 @@ class GuestRequestsBanner extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               OutlinedButton(
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                 onPressed: () =>
                     service.rejectGuestOrder(o.id, employee.name, 'Нет в наличии'),
                 child: const Text('Отклонить'),

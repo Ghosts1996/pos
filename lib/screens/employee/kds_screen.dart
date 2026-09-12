@@ -177,6 +177,7 @@ class KdsScreen extends StatelessWidget {
               if (secondaryLabel != null) ...[
                 const SizedBox(width: 8),
                 TextButton(
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: onSecondary,
                   child: Text(secondaryLabel,
                       style: const TextStyle(color: AppColors.textMuted)),

@@ -4,6 +4,8 @@ import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/reservation_service.dart';
 import '../services/kolibri_auth_service.dart';
+import '../../models/venue_models.dart';
+import '../../services/venue_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_menu_screen.dart';
 
@@ -35,11 +37,13 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
 
   bool _loadingSlots = false;
   bool _sending = false;
+  VenueProfile? _venue;
 
   @override
   void initState() {
     super.initState();
     _prefill();
+    _loadVenue();
     _loadSlots();
   }
 
@@ -49,6 +53,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     _phoneCtrl.dispose();
     _commentCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadVenue() async {
+    final v = await VenueService.instance.load();
+    if (mounted) setState(() => _venue = v);
   }
 
   Future<void> _prefill() async {
@@ -88,6 +97,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         const SizedBox(height: 4),
         const Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+        if (_venue != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Работаем ${_venue!.workingHours[_day.weekday]?.isNotEmpty == true ? _venue!.workingHours[_day.weekday]! : 'в этот день — выходной'}',
+              style: const TextStyle(color: KolibriColors.gold, fontSize: 13),
+            ),
+          ),
         const SizedBox(height: 20),
 
         _label('Дата'),
@@ -180,10 +197,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
             child: LinearProgressIndicator(),
           )
         else if (_slots.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text('На этот день свободных столов нет — выберите другую дату',
-                style: TextStyle(color: KolibriColors.warning)),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              _venue?.workingHours[_day.weekday]?.isNotEmpty == true
+                  ? 'На этот день свободного времени нет — выберите другую дату'
+                  : 'В этот день мы закрыты — выберите другую дату',
+              style: const TextStyle(color: KolibriColors.warning),
+            ),
           )
         else
           Wrap(
@@ -235,6 +256,29 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
               : 'Предзаказ: ${_preOrder.length} поз. на '
                   '${_preOrder.fold<double>(0, (s, i) => s + i.total).toStringAsFixed(0)} ₽'),
         ),
+
+        if ((_venue?.rules ?? '').isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: KolibriColors.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: KolibriColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Правила заведения',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                Text(_venue!.rules,
+                    style: const TextStyle(
+                        color: KolibriColors.textMuted, fontSize: 13, height: 1.4)),
+              ],
+            ),
+          ),
+        ],
 
         const SizedBox(height: 24),
         FilledButton(
@@ -354,6 +398,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           ],
         ),
       );
+    } on ReservationTimeException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        _loadSlots();
+      }
     } on NoTablesAvailableException {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

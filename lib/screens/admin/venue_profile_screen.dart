@@ -139,6 +139,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               ),
               TextButton.icon(
+                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
                 onPressed: _addFaq,
                 icon: const Icon(Icons.add),
                 label: const Text('Вопрос'),
@@ -172,6 +173,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               ),
               TextButton.icon(
+                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
                 onPressed: _addHappyHour,
                 icon: const Icon(Icons.add),
                 label: const Text('Акция'),
