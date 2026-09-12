@@ -9,9 +9,10 @@ import '../widgets/kolibri_ai_chat.dart';
 
 /// Живое меню заведения для гостя.
 ///
-/// Источник — те же коллекции menuCategories/menuItems, что и в POS:
-/// администратор скрыл позицию (available = false) — она мгновенно
-/// пропала у гостей, без выкладки новой версии приложения.
+/// Позиции сгруппированы по категориям с заголовками — сплошной список
+/// вперемешку читать невозможно. Категории, которых нет в справочнике
+/// (позиция без categoryId или с удалённой категорией), собираются в
+/// блок «Прочее», а не теряются.
 class KolibriMenuScreen extends StatefulWidget {
   /// Режим предзаказа: корзина отдаётся наружу (экран брони), а не
   /// отправляется на кухню.
@@ -40,34 +41,95 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       stream: _link.publicCategoriesStream(),
       builder: (context, catSnap) {
         final categories = catSnap.data ?? const <MenuCategory>[];
+
         return StreamBuilder<List<MenuItem>>(
           stream: _link.publicMenuStream(),
           builder: (context, itemSnap) {
+            if (itemSnap.hasError) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text('Не удалось загрузить меню. Проверьте интернет.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: KolibriColors.textMuted)),
+                ),
+              );
+            }
             if (!itemSnap.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
+
             final all = itemSnap.data!;
-            final items = all.where((i) {
+            final filtered = all.where((i) {
               final okCat = _categoryId.isEmpty || i.categoryId == _categoryId;
-              final okSearch = _search.isEmpty ||
-                  i.name.toLowerCase().contains(_search.toLowerCase());
+              final okSearch =
+                  _search.isEmpty || i.name.toLowerCase().contains(_search.toLowerCase());
               return okCat && okSearch;
             }).toList();
+
+            // Группируем по категориям в порядке справочника, остаток — в «Прочее».
+            final sections = <({String title, List<MenuItem> items})>[];
+            final used = <String>{};
+            for (final c in categories) {
+              final items = filtered.where((i) => i.categoryId == c.id).toList()
+                ..sort((a, b) => a.name.compareTo(b.name));
+              if (items.isEmpty) continue;
+              used.add(c.id);
+              sections.add((title: c.name, items: items));
+            }
+            final rest = filtered.where((i) => !used.contains(i.categoryId)).toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+            if (rest.isNotEmpty) sections.add((title: 'Прочее', items: rest));
 
             return Column(
               children: [
                 _searchBar(),
-                _categoryChips(categories),
+                if (categories.isNotEmpty) _categoryChips(categories),
                 Expanded(
-                  child: items.isEmpty
+                  child: sections.isEmpty
                       ? const Center(
                           child: Text('Ничего не найдено',
                               style: TextStyle(color: KolibriColors.textMuted)))
-                      : ListView.separated(
+                      : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
-                          itemCount: items.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (_, i) => _itemTile(items[i]),
+                          itemCount: sections.length,
+                          itemBuilder: (_, s) {
+                            final section = sections[s];
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: EdgeInsets.only(top: s == 0 ? 4 : 22, bottom: 10),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 3,
+                                        height: 18,
+                                        decoration: BoxDecoration(
+                                          color: KolibriColors.primary,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        section.title,
+                                        style: const TextStyle(
+                                            fontSize: 18, fontWeight: FontWeight.w700),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text('${section.items.length}',
+                                          style: const TextStyle(
+                                              color: KolibriColors.textMuted, fontSize: 13)),
+                                    ],
+                                  ),
+                                ),
+                                ...section.items.map((item) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: _itemTile(item),
+                                    )),
+                              ],
+                            );
+                          },
                         ),
                 ),
                 if (_cart.isNotEmpty) _cartBar(),
@@ -114,8 +176,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           children: [
             _chip('Всё', _categoryId.isEmpty, () => setState(() => _categoryId = '')),
-            ...categories.map((c) => _chip(c.name, _categoryId == c.id,
-                () => setState(() => _categoryId = c.id))),
+            ...categories.map((c) =>
+                _chip(c.name, _categoryId == c.id, () => setState(() => _categoryId = c.id))),
           ],
         ),
       );
@@ -140,7 +202,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       decoration: BoxDecoration(
         color: KolibriColors.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: KolibriColors.border),
+        border: Border.all(
+          color: inCart > 0 ? KolibriColors.primary : KolibriColors.border,
+        ),
       ),
       child: Row(
         children: [
@@ -270,16 +334,13 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       );
 
   /// Отправка заказа на POS. Заказ не попадает в чек автоматически —
-  /// кальянщик подтверждает его на планшете, поэтому гость не может
-  /// «набить» чек без участия персонала.
+  /// кальянщик подтверждает его на планшете.
   Future<void> _sendOrder() async {
     final profile = await _link.profileStream(_auth.uid).first;
     if (profile == null || profile.activeSessionId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Сначала откройте свой стол на вкладке «Мой стол»'),
-        ),
+        const SnackBar(content: Text('Сначала откройте свой стол на вкладке «Мой стол»')),
       );
       return;
     }
@@ -308,7 +369,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   }
 }
 
-/// Небольшая вспомогалка: открыть меню как выбор предзаказа к брони.
+/// Открыть меню как выбор предзаказа к брони.
 Future<List<OrderItem>?> pickPreOrder(BuildContext context) {
   return Navigator.push<List<OrderItem>>(
     context,
