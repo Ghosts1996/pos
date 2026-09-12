@@ -94,7 +94,31 @@ class ReservationService {
         .map((r) => r.tableId)
         .toSet();
 
-    final soon = start.difference(DateTime.now()).inMinutes < 60;
+    // Столы, за которыми прямо сейчас сидят гости. Стол нельзя отдать под
+    // бронь, пока сеанс не закончится: раньше проверялся только ближайший
+    // час, и гостя могли «забронировать» прямо во время его визита.
+    // Закладываем 20 минут на уборку и посадку после ухода.
+    final sessionsSnap =
+        await _db.collection('sessions').where('status', isEqualTo: 'active').get();
+
+    final busyUntil = <String, DateTime>{};
+    for (final doc in sessionsSnap.docs) {
+      final data = doc.data();
+      final tableId = data['tableId']?.toString() ?? '';
+      if (tableId.isEmpty) continue;
+
+      final ts = data['plannedEnd'];
+      var until = ts is Timestamp ? ts.toDate() : DateTime.now();
+      // Сеанс уже просрочен — гость всё ещё за столом, считаем занятым
+      // минимум на ближайший час.
+      if (until.isBefore(DateTime.now())) {
+        until = DateTime.now().add(const Duration(hours: 1));
+      }
+      until = until.add(const Duration(minutes: 20));
+
+      final prev = busyUntil[tableId];
+      if (prev == null || until.isAfter(prev)) busyUntil[tableId] = until;
+    }
 
     return tables.where((t) {
       if (t.seats < guestsCount) return false;

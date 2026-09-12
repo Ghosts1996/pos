@@ -240,6 +240,9 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                       AiAssistantSheet.show(
                         context,
                         agent: AiAgents.hall,
+                        // Данные зала кладём в промпт заранее: иначе ассистент
+                        // отвечает «данных нет», если шлюз не умеет инструменты.
+                        asyncContextBuilder: AiService.instance.hallContext,
                         quickPrompts: const [
                           'Какие столы освободятся через час?',
                           'Что предложить гостям сегодня?',
