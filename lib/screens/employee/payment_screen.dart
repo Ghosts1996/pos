@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/app_colors.dart';
@@ -11,6 +13,10 @@ import '../../services/egais_service.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../models/egais_models.dart';
 import '../../utils/constants.dart';
+import '../../services/gift_card_service.dart';
+import '../../services/guest_link_service.dart';
+import '../../services/referral_service.dart';
+import '../../widgets/bonus_redeem_panel.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / за счёт заведения,
@@ -66,13 +72,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   final _contactCtrl = TextEditingController();
 
+  // Бонусы и сертификат уменьшают сумму к оплате ДО распределения по
+  // способам оплаты: это уже оплаченные ранее деньги, а не выручка смены.
+  // В чек они уходят в поле "за счёт заведения" (paymentComp), чтобы итог
+  // сходился и X-отчёт не показывал недостачу.
+  double _bonusPaid = 0;
+  double _giftPaid = 0;
+  String? _giftMessage;
+  final _giftCtrl = TextEditingController();
+  String _clientUid = '';
+
   bool _closeWithoutPayment = false;
   bool _printReceipt = false;
   bool _printFiscalReceipt = false;
   bool _busy = false;
   bool _terminalBusy = false;
 
-  double get _total => widget.session.totalWithDiscount;
+  /// Сумма, которую ещё нужно взять с гостя: счёт со скидкой минус
+  /// списанные бонусы и сертификат.
+  double get _total {
+    final rest = widget.session.totalWithDiscount - _bonusPaid - _giftPaid;
+    return rest < 0 ? 0 : rest;
+  }
 
   @override
   void initState() {
@@ -90,6 +111,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
     for (final m in _methods) {
       m.controller.addListener(() => setState(() {}));
     }
+
+    // Гость из «Колибри Лаундж», сидящий за этим чеком, — нужен для
+    // бонусов и реферальной программы. Если приложения у гостя нет,
+    // панель бонусов просто предложит найти его по телефону.
+    GuestLinkService().findBySession(widget.session.id).then((profile) {
+      if (profile != null && mounted) setState(() => _clientUid = profile.uid);
+    });
   }
 
   @override
@@ -98,6 +126,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       m.dispose();
     }
     _contactCtrl.dispose();
+    _giftCtrl.dispose();
     super.dispose();
   }
 
@@ -208,7 +237,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         cash: _closeWithoutPayment ? 0 : _cash.parse(),
         card: _closeWithoutPayment ? 0 : _card.parse(),
         terminal: _closeWithoutPayment ? 0 : _terminal.parse(),
-        comp: _closeWithoutPayment ? 0 : _comp.parse(),
+        comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid + _giftPaid,
         guestContact: _contactCtrl.text.trim(),
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
@@ -216,6 +245,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
       );
+      // Кешбэк начисляет Cloud Function onSessionClosed — с планшета
+      // начислять нельзя, иначе бонусы задвоятся. Здесь остаётся только
+      // реферальная награда за первый оплаченный визит (идемпотентна).
+      if (_clientUid.isNotEmpty && !_closeWithoutPayment) {
+        unawaited(ReferralService.instance.rewardIfFirstVisit(_clientUid));
+      }
       if (_printReceipt) await _printOnThermalPrinter();
       if (_printFiscalReceipt) await _sendToKassa();
       if (mounted) Navigator.of(context).pop(true);
@@ -252,6 +287,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_card.parse() > 0) 'карта ${_card.parse().toStringAsFixed(0)}₽',
               if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
+              if (_bonusPaid > 0) 'бонусы ${_bonusPaid.toStringAsFixed(0)}₽',
+              if (_giftPaid > 0) 'сертификат ${_giftPaid.toStringAsFixed(0)}₽',
             ].join(', ');
       await printer.printReceipt(ReceiptData(
         venueName: 'Кальянная',
@@ -404,7 +441,39 @@ class _PaymentScreenState extends State<PaymentScreen> {
             children: [
               Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
+              if (_bonusPaid > 0 || _giftPaid > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    [
+                      if (_bonusPaid > 0) 'бонусами ${_fmt(_bonusPaid)}',
+                      if (_giftPaid > 0) 'сертификатом ${_fmt(_giftPaid)}',
+                    ].join(', '),
+                    style: const TextStyle(color: AppColors.success, fontSize: 14),
+                  ),
+                ),
               const SizedBox(height: 16),
+              if (!_closeWithoutPayment) ...[
+                BonusRedeemPanel(
+                  sessionId: widget.session.id,
+                  billTotal: _total,
+                  onApplied: (applied, profile) {
+                    setState(() {
+                      _bonusPaid += applied;
+                      _clientUid = profile.uid;
+                      // Пересобираем поле "наличными": гость доплачивает
+                      // уже уменьшенную сумму.
+                      _cash.controller.text = _fmt(_total);
+                      for (final m in _methods) {
+                        if (m != _cash) m.controller.text = '0';
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                _giftCardRow(),
+                const Divider(height: 28),
+              ],
               for (final m in _methods)
                 _amountField(
                   m,
@@ -476,6 +545,101 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ),
       ),
     );
+  }
+
+  /// Поле подарочного сертификата. Код гость называет вслух или
+  /// показывает в приложении; списывается не больше остатка на карте и не
+  /// больше суммы к оплате.
+  Widget _giftCardRow() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.card_giftcard, color: AppColors.warning, size: 20),
+              const SizedBox(width: 8),
+              const Text('Сертификат',
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (_giftPaid > 0)
+                Text('Списано ${_fmt(_giftPaid)}',
+                    style: const TextStyle(color: AppColors.success)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _giftCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  style: const TextStyle(color: AppColors.textPrimary),
+                  decoration: const InputDecoration(
+                    hintText: 'KLB-XXXX-XXXX',
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: _busy ? null : _applyGiftCard,
+                child: const Text('Списать'),
+              ),
+            ],
+          ),
+          if (_giftMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(_giftMessage!,
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _applyGiftCard() async {
+    final code = _giftCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) return;
+    setState(() => _giftMessage = null);
+
+    final card = await GiftCardService.instance.find(code);
+    if (card == null) {
+      setState(() => _giftMessage = 'Сертификат не найден');
+      return;
+    }
+    if (!card.isUsable) {
+      setState(() => _giftMessage = 'Сертификат неактивен или истёк');
+      return;
+    }
+
+    try {
+      final applied = await GiftCardService.instance.redeem(
+        code: code,
+        amount: _total,
+        sessionId: widget.session.id,
+        employeeName: widget.session.employeeName,
+      );
+      setState(() {
+        _giftPaid += applied;
+        _giftMessage = 'Списано ${_fmt(applied)} ${AppConstants.currencySymbol}, '
+            'остаток на сертификате ${_fmt(card.balance - applied)}';
+        _giftCtrl.clear();
+        _cash.controller.text = _fmt(_total);
+        for (final m in _methods) {
+          if (m != _cash) m.controller.text = '0';
+        }
+      });
+    } catch (e) {
+      setState(() => _giftMessage = '$e');
+    }
   }
 
   /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа
