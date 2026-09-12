@@ -100,7 +100,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Настройки ИИ (tooken.club)')),
+      appBar: AppBar(title: const Text('Настройки ИИ')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -116,8 +116,8 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             controller: _apiKey,
             obscureText: _obscureKey,
             decoration: InputDecoration(
-              labelText: 'API-ключ tooken.club',
-              helperText: 'Личный кабинет tooken.club → API-ключи',
+              labelText: 'API-ключ',
+              helperText: 'Ключ из кабинета шлюза: tooken.club, ai.d1n0tf.ru и т.п.',
               suffixIcon: IconButton(
                 icon: Icon(_obscureKey ? Icons.visibility : Icons.visibility_off),
                 onPressed: () => setState(() => _obscureKey = !_obscureKey),
@@ -129,8 +129,51 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             controller: _baseUrl,
             decoration: const InputDecoration(
               labelText: 'Base URL',
-              helperText: 'OpenAI-совместимый endpoint из кабинета tooken.club',
+              helperText: 'Адрес шлюза из личного кабинета (без /chat/completions)',
             ),
+          ),
+          const SizedBox(height: 10),
+          // Готовые шлюзы: подставляют адрес и формат одним нажатием,
+          // чтобы не искать их в кабинете при переустановке.
+          Wrap(
+            spacing: 8,
+            children: [
+              ActionChip(
+                label: const Text('tooken.club'),
+                onPressed: () => setState(() {
+                  _baseUrl.text = 'https://tooken.club/v1';
+                  _settings = _settings.copyWith(provider: 'openai');
+                }),
+              ),
+              ActionChip(
+                label: const Text('ai.d1n0tf.ru (Claude)'),
+                onPressed: () => setState(() {
+                  _baseUrl.text = 'https://ai.d1n0tf.ru';
+                  _settings = _settings.copyWith(provider: 'anthropic');
+                  if (_model.text.isEmpty || _model.text.startsWith('gpt')) {
+                    _model.text = 'claude-sonnet-4-5';
+                    _analyticsModel.text = 'claude-sonnet-4-5';
+                  }
+                }),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: ['auto', 'openai', 'anthropic'].contains(_settings.provider)
+                ? _settings.provider
+                : 'auto',
+            decoration: const InputDecoration(
+              labelText: 'Формат API',
+              helperText: 'Не знаете — оставьте «Определить автоматически»',
+            ),
+            items: const [
+              DropdownMenuItem(value: 'auto', child: Text('Определить автоматически')),
+              DropdownMenuItem(value: 'openai', child: Text('OpenAI-совместимый')),
+              DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)')),
+            ],
+            onChanged: (v) =>
+                setState(() => _settings = _settings.copyWith(provider: v ?? 'auto')),
           ),
           const SizedBox(height: 12),
           Row(

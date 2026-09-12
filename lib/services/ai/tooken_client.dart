@@ -86,13 +86,154 @@ class TookenClient {
 
   AiSettings get _settings => AiSettingsStore.instance.current;
 
-  Uri _endpoint(String path) =>
-      Uri.parse('${_settings.baseUrl.replaceAll(RegExp(r'/+$'), '')}/$path');
+  /// Рабочий формат, определённый в режиме 'auto'. Живёт до перезапуска
+  /// приложения, чтобы не проверять формат на каждом запросе.
+  String? _detected;
 
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Authorization': 'Bearer ${_settings.apiKey}',
-      };
+  /// Формат API: openai | anthropic.
+  String get _format {
+    final p = _settings.provider;
+    if (p == 'openai' || p == 'anthropic') return p;
+    return _detected ?? 'openai';
+  }
+
+  bool get _isAnthropic => _format == 'anthropic';
+
+  String get _base => _settings.baseUrl.replaceAll(RegExp(r'/+$'), '');
+
+  Uri _endpoint(String path) => Uri.parse('$_base/$path');
+
+  /// Anthropic-шлюзы ждут путь /v1/messages. Если в baseUrl уже есть /v1,
+  /// второй раз его не добавляем — частая причина 404 на таких прокси.
+  Uri get _messagesEndpoint => Uri.parse(
+        _base.endsWith('/v1') ? '$_base/messages' : '$_base/v1/messages',
+      );
+
+  Map<String, String> get _headers => _isAnthropic
+      ? {
+          'Content-Type': 'application/json; charset=utf-8',
+          'x-api-key': _settings.apiKey,
+          'anthropic-version': '2023-06-01',
+          // Часть прокси принимает и Bearer — отправляем оба заголовка,
+          // лишний просто игнорируется.
+          'Authorization': 'Bearer ${_settings.apiKey}',
+        }
+      : {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': 'Bearer ${_settings.apiKey}',
+        };
+
+  // ---------- КОНВЕРТАЦИЯ В ФОРМАТ ANTHROPIC ----------
+
+  /// В Anthropic системные сообщения выносятся в отдельное поле system,
+  /// а в messages остаются только user/assistant. Результаты инструментов
+  /// приходят как блоки tool_result внутри user-сообщения.
+  Map<String, dynamic> _anthropicBody({
+    required List<AiMessage> messages,
+    required String model,
+    required double temperature,
+    required int maxTokens,
+    List<Map<String, dynamic>>? tools,
+    bool stream = false,
+  }) {
+    final system = messages
+        .where((m) => m.role == 'system')
+        .map((m) => m.content)
+        .where((c) => c.trim().isNotEmpty)
+        .join('\n\n');
+
+    final converted = <Map<String, dynamic>>[];
+    for (final m in messages) {
+      if (m.role == 'system') continue;
+
+      if (m.role == 'tool') {
+        converted.add({
+          'role': 'user',
+          'content': [
+            {
+              'type': 'tool_result',
+              'tool_use_id': m.toolCallId ?? '',
+              'content': m.content,
+            }
+          ],
+        });
+        continue;
+      }
+
+      if (m.role == 'assistant' && (m.toolCalls?.isNotEmpty ?? false)) {
+        final blocks = <Map<String, dynamic>>[
+          if (m.content.trim().isNotEmpty) {'type': 'text', 'text': m.content},
+          ...m.toolCalls!.map((c) {
+            final fn = (c['function'] as Map?) ?? const {};
+            Map<String, dynamic> input = {};
+            try {
+              input = Map<String, dynamic>.from(
+                  jsonDecode(fn['arguments']?.toString() ?? '{}') as Map);
+            } catch (_) {}
+            return {
+              'type': 'tool_use',
+              'id': c['id']?.toString() ?? '',
+              'name': fn['name']?.toString() ?? '',
+              'input': input,
+            };
+          }),
+        ];
+        converted.add({'role': 'assistant', 'content': blocks});
+        continue;
+      }
+
+      converted.add({'role': m.role, 'content': m.content});
+    }
+
+    return {
+      'model': model,
+      'max_tokens': maxTokens,
+      'temperature': temperature,
+      if (system.isNotEmpty) 'system': system,
+      'messages': converted,
+      if (tools != null && tools.isNotEmpty)
+        'tools': tools.map((t) {
+          final fn = (t['function'] as Map?) ?? const {};
+          return {
+            'name': fn['name'],
+            'description': fn['description'],
+            'input_schema': fn['parameters'],
+          };
+        }).toList(),
+      if (stream) 'stream': true,
+    };
+  }
+
+  /// Ответ Anthropic приводим к той же форме, что и OpenAI, чтобы весь
+  /// остальной код (агенты, инструменты, экраны) не знал о разнице.
+  AiResult _parseAnthropic(Map<String, dynamic> data) {
+    final content = (data['content'] as List?) ?? const [];
+    final text = content
+        .where((b) => (b as Map)['type'] == 'text')
+        .map((b) => (b as Map)['text']?.toString() ?? '')
+        .join('\n')
+        .trim();
+
+    final toolCalls = content
+        .where((b) => (b as Map)['type'] == 'tool_use')
+        .map((b) => {
+              'id': (b as Map)['id']?.toString() ?? '',
+              'type': 'function',
+              'function': {
+                'name': b['name']?.toString() ?? '',
+                'arguments': jsonEncode(b['input'] ?? {}),
+              },
+            })
+        .toList();
+
+    final usage = (data['usage'] as Map?) ?? const {};
+    return AiResult(
+      text,
+      promptTokens: (usage['input_tokens'] as num?)?.toInt() ?? 0,
+      completionTokens: (usage['output_tokens'] as num?)?.toInt() ?? 0,
+      toolCalls: toolCalls,
+    );
+  }
 
   // ---------- БАЗОВЫЙ ЗАПРОС ----------
 
@@ -112,15 +253,23 @@ class TookenClient {
       throw AiException('ИИ не настроен: укажите ключ tooken.club в «Админ → Настройки ИИ».');
     }
 
-    final body = <String, dynamic>{
-      'model': model ?? s.model,
-      'messages': messages.map((m) => m.toJson()).toList(),
-      'temperature': temperature ?? s.temperature,
-      'max_tokens': maxTokens ?? s.maxTokens,
-      if (jsonMode) 'response_format': {'type': 'json_object'},
-      if (tools != null && tools.isNotEmpty) 'tools': tools,
-      if (tools != null && tools.isNotEmpty) 'tool_choice': 'auto',
-    };
+    final body = _isAnthropic
+        ? _anthropicBody(
+            messages: messages,
+            model: model ?? s.model,
+            temperature: temperature ?? s.temperature,
+            maxTokens: maxTokens ?? s.maxTokens,
+            tools: tools,
+          )
+        : <String, dynamic>{
+            'model': model ?? s.model,
+            'messages': messages.map((m) => m.toJson()).toList(),
+            'temperature': temperature ?? s.temperature,
+            'max_tokens': maxTokens ?? s.maxTokens,
+            if (jsonMode) 'response_format': {'type': 'json_object'},
+            if (tools != null && tools.isNotEmpty) 'tools': tools,
+            if (tools != null && tools.isNotEmpty) 'tool_choice': 'auto',
+          };
 
     final cacheKey = cacheFor == null ? null : jsonEncode(body);
     if (cacheKey != null) {
@@ -136,8 +285,28 @@ class TookenClient {
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
         final resp = await _http
-            .post(_endpoint('chat/completions'), headers: _headers, body: payload)
+            .post(_isAnthropic ? _messagesEndpoint : _endpoint('chat/completions'),
+                headers: _headers, body: payload)
             .timeout(timeout);
+
+        // Режим 'auto': шлюз не понял OpenAI-формат — значит он Anthropic.
+        // Переключаемся один раз и повторяем запрос уже правильно.
+        if (_settings.provider == 'auto' &&
+            _detected == null &&
+            !_isAnthropic &&
+            (resp.statusCode == 404 || resp.statusCode == 400 || resp.statusCode == 405)) {
+          _detected = 'anthropic';
+          return complete(
+            messages: messages,
+            model: model,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            jsonMode: jsonMode,
+            tools: tools,
+            agentId: agentId,
+            timeout: timeout,
+          );
+        }
 
         if (resp.statusCode == 401 || resp.statusCode == 403) {
           throw AiException(
@@ -162,19 +331,26 @@ class TookenClient {
         }
 
         final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
-        final choices = (data['choices'] as List?) ?? const [];
-        if (choices.isEmpty) throw AiException('Пустой ответ ИИ');
 
-        final message = (choices.first['message'] as Map?) ?? const {};
-        final usage = (data['usage'] as Map?) ?? const {};
-        final result = AiResult(
-          (message['content'] as String?)?.trim() ?? '',
-          promptTokens: (usage['prompt_tokens'] as num?)?.toInt() ?? 0,
-          completionTokens: (usage['completion_tokens'] as num?)?.toInt() ?? 0,
-          toolCalls: ((message['tool_calls'] as List?) ?? const [])
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList(),
-        );
+        late final AiResult result;
+        if (_isAnthropic) {
+          result = _parseAnthropic(data);
+          if (_settings.provider == 'auto') _detected = 'anthropic';
+        } else {
+          final choices = (data['choices'] as List?) ?? const [];
+          if (choices.isEmpty) throw AiException('Пустой ответ ИИ');
+          final message = (choices.first['message'] as Map?) ?? const {};
+          final usage = (data['usage'] as Map?) ?? const {};
+          result = AiResult(
+            (message['content'] as String?)?.trim() ?? '',
+            promptTokens: (usage['prompt_tokens'] as num?)?.toInt() ?? 0,
+            completionTokens: (usage['completion_tokens'] as num?)?.toInt() ?? 0,
+            toolCalls: ((message['tool_calls'] as List?) ?? const [])
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList(),
+          );
+          if (_settings.provider == 'auto') _detected = 'openai';
+        }
 
         if (cacheKey != null) {
           _cache[cacheKey] = _CacheEntry(result, DateTime.now().add(cacheFor!));
@@ -271,15 +447,26 @@ class TookenClient {
     final s = _settings;
     if (!s.isReady) throw AiException('ИИ не настроен: укажите ключ tooken.club.');
 
-    final request = http.Request('POST', _endpoint('chat/completions'))
-      ..headers.addAll(_headers)
-      ..body = jsonEncode({
-        'model': model ?? s.model,
-        'messages': messages.map((m) => m.toJson()).toList(),
-        'temperature': temperature ?? s.temperature,
-        'max_tokens': maxTokens ?? s.maxTokens,
-        'stream': true,
-      });
+    final request =
+        http.Request('POST', _isAnthropic ? _messagesEndpoint : _endpoint('chat/completions'))
+          ..headers.addAll(_headers)
+          ..body = jsonEncode(
+            _isAnthropic
+                ? _anthropicBody(
+                    messages: messages,
+                    model: model ?? s.model,
+                    temperature: temperature ?? s.temperature,
+                    maxTokens: maxTokens ?? s.maxTokens,
+                    stream: true,
+                  )
+                : {
+                    'model': model ?? s.model,
+                    'messages': messages.map((m) => m.toJson()).toList(),
+                    'temperature': temperature ?? s.temperature,
+                    'max_tokens': maxTokens ?? s.maxTokens,
+                    'stream': true,
+                  },
+          );
 
     final resp = await _http.send(request);
     if (resp.statusCode >= 400) {
@@ -294,9 +481,16 @@ class TookenClient {
       if (payload.isEmpty || payload == '[DONE]') continue;
       try {
         final data = jsonDecode(payload) as Map<String, dynamic>;
-        final delta = ((data['choices'] as List?)?.first as Map?)?['delta'] as Map?;
-        final piece = delta?['content'] as String?;
-        if (piece != null && piece.isNotEmpty) yield piece;
+        if (_isAnthropic) {
+          // У Anthropic текст приходит событиями content_block_delta.
+          final delta = data['delta'] as Map?;
+          final piece = delta?['text'] as String?;
+          if (piece != null && piece.isNotEmpty) yield piece;
+        } else {
+          final delta = ((data['choices'] as List?)?.first as Map?)?['delta'] as Map?;
+          final piece = delta?['content'] as String?;
+          if (piece != null && piece.isNotEmpty) yield piece;
+        }
       } catch (_) {}
     }
   }
@@ -311,7 +505,13 @@ class TookenClient {
     Duration? cacheFor,
   }) async {
     final res = await complete(
-      messages: messages,
+      messages: _isAnthropic
+          ? [
+              const AiMessage.system(
+                  'Отвечай СТРОГО одним JSON-объектом, без пояснений и без markdown.'),
+              ...messages,
+            ]
+          : messages,
       model: model,
       jsonMode: true,
       temperature: 0.1,
@@ -320,6 +520,8 @@ class TookenClient {
       cacheFor: cacheFor,
     );
     var text = res.text.trim();
+    // Anthropic не поддерживает response_format, поэтому JSON приходит
+    // как обычный текст, иногда в блоке ``` — снимаем обёртку.
     if (text.startsWith('```')) {
       text = text.replaceFirst(RegExp(r'^```[a-zA-Z]*\s*'), '').replaceFirst(RegExp(r'```$'), '');
     }
@@ -334,6 +536,16 @@ class TookenClient {
 
   Future<List<String>> listModels() async {
     if (_settings.apiKey.isEmpty) return const [];
+    if (_isAnthropic) {
+      // У Anthropic-шлюзов список моделей обычно недоступен — отдаём
+      // актуальные имена, чтобы админ выбрал из списка, а не печатал.
+      return const [
+        'claude-sonnet-4-5',
+        'claude-opus-4-1',
+        'claude-3-5-haiku-latest',
+        'claude-3-5-sonnet-latest',
+      ];
+    }
     final resp = await _http.get(_endpoint('models'), headers: _headers);
     if (resp.statusCode >= 400) return const [];
     final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
