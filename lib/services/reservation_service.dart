@@ -123,7 +123,12 @@ class ReservationService {
     return tables.where((t) {
       if (t.seats < guestsCount) return false;
       if (busyByReservation.contains(t.id)) return false;
-      if (soon && t.activeSessionIds.isNotEmpty) return false;
+
+      // Гость за столом: стол свободен только если бронь начинается после
+      // окончания его сеанса с запасом на уборку.
+      final occupiedUntil = busyUntil[t.id];
+      if (occupiedUntil != null && start.isBefore(occupiedUntil)) return false;
+
       return true;
     }).toList()
       ..sort((a, b) => a.seats.compareTo(b.seats)); // подбираем стол «впритык»
