@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
+import '../services/kolibri_image_cache.dart';
 import '../theme/kolibri_theme.dart';
 import '../widgets/kolibri_ai_chat.dart';
 import 'kolibri_booking_screen.dart';
@@ -23,6 +24,14 @@ class _KolibriShellState extends State<KolibriShell> {
   final _auth = KolibriAuthService();
   final _link = GuestLinkService();
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Фоном скачиваем все фото меню сразу при запуске: дальше меню
+    // открывается мгновенно и работает даже без сети.
+    KolibriImageCache.instance.warmUp();
+  }
 
   @override
   Widget build(BuildContext context) {
