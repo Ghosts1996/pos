@@ -223,6 +223,52 @@ jobs:
           fi
           cat "$MANIFEST"
 
+      - name: Enable core library desugaring
+        run: |
+          # flutter_local_notifications требует desugaring: плагин использует
+          # java.time, которого нет на старых Android без этой прослойки.
+          # Правим питоном — Gradle-файл с фигурными скобками через sed
+          # правится ненадёжно.
+          APP_GRADLE=android/app/build.gradle.kts
+          IS_KTS=1
+          if [ ! -f "$APP_GRADLE" ]; then
+            APP_GRADLE=android/app/build.gradle
+            IS_KTS=0
+          fi
+          python3 - "$APP_GRADLE" "$IS_KTS" <<'PYEOF'
+          import re, sys
+          path, is_kts = sys.argv[1], sys.argv[2] == '1'
+          src = open(path, encoding='utf-8').read()
+
+          if 'isCoreLibraryDesugaringEnabled' not in src and 'coreLibraryDesugaringEnabled' not in src:
+              flag = ('        isCoreLibraryDesugaringEnabled = true\n' if is_kts
+                      else '        coreLibraryDesugaringEnabled true\n')
+              # Флаг ставится внутрь блока compileOptions.
+              if 'compileOptions' in src:
+                  src = re.sub(r'(compileOptions\s*\{)', r'\1\n' + flag.rstrip('\n'), src, count=1)
+              else:
+                  block = ('    compileOptions {\n' + flag +
+                           ('        sourceCompatibility = JavaVersion.VERSION_11\n'
+                            '        targetCompatibility = JavaVersion.VERSION_11\n' if is_kts else
+                            '        sourceCompatibility JavaVersion.VERSION_11\n'
+                            '        targetCompatibility JavaVersion.VERSION_11\n') +
+                           '    }\n')
+                  src = src.replace('    buildTypes {', block + '    buildTypes {', 1)
+
+          if 'desugar_jdk_libs' not in src:
+              dep = ('    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+                     if is_kts else
+                     "    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'")
+              if re.search(r'^dependencies\s*\{', src, re.M):
+                  src = re.sub(r'^(dependencies\s*\{)', r'\1\n' + dep, src, count=1, flags=re.M)
+              else:
+                  src += '\ndependencies {\n' + dep + '\n}\n'
+
+          open(path, 'w', encoding='utf-8').write(src)
+          print('desugaring включён')
+          PYEOF
+          grep -n "Desugar\|desugar" "$APP_GRADLE"
+
       - name: Force bundled (offline) ML Kit barcode model
         run: |
           # Play Services-вариант ML Kit докачивает модель по сети при первом
