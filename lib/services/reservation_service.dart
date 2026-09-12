@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/reservation_model.dart';
+import '../models/venue_models.dart';
+import 'venue_service.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
 
@@ -135,22 +137,35 @@ class ReservationService {
   }
 
   /// Сетка доступных времён на день с шагом [stepMinutes].
-  /// Используется в клиентском приложении для выбора времени.
+  ///
+  /// Часы берутся из профиля заведения (Админ → Профиль заведения):
+  /// строка вида «16:00-02:00» для нужного дня недели. Закрытие после
+  /// полуночи поддерживается — слоты продолжаются до 02:00 следующих суток.
+  /// Выходной день (пустая строка) даёт пустой список.
+  ///
+  /// Прошедшее время не предлагается никогда: последний слот — не раньше
+  /// чем через 30 минут от текущего момента, чтобы гость успел доехать,
+  /// а зал — подготовить стол.
   Future<List<DateTime>> availableSlots({
     required DateTime day,
     int durationMinutes = 90,
     int guestsCount = 2,
-    int openHour = 12,
-    int closeHour = 24,
     int stepMinutes = 30,
   }) async {
-    final result = <DateTime>[];
-    final now = DateTime.now();
-    var cursor = DateTime(day.year, day.month, day.day, openHour);
-    final last = DateTime(day.year, day.month, day.day).add(Duration(hours: closeHour));
+    final profile = await VenueService.instance.load();
+    final window = _workingWindow(profile, day);
+    if (window == null) return const []; // выходной
 
-    while (cursor.isBefore(last)) {
-      if (cursor.isAfter(now.add(const Duration(minutes: 15)))) {
+    final result = <DateTime>[];
+    final earliest = DateTime.now().add(const Duration(minutes: 30));
+    var cursor = window.open;
+
+    // Бронь должна успеть закончиться до закрытия — иначе гостя выгонят
+    // на середине сеанса.
+    final lastStart = window.close.subtract(Duration(minutes: durationMinutes));
+
+    while (!cursor.isAfter(lastStart)) {
+      if (cursor.isAfter(earliest)) {
         final free = await availableTables(
           start: cursor,
           durationMinutes: durationMinutes,
@@ -163,12 +178,55 @@ class ReservationService {
     return result;
   }
 
+  /// Окно работы на конкретный день: разбирает «16:00-02:00» в две даты.
+  /// Время закрытия меньше времени открытия означает следующие сутки.
+  ({DateTime open, DateTime close})? _workingWindow(VenueProfile profile, DateTime day) {
+    final raw = profile.workingHours[day.weekday]?.trim() ?? '';
+    if (raw.isEmpty) return null;
+
+    final match = RegExp(r'(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})').firstMatch(raw);
+    if (match == null) return null;
+
+    final openH = int.parse(match.group(1)!);
+    final openM = int.parse(match.group(2)!);
+    final closeH = int.parse(match.group(3)!);
+    final closeM = int.parse(match.group(4)!);
+
+    final open = DateTime(day.year, day.month, day.day, openH, openM);
+    var close = DateTime(day.year, day.month, day.day, closeH, closeM);
+    if (!close.isAfter(open)) close = close.add(const Duration(days: 1));
+
+    return (open: open, close: close);
+  }
+
+  /// Работает ли заведение в это время — проверка перед созданием брони.
+  Future<bool> isOpenAt(DateTime moment) async {
+    final profile = await VenueService.instance.load();
+    // Ночное время относится к предыдущему дню: 01:30 — это ещё смена,
+    // начавшаяся накануне.
+    for (final day in [moment, moment.subtract(const Duration(days: 1))]) {
+      final window = _workingWindow(profile, day);
+      if (window == null) continue;
+      if (!moment.isBefore(window.open) && moment.isBefore(window.close)) return true;
+    }
+    return false;
+  }
+
   // ---------- СОЗДАНИЕ / ИЗМЕНЕНИЕ ----------
 
   /// Создать бронь. Если [tableId] не задан — стол подбирается автоматически
   /// из свободных на это время (самый компактный подходящий).
   Future<String> create(ReservationModel r, {bool autoAssignTable = true}) async {
     var reservation = r;
+
+    // Защита от брони «в прошлое»: такие записи появлялись, если экран
+    // держали открытым и время успевало пройти.
+    if (reservation.startTime.isBefore(DateTime.now().add(const Duration(minutes: 5)))) {
+      throw ReservationTimeException('Это время уже прошло — выберите другое.');
+    }
+    if (!await isOpenAt(reservation.startTime)) {
+      throw ReservationTimeException('В это время заведение закрыто.');
+    }
 
     if (autoAssignTable && reservation.tableId.isEmpty) {
       final free = await availableTables(
@@ -290,6 +348,14 @@ class ReservationService {
 
     return sessionRef.id;
   }
+}
+
+/// Время брони невозможно: в прошлом или вне часов работы.
+class ReservationTimeException implements Exception {
+  final String message;
+  ReservationTimeException(this.message);
+  @override
+  String toString() => message;
 }
 
 class NoTablesAvailableException implements Exception {
