@@ -19,3 +19,6 @@ android/local.properties
 .vscode/
 *.log
 .backup-*/
+keystore.base64
+*.jks
+key.properties
