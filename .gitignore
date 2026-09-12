@@ -18,3 +18,4 @@ android/local.properties
 .idea/
 .vscode/
 *.log
+.backup-*/

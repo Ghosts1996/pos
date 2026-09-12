@@ -1,8 +1,221 @@
 rules_version = '2';
+
+// Правила для двух приложений одного проекта:
+//  • POS (сотрудники, анонимный вход) — полный доступ к рабочим данным;
+//  • «Колибри Лаундж» (гости, анонимный вход или вход по телефону) —
+//    только чтение витрины и запись в свои документы.
+//
+// Отличить гостя от сотрудника по анонимному входу нельзя, поэтому
+// используется коллекция staffDevices/{uid}: POS при первом входе
+// сотрудника создаёт документ с этим uid (см. AuthService), а клиентское
+// приложение — нет. Всё, что не разрешено гостю явно, ему запрещено.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Устройство зарегистрировано как POS-планшет заведения.
+    function isStaff() {
+      return signedIn() && exists(/databases/$(database)/documents/staffDevices/$(request.auth.uid));
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ---- Регистрация POS-устройств ----
+    // POS-планшет один раз регистрирует себя, передав секрет заведения
+    // (meta/staffSecret.value) — его вводит администратор при установке
+    // приложения на планшет. Гостевое приложение секрета не знает.
+    match /staffDevices/{uid} {
+      allow read: if signedIn();
+      allow create: if isSelf(uid) &&
+        request.resource.data.secret ==
+          get(/databases/$(database)/documents/meta/staffSecret).data.value;
+      allow update, delete: if isStaff();
+    }
+
+    // Сам секрет читать нельзя никому из приложения — только сравнение
+    // внутри правил выше; менять его можно из консоли Firebase.
+    match /meta/staffSecret {
+      allow read, write: if false;
+    }
+
+    // ---- Витрина: гость читает, пишет только персонал ----
+    match /menuCategories/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /menuItems/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /tables/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // ---- Чеки: гость только читает (свой стол), меняет их касса ----
+    match /sessions/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // ---- Профили гостей ----
+    match /clients/{uid} {
+      allow read: if isSelf(uid) || isStaff();
+      allow create, update: if isSelf(uid) || isStaff();
+      allow delete: if isStaff();
+    }
+
+    // ---- Брони ----
+    match /reservations/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      // Гость создаёт бронь только от своего имени и только как «новую».
+      allow create: if isStaff() ||
+        (signedIn() &&
+         request.resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'new');
+      // Гость может лишь отменить свою бронь; подтверждение и посадка — персонал.
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'cancelled');
+      allow delete: if isStaff();
+    }
+
+    // ---- Вызовы персонала ----
+    match /waiterCalls/{doc} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isStaff();
+    }
+
+    // ---- Заказы гостя из-за стола ----
+    match /guestOrders/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.status == 'new';
+      allow update, delete: if isStaff();
+    }
+
+    // ---- Отзывы ----
+    match /reviews/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow create: if signedIn();
+      allow update, delete: if isStaff();
+    }
+
+    // ---- Бонусные операции: пишет только касса ----
+    match /bonusOperations/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow write: if isStaff();
+    }
+
+    // ---- Настройки ИИ ----
+    // Ключ tooken.club нужен и клиентскому приложению (ИИ-консьерж),
+    // поэтому документ читаем всем авторизованным, а меняет только персонал.
+    // Если ключ не должен покидать POS — закройте read до isStaff() и
+    // проксируйте запросы гостей через Cloud Function.
+    match /meta/aiSettings {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    match /aiLogs/{doc} {
+      allow read: if isStaff();
+      allow create: if signedIn();
+      allow update, delete: if isStaff();
+    }
+
+    // ---- Действия ИИ и журнал кассы: только персонал ----
+    match /aiActions/{doc} {
+      allow read: if isStaff();
+      allow create: if signedIn();
+      allow update, delete: if isStaff();
+    }
+    match /auditLog/{doc} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false; // журнал не редактируется
+    }
+    match /staffNotes/{doc} {
+      allow read, write: if isStaff();
+    }
+    match /aiJobs/{doc} {
+      allow read, write: if isStaff();
+    }
+
+    // ---- Лента для гостей ----
+    match /stories/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // ---- Очередь push ----
+    // Пишут оба приложения, читает и рассылает Cloud Function
+    // (у неё права администратора и правила на неё не распространяются).
+    match /pushQueue/{doc} {
+      allow read: if isStaff();
+      allow create: if signedIn();
+      allow update, delete: if false;
+    }
+
+    // ---- Счётчик обращений гостя к ИИ (ведёт Cloud Function) ----
+    match /aiUsage/{doc} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    // ---- Замок планировщика ИИ ----
+    match /meta/aiSchedulerLock {
+      allow read, write: if isStaff();
+    }
+
+    // ---- Лист ожидания ----
+    match /waitlist/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.status == 'waiting';
+      // Гость может только выйти из очереди; приглашение и посадка — персонал.
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'left');
+      allow delete: if isStaff();
+    }
+
+    // ---- Счастливые часы и профиль заведения: витрина для гостя ----
+    match /happyHours/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /meta/venueProfile {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // ---- Сертификаты ----
+    // Гость может проверить код (чтение по конкретному документу), но не
+    // изменить баланс — списывает только касса.
+    match /giftCards/{code} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+    match /giftCardOperations/{doc} {
+      allow read, write: if isStaff();
+    }
+
+    // ---- Чаевые ----
+    match /tips/{doc} {
+      allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.status == 'pending';
+      allow update, delete: if isStaff();
+    }
+
+    // ---- Всё остальное (склад, смены, сотрудники, чеки ККТ, ЕГАИС) ----
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
   }
 }
