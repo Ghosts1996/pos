@@ -5,9 +5,12 @@ import '../../models/story_model.dart';
 import '../theme/kolibri_theme.dart';
 
 /// Лента заведения в приложении гостя: новые миксы, ивенты, акции.
-/// Показываются только опубликованные и не истёкшие карточки.
+///
+/// Важное отличие от первой версии: лента НИКОГДА не показывает
+/// бесконечный индикатор загрузки. Пока данных нет, ошибка доступа или
+/// коллекция пуста — блок просто схлопывается, и главный экран выглядит
+/// цельным. Спиннер посреди главной выглядел как зависшее приложение.
 class KolibriStoriesScreen extends StatelessWidget {
-  /// Переход на вкладку меню/брони по кнопке карточки.
   final void Function(int tabIndex)? onOpenTab;
 
   const KolibriStoriesScreen({super.key, this.onOpenTab});
@@ -15,29 +18,42 @@ class KolibriStoriesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
+      // orderBy убран сознательно: связка where + orderBy требует составного
+      // индекса, без которого запрос падает с ошибкой — и лента «висела».
+      // Карточек в ленте единицы, поэтому сортируем на устройстве.
       stream: FirebaseFirestore.instance
           .collection('stories')
           .where('published', isEqualTo: true)
-          .orderBy('order')
           .limit(30)
           .snapshots(),
       builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final stories =
-            snap.data!.docs.map(StoryCard.fromDoc).where((s) => s.isLive).toList();
+        if (snap.hasError || !snap.hasData) return const SizedBox.shrink();
+
+        final stories = snap.data!.docs.map(StoryCard.fromDoc).where((s) => s.isLive).toList()
+          ..sort((a, b) {
+            final byOrder = a.order.compareTo(b.order);
+            return byOrder != 0 ? byOrder : b.createdAt.compareTo(a.createdAt);
+          });
         if (stories.isEmpty) return const SizedBox.shrink();
 
-        return SizedBox(
-          height: 190,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            itemCount: stories.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (_, i) => _card(context, stories[i]),
-          ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text('Афиша',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            ),
+            SizedBox(
+              height: 180,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: stories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (_, i) => _card(context, stories[i]),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -65,9 +81,9 @@ class KolibriStoriesScreen extends StatelessWidget {
               CachedNetworkImage(
                 imageUrl: s.imageUrl,
                 fit: BoxFit.cover,
+                placeholder: (_, __) => const SizedBox.shrink(),
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
-            // Затемнение, чтобы текст читался на любой картинке.
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -84,6 +100,8 @@ class KolibriStoriesScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Text(s.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 6),
                   Text(
