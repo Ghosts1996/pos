@@ -14,6 +14,8 @@ import 'services/chestny_znak_api_service.dart';
 import 'services/push_service.dart';
 import 'services/venue_service.dart';
 import 'services/auto_stoplist_service.dart';
+import 'services/notification_service.dart';
+import 'services/session_alerts_service.dart';
 import 'services/ai/ai_settings.dart';
 import 'services/ai/ai_scheduler.dart';
 import 'screens/image_preload_screen.dart';
@@ -66,6 +68,13 @@ void main() async {
       unawaited(loadSavedChestnyZnakSettings());
       unawaited(AiSettingsStore.instance.init());
       unawaited(PushService.instance.initStaff());
+
+      // Локальные уведомления зала: новые брони, вызовы гостей, угли через
+      // 35 минут и предупреждение за 10 минут до конца сеанса. Работают без
+      // сервера и без платного тарифа Firebase.
+      unawaited(NotificationService.instance.init().then(
+        (_) => SessionAlertsService.instance.start(),
+      ));
       VenueService.instance.watch();
 
       // Автостоп-лист следит за остатками и сам убирает из меню то, чего
