@@ -150,6 +150,12 @@ jobs:
           add_permission "android.permission.RECORD_AUDIO"
           # Push-уведомления на Android 13+ требуют явного разрешения.
           add_permission "android.permission.POST_NOTIFICATIONS"
+          # Точные будильники: без них напоминание об углях сдвигается
+          # системой на десятки минут ради экономии батареи.
+          add_permission "android.permission.SCHEDULE_EXACT_ALARM"
+          add_permission "android.permission.USE_EXACT_ALARM"
+          add_permission "android.permission.RECEIVE_BOOT_COMPLETED"
+          add_permission "android.permission.VIBRATE"
 
           if ! grep -q "android.hardware.camera" "$MANIFEST"; then
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
@@ -164,6 +170,20 @@ jobs:
           if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
             sed -i "/<application/,/>/{/>/a\\    <meta-data android:name=\"com.google.mlkit.vision.DEPENDENCIES\" android:value=\"barcode\" />
             }" "$MANIFEST"
+          fi
+
+          # Приёмники flutter_local_notifications: показывают запланированные
+          # уведомления и восстанавливают их после перезагрузки планшета.
+          if ! grep -q "ScheduledNotificationReceiver" "$MANIFEST"; then
+            sed -i "/<\/application>/i\\
+        <receiver android:exported=\"false\" android:name=\"com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver\" />\n\
+        <receiver android:exported=\"false\" android:name=\"com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver\">\n\
+            <intent-filter>\n\
+                <action android:name=\"android.intent.action.BOOT_COMPLETED\" />\n\
+                <action android:name=\"android.intent.action.MY_PACKAGE_REPLACED\" />\n\
+                <action android:name=\"android.intent.action.QUICKBOOT_POWERON\" />\n\
+            </intent-filter>\n\
+        </receiver>" "$MANIFEST"
           fi
 
           # Название приложения на экране устройства — своё у каждой сборки.
@@ -258,15 +278,7 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."
             exit 0
           fi
-          printf "%s" "$KEYSTORE_BASE64" | tr -dc "A-Za-z0-9+/=" | base64 -di > android/app/upload-keystore.jks 2>/dev/null
-          SIZE=$(stat -c%s android/app/upload-keystore.jks 2>/dev/null || echo 0)
-          echo "Размер keystore: $SIZE байт"
-          if [ "$SIZE" -lt 1000 ]; then
-            echo "::error::Секрет ANDROID_KEYSTORE_BASE64 неполный (получилось $SIZE байт вместо ~2730). Скопируйте содержимое keystore.base64 целиком."
-            exit 1
-          fi
-          keytool -list -keystore android/app/upload-keystore.jks -storepass "$KEYSTORE_PASSWORD" >/dev/null || {
-            echo "::error::Keystore не открывается — проверьте ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
           cat > android/key.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD

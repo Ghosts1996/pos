@@ -245,11 +245,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
       );
-      // Кешбэк начисляет Cloud Function onSessionClosed — с планшета
-      // начислять нельзя, иначе бонусы задвоятся. Здесь остаётся только
-      // реферальная награда за первый оплаченный визит (идемпотентна).
+      // Кешбэк и реферальная награда. Обе операции идемпотентны:
+      // повторный вызов с тем же чеком ничего не начислит.
       if (_clientUid.isNotEmpty && !_closeWithoutPayment) {
-        unawaited(ReferralService.instance.rewardIfFirstVisit(_clientUid));
+        final paid = _methods.fold<double>(0, (sum, m) => sum + m.parse());
+        unawaited(GuestLinkService()
+            .accrueBonuses(
+              clientUid: _clientUid,
+              sessionId: widget.session.id,
+              paidAmount: paid,
+            )
+            .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
       }
       if (_printReceipt) await _printOnThermalPrinter();
       if (_printFiscalReceipt) await _sendToKassa();
