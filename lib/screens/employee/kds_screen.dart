@@ -141,9 +141,13 @@ class KdsScreen extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(title,
-                    style: const TextStyle(
-                        fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -157,7 +161,10 @@ class KdsScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          Text(subtitle, style: const TextStyle(color: AppColors.textMuted)),
+          Text(subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
           const SizedBox(height: 10),
           Expanded(
             child: SingleChildScrollView(

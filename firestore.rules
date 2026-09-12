@@ -57,9 +57,19 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // ---- Чеки: гость только читает (свой стол), меняет их касса ----
+    // ---- Чеки ----
+    // Гость видит ТОЛЬКО тот чек, к которому сам привязан (свой стол).
+    // Раньше читать мог любой авторизованный — то есть чужие счета тоже.
+    function myActiveSession() {
+      return get(/databases/$(database)/documents/clients/$(request.auth.uid))
+                .data.activeSessionId;
+    }
+
     match /sessions/{doc} {
-      allow read: if signedIn();
+      allow read: if isStaff() ||
+        (signedIn() &&
+         exists(/databases/$(database)/documents/clients/$(request.auth.uid)) &&
+         myActiveSession() == doc);
       allow write: if isStaff();
     }
 
@@ -87,8 +97,11 @@ service cloud.firestore {
     }
 
     // ---- Вызовы персонала ----
+    // Гость видит только свои вызовы — чтобы не читать, что происходит
+    // за соседними столами.
     match /waiterCalls/{doc} {
-      allow read: if signedIn();
+      allow read: if isStaff() ||
+        (signedIn() && resource.data.clientUid == request.auth.uid);
       allow create: if signedIn();
       allow update, delete: if isStaff();
     }

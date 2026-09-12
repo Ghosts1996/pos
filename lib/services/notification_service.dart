@@ -46,7 +46,9 @@ class NotificationService {
 
     await _plugin.initialize(
       const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        // Монохромная иконка: системная панель рисует только силуэт, и
+        // цветной ic_launcher превращался в серый квадрат.
+        android: AndroidInitializationSettings('@drawable/ic_notification'),
       ),
     );
 
@@ -101,6 +103,7 @@ class NotificationService {
           timer ? _channelTimers.name : _channelInstant.name,
           importance: Importance.high,
           priority: Priority.high,
+          icon: '@drawable/ic_notification',
           styleInformation: BigTextStyleInformation(body),
         ),
       ),
@@ -132,14 +135,11 @@ class NotificationService {
           _channelTimers.name,
           importance: Importance.high,
           priority: Priority.high,
+          icon: '@drawable/ic_notification',
           styleInformation: BigTextStyleInformation(body),
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      // Требуется плагином даже в Android-сборке: задаёт, как трактовать
-      // указанное время — как абсолютное в локальной зоне.
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 

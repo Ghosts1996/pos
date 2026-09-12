@@ -107,16 +107,10 @@ class GuestLinkService {
     String guestName = '',
     String comment = '',
   }) async {
-    // Не плодим дубли: если такой же открытый вызов уже висит — не создаём
-    // второй, гость просто нажал кнопку дважды.
-    final existing = await _calls
-        .where('tableId', isEqualTo: tableId)
-        .where('status', isEqualTo: 'new')
-        .where('type', isEqualTo: type.code)
-        .limit(1)
-        .get();
-    if (existing.docs.isNotEmpty) return existing.docs.first.id;
-
+    // Пишем вызов сразу, без предварительной проверки дублей: лишний
+    // круг к серверу задерживал нажатие почти на секунду. Повторные
+    // нажатия гасит сам экран, а дубль в зале кальянщик закрывает одним
+    // касанием.
     final call = WaiterCall(
       id: '',
       tableId: tableId,
@@ -139,8 +133,11 @@ class GuestLinkService {
       .map((s) => s.docs.map(WaiterCall.fromDoc).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
 
-  Stream<List<WaiterCall>> tableCallsStream(String tableId) => _calls
-      .where('tableId', isEqualTo: tableId)
+  /// Вызовы конкретного гостя — для его же экрана «Мой стол».
+  /// Фильтр по clientUid обязателен: правила безопасности не отдают гостю
+  /// чужие вызовы, и запрос по одному столу вернул бы ошибку доступа.
+  Stream<List<WaiterCall>> myCallsStream(String clientUid) => _calls
+      .where('clientUid', isEqualTo: clientUid)
       .where('status', isEqualTo: 'new')
       .snapshots()
       .map((s) => s.docs.map(WaiterCall.fromDoc).toList());
