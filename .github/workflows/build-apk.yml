@@ -5,9 +5,44 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
+# Одна сборка — два приложения. Они живут в одном репозитории и делят
+# модели/сервисы, но различаются точкой входа, applicationId, названием и
+# иконкой:
+#
+#   POS            lib/main.dart                → com.hookahpos      → hookah-pos-apk
+#   Колибри Лаундж lib/client/kolibri_main.dart → com.kolibrilounge  → kolibri-lounge-apk
+#
+# Разные applicationId обязательны: с одинаковым id второй APK затирает
+# первый при установке на одно устройство и их нельзя развести в Play.
+# Под каждый applicationId в Firebase должно быть зарегистрировано
+# отдельное Android-приложение, и для каждого — свой google-services.json
+# в секретах репозитория.
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: pos
+            entrypoint: lib/main.dart
+            project_name: hookahpos          # applicationId = com.hookahpos
+            label: Hookah POS
+            icon: assets/icon/icon.png
+            artifact: hookah-pos-apk
+            gservices_secret: GOOGLE_SERVICES_JSON
+            deeplink: 'false'
+          - app: kolibri
+            entrypoint: lib/client/kolibri_main.dart
+            project_name: kolibrilounge      # applicationId = com.kolibrilounge
+            label: Колибри Лаундж
+            icon: assets/icon/kolibri.png
+            artifact: kolibri-lounge-apk
+            gservices_secret: GOOGLE_SERVICES_JSON_KOLIBRI
+            deeplink: 'true'
+
+    name: Build ${{ matrix.app }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,68 +65,52 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ matrix.app }}-${{ hashFiles('pubspec.yaml') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
       - name: Generate missing Android platform files
         run: |
-          # ВАЖНО: --org/--project-name подобраны так, чтобы итоговый
-          # applicationId был РОВНО "com.hookahpos" — это package_name,
-          # под которым Android-приложение зарегистрировано в Firebase
-          # (см. google-services.json). Раньше здесь стояло
-          # --org com.hookahpos --project-name hookah_pos, из-за чего
-          # реально получался "com.hookahpos.hookah_pos" — приложение не
-          # совпадало с регистрацией в Firebase, и нативный Firebase SDK на
-          # Android (в частности Storage) работал некорректно, из-за чего
-          # загрузка фото падала с [firebase_storage/object-not-found]
-          # независимо от Dart-кода.
-          flutter create . --platforms=android --org com --project-name hookahpos
+          # --org/--project-name подобраны так, чтобы applicationId получился
+          # РОВНО таким, под каким приложение зарегистрировано в Firebase
+          # (com.hookahpos / com.kolibrilounge). Если написать
+          # "--org com.hookahpos --project-name hookah_pos", выйдет
+          # "com.hookahpos.hookah_pos" — нативный Firebase SDK перестанет
+          # видеть приложение и Storage начнёт падать с object-not-found.
+          flutter create . --platforms=android --org com --project-name ${{ matrix.project_name }}
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
 
       - name: Bump compileSdk for CameraX / mobile_scanner compatibility
         run: |
-          # mobile_scanner 5.x+ требует compileSdk >= 34 из-за CameraX 1.3.x.
-          # Кроме того ряд других плагинов (app_links, image_picker_android,
-          # flutter_plugin_android_lifecycle, shared_preferences_android,
-          # sqflite_android, url_launcher_android) и транзитивные androidx-
-          # зависимости (androidx.core 1.18.0, androidx.activity 1.13.0 и т.д.)
-          # требуют compileSdk >= 36 — сборка падает на checkReleaseAarMetadata,
-          # если поставить только 35. Поднимаем сразу до 36.
-          #
-          # ВАЖНО: свежий шаблон Flutter пишет "compileSdk = flutter.compileSdkVersion"
-          # (без цифр вообще). Старый sed с шаблоном "[0-9]*" совпадал с пустой
-          # строкой прямо перед "flutter.compileSdkVersion" и ВСТАВЛЯЛ число перед
-          # ним, а не заменял — получалось "compileSdk = 35flutter.compileSdkVersion"
-          # и сборка падала с "Expecting an element". Теперь заменяем весь хвост
-          # строки после "compileSdk =" целиком.
+          # mobile_scanner 5.x+ требует compileSdk >= 34 (CameraX 1.3.x), а
+          # транзитивные androidx-зависимости — >= 36, иначе сборка падает
+          # на checkReleaseAarMetadata.
           APP_GRADLE=android/app/build.gradle.kts
           [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
           sed -i -E 's/compileSdk[[:space:]]*=.*/compileSdk = 36/' "$APP_GRADLE"
           sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 36/' "$APP_GRADLE"
-          echo "----- build.gradle compileSdk -----"; grep -E "compileSdk" "$APP_GRADLE"
+          grep -E "compileSdk" "$APP_GRADLE"
 
       - name: Add google-services.json (Firebase Android config)
+        env:
+          GSERVICES: ${{ secrets[matrix.gservices_secret] }}
         run: |
-          # Файл нужен, чтобы нативный Firebase SDK на Android (Storage в
-          # первую очередь) корректно привязался к проекту hoocah-pos —
-          # без него Storage вела себя нестабильно даже при правильном
-          # applicationId. Секрет GOOGLE_SERVICES_JSON должен содержать
-          # СЫРОЕ содержимое google-services.json (Settings → Secrets and
-          # variables → Actions → New repository secret).
-          if [ -z "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
-            echo "::error::Секрет GOOGLE_SERVICES_JSON не задан в настройках репозитория (Settings → Secrets and variables → Actions)."
+          # Для каждого applicationId — свой файл. Секреты:
+          #   GOOGLE_SERVICES_JSON          — приложение com.hookahpos
+          #   GOOGLE_SERVICES_JSON_KOLIBRI  — приложение com.kolibrilounge
+          # Оба берутся в консоли Firebase: Project settings → Your apps.
+          if [ -z "$GSERVICES" ]; then
+            echo "::error::Секрет ${{ matrix.gservices_secret }} не задан (Settings → Secrets and variables → Actions)."
             exit 1
           fi
-          cat > android/app/google-services.json <<'EOF'
-          ${{ secrets.GOOGLE_SERVICES_JSON }}
-          EOF
+          printf '%s' "$GSERVICES" > android/app/google-services.json
+          # Проверяем, что в файле есть нужный package_name — иначе Gradle
+          # упадёт на этапе processReleaseGoogleServices с невнятной ошибкой.
+          grep -q "com.${{ matrix.project_name }}" android/app/google-services.json \
+            || (echo "::error::В ${{ matrix.gservices_secret }} нет приложения com.${{ matrix.project_name }}" && exit 1)
 
       - name: Apply Google Services Gradle plugin
         run: |
-          # У Flutter есть два варианта шаблона android/ (Groovy и Kotlin
-          # DSL) в зависимости от версии — определяем, какой сгенерировался,
-          # и подключаем плагин google-services соответствующим способом.
           SETTINGS=android/settings.gradle.kts
           [ -f "$SETTINGS" ] || SETTINGS=android/settings.gradle
           APP_GRADLE=android/app/build.gradle.kts
@@ -100,7 +119,6 @@ jobs:
           [ -f "$PROJECT_GRADLE" ] || PROJECT_GRADLE=android/build.gradle
 
           if grep -q "pluginManagement" "$SETTINGS" 2>/dev/null; then
-            echo "Обнаружен новый шаблон (plugins DSL в settings.gradle.kts)"
             if ! grep -q "com.google.gms.google-services" "$SETTINGS"; then
               sed -i '/id("dev.flutter.flutter-plugin-loader")/a\    id("com.google.gms.google-services") version "4.4.2" apply false' "$SETTINGS"
             fi
@@ -108,7 +126,6 @@ jobs:
               sed -i '/^plugins {/a\    id("com.google.gms.google-services")' "$APP_GRADLE"
             fi
           else
-            echo "Обнаружен старый шаблон (buildscript classpath)"
             if ! grep -q "com.google.gms:google-services" "$PROJECT_GRADLE"; then
               sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.2'" "$PROJECT_GRADLE"
             fi
@@ -117,10 +134,7 @@ jobs:
             fi
           fi
 
-          echo "----- $SETTINGS -----"; cat "$SETTINGS"
-          echo "----- $APP_GRADLE -----"; cat "$APP_GRADLE"
-
-      - name: Ensure required permissions for release builds
+      - name: Ensure required permissions and manifest entries
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           add_permission() {
@@ -128,58 +142,63 @@ jobs:
               sed -i "/<manifest /a\\    <uses-permission android:name=\"$1\" />" "$MANIFEST"
             fi
           }
-          # Сеть — Firestore/Storage.
           add_permission "android.permission.INTERNET"
-          # Камера и медиатека — фото категорий/блюд в редакторе меню
-          # (image_picker). READ_MEDIA_IMAGES нужен на Android 13+, где
-          # старое READ_EXTERNAL_STORAGE уже не действует на изображения.
           add_permission "android.permission.CAMERA"
           add_permission "android.permission.READ_MEDIA_IMAGES"
           add_permission "android.permission.READ_EXTERNAL_STORAGE"
-          # mobile_scanner требует явного объявления фичи камеры
+          # Голосовой ввод в чатах с ИИ (speech_to_text).
+          add_permission "android.permission.RECORD_AUDIO"
+          # Push-уведомления на Android 13+ требуют явного разрешения.
+          add_permission "android.permission.POST_NOTIFICATIONS"
+
           if ! grep -q "android.hardware.camera" "$MANIFEST"; then
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
           fi
-          # Android 11+ (API 30+): без <queries> приложение не видит системную
-          # камеру (image_picker), что ломает _scanBarcodeFromCameraPhoto.
+
+          # <queries>: системная камера (image_picker) и движок
+          # распознавания речи — без этого блока Android 11+ их «не видит».
           if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i "/<\/manifest>/i\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n    </queries>" "$MANIFEST"
+            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n    </queries>" "$MANIFEST"
           fi
-          # google_mlkit_barcode_scanning по умолчанию докачивает модель
-          # распознавания штрихкодов через Play Services ЛЕНИВО, при первом
-          # обращении. Если докачка не успевает завершиться (нет интернета
-          # при первом запуске, медленная сеть и т.п.), любой вызов падает с
-          # NullPointerException внутри
-          # com.google.android.gms.internal.mlkit_vision_common.zzmj —
-          # именно эта ошибка была на скриншоте пользователя. Эта meta-data
-          # заставляет Play Store скачать модель СРАЗУ при установке
-          # приложения, а не при первом использовании камеры.
+
           if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
             sed -i "/<application/,/>/{/>/a\\    <meta-data android:name=\"com.google.mlkit.vision.DEPENDENCIES\" android:value=\"barcode\" />
             }" "$MANIFEST"
           fi
-          sed -i 's/android:label="[^"]*"/android:label="Hookah POS"/' "$MANIFEST"
-          echo "----- AndroidManifest.xml -----"
+
+          # Название приложения на экране устройства — своё у каждой сборки.
+          sed -i 's/android:label="[^"]*"/android:label="${{ matrix.label }}"/' "$MANIFEST"
+
+          # Диплинк kolibri://table/{id} — только для клиентского приложения:
+          # по нему открывается стол после сканирования QR со стола.
+          if [ "${{ matrix.deeplink }}" = "true" ]; then
+            python3 - "$MANIFEST" <<'PY'
+          import re, sys
+          path = sys.argv[1]
+          xml = open(path, encoding='utf-8').read()
+          if 'android:scheme="kolibri"' not in xml:
+              filter_xml = (
+                  '\n            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.VIEW" />\n'
+                  '                <category android:name="android.intent.category.DEFAULT" />\n'
+                  '                <category android:name="android.intent.category.BROWSABLE" />\n'
+                  '                <data android:scheme="kolibri" android:host="table" />\n'
+                  '            </intent-filter>'
+              )
+              # Вставляем внутрь основной <activity>, перед её закрытием.
+              xml = xml.replace('</activity>', filter_xml + '\n        </activity>', 1)
+              open(path, 'w', encoding='utf-8').write(xml)
+          PY
+          fi
           cat "$MANIFEST"
 
       - name: Force bundled (offline) ML Kit barcode model
         run: |
-          # google_mlkit_barcode_scanning по умолчанию тянет через
-          # транзитивные зависимости Play Services-вариант распознавания
-          # штрихкодов (com.google.android.gms:play-services-mlkit-barcode-scanning),
-          # который докачивает модель ПО СЕТИ при первом использовании —
-          # именно это падает с NullPointerException внутри
-          # com.google.android.gms.internal.mlkit_vision_common.zzmj, если
-          # докачка не успела/не смогла произойти (см. скриншот/видео
-          # пользователя). Явная докачка модели Play Store'ом при установке
-          # (meta-data com.google.mlkit.vision.DEPENDENCIES) работает ТОЛЬКО
-          # при установке из Play Store — а этот APK ставится напрямую
-          # (сайдлоуд), поэтому тот механизм здесь не срабатывает.
-          #
-          # Решение: явно подключаем "bundled"-вариант модели
-          # (com.google.mlkit:barcode-scanning) — она зашивается прямо в
-          # APK (+неск. МБ к размеру) и работает полностью офлайн, без
-          # Play Services и без сети, сразу после установки.
+          # Play Services-вариант ML Kit докачивает модель по сети при первом
+          # использовании и падает NullPointerException, если докачка не
+          # прошла. При сайдлоуде APK (не из Play Store) это происходит
+          # регулярно, поэтому подключаем bundled-модель — она внутри APK и
+          # работает офлайн сразу после установки.
           APP_GRADLE=android/app/build.gradle.kts
           IS_KTS=1
           if [ ! -f "$APP_GRADLE" ]; then
@@ -198,33 +217,17 @@ jobs:
               printf '\ndependencies {\n%s\n}\n' "$DEP_LINE" >> "$APP_GRADLE"
             fi
           fi
-          echo "----- $APP_GRADLE (dependencies) -----"
-          grep -A3 -E "^dependencies \{" "$APP_GRADLE" || true
 
       - name: Add ProGuard/R8 keep rules for ML Kit and mobile_scanner
         run: |
-          # ПРИЧИНА реальных сбоев камеры/сканера на РАЗНЫХ устройствах
-          # (одинаковая ошибка вида "Attempt to invoke virtual method
-          # 'fh2 bh2.a(gb)' ... null object reference" с обфусцированными
-          # именами классов/методов из 1-2 букв) — это R8/ProGuard,
-          # который в релизной сборке (flutter build apk --release)
-          # переименовывает и вырезает классы, включая внутренности
-          # ML Kit и mobile_scanner/CameraX, если не сказать ему явно их
-          # не трогать. ML Kit активно использует рефлексию и динамическую
-          # загрузку классов — без keep-правил R8 ломает именно этот путь,
-          # что выглядит как случайный сбой камеры, а на деле стабильно
-          # воспроизводится на любом устройстве с этой сборкой.
+          # R8 в релизе переименовывает внутренности ML Kit и CameraX,
+          # которые работают через рефлексию, — сканер падает с NPE только в
+          # release-сборке. Keep-правила это лечат.
           RULES=android/app/proguard-rules.pro
           mkdir -p "$(dirname "$RULES")"
           touch "$RULES"
           if ! grep -q "google.mlkit" "$RULES" 2>/dev/null; then
             cat >> "$RULES" <<'EOF'
-
-          # --- ML Kit (распознавание штрихкодов/DataMatrix) и mobile_scanner/CameraX ---
-          # Без этих правил R8 в релизной сборке ломает рефлексию/инициализацию
-          # ML Kit — сканер падает с NullPointerException на реальных устройствах
-          # (в debug-сборке без минификации всё работает нормально, поэтому баг
-          # незаметен при обычной разработке).
           -keep class com.google.mlkit.** { *; }
           -keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
           -keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
@@ -233,38 +236,100 @@ jobs:
           -keep class com.google.mlkit.vision.common.** { *; }
           -keep class com.google.mlkit.common.** { *; }
           -dontwarn com.google.mlkit.**
-
-          # mobile_scanner (CameraX-based live preview scanner)
           -keep class dev.steenbakker.mobile_scanner.** { *; }
           -keep class androidx.camera.** { *; }
           -dontwarn androidx.camera.**
           EOF
           fi
-          # Убеждаемся, что release-сборка вообще подключает этот файл
-          # правил (стандартный шаблон Flutter это делает по умолчанию,
-          # но проверяем на случай нестандартного build.gradle).
-          APP_GRADLE=android/app/build.gradle.kts
-          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
-          if ! grep -q "proguard-rules.pro" "$APP_GRADLE"; then
-            echo "::warning::proguard-rules.pro не подключён в $APP_GRADLE — добавьте proguardFiles вручную в buildTypes.release"
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Без своего keystore Flutter подписывает release-сборку debug-ключом,
+          # который в CI генерируется заново на каждом запуске. SHA-1 при этом
+          # меняется, и Firebase Phone Auth (вход по SMS в «Колибри Лаундж»)
+          # перестаёт работать. Поэтому подписываем постоянным ключом из
+          # секретов; если секретов нет — предупреждаем и собираем как раньше.
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."
+            exit 0
           fi
-          echo "----- $RULES -----"; cat "$RULES"
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+          APP_GRADLE=android/app/build.gradle.kts
+          if [ -f "$APP_GRADLE" ]; then
+            python3 - "$APP_GRADLE" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          src = open(path, encoding='utf-8').read()
+          if 'keystoreProperties' not in src:
+              header = (
+                  'import java.util.Properties\n'
+                  'import java.io.FileInputStream\n\n'
+                  'val keystoreProperties = Properties()\n'
+                  'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                  'if (keystorePropertiesFile.exists()) {\n'
+                  '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+                  '}\n\n'
+              )
+              src = header + src
+              signing = (
+                  '    signingConfigs {\n'
+                  '        create("release") {\n'
+                  '            keyAlias = keystoreProperties["keyAlias"] as String?\n'
+                  '            keyPassword = keystoreProperties["keyPassword"] as String?\n'
+                  '            storeFile = keystoreProperties["storeFile"]?.let { file(it) }\n'
+                  '            storePassword = keystoreProperties["storePassword"] as String?\n'
+                  '        }\n'
+                  '    }\n'
+              )
+              src = src.replace('    buildTypes {', signing + '    buildTypes {', 1)
+              src = src.replace('signingConfig = signingConfigs.getByName("debug")',
+                                'signingConfig = signingConfigs.getByName("release")')
+              open(path, 'w', encoding='utf-8').write(src)
+          PYEOF
+          else
+            echo "::warning::build.gradle.kts не найден — проверьте подпись вручную"
+          fi
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Generate app launcher icon
-        run: dart run flutter_launcher_icons
+        run: |
+          # У приложений разные иконки. Если файла для клиентской сборки нет
+          # (assets/icon/kolibri.png), берём общую — сборка не должна падать
+          # из-за отсутствующей картинки.
+          ICON="${{ matrix.icon }}"
+          if [ ! -f "$ICON" ]; then
+            echo "::warning::$ICON не найден — использую assets/icon/icon.png"
+            ICON="assets/icon/icon.png"
+          fi
+          sed -i -E "s|image_path: \".*\"|image_path: \"$ICON\"|" pubspec.yaml
+          dart run flutter_launcher_icons
 
       - name: Analyze (informational — does not block the build)
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
       - name: Build APK (release)
-        run: flutter build apk --release
+        run: flutter build apk --release -t ${{ matrix.entrypoint }}
+
+      - name: Rename APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/${{ matrix.artifact }}.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hookah-pos-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ matrix.artifact }}
+          path: build/app/outputs/flutter-apk/${{ matrix.artifact }}.apk

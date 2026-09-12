@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
@@ -9,6 +11,11 @@ import 'services/printer_service.dart';
 import 'services/kassa_service.dart';
 import 'services/egais_service.dart';
 import 'services/chestny_znak_api_service.dart';
+import 'services/push_service.dart';
+import 'services/venue_service.dart';
+import 'services/auto_stoplist_service.dart';
+import 'services/ai/ai_settings.dart';
+import 'services/ai/ai_scheduler.dart';
 import 'screens/image_preload_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
@@ -33,22 +40,42 @@ void main() async {
   if (DefaultFirebaseOptions.isConfigured) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+      // Офлайн-режим кассы: при обрыве интернета зал продолжает работать
+      // на локальном кэше, изменения уезжают в облако при восстановлении
+      // связи. Ставится до первого обращения к Firestore.
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+
       // Вход в Firebase Auth и инициализация Supabase не зависят друг от
-      // друга — раньше шли строго последовательно (два похода в сеть один
-      // за другим), хотя оба нужны только к моменту первого обращения к
-      // базе/хранилищу. Запускаем параллельно, чтобы старт приложения не
-      // ждал их суммарное время, а только большее из двух.
+      // друга — запускаем параллельно, чтобы старт приложения ждал только
+      // большее из двух, а не их сумму.
       await Future.wait([
         AuthService().ensureSignedIn(),
         Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
       ]);
       ready = true;
-      // Не блокирует старт приложения — принтер/касса подтянутся чуть
+
+      // Не блокирует старт приложения — принтер/касса/ИИ подтянутся чуть
       // позже, если настроены, а не настроены — ничего не сломается.
       unawaited(loadSavedPrinterSettings());
       unawaited(loadSavedKassaSettings());
       unawaited(loadSavedEgaisSettings());
       unawaited(loadSavedChestnyZnakSettings());
+      unawaited(AiSettingsStore.instance.init());
+      unawaited(PushService.instance.initStaff());
+      VenueService.instance.watch();
+
+      // Автостоп-лист следит за остатками и сам убирает из меню то, чего
+      // нет в зале, — иначе гость закажет это в «Колибри Лаундж».
+      AutoStopListService.instance.start();
+
+      // Фоновые ИИ-задания. Замок внутри планировщика гарантирует, что
+      // работу выполнит только одно устройство в зале.
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) AiScheduler.instance.start(deviceId: uid);
     } catch (e) {
       startupError = e.toString();
     }
