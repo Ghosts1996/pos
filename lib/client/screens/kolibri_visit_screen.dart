@@ -193,7 +193,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
 
         // ---- Статус вызовов ----
         StreamBuilder<List<WaiterCall>>(
-          stream: _link.tableCallsStream(s.tableId),
+          stream: _link.myCallsStream(_auth.uid),
           builder: (context, snap) {
             final calls = snap.data ?? const <WaiterCall>[];
             if (calls.isEmpty) return const SizedBox.shrink();

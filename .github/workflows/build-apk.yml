@@ -27,7 +27,7 @@ jobs:
           - app: pos
             entrypoint: lib/main.dart
             project_name: hookahpos          # applicationId = com.hookahpos
-            label: Hookah POS
+            label: Kolibri POS
             icon: assets/icon/icon.png
             artifact: hookah-pos-apk
             gservices_secret: GOOGLE_SERVICES_JSON
@@ -378,6 +378,30 @@ jobs:
           else
             echo "::warning::build.gradle.kts не найден — проверьте подпись вручную"
           fi
+
+      - name: Create notification icon
+        run: |
+          # Android рисует иконку уведомления силуэтом: цветной ic_launcher
+          # превращается в серый квадрат. Кладём монохромный вектор —
+          # колокольчик с восклицательным знаком.
+          DRAWABLE=android/app/src/main/res/drawable
+          mkdir -p "$DRAWABLE"
+          cat > "$DRAWABLE/ic_notification.xml" <<'XMLEOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24"
+              android:tint="#FFFFFFFF">
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.9,2 2,2zM18,16v-5c0,-3.07 -1.63,-5.64 -4.5,-6.32L13.5,4c0,-0.83 -0.67,-1.5 -1.5,-1.5s-1.5,0.67 -1.5,1.5v0.68C7.64,5.36 6,7.92 6,11v5l-2,2v1h16v-1l-2,-2z"/>
+            <path
+                android:fillColor="#FF000000"
+                android:pathData="M11.25,8h1.5v4h-1.5zM11.25,13h1.5v1.5h-1.5z"/>
+          </vector>
+          XMLEOF
+          echo "иконка уведомлений создана"
 
       - name: Install dependencies
         run: flutter pub get

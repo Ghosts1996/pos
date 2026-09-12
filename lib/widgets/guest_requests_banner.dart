@@ -139,63 +139,65 @@ class GuestRequestsBanner extends StatelessWidget {
     );
   }
 
+  /// Строка вызова: что нужно сделать, сколько ждут и крестик «закрыть».
+  /// Кнопок с подписями нет специально — в строке они требовали ширину и
+  /// ломали текст; крестик всегда одного размера и ничего не ломает.
   Widget _callTile(BuildContext context, GuestLinkService service, WaiterCall c) {
     final late = c.waitingMinutes >= 5;
+
+    // Одна строка: что сделать и где. Действие — иконкой справа, без
+    // текстовых кнопок: они в этой теме требуют всю ширину и ломают строку.
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.surfaceElevated,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: late ? AppColors.danger : AppColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(_iconFor(c.type), size: 18,
-                  color: late ? AppColors.danger : AppColors.warning),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${c.tableName.isEmpty ? 'Стол' : c.tableName} · ${c.type.label}',
+          Icon(_iconFor(c.type), size: 20,
+              color: late ? AppColors.danger : AppColors.warning),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  c.type.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                 ),
-              ),
-              Text('${c.waitingMinutes} мин',
+                Text(
+                  '${c.tableName.isEmpty ? 'Стол' : c.tableName} · ${c.waitingMinutes} мин'
+                  '${c.comment.isEmpty ? '' : ' · «${c.comment}»'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      color: late ? AppColors.danger : AppColors.textMuted, fontSize: 13)),
-            ],
-          ),
-          if (c.comment.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text('«${c.comment}»',
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-            ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => service.closeCall(c.id, employee.name),
-                  child: const Text('Готово'),
-                ),
-              ),
-              if (c.tableId.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    onOpenTable?.call(c.tableId, c.sessionId);
-                  },
-                  child: const Text('К столу'),
+                    color: late ? AppColors.danger : AppColors.textMuted,
+                    fontSize: 12,
+                  ),
                 ),
               ],
-            ],
+            ),
+          ),
+          if (c.tableId.isNotEmpty)
+            IconButton(
+              tooltip: 'Открыть стол',
+              icon: const Icon(Icons.open_in_new, size: 20, color: AppColors.textMuted),
+              onPressed: () {
+                Navigator.pop(context);
+                onOpenTable?.call(c.tableId, c.sessionId);
+              },
+            ),
+          IconButton(
+            tooltip: 'Выполнено',
+            icon: const Icon(Icons.check_circle, size: 26, color: AppColors.success),
+            onPressed: () => service.closeCall(c.id, employee.name),
           ),
         ],
       ),
@@ -203,65 +205,67 @@ class GuestRequestsBanner extends StatelessWidget {
   }
 
   Widget _orderTile(BuildContext context, GuestLinkService service, GuestOrder o) {
+    final preparing = o.status == 'preparing';
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.surfaceElevated,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.success.withValues(alpha: 0.6)),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.5)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.receipt_long, size: 18, color: AppColors.success),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${o.tableName.isEmpty ? 'Стол' : o.tableName} · заказ из приложения',
+          const Icon(Icons.receipt_long, size: 20, color: AppColors.success),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  preparing ? 'Готовится' : 'Новый заказ',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                 ),
-              ),
-              Text('${o.total.toStringAsFixed(0)} ₽',
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(o.items.map((i) => '${i.name} ×${i.qty}').join(', '),
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: () async {
-                    try {
-                      if (o.status == 'preparing') {
-                        await service.markOrderReady(o, employee.name);
-                      } else {
-                        await service.acceptGuestOrder(o, employee.name);
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context)
-                            .showSnackBar(SnackBar(content: Text('$e')));
-                      }
-                    }
-                  },
-                  child: Text(o.status == 'preparing' ? 'Готово' : 'В чек'),
+                Text(
+                  '${o.tableName.isEmpty ? 'Стол' : o.tableName} · '
+                  '${o.items.map((i) => '${i.name}×${i.qty}').join(', ')} · '
+                  '${o.total.toStringAsFixed(0)} ₽',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
-                onPressed: () =>
-                    service.rejectGuestOrder(o.id, employee.name, 'Нет в наличии'),
-                child: const Text('Отклонить'),
-              ),
-            ],
+              ],
+            ),
+          ),
+          if (!preparing)
+            IconButton(
+              tooltip: 'Отклонить',
+              icon: const Icon(Icons.close, size: 20, color: AppColors.textMuted),
+              onPressed: () =>
+                  service.rejectGuestOrder(o.id, employee.name, 'Нет в наличии'),
+            ),
+          IconButton(
+            tooltip: preparing ? 'Готово' : 'В чек',
+            icon: Icon(preparing ? Icons.check_circle : Icons.playlist_add,
+                size: 26, color: AppColors.success),
+            onPressed: () async {
+              try {
+                if (preparing) {
+                  await service.markOrderReady(o, employee.name);
+                } else {
+                  await service.acceptGuestOrder(o, employee.name);
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                }
+              }
+            },
           ),
         ],
       ),
