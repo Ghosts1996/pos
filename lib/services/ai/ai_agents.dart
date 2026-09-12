@@ -46,6 +46,47 @@ const _brandRules = '''
 - Цены — в рублях, ровно как в данных.
 ''';
 
+/// Кальянная база знаний: вкусовые семейства, рабочие пропорции и
+/// проверенные миксы. Без неё модель сочиняет вкусы, которых не бывает,
+/// или предлагает позиции меню вместо микса.
+const _hookahKnowledge = '''
+ВКУСОВЫЕ СЕМЕЙСТВА:
+- Цитрус: лимон, лайм, грейпфрут, апельсин. Дают кислинку и свежесть.
+- Ягоды: малина, клубника, черника, вишня, смородина. Сладкие, мягкие.
+- Тропики: манго, маракуйя, ананас, банан, кокос, личи. Сочные, сладкие.
+- Свежесть: мята, лёд, эвкалипт, холодок. Добавляются 10–20%.
+- Десерт: ваниль, крем, карамель, шоколад, выпечка, мёд.
+- Пряности: корица, кардамон, имбирь, чай, тархун.
+- Кислые добавки: барбарис, гранат, клюква — 10–15% для баланса сладкого.
+
+КРЕПОСТЬ:
+- Лёгкая: фруктово-ягодные линейки, светлый лист. Для новичков и девушек.
+- Средняя: классические линейки, большинство гостей.
+- Крепкая: тёмный лист. Только опытным, кто просит сам. Предупреди, что
+  крепко, и посоветуй не курить натощак.
+
+ПРАВИЛА МИКСА:
+- 2–3 вкуса, редко 4. Больше — каша.
+- Доли считай на 10 частей, например 5/3/2.
+- Основа 50–60%, дополнение 30%, акцент 10–20%.
+- Кислое + сладкое работает почти всегда; два десерта вместе — тяжело.
+- Мята/лёд поверх фруктов освежает, поверх десерта обычно лишняя.
+- Один яркий доминант: два сильных вкуса забивают друг друга.
+
+ПРОВЕРЕННЫЕ МИКСЫ:
+- Цитрус-фреш: грейпфрут 5 / лайм 3 / мята 2 — кисло, свежо, лёгкий.
+- Летний сад: малина 4 / клубника 4 / мята 2 — сладкий, мягкий, для начала вечера.
+- Тропик: манго 5 / маракуйя 3 / лёд 2 — сочный, летний, средняя крепость.
+- Кола-лайм: кола 6 / лайм 4 — газировочный, бодрит, средний.
+- Вишня в шоколаде: вишня 6 / шоколад 4 — десертный, вечерний.
+- Пряная груша: груша 5 / корица 3 / ваниль 2 — тёплый, осенний.
+- Арбуз-дыня: арбуз 5 / дыня 5 — классика для компании, лёгкий.
+- Гранат-барбарис: гранат 5 / барбарис 3 / лёд 2 — кислый, освежающий.
+- Чай с бергамотом: чёрный чай 6 / бергамот 2 / лимон 2 — некрепкий, к чаю.
+- Мохито: лайм 4 / мята 4 / лёд 2 — самый безопасный выбор для новичка.
+- Тёмная ночь: тёмный лист вишня 6 / чёрная смородина 4 — крепкий, опытным.
+''';
+
 /// Реестр из 16 агентов.
 class AiAgents {
   AiAgents._();
@@ -69,10 +110,24 @@ class AiAgents {
     description: 'Подбирает микс и сопровождение под вкусы гостя.',
     tools: {'get_menu', 'get_guest_profile', 'save_guest_taste_note'},
     systemPrompt: '''$_brandRules
-Роль: кальянный сомелье. Сначала получи меню инструментом get_menu.
-Подбери 2–3 варианта: название, цена, одна строка почему подходит.
-В конце — напиток или закуска из меню в пару. Новичкам не советуй крепкое.
-Если гость назвал новые предпочтения — сохрани их через save_guest_taste_note.''',
+Роль: кальянный сомелье.
+
+В меню заведения кальяны продаются позициями по уровню («Классик»,
+«Премиум» и т.п.), а конкретный микс мастер собирает на месте. Поэтому
+твоя задача — предложить ИМЕННО МИКС из табачных вкусов, а позицию меню
+назвать только как строку счёта с ценой.
+
+$_hookahKnowledge
+
+Формат ответа:
+1) Два-три микса: название микса, состав в долях, крепость, вкус в одной
+   строке.
+2) Строка «В счёт пойдёт: <позиция меню> — <цена>».
+3) Напиток из меню в пару.
+
+Если гость новичок или просит «полегче» — держись лёгкой и средней
+крепости, не предлагай тёмный лист. Гость назвал предпочтения —
+сохрани их через save_guest_taste_note.''',
   );
 
   static const upsell = AiAgent(
@@ -389,23 +444,54 @@ class AiService {
 
   // ---------- ГОТОВЫЕ СЦЕНАРИИ ----------
 
-  Future<String> askHall(String question, {String employeeName = ''}) =>
-      ask(AiAgents.hall, question, employeeName: employeeName);
+  /// Контекст собирается заранее и передаётся в промпт: не все шлюзы
+  /// поддерживают вызов инструментов, и без этого агент отвечал «данных нет».
+  Future<String> hallContext() async {
+    final parts = await Future.wait([
+      _ctx.hallSnapshot(),
+      _ctx.reservationsSnapshot(),
+      _ctx.stockSnapshot(onlyProblems: true),
+    ]);
+    return 'ЗАЛ СЕЙЧАС:\n${parts[0]}\n\nБРОНИ:\n${parts[1]}\n\n'
+        'ПРОБЛЕМЫ СКЛАДА:\n${parts[2]}';
+  }
 
-  Future<String> sommelier(String request, {String guestUid = ''}) =>
-      ask(AiAgents.sommelier, request, guestUid: guestUid);
+  Future<String> askHall(String question, {String employeeName = ''}) async =>
+      ask(AiAgents.hall, question,
+          employeeName: employeeName, extraContext: await hallContext());
+
+  Future<String> sommelier(String request, {String guestUid = ''}) async {
+    final menu = await _ctx.menuSnapshot();
+    final guest = guestUid.isEmpty ? '' : await _ctx.guestSnapshot(guestUid);
+    return ask(
+      AiAgents.sommelier,
+      request,
+      guestUid: guestUid,
+      extraContext: 'МЕНЮ:\n$menu${guest.isEmpty ? '' : '\n\nО ГОСТЕ:\n$guest'}',
+    );
+  }
 
   Future<String> conciergeReply(
     String message, {
     String guestUid = '',
     List<AiMessage> history = const [],
-  }) =>
-      ask(AiAgents.concierge, message, guestUid: guestUid, history: history);
+  }) async {
+    final menu = await _ctx.menuSnapshot();
+    final guest = guestUid.isEmpty ? '' : await _ctx.guestSnapshot(guestUid);
+    return ask(
+      AiAgents.concierge,
+      message,
+      guestUid: guestUid,
+      history: history,
+      extraContext: 'МЕНЮ:\n$menu${guest.isEmpty ? '' : '\n\nО ГОСТЕ:\n$guest'}',
+    );
+  }
 
-  Future<String> hostessBriefing({String employeeName = ''}) => ask(
+  Future<String> hostessBriefing({String employeeName = ''}) async => ask(
         AiAgents.hostess,
         'Разбери брони на ближайшую смену.',
         employeeName: employeeName,
+        extraContext: await hallContext(),
       );
 
   Future<String> analyzeSales({
