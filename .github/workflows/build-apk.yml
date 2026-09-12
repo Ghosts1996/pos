@@ -258,7 +258,15 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."
             exit 0
           fi
-          printf "%s" "$KEYSTORE_BASE64" | tr -d "\r\n \t" | base64 -d > android/app/upload-keystore.jks || { echo "::error::ANDROID_KEYSTORE_BASE64 повреждён — пересоздайте секрет командой base64 -w0"; exit 1; }
+          printf "%s" "$KEYSTORE_BASE64" | tr -dc "A-Za-z0-9+/=" | base64 -di > android/app/upload-keystore.jks 2>/dev/null
+          SIZE=$(stat -c%s android/app/upload-keystore.jks 2>/dev/null || echo 0)
+          echo "Размер keystore: $SIZE байт"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "::error::Секрет ANDROID_KEYSTORE_BASE64 неполный (получилось $SIZE байт вместо ~2730). Скопируйте содержимое keystore.base64 целиком."
+            exit 1
+          fi
+          keytool -list -keystore android/app/upload-keystore.jks -storepass "$KEYSTORE_PASSWORD" >/dev/null || {
+            echo "::error::Keystore не открывается — проверьте ANDROID_KEYSTORE_PASSWORD"; exit 1; }
           cat > android/key.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
