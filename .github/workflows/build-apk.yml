@@ -174,17 +174,28 @@ jobs:
 
           # Приёмники flutter_local_notifications: показывают запланированные
           # уведомления и восстанавливают их после перезагрузки планшета.
-          if ! grep -q "ScheduledNotificationReceiver" "$MANIFEST"; then
-            sed -i "/<\/application>/i\\
-        <receiver android:exported=\"false\" android:name=\"com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver\" />\n\
-        <receiver android:exported=\"false\" android:name=\"com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver\">\n\
-            <intent-filter>\n\
-                <action android:name=\"android.intent.action.BOOT_COMPLETED\" />\n\
-                <action android:name=\"android.intent.action.MY_PACKAGE_REPLACED\" />\n\
-                <action android:name=\"android.intent.action.QUICKBOOT_POWERON\" />\n\
-            </intent-filter>\n\
-        </receiver>" "$MANIFEST"
-          fi
+          # Правим XML питоном, а не sed: многострочная вставка с кавычками
+          # внутри YAML ломает файл workflow.
+          python3 - "$MANIFEST" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          xml = open(path, encoding='utf-8').read()
+          if 'ScheduledNotificationReceiver' not in xml:
+              receivers = (
+                  '        <receiver android:exported="false" '
+                  'android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />\n'
+                  '        <receiver android:exported="false" '
+                  'android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.BOOT_COMPLETED" />\n'
+                  '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />\n'
+                  '                <action android:name="android.intent.action.QUICKBOOT_POWERON" />\n'
+                  '            </intent-filter>\n'
+                  '        </receiver>\n'
+              )
+              xml = xml.replace('</application>', receivers + '    </application>', 1)
+              open(path, 'w', encoding='utf-8').write(xml)
+          PYEOF
 
           # Название приложения на экране устройства — своё у каждой сборки.
           sed -i 's/android:label="[^"]*"/android:label="${{ matrix.label }}"/' "$MANIFEST"
