@@ -136,6 +136,10 @@ class NotificationService {
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      // Требуется плагином даже в Android-сборке: задаёт, как трактовать
+      // указанное время — как абсолютное в локальной зоне.
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
