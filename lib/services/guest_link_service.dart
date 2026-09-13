@@ -32,16 +32,59 @@ class GuestLinkService {
     return profile;
   }
 
-  Future<void> updateProfile(String uid, Map<String, dynamic> patch) {
+  Future<void> updateProfile(String uid, Map<String, dynamic> patch) async {
     // Нормализуем телефон если он есть в patch
     if (patch.containsKey('phone') && patch['phone'] is String) {
       final raw = patch['phone'] as String;
       if (raw.isNotEmpty) {
         patch = Map<String, dynamic>.from(patch);
-        patch['phone'] = normalizePhone(raw);
+        final normalized = normalizePhone(raw);
+        patch['phone'] = normalized;
+        await _syncPhoneIndex(uid, normalized);
       }
     }
-    return _clients.doc(uid).set(patch, SetOptions(merge: true));
+    await _clients.doc(uid).set(patch, SetOptions(merge: true));
+  }
+
+  /// Обезличенный указатель «номер → uid», по которому можно узнать, занят
+  /// ли телефон, не читая чужой профиль.
+  ///
+  /// Зачем он нужен. Гость по firestore.rules может прочитать ТОЛЬКО свой
+  /// документ в clients — запрос по всей коллекции (`where('phone', ...)`)
+  /// правила отклоняют, потому что не могут доказать, что все результаты
+  /// разрешены. Из-за этого проверка «номер уже занят» в профиле падала с
+  /// permission-denied, и сохранение телефона зависало навсегда. Здесь
+  /// лежит только пара «номер → uid»: ни имени, ни бонусов, ни трат.
+  CollectionReference<Map<String, dynamic>> get _phoneIndex =>
+      _db.collection('phoneIndex');
+
+  /// Занят ли номер ДРУГИМ профилем. Это чтение одного документа по id, а
+  /// не запрос по коллекции, поэтому работает и у гостя.
+  Future<bool> isPhoneTakenByOther(String phone, String uid) async {
+    final normalized = normalizePhone(phone);
+    if (normalized.isEmpty) return false;
+    final doc = await _phoneIndex.doc(normalized).get();
+    if (!doc.exists) return false;
+    final owner = (doc.data()?['uid'] as String?) ?? '';
+    return owner.isNotEmpty && owner != uid;
+  }
+
+  /// Закрепляет номер за гостем и освобождает его прежний номер.
+  /// Ошибки не пробрасывает: указатель вторичен, сам профиль важнее.
+  Future<void> _syncPhoneIndex(String uid, String normalized) async {
+    try {
+      final prev = (await _clients.doc(uid).get()).data()?['phone'] as String?;
+      if (prev != null && prev.isNotEmpty && prev != normalized) {
+        // Освободить прежний номер может только касса — у гостя номер и так
+        // меняется лишь через администратора.
+        await _phoneIndex.doc(prev).delete();
+      }
+    } catch (_) {
+      // Нет прав на удаление — не страшно, лишняя запись никому не мешает.
+    }
+    try {
+      await _phoneIndex.doc(normalized).set({'uid': uid});
+    } catch (_) {}
   }
 
   Future<void> toggleFavorite(String uid, String menuItemId, bool favorite) =>
@@ -163,7 +206,45 @@ class GuestLinkService {
       await batch.commit();
     }
 
+    // Указатель «номер → uid» переводим на выживший профиль, иначе номер
+    // остался бы закреплён за удалённым.
+    if (normalized.isNotEmpty) {
+      try {
+        await _phoneIndex.doc(normalized).set({'uid': newUid});
+      } catch (_) {}
+    }
+
     await oldRef.delete();
+  }
+
+  /// Разовая достройка указателей phoneIndex и referralCodes для гостей,
+  /// заведённых до их появления. Без неё номер старого гостя не считался
+  /// занятым, и второе устройство могло увести его себе.
+  ///
+  /// Запускается с кассы при входе сотрудника: читать всех гостей может
+  /// только персонал. Отметка о выполнении лежит в jobRuns, поэтому проход
+  /// по базе делается один раз, а не на каждый вход.
+  Future<void> backfillGuestIndexes() async {
+    final marker = _db.collection('jobRuns').doc('guestIndexBackfill');
+    try {
+      if ((await marker.get()).exists) return;
+
+      final clients = await _clients.get();
+      for (final doc in clients.docs) {
+        final data = doc.data();
+        final phone = (data['phone'] as String?) ?? '';
+        final code = (data['referralCode'] as String?) ?? '';
+        if (phone.isNotEmpty) {
+          await _phoneIndex.doc(normalizePhone(phone)).set({'uid': doc.id});
+        }
+        if (code.isNotEmpty) {
+          await _db.collection('referralCodes').doc(code).set({'uid': doc.id});
+        }
+      }
+      await marker.set({'lastRunAt': Timestamp.fromDate(DateTime.now())});
+    } catch (_) {
+      // Нет прав или сети — попробуем при следующем входе.
+    }
   }
 
   /// Все гости для админского экрана «Гости»: имя, телефон, уровень

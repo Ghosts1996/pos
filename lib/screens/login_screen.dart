@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
 import '../services/firestore_service.dart';
+import '../services/guest_link_service.dart';
 import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
 import '../utils/constants.dart';
@@ -101,6 +102,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // Проверка стоит один документ и ничего не делает, если всё на месте.
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
+    unawaited(GuestLinkService().backfillGuestIndexes());
     if (loggedInEmployee.role == AppConstants.roleAdmin) {
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: loggedInEmployee)));

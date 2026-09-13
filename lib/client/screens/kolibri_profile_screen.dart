@@ -82,27 +82,36 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     final phone = rawPhone.isNotEmpty ? normalizePhone(rawPhone) : '';
     setState(() => _saving = true);
 
-    // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
-    // ли он уже ДРУГИМ устройством, прежде чем сохранять.
-    if (!_phoneLocked && phone.isNotEmpty) {
-      if (!isValidRuPhone(phone)) {
-        setState(() => _saving = false);
-        _snack('Введите корректный номер (например, 79995061580)');
-        return;
-      }
+    // try/finally обязателен. Раньше его не было, и любая ошибка внутри
+    // (а проверка занятости номера падала с permission-denied всегда)
+    // просто улетала наружу: _saving оставался true, и кнопка навсегда
+    // застревала на «Сохраняем…», не показывая никакой причины.
+    try {
+      // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
+      // ли он уже ДРУГИМ устройством, прежде чем сохранять.
+      if (!_phoneLocked && phone.isNotEmpty) {
+        if (!isValidRuPhone(phone)) {
+          _snack('Введите корректный номер (например, 79995061580)');
+          return;
+        }
 
-      final existing = await _link.findByPhone(phone);
-      if (existing != null && existing.uid != _auth.uid) {
-        setState(() => _saving = false);
-        if (mounted) {
+        // Проверка идёт по обезличенному указателю phoneIndex, а не
+        // запросом по коллекции clients: запрос гостю запрещён правилами,
+        // и именно он раньше ронял сохранение.
+        if (await _link.isPhoneTakenByOther(phone, _auth.uid)) {
+          if (!mounted) return;
           await showDialog(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text('Номер уже зарегистрирован'),
-              content: Text(
-                'На этот номер уже есть профиль с ${existing.bonusBalance.toStringAsFixed(0)} '
-                'бонусами. Чтобы они появились на этом устройстве, покажите кальянщику '
-                'этот номер и «ID устройства» ниже — он объединит профили на кассе за пару секунд.',
+              // Про чужой профиль не рассказываем ничего — ни имени, ни
+              // баланса: раньше здесь показывался бонусный счёт другого
+              // человека любому, кто угадал его номер телефона.
+              content: const Text(
+                'На этот номер уже есть профиль. Чтобы его бонусы и история '
+                'появились на этом устройстве, назовите кальянщику номер и '
+                '«ID устройства» ниже — он объединит профили на кассе за пару '
+                'секунд.',
               ),
               actions: [
                 TextButton(
@@ -112,19 +121,19 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               ],
             ),
           );
+          return;
         }
-        return;
       }
-    }
 
-    await _link.updateProfile(_auth.uid, {
-      'name': _name.text.trim(),
-      if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
-    });
-
-    if (mounted) {
-      setState(() => _saving = false);
+      await _link.updateProfile(_auth.uid, {
+        'name': _name.text.trim(),
+        if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
+      });
       _snack('Сохранено');
+    } catch (e) {
+      _snack('Не удалось сохранить: проверьте интернет и попробуйте снова');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

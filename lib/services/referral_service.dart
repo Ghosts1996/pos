@@ -12,6 +12,17 @@ class ReferralService {
 
   final _db = FirebaseFirestore.instance;
 
+  /// Обезличенный указатель «код → uid».
+  ///
+  /// Как и phoneIndex, он нужен потому, что гость по firestore.rules может
+  /// прочитать только свой документ в clients: запрос
+  /// `where('referralCode', ...)` правила отклоняют. Из-за этого вся
+  /// реферальная программа в приложении гостя молча не работала — код не
+  /// выдавался, а чужой код не принимался. В указателе лежит только пара
+  /// «код → uid», никаких персональных данных.
+  CollectionReference<Map<String, dynamic>> get _codes =>
+      _db.collection('referralCodes');
+
   /// Сколько бонусов получает каждая сторона.
   static const double inviterBonus = 300;
   static const double inviteeBonus = 200;
@@ -35,14 +46,18 @@ class ReferralService {
       finalCode = '$code$attempt';
     }
 
+    // Сначала закрепляем код в указателе, потом пишем в профиль: если
+    // закрепить не вышло, профиль не получит код, на который нельзя сослаться.
+    await _codes.doc(finalCode).set({'uid': uid});
     await ref.set({'referralCode': finalCode}, SetOptions(merge: true));
     return finalCode;
   }
 
   Future<bool> _codeTaken(String code, String uid) async {
-    final snap =
-        await _db.collection('clients').where('referralCode', isEqualTo: code).limit(1).get();
-    return snap.docs.isNotEmpty && snap.docs.first.id != uid;
+    final doc = await _codes.doc(code).get();
+    if (!doc.exists) return false;
+    final owner = (doc.data()?['uid'] as String?) ?? '';
+    return owner.isNotEmpty && owner != uid;
   }
 
   /// Гость вводит код пригласившего. Начисление — не сразу, а после первого
@@ -63,12 +78,13 @@ class ReferralService {
       return 'Код можно применить только до первого визита.';
     }
 
-    final inviter =
-        await _db.collection('clients').where('referralCode', isEqualTo: normalized).limit(1).get();
-    if (inviter.docs.isEmpty) return 'Такого кода нет.';
+    final inviterDoc = await _codes.doc(normalized).get();
+    final inviterId = (inviterDoc.data()?['uid'] as String?) ?? '';
+    if (!inviterDoc.exists || inviterId.isEmpty) return 'Такого кода нет.';
+    if (inviterId == uid) return 'Это ваш собственный код.';
 
     await _db.collection('clients').doc(uid).set({
-      'referredBy': inviter.docs.first.id,
+      'referredBy': inviterId,
       'referralCodeUsed': normalized,
     }, SetOptions(merge: true));
 
@@ -126,10 +142,17 @@ class ReferralService {
     );
   }
 
-  /// Сколько гостей пришло по коду — для экрана профиля.
+  /// Сколько приглашённых гостей уже дошло до заведения — для экрана
+  /// профиля. Считается по счётчику в собственном профиле гостя, который
+  /// увеличивается в [rewardIfFirstVisit]: запрос по коллекции clients
+  /// гостю запрещён правилами и всегда падал с permission-denied.
+  ///
+  /// Смысл числа чуть строже прежнего: раньше считались все, кто ввёл код,
+  /// теперь — только те, кто реально пришёл и закрыл чек. Это честнее: за
+  /// них и начислены бонусы.
   Stream<int> invitedCount(String uid) => _db
       .collection('clients')
-      .where('referredBy', isEqualTo: uid)
+      .doc(uid)
       .snapshots()
-      .map((s) => s.docs.length);
+      .map((d) => (d.data()?['referralsCount'] as num?)?.toInt() ?? 0);
 }

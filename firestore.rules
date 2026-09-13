@@ -101,6 +101,38 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ---- Обезличенные указатели «номер → uid» и «код → uid» ----
+    // Гостю нужно знать, занят ли телефон и существует ли реферальный код,
+    // но читать чужие профили нельзя. Запрос по коллекции clients правила
+    // отклоняют — из-за этого сохранение телефона зависало навсегда, а
+    // реферальная программа молча не работала. Здесь лежит только пара
+    // «ключ → uid»: ни имени, ни телефона владельца, ни бонусов.
+    //
+    // Занять ключ можно лишь тот, что свободен (create срабатывает только
+    // для несуществующего документа) и только на себя — переписать чужой
+    // указатель нельзя, поэтому увести чужой номер или код не получится.
+    match /phoneIndex/{phone} {
+      allow read: if signedIn();
+      allow create: if isStaff() ||
+        (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff();
+    }
+
+    match /referralCodes/{code} {
+      allow read: if signedIn();
+      allow create: if isStaff() ||
+        (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff();
+    }
+
     // ---- Вечная история визитов гостя ----
     // Свои визиты гость видит, но не правит: запись создаёт касса при
     // закрытии чека. Отдельная подколлекция нужна потому, что сами чеки
