@@ -17,8 +17,8 @@ class CashierLayoutBlueprint extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Стол №5 · Зал')),
-      body: Row(
-        children: const [
+      body: const Row(
+        children: [
           // ---- Левая часть: активный чек ------------------------------
           SizedBox(width: 380, child: _ReceiptPanel()),
           VerticalDivider(width: 1, color: AppColors.border),
@@ -214,7 +214,7 @@ class _MenuPanel extends StatelessWidget {
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            children: [
+            children: const [
               _CategoryChip(label: 'Кальяны', selected: true),
               _CategoryChip(label: 'Напитки'),
               _CategoryChip(label: 'Кухня'),

@@ -80,12 +80,18 @@ class FloorPlanScreen extends StatelessWidget {
                   return const Center(child: Text('Столы ещё не добавлены администратором'));
                 }
                 return LayoutBuilder(builder: (context, constraints) {
+                  // x/y хранятся как доли 0..1, а плитка имеет реальный
+                  // размер: умножать долю на полную ширину нельзя — на
+                  // узком экране правый и нижний ряд столов уезжали за
+                  // границу и обрезались. Раскладываем по свободному месту.
+                  final spanX = (constraints.maxWidth - TableTile.size).clamp(0.0, double.infinity);
+                  final spanY = (constraints.maxHeight - TableTile.size).clamp(0.0, double.infinity);
                   return Stack(
                     children: tables.map((t) {
                       return Positioned(
                         key: ValueKey(t.id),
-                        left: t.x * constraints.maxWidth,
-                        top: t.y * constraints.maxHeight,
+                        left: t.x * spanX,
+                        top: t.y * spanY,
                         child: _TableWithTimer(
                           table: t,
                           employee: employee,
@@ -117,7 +123,15 @@ class FloorPlanScreen extends StatelessWidget {
 /// Подписывается на первый открытый чек стола, чтобы показать живой таймер
 /// и бейдж количества чеков прямо на плитке. Дополнительно подсвечивает
 /// стол, от которого поступил вызов гостя.
-class _TableWithTimer extends StatelessWidget {
+///
+/// Стрим чека кэшируется и пересоздаётся ТОЛЬКО при смене id чека. Раньше
+/// виджет был stateless и создавал `fs.sessionStream(...)` прямо в build:
+/// StreamBuilder сравнивает стримы по ссылке, поэтому на каждый ребилд
+/// карты зала (а он происходит при любом изменении любого стола) все
+/// подписки на чеки отписывались и подписывались заново. Отсюда и лишний
+/// трафик к Firestore, и мигание таймеров — плитка на кадр теряла данные
+/// чека и показывалась «свободной».
+class _TableWithTimer extends StatefulWidget {
   final TableModel table;
   final Employee employee;
   final VoidCallback onTap;
@@ -129,21 +143,52 @@ class _TableWithTimer extends StatelessWidget {
   });
 
   @override
+  State<_TableWithTimer> createState() => _TableWithTimerState();
+}
+
+class _TableWithTimerState extends State<_TableWithTimer> {
+  static final _fs = FirestoreService();
+
+  String? _sessionId;
+  Stream<SessionModel?>? _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncStream();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TableWithTimer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncStream();
+  }
+
+  void _syncStream() {
+    final id = widget.table.activeSessionIds.isEmpty
+        ? null
+        : widget.table.activeSessionIds.first;
+    if (id == _sessionId) return;
+    _sessionId = id;
+    _stream = id == null ? null : _fs.sessionStream(id);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (table.activeSessionIds.isEmpty) {
-      return TableTile(table: table, onTap: onTap);
+    final stream = _stream;
+    if (stream == null) {
+      return TableTile(table: widget.table, onTap: widget.onTap);
     }
-    final fs = FirestoreService();
     return StreamBuilder<SessionModel?>(
-      stream: fs.sessionStream(table.activeSessionIds.first),
+      stream: stream,
       builder: (context, snap) {
         final session = snap.data;
         return TableTile(
-          table: table,
+          table: widget.table,
           plannedEnd: session?.plannedEnd,
-          checkCount: table.activeSessionIds.length,
+          checkCount: widget.table.activeSessionIds.length,
           guestTag: session?.guestTag,
-          onTap: onTap,
+          onTap: widget.onTap,
         );
       },
     );

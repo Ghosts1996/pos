@@ -216,12 +216,12 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
+              const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
-                  const SizedBox(width: 12),
-                  const Expanded(
+                  Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
+                  SizedBox(width: 12),
+                  Expanded(
                     child: Text(
                       'Бонусы копятся на этом устройстве и находятся по вашему номеру '
                       'на кассе. Сменили телефон — назовите номер и покажите ID '

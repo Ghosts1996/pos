@@ -20,6 +20,16 @@ class TableModel {
   /// Настраивается администратором в карте зала. По умолчанию — 2.
   final int maxOpenSessions;
 
+  /// До какого момента стол занят живым гостем — максимальный plannedEnd
+  /// среди открытых на нём чеков. Денормализовано СПЕЦИАЛЬНО: карточку
+  /// стола гостю читать можно, а коллекцию sessions — нет (см.
+  /// firestore.rules), поэтому расчёт свободных слотов в «Колибри Лаундж»
+  /// и оценка ожидания в листе ожидания опираются именно на это поле, а
+  /// не на запрос к чекам, который у гостя падал с permission-denied.
+  /// Поддерживается в актуальном состоянии POS-ом (см.
+  /// FirestoreService.syncTableBusyUntil). null — стол свободен.
+  final DateTime? busyUntil;
+
   TableModel({
     required this.id,
     required this.name,
@@ -30,6 +40,7 @@ class TableModel {
     this.status = 'free',
     this.activeSessionIds = const [],
     this.maxOpenSessions = 2,
+    this.busyUntil,
   });
 
   factory TableModel.fromDoc(DocumentSnapshot doc) {
@@ -56,6 +67,9 @@ class TableModel {
       status: data['status'] ?? 'free',
       activeSessionIds: ids,
       maxOpenSessions: ((data['maxOpenSessions'] as num?)?.toInt()) ?? 2,
+      busyUntil: data['busyUntil'] is Timestamp
+          ? (data['busyUntil'] as Timestamp).toDate()
+          : null,
     );
   }
 
@@ -69,6 +83,7 @@ class TableModel {
       'status': status,
       'activeSessionIds': activeSessionIds,
       'maxOpenSessions': maxOpenSessions,
+      'busyUntil': busyUntil == null ? null : Timestamp.fromDate(busyUntil!),
     };
   }
 
@@ -84,6 +99,7 @@ class TableModel {
     String? status,
     List<String>? activeSessionIds,
     int? maxOpenSessions,
+    DateTime? busyUntil,
   }) {
     return TableModel(
       id: id,
@@ -95,6 +111,7 @@ class TableModel {
       status: status ?? this.status,
       activeSessionIds: activeSessionIds ?? this.activeSessionIds,
       maxOpenSessions: maxOpenSessions ?? this.maxOpenSessions,
+      busyUntil: busyUntil ?? this.busyUntil,
     );
   }
 }

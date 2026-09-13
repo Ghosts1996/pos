@@ -113,7 +113,7 @@ class GuestLinkService {
         throw StateError('Устройство с ID $newUid не найдено — попросите гостя '
             'открыть приложение и профиль ещё раз');
       }
-      final newData = newSnap.data() as Map<String, dynamic>;
+      final newData = newSnap.data()!;
       final newBonus = (newData['bonusBalance'] ?? 0).toDouble();
       final newSpent = (newData['totalSpent'] ?? 0).toDouble();
       final newVisits = (newData['visits'] as num?)?.toInt() ?? 0;
@@ -132,13 +132,21 @@ class GuestLinkService {
 
     // Переносим историю бонусных операций на новый uid — гость увидит её
     // в «Истории бонусов» уже на текущем устройстве.
+    //
+    // Пишем ЧАНКАМИ: в один батч Firestore принимает максимум 500 операций,
+    // а у постоянного гостя за пару лет операций бывает и больше — такой
+    // батч отклонялся целиком, и объединение профилей падало с ошибкой,
+    // уже успев слить балансы транзакцией выше.
     final ops = await _db.collection('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
-    final batch = _db.batch();
-    for (final d in ops.docs) {
-      batch.update(d.reference, {'clientUid': newUid});
+    const chunkSize = 400;
+    for (var i = 0; i < ops.docs.length; i += chunkSize) {
+      final batch = _db.batch();
+      for (final d in ops.docs.skip(i).take(chunkSize)) {
+        batch.update(d.reference, {'clientUid': newUid});
+      }
+      await batch.commit();
     }
-    batch.delete(oldRef);
-    await batch.commit();
+    await oldRef.delete();
   }
 
   /// Все гости для админского экрана «Гости»: имя, телефон, уровень
@@ -177,14 +185,25 @@ class GuestLinkService {
 
     // Подписываем чек именем гостя, если подпись пуста — кальянщик сразу
     // видит, кто за столом.
-    final client = await _clients.doc(uid).get();
-    final name = (client.data()?['name'] as String?) ?? '';
-    if (name.isNotEmpty) {
-      final sessionRef = _db.collection('sessions').doc(sessionId);
-      final s = await sessionRef.get();
-      if (((s.data()?['guestTag'] as String?) ?? '').isEmpty) {
-        await sessionRef.update({'guestTag': name});
+    //
+    // ВАЖНО: этот шаг — «по возможности». Писать в sessions по правилам
+    // может только POS, а метод вызывается и из гостевого приложения (гость
+    // сканирует QR стола). Раньше permission-denied отсюда улетал наружу, и
+    // гость видел «Не удалось открыть стол», хотя привязка выше уже
+    // прошла успешно и счёт был доступен. Подпись чека — украшение, ронять
+    // из-за неё посадку за стол нельзя.
+    try {
+      final client = await _clients.doc(uid).get();
+      final name = (client.data()?['name'] as String?) ?? '';
+      if (name.isNotEmpty) {
+        final sessionRef = _db.collection('sessions').doc(sessionId);
+        final s = await sessionRef.get();
+        if (((s.data()?['guestTag'] as String?) ?? '').isEmpty) {
+          await sessionRef.update({'guestTag': name});
+        }
       }
+    } catch (_) {
+      // Нет прав/сети — гость всё равно уже за столом.
     }
     return sessionId;
   }
@@ -463,6 +482,32 @@ class GuestLinkService {
       });
     }
     return applied;
+  }
+
+  /// Вернуть гостю бонусы, списанные на экране оплаты, если оплата так и
+  /// не была проведена (кассир вышел с экрана, оплату отменили).
+  ///
+  /// Без этого возврата получалась прямая потеря денег гостя: нажатие
+  /// «Списать» уменьшало баланс сразу, а выход с экрана оплаты оставлял
+  /// чек открытым — при следующем открытии экрана сумма к оплате была уже
+  /// полной, и бонусы просто исчезали.
+  Future<void> refundBonuses({
+    required String clientUid,
+    required String sessionId,
+    required double amount,
+  }) async {
+    if (clientUid.isEmpty || amount <= 0) return;
+    await _clients.doc(clientUid).set(
+      {'bonusBalance': FieldValue.increment(amount)},
+      SetOptions(merge: true),
+    );
+    await _db.collection('bonusOperations').add({
+      'clientUid': clientUid,
+      'sessionId': sessionId,
+      'type': 'redeem_cancelled',
+      'amount': amount,
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+    });
   }
 
   // ---------- ОТЗЫВЫ ----------

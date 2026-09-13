@@ -177,7 +177,7 @@ class SessionModel {
     };
   }
 
-  double get orderTotal => orderItems.fold(0.0, (sum, item) => sum + item.total);
+  double get orderTotal => orderItems.fold(0.0, (acc, item) => acc + item.total);
 
   double get totalWithDiscount => orderTotal * (1 - discountPercent / 100);
 

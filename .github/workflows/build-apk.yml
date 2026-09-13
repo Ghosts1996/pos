@@ -425,6 +425,13 @@ jobs:
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
+      # Юнит-тесты чистой логики (деньги, остатки, таймеры, коды
+      # маркировки). Быстрые, без Firebase — единственный шаг, который
+      # реально ловит регрессии до того, как APK уедет в зал, поэтому
+      # он блокирующий: падение теста останавливает сборку.
+      - name: Unit tests
+        run: flutter test
+
       - name: Build APK (release)
         run: flutter build apk --release -t ${{ matrix.entrypoint }}
 

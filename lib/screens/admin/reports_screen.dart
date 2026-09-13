@@ -211,6 +211,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           ),
                         ),
                       ],
+                      if (stats.unpaidClosed > 0) ...[
+                        const SizedBox(height: 8),
+                        _sectionTitle('Закрыто без оплаты'),
+                        Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.money_off, color: Colors.orange),
+                            title: Text('${stats.unpaidClosed} чек(ов)'),
+                            subtitle: Text(
+                                'На сумму ${stats.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (не входит в выручку)'),
+                          ),
+                        ),
+                      ],
                       if (stats.refunds > 0) ...[
                         const SizedBox(height: 8),
                         _sectionTitle('Возвраты'),
@@ -307,6 +319,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
       buf.writeln(
           'Возвратов: ${stats.refunds} на сумму ${stats.refundedAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     }
+    if (stats.unpaidClosed > 0) {
+      buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed} на сумму '
+          '${stats.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    }
     if (stats.byEmployee.isNotEmpty) {
       buf.writeln('\nПо сотрудникам:');
       for (final e in stats.byEmployee.entries) {
@@ -348,6 +364,11 @@ class _ReportStats {
   final int refunds;
   final double refundedAmount;
 
+  /// Чеки, закрытые кнопкой «Закрыть без оплаты» — гость не заплатил
+  /// ничего. В выручку не входят, показываются отдельной строкой.
+  final int unpaidClosed;
+  final double unpaidAmount;
+
   _ReportStats({
     required this.visits,
     required this.revenue,
@@ -358,6 +379,8 @@ class _ReportStats {
     required this.totalDiscountGiven,
     required this.refunds,
     required this.refundedAmount,
+    required this.unpaidClosed,
+    required this.unpaidAmount,
   });
 
   double get averageCheck => visits == 0 ? 0 : revenue / visits;
@@ -369,6 +392,8 @@ class _ReportStats {
     double discountGiven = 0;
     int refunds = 0;
     double refundedAmount = 0;
+    int unpaidClosed = 0;
+    double unpaidAmount = 0;
     final byEmployee = <String, _EmployeeStat>{};
     final byItem = <String, _ItemStat>{};
 
@@ -378,6 +403,16 @@ class _ReportStats {
       if (s.refunded) {
         refunds++;
         refundedAmount += s.totalWithDiscount;
+        continue;
+      }
+
+      // Чек «закрыт без оплаты» — денег заведение не получило вовсе (все
+      // поля оплаты нулевые). Раньше его сумма всё равно падала в выручку
+      // через totalWithDiscount, и отчёт показывал деньги, которых нет:
+      // итог не сходился с суммой способов оплаты. Учитываем отдельно.
+      if (s.closedWithoutPayment) {
+        unpaidClosed++;
+        unpaidAmount += s.totalWithDiscount;
         continue;
       }
 
@@ -405,7 +440,7 @@ class _ReportStats {
     final itemsSorted = byItem.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
 
     return _ReportStats(
-      visits: sessions.length - refunds,
+      visits: sessions.length - refunds - unpaidClosed,
       revenue: revenue,
       refills: refills,
       byEmployee: employeesSorted,
@@ -414,6 +449,8 @@ class _ReportStats {
       totalDiscountGiven: discountGiven,
       refunds: refunds,
       refundedAmount: refundedAmount,
+      unpaidClosed: unpaidClosed,
+      unpaidAmount: unpaidAmount,
     );
   }
 }

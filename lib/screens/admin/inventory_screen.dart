@@ -68,9 +68,9 @@ class _StockTabState extends State<_StockTab> {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final all = snap.data!;
           if (all.isEmpty) {
-            return Center(
+            return const Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.all(24),
                 child: Text(
                   'Позиций склада пока нет.\nНажмите «+», чтобы добавить первую — '
                   'например, сорт табака в граммах или пиво в банках.',
@@ -149,6 +149,10 @@ class _StockTabState extends State<_StockTab> {
         text: item != null && item.minQuantity > 0 ? item.unit.format(item.minQuantity) : '');
     final noteCtrl = TextEditingController(text: item?.note ?? '');
     InventoryUnit unit = item?.unit ?? InventoryUnit.pcs;
+
+    // Между await выше и открытием диалога экран мог быть закрыт —
+    // обращаться к его context после этого нельзя.
+    if (!context.mounted) return;
 
     final ok = await showDialog<bool>(
       context: context,

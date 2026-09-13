@@ -58,11 +58,12 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                 OutlinedButton(
                   style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
                     final card = await _service.find(_search.text);
                     if (!mounted) return;
                     setState(() => _found = card);
                     if (card == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         const SnackBar(content: Text('Сертификат не найден')),
                       );
                     }

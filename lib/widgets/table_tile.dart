@@ -1,11 +1,16 @@
 import '../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
+import 'clock_ticker.dart';
 import 'timer_display.dart';
 import '../utils/constants.dart';
 
 /// Плитка стола на карте зала (используется и в админке, и у сотрудника)
 class TableTile extends StatelessWidget {
+  /// Размер плитки в пикселях. Нужен экранам карты зала, чтобы разложить
+  /// столы по свободному месту и не увести крайние за границу экрана.
+  static const double size = 96;
+
   final TableModel table;
   final DateTime? plannedEnd; // если стол занят — время окончания ближайшего чека
   final VoidCallback? onTap;
@@ -30,11 +35,24 @@ class TableTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Цвет плитки зависит от текущего времени, а не только от данных из
+    // базы. Раньше он считался один раз при построении: стол оставался
+    // синим и после истечения сеанса — пока в Firestore не менялось хоть
+    // что-нибудь, что заставит плитку перестроиться. Обещанный переход
+    // синий → оранжевый → красный на карте зала фактически не работал.
+    // Теперь плитка перестраивается по общему секундному тикеру.
+    if (table.status == 'occupied' && plannedEnd != null) {
+      return TickerBuilder(builder: (context, now) => _build(context, now));
+    }
+    return _build(context, DateTime.now());
+  }
+
+  Widget _build(BuildContext context, DateTime now) {
     final occupied = table.status == 'occupied';
     final bool nearEnd = occupied &&
         plannedEnd != null &&
-        plannedEnd!.difference(DateTime.now()).inMinutes < AppConstants.warningThresholdMinutes;
-    final bool overdue = occupied && plannedEnd != null && plannedEnd!.isBefore(DateTime.now());
+        plannedEnd!.difference(now).inMinutes < AppConstants.warningThresholdMinutes;
+    final bool overdue = occupied && plannedEnd != null && plannedEnd!.isBefore(now);
 
     Color bg;
     if (!occupied) {
@@ -48,15 +66,15 @@ class TableTile extends StatelessWidget {
     }
 
     final tile = Container(
-      width: 96,
-      height: 96,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: bg,
         borderRadius: table.shape == 'circle'
             ? BorderRadius.circular(48)
             : BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 4, offset: const Offset(0, 2)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 4, offset: const Offset(0, 2)),
         ],
         border: isDraggablePreview ? Border.all(color: Colors.white, width: 2) : null,
       ),

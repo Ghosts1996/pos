@@ -243,13 +243,13 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
         ),
       );
 
-  Widget _emptyState() => Center(
+  Widget _emptyState() => const Center(
         child: Padding(
-          padding: const EdgeInsets.all(32),
+          padding: EdgeInsets.all(32),
           child: Text(
             'Спросите что угодно по работе зала — ассистент видит актуальные данные.',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.textMuted),
+            style: TextStyle(color: AppColors.textMuted),
           ),
         ),
       );

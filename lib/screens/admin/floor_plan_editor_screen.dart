@@ -38,8 +38,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     final col = index % cols;
     final row = index ~/ cols;
     return Offset(
-      (0.04 + col * stepX).clamp(0.0, 0.85),
-      (0.04 + row * stepY).clamp(0.0, 0.85),
+      (0.04 + col * stepX).clamp(0.0, 1.0),
+      (0.04 + row * stepY).clamp(0.0, 1.0),
     );
   }
 
@@ -61,7 +61,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
 
   Future<void> _editTable(TableModel table) async {
     final result = await _showTableDialog(existing: table);
-    if (result == null) return;
+    if (result == null || !mounted) return;
     if (result['delete'] == true) {
       final confirm = await showDialog<bool>(
         context: context,
@@ -102,7 +102,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     String shape = existing?.shape ?? 'rect';
     int maxOpenSessions = existing?.maxOpenSessions ?? 2;
 
-    return showDialog<Map<String, dynamic>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
         return AlertDialog(
@@ -172,7 +172,10 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                 if (nameCtrl.text.trim().isEmpty) return;
                 Navigator.pop(ctx, {
                   'name': nameCtrl.text.trim(),
-                  'seats': int.tryParse(seatsCtrl.text) ?? 4,
+                  // Ноль и отрицательные значения ломают подбор стола под
+                  // компанию (t.seats < guestsCount) — стол с 0 мест не
+                  // подходил бы вообще никому.
+                  'seats': (int.tryParse(seatsCtrl.text) ?? 4).clamp(1, 99),
                   'shape': shape,
                   'maxOpenSessions': maxOpenSessions,
                 });
@@ -183,6 +186,9 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         );
       }),
     );
+    nameCtrl.dispose();
+    seatsCtrl.dispose();
+    return result;
   }
 
   @override
@@ -198,13 +204,18 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           _tables = snap.data!;
           return LayoutBuilder(builder: (context, constraints) {
+            // См. комментарий в floor_plan_screen: позиция стола — доля
+            // 0..1, а плитка занимает _tileSize пикселей, поэтому
+            // раскладываем по свободному месту, а не по полной ширине.
+            final spanX = (constraints.maxWidth - TableTile.size).clamp(0.0, double.infinity);
+            final spanY = (constraints.maxHeight - TableTile.size).clamp(0.0, double.infinity);
             return Stack(
               key: _mapKey,
               children: _tables.map((t) {
                 return Positioned(
                   key: ValueKey(t.id),
-                  left: t.x * constraints.maxWidth,
-                  top: t.y * constraints.maxHeight,
+                  left: t.x * spanX,
+                  top: t.y * spanY,
                   child: Draggable(
                     feedback: TableTile(table: t, isDraggablePreview: true),
                     childWhenDragging: Opacity(opacity: 0.3, child: TableTile(table: t)),
@@ -214,8 +225,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                       final mapBox =
                           _mapKey.currentContext!.findRenderObject() as RenderBox;
                       final local = mapBox.globalToLocal(details.offset);
-                      final nx = (local.dx / constraints.maxWidth).clamp(0.0, 0.85);
-                      final ny = (local.dy / constraints.maxHeight).clamp(0.0, 0.85);
+                      final nx = spanX <= 0 ? 0.0 : (local.dx / spanX).clamp(0.0, 1.0);
+                      final ny = spanY <= 0 ? 0.0 : (local.dy / spanY).clamp(0.0, 1.0);
                       _fs.updateTablePosition(t.id, nx, ny);
                     },
                     child: TableTile(

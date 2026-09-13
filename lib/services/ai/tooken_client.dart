@@ -296,7 +296,10 @@ class TookenClient {
             !_isAnthropic &&
             (resp.statusCode == 404 || resp.statusCode == 400 || resp.statusCode == 405)) {
           _detected = 'anthropic';
-          return complete(
+          // await обязателен: без него ошибка повторного запроса улетает
+          // мимо catch-веток этого же цикла и приходит вызывающему как
+          // необработанный Future, а не как понятный AiException.
+          return await complete(
             messages: messages,
             model: model,
             temperature: temperature,

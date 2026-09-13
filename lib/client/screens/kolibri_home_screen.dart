@@ -41,7 +41,7 @@ class KolibriHomeScreen extends StatelessWidget {
                           color: KolibriColors.primary,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  Text(_greeting() + ', ' + name,
+                  Text('${_greeting()}, $name',
                       style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
                 ],
               ),
@@ -229,7 +229,7 @@ class KolibriHomeScreen extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           colors: [KolibriColors.surfaceElevated, KolibriColors.surface],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,

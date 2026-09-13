@@ -73,7 +73,7 @@ class FirestoreService {
 
     await _db.runTransaction((tx) async {
       final toSnap = await tx.get(toRef);
-      final toData = toSnap.data() as Map<String, dynamic>?;
+      final toData = toSnap.data();
       final toIds = ((toData?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -83,7 +83,7 @@ class FirestoreService {
       }
 
       final fromSnap = await tx.get(fromRef);
-      final fromData = fromSnap.data() as Map<String, dynamic>?;
+      final fromData = fromSnap.data();
       final fromIds = ((fromData?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -99,6 +99,49 @@ class FirestoreService {
       });
       tx.update(toRef, {'activeSessionIds': toIds, 'status': 'occupied'});
     });
+
+    // Занятость обоих столов пересчитываем после транзакции: внутри неё
+    // нельзя прочитать чужие чеки запросом, а для busyUntil нужен максимум
+    // plannedEnd по всем чекам стола.
+    await syncTableBusyUntil(fromTableId);
+    await syncTableBusyUntil(toTableId);
+  }
+
+  /// Пересчитывает поле [TableModel.busyUntil] — до какого момента стол
+  /// занят живым гостем.
+  ///
+  /// Зачем отдельным методом: гостевое приложение «Колибри Лаундж» по
+  /// правилам безопасности НЕ может читать коллекцию sessions (там чужие
+  /// счета), но карточку стола читать может. Поэтому занятость зала для
+  /// подбора слотов брони и оценки ожидания в листе ожидания живёт прямо
+  /// на столе, а поддерживает её в актуальном состоянии POS — то есть
+  /// устройство, у которого права на чтение чеков есть.
+  ///
+  /// Ошибки намеренно проглатываются: это вспомогательное денормализованное
+  /// поле, из-за него нельзя ронять открытие/закрытие чека.
+  Future<void> syncTableBusyUntil(String tableId) async {
+    if (tableId.isEmpty) return;
+    try {
+      final snap = await _db
+          .collection('sessions')
+          .where('tableId', isEqualTo: tableId)
+          .where('status', isEqualTo: 'active')
+          .get();
+
+      DateTime? maxEnd;
+      for (final doc in snap.docs) {
+        final ts = doc.data()['plannedEnd'];
+        if (ts is! Timestamp) continue;
+        final end = ts.toDate();
+        if (maxEnd == null || end.isAfter(maxEnd)) maxEnd = end;
+      }
+
+      await _db.collection('tables').doc(tableId).update({
+        'busyUntil': maxEnd == null ? null : Timestamp.fromDate(maxEnd),
+      });
+    } catch (_) {
+      // Денормализация — не критичный путь.
+    }
   }
 
   // ---------- СЕССИИ (ЧЕКИ) ----------
@@ -140,7 +183,7 @@ class FirestoreService {
 
     await _db.runTransaction((tx) async {
       final freshTable = await tx.get(tableRef);
-      final data = freshTable.data() as Map<String, dynamic>?;
+      final data = freshTable.data();
       final ids = ((data?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -161,15 +204,28 @@ class FirestoreService {
       tx.set(sessionRef, session.toMap());
 
       ids.add(sessionRef.id);
-      tx.update(tableRef, {'activeSessionIds': ids, 'status': 'occupied'});
+      // busyUntil держим не меньше конца самого позднего чека стола:
+      // на столе может быть открыто несколько счетов.
+      final prevBusy = data?['busyUntil'];
+      final prevEnd = prevBusy is Timestamp ? prevBusy.toDate() : null;
+      final newEnd = session.plannedEnd;
+      tx.update(tableRef, {
+        'activeSessionIds': ids,
+        'status': 'occupied',
+        'busyUntil': Timestamp.fromDate(
+            prevEnd != null && prevEnd.isAfter(newEnd) ? prevEnd : newEnd),
+      });
     });
 
     return sessionRef.id;
   }
 
-  /// Перезабивка — сброс таймера на новые 1.5ч (или заданную длительность)
+  /// Перезабивка — сброс таймера на новые 1.5ч (или заданную длительность).
+  /// [tableId] нужен, чтобы обновить денормализованную занятость стола —
+  /// см. [syncTableBusyUntil].
   Future<void> refillSession(String sessionId,
-      {int durationMinutes = AppConstants.defaultSessionMinutes}) async {
+      {int durationMinutes = AppConstants.defaultSessionMinutes,
+      String tableId = ''}) async {
     final now = DateTime.now();
     await _db.collection('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(now.add(Duration(minutes: durationMinutes))),
@@ -178,6 +234,7 @@ class FirestoreService {
         {'time': Timestamp.fromDate(now)}
       ]),
     });
+    await syncTableBusyUntil(tableId);
   }
 
   /// Установить/сменить подпись чека — кто сидит за столом (гость, номер
@@ -187,18 +244,21 @@ class FirestoreService {
   }
 
   /// Обновить/продлить таймер на N минут (может быть отрицательным)
-  Future<void> extendSession(String sessionId, DateTime currentPlannedEnd, int minutes) {
+  Future<void> extendSession(String sessionId, DateTime currentPlannedEnd, int minutes,
+      {String tableId = ''}) async {
     final newEnd = currentPlannedEnd.add(Duration(minutes: minutes));
-    return _db.collection('sessions').doc(sessionId).update({
+    await _db.collection('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
     });
+    await syncTableBusyUntil(tableId);
   }
 
   /// Установить таймер на конкретное время вручную
-  Future<void> setSessionEnd(String sessionId, DateTime newEnd) {
-    return _db.collection('sessions').doc(sessionId).update({
+  Future<void> setSessionEnd(String sessionId, DateTime newEnd, {String tableId = ''}) async {
+    await _db.collection('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
     });
+    await syncTableBusyUntil(tableId);
   }
 
   /// Добавить позицию в заказ. Если такая позиция меню (по menuItemId) уже
@@ -291,25 +351,37 @@ class FirestoreService {
     List<OrderItem> orderItems = const [],
     String employeeName = '',
   }) async {
-    // 1. Закрываем чек
-    await _db.collection('sessions').doc(sessionId).update({
-      'status': 'closed',
-      'closedAt': Timestamp.fromDate(DateTime.now()),
-      'paymentCash': cash,
-      'paymentCard': card,
-      'paymentTerminal': terminal,
-      'paymentComp': comp,
-      'guestContact': guestContact,
-      'closedWithoutPayment': closedWithoutPayment,
-      'receiptPrinted': receiptPrinted,
-      'fiscalReceiptPrinted': fiscalReceiptPrinted,
+    // 1. Закрываем чек.
+    //    Транзакция + проверка статуса делают закрытие ИДЕМПОТЕНТНЫМ: если
+    //    первая попытка успела закрыть чек, но упала дальше (сеть моргнула
+    //    на обновлении стола), кассир жмёт «Оплатить» ещё раз — и повторный
+    //    вызов уже не переписывает чек и, главное, НЕ списывает склад
+    //    второй раз. Раньше именно так остатки уезжали в минус на величину
+    //    целого заказа.
+    final sessionRef = _db.collection('sessions').doc(sessionId);
+    final alreadyClosed = await _db.runTransaction<bool>((tx) async {
+      final snap = await tx.get(sessionRef);
+      if ((snap.data()?['status'] as String?) == 'closed') return true;
+      tx.update(sessionRef, {
+        'status': 'closed',
+        'closedAt': Timestamp.fromDate(DateTime.now()),
+        'paymentCash': cash,
+        'paymentCard': card,
+        'paymentTerminal': terminal,
+        'paymentComp': comp,
+        'guestContact': guestContact,
+        'closedWithoutPayment': closedWithoutPayment,
+        'receiptPrinted': receiptPrinted,
+        'fiscalReceiptPrinted': fiscalReceiptPrinted,
+      });
+      return false;
     });
 
     // 2. Убираем сессию из стола
     final tableRef = _db.collection('tables').doc(tableId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(tableRef);
-      final data = doc.data() as Map<String, dynamic>?;
+      final data = doc.data();
       final ids = ((data?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -320,9 +392,12 @@ class FirestoreService {
       });
     });
 
-    // 3. Списываем склад по позициям заказа (игнорируем ошибки, чтобы не
+    // 3. Пересчитываем занятость стола для гостевого приложения.
+    await syncTableBusyUntil(tableId);
+
+    // 4. Списываем склад по позициям заказа (игнорируем ошибки, чтобы не
     //    блокировать оплату при временных сбоях сети или ненастроенных связях)
-    if (orderItems.isNotEmpty) {
+    if (!alreadyClosed && orderItems.isNotEmpty) {
       await _deductInventoryForSale(orderItems, employeeName);
     }
   }
@@ -975,18 +1050,45 @@ class FirestoreService {
     });
   }
 
+  /// Разовая достройка [TableModel.busyUntil] для столов, которые уже были
+  /// заняты на момент обновления приложения.
+  ///
+  /// До появления этого поля занятость стола нигде не хранилась, и сразу
+  /// после обновления гостевое приложение считало бы занятые столы
+  /// свободными (на них можно было бы забронировать время). Метод вызывается
+  /// с POS при входе сотрудника и правит только те столы, где чек открыт, а
+  /// поле ещё пустое, — обычно это ноль или пара документов.
+  Future<void> backfillTablesBusyUntil() async {
+    try {
+      final snap = await _db.collection('tables').get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final ids = (data['activeSessionIds'] ?? []) as List;
+        if (ids.isEmpty) continue;
+        if (data['busyUntil'] is Timestamp) continue; // уже заполнено
+        await syncTableBusyUntil(doc.id);
+      }
+    } catch (_) {
+      // Нет прав/сети — попробуем при следующем входе.
+    }
+  }
+
   /// История движений конкретной позиции, от самого свежего к старому.
   Stream<List<InventoryMovement>> inventoryMovementsStream(String itemId, {int limit = 100}) {
+    // ВАЖНО: orderBy обязателен. Без него limit(100) отдавал ПЕРВЫЕ сто
+    // документов в порядке id (то есть случайные), и на позиции с долгой
+    // историей «последние движения» показывали древние записи, а свежие
+    // списания продаж вообще не попадали в список. Сортировка на клиенте
+    // после limit это не чинила — она сортировала уже не те сто записей.
+    // Составной индекс (itemId ASC, createdAt DESC) добавлен в
+    // firestore.indexes.json.
     return _db
         .collection('inventoryMovements')
         .where('itemId', isEqualTo: itemId)
+        .orderBy('createdAt', descending: true)
         .limit(limit)
         .snapshots()
-        .map((snap) {
-      final list = snap.docs.map((d) => InventoryMovement.fromDoc(d)).toList();
-      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      return list;
-    });
+        .map((snap) => snap.docs.map((d) => InventoryMovement.fromDoc(d)).toList());
   }
 
   // ---------- СКЛАД (ИНВЕНТАРИЗАЦИЯ) ----------

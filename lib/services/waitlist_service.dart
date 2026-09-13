@@ -77,16 +77,14 @@ class WaitlistService {
         .toList();
     if (suitable.isEmpty) return 60;
 
-    final sessions =
-        await _db.collection('sessions').where('status', isEqualTo: 'active').get();
+    // Занятость берём из денормализованного поля tables.busyUntil, а не
+    // запросом к sessions: гостевое приложение читать чужие чеки не может
+    // (firestore.rules), и раньше вся оценка ожидания у гостя падала с
+    // permission-denied — он просто не мог встать в очередь.
     final endByTable = <String, DateTime>{};
-    for (final d in sessions.docs) {
-      final data = d.data();
-      final tableId = data['tableId']?.toString() ?? '';
-      final ts = data['plannedEnd'];
-      final end = ts is Timestamp ? ts.toDate() : DateTime.now();
-      final prev = endByTable[tableId];
-      if (prev == null || end.isAfter(prev)) endByTable[tableId] = end;
+    for (final d in tables.docs) {
+      final ts = d.data()['busyUntil'];
+      if (ts is Timestamp) endByTable[d.id] = ts.toDate();
     }
 
     final waits = <int>[];

@@ -17,7 +17,7 @@ class AppShadows {
 
   static List<BoxShadow> primaryButton = [
     BoxShadow(
-      color: AppColors.primary.withOpacity(0.35),
+      color: AppColors.primary.withValues(alpha: 0.35),
       blurRadius: 20,
       offset: const Offset(0, 8),
     ),
@@ -140,10 +140,10 @@ class AppTheme {
           // чтобы палец получал моментальный визуальный отклик.
           overlayColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.pressed)) {
-              return AppColors.primaryPressed.withOpacity(0.6);
+              return AppColors.primaryPressed.withValues(alpha: 0.6);
             }
             if (states.contains(WidgetState.hovered)) {
-              return Colors.white.withOpacity(0.04);
+              return Colors.white.withValues(alpha: 0.04);
             }
             return null;
           }),

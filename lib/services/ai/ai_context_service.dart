@@ -91,7 +91,7 @@ class AiContextService {
           final left = s.remaining.inMinutes;
           buf.writeln(
             '- ${t.name} (${t.seats} мест): занят, счёт ${money(s.orderTotal)}, '
-            'до конца ${left} мин, перезабивок ${s.refillCount}'
+            'до конца $left мин, перезабивок ${s.refillCount}'
             '${s.guestTag.isNotEmpty ? ', гость: ${s.guestTag}' : ''}',
           );
         }

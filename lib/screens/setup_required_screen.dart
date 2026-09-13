@@ -52,7 +52,7 @@ class SetupRequiredScreen extends StatelessWidget {
                       children: [
                         CircleAvatar(
                           radius: 12,
-                          backgroundColor: Colors.purpleAccent.withOpacity(0.25),
+                          backgroundColor: Colors.purpleAccent.withValues(alpha: 0.25),
                           child: Text('${e.key + 1}',
                               style: const TextStyle(color: Colors.white, fontSize: 12)),
                         ),
@@ -69,9 +69,9 @@ class SetupRequiredScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.12),
+                    color: Colors.red.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
