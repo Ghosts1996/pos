@@ -207,19 +207,39 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
               ],
             ),
           ] else ...[
+            // Кнопки в этой теме требуют бесконечную ширину
+            // (minimumSize: Size.fromHeight), поэтому соседний текст в Row
+            // сжимался до нуля и рассыпался по букве в строку. Явная
+            // ширина кнопки лечит это, а сам текст режем многоточием.
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    '${_profile!.name.isEmpty ? 'Гость' : _profile!.name} · уровень «${_profile!.tier}» · '
-                    'баланс ${_profile!.bonusBalance.toStringAsFixed(0)} ₽ · ${_profile!.phone}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${_profile!.name.isEmpty ? 'Гость' : _profile!.name} · '
+                        'уровень «${_profile!.tier}»',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: AppColors.textPrimary, fontSize: 13),
+                      ),
+                      Text(
+                        'Баланс ${_profile!.bonusBalance.toStringAsFixed(0)} ₽'
+                        '${_profile!.phone.isEmpty ? '' : ' · ${_profile!.phone}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
                 TextButton(
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 36)),
                   onPressed: _busy ? null : _changePhone,
-                  child: const Text('Сменить номер', style: TextStyle(fontSize: 12)),
+                  child: const Text('Сменить', style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),

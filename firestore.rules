@@ -76,7 +76,20 @@ service cloud.firestore {
     // ---- Профили гостей ----
     match /clients/{uid} {
       allow read: if isSelf(uid) || isStaff();
-      allow create, update: if isSelf(uid) || isStaff();
+      allow create: if isSelf(uid) || isStaff();
+
+      // Телефон гость задаёт один раз: к нему привязаны бонусы, и смена
+      // номера означала бы доступ к чужому счёту. Менять его может только
+      // персонал на кассе. Баланс бонусов гость не правит вовсе.
+      allow update: if isStaff() ||
+        (isSelf(uid) &&
+         (!('phone' in request.resource.data) ||
+          resource.data.get('phone', '') == '' ||
+          request.resource.data.phone == resource.data.phone) &&
+         (!('bonusBalance' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('tier' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('totalSpent' in request.resource.data.diff(resource.data).affectedKeys())));
+
       allow delete: if isStaff();
     }
 

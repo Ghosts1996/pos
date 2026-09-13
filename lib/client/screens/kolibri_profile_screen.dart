@@ -20,6 +20,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   final _link = GuestLinkService();
   final _name = TextEditingController();
   final _phone = TextEditingController();
+
+  /// Номер уже привязан — редактировать его гость не может.
+  bool get _phoneLocked => (widget.profile?.phone ?? '').isNotEmpty;
   bool _saving = false;
 
   @override
@@ -100,24 +103,46 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           decoration: const InputDecoration(labelText: 'Как к вам обращаться'),
         ),
         const SizedBox(height: 12),
+        // Номер вводится один раз и дальше не редактируется: к нему
+        // привязаны бонусы, и подмена номера означала бы доступ к чужому
+        // счёту. Сменить его может только администратор на кассе.
         TextField(
           controller: _phone,
           keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
+          readOnly: _phoneLocked,
+          decoration: InputDecoration(
             labelText: 'Телефон',
-            helperText: 'Назовите его кальянщику при оплате — спишем и начислим бонусы',
+            helperText: _phoneLocked
+                ? 'Сменить номер можно только через администратора'
+                : 'Указывается один раз — по нему кальянщик найдёт ваши бонусы',
+            suffixIcon: _phoneLocked
+                ? const Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
+                : null,
           ),
+          onTap: _phoneLocked
+              ? () => ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Номер уже привязан. Попросите администратора '
+                          'изменить его на кассе.'),
+                    ),
+                  )
+              : null,
         ),
         const SizedBox(height: 12),
         FilledButton(
           onPressed: _saving
               ? null
               : () async {
+                  final phone = _phone.text.trim();
                   setState(() => _saving = true);
+
+                  // Телефон отправляем только пока он не зафиксирован —
+                  // иначе правила базы всё равно отклонят изменение.
                   await _link.updateProfile(_auth.uid, {
                     'name': _name.text.trim(),
-                    'phone': _phone.text.trim(),
+                    if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
                   });
+
                   if (mounted) {
                     setState(() => _saving = false);
                     ScaffoldMessenger.of(context)
