@@ -161,10 +161,12 @@ jobs:
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
           fi
 
-          # <queries>: системная камера (image_picker) и движок
-          # распознавания речи — без этого блока Android 11+ их «не видит».
+          # <queries>: системная камера (image_picker), движок распознавания
+          # речи и звонок по tel: (кнопка телефона в бронях) — без этого
+          # блока Android 11+ считает их «невидимыми» для приложения, и
+          # canLaunchUrl('tel:...') всегда возвращает false.
           if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n    </queries>" "$MANIFEST"
+            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.DIAL\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n    </queries>" "$MANIFEST"
           fi
 
           if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
