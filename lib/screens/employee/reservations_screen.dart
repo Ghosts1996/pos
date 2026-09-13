@@ -5,6 +5,7 @@ import '../../models/reservation_model.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/reservation_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
@@ -28,6 +29,30 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   final _fs = FirestoreService();
   final _guestLink = GuestLinkService();
   DateTime _day = DateTime.now();
+
+  /// Разрешены ли уведомления на планшете.
+  ///
+  /// Если на Android 13+ сотрудник один раз отказал в разрешении, новые
+  /// брони и вызовы гостей перестают всплывать — молча, без единого следа
+  /// в приложении. Проверяем и говорим об этом прямо на экране броней:
+  /// именно здесь замечают, что «уведомления не приходят».
+  bool _notificationsOn = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkNotifications();
+  }
+
+  Future<void> _checkNotifications() async {
+    final on = await NotificationService.instance.areEnabled();
+    if (mounted) setState(() => _notificationsOn = on);
+  }
+
+  Future<void> _enableNotifications() async {
+    await NotificationService.instance.requestPermission();
+    await _checkNotifications();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +86,43 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Бронь по телефону'),
       ),
-      body: StreamBuilder<List<ReservationModel>>(
+      body: Column(
+        children: [
+          if (!_notificationsOn)
+            Material(
+              color: AppColors.warning.withValues(alpha: 0.15),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.notifications_off,
+                        color: AppColors.warning, size: 20),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Уведомления на планшете выключены — новые брони и '
+                        'вызовы гостей не всплывают',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _enableNotifications,
+                      child: const Text('Включить'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: _list(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _list() {
+    return StreamBuilder<List<ReservationModel>>(
         stream: _service.dayStream(_day),
         builder: (context, snap) {
           if (snap.hasError) {
@@ -84,7 +145,6 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             itemBuilder: (_, i) => _tile(list[i]),
           );
         },
-      ),
     );
   }
 

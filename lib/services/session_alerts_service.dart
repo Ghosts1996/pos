@@ -43,13 +43,21 @@ class SessionAlertsService {
   /// при добавлении позиции.
   final _planned = <String, ({DateTime end, int refills})>{};
 
-  DateTime _startedAt = DateTime.now();
   bool _running = false;
+
+  /// Первый снапшот Firestore отдаёт всё существующее как «added» — по нему
+  /// уведомлять нельзя, иначе при каждом запуске планшета сыплется десяток
+  /// старых броней. Раньше это отсекалось сравнением createdAt с моментом
+  /// запуска, но createdAt в брони проставляет ТЕЛЕФОН ГОСТЯ: стоит его
+  /// часам отстать на пару минут — и свежая бронь считалась старой, а
+  /// уведомление не приходило вовсе. Теперь просто пропускаем самый первый
+  /// снапшот каждого стрима, ничего не зная о чужих часах.
+  bool _firstReservationSnapshot = true;
+  bool _firstCallSnapshot = true;
 
   Future<void> start() async {
     if (_running) return;
     _running = true;
-    _startedAt = DateTime.now();
     await _notify.init();
 
     _watchSessions();
@@ -63,6 +71,8 @@ class SessionAlertsService {
     await _calls?.cancel();
     _sessions = _reservations = _calls = null;
     _planned.clear();
+    _firstReservationSnapshot = true;
+    _firstCallSnapshot = true;
     _running = false;
   }
 
@@ -134,14 +144,14 @@ class SessionAlertsService {
         .where('status', isEqualTo: 'new')
         .snapshots()
         .listen((snap) {
+      if (_firstReservationSnapshot) {
+        _firstReservationSnapshot = false;
+        return;
+      }
       for (final change in snap.docChanges) {
         if (change.type != DocumentChangeType.added) continue;
 
         final r = ReservationModel.fromDoc(change.doc);
-        // При первом подключении Firestore отдаёт все существующие брони
-        // как «added» — уведомлять о них не нужно, иначе при каждом
-        // запуске планшета посыплется десяток старых уведомлений.
-        if (r.createdAt.isBefore(_startedAt)) continue;
         if (r.source != 'kolibri') continue;
 
         final t = r.startTime;
@@ -164,11 +174,14 @@ class SessionAlertsService {
         .where('status', isEqualTo: 'new')
         .snapshots()
         .listen((snap) {
+      if (_firstCallSnapshot) {
+        _firstCallSnapshot = false;
+        return;
+      }
       for (final change in snap.docChanges) {
         if (change.type != DocumentChangeType.added) continue;
 
         final c = WaiterCall.fromDoc(change.doc);
-        if (c.createdAt.isBefore(_startedAt)) continue;
 
         unawaited(_notify.show(
           id: NotificationService.idFor('call_${c.id}'),
