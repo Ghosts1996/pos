@@ -116,7 +116,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
     // бонусов и реферальной программы. Если приложения у гостя нет,
     // панель бонусов просто предложит найти его по телефону.
     GuestLinkService().findBySession(widget.session.id).then((profile) {
-      if (profile != null && mounted) setState(() => _clientUid = profile.uid);
+      if (profile == null || !mounted) return;
+      setState(() {
+        _clientUid = profile.uid;
+        // Телефон гостя уже известен приложению — не заставляем кассира
+        // набирать его вручную ещё раз на чеке.
+        if (_contactCtrl.text.isEmpty && profile.phone.isNotEmpty) {
+          _contactCtrl.text = profile.phone;
+        }
+      });
     });
   }
 
