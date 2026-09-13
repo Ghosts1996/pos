@@ -5,6 +5,7 @@
 // падал на загрузке и проверять было нечего.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/models/client_models.dart';
 import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/marking_code.dart';
 import 'package:hookah_pos/models/session_model.dart';
@@ -165,6 +166,52 @@ void main() {
           isNot(TimerDisplay.colorFor(const Duration(minutes: 10))));
       expect(TimerDisplay.colorFor(const Duration(minutes: 10)),
           isNot(TimerDisplay.colorFor(const Duration(minutes: -1))));
+    });
+  });
+
+  group('Уровни лояльности', () {
+    ClientProfile guest(double spent) =>
+        ClientProfile(uid: 'u1', totalSpent: spent, createdAt: DateTime(2026));
+
+    test('порог каждого уровня', () {
+      expect(guest(0).tier, 'Бронза');
+      expect(guest(9999).tier, 'Бронза');
+      expect(guest(10000).tier, 'Серебро');
+      expect(guest(24999).tier, 'Серебро');
+      expect(guest(25000).tier, 'Золото');
+      expect(guest(49999).tier, 'Золото');
+      expect(guest(50000).tier, 'Платина');
+      expect(guest(99999).tier, 'Платина');
+      expect(guest(100000).tier, 'Алмаз');
+      expect(guest(1000000).tier, 'Алмаз');
+    });
+
+    test('кешбэк растёт вместе с уровнем', () {
+      expect(guest(0).cashbackPercent, 3);
+      expect(guest(10000).cashbackPercent, 5);
+      expect(guest(25000).cashbackPercent, 7);
+      expect(guest(50000).cashbackPercent, 10);
+      expect(guest(100000).cashbackPercent, 15);
+    });
+
+    test('сколько осталось до следующего уровня', () {
+      expect(guest(0).nextTier?.name, 'Серебро');
+      expect(guest(0).toNextTier, 10000);
+      expect(guest(24000).nextTier?.name, 'Золото');
+      expect(guest(24000).toNextTier, 1000);
+    });
+
+    test('на максимальном уровне следующего нет', () {
+      final top = guest(150000);
+      expect(top.nextTier, isNull);
+      expect(top.toNextTier, 0);
+      expect(top.tierProgress, 1);
+    });
+
+    test('прогресс считается внутри текущего уровня', () {
+      // Серебро 10 000 → Золото 25 000: на 17 500 пройдена половина.
+      expect(guest(17500).tierProgress, closeTo(0.5, 0.001));
+      expect(guest(10000).tierProgress, 0);
     });
   });
 
