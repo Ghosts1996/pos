@@ -74,11 +74,13 @@ class _KolibriShellState extends State<KolibriShell> {
 
         return Scaffold(
           body: SafeArea(bottom: false, child: pages[_index]),
-          floatingActionButton: FloatingActionButton(
+          floatingActionButton: FloatingActionButton.small(
             backgroundColor: KolibriColors.primary,
             onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),
-            child: const Icon(Icons.auto_awesome, color: Colors.white),
+            tooltip: 'ИИ-консьерж',
+            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
           ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
           bottomNavigationBar: NavigationBar(
             selectedIndex: _index,
             onDestinationSelected: (i) => setState(() => _index = i),
