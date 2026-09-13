@@ -92,6 +92,28 @@ class GiftCardService {
     return applied;
   }
 
+  /// Вернуть на сертификат сумму, списанную при незавершённой оплате.
+  /// Симметрично [redeem]: если кассир вышел с экрана оплаты, не проведя
+  /// её, деньги сертификата не должны сгорать.
+  Future<void> refund({
+    required String code,
+    required double amount,
+    required String sessionId,
+    String employeeName = '',
+  }) async {
+    if (amount <= 0) return;
+    final normalized = code.trim().toUpperCase();
+    await _col.doc(normalized).update({'balance': FieldValue.increment(amount)});
+    await _db.collection('giftCardOperations').add({
+      'code': normalized,
+      'sessionId': sessionId,
+      'amount': -amount,
+      'reason': 'redeem_cancelled',
+      'employeeName': employeeName,
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
+
   Stream<List<GiftCard>> activeCardsStream() => _col
       .where('active', isEqualTo: true)
       .snapshots()

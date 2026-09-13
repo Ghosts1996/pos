@@ -61,7 +61,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
-  Future<void> _refill(String sessionId) async {
+  Future<void> _refill(String sessionId, String tableId) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -75,14 +75,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (confirm == true) {
       try {
-        await _fs.refillSession(sessionId);
+        await _fs.refillSession(sessionId, tableId: tableId);
       } catch (e) {
         _showError('Не удалось обновить таймер — проверьте интернет');
       }
     }
   }
 
-  Future<void> _extend(String sessionId, DateTime plannedEnd) async {
+  Future<void> _extend(String sessionId, DateTime plannedEnd, String tableId) async {
     final choice = await showModalBottomSheet<int>(
       context: context,
       builder: (_) => SafeArea(
@@ -108,7 +108,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (choice != null) {
       try {
-        await _fs.extendSession(sessionId, plannedEnd, choice);
+        await _fs.extendSession(sessionId, plannedEnd, choice, tableId: tableId);
       } catch (e) {
         _showError('Не удалось обновить таймер — проверьте интернет');
       }
@@ -369,12 +369,12 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       alignment: WrapAlignment.center,
                       children: [
                         ElevatedButton.icon(
-                          onPressed: () => _refill(session.id),
+                          onPressed: () => _refill(session.id, session.tableId),
                           icon: const Icon(Icons.refresh),
                           label: const Text('Перезабивка'),
                         ),
                         ElevatedButton.icon(
-                          onPressed: () => _extend(session.id, session.plannedEnd),
+                          onPressed: () => _extend(session.id, session.plannedEnd, session.tableId),
                           icon: const Icon(Icons.timer),
                           label: const Text('Обновить таймер'),
                         ),

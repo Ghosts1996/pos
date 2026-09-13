@@ -28,6 +28,32 @@ const REGION = "europe-west1";
 
 const TOOKEN_API_KEY = defineSecret("TOOKEN_API_KEY");
 
+/** Часовой пояс заведения. Функции работают в UTC, поэтому любое время,
+ *  которое увидит человек (push смене, расчёт дня рождения), обязано
+ *  форматироваться явно в этой зоне, а не через getHours()/getDate(). */
+const VENUE_TZ = "Europe/Moscow";
+
+/** «16:30» в зоне заведения. */
+function formatVenueTime(date) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: VENUE_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+/** Календарные день/месяц/год даты в зоне заведения. */
+function venueDateParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: VENUE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+
 // ---------------------------------------------------------------- push
 
 /** Очередь push: приложение пишет документ, функция рассылает. */
@@ -68,7 +94,10 @@ exports.onReservationCreated = onDocumentCreated(
     await db.collection("pushQueue").add({
       topic: "staff",
       title: "Новая бронь",
-      body: `${r.guestName}, ${r.guestsCount} чел, ${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}`,
+      // ВАЖНО: getHours() у Node в Cloud Functions считает по UTC, поэтому
+      // смене прилетала бронь «на 13:00» вместо 16:00. Форматируем явно в
+      // зоне заведения.
+      body: `${r.guestName}, ${r.guestsCount} чел, ${formatVenueTime(t)}`,
       data: { type: "reservation", id: event.params.id },
       status: "new",
       createdAt: new Date(),
@@ -182,6 +211,13 @@ exports.reservationWatchdog = onSchedule(
       const r = doc.data();
       if (r.status !== "new" && r.status !== "confirmed") continue;
       await doc.ref.update({ status: "noShow", handledBy: "auto" });
+      // Освобождаем стол и в обезличенном зеркале занятости, иначе бронь
+      // гостя, который не пришёл, продолжала бы держать слот в приложении
+      // до конца своего интервала.
+      await db
+        .collection("reservationSlots")
+        .doc(doc.id)
+        .set({ active: false }, { merge: true });
       await db.collection("staffNotes").add({
         title: "Бронь без гостя",
         text: `${r.guestName} (${r.guestsCount} чел) не пришёл — стол ${r.tableName || "—"} освобождён.`,
@@ -219,26 +255,47 @@ exports.onSessionClosed = onDocumentUpdated(
     if (clients.empty) return;
 
     const ref = clients.docs[0].ref;
-    const c = clients.docs[0].data();
 
-    // Бонус может начислить и касса на планшете (accrueBonuses в
-    // guest_link_service.dart) — если сюда доедет тот же чек ещё раз,
-    // ничего не делаем, чтобы не задвоить бонус.
-    if (c.bonusAccruedFor === event.params.id) return;
+    // Бонус начисляет ещё и касса на планшете (accrueBonuses в
+    // guest_link_service.dart) — причём ровно в тот же момент, сразу после
+    // закрытия чека. Раньше здесь было «прочитали документ → проверили
+    // bonusAccruedFor → записали», без транзакции: оба начисления успевали
+    // прочитать профиль ДО того, как любое из них поставило отметку, и
+    // гость получал двойной кешбэк, двойной visits и двойной totalSpent.
+    // Транзакция закрывает эту гонку: кто пришёл вторым, увидит уже
+    // выставленный bonusAccruedFor и не начислит ничего.
+    const result = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const c = snap.data() || {};
+      if (c.bonusAccruedFor === event.params.id) return null;
 
-    const spent = (c.totalSpent || 0) + paid;
-    const percent = spent >= 50000 ? 10 : spent >= 25000 ? 7 : spent >= 10000 ? 5 : 3;
-    const bonus = Math.round((paid * percent) / 100);
+      const spent = (c.totalSpent || 0) + paid;
+      // Пороги и проценты должны совпадать с ClientProfile.cashbackPercent
+      // в приложении — иначе гость видит в профиле один процент, а
+      // получает другой. Алмаз (15% от 100 000) здесь раньше отсутствовал.
+      const percent =
+        spent >= 100000 ? 15 :
+        spent >= 50000 ? 10 :
+        spent >= 25000 ? 7 :
+        spent >= 10000 ? 5 : 3;
+      const bonus = Math.round((paid * percent) / 100);
 
-    await ref.update({
-      bonusBalance: (c.bonusBalance || 0) + bonus,
-      totalSpent: spent,
-      visits: (c.visits || 0) + 1,
-      bonusAccruedFor: event.params.id,
-      activeSessionId: "",
-      activeTableId: "",
-      lastVisitAt: new Date(),
+      tx.update(ref, {
+        bonusBalance: (c.bonusBalance || 0) + bonus,
+        totalSpent: spent,
+        visits: (c.visits || 0) + 1,
+        bonusAccruedFor: event.params.id,
+        activeSessionId: "",
+        activeTableId: "",
+        lastVisitAt: new Date(),
+      });
+      return { bonus, pushToken: c.pushToken };
     });
+
+    if (!result) return; // касса уже начислила этот чек
+
+    const { bonus } = result;
+    const c = { pushToken: result.pushToken };
 
     await db.collection("bonusOperations").add({
       clientUid: ref.id,
@@ -273,13 +330,15 @@ exports.birthdayGreetings = onSchedule(
   { region: REGION, schedule: "every day 12:00", timeZone: "Europe/Moscow" },
   async () => {
     const GIFT = 500;
-    const target = new Date(Date.now() + 3 * 86400000);
-    const year = new Date().getFullYear();
+    // Дату считаем в зоне заведения: getMonth()/getDate() дают UTC, и у
+    // именинников 1-го числа поздравление уезжало на сутки.
+    const target = venueDateParts(new Date(Date.now() + 3 * 86400000));
+    const year = venueDateParts(new Date()).year;
 
     const snap = await db
       .collection("clients")
-      .where("birthdayMonth", "==", target.getMonth() + 1)
-      .where("birthdayDay", "==", target.getDate())
+      .where("birthdayMonth", "==", target.month)
+      .where("birthdayDay", "==", target.day)
       .get();
 
     const names = [];

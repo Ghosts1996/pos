@@ -11,7 +11,6 @@ import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_service.dart';
 import '../../services/egais_service.dart';
 import '../../models/fiscal_receipt.dart';
-import '../../models/egais_models.dart';
 import '../../utils/constants.dart';
 import '../../services/gift_card_service.dart';
 import '../../services/guest_link_service.dart';
@@ -82,6 +81,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final _giftCtrl = TextEditingController();
   String _clientUid = '';
 
+  /// Какие сертификаты и на какую сумму уже погашены на этом экране —
+  /// нужно, чтобы вернуть деньги, если оплату так и не провели.
+  final Map<String, double> _giftRedeemed = {};
+
+  /// Оплата проведена — списанные бонусы/сертификаты возврату не подлежат.
+  bool _paidDone = false;
+
+  /// Есть что возвращать, если кассир уйдёт с экрана, не оплатив.
+  bool get _hasPendingRedemptions =>
+      !_paidDone && (_bonusPaid > 0 || _giftRedeemed.isNotEmpty);
+
   bool _closeWithoutPayment = false;
   bool _printReceipt = false;
   bool _printFiscalReceipt = false;
@@ -136,6 +146,54 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _contactCtrl.dispose();
     _giftCtrl.dispose();
     super.dispose();
+  }
+
+  /// Возвращает гостю всё, что было списано на этом экране, но так и не
+  /// пошло в оплату: бонусы и сертификаты.
+  ///
+  /// Списание происходит в момент нажатия «Списать» — это удобно кассиру
+  /// (сумма к оплате сразу уменьшается), но означает, что выход с экрана
+  /// без оплаты обязан вернуть деньги обратно. Раньше возврата не было:
+  /// гость терял бонусы и остаток сертификата, а чек оставался открытым на
+  /// полную сумму.
+  Future<void> _rollbackRedemptions() async {
+    final bonus = _bonusPaid;
+    final gifts = Map<String, double>.from(_giftRedeemed);
+    if (bonus <= 0 && gifts.isEmpty) return;
+
+    // Обнуляем локально сразу — повторный вызов (быстрый двойной «назад»)
+    // не должен вернуть деньги дважды.
+    _bonusPaid = 0;
+    _giftPaid = 0;
+    _giftRedeemed.clear();
+
+    try {
+      if (bonus > 0 && _clientUid.isNotEmpty) {
+        await GuestLinkService().refundBonuses(
+          clientUid: _clientUid,
+          sessionId: widget.session.id,
+          amount: bonus,
+        );
+      }
+      for (final entry in gifts.entries) {
+        await GiftCardService.instance.refund(
+          code: entry.key,
+          amount: entry.value,
+          sessionId: widget.session.id,
+          employeeName: widget.session.employeeName,
+        );
+      }
+    } catch (_) {
+      // Сеть отвалилась — офлайн-кэш Firestore доотправит операции сам,
+      // когда связь вернётся (инкременты для этого и выбраны).
+    }
+  }
+
+  /// Уход с экрана без оплаты: сначала вернуть списанное, потом закрыть.
+  Future<void> _leaveWithoutPaying() async {
+    if (_busy) return;
+    await _rollbackRedemptions();
+    if (mounted) Navigator.of(context).pop(false);
   }
 
   /// Первый тап по полю: сумма к оплате переносится в поле, остальные
@@ -256,7 +314,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.
       if (_clientUid.isNotEmpty && !_closeWithoutPayment) {
-        final paid = _methods.fold<double>(0, (sum, m) => sum + m.parse());
+        // Кешбэк начисляется ТОЛЬКО с реально полученных денег: наличные,
+        // карта, терминал. Поле «за счёт заведения» сюда не входит — в нём
+        // лежат в том числе сами бонусы и сертификат, и начисление с них
+        // означало бы кешбэк с кешбэка (бонусы подпитывали сами себя, а
+        // уровень лояльности рос за счёт заведения).
+        final paid = _cash.parse() + _card.parse() + _terminal.parse();
         unawaited(GuestLinkService()
             .accrueBonuses(
               clientUid: _clientUid,
@@ -265,6 +328,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             )
             .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
       }
+      _paidDone = true; // списанные бонусы/сертификаты ушли в оплату
       if (_printReceipt) await _printOnThermalPrinter();
       if (_printFiscalReceipt) await _sendToKassa();
       if (mounted) Navigator.of(context).pop(true);
@@ -348,6 +412,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
         codesByMenuItem.putIfAbsent(entry.menuItemId, () => []).add(entry.code.raw);
       }
 
+      // Цены позиций в фискальном чеке должны быть УЖЕ со скидкой.
+      // Раньше позиции уходили по полному прайсу, а платежи — по факту
+      // (то есть со скидкой), и итог чека не сходился с итогом платежей:
+      // реальная касса такой чек отклоняет, а mock молча «пробивал»
+      // неправильный документ. Скидка процентная, поэтому достаточно
+      // умножить цену каждой позиции — сумма сойдётся копейка в копейку.
+      final discountK = 1 - widget.session.discountPercent / 100;
+      double priceOf(OrderItem line) =>
+          double.parse((line.price * discountK).toStringAsFixed(2));
+
       final items = <FiscalReceiptItem>[];
       for (final line in widget.session.orderItems) {
         final codes = List<String>.from(codesByMenuItem[line.menuItemId] ?? const []);
@@ -357,7 +431,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         for (var i = 0; i < markedCount; i++) {
           items.add(FiscalReceiptItem(
             name: line.name,
-            price: line.price,
+            price: priceOf(line),
             quantity: 1,
             paymentObject: FiscalPaymentObject.markedGood,
             markingCode: codes[i],
@@ -374,24 +448,34 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (rest > 0) {
           items.add(FiscalReceiptItem(
             name: line.name,
-            price: line.price,
+            price: priceOf(line),
             quantity: rest.toDouble(),
           ));
         }
       }
 
+      // Итог платежей обязан совпасть с итогом позиций (сумма чека со
+      // скидкой). Бонусы и сертификат — это деньги, полученные заведением
+      // РАНЬШЕ, поэтому по ФФД они идут отдельным видом расчёта
+      // «предоплата» (тег 1215), а не теряются, как было до этого.
+      final prepaid = _bonusPaid + _giftPaid;
+      final billTotal = widget.session.totalWithDiscount;
       final payments = <FiscalPayment>[
-        if (!_closeWithoutPayment && _cash.parse() > 0) FiscalPayment('cash', _cash.parse()),
-        if (!_closeWithoutPayment && _card.parse() > 0) FiscalPayment('card', _card.parse()),
-        if (!_closeWithoutPayment && _terminal.parse() > 0) FiscalPayment('card', _terminal.parse()),
-        if (!_closeWithoutPayment && _comp.parse() > 0) FiscalPayment('other', _comp.parse()),
-        if (_closeWithoutPayment) FiscalPayment('other', _total),
+        if (_closeWithoutPayment)
+          FiscalPayment('other', billTotal)
+        else ...[
+          if (_cash.parse() > 0) FiscalPayment('cash', _cash.parse()),
+          if (_card.parse() > 0) FiscalPayment('card', _card.parse()),
+          if (_terminal.parse() > 0) FiscalPayment('card', _terminal.parse()),
+          if (_comp.parse() > 0) FiscalPayment('other', _comp.parse()),
+          if (prepaid > 0) FiscalPayment('prepayment', prepaid),
+        ],
       ];
 
       final result = await kassaService.sendReceipt(FiscalReceipt(
         receiptId: widget.session.id,
         items: items,
-        payments: payments.isEmpty ? [FiscalPayment('cash', _total)] : payments,
+        payments: payments.isEmpty ? [FiscalPayment('cash', billTotal)] : payments,
         buyerContact: _contactCtrl.text.trim(),
       ));
 
@@ -442,9 +526,24 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      // Пока на экране есть списанные, но не оплаченные бонусы/сертификат,
+      // выход перехватываем: сначала возвращаем деньги гостю, потом
+      // закрываем экран. Работает и для системной кнопки «назад», и для
+      // жеста, и для стрелки в AppBar.
+      canPop: !_hasPendingRedemptions,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(_leaveWithoutPaying());
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leading: BackButton(onPressed: () => Navigator.of(context).pop(false)),
+        leading: BackButton(onPressed: () => Navigator.of(context).maybePop(false)),
         title: const Text('Назад'),
       ),
       body: SafeArea(
@@ -505,7 +604,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
                             shape: const StadiumBorder(),
-                            side: BorderSide(color: AppColors.textMuted),
+                            side: const BorderSide(color: AppColors.textMuted),
                           ),
                           onPressed: () => _applyQuick(v),
                           child: Text(_fmt(v)),
@@ -528,8 +627,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                 ),
               const Divider(height: 28),
-              _toggleRow('Закрыть без оплаты', _closeWithoutPayment,
-                  (v) => setState(() => _closeWithoutPayment = v)),
+              // Переключение в «без оплаты» обязано вернуть уже списанные
+              // бонусы/сертификат: чек закрывается за счёт заведения, а не
+              // деньгами гостя, и они не должны сгореть.
+              _toggleRow('Закрыть без оплаты', _closeWithoutPayment, (v) async {
+                if (v && _hasPendingRedemptions) await _rollbackRedemptions();
+                if (mounted) setState(() => _closeWithoutPayment = v);
+              }),
               _toggleRow('Распечатать чек', _printReceipt, (v) => setState(() => _printReceipt = v)),
               _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
                   (v) => setState(() => _printFiscalReceipt = v)),
@@ -644,6 +748,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       );
       setState(() {
         _giftPaid += applied;
+        _giftRedeemed[code] = (_giftRedeemed[code] ?? 0) + applied;
         _giftMessage = 'Списано ${_fmt(applied)} ${AppConstants.currencySymbol}, '
             'остаток на сертификате ${_fmt(card.balance - applied)}';
         _giftCtrl.clear();
@@ -712,7 +817,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         fillColor: enabled ? AppColors.surface : AppColors.surfaceElevated,
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: AppColors.textMuted),
+          borderSide: const BorderSide(color: AppColors.textMuted),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
@@ -776,7 +881,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 fillColor: AppColors.surface,
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: AppColors.textMuted),
+                  borderSide: const BorderSide(color: AppColors.textMuted),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
@@ -790,7 +895,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Widget _toggleRow(String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _toggleRow(String label, bool value, void Function(bool) onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(

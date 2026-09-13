@@ -1,5 +1,13 @@
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Сгенерированный и платформенный код анализировать незачем: android/ и
+    # ios/ создаются заново в CI (`flutter create .`), build/ — артефакты.
+    - build/**
+    - android/**
+    - ios/**
+
 linter:
   rules:
     prefer_const_constructors: true

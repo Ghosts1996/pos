@@ -109,6 +109,25 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ---- Обезличенное зеркало занятости столов бронями ----
+    // Гостевому приложению нужно знать, какой стол и на какой интервал
+    // занят, чтобы показать свободные слоты. Читать для этого саму
+    // коллекцию reservations нельзя — там чужие имена и телефоны, и запрос
+    // справедливо отклонялся правилом ниже (из-за чего экран брони у гостя
+    // молча показывал «слотов нет»). Здесь лежат ТОЛЬКО обезличенные поля:
+    // стол, интервал, признак «занимает» и uid владельца — по нему гость
+    // может править запись своей брони и не может чужую.
+    match /reservationSlots/{doc} {
+      allow read: if signedIn();
+      allow create: if isStaff() ||
+        (signedIn() && request.resource.data.clientUid == request.auth.uid);
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.clientUid == request.auth.uid &&
+         request.resource.data.clientUid == request.auth.uid);
+      allow delete: if isStaff();
+    }
+
     // ---- Вызовы персонала ----
     // Гость видит только свои вызовы — чтобы не читать, что происходит
     // за соседними столами.

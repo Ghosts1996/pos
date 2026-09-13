@@ -1,38 +1,60 @@
 import 'package:flutter/material.dart';
-import '../models/reservation_model.dart';
 import '../models/table_model.dart';
+
+/// Занятый интервал стола для подписи на карте выбора.
+///
+/// Специально не завязан на [ReservationModel]: на POS подпись собирается
+/// из брони вместе с именем гостя, а в «Колибри Лаундж» — из обезличенного
+/// зеркала занятости (reservationSlots), где чужих имён и телефонов нет и
+/// быть не может. Раньше гостю передавали сами брони, и экран падал на
+/// запросе к чужим документам.
+class TableBusyInterval {
+  final String tableId;
+  final DateTime startTime;
+  final DateTime endTime;
+
+  /// Что показать после времени: «Аня · 4 чел · Подтверждена» на POS или
+  /// просто «занято» у гостя. Пусто — только интервал.
+  final String description;
+
+  const TableBusyInterval({
+    required this.tableId,
+    required this.startTime,
+    required this.endTime,
+    this.description = '',
+  });
+}
 
 /// Карта зала для выбора стола при создании брони.
 ///
 /// Один и тот же виджет используется и на POS (сотрудник видит имя гостя
 /// в каждой брони), и в «Колибри Лаундж» (гость видит только время занятости
-/// чужих столов — [showGuestNames] = false, имена и телефоны других гостей
-/// клиенту не показываем).
+/// чужих столов). Что именно подписать — решает вызывающий экран через
+/// [TableBusyInterval.description], поэтому имена и телефоны других гостей
+/// физически не попадают в клиентское приложение.
 ///
 /// Свободность стола считается по уже загруженному списку [freeTableIds]
 /// (обычно результат ReservationService.availableTables на нужный интервал —
 /// там же учтены и живые сеансы, а не только брони), а подписи на плитках —
-/// по [dayReservations] (брони на выбранный день, для показа «когда занят»).
+/// по [busyIntervals] (занятость на выбранный день).
 class TablePickerMap extends StatelessWidget {
   final List<TableModel> tables;
   final Set<String> freeTableIds;
-  final List<ReservationModel> dayReservations;
+  final List<TableBusyInterval> busyIntervals;
   final DateTime start;
   final int durationMinutes;
   final String? selectedTableId;
-  final bool showGuestNames;
   final ValueChanged<TableModel> onSelect;
 
   const TablePickerMap({
     super.key,
     required this.tables,
     required this.freeTableIds,
-    required this.dayReservations,
+    required this.busyIntervals,
     required this.start,
     required this.durationMinutes,
     required this.onSelect,
     this.selectedTableId,
-    this.showGuestNames = false,
   });
 
   static const _freeColor = Color(0xFF22C55E);
@@ -99,7 +121,7 @@ class TablePickerMap extends StatelessWidget {
   }
 
   void _openInfo(BuildContext context, TableModel table, bool free) {
-    final todays = dayReservations.where((r) => r.tableId == table.id).toList()
+    final todays = busyIntervals.where((r) => r.tableId == table.id).toList()
       ..sort((a, b) => a.startTime.compareTo(b.startTime));
 
     showModalBottomSheet(
@@ -115,19 +137,15 @@ class TablePickerMap extends StatelessWidget {
               Text('${table.seats} мест', style: const TextStyle(color: Colors.grey)),
               const SizedBox(height: 14),
               if (todays.isEmpty)
-                const Text('На этот день броней нет')
+                const Text('На этот день стол свободен')
               else ...[
                 const Text('Занятость на этот день:',
                     style: TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
                 ...todays.map((r) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text(
-                        showGuestNames
-                            ? '${_fmt(r.startTime)}–${_fmt(r.endTime)} · ${r.guestName} · '
-                                '${r.guestsCount} чел · ${r.status.label}'
-                            : '${_fmt(r.startTime)}–${_fmt(r.endTime)} занято',
-                      ),
+                      child: Text('${_fmt(r.startTime)}–${_fmt(r.endTime)} · '
+                          '${r.description.isEmpty ? 'занято' : r.description}'),
                     )),
               ],
               const SizedBox(height: 18),

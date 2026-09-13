@@ -83,7 +83,7 @@ class PosMenuTile extends StatelessWidget {
     final borderColor = selected
         ? AppColors.primary
         : disabled
-            ? AppColors.border.withOpacity(0.5)
+            ? AppColors.border.withValues(alpha: 0.5)
             : AppColors.border;
 
     return Material(
@@ -93,8 +93,8 @@ class PosMenuTile extends StatelessWidget {
         onTap: disabled ? null : onTap,
         borderRadius: BorderRadius.circular(AppRadius.md),
         // Заметный tap-фидбек пальцем на глянцевом экране.
-        splashColor: AppColors.primary.withOpacity(0.18),
-        highlightColor: AppColors.primary.withOpacity(0.10),
+        splashColor: AppColors.primary.withValues(alpha: 0.18),
+        highlightColor: AppColors.primary.withValues(alpha: 0.10),
         child: Container(
           constraints: const BoxConstraints(minHeight: AppSpacing.minTouchTarget + 20),
           padding: const EdgeInsets.all(14),

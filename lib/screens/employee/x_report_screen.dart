@@ -367,6 +367,18 @@ class _XReportScreenState extends State<XReportScreen> {
                     _totalRow('Оплачено наличными', data.paymentCash),
                     _totalRow('Оплачено с терминала', data.paymentTerminal),
                     _totalRow('За счёт заведения', data.paymentComp),
+                    if (data.unpaidCount > 0) ...[
+                      const Divider(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Закрыто без оплаты'),
+                          Text('${data.unpaidCount}',
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      _totalRow('На сумму (вне выручки)', data.unpaidAmount),
+                    ],
                     if (refunded.isNotEmpty) ...[
                       const Divider(height: 24),
                       Row(
@@ -418,7 +430,7 @@ class _XReportScreenState extends State<XReportScreen> {
           child: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: (shift == null ? AppColors.danger : AppColors.textMuted).withOpacity(0.08),
+              color: (shift == null ? AppColors.danger : AppColors.textMuted).withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -540,6 +552,10 @@ class _XReportScreenState extends State<XReportScreen> {
     }
     buf.writeln('');
     buf.writeln('Итого: ${data.orderTotal.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    if (data.unpaidCount > 0) {
+      buf.writeln('Закрыто без оплаты: ${data.unpaidCount} на сумму '
+          '${data.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (вне выручки)');
+    }
     buf.writeln('К оплате: ${data.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     buf.writeln(
         'Оплачено картой: ${data.paymentCard.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
@@ -573,6 +589,10 @@ class _XReportData {
   final double paymentTerminal;
   final double paymentComp;
 
+  /// Сумма чеков, закрытых «без оплаты» — денег по ним не поступало.
+  final double unpaidAmount;
+  final int unpaidCount;
+
   _XReportData({
     required this.items,
     required this.orderTotal,
@@ -581,6 +601,8 @@ class _XReportData {
     required this.paymentCard,
     required this.paymentTerminal,
     required this.paymentComp,
+    required this.unpaidAmount,
+    required this.unpaidCount,
   });
 
   factory _XReportData.fromSessions(List<SessionModel> sessions) {
@@ -591,7 +613,18 @@ class _XReportData {
     double card = 0;
     double terminal = 0;
     double comp = 0;
+    double unpaidAmount = 0;
+    var unpaidCount = 0;
     for (final s in sessions) {
+      // Чек «закрыт без оплаты» не даёт ни рубля выручки: все поля оплаты
+      // в нём нулевые. Раньше его сумма всё равно попадала в строку
+      // «К оплате», и итог X-отчёта не сходился с суммой по способам
+      // оплаты — кассиру казалось, что в кассе недостача.
+      if (s.closedWithoutPayment) {
+        unpaidCount++;
+        unpaidAmount += s.totalWithDiscount;
+        continue;
+      }
       orderTotal += s.orderTotal;
       revenue += s.totalWithDiscount;
       cash += s.paymentCash;
@@ -613,6 +646,8 @@ class _XReportData {
       paymentCard: card,
       paymentTerminal: terminal,
       paymentComp: comp,
+      unpaidAmount: unpaidAmount,
+      unpaidCount: unpaidCount,
     );
   }
 }
