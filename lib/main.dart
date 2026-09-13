@@ -18,6 +18,7 @@ import 'services/notification_service.dart';
 import 'services/session_alerts_service.dart';
 import 'services/ai/ai_settings.dart';
 import 'services/ai/ai_scheduler.dart';
+import 'services/background_jobs_service.dart';
 import 'screens/image_preload_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
@@ -85,6 +86,12 @@ void main() async {
       // работу выполнит только одно устройство в зале.
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) AiScheduler.instance.start(deviceId: uid);
+
+      // То, что раньше делали Cloud Functions: снять брони, к которым
+      // гость не пришёл, и поздравить именинников. Функции доступны только
+      // на платном тарифе Blaze, поэтому на бесплатном эту работу ведёт
+      // сам POS — тоже под замком «дежурного устройства».
+      if (uid != null) BackgroundJobsService.instance.start(deviceId: uid);
     } catch (e) {
       startupError = e.toString();
     }

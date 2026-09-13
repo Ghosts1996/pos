@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'push_service.dart';
 
 /// Реферальная программа «приведи друга».
 ///
@@ -116,14 +117,13 @@ class ReferralService {
 
     await batch.commit();
 
-    await _db.collection('pushQueue').add({
-      'token': '',
-      'clientUid': inviterId,
-      'title': 'Друг дошёл до нас',
-      'body': 'Вам начислено ${inviterBonus.toStringAsFixed(0)} бонусов. Спасибо!',
-      'status': 'new',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
+    // Без Cloud Functions push не уйдёт, но приглашающий увидит рост
+    // баланса — его приложение уведомит об этом само.
+    await PushService.instance.enqueue(
+      clientUid: inviterId,
+      title: 'Друг дошёл до нас',
+      body: 'Вам начислено ${inviterBonus.toStringAsFixed(0)} бонусов. Спасибо!',
+    );
   }
 
   /// Сколько гостей пришло по коду — для экрана профиля.
