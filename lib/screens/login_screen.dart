@@ -6,6 +6,7 @@ import '../services/firestore_service.dart';
 import '../services/guest_link_service.dart';
 import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
+import '../services/staff_session_store.dart';
 import '../utils/constants.dart';
 import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
@@ -23,9 +24,14 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _fs = FirestoreService();
   final _staffDevice = StaffDeviceService();
+  final _session = StaffSessionStore.instance;
   String _pin = '';
   bool _loading = false;
   String? _error;
+
+  /// Идёт восстановление прошлого входа — показываем ожидание вместо
+  /// клавиатуры, чтобы не мигать экраном ввода PIN на секунду.
+  bool _restoring = true;
 
   /// Планшет ещё не отмечен как рабочее устройство — до регистрации база не
   /// отдаёт ему ни сотрудников, ни столы, ни чеки (см. firestore.rules).
@@ -35,12 +41,41 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _checkDevice();
+    _start();
   }
 
-  Future<void> _checkDevice() async {
+  Future<void> _start() async {
     final registered = await _staffDevice.isRegistered();
-    if (mounted) setState(() => _deviceRegistered = registered);
+    if (!mounted) return;
+    setState(() => _deviceRegistered = registered);
+    if (registered) {
+      await _restoreLastLogin();
+    }
+    if (mounted) setState(() => _restoring = false);
+  }
+
+  /// Восстанавливает вход того, кто работал на этом планшете в прошлый раз.
+  ///
+  /// PIN спрашивался при каждом запуске, а запускается приложение чаще, чем
+  /// кажется: свёрнутое приложение Android выгружает сам, освобождая
+  /// память. Сотрудник возвращался к планшету и снова набирал код, хотя
+  /// смена не менялась. Теперь код нужен один раз — и снова только после
+  /// «Сменить сотрудника».
+  Future<void> _restoreLastLogin() async {
+    final id = await _session.savedEmployeeId();
+    if (id.isEmpty) return;
+    try {
+      final employee = await _fs.employeeById(id);
+      // Сотрудника удалили или переименовали роль — спокойно спрашиваем PIN.
+      if (employee == null) {
+        await _session.forget();
+        return;
+      }
+      if (!mounted) return;
+      _enter(employee);
+    } catch (_) {
+      // Нет связи — покажем обычный вход, он сообщит об этом понятнее.
+    }
   }
 
   Future<void> _submit() async {
@@ -92,6 +127,9 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     final loggedInEmployee = employee;
+    // Запоминаем вошедшего на этом устройстве — при следующем запуске PIN
+    // спрашиваться не будет. Хранится только id, сам PIN — нет.
+    unawaited(_session.remember(loggedInEmployee.id));
     // Открываем кассовую смену при входе, если сейчас нет открытой — это
     // источник данных для X-отчёта. Делаем в фоне и не блокируем вход даже
     // при сетевой ошибке: сотрудник всё равно должен попасть в приложение,
@@ -103,13 +141,18 @@ class _LoginScreenState extends State<LoginScreen> {
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
     unawaited(GuestLinkService().backfillGuestIndexes());
-    if (loggedInEmployee.role == AppConstants.roleAdmin) {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: loggedInEmployee)));
-    } else {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => FloorPlanScreen(employee: loggedInEmployee)));
-    }
+    _enter(loggedInEmployee);
+  }
+
+  void _enter(Employee employee) {
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => employee.role == AppConstants.roleAdmin
+            ? AdminHomeScreen(employee: employee)
+            : FloorPlanScreen(employee: employee),
+      ),
+    );
   }
 
   void _tap(String digit) {
@@ -125,6 +168,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_restoring) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF1B1B1F),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     if (_deviceRegistered == false) {
       return StaffDeviceSetupScreen(
         onRegistered: () => setState(() {

@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
+import 'services/hall_watch_service.dart';
 import 'services/auth_service.dart';
 import 'services/printer_service.dart';
 import 'services/kassa_service.dart';
@@ -82,6 +83,12 @@ void main() async {
       // же init, но раньше по порядку), вызовы гостей на экране видны, а
       // в шторке — ни одного уведомления, и нигде ни одной ошибки.
       unawaited(SessionAlertsService.instance.start());
+
+      // Постоянное уведомление «следит за залом». Без него Android рано
+      // или поздно выгружает свёрнутое приложение, подписки обрываются, и
+      // вызовы гостей перестают доходить — молча, без всякого признака.
+      // Настоящий push решил бы это, но требует платного тарифа Firebase.
+      unawaited(HallWatchService.instance.start());
       VenueService.instance.watch();
 
       // Автостоп-лист следит за остатками и сам убирает из меню то, чего

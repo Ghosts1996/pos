@@ -905,6 +905,14 @@ class FirestoreService {
 
   Future<void> deleteEmployee(String id) => _db.collection('employees').doc(id).delete();
 
+  /// Сотрудник по id — по нему восстанавливается вход на планшете, где
+  /// PIN уже вводили. Сам PIN на устройстве не хранится.
+  Future<Employee?> employeeById(String id) async {
+    if (id.isEmpty) return null;
+    final doc = await _db.collection('employees').doc(id).get();
+    return doc.exists ? Employee.fromDoc(doc) : null;
+  }
+
   Future<Employee?> findByPin(String pin) async {
     final snap =
         await _db.collection('employees').where('pinCode', isEqualTo: pin).limit(1).get();
