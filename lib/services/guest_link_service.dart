@@ -281,7 +281,7 @@ class GuestLinkService {
     // Витрина чеков живёт на карточке стола: читать sessions гостю нельзя.
     final checks = table.openChecks.where((c) => c.id.isNotEmpty).toList();
     if (checks.length > 1) {
-      return TableBindResult.choose(checks, table.name);
+      return TableBindResult.choose(await _markTakenChecks(checks, uid), table.name);
     }
 
     // Витрина могла ещё не построиться (старые данные) — тогда работаем по
@@ -300,9 +300,62 @@ class GuestLinkService {
     return TableBindResult.bound(sessionId);
   }
 
+  /// Кто занял чек: sessionClaims/{sessionId} → {uid}.
+  ///
+  /// Нужен, чтобы один и тот же счёт не открылся сразу на двух телефонах.
+  /// Проверить это через коллекцию clients нельзя — запрос по ней гостю
+  /// запрещён правилами, поэтому занятость лежит отдельным документом,
+  /// который гость может прочитать по id.
+  CollectionReference<Map<String, dynamic>> get _sessionClaims =>
+      _db.collection('sessionClaims');
+
+  /// Занят ли чек другим гостем.
+  Future<bool> isSessionTakenByOther(String sessionId, String uid) async {
+    try {
+      final doc = await _sessionClaims.doc(sessionId).get();
+      if (!doc.exists) return false;
+      final owner = (doc.data()?['uid'] as String?) ?? '';
+      return owner.isNotEmpty && owner != uid;
+    } catch (_) {
+      // Не смогли проверить — не мешаем гостю сесть за стол.
+      return false;
+    }
+  }
+
+  /// Проставляет каждому чеку признак «уже занят другим гостем», чтобы в
+  /// списке выбора такие счета были видны, но недоступны.
+  Future<List<TableCheck>> _markTakenChecks(
+      List<TableCheck> checks, String uid) async {
+    final result = <TableCheck>[];
+    for (final c in checks) {
+      result.add(c.copyWith(taken: await isSessionTakenByOther(c.id, uid)));
+    }
+    return result;
+  }
+
   /// Привязать гостя к конкретному чеку стола — используется после выбора
   /// из нескольких открытых счетов.
+  ///
+  /// Чек закрепляется за гостем: повторно открыть его на другом телефоне
+  /// или под другим профилем уже нельзя. Раньше этого не было — двое
+  /// гостей, отсканировав один QR, садились на один и тот же счёт и оба
+  /// им распоряжались.
+  ///
+  /// Бросает [SessionTakenException], если чек занят кем-то другим.
   Future<void> bindToSession(String uid, String tableId, String sessionId) async {
+    if (await isSessionTakenByOther(sessionId, uid)) {
+      throw SessionTakenException();
+    }
+    try {
+      // Документ создаётся только если его ещё нет, поэтому при одновременном
+      // сканировании с двух телефонов выигрывает ровно один: второму правила
+      // откажут в записи.
+      await _sessionClaims.doc(sessionId).set({'uid': uid});
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw SessionTakenException();
+      rethrow;
+    }
+
     await _clients.doc(uid).set({
       'activeSessionId': sessionId,
       'activeTableId': tableId,
@@ -333,10 +386,23 @@ class GuestLinkService {
     }
   }
 
-  Future<void> unbind(String uid) => _clients.doc(uid).set({
-        'activeSessionId': '',
-        'activeTableId': '',
-      }, SetOptions(merge: true));
+  /// Гость уходит от стола («Это не мой стол») — освобождаем чек, чтобы им
+  /// мог воспользоваться тот, чей он на самом деле.
+  Future<void> unbind(String uid) async {
+    try {
+      final current =
+          (await _clients.doc(uid).get()).data()?['activeSessionId'] as String?;
+      if (current != null && current.isNotEmpty) {
+        await _sessionClaims.doc(current).delete();
+      }
+    } catch (_) {
+      // Не удалось освободить — чек всё равно закроется вместе с визитом.
+    }
+    await _clients.doc(uid).set({
+      'activeSessionId': '',
+      'activeTableId': '',
+    }, SetOptions(merge: true));
+  }
 
   // ---------- ЛИМИТ ИИ-КОНСЬЕРЖА ----------
 
@@ -715,6 +781,14 @@ class GuestLinkService {
       .orderBy('order')
       .snapshots()
       .map((s) => s.docs.map(MenuCategory.fromDoc).toList());
+}
+
+/// Чек уже открыт у другого гостя.
+class SessionTakenException implements Exception {
+  @override
+  String toString() =>
+      'Этот счёт уже открыт у другого гостя. Если счёт ваш — попросите '
+      'кальянщика открыть его на вас.';
 }
 
 /// Результат проверки лимита ИИ-консьержа.

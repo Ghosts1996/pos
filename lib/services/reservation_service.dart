@@ -520,6 +520,14 @@ class ReservationService {
         'activeTableId': reservation.tableId,
         'lastVisitAt': Timestamp.fromDate(now),
       }, SetOptions(merge: true));
+      // Закрепляем чек за тем, кто бронировал, — иначе его счёт мог бы
+      // «увести» другой гость, отсканировав QR этого стола.
+      try {
+        await _db
+            .collection('sessionClaims')
+            .doc(sessionRef.id)
+            .set({'uid': reservation.clientUid});
+      } catch (_) {}
     }
 
     return sessionRef.id;

@@ -93,7 +93,16 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
           setState(() => _handling = false);
           return;
         }
-        await _link.bindToSession(_auth.uid, tableId, picked.id);
+        try {
+          await _link.bindToSession(_auth.uid, tableId, picked.id);
+        } on SessionTakenException catch (e) {
+          if (!mounted) return;
+          setState(() {
+            _handling = false;
+            _error = '$e';
+          });
+          return;
+        }
         if (!mounted) return;
         Navigator.pop(context, picked.id);
         return;
