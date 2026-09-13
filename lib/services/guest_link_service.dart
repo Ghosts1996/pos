@@ -661,6 +661,11 @@ class GuestLinkService {
         'bonusAccruedFor': sessionId,
         'activeSessionId': '',
         'activeTableId': '',
+        // Чек закрыт, но гостю ещё нужно предложить оценить визит. Экран
+        // оценки раньше строился на activeSessionId, который здесь же и
+        // обнулялся, — и «Спасибо за визит» исчезало в тот же миг, когда
+        // появлялось. Теперь предложение держится на этом поле.
+        'lastVisitId': sessionId,
         'lastVisitAt': Timestamp.fromDate(DateTime.now()),
       });
     });
@@ -692,6 +697,35 @@ class GuestLinkService {
       'bonus': bonus,
       'createdAt': Timestamp.fromDate(DateTime.now()),
     });
+  }
+
+  /// Один визит по id — по нему строится экран «Спасибо за визит».
+  ///
+  /// Читается именно визит, а не чек: после закрытия чек гостю уже
+  /// недоступен по правилам (там счета других столов), а в визите есть
+  /// всё нужное — стол, сумма и начисленные бонусы.
+  /// Именно стрим, а не разовое чтение: касса ставит отметку о закрытом
+  /// чеке в профиле и только потом дописывает сам визит отдельной
+  /// операцией. Разовое чтение попадает в этот промежуток, не находит
+  /// визита — и экран «Спасибо» не появляется уже никогда, потому что
+  /// перечитывать нечему.
+  Stream<GuestVisit?> visitById(String uid, String visitId) {
+    if (uid.isEmpty || visitId.isEmpty) return Stream.value(null);
+    return _clients
+        .doc(uid)
+        .collection('visits')
+        .doc(visitId)
+        .snapshots()
+        .map((d) => d.exists ? GuestVisit.fromDoc(d) : null)
+        .handleError((_) {});
+  }
+
+  /// Гость поставил оценку (или закрыл предложение) — больше не показываем.
+  Future<void> markVisitRated(String uid, String visitId) async {
+    if (uid.isEmpty || visitId.isEmpty) return;
+    try {
+      await _clients.doc(uid).set({'ratedVisitId': visitId}, SetOptions(merge: true));
+    } catch (_) {}
   }
 
   /// Вечная история визитов гостя, от самого свежего. Источник — та самая
