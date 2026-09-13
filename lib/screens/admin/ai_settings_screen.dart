@@ -10,7 +10,7 @@ import '../../theme/app_colors.dart';
 ///
 /// Ключ хранится в Firestore (meta/aiSettings), поэтому вводится один раз
 /// на любом устройстве и действует на всех планшетах и в клиентском
-/// приложении «Колибри Лаундж».
+/// приложении «Colibri Lounge».
 class AiSettingsScreen extends StatefulWidget {
   const AiSettingsScreen({super.key});
 
