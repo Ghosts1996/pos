@@ -118,7 +118,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     if (phone.isEmpty || uid.isEmpty) return;
 
     try {
-      await _link.mergeGuestProfiles(phone: phone, newUid: uid);
+      await _link.mergeGuestProfiles(phone: phone, newDeviceInput: uid);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Готово — бонусы и история перенесены')),
