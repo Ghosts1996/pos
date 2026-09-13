@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/venue_models.dart';
+import 'push_service.dart';
 
 /// Подарочные сертификаты и чаевые.
 ///
@@ -157,14 +158,12 @@ class TipsService {
       'createdAt': Timestamp.fromDate(DateTime.now()),
     });
 
-    await _db.collection('pushQueue').add({
-      'topic': 'staff',
-      'title': 'Чаевые',
-      'body': '$employeeName — ${amount.toStringAsFixed(0)} ₽'
+    await PushService.instance.enqueue(
+      topic: 'staff',
+      title: 'Чаевые',
+      body: '$employeeName — ${amount.toStringAsFixed(0)} ₽'
           '${comment.isEmpty ? '' : ' · «$comment»'}',
-      'status': 'new',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
+    );
     return ref.id;
   }
 

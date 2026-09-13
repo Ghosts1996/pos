@@ -4,6 +4,7 @@ import '../models/menu_models.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
 import '../utils/phone_utils.dart';
+import 'push_service.dart';
 
 /// Мост между POS и клиентским приложением «Колибри Лаундж»:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -395,13 +396,16 @@ class GuestLinkService {
     final token = client.data()?['pushToken'] as String?;
     if (token == null || token.isEmpty) return;
 
-    await _db.collection('pushQueue').add({
-      'token': token,
-      'title': 'Заказ готов',
-      'body': order.items.map((i) => i.name).join(', '),
-      'status': 'new',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
+    // Очередь разбирает Cloud Function, которой нет на бесплатном тарифе —
+    // PushService сам решает, писать туда или нет. Без функций гость всё
+    // равно узнает о готовности: его приложение слушает свои заказы и
+    // показывает локальное уведомление (KolibriNotifications).
+    await PushService.instance.enqueue(
+      token: token,
+      clientUid: order.clientUid,
+      title: 'Заказ готов',
+      body: order.items.map((i) => i.name).join(', '),
+    );
   }
 
   Future<void> rejectGuestOrder(String orderId, String employeeName, String reason) =>

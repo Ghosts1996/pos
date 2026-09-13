@@ -33,6 +33,18 @@ class VenueProfile {
   final double lat;
   final double lon;
 
+  /// Подключены ли Cloud Functions (тариф Firebase Blaze).
+  ///
+  /// По умолчанию ВЫКЛЮЧЕНО: на бесплатном тарифе Spark функции
+  /// развернуть нельзя, и всё, что они делали, приложение делает само —
+  /// POS ведёт фоновые задания (авто-неявка, дни рождения), а гостевое
+  /// приложение показывает локальные уведомления вместо push.
+  ///
+  /// Включать только после `firebase deploy --only functions`: иначе
+  /// очередь `pushQueue` будет копиться впустую, а гость получит по два
+  /// уведомления на каждое событие — от функции и от приложения.
+  final bool cloudFunctionsEnabled;
+
   const VenueProfile({
     this.name = 'Колибри Лаундж',
     this.address = '',
@@ -45,6 +57,7 @@ class VenueProfile {
     this.depositGuests = 6,
     this.lat = 0,
     this.lon = 0,
+    this.cloudFunctionsEnabled = false,
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -66,6 +79,7 @@ class VenueProfile {
       depositGuests: (data['depositGuests'] as num?)?.toInt() ?? 6,
       lat: (data['lat'] ?? 0).toDouble(),
       lon: (data['lon'] ?? 0).toDouble(),
+      cloudFunctionsEnabled: data['cloudFunctionsEnabled'] == true,
     );
   }
 
@@ -81,6 +95,7 @@ class VenueProfile {
         'depositGuests': depositGuests,
         'lat': lat,
         'lon': lon,
+        'cloudFunctionsEnabled': cloudFunctionsEnabled,
       };
 
   /// Часы работы на сегодня — строкой, как их показывают гостю.
@@ -98,6 +113,7 @@ class VenueProfile {
     int? depositGuests,
     double? lat,
     double? lon,
+    bool? cloudFunctionsEnabled,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -111,6 +127,7 @@ class VenueProfile {
         depositGuests: depositGuests ?? this.depositGuests,
         lat: lat ?? this.lat,
         lon: lon ?? this.lon,
+        cloudFunctionsEnabled: cloudFunctionsEnabled ?? this.cloudFunctionsEnabled,
       );
 }
 

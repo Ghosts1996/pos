@@ -28,6 +28,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _hours = <int, TextEditingController>{};
 
   bool _loading = true;
+  bool _cloudFunctions = false;
 
   static const _days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -47,6 +48,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _rules.text = p.rules;
     _lat.text = p.lat == 0 ? '' : p.lat.toString();
     _lon.text = p.lon == 0 ? '' : p.lon.toString();
+    _cloudFunctions = p.cloudFunctionsEnabled;
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -62,6 +64,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       rules: _rules.text.trim(),
       lat: double.tryParse(_lat.text.trim().replaceAll(',', '.')) ?? 0,
       lon: double.tryParse(_lon.text.trim().replaceAll(',', '.')) ?? 0,
+      cloudFunctionsEnabled: _cloudFunctions,
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
@@ -140,6 +143,23 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
             'и учитывают её в подборе микса. Найдите точку на Яндекс.Картах или '
             'Google Maps: координаты показаны при долгом нажатии на точку.',
             style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+
+          const Divider(height: 32),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _cloudFunctions,
+            onChanged: (v) => setState(() => _cloudFunctions = v),
+            title: const Text('Cloud Functions подключены (тариф Blaze)'),
+            subtitle: const Text(
+              'Выключено — приложение работает полностью само: POS ведёт '
+              'фоновые задания (снимает брони без гостя, поздравляет '
+              'именинников), а гость получает локальные уведомления вместо '
+              'push. Включайте ТОЛЬКО после «firebase deploy --only '
+              'functions», иначе гость получит по два одинаковых '
+              'уведомления, а очередь push будет копиться впустую.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
           ),
 
           const Divider(height: 32),

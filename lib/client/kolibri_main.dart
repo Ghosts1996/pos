@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import '../firebase_options.dart';
 import '../services/ai/ai_settings.dart';
+import '../services/venue_service.dart';
 import 'screens/kolibri_shell.dart';
 import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
@@ -30,6 +31,10 @@ void main() async {
       // Настройки ИИ подтягиваются в фоне — без них приложение просто
       // работает без ИИ-консьержа.
       unawaited(AiSettingsStore.instance.init());
+      // Профиль заведения нужен не только для часов работы: из него
+      // берётся флаг cloudFunctionsEnabled, по которому приложение решает,
+      // показывать локальные уведомления самому или ждать push с сервера.
+      VenueService.instance.watch();
     } catch (e) {
       startupError = e.toString();
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'venue_service.dart';
 
 /// Push-уведомления через Firebase Cloud Messaging.
 ///
@@ -50,7 +51,7 @@ class PushService {
     required String body,
     Map<String, String> data = const {},
   }) =>
-      _enqueue(topic: 'staff', title: title, body: body, data: data);
+      enqueue(topic: 'staff', title: title, body: body, data: data);
 
   /// Уведомление конкретному гостю.
   Future<void> notifyGuest({
@@ -62,25 +63,37 @@ class PushService {
     final doc = await _db.collection('clients').doc(clientUid).get();
     final token = doc.data()?['pushToken'] as String?;
     if (token == null || token.isEmpty) return;
-    await _enqueue(token: token, title: title, body: body, data: data);
+    await enqueue(token: token, title: title, body: body, data: data);
   }
 
-  Future<void> _enqueue({
+  /// Кладёт задание в очередь `pushQueue`. Разбирает её Cloud Function
+  /// `sendQueuedPush` — а она есть только на платном тарифе Blaze.
+  ///
+  /// Поэтому без функций мы в очередь НЕ пишем: раньше документы копились
+  /// там мёртвым грузом (гость их всё равно не получал), впустую съедая
+  /// лимит записей бесплатного тарифа. Уведомления в этом случае
+  /// показывают сами приложения: POS — локальные уведомления зала, гость —
+  /// KolibriNotifications.
+  Future<void> enqueue({
     String? topic,
     String? token,
+    String clientUid = '',
     required String title,
     required String body,
     Map<String, String> data = const {},
-  }) =>
-      _db.collection('pushQueue').add({
-        if (topic != null) 'topic': topic,
-        if (token != null) 'token': token,
-        'title': title,
-        'body': body,
-        'data': data,
-        'status': 'new',
-        'createdAt': Timestamp.fromDate(DateTime.now()),
-      });
+  }) async {
+    if (!VenueService.instance.cached.cloudFunctionsEnabled) return;
+    await _db.collection('pushQueue').add({
+      if (topic != null) 'topic': topic,
+      if (token != null) 'token': token,
+      if (clientUid.isNotEmpty) 'clientUid': clientUid,
+      'title': title,
+      'body': body,
+      'data': data,
+      'status': 'new',
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
 
   /// Сообщения, пришедшие при открытом приложении — можно показать
   /// всплывающей плашкой поверх интерфейса.

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'reservation_service.dart';
+import 'push_service.dart';
 
 /// Лист ожидания: что делать, когда мест нет.
 ///
@@ -55,13 +56,11 @@ class WaitlistService {
       createdAt: DateTime.now(),
     ).toMap());
 
-    await _db.collection('pushQueue').add({
-      'topic': 'staff',
-      'title': 'Новый гость в очереди',
-      'body': '$guestName, $guestsCount чел · ждёт ~$minutes мин',
-      'status': 'new',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
+    await PushService.instance.enqueue(
+      topic: 'staff',
+      title: 'Новый гость в очереди',
+      body: '$guestName, $guestsCount чел · ждёт ~$minutes мин',
+    );
 
     return (id: ref.id, position: position, minutes: minutes);
   }
@@ -112,15 +111,14 @@ class WaitlistService {
       final client = await _db.collection('clients').doc(entry.clientUid).get();
       final token = client.data()?['pushToken'] as String?;
       if (token != null && token.isNotEmpty) {
-        await _db.collection('pushQueue').add({
-          'token': token,
-          'title': 'Стол готов',
-          'body': tableName.isEmpty
+        await PushService.instance.enqueue(
+          token: token,
+          clientUid: entry.clientUid,
+          title: 'Стол готов',
+          body: tableName.isEmpty
               ? 'Ждём вас в ближайшие 15 минут'
               : 'Стол $tableName ваш — ждём в ближайшие 15 минут',
-          'status': 'new',
-          'createdAt': Timestamp.fromDate(DateTime.now()),
-        });
+        );
       }
     }
   }
