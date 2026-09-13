@@ -506,7 +506,14 @@ jobs:
         run: flutter test
 
       - name: Build APK (release)
-        run: flutter build apk --release -t ${{ matrix.entrypoint }}
+        # BUILD_NUMBER виден в приложении (профиль гостя). Приложения
+        # ставятся файлом, и без такой метки нельзя понять, какая версия
+        # стоит на конкретном телефоне: однажды это уже стоило разбора
+        # «бага», которого в коде не было.
+        run: |
+          flutter build apk --release \
+            -t ${{ matrix.entrypoint }} \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }}
 
       - name: Rename APK
         run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/${{ matrix.artifact }}.apk

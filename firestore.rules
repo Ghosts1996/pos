@@ -84,13 +84,32 @@ service cloud.firestore {
     // ---- Профили гостей ----
     match /clients/{uid} {
       allow read: if isSelf(uid) || isStaff();
-      allow create: if isSelf(uid) || isStaff();
+
+      // Назвать чек своим можно, только если он закреплён за тобой в
+      // sessionClaims. Раньше это проверяло только приложение, а правила
+      // пропускали любую запись — и телефон со старой версией приложения
+      // просто записывал себе чужой activeSessionId и садился на уже
+      // занятый счёт. Проверка на сервере закрывает это независимо от
+      // версии приложения: кто первым занял чек, за тем он и остаётся.
+      //
+      // currentSid — то, что стоит в профиле сейчас. Оставить как есть
+      // можно всегда: иначе гость, привязанный ещё старой версией (без
+      // записи в sessionClaims), не смог бы даже сменить имя.
+      function sessionClaimOk(uid, currentSid) {
+        let sid = request.resource.data.get('activeSessionId', '');
+        return sid == '' || sid == currentSid ||
+          (exists(/databases/$(database)/documents/sessionClaims/$(sid)) &&
+           get(/databases/$(database)/documents/sessionClaims/$(sid)).data.uid == uid);
+      }
+
+      allow create: if isStaff() || (isSelf(uid) && sessionClaimOk(uid, ''));
 
       // Телефон гость задаёт один раз: к нему привязаны бонусы, и смена
       // номера означала бы доступ к чужому счёту. Менять его может только
       // персонал на кассе. Баланс бонусов гость не правит вовсе.
       allow update: if isStaff() ||
         (isSelf(uid) &&
+         sessionClaimOk(uid, resource.data.get('activeSessionId', '')) &&
          (!('phone' in request.resource.data) ||
           resource.data.get('phone', '') == '' ||
           request.resource.data.phone == resource.data.phone) &&

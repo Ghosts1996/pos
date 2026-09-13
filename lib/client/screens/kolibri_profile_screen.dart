@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/client_models.dart';
@@ -378,8 +379,10 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         ),
 
         const SizedBox(height: 32),
+        // Номер сборки: приложение ставится файлом, и без него нельзя
+        // понять, свежая ли версия стоит на конкретном телефоне.
         const Text(
-          'Colibri Lounge · приложение гостя',
+          'Colibri Lounge · приложение гостя · сборка $kBuildNumber',
           textAlign: TextAlign.center,
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),
