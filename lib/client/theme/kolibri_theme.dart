@@ -29,6 +29,26 @@ class KolibriColors {
   static const success = Color(0xFF22C55E);
   static const warning = Color(0xFFF59E0B);
   static const danger = Color(0xFFEF4444);
+
+  // ---- Уровни программы лояльности ----
+  static const tierBronze = Color(0xFFCD7F32);
+  static const tierSilver = Color(0xFFB4C4CC);
+  static const tierGold = gold;
+  static const tierPlatinum = Color(0xFFAEEFE6);
+
+  /// Цвет карточки/акцента под текущий уровень гостя (см. ClientProfile.tier).
+  static Color tierColor(String tier) {
+    switch (tier) {
+      case 'Платина':
+        return tierPlatinum;
+      case 'Золото':
+        return tierGold;
+      case 'Серебро':
+        return tierSilver;
+      default:
+        return tierBronze;
+    }
+  }
 }
 
 class KolibriTheme {

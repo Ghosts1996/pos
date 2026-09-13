@@ -221,19 +221,20 @@ class KolibriHomeScreen extends StatelessWidget {
 
   Widget _bonusCard(BuildContext context) {
     final bonus = profile?.bonusBalance ?? 0;
-    final tier = profile?.tier ?? 'Гость';
+    final tier = profile?.tier ?? 'Бронза';
     final cashback = profile?.cashbackPercent ?? 3;
+    final tierColor = KolibriColors.tierColor(tier);
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           colors: [KolibriColors.surfaceElevated, KolibriColors.surface],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        border: Border.all(color: KolibriColors.gold.withValues(alpha: 0.35)),
+        border: Border.all(color: tierColor.withValues(alpha: 0.45)),
       ),
       child: Row(
         children: [
@@ -244,15 +245,15 @@ class KolibriHomeScreen extends StatelessWidget {
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
               const SizedBox(height: 6),
               Text('${bonus.toStringAsFixed(0)} ₽',
-                  style: const TextStyle(
-                      fontSize: 30, fontWeight: FontWeight.w700, color: KolibriColors.gold)),
+                  style: TextStyle(
+                      fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
               const SizedBox(height: 4),
               Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
                   style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
             ],
           ),
           const Spacer(),
-          const Icon(Icons.card_giftcard, color: KolibriColors.gold, size: 36),
+          Icon(Icons.card_giftcard, color: tierColor, size: 36),
         ],
       ),
     );

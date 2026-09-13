@@ -50,6 +50,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
+    final tier = p?.tier ?? 'Бронза';
+    final tierColor = KolibriColors.tierColor(tier);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
@@ -62,9 +64,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: KolibriColors.gold.withValues(alpha: 0.4)),
-            gradient: const LinearGradient(
-              colors: [KolibriColors.surfaceElevated, KolibriColors.surface],
+            border: Border.all(color: tierColor.withValues(alpha: 0.5)),
+            gradient: LinearGradient(
+              colors: [tierColor.withValues(alpha: 0.16), KolibriColors.surface],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -72,8 +74,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Уровень «${p?.tier ?? 'Гость'}»',
-                  style: const TextStyle(color: KolibriColors.gold, fontWeight: FontWeight.w600)),
+              Text('Уровень «$tier»',
+                  style: TextStyle(color: tierColor, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
               Text('${(p?.bonusBalance ?? 0).toStringAsFixed(0)} бонусов',
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
@@ -86,7 +88,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text('Дисконтная карта: −${p!.discountPercent.toStringAsFixed(0)}%',
-                      style: const TextStyle(color: KolibriColors.gold, fontSize: 13)),
+                      style: TextStyle(color: tierColor, fontSize: 13)),
                 ),
             ],
           ),
