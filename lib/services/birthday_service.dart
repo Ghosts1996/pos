@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'push_service.dart';
 
 /// Дни рождения гостей.
 ///
@@ -64,13 +65,12 @@ class BirthdayService {
     });
 
     if (token.isNotEmpty) {
-      await _db.collection('pushQueue').add({
-        'token': token,
-        'title': 'С наступающим днём рождения!',
-        'body': '${giftBonus.toStringAsFixed(0)} бонусов уже на счету — ждём вас отметить.',
-        'status': 'new',
-        'createdAt': Timestamp.fromDate(DateTime.now()),
-      });
+      await PushService.instance.enqueue(
+        token: token,
+        clientUid: uid,
+        title: 'С наступающим днём рождения!',
+        body: '${giftBonus.toStringAsFixed(0)} бонусов уже на счету — ждём вас отметить.',
+      );
     }
   }
 
