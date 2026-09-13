@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../models/reservation_model.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
@@ -41,18 +45,30 @@ class KolibriNotifications {
   String _uid = '';
   bool _running = false;
 
-  /// Уведомляем только о том, что изменилось ПОСЛЕ запуска: Firestore
-  /// отдаёт весь текущий срез первым снапшотом, и без этой отсечки при
-  /// каждом открытии приложения сыпался бы десяток старых уведомлений.
+  /// Отсечка по времени для заказов: свежесозданный заказ уведомлять
+  /// осмысленно, вчерашний — нет.
   DateTime _startedAt = DateTime.now();
 
-  /// Последний известный статус каждой брони и последний баланс бонусов —
-  /// чтобы отличить реальное изменение от повторной отдачи того же
-  /// документа (Firestore присылает снапшот на любое поле, включая те,
-  /// что гостю неинтересны).
+  /// Последний известный статус каждой брони и заказа и последний баланс
+  /// бонусов. Нужны, чтобы отличить реальное изменение от повторной отдачи
+  /// того же документа: Firestore присылает снапшот на любое поле, включая
+  /// те, что гостю неинтересны.
+  ///
+  /// ВАЖНО: всё это переживает закрытие приложения (SharedPreferences).
+  /// Раньше состояние жило только в памяти, и первый снапшот всегда
+  /// считался «начальным» — то есть про бронь, подтверждённую, пока
+  /// приложение было закрыто, гость не узнавал никогда. А закрыто оно
+  /// почти всегда: держать соединение с Firestore круглосуточно телефон
+  /// не станет. Теперь сравниваем с тем, что было в прошлый раз, и
+  /// пропущенное приходит при первом же открытии.
   final _resStatus = <String, ReservationStatus>{};
   final _orderStatus = <String, String>{};
   double? _lastBonusBalance;
+
+  SharedPreferences? _prefs;
+  String get _resKey => 'notif_res_$_uid';
+  String get _orderKey => 'notif_order_$_uid';
+  String get _bonusKey => 'notif_bonus_$_uid';
 
   Future<void> start(String uid) async {
     if (_running && _uid == uid) return;
@@ -63,10 +79,57 @@ class KolibriNotifications {
     _running = true;
     _startedAt = DateTime.now();
     await _notify.init();
+    await _restore();
 
     _watchReservations();
     _watchOrders();
     _watchBonuses();
+  }
+
+  /// Поднимает из памяти телефона то, что видели в прошлый запуск.
+  Future<void> _restore() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _prefs = prefs;
+
+      final res = prefs.getString(_resKey);
+      if (res != null) {
+        final map = jsonDecode(res) as Map<String, dynamic>;
+        for (final e in map.entries) {
+          for (final status in ReservationStatus.values) {
+            if (status.name == e.value) {
+              _resStatus[e.key] = status;
+              break;
+            }
+          }
+        }
+      }
+
+      final orders = prefs.getString(_orderKey);
+      if (orders != null) {
+        final map = jsonDecode(orders) as Map<String, dynamic>;
+        map.forEach((k, v) => _orderStatus[k] = '$v');
+      }
+
+      if (prefs.containsKey(_bonusKey)) {
+        _lastBonusBalance = prefs.getDouble(_bonusKey);
+      }
+    } catch (_) {
+      // Память недоступна — работаем как раньше, только в пределах сеанса.
+    }
+  }
+
+  void _persistRes() {
+    _prefs?.setString(
+      _resKey,
+      jsonEncode(_resStatus.map((k, v) => MapEntry(k, v.name))),
+    );
+  }
+
+  void _persistOrders() {
+    // Храним только последние 50 заказов, иначе список растёт вечно.
+    final trimmed = Map.fromEntries(_orderStatus.entries.take(50));
+    _prefs?.setString(_orderKey, jsonEncode(trimmed));
   }
 
   Future<void> stop() async {
@@ -77,6 +140,7 @@ class KolibriNotifications {
     _resStatus.clear();
     _orderStatus.clear();
     _lastBonusBalance = null;
+    _prefs = null;
     _running = false;
   }
 
@@ -90,24 +154,25 @@ class KolibriNotifications {
         final known = _resStatus[r.id];
         _resStatus[r.id] = r.status;
 
-        // Первый снимок — только запоминаем состояние, не шумим.
-        if (known == null) {
-          _syncReminder(r);
-          continue;
-        }
-        if (known == r.status) continue;
-
         _syncReminder(r);
+
+        // Бронь видим впервые — запоминаем и молчим: гость сам её только
+        // что создал и смотрит на экран подтверждения.
+        if (known == null) continue;
+        if (known == r.status) continue;
         if (_silenced) continue;
 
+        // Сюда попадают и изменения, случившиеся пока приложение было
+        // закрыто: прошлый статус поднят из памяти телефона.
         final text = _reservationMessage(r);
         if (text == null) continue;
         unawaited(_notify.show(
-          id: NotificationService.idFor('res_status_${r.id}'),
+          id: NotificationService.idFor('res_status_${r.id}_${r.status.name}'),
           title: text.$1,
           body: text.$2,
         ));
       }
+      _persistRes();
     }, onError: (_) {});
   }
 
@@ -191,6 +256,7 @@ class KolibriNotifications {
               : o.items.map((i) => '${i.name} ×${i.qty}').join(', '),
         ));
       }
+      _persistOrders();
     }, onError: (_) {});
   }
 
@@ -205,8 +271,12 @@ class KolibriNotifications {
       if (profile == null) return;
       final previous = _lastBonusBalance;
       _lastBonusBalance = profile.bonusBalance;
+      _prefs?.setDouble(_bonusKey, profile.bonusBalance);
 
-      if (previous == null) return; // первый снимок
+      // previous == null только в самый первый запуск после установки:
+      // дальше баланс лежит в памяти телефона, и начисление, сделанное
+      // кассой пока приложение было закрыто, приходит при открытии.
+      if (previous == null) return;
       final gained = profile.bonusBalance - previous;
       if (gained < 1 || _silenced) return;
 

@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../../services/notification_service.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../../utils/phone_utils.dart';
@@ -37,12 +39,36 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   bool get _phoneLocked => (widget.profile?.phone ?? '').isNotEmpty;
   bool _saving = false;
 
+  /// Разрешены ли уведомления на уровне системы.
+  ///
+  /// Начиная с Android 13 отказ от уведомлений ничем не проявляется:
+  /// приложение их «показывает», а на экране не появляется ничего. Гость
+  /// при этом уверен, что приложение сломано. Поэтому спрашиваем систему
+  /// и, если выключено, говорим об этом прямым текстом с кнопкой.
+  bool _notificationsOn = true;
+
   @override
   void initState() {
     super.initState();
     _name.text = widget.profile?.name ?? '';
     _phone.text = widget.profile?.phone ?? '';
     _initShortId();
+    _checkNotifications();
+  }
+
+  Future<void> _checkNotifications() async {
+    final on = await NotificationService.instance.areEnabled();
+    if (mounted) setState(() => _notificationsOn = on);
+  }
+
+  Future<void> _enableNotifications() async {
+    final granted = await NotificationService.instance.requestPermission();
+    if (!granted) {
+      // Система показывает диалог только один раз: если гость уже
+      // отказывал, включить можно лишь в настройках приложения.
+      await openAppSettings();
+    }
+    await _checkNotifications();
   }
 
   Future<void> _initShortId() async {
@@ -149,6 +175,45 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
       children: [
         const Text('Профиль', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         const SizedBox(height: 20),
+
+        if (!_notificationsOn) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: KolibriColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: KolibriColors.warning),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.notifications_off, color: KolibriColors.warning, size: 20),
+                    SizedBox(width: 8),
+                    Text('Уведомления выключены',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Вы не узнаете, что бронь подтвердили, заказ готов или '
+                  'начислены бонусы. Включается одной кнопкой.',
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _enableNotifications,
+                    child: const Text('Включить уведомления'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
 
         // ---- Карта лояльности ----
         Container(
