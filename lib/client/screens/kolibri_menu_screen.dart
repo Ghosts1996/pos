@@ -285,8 +285,12 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     });
   }
 
+  /// Панель корзины закреплена внизу — единственное место в клиентском
+  /// приложении, где плавающая кнопка ИИ-консьержа может что-то перекрыть.
+  /// Справа оставляем под неё место, чтобы кнопка «Заказать» не пряталась
+  /// под кружком консьержа.
   Widget _cartBar() => Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 12, 72, 24),
         decoration: const BoxDecoration(
           color: KolibriColors.surfaceElevated,
           border: Border(top: BorderSide(color: KolibriColors.border)),
