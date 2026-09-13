@@ -62,57 +62,41 @@ class ReservationService {
 
   // ---------- ДОСТУПНОСТЬ СЛОТОВ ----------
 
-  /// Столы, свободные на интервал [start] + [durationMinutes].
-  ///
-  /// Стол считается занятым, если:
-  ///  • на него уже есть живая бронь, пересекающаяся по времени, ИЛИ
-  ///  • прямо сейчас за ним открыт чек, а бронь начинается в ближайший час
-  ///    (гость физически не успеет сесть).
-  Future<List<TableModel>> availableTables({
-    required DateTime start,
-    int durationMinutes = 90,
-    int guestsCount = 2,
-  }) async {
-    final end = start.add(Duration(minutes: durationMinutes));
+  /// Снимок занятости зала: столы, живые брони и текущие сеансы.
+  /// Загружается один раз и переиспользуется для всех слотов дня — иначе
+  /// на каждый получас уходило по три запроса, и список времени собирался
+  /// по десять секунд.
+  Future<_HallSnapshot> _loadHall(DateTime around) async {
+    final dayFrom = around.subtract(const Duration(hours: 14));
+    final dayTo = around.add(const Duration(hours: 26));
 
-    final tablesSnap = await _db.collection('tables').get();
-    final tables = tablesSnap.docs.map(TableModel.fromDoc).toList();
+    final results = await Future.wait([
+      _db.collection('tables').get(),
+      _col
+          .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(dayFrom))
+          .where('startTime', isLessThan: Timestamp.fromDate(dayTo))
+          .get(),
+      _db.collection('sessions').where('status', isEqualTo: 'active').get(),
+    ]);
 
-    // Берём брони на сутки вокруг запрошенного времени — этого достаточно,
-    // чтобы поймать все пересечения, и дёшево по чтениям.
-    final dayFrom = start.subtract(const Duration(hours: 12));
-    final dayTo = start.add(const Duration(hours: 12));
-    final resSnap = await _col
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(dayFrom))
-        .where('startTime', isLessThan: Timestamp.fromDate(dayTo))
-        .get();
-    final reservations = resSnap.docs
+    final tables = results[0].docs.map(TableModel.fromDoc).toList();
+
+    final reservations = results[1]
+        .docs
         .map(ReservationModel.fromDoc)
         .where((r) => r.status.blocksTable)
         .toList();
 
-    final busyByReservation = reservations
-        .where((r) => r.overlaps(start, end) && r.tableId.isNotEmpty)
-        .map((r) => r.tableId)
-        .toSet();
-
-    // Столы, за которыми прямо сейчас сидят гости. Стол нельзя отдать под
-    // бронь, пока сеанс не закончится: раньше проверялся только ближайший
-    // час, и гостя могли «забронировать» прямо во время его визита.
-    // Закладываем 20 минут на уборку и посадку после ухода.
-    final sessionsSnap =
-        await _db.collection('sessions').where('status', isEqualTo: 'active').get();
-
+    // До какого момента стол занят живым гостем: планируемый конец плюс
+    // 20 минут на уборку. Просроченный сеанс держит стол ещё час.
     final busyUntil = <String, DateTime>{};
-    for (final doc in sessionsSnap.docs) {
+    for (final doc in results[2].docs) {
       final data = doc.data();
       final tableId = data['tableId']?.toString() ?? '';
       if (tableId.isEmpty) continue;
 
       final ts = data['plannedEnd'];
       var until = ts is Timestamp ? ts.toDate() : DateTime.now();
-      // Сеанс уже просрочен — гость всё ещё за столом, считаем занятым
-      // минимум на ближайший час.
       if (until.isBefore(DateTime.now())) {
         until = DateTime.now().add(const Duration(hours: 1));
       }
@@ -122,18 +106,44 @@ class ReservationService {
       if (prev == null || until.isAfter(prev)) busyUntil[tableId] = until;
     }
 
-    return tables.where((t) {
+    return _HallSnapshot(tables: tables, reservations: reservations, busyUntil: busyUntil);
+  }
+
+  /// Свободные столы на интервал по уже загруженному снимку — без сети.
+  List<TableModel> _freeIn(
+    _HallSnapshot hall, {
+    required DateTime start,
+    required int durationMinutes,
+    required int guestsCount,
+  }) {
+    final end = start.add(Duration(minutes: durationMinutes));
+
+    final busyByReservation = hall.reservations
+        .where((r) => r.overlaps(start, end) && r.tableId.isNotEmpty)
+        .map((r) => r.tableId)
+        .toSet();
+
+    return hall.tables.where((t) {
       if (t.seats < guestsCount) return false;
       if (busyByReservation.contains(t.id)) return false;
 
-      // Гость за столом: стол свободен только если бронь начинается после
-      // окончания его сеанса с запасом на уборку.
-      final occupiedUntil = busyUntil[t.id];
+      final occupiedUntil = hall.busyUntil[t.id];
       if (occupiedUntil != null && start.isBefore(occupiedUntil)) return false;
 
       return true;
     }).toList()
       ..sort((a, b) => a.seats.compareTo(b.seats)); // подбираем стол «впритык»
+  }
+
+  /// Столы, свободные на интервал [start] + [durationMinutes].
+  Future<List<TableModel>> availableTables({
+    required DateTime start,
+    int durationMinutes = 90,
+    int guestsCount = 2,
+  }) async {
+    final hall = await _loadHall(start);
+    return _freeIn(hall,
+        start: start, durationMinutes: durationMinutes, guestsCount: guestsCount);
   }
 
   /// Сетка доступных времён на день с шагом [stepMinutes].
@@ -156,6 +166,8 @@ class ReservationService {
     final window = _workingWindow(profile, day);
     if (window == null) return const []; // выходной
 
+    final hall = await _loadHall(window.open);
+
     final result = <DateTime>[];
     final earliest = DateTime.now().add(const Duration(minutes: 30));
     var cursor = window.open;
@@ -166,11 +178,8 @@ class ReservationService {
 
     while (!cursor.isAfter(lastStart)) {
       if (cursor.isAfter(earliest)) {
-        final free = await availableTables(
-          start: cursor,
-          durationMinutes: durationMinutes,
-          guestsCount: guestsCount,
-        );
+        final free = _freeIn(hall,
+            start: cursor, durationMinutes: durationMinutes, guestsCount: guestsCount);
         if (free.isNotEmpty) result.add(cursor);
       }
       cursor = cursor.add(Duration(minutes: stepMinutes));
@@ -348,6 +357,19 @@ class ReservationService {
 
     return sessionRef.id;
   }
+}
+
+/// Разовый снимок занятости зала для расчёта слотов.
+class _HallSnapshot {
+  final List<TableModel> tables;
+  final List<ReservationModel> reservations;
+  final Map<String, DateTime> busyUntil;
+
+  _HallSnapshot({
+    required this.tables,
+    required this.reservations,
+    required this.busyUntil,
+  });
 }
 
 /// Время брони невозможно: в прошлом или вне часов работы.
