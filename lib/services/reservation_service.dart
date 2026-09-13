@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'venue_service.dart';
+import 'firestore_service.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
 
@@ -66,47 +67,160 @@ class ReservationService {
   /// Загружается один раз и переиспользуется для всех слотов дня — иначе
   /// на каждый получас уходило по три запроса, и список времени собирался
   /// по десять секунд.
+  ///
+  /// ВАЖНО про источники данных. Этот расчёт выполняется и на POS, и в
+  /// гостевом приложении «Колибри Лаундж», а у гостя по firestore.rules
+  /// НЕТ доступа ни к коллекции `sessions` (там чужие счета), ни к
+  /// коллекции `reservations` целиком (там чужие имена и телефоны).
+  /// Раньше метод ходил именно туда — и у гостя оба запроса падали с
+  /// permission-denied: экран брони молча показывал «слотов нет», а выбор
+  /// стола вообще не открывался. Поэтому занятость берётся из двух
+  /// обезличенных источников, читать которые гостю можно:
+  ///   • `tables.busyUntil` — до какого момента стол занят живым гостем
+  ///     (поддерживает POS, см. FirestoreService.syncTableBusyUntil);
+  ///   • `reservationSlots` — зеркало броней БЕЗ персональных данных
+  ///     (только стол, интервал и признак «занимает»), см. [_writeSlot].
   Future<_HallSnapshot> _loadHall(DateTime around) async {
     final dayFrom = around.subtract(const Duration(hours: 14));
     final dayTo = around.add(const Duration(hours: 26));
 
     final results = await Future.wait([
       _db.collection('tables').get(),
-      _col
+      _slots
           .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(dayFrom))
           .where('startTime', isLessThan: Timestamp.fromDate(dayTo))
           .get(),
-      _db.collection('sessions').where('status', isEqualTo: 'active').get(),
     ]);
 
     final tables = results[0].docs.map(TableModel.fromDoc).toList();
 
     final reservations = results[1]
         .docs
-        .map(ReservationModel.fromDoc)
-        .where((r) => r.status.blocksTable)
+        .map(_ReservedSlot.fromDoc)
+        .where((r) => r.active && r.tableId.isNotEmpty)
         .toList();
 
     // До какого момента стол занят живым гостем: планируемый конец плюс
     // 20 минут на уборку. Просроченный сеанс держит стол ещё час.
+    final now = DateTime.now();
     final busyUntil = <String, DateTime>{};
-    for (final doc in results[2].docs) {
-      final data = doc.data();
-      final tableId = data['tableId']?.toString() ?? '';
-      if (tableId.isEmpty) continue;
-
-      final ts = data['plannedEnd'];
-      var until = ts is Timestamp ? ts.toDate() : DateTime.now();
-      if (until.isBefore(DateTime.now())) {
-        until = DateTime.now().add(const Duration(hours: 1));
-      }
+    for (final t in tables) {
+      final end = t.busyUntil;
+      if (end == null) continue;
+      var until = end.isBefore(now) ? now.add(const Duration(hours: 1)) : end;
       until = until.add(const Duration(minutes: 20));
-
-      final prev = busyUntil[tableId];
-      if (prev == null || until.isAfter(prev)) busyUntil[tableId] = until;
+      busyUntil[t.id] = until;
     }
 
     return _HallSnapshot(tables: tables, reservations: reservations, busyUntil: busyUntil);
+  }
+
+  /// Зеркало броней без персональных данных — единственный источник
+  /// занятости столов бронями, доступный гостевому приложению.
+  CollectionReference<Map<String, dynamic>> get _slots =>
+      _db.collection('reservationSlots');
+
+  /// Создаёт/обновляет запись в зеркале. Вызывается при каждом изменении
+  /// брони, которое влияет на занятость стола: создание, подтверждение,
+  /// отмена, неявка, перенос времени, смена стола.
+  ///
+  /// В документ кладутся ТОЛЬКО обезличенные поля: стол, интервал, признак
+  /// «занимает стол» и uid владельца (нужен правилам, чтобы гость не мог
+  /// переписать чужую бронь). Ни имени, ни телефона, ни комментария.
+  Future<void> _writeSlot({
+    required String reservationId,
+    required String tableId,
+    required DateTime startTime,
+    required int durationMinutes,
+    required bool active,
+    required String clientUid,
+  }) async {
+    try {
+      await _slots.doc(reservationId).set({
+        'tableId': tableId,
+        'clientUid': clientUid,
+        'startTime': Timestamp.fromDate(startTime),
+        'endTime':
+            Timestamp.fromDate(startTime.add(Duration(minutes: durationMinutes))),
+        'active': active,
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // Зеркало вторично: если запись не прошла, сама бронь всё равно
+      // создана и видна персоналу на POS.
+    }
+  }
+
+  /// Снять блокировку стола в зеркале (отмена/неявка).
+  Future<void> _releaseSlot(String reservationId) async {
+    try {
+      await _slots.doc(reservationId).set({'active': false}, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  /// Занятые интервалы столов на конкретный день — обезличенно, из
+  /// зеркала [reservationSlots]. Используется гостевым приложением, где
+  /// читать сами брони (с именами и телефонами) нельзя.
+  Future<List<({String tableId, DateTime start, DateTime end})>> dayBusySlots(
+      DateTime day) async {
+    final from = DateTime(day.year, day.month, day.day);
+    final to = from.add(const Duration(days: 1));
+    final snap = await _slots
+        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+        .where('startTime', isLessThan: Timestamp.fromDate(to))
+        .get();
+    return snap.docs
+        .map(_ReservedSlot.fromDoc)
+        .where((s) => s.active && s.tableId.isNotEmpty)
+        .map((s) => (tableId: s.tableId, start: s.startTime, end: s.endTime))
+        .toList();
+  }
+
+  /// Достроить зеркало, если его ещё нет: разовая миграция для заведений,
+  /// которые обновились с версии без `reservationSlots`. Без неё уже
+  /// созданные будущие брони не держали бы стол в гостевом приложении.
+  ///
+  /// Дёшево и самовосстанавливаемо: читаем ближайшую будущую бронь и
+  /// проверяем, есть ли для неё запись в зеркале. Есть — ничего не делаем.
+  /// Вызывается с POS при входе сотрудника (у гостя нет прав читать чужие
+  /// брони, поэтому там метод молча ничего не сделает).
+  Future<void> ensureSlotMirror() async {
+    try {
+      final snap = await _col
+          .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.now()))
+          .orderBy('startTime')
+          .limit(1)
+          .get();
+      if (snap.docs.isEmpty) return; // будущих броней нет — нечего зеркалить
+      final mirrored = await _slots.doc(snap.docs.first.id).get();
+      if (mirrored.exists) return; // зеркало уже построено
+      await rebuildSlotMirror();
+    } catch (_) {
+      // Нет прав (не POS) или нет сети — попробуем при следующем входе.
+    }
+  }
+
+  /// Перестроить зеркало по существующим броням — разовая миграция для
+  /// заведений, которые обновились с версии без `reservationSlots`.
+  /// Запускается с POS (у гостя нет прав читать чужие брони).
+  Future<int> rebuildSlotMirror() async {
+    final from = DateTime.now().subtract(const Duration(days: 1));
+    final snap = await _col
+        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+        .get();
+    var count = 0;
+    for (final doc in snap.docs) {
+      final r = ReservationModel.fromDoc(doc);
+      await _writeSlot(
+        reservationId: r.id,
+        tableId: r.tableId,
+        startTime: r.startTime,
+        durationMinutes: r.durationMinutes,
+        active: r.status.blocksTable,
+        clientUid: r.clientUid,
+      );
+      count++;
+    }
+    return count;
   }
 
   /// Свободные столы на интервал по уже загруженному снимку — без сети.
@@ -268,6 +382,14 @@ class ReservationService {
 
     final ref = _col.doc();
     await ref.set(reservation.toMap());
+    await _writeSlot(
+      reservationId: ref.id,
+      tableId: reservation.tableId,
+      startTime: reservation.startTime,
+      durationMinutes: reservation.durationMinutes,
+      active: reservation.status.blocksTable,
+      clientUid: reservation.clientUid,
+    );
     return ref.id;
   }
 
@@ -277,26 +399,49 @@ class ReservationService {
         'handledBy': employeeName,
       });
 
-  Future<void> cancel(String id, {String by = ''}) => _col.doc(id).update({
-        'status': ReservationStatus.cancelled.code,
-        'handledBy': by,
-      });
+  Future<void> cancel(String id, {String by = ''}) async {
+    await _col.doc(id).update({
+      'status': ReservationStatus.cancelled.code,
+      'handledBy': by,
+    });
+    // Стол освобождается сразу — иначе отменённая бронь продолжала бы
+    // держать слот в сетке доступности до конца своего интервала.
+    await _releaseSlot(id);
+  }
 
-  Future<void> markNoShow(String id, String employeeName) => _col.doc(id).update({
-        'status': ReservationStatus.noShow.code,
-        'handledBy': employeeName,
-      });
+  Future<void> markNoShow(String id, String employeeName) async {
+    await _col.doc(id).update({
+      'status': ReservationStatus.noShow.code,
+      'handledBy': employeeName,
+    });
+    await _releaseSlot(id);
+  }
 
-  Future<void> assignTable(String id, TableModel table) => _col.doc(id).update({
-        'tableId': table.id,
-        'tableName': table.name,
-      });
+  Future<void> assignTable(String id, TableModel table) async {
+    await _col.doc(id).update({
+      'tableId': table.id,
+      'tableName': table.name,
+    });
+    await _slots.doc(id).set({'tableId': table.id}, SetOptions(merge: true));
+  }
 
-  Future<void> reschedule(String id, DateTime newStart, {int? durationMinutes}) =>
-      _col.doc(id).update({
-        'startTime': Timestamp.fromDate(newStart),
-        if (durationMinutes != null) 'durationMinutes': durationMinutes,
-      });
+  Future<void> reschedule(String id, DateTime newStart, {int? durationMinutes}) async {
+    await _col.doc(id).update({
+      'startTime': Timestamp.fromDate(newStart),
+      if (durationMinutes != null) 'durationMinutes': durationMinutes,
+    });
+    final fresh = await _col.doc(id).get();
+    if (!fresh.exists) return;
+    final r = ReservationModel.fromDoc(fresh);
+    await _writeSlot(
+      reservationId: id,
+      tableId: r.tableId,
+      startTime: r.startTime,
+      durationMinutes: r.durationMinutes,
+      active: r.status.blocksTable,
+      clientUid: r.clientUid,
+    );
+  }
 
   Future<void> setAiNote(String id, String note) => _col.doc(id).update({'aiNote': note});
 
@@ -325,13 +470,13 @@ class ReservationService {
 
     await _db.runTransaction((tx) async {
       final freshRes = await tx.get(resRef);
-      final resData = freshRes.data() as Map<String, dynamic>? ?? {};
+      final resData = freshRes.data() ?? <String, dynamic>{};
       if ((resData['sessionId'] as String? ?? '').isNotEmpty) {
         throw StateError('По этой брони уже открыт чек.');
       }
 
       final freshTable = await tx.get(tableRef);
-      final data = freshTable.data() as Map<String, dynamic>?;
+      final data = freshTable.data();
       if (data == null) throw StateError('Стол брони удалён из карты зала.');
 
       final ids = ((data['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList();
@@ -362,6 +507,11 @@ class ReservationService {
       });
     });
 
+    // Гость сел — бронь больше не держит слот, теперь стол занят живым
+    // чеком (его конец уезжает в tables.busyUntil).
+    await _releaseSlot(reservation.id);
+    await FirestoreService().syncTableBusyUntil(reservation.tableId);
+
     // Привязываем гостя к чеку, чтобы в его приложении сразу появился
     // живой счёт и таймер стола.
     if (reservation.clientUid.isNotEmpty) {
@@ -376,10 +526,45 @@ class ReservationService {
   }
 }
 
+/// Обезличенная запись занятости стола бронью — документ
+/// `reservationSlots/{reservationId}`. Ровно те поля, которых хватает для
+/// расчёта свободных слотов, и ни одного персонального.
+class _ReservedSlot {
+  final String tableId;
+  final DateTime startTime;
+  final DateTime endTime;
+  final bool active;
+
+  const _ReservedSlot({
+    required this.tableId,
+    required this.startTime,
+    required this.endTime,
+    required this.active,
+  });
+
+  factory _ReservedSlot.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? const <String, dynamic>{};
+    final start = data['startTime'];
+    final end = data['endTime'];
+    final startAt = start is Timestamp ? start.toDate() : DateTime.now();
+    return _ReservedSlot(
+      tableId: (data['tableId'] as String?) ?? '',
+      startTime: startAt,
+      endTime: end is Timestamp
+          ? end.toDate()
+          : startAt.add(const Duration(minutes: 90)),
+      active: data['active'] != false,
+    );
+  }
+
+  bool overlaps(DateTime from, DateTime to) =>
+      startTime.isBefore(to) && endTime.isAfter(from);
+}
+
 /// Разовый снимок занятости зала для расчёта слотов.
 class _HallSnapshot {
   final List<TableModel> tables;
-  final List<ReservationModel> reservations;
+  final List<_ReservedSlot> reservations;
   final Map<String, DateTime> busyUntil;
 
   _HallSnapshot({

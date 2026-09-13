@@ -19,22 +19,42 @@ class AutoStopListService {
 
   final _db = FirebaseFirestore.instance;
   StreamSubscription? _sub;
-  DateTime _lastRun = DateTime(2000);
+  Timer? _pending;
+
+  /// Не чаще одного пересчёта в минуту: склад «шумит» при инвентаризации.
+  static const _cooldown = Duration(seconds: 60);
 
   /// Запускается один раз при входе сотрудника на POS.
   void start() {
     _sub?.cancel();
-    _sub = _db.collection('inventoryItems').snapshots().listen((_) {
-      // Склад «шумит» при инвентаризации — пересчитываем не чаще раза в минуту.
-      if (DateTime.now().difference(_lastRun).inSeconds < 60) return;
-      _lastRun = DateTime.now();
-      unawaited(sync());
-    });
+    _sub = _db.collection('inventoryItems').snapshots().listen(
+      (_) => _scheduleSync(),
+      // Пока планшет не зарегистрирован как рабочее устройство, прав на
+      // склад нет и стрим завершается ошибкой. Это не повод сыпать
+      // необработанными исключениями в консоль при каждом старте.
+      onError: (_) {},
+    );
+  }
+
+  /// Откладывает пересчёт на [_cooldown], сбрасывая уже запланированный.
+  ///
+  /// Раньше здесь стояла обратная логика: изменения, пришедшие раньше чем
+  /// через минуту после прошлого пересчёта, просто ОТБРАСЫВАЛИСЬ. Если
+  /// приход товара приходил в эту минуту и больше склад не трогали,
+  /// стоп-лист не пересчитывался вообще — позиция так и висела снятой с
+  /// продажи (или, наоборот, продавалась при нулевом остатке) до
+  /// следующего изменения склада. Теперь последнее изменение всегда
+  /// доезжает: таймер только сдвигается.
+  void _scheduleSync() {
+    _pending?.cancel();
+    _pending = Timer(_cooldown, () => unawaited(sync()));
   }
 
   void stop() {
     _sub?.cancel();
     _sub = null;
+    _pending?.cancel();
+    _pending = null;
   }
 
   /// Полный пересчёт стоп-листа. Можно дёрнуть вручную из админки.

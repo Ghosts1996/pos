@@ -298,7 +298,17 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
 
     final allTables = results[0] as List<TableModel>;
     final freeIds = (results[1] as List<TableModel>).map((t) => t.id).toSet();
-    final dayReservations = results[2] as List<ReservationModel>;
+    // На POS подпись занятости полная — сотрудник вправе видеть, кто и на
+    // сколько человек держит стол.
+    final busyIntervals = (results[2] as List<ReservationModel>)
+        .where((r) => r.status.blocksTable || r.status == ReservationStatus.seated)
+        .map((r) => TableBusyInterval(
+              tableId: r.tableId,
+              startTime: r.startTime,
+              endTime: r.endTime,
+              description: '${r.guestName} · ${r.guestsCount} чел · ${r.status.label}',
+            ))
+        .toList();
 
     if (allTables.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -328,10 +338,9 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                 child: TablePickerMap(
                   tables: allTables,
                   freeTableIds: freeIds,
-                  dayReservations: dayReservations,
+                  busyIntervals: busyIntervals,
                   start: start,
                   durationMinutes: durationMinutes,
-                  showGuestNames: true, // сотрудник видит, кто и когда бронировал
                   onSelect: (t) => Navigator.pop(ctx, t),
                 ),
               ),

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
 import '../services/firestore_service.dart';
+import '../services/reservation_service.dart';
 import '../utils/constants.dart';
 import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
@@ -54,6 +55,11 @@ class _LoginScreenState extends State<LoginScreen> {
     // при сетевой ошибке: сотрудник всё равно должен попасть в приложение,
     // а открыть смену можно будет вручную из X-отчёта.
     unawaited(_fs.openShiftIfNeeded(loggedInEmployee.name));
+    // Разовая достройка обезличенного зеркала занятости столов — нужна
+    // заведениям, которые обновились с версии без reservationSlots.
+    // Проверка стоит один документ и ничего не делает, если всё на месте.
+    unawaited(ReservationService().ensureSlotMirror());
+    unawaited(_fs.backfillTablesBusyUntil());
     if (loggedInEmployee.role == AppConstants.roleAdmin) {
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => AdminHomeScreen(employee: loggedInEmployee)));

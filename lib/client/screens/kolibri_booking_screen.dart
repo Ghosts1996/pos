@@ -390,20 +390,22 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   /// личные данные, в отличие от карты на POS.
   Future<void> _pickTable() async {
     if (_slot == null) return;
-    final results = await Future.wait([
-      _fs.tablesStream().first,
-      _service.availableTables(
-        start: _slot!,
-        durationMinutes: _duration,
-        guestsCount: _guests,
-      ),
-      _service.dayStream(_slot!).first,
-    ]);
+    // Занятость берём из обезличенного зеркала: читать чужие брони
+    // (там имя и телефон) гостевому приложению по правилам нельзя, и
+    // раньше именно этот запрос молча ронял выбор стола.
+    final allTables = await _fs.tablesStream().first;
+    final free = await _service.availableTables(
+      start: _slot!,
+      durationMinutes: _duration,
+      guestsCount: _guests,
+    );
+    final busy = await _service.dayBusySlots(_slot!);
     if (!mounted) return;
 
-    final allTables = results[0] as List<TableModel>;
-    final freeIds = (results[1] as List<TableModel>).map((t) => t.id).toSet();
-    final dayReservations = results[2] as List<ReservationModel>;
+    final freeIds = free.map((t) => t.id).toSet();
+    final busyIntervals = busy
+        .map((b) => TableBusyInterval(tableId: b.tableId, startTime: b.start, endTime: b.end))
+        .toList();
 
     final picked = await showModalBottomSheet<TableModel>(
       context: context,
@@ -426,10 +428,9 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                 child: TablePickerMap(
                   tables: allTables,
                   freeTableIds: freeIds,
-                  dayReservations: dayReservations,
+                  busyIntervals: busyIntervals,
                   start: _slot!,
                   durationMinutes: _duration,
-                  showGuestNames: false,
                   onSelect: (t) => Navigator.pop(ctx, t),
                 ),
               ),
