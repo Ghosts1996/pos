@@ -36,31 +36,72 @@ class NotificationService {
     importance: Importance.high,
   );
 
+  /// Последняя ошибка инициализации — её показывает [diagnose].
+  String? _initError;
+
+  /// Какая иконка в итоге используется. Если своей нет в сборке, плагин
+  /// падает при инициализации, и тогда берём иконку приложения.
+  String _icon = '@drawable/ic_notification';
+
   Future<void> init() async {
     if (_ready) return;
 
-    tzdata.initializeTimeZones();
-    // Локальная зона устройства — иначе запланированное время уедет.
-    tz.setLocalLocation(tz.getLocation(await _deviceTimeZone()));
-
-    await _plugin.initialize(
-      const InitializationSettings(
-        // Монохромная иконка: системная панель рисует только силуэт, и
-        // цветной ic_launcher превращался в серый квадрат.
-        android: AndroidInitializationSettings('@drawable/ic_notification'),
-      ),
-    );
+    // ПОРЯДОК ВАЖЕН. Раньше init начинался с настройки часовых поясов, и
+    // любая осечка там (неизвестная зона, сбой базы) обрывала init целиком
+    // — вместе с созданием каналов и запросом разрешения. Мгновенные
+    // уведомления о бронях и вызовах гостей часовые пояса не используют
+    // вовсе, но переставали работать заодно, причём молча: исключение
+    // уходило в unawaited и нигде не всплывало.
+    //
+    // Теперь сначала делается то, без чего уведомлений нет вообще, а
+    // часовые пояса — отдельно и с собственным перехватом: не вышло —
+    // не сработают только отложенные напоминания.
+    try {
+      var ok = await _plugin.initialize(
+        InitializationSettings(
+          // Монохромная иконка: системная панель рисует только силуэт, и
+          // цветной ic_launcher превращался в серый квадрат.
+          android: AndroidInitializationSettings(_icon),
+        ),
+      );
+      if (ok == false) throw Exception('плагин не инициализировался');
+    } catch (e) {
+      // Своей иконки в сборке нет — уведомления важнее красоты.
+      _icon = '@mipmap/ic_launcher';
+      _initError = 'иконка $e';
+      try {
+        await _plugin.initialize(
+          InitializationSettings(
+            android: AndroidInitializationSettings(_icon),
+          ),
+        );
+      } catch (e2) {
+        _initError = '$e2';
+      }
+    }
 
     final android =
         _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await android?.createNotificationChannel(_channelInstant);
-    await android?.createNotificationChannel(_channelTimers);
-    await android?.requestNotificationsPermission();
-    // Точные будильники нужны, чтобы напоминание об углях не «уехало»
-    // на 10 минут из-за экономии батареи.
-    await android?.requestExactAlarmsPermission();
+    try {
+      await android?.createNotificationChannel(_channelInstant);
+      await android?.createNotificationChannel(_channelTimers);
+      await android?.requestNotificationsPermission();
+      // Точные будильники нужны, чтобы напоминание об углях не «уехало»
+      // на 10 минут из-за экономии батареи.
+      await android?.requestExactAlarmsPermission();
+    } catch (e) {
+      _initError = '$e';
+    }
 
     _ready = true;
+
+    // Часовые пояса — только для отложенных уведомлений.
+    try {
+      tzdata.initializeTimeZones();
+      tz.setLocalLocation(tz.getLocation(await _deviceTimeZone()));
+    } catch (_) {
+      // Отложенные напоминания не встанут, мгновенные работают.
+    }
   }
 
   /// Определяем зону по смещению устройства: полноценная база IANA тут
@@ -102,7 +143,7 @@ class NotificationService {
           timer ? _channelTimers.name : _channelInstant.name,
           importance: Importance.high,
           priority: Priority.high,
-          icon: '@drawable/ic_notification',
+          icon: _icon,
           styleInformation: BigTextStyleInformation(body),
         ),
       ),
@@ -134,7 +175,7 @@ class NotificationService {
           _channelTimers.name,
           importance: Importance.high,
           priority: Priority.high,
-          icon: '@drawable/ic_notification',
+          icon: _icon,
           styleInformation: BigTextStyleInformation(body),
         ),
       ),
@@ -181,6 +222,63 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     final granted = await android?.requestNotificationsPermission();
     return granted ?? await areEnabled();
+  }
+
+  // ---------- ПРОВЕРКА ----------
+
+  /// Пробует показать тестовое уведомление и рассказывает, что вышло.
+  ///
+  /// Уведомления — та часть приложения, которая ломается совершенно
+  /// беззвучно: разрешение не выдано, канал отключён, прошивка вырезала
+  /// фоновую работу — во всех случаях приложение «показывает»
+  /// уведомление, а на экране не появляется ничего и нигде нет ошибки.
+  /// Отсюда и берутся разборы вида «уведомления не приходят» без единой
+  /// зацепки. Эта проверка превращает такую тишину в понятный текст.
+  Future<String> diagnose() async {
+    final lines = <String>[];
+    try {
+      await init();
+    } catch (e) {
+      return 'Не удалось подготовить уведомления: $e';
+    }
+
+    if (_initError != null) {
+      lines.add('При подготовке была ошибка: $_initError');
+    }
+
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final enabled = await android?.areNotificationsEnabled() ?? true;
+    lines.add(enabled
+        ? 'Разрешение: выдано'
+        : 'Разрешение: НЕ выдано — включите уведомления для приложения '
+            'в настройках телефона');
+
+    try {
+      final exact = await android?.canScheduleExactNotifications() ?? true;
+      lines.add(exact
+          ? 'Точные напоминания: разрешены'
+          : 'Точные напоминания: запрещены — напоминание за час до брони '
+              'может опоздать');
+    } catch (_) {}
+
+    try {
+      await show(
+        id: idFor('diagnose'),
+        title: 'Проверка уведомлений',
+        body: 'Если вы видите это сообщение в шторке — всё работает.',
+      );
+      lines.add('Тестовое уведомление отправлено.');
+      if (enabled) {
+        lines.add('Не видно в шторке? Значит уведомления режет прошивка: '
+            'откройте настройки приложения и разрешите уведомления и '
+            'автозапуск (на Xiaomi, Huawei и Honor это отдельные пункты).');
+      }
+    } catch (e) {
+      lines.add('Показать уведомление не удалось: $e');
+    }
+
+    return lines.join('\n\n');
   }
 
   /// Стабильный числовой id из строки: у каждого чека свои уведомления,
