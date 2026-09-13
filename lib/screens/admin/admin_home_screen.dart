@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/staff_session_store.dart';
 import '../../models/employee.dart';
 import 'floor_plan_editor_screen.dart';
 import 'menu_editor_screen.dart';
@@ -61,8 +62,14 @@ class AdminHomeScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () => Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false),
+            // Забываем сохранённый вход — иначе экран PIN тут же вернул
+            // бы в приложение того же сотрудника.
+            onPressed: () async {
+              await StaffSessionStore.instance.forget();
+              if (!context.mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false);
+            },
           ),
         ],
       ),
