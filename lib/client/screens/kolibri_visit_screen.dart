@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
+import '../../widgets/clock_ticker.dart';
 import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
 import 'kolibri_qr_scan_screen.dart';
@@ -24,22 +25,12 @@ class KolibriVisitScreen extends StatefulWidget {
 class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   final _link = GuestLinkService();
   final _auth = KolibriAuthService();
-  Timer? _ticker;
 
-  @override
-  void initState() {
-    super.initState();
-    // Пересобираем экран раз в секунду — таймер сеанса должен «идти».
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _ticker?.cancel();
-    super.dispose();
-  }
+  // Раз в секунду здесь перестраивался ВЕСЬ экран: список позиций счёта,
+  // кнопки вызова, карточки — ради одной надписи с обратным отсчётом.
+  // На слабых телефонах это давало заметные подтормаживания и грело
+  // батарею впустую. Теперь тикает только сам счётчик (TickerBuilder), и
+  // от общего таймера приложения, а не от собственного.
 
   @override
   Widget build(BuildContext context) {
@@ -108,11 +99,6 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
       );
 
   Widget _activeVisit(SessionModel s) {
-    final left = s.remaining;
-    final over = left.isNegative;
-    final minutes = left.inMinutes.abs();
-    final seconds = (left.inSeconds.abs() % 60).toString().padLeft(2, '0');
-
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
@@ -130,7 +116,14 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         const SizedBox(height: 16),
 
         // ---- Таймер сеанса ----
-        Container(
+        // Единственное место экрана, которое обязано обновляться каждую
+        // секунду, — поэтому только оно и перестраивается.
+        TickerBuilder(builder: (context, _) {
+          final left = s.remaining;
+          final over = left.isNegative;
+          final minutes = left.inMinutes.abs();
+          final seconds = (left.inSeconds.abs() % 60).toString().padLeft(2, '0');
+          return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             color: KolibriColors.surface,
@@ -161,7 +154,8 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                     style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
             ],
           ),
-        ),
+          );
+        }),
 
         const SizedBox(height: 20),
 

@@ -7,16 +7,28 @@
 <!--
   Страница-«прослойка» для QR-кодов на столах.
 
-  Зачем она нужна. В QR нельзя зашивать сразу kolibri://table/{id}: это
-  собственная схема приложения, и если приложение не установлено, телефону
-  нечем обработать такую ссылку — гость видит либо непонятную строку, либо
-  «не найдено приложение», и никакой подсказки показать невозможно, потому
-  что ничего нашего в этот момент не выполняется.
+  Как это работает по шагам.
 
-  Поэтому в новых QR зашивается обычный https-адрес этой страницы. Она
-  сразу пытается открыть приложение по kolibri://, и если оно есть —
-  гость даже не успевает её разглядеть. Если приложения нет, переход не
-  срабатывает, и через полторы секунды показывается предложение установить.
+  1. Гость наводит обычную камеру на QR со стола. В коде — обычный
+     https-адрес этой страницы, потому что камера умеет открывать только
+     http(s); собственную схему kolibri:// она либо не покажет вовсе,
+     либо выдаст непонятную ошибку, и подсказать гостю будет нечем —
+     никакой наш код в этот момент не выполняется.
+
+  2. Если приложение установлено и Android успел проверить права сайта
+     (файл /.well-known/assetlinks.json), эта страница вообще не
+     открывается: система сразу запускает приложение и передаёт ему
+     ссылку. Гость видит свой стол, браузер не мелькает.
+
+  3. Если проверка ещё не прошла (первые минуты после установки, либо
+     гость запретил приложению открывать ссылки), открывается браузер и
+     срабатывает код ниже. На Android он уходит через intent:// — это
+     единственный способ, который Chrome не блокирует: обычный переход на
+     kolibri:// без нажатия кнопки браузер молча отменяет.
+
+  4. Приложения нет — переход не срабатывает, и гость видит предложение
+     установить. Chrome в этом случае сам возвращается сюда с меткой
+     ?noapp=1, и страница больше не пытается никуда уйти.
 -->
 <style>
   :root {
@@ -123,42 +135,78 @@
 </div>
 
 <script>
+(function () {
   // Id стола берём из адреса: /table/{id}
   var parts = location.pathname.split('/').filter(Boolean);
   var tableId = parts.length ? parts[parts.length - 1] : '';
-  var appLink = tableId ? 'kolibri://table/' + encodeURIComponent(tableId) : 'kolibri://';
+  var query = location.search || '';
 
   var opening = document.getElementById('opening');
   var install = document.getElementById('install');
   var shown = false;
+  var timer = null;
 
   function showInstall() {
     if (shown) return;
     shown = true;
+    if (timer) { clearTimeout(timer); timer = null; }
     opening.style.display = 'none';
     install.style.display = 'block';
   }
 
-  function openApp() {
-    // Если приложение установлено, система перехватит переход и уведёт
-    // гостя в него. Если нет — здесь ничего не произойдёт.
-    window.location.href = appLink;
+  var isAndroid = /android/i.test(navigator.userAgent || '');
+
+  // Ссылка для приложения.
+  var appLink = tableId
+    ? 'kolibri://table/' + encodeURIComponent(tableId)
+    : 'kolibri://';
+
+  // Android: intent:// с запасным адресом. Если приложения нет, Chrome сам
+  // вернётся сюда с ?noapp=1 — и тогда вместо новой попытки открыть
+  // приложение мы сразу показываем установку, иначе получился бы цикл.
+  var fallback = location.origin + location.pathname + '?noapp=1';
+  var intentLink = 'intent://table/' + encodeURIComponent(tableId) +
+    '#Intent;scheme=kolibri;package=com.kolibrilounge;' +
+    'S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
+
+  function openApp(useIntent) {
+    try {
+      if (useIntent && isAndroid && tableId) {
+        window.location.replace(intentLink);
+      } else {
+        window.location.href = appLink;
+      }
+    } catch (e) {
+      showInstall();
+    }
   }
 
-  // Страница спряталась — значит приложение открылось, подсказку не нужно.
+  // Страница спряталась — значит приложение открылось, подсказка не нужна.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) shown = true;
   });
+  window.addEventListener('pagehide', function () { shown = true; });
 
   document.getElementById('retry').addEventListener('click', function (e) {
     e.preventDefault();
     shown = false;
-    openApp();
-    setTimeout(showInstall, 1500);
+    opening.style.display = 'block';
+    install.style.display = 'none';
+    openApp(true);
+    timer = setTimeout(showInstall, 2000);
   });
 
-  openApp();
-  setTimeout(showInstall, 1600);
+  if (query.indexOf('noapp=1') !== -1 || !tableId) {
+    // Chrome уже сходил за приложением и не нашёл его.
+    showInstall();
+  } else {
+    openApp(true);
+    // Запасной таймер: браузеры без поддержки intent:// (Firefox и часть
+    // прошивок) просто ничего не делают, и без него гость остался бы
+    // смотреть на крутилку.
+    timer = setTimeout(showInstall, 2500);
+  }
+})();
 </script>
 </body>
 </html>

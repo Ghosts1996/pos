@@ -210,15 +210,31 @@ jobs:
           # Название приложения на экране устройства — своё у каждой сборки.
           sed -i 's/android:label="[^"]*"/android:label="${{ matrix.label }}"/' "$MANIFEST"
 
-          # Диплинк kolibri://table/{id} — только для клиентского приложения:
-          # по нему открывается стол после сканирования QR со стола.
+          # Диплинки клиентского приложения — два, и оба нужны.
+          #
+          #   kolibri://table/{id}  — схема из уже напечатанных наклеек.
+          #     Их нельзя менять, коды разложены по столам.
+          #
+          #   https://colibri-lounge.web.app/table/{id} — App Link. Он с
+          #     android:autoVerify="true": при установке Android скачивает
+          #     https://colibri-lounge.web.app/.well-known/assetlinks.json,
+          #     сверяет отпечаток подписи APK и, если сходится, открывает
+          #     ссылку сразу в приложении, минуя браузер. Именно это даёт
+          #     «навёл камеру — открылся стол», без мелькания сайта.
+          #
+          # Проверка привязана к подписи, поэтому APK обязан быть подписан
+          # постоянным ключом из секретов (см. шаг Configure release
+          # signing). С одноразовым debug-ключом отпечаток не сойдётся и
+          # ссылка просто откроется в браузере — страница сама предложит
+          # установку, ничего не сломается.
           if [ "${{ matrix.deeplink }}" = "true" ]; then
             python3 - "$MANIFEST" <<'PY'
-          import re, sys
+          import sys
           path = sys.argv[1]
           xml = open(path, encoding='utf-8').read()
+          added = ''
           if 'android:scheme="kolibri"' not in xml:
-              filter_xml = (
+              added += (
                   '\n            <intent-filter>\n'
                   '                <action android:name="android.intent.action.VIEW" />\n'
                   '                <category android:name="android.intent.category.DEFAULT" />\n'
@@ -226,8 +242,20 @@ jobs:
                   '                <data android:scheme="kolibri" android:host="table" />\n'
                   '            </intent-filter>'
               )
+          if 'colibri-lounge.web.app' not in xml:
+              added += (
+                  '\n            <intent-filter android:autoVerify="true">\n'
+                  '                <action android:name="android.intent.action.VIEW" />\n'
+                  '                <category android:name="android.intent.category.DEFAULT" />\n'
+                  '                <category android:name="android.intent.category.BROWSABLE" />\n'
+                  '                <data android:scheme="https"\n'
+                  '                      android:host="colibri-lounge.web.app"\n'
+                  '                      android:pathPrefix="/table" />\n'
+                  '            </intent-filter>'
+              )
+          if added:
               # Вставляем внутрь основной <activity>, перед её закрытием.
-              xml = xml.replace('</activity>', filter_xml + '\n        </activity>', 1)
+              xml = xml.replace('</activity>', added + '\n        </activity>', 1)
               open(path, 'w', encoding='utf-8').write(xml)
           PY
           fi
