@@ -14,7 +14,7 @@ import 'table_detail_screen.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
 /// Сюда мгновенно прилетают брони из клиентского приложения
-/// «Колибри Лаундж» — подтверждение, назначение стола, посадка.
+/// «Colibri Lounge» — подтверждение, назначение стола, посадка.
 class ReservationsScreen extends StatefulWidget {
   final Employee employee;
   const ReservationsScreen({super.key, required this.employee});
@@ -130,7 +130,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                     Text(
                       '${r.tableName.isEmpty ? 'стол не назначен' : r.tableName} · '
                       '${r.durationMinutes} мин · ${r.status.label}'
-                      '${r.source == 'kolibri' ? ' · Колибри' : ''}',
+                      '${r.source == 'kolibri' ? ' · Colibri' : ''}',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
                   ],
@@ -439,7 +439,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     final start = DateTime(_day.year, _day.month, _day.day, time.hour, time.minute);
     final phone = _normalizePhone(phoneCtrl.text.trim());
 
-    // Если гость уже ставил себе телефон в «Колибри Лаундж» — находим его
+    // Если гость уже ставил себе телефон в «Colibri Lounge» — находим его
     // профиль и привязываем бронь к нему: тогда она сразу появится в его
     // приложении и придёт пуш о подтверждении. Если профиля ещё нет —
     // бронь всё равно создаётся, просто без привязки (гость не увидит её
@@ -472,7 +472,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   }
 
   /// Приводит номер к формату, в котором он хранится в профиле гостя
-  /// («Колибри Лаундж» использует Firebase Phone Auth — там номер всегда
+  /// («Colibri Lounge» использует Firebase Phone Auth — там номер всегда
   /// в E.164: +7XXXXXXXXXX). Без этого поиск по строке findByPhone почти
   /// никогда не совпадёт с тем, что ввёл сотрудник.
   String _normalizePhone(String raw) {

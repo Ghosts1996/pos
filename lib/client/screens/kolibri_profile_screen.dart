@@ -379,7 +379,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
 
         const SizedBox(height: 32),
         const Text(
-          'Колибри Лаундж · приложение гостя',
+          'Colibri Lounge · приложение гостя',
           textAlign: TextAlign.center,
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),

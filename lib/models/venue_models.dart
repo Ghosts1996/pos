@@ -46,7 +46,7 @@ class VenueProfile {
   final bool cloudFunctionsEnabled;
 
   const VenueProfile({
-    this.name = 'Колибри Лаундж',
+    this.name = 'Colibri Lounge',
     this.address = '',
     this.phone = '',
     this.about = '',
@@ -63,7 +63,7 @@ class VenueProfile {
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
     if (data == null) return const VenueProfile();
     return VenueProfile(
-      name: data['name'] ?? 'Колибри Лаундж',
+      name: data['name'] ?? 'Colibri Lounge',
       address: data['address'] ?? '',
       phone: data['phone'] ?? '',
       about: data['about'] ?? '',

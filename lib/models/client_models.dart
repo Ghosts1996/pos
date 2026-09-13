@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'session_model.dart';
 import 'table_model.dart';
 
-/// Профиль гостя приложения «Колибри Лаундж».
+/// Профиль гостя приложения «Colibri Lounge».
 /// Документ clients/{uid}, где uid — Firebase Auth UID клиентского приложения.
 class ClientProfile {
   final String uid;
