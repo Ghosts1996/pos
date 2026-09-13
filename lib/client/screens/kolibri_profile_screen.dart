@@ -1,12 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_extras_screen.dart';
 
-/// Профиль гостя: имя, телефон, бонусы, история операций, вход по SMS.
+/// Профиль гостя: имя, телефон, бонусы, история операций.
+///
+/// Бесплатный вариант без SMS-подтверждения (Firebase Phone Auth требует
+/// платный тариф Blaze). Поэтому: один номер — один профиль на уровне
+/// приложения (нельзя сохранить номер, уже занятый другим устройством),
+/// а перенос истории с одного устройства на другое делает кальянщик на
+/// кассе в один клик — гость называет номер и показывает свой «ID
+/// устройства» с этого экрана.
 class KolibriProfileScreen extends StatefulWidget {
   final ClientProfile? profile;
   const KolibriProfileScreen({super.key, required this.profile});
@@ -48,6 +56,57 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     _name.dispose();
     _phone.dispose();
     super.dispose();
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _save() async {
+    final phone = _phone.text.trim();
+    setState(() => _saving = true);
+
+    // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
+    // ли он уже ДРУГИМ устройством, прежде чем сохранять. Без этой
+    // проверки два устройства с одним номером превращались в два разных
+    // профиля с нулевыми бонусами.
+    if (!_phoneLocked && phone.isNotEmpty) {
+      final existing = await _link.findByPhone(phone);
+      if (existing != null && existing.uid != _auth.uid) {
+        setState(() => _saving = false);
+        if (mounted) {
+          await showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Номер уже зарегистрирован'),
+              content: Text(
+                'На этот номер уже есть профиль с ${existing.bonusBalance.toStringAsFixed(0)} '
+                'бонусами. Чтобы они появились на этом устройстве, покажите кальянщику '
+                'этот номер и «ID устройства» ниже — он объединит профили на кассе за пару секунд.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    await _link.updateProfile(_auth.uid, {
+      'name': _name.text.trim(),
+      if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
+    });
+
+    if (mounted) {
+      setState(() => _saving = false);
+      _snack('Сохранено');
+    }
   }
 
   @override
@@ -120,42 +179,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 : null,
           ),
           onTap: _phoneLocked
-              ? () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Номер уже привязан. Попросите администратора '
-                          'изменить его на кассе.'),
-                    ),
-                  )
+              ? () => _snack('Номер уже привязан. Попросите администратора '
+                  'изменить его на кассе.')
               : null,
         ),
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: _saving
-              ? null
-              : () async {
-                  final phone = _phone.text.trim();
-                  setState(() => _saving = true);
-
-                  // Телефон отправляем только пока он не зафиксирован —
-                  // иначе правила базы всё равно отклонят изменение.
-                  await _link.updateProfile(_auth.uid, {
-                    'name': _name.text.trim(),
-                    if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
-                  });
-
-                  if (mounted) {
-                    setState(() => _saving = false);
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(const SnackBar(content: Text('Сохранено')));
-                  }
-                },
-          child: const Text('Сохранить'),
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
         ),
 
         const SizedBox(height: 20),
-        // Телефонный вход по SMS намеренно не используется: он требует
-        // платного тарифа Firebase. Гость работает на анонимном входе, а
-        // узнаётся по номеру, который называет кассиру при оплате.
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -163,17 +197,51 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: KolibriColors.border),
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'Бонусы копятся на этом устройстве и находятся по вашему номеру '
-                  'на кассе. Сменили телефон — назовите номер кальянщику, и мы '
-                  'перенесём историю визитов.',
-                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Бонусы копятся на этом устройстве и находятся по вашему номеру '
+                      'на кассе. Сменили телефон — назовите номер и покажите ID '
+                      'устройства ниже кальянщику, и мы перенесём историю визитов.',
+                      style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () async {
+                  await Clipboard.setData(ClipboardData(text: _auth.uid));
+                  _snack('ID устройства скопирован');
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.badge_outlined, size: 16, color: KolibriColors.textMuted),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'ID устройства: ${_auth.uid}',
+                          style: const TextStyle(fontSize: 12, color: KolibriColors.textMuted),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.copy, size: 14, color: KolibriColors.textMuted),
+                    ],
+                  ),
                 ),
               ),
             ],
