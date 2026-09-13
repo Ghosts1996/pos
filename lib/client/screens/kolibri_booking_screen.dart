@@ -39,6 +39,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   bool _sending = false;
   VenueProfile? _venue;
 
+  // Стрим создаём один раз: если создавать его прямо в build() (как было),
+  // каждый setState на этом экране — а их тут много (выбор даты, гостей,
+  // длительности, загрузка слотов) — пересоздаёт Firestore-подписку.
+  // StreamBuilder отписывается от старой и на миг до первого снэпшота новой
+  // показывает null, из-за чего бронь в списке «мигала» и пропадала.
+  late final Stream<List<ReservationModel>> _myReservations =
+      _service.clientStream(_auth.uid);
+
   @override
   void initState() {
     super.initState();
@@ -296,7 +304,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         const Text('Мои брони', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         StreamBuilder<List<ReservationModel>>(
-          stream: _service.clientStream(_auth.uid),
+          stream: _myReservations,
           builder: (context, snap) {
             final list = snap.data ?? const <ReservationModel>[];
             if (list.isEmpty) {
