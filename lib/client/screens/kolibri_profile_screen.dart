@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_extras_screen.dart';
@@ -29,6 +30,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   final _name = TextEditingController();
   final _phone = TextEditingController();
 
+  String _shortDeviceId = '…';
+
   /// Номер уже привязан — редактировать его гость не может.
   bool get _phoneLocked => (widget.profile?.phone ?? '').isNotEmpty;
   bool _saving = false;
@@ -38,6 +41,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     super.initState();
     _name.text = widget.profile?.name ?? '';
     _phone.text = widget.profile?.phone ?? '';
+    _auth.getShortDeviceId().then((id) {
+      if (mounted) setState(() => _shortDeviceId = id);
+    });
   }
 
   @override
@@ -64,14 +70,19 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   }
 
   Future<void> _save() async {
-    final phone = _phone.text.trim();
+    final rawPhone = _phone.text.trim();
+    final phone = rawPhone.isNotEmpty ? normalizePhone(rawPhone) : '';
     setState(() => _saving = true);
 
     // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
-    // ли он уже ДРУГИМ устройством, прежде чем сохранять. Без этой
-    // проверки два устройства с одним номером превращались в два разных
-    // профиля с нулевыми бонусами.
+    // ли он уже ДРУГИМ устройством, прежде чем сохранять.
     if (!_phoneLocked && phone.isNotEmpty) {
+      if (!isValidRuPhone(phone)) {
+        setState(() => _saving = false);
+        _snack('Введите корректный номер (например, 79995061580)');
+        return;
+      }
+
       final existing = await _link.findByPhone(phone);
       if (existing != null && existing.uid != _auth.uid) {
         setState(() => _saving = false);
@@ -162,9 +173,6 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           decoration: const InputDecoration(labelText: 'Как к вам обращаться'),
         ),
         const SizedBox(height: 12),
-        // Номер вводится один раз и дальше не редактируется: к нему
-        // привязаны бонусы, и подмена номера означала бы доступ к чужому
-        // счёту. Сменить его может только администратор на кассе.
         TextField(
           controller: _phone,
           keyboardType: TextInputType.phone,
@@ -173,7 +181,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             labelText: 'Телефон',
             helperText: _phoneLocked
                 ? 'Сменить номер можно только через администратора'
-                : 'Указывается один раз — по нему кальянщик найдёт ваши бонусы',
+                : 'Укажите номер в любом формате: +7, 8 или просто 9...',
             suffixIcon: _phoneLocked
                 ? const Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
                 : null,
@@ -216,10 +224,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 ],
               ),
               const SizedBox(height: 12),
+              // Короткий ID устройства — 6 символов, легко продиктовать
               InkWell(
                 borderRadius: BorderRadius.circular(10),
                 onTap: () async {
-                  await Clipboard.setData(ClipboardData(text: _auth.uid));
+                  await Clipboard.setData(ClipboardData(text: _shortDeviceId));
                   _snack('ID устройства скопирован');
                 },
                 child: Container(
@@ -234,9 +243,13 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'ID устройства: ${_auth.uid}',
-                          style: const TextStyle(fontSize: 12, color: KolibriColors.textMuted),
-                          overflow: TextOverflow.ellipsis,
+                          'ID устройства: $_shortDeviceId',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: KolibriColors.textMuted,
+                            letterSpacing: 2,
+                          ),
                         ),
                       ),
                       const Icon(Icons.copy, size: 14, color: KolibriColors.textMuted),
@@ -267,9 +280,6 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         StreamBuilder<QuerySnapshot>(
-          // orderBy вместе с where требует составного индекса Firestore —
-          // без него запрос падал, и история «вечно грузилась». Сортируем
-          // на устройстве: операций у одного гостя всегда немного.
           stream: FirebaseFirestore.instance
               .collection('bonusOperations')
               .where('clientUid', isEqualTo: _auth.uid)
