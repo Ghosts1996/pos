@@ -375,7 +375,43 @@ class TookenClient {
   ///
   /// [executor] решает, что агенту разрешено делать — см. AiToolRegistry.
   /// [maxRounds] не даёт агенту зациклиться и съесть баланс токенов.
+  /// Запрос с инструментами и безопасным запасным путём.
+  ///
+  /// Часть шлюзов (особенно Claude-прокси) не поддерживает function calling
+  /// и отвечает ошибкой на поле tools. Раньше это выглядело как «Консьерж
+  /// сейчас недоступен». Теперь при такой ошибке повторяем запрос без
+  /// инструментов: агент ответит по данным, которые уже лежат в промпте.
   Future<AiToolRunResult> completeWithTools({
+    required List<AiMessage> messages,
+    required List<Map<String, dynamic>> tools,
+    required Future<String> Function(String name, Map<String, dynamic> args) executor,
+    String? model,
+    String agentId = 'generic',
+    int maxRounds = 4,
+    int? maxTokens,
+  }) async {
+    try {
+      return await _completeWithToolsRaw(
+        messages: messages,
+        tools: tools,
+        executor: executor,
+        model: model,
+        agentId: agentId,
+        maxRounds: maxRounds,
+        maxTokens: maxTokens,
+      );
+    } catch (_) {
+      final res = await complete(
+        messages: messages,
+        model: model,
+        agentId: agentId,
+        maxTokens: maxTokens,
+      );
+      return AiToolRunResult(res.text, totalTokens: res.totalTokens);
+    }
+  }
+
+  Future<AiToolRunResult> _completeWithToolsRaw({
     required List<AiMessage> messages,
     required List<Map<String, dynamic>> tools,
     required Future<String> Function(String name, Map<String, dynamic> args) executor,
