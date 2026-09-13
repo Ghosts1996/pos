@@ -86,9 +86,18 @@ class NotificationService {
       await android?.createNotificationChannel(_channelInstant);
       await android?.createNotificationChannel(_channelTimers);
       await android?.requestNotificationsPermission();
-      // Точные будильники нужны, чтобы напоминание об углях не «уехало»
-      // на 10 минут из-за экономии батареи.
-      await android?.requestExactAlarmsPermission();
+    } catch (e) {
+      _initError = '$e';
+    }
+
+    // Точные будильники нужны, чтобы напоминание об углях не «уехало» на
+    // десять минут из-за экономии батареи. Просим отдельно и только если
+    // их ещё нет: на части прошивок этот запрос бросает исключение, и
+    // раньше оно обрывало подготовку целиком — вместе со всем, что шло
+    // после неё.
+    try {
+      final exact = await android?.canScheduleExactNotifications() ?? true;
+      if (!exact) await android?.requestExactAlarmsPermission();
     } catch (e) {
       _initError = '$e';
     }
