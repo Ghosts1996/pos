@@ -203,13 +203,17 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                 children: calls
                     .map((c) => Row(
                           children: [
-                            const SizedBox(
-                              height: 14,
-                              width: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
+                            // Была бесконечная «крутилка» с подписью
+                            // «приняли, идём» — она обещала то, чего ещё не
+                            // произошло: вызов всего лишь передан и ждёт
+                            // кальянщика. Галочка и время говорят правду и
+                            // не создают ощущения зависшего экрана.
+                            const Icon(Icons.check_circle_outline,
+                                size: 15, color: KolibriColors.primary),
                             const SizedBox(width: 10),
-                            Text('${c.type.label} — приняли, идём',
+                            Text('${c.type.label} — передали в '
+                                '${c.createdAt.hour.toString().padLeft(2, '0')}:'
+                                '${c.createdAt.minute.toString().padLeft(2, '0')}',
                                 style: const TextStyle(
                                     color: KolibriColors.textMuted, fontSize: 13)),
                           ],
@@ -427,25 +431,51 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         ],
       );
 
-  Widget _callButton(SessionModel s, GuestCallType type, IconData icon) => OutlinedButton.icon(
-        onPressed: () async {
-          await _link.callStaff(
-            tableId: s.tableId,
-            tableName: s.tableName,
-            sessionId: s.id,
-            type: type,
-            clientUid: _auth.uid,
-            guestName: widget.profile?.name ?? '',
-          );
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('${type.label} — передали кальянщику')),
-            );
-          }
-        },
-        icon: Icon(icon, size: 18, color: KolibriColors.accent),
-        label: Text(type.label, style: const TextStyle(fontSize: 13)),
-      );
+  /// Типы вызовов, которые уже переданы и ещё не закрыты кальянщиком.
+  /// Повторное нажатие по такому типу ничего нового не создаёт.
+  final _pendingCalls = <GuestCallType>{};
+
+  Widget _callButton(SessionModel s, GuestCallType type, IconData icon) {
+    final pending = _pendingCalls.contains(type);
+    return OutlinedButton.icon(
+      // Кнопка не ждёт сеть: запись уходит в Firestore, который применяет
+      // её локально мгновенно и сам дошлёт на сервер. Раньше здесь стоял
+      // await, и на слабой связи кнопка висела секундами — гость успевал
+      // нажать её несколько раз, а кальянщик получал пачку одинаковых
+      // вызовов (ровно это и видно на экране с восемью «крутилками»).
+      onPressed: pending
+          ? null
+          : () {
+              _link.callStaff(
+                tableId: s.tableId,
+                tableName: s.tableName,
+                sessionId: s.id,
+                type: type,
+                clientUid: _auth.uid,
+                guestName: widget.profile?.name ?? '',
+              );
+              setState(() => _pendingCalls.add(type));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${type.label} — передали кальянщику'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+              // Через минуту разрешаем позвать снова: кальянщик мог не
+              // услышать, и гость не должен оказаться запертым.
+              Future.delayed(const Duration(minutes: 1), () {
+                if (mounted) setState(() => _pendingCalls.remove(type));
+              });
+            },
+      icon: Icon(icon,
+          size: 18,
+          color: pending ? KolibriColors.textMuted : KolibriColors.accent),
+      label: Text(
+        pending ? 'Передано' : type.label,
+        style: const TextStyle(fontSize: 13),
+      ),
+    );
+  }
 
 }
 
