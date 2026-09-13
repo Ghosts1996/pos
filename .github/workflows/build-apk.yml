@@ -27,7 +27,7 @@ jobs:
           - app: pos
             entrypoint: lib/main.dart
             project_name: hookahpos          # applicationId = com.hookahpos
-            label: Kolibri POS
+            label: Colibri POS
             icon: assets/icon/icon.png
             artifact: hookah-pos-apk
             gservices_secret: GOOGLE_SERVICES_JSON
