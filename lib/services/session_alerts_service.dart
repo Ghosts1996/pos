@@ -58,7 +58,11 @@ class SessionAlertsService {
   Future<void> start() async {
     if (_running) return;
     _running = true;
-    await _notify.init();
+    // Подписки на зал важнее уведомлений: не смогли подготовить
+    // уведомления — экран всё равно должен показывать вызовы и брони.
+    try {
+      await _notify.init();
+    } catch (_) {}
 
     _watchSessions();
     _watchReservations();
