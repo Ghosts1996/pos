@@ -16,6 +16,7 @@ dependencies:
   cloud_firestore: ^5.4.4
   url_launcher: ^6.3.1        # звонок гостю по значку телефона в бронях
   firebase_auth: ^5.3.1
+  shared_preferences: ^2.3.2
   image_picker: ^1.1.2
   cached_network_image: ^3.4.1
   supabase_flutter: ^2.8.0
