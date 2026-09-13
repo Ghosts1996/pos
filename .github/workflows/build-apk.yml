@@ -417,6 +417,43 @@ jobs:
             echo "::warning::build.gradle.kts не найден — проверьте подпись вручную"
           fi
 
+      - name: Проверка отпечатка подписи для App Links
+        if: matrix.deeplink == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          # Android открывает https-ссылку сразу в приложении только если
+          # отпечаток подписи APK совпадает с тем, что лежит на сайте в
+          # .well-known/assetlinks.json. Не совпал — ссылка молча уходит в
+          # браузер, и ни в приложении, ни в логах ошибки не будет.
+          # Поэтому сверяем здесь: отпечаток известен только сборке.
+          AL=public/.well-known/assetlinks.json
+          KS=android/app/upload-keystore.jks
+          if [ ! -f "$KS" ]; then
+            echo "::warning::Постоянного ключа нет — App Links не заработают."
+            exit 0
+          fi
+          FP=$(keytool -list -v -keystore "$KS" -alias "$KEY_ALIAS" \
+                 -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
+               | grep -m1 "SHA256:" | sed 's/.*SHA256: *//' | tr -d ' \r')
+          if [ -z "$FP" ]; then
+            echo "::warning::Не удалось прочитать отпечаток из ключа."
+            exit 0
+          fi
+          echo "Отпечаток подписи этой сборки:"
+          echo "  $FP"
+          if grep -q "$FP" "$AL"; then
+            echo "Совпадает с assetlinks.json — QR будет открывать приложение напрямую."
+          else
+            # Не роняем сборку: APK остаётся рабочим, просто ссылка со
+            # стола откроется через браузер, а не сразу в приложении.
+            echo "::warning::Отпечаток не совпадает с $AL — QR будет открываться через браузер."
+            echo "::warning::Нужно вписать в assetlinks.json отпечаток, напечатанный выше."
+            echo "Сейчас в файле:"
+            cat "$AL"
+          fi
+
       - name: Create notification icon
         run: |
           # Android рисует иконку уведомления силуэтом: цветной ic_launcher
