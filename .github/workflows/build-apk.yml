@@ -80,6 +80,14 @@ jobs:
           flutter create . --platforms=android --org com --project-name ${{ matrix.project_name }}
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
 
+          # flutter create кладёт в test/ свой шаблонный widget_test.dart со
+          # счётчиком: он импортирует package:${{ matrix.project_name }}/main.dart
+          # и виджет MyApp, которых в этом проекте нет (пакет называется
+          # hookah_pos, а точек входа две — lib/main.dart и
+          # lib/client/kolibri_main.dart). Файл в репозитории не хранится,
+          # появляется только здесь и валит шаг тестов. Удаляем сразу.
+          rm -f test/widget_test.dart
+
       - name: Bump compileSdk for CameraX / mobile_scanner compatibility
         run: |
           # mobile_scanner 5.x+ требует compileSdk >= 34 (CameraX 1.3.x), а
