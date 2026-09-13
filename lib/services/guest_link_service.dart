@@ -44,6 +44,60 @@ class GuestLinkService {
     return ClientProfile.fromDoc(snap.docs.first);
   }
 
+  /// Объединение гостя, пришедшего с НОВОГО устройства, с его же старым
+  /// профилем (найденным по номеру телефона).
+  ///
+  /// Бесплатная альтернатива SMS-подтверждению: без платного тарифа
+  /// Firebase нельзя проверить владение номером автоматически, поэтому
+  /// подтверждает личность кальянщик на кассе — так же, как раньше
+  /// вручную переносил историю визитов. Метод переносит бонусный баланс,
+  /// сумму трат, визиты и историю операций на [newUid] и удаляет старую
+  /// запись, чтобы бонусы не задваивались.
+  Future<void> mergeGuestProfiles({required String phone, required String newUid}) async {
+    final old = await findByPhone(phone);
+    if (old == null) {
+      throw StateError('Гость с номером $phone не найден');
+    }
+    if (old.uid == newUid) {
+      throw StateError('Это уже тот же самый профиль');
+    }
+    final newRef = _clients.doc(newUid);
+    final oldRef = _clients.doc(old.uid);
+
+    await _db.runTransaction((tx) async {
+      final newSnap = await tx.get(newRef);
+      if (!newSnap.exists) {
+        throw StateError('Устройство с ID $newUid не найдено — попросите гостя '
+            'открыть приложение и профиль ещё раз');
+      }
+      final newData = newSnap.data() as Map<String, dynamic>;
+      final newBonus = (newData['bonusBalance'] ?? 0).toDouble();
+      final newSpent = (newData['totalSpent'] ?? 0).toDouble();
+      final newVisits = (newData['visits'] as num?)?.toInt() ?? 0;
+      final newName = (newData['name'] as String?) ?? '';
+
+      tx.set(newRef, {
+        'phone': phone,
+        'name': newName.isNotEmpty ? newName : old.name,
+        'bonusBalance': old.bonusBalance + newBonus,
+        'totalSpent': old.totalSpent + newSpent,
+        'visits': old.visits + newVisits,
+        if (old.discountCardId.isNotEmpty) 'discountCardId': old.discountCardId,
+        if (old.discountPercent > 0) 'discountPercent': old.discountPercent,
+      }, SetOptions(merge: true));
+    });
+
+    // Переносим историю бонусных операций на новый uid — гость увидит её
+    // в «Истории бонусов» уже на текущем устройстве.
+    final ops = await _db.collection('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
+    final batch = _db.batch();
+    for (final d in ops.docs) {
+      batch.update(d.reference, {'clientUid': newUid});
+    }
+    batch.delete(oldRef);
+    await batch.commit();
+  }
+
   /// Все гости для админского экрана «Гости»: имя, телефон, уровень
   /// лояльности, визиты, траты — сортировка по тратам. Фильтрация по
   /// имени/телефону — на клиенте: гостей обычно не тысячи, а Firestore не

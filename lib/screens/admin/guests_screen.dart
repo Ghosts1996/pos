@@ -69,10 +69,82 @@ class _GuestsScreenState extends State<GuestsScreen> {
     }
   }
 
+  /// Гость пришёл с нового устройства и назвал номер, на который уже
+  /// заведён профиль (приложение само не даст ему сохранить занятый
+  /// номер и покажет «ID устройства» — его и нужно ввести сюда). Переносит
+  /// бонусы, визиты, сумму трат и историю операций со старого профиля на
+  /// новое устройство и удаляет дубль.
+  Future<void> _mergeDevices() async {
+    final phoneCtrl = TextEditingController();
+    final uidCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Объединить с новым устройством'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Гость называет свой номер телефона и показывает «ID устройства» '
+              'из профиля на новом телефоне.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: phoneCtrl,
+              autofocus: true,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'Номер телефона гостя'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: uidCtrl,
+              decoration: const InputDecoration(labelText: 'ID устройства (с нового телефона)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Объединить'),
+          ),
+        ],
+      ),
+    );
+    if (result != true) return;
+    final phone = phoneCtrl.text.trim();
+    final uid = uidCtrl.text.trim();
+    if (phone.isEmpty || uid.isEmpty) return;
+
+    try {
+      await _link.mergeGuestProfiles(phone: phone, newUid: uid);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Готово — бонусы и история перенесены')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось объединить: $e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Гости')),
+      appBar: AppBar(
+        title: const Text('Гости'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.merge_type),
+            tooltip: 'Объединить с новым устройством',
+            onPressed: _mergeDevices,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
