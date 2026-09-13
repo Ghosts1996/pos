@@ -5,7 +5,6 @@ import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
-import '../widgets/kolibri_ai_chat.dart';
 
 /// Живое меню заведения для гостя.
 ///
@@ -152,17 +151,6 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                   hintText: 'Поиск по меню',
                   prefixIcon: Icon(Icons.search, color: KolibriColors.textMuted),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            IconButton.filled(
-              style: IconButton.styleFrom(backgroundColor: KolibriColors.gold),
-              icon: const Icon(Icons.auto_awesome, color: Colors.black87),
-              tooltip: 'Подобрать через ИИ-сомелье',
-              onPressed: () => KolibriAiChat.show(
-                context,
-                guestUid: _auth.uid,
-                sommelierMode: true,
               ),
             ),
           ],
