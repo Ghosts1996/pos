@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
 import '../services/firestore_service.dart';
 import '../services/reservation_service.dart';
+import '../services/staff_device_service.dart';
 import '../utils/constants.dart';
 import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
+import 'staff_device_setup_screen.dart';
 
 /// Вход по 4-значному PIN-коду сотрудника. Роль (админ/сотрудник) определяется
 /// автоматически по коду — отдельного экрана выбора роли не требуется.
@@ -18,9 +21,26 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _fs = FirestoreService();
+  final _staffDevice = StaffDeviceService();
   String _pin = '';
   bool _loading = false;
   String? _error;
+
+  /// Планшет ещё не отмечен как рабочее устройство — до регистрации база не
+  /// отдаёт ему ни сотрудников, ни столы, ни чеки (см. firestore.rules).
+  /// null — пока проверяем.
+  bool? _deviceRegistered;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDevice();
+  }
+
+  Future<void> _checkDevice() async {
+    final registered = await _staffDevice.isRegistered();
+    if (mounted) setState(() => _deviceRegistered = registered);
+  }
 
   Future<void> _submit() async {
     if (_pin.length < 4 || _loading) return;
@@ -31,6 +51,27 @@ class _LoginScreenState extends State<LoginScreen> {
     Employee? employee;
     try {
       employee = await _fs.findByPin(_pin);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      // permission-denied — это НЕ проблема сети. Правила безопасности не
+      // отдают список сотрудников устройству, которое не зарегистрировано
+      // как рабочее. Раньше здесь для любой ошибки показывалось «Нет связи
+      // с сервером», и настоящая причина была не видна: кассир проверял
+      // интернет, а дело было в регистрации планшета.
+      if (e.code == 'permission-denied') {
+        setState(() {
+          _loading = false;
+          _deviceRegistered = false;
+          _pin = '';
+        });
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _error = 'Нет связи с сервером. Проверьте интернет и попробуйте снова';
+        _pin = '';
+      });
+      return;
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -82,6 +123,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_deviceRegistered == false) {
+      return StaffDeviceSetupScreen(
+        onRegistered: () => setState(() {
+          _deviceRegistered = true;
+          _error = null;
+        }),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF1B1B1F),
       body: SafeArea(

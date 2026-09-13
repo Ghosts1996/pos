@@ -14,8 +14,8 @@ import 'kolibri_menu_screen.dart';
 import 'kolibri_profile_screen.dart';
 import 'kolibri_visit_screen.dart';
 
-/// Корневой каркас «Колибри Лаундж»: 4 вкладки + плавающая кнопка
-/// ИИ-консьержа, доступная с любого экрана.
+/// Корневой каркас «Колибри Лаундж»: 5 вкладок + плавающая кнопка
+/// ИИ-консьержа снизу справа, доступная с любого экрана.
 class KolibriShell extends StatefulWidget {
   const KolibriShell({super.key});
 
@@ -116,7 +116,13 @@ class _KolibriShellState extends State<KolibriShell> {
             tooltip: 'ИИ-консьерж',
             child: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
           ),
-          floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
+          // Штатное место кнопки — снизу справа, над панелью вкладок.
+          // Было endTop: без AppBar эта позиция ставит кнопку центром ровно
+          // на верхнюю границу экрана, поэтому она наезжала на заголовок
+          // («Добрый вечер, …») и выглядела обрезанной. Внизу справа у всех
+          // экранов оставлен пустой отступ (100–140 px), так что кнопка ничего
+          // не перекрывает.
+          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
           bottomNavigationBar: NavigationBar(
             selectedIndex: _index,
             onDestinationSelected: (i) => setState(() => _index = i),
