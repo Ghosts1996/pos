@@ -181,7 +181,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (tag == null) return;
     try {
-      await _fs.setGuestTag(session.id, tag);
+      await _fs.setGuestTag(session.id, tag, tableId: session.tableId);
     } catch (e) {
       _showError('Не удалось сохранить подпись — проверьте интернет');
     }

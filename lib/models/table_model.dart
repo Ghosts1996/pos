@@ -30,6 +30,12 @@ class TableModel {
   /// FirestoreService.syncTableBusyUntil). null — стол свободен.
   final DateTime? busyUntil;
 
+  /// Краткая витрина открытых чеков стола — для выбора «своего» чека в
+  /// гостевом приложении. Заполняется кассой (см.
+  /// FirestoreService.syncTableBusyUntil). Персональных данных не несёт:
+  /// только id, подпись кассира и время открытия.
+  final List<TableCheck> openChecks;
+
   TableModel({
     required this.id,
     required this.name,
@@ -41,6 +47,7 @@ class TableModel {
     this.activeSessionIds = const [],
     this.maxOpenSessions = 2,
     this.busyUntil,
+    this.openChecks = const [],
   });
 
   factory TableModel.fromDoc(DocumentSnapshot doc) {
@@ -70,6 +77,9 @@ class TableModel {
       busyUntil: data['busyUntil'] is Timestamp
           ? (data['busyUntil'] as Timestamp).toDate()
           : null,
+      openChecks: ((data['openChecks'] ?? []) as List)
+          .map((e) => TableCheck.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList(),
     );
   }
 
@@ -84,6 +94,7 @@ class TableModel {
       'activeSessionIds': activeSessionIds,
       'maxOpenSessions': maxOpenSessions,
       'busyUntil': busyUntil == null ? null : Timestamp.fromDate(busyUntil!),
+      'openChecks': openChecks.map((e) => e.toMap()).toList(),
     };
   }
 
@@ -100,6 +111,7 @@ class TableModel {
     List<String>? activeSessionIds,
     int? maxOpenSessions,
     DateTime? busyUntil,
+    List<TableCheck>? openChecks,
   }) {
     return TableModel(
       id: id,
@@ -112,6 +124,36 @@ class TableModel {
       activeSessionIds: activeSessionIds ?? this.activeSessionIds,
       maxOpenSessions: maxOpenSessions ?? this.maxOpenSessions,
       busyUntil: busyUntil ?? this.busyUntil,
+      openChecks: openChecks ?? this.openChecks,
     );
   }
+}
+
+/// Один открытый чек стола в витрине [TableModel.openChecks].
+///
+/// Ровно столько, сколько нужно гостю, чтобы отличить свой чек от соседнего:
+/// подпись, которую кассир поставил чеку, и время его открытия. Ни позиций,
+/// ни суммы здесь нет — за соседний счёт гость платить не будет, а видеть
+/// его не должен.
+class TableCheck {
+  final String id;
+  final String label;
+  final DateTime? openedAt;
+
+  const TableCheck({required this.id, this.label = '', this.openedAt});
+
+  factory TableCheck.fromMap(Map<String, dynamic> m) {
+    final ts = m['openedAt'];
+    return TableCheck(
+      id: m['id']?.toString() ?? '',
+      label: m['label']?.toString() ?? '',
+      openedAt: ts is Timestamp ? ts.toDate() : null,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'label': label,
+        'openedAt': openedAt == null ? null : Timestamp.fromDate(openedAt!),
+      };
 }

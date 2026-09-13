@@ -7,6 +7,7 @@ import '../services/kolibri_deep_links.dart';
 import '../services/kolibri_image_cache.dart';
 import '../services/kolibri_notifications.dart';
 import '../theme/kolibri_theme.dart';
+import '../widgets/check_picker_sheet.dart';
 import '../widgets/kolibri_ai_chat.dart';
 import 'kolibri_booking_screen.dart';
 import 'kolibri_home_screen.dart';
@@ -65,6 +66,24 @@ class _KolibriShellState extends State<KolibriShell> {
       ..onFailed = (message) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      // За столом несколько счетов — спрашиваем, какой из них гостя.
+      // Раньше приложение молча цепляло последний открытый, и соседи по
+      // столу видели один и тот же чужой чек.
+      ..onChooseCheck = (tableId, tableName, checks) async {
+        if (!mounted) return;
+        final picked = await CheckPickerSheet.show(
+          context,
+          tableName: tableName,
+          checks: checks,
+        );
+        if (picked == null || !mounted) return;
+        await _link.bindToSession(_auth.uid, tableId, picked.id);
+        if (!mounted) return;
+        setState(() => _index = 3);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Готово! Ваш счёт открыт')),
+        );
       };
     links.start();
   }
