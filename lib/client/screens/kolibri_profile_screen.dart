@@ -162,9 +162,35 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Text(
-                'Визитов: ${p?.visits ?? 0} · кешбэк ${(p?.cashbackPercent ?? 3).toStringAsFixed(0)}%',
+                'Визитов: ${p?.visits ?? 0} · потрачено '
+                '${(p?.totalSpent ?? 0).toStringAsFixed(0)} ₽ · кешбэк '
+                '${(p?.cashbackPercent ?? 3).toStringAsFixed(0)}%',
                 style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
               ),
+              // Прогресс до следующего уровня: без него гость видит только
+              // текущий статус и не понимает, что до следующего осталось
+              // немного — а это главный смысл уровней.
+              if (p != null) ...[
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: p.tierProgress,
+                    minHeight: 6,
+                    backgroundColor: KolibriColors.surfaceElevated,
+                    valueColor: AlwaysStoppedAnimation(tierColor),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  p.nextTier == null
+                      ? 'Максимальный уровень — спасибо, что вы с нами'
+                      : 'До уровня «${p.nextTier!.name}» осталось '
+                          '${p.toNextTier.toStringAsFixed(0)} ₽ '
+                          '(кешбэк вырастет до ${p.nextTier!.cashback.toStringAsFixed(0)}%)',
+                  style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+                ),
+              ],
               if ((p?.discountPercent ?? 0) > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -284,13 +310,23 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         ),
 
         const SizedBox(height: 28),
+        _visitsSection(),
+
+        const SizedBox(height: 28),
         const Text('История бонусов',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         StreamBuilder<QuerySnapshot>(
+          // orderBy обязателен: limit(50) без сортировки отдаёт первые
+          // пятьдесят документов в порядке id, то есть случайные. У
+          // постоянного гостя свежие начисления в такую выборку просто не
+          // попадали, и «история» показывала произвольный срез за все годы.
+          // Сортировка на клиенте это не чинила — она сортировала уже не те
+          // записи. Составной индекс добавлен в firestore.indexes.json.
           stream: FirebaseFirestore.instance
               .collection('bonusOperations')
               .where('clientUid', isEqualTo: _auth.uid)
+              .orderBy('createdAt', descending: true)
               .limit(50)
               .snapshots(),
           builder: (context, snap) {
@@ -300,13 +336,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             }
             if (!snap.hasData) return const LinearProgressIndicator();
 
-            final docs = snap.data!.docs.toList()
-              ..sort((a, b) {
-                final x = (a.data() as Map<String, dynamic>)['createdAt'];
-                final y = (b.data() as Map<String, dynamic>)['createdAt'];
-                if (x is! Timestamp || y is! Timestamp) return 0;
-                return y.compareTo(x);
-              });
+            final docs = snap.data!.docs;
             if (docs.isEmpty) {
               return const Text('Операций пока нет',
                   style: TextStyle(color: KolibriColors.textMuted));
@@ -345,6 +375,91 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),
       ],
+    );
+  }
+
+  /// История визитов — то, из чего складывается уровень лояльности.
+  ///
+  /// Берётся из подколлекции clients/{uid}/visits: сами чеки гостю читать
+  /// нельзя (в коллекции sessions лежат счета всех столов), поэтому касса
+  /// при закрытии чека пишет гостю его собственную копию визита. Она не
+  /// меняется и не удаляется — история живёт столько же, сколько профиль.
+  Widget _visitsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('История визитов',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        StreamBuilder<List<GuestVisit>>(
+          stream: _link.visitsStream(_auth.uid),
+          builder: (context, snap) {
+            if (snap.hasError) {
+              return const Text('Не удалось загрузить историю',
+                  style: TextStyle(color: KolibriColors.textMuted));
+            }
+            if (!snap.hasData) return const LinearProgressIndicator();
+            final visits = snap.data!;
+            if (visits.isEmpty) {
+              return const Text(
+                'Визитов пока нет. Отсканируйте QR-код на столе — визит '
+                'зачтётся автоматически, и сумма чека пойдёт в ваш уровень.',
+                style: TextStyle(color: KolibriColors.textMuted),
+              );
+            }
+            return Column(children: visits.map(_visitTile).toList());
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _visitTile(GuestVisit v) {
+    final items = v.items.map((i) => '${i.name} ×${i.qty}').join(', ');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: KolibriColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: KolibriColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${v.date.day.toString().padLeft(2, '0')}.'
+                  '${v.date.month.toString().padLeft(2, '0')}.${v.date.year}'
+                  '${v.tableName.isEmpty ? '' : ' · стол ${v.tableName}'}',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+              ),
+              Text('${v.total.toStringAsFixed(0)} ₽',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ],
+          ),
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(items,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+          ],
+          if (v.bonusEarned > 0 || v.bonusSpent > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              [
+                if (v.bonusEarned > 0) '+${v.bonusEarned.toStringAsFixed(0)} бонусов',
+                if (v.bonusSpent > 0) 'списано ${v.bonusSpent.toStringAsFixed(0)} ₽ бонусами',
+              ].join(' · '),
+              style: const TextStyle(color: KolibriColors.success, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

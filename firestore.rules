@@ -101,6 +101,15 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ---- Вечная история визитов гостя ----
+    // Свои визиты гость видит, но не правит: запись создаёт касса при
+    // закрытии чека. Отдельная подколлекция нужна потому, что сами чеки
+    // (sessions) гостю читать нельзя — там счета других столов.
+    match /clients/{uid}/visits/{visitId} {
+      allow read: if isSelf(uid) || isStaff();
+      allow write: if isStaff();
+    }
+
     // ---- Брони ----
     match /reservations/{doc} {
       allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);

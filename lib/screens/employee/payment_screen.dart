@@ -325,6 +325,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
               clientUid: _clientUid,
               sessionId: widget.session.id,
               paidAmount: paid,
+              // Уровень лояльности двигает полная сумма чека, а не только
+              // живые деньги: иначе гость, закрывший часть счёта бонусами,
+              // поднимался бы к Золоту медленнее того, кто бонусами не
+              // пользуется.
+              billTotal: widget.session.totalWithDiscount,
+              tableName: widget.session.tableName,
+              bonusSpent: _bonusPaid + _giftPaid,
+              items: widget.session.orderItems,
             )
             .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
       }

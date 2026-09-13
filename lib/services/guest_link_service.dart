@@ -147,6 +147,22 @@ class GuestLinkService {
       }
       await batch.commit();
     }
+
+    // Переносим и историю визитов. Она лежит подколлекцией внутри профиля,
+    // а Firestore при удалении документа подколлекции НЕ удаляет — без
+    // этого переноса визиты остались бы висеть под уже удалённым профилем,
+    // и гость, объединивший устройства, увидел бы пустую историю при
+    // сохранившейся сумме трат.
+    final visits = await oldRef.collection('visits').get();
+    for (var i = 0; i < visits.docs.length; i += chunkSize) {
+      final batch = _db.batch();
+      for (final d in visits.docs.skip(i).take(chunkSize)) {
+        batch.set(newRef.collection('visits').doc(d.id), d.data());
+        batch.delete(d.reference);
+      }
+      await batch.commit();
+    }
+
     await oldRef.delete();
   }
 
@@ -418,34 +434,79 @@ class GuestLinkService {
 
   // ---------- БОНУСЫ ----------
 
+  /// Засчитывает визит гостю: кешбэк, счётчик визитов, сумма трат и запись
+  /// в вечную историю визитов.
+  ///
+  /// Два разных числа — и их нельзя путать:
+  ///  • [paidAmount] — сколько получено ЖИВЫМИ деньгами (наличные, карта,
+  ///    терминал). С них и только с них считается кешбэк: если начислять
+  ///    бонусы ещё и на сумму, оплаченную бонусами, программа лояльности
+  ///    начинает подпитывать сама себя.
+  ///  • [billTotal] — полная сумма чека со скидкой. Именно она копится в
+  ///    totalSpent и двигает уровень: гость «наел» на эти деньги, чем бы он
+  ///    их ни закрыл. Раньше в totalSpent падала оплата живыми деньгами, и
+  ///    гость, расплатившийся бонусами, продвигался к Золоту медленнее, чем
+  ///    тот, кто бонусами не пользуется, — программа наказывала за то, ради
+  ///    чего сама и существует.
+  ///
+  /// Идемпотентно: повторный вызов с тем же чеком ничего не начислит
+  /// (отметка bonusAccruedFor) и не задвоит запись визита (id визита —
+  /// это id чека).
   Future<void> accrueBonuses({
     required String clientUid,
     required String sessionId,
     required double paidAmount,
+    double billTotal = 0,
+    String tableName = '',
+    double bonusSpent = 0,
+    List<OrderItem> items = const [],
   }) async {
-    if (clientUid.isEmpty || paidAmount <= 0) return;
+    if (clientUid.isEmpty) return;
+    final spent = billTotal > 0 ? billTotal : paidAmount;
+    if (spent <= 0 && paidAmount <= 0) return;
+
     final ref = _clients.doc(clientUid);
     var bonus = 0.0;
+    var counted = false;
 
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
       if (!snap.exists) return;
 
-      final data = snap.data() as Map<String, dynamic>;
+      final data = snap.data()!;
       if (data['bonusAccruedFor'] == sessionId) return;
 
       final profile = ClientProfile.fromDoc(snap);
       bonus = (paidAmount * profile.cashbackPercent / 100).roundToDouble();
+      counted = true;
 
       tx.update(ref, {
         'bonusBalance': profile.bonusBalance + bonus,
-        'totalSpent': profile.totalSpent + paidAmount,
+        'totalSpent': profile.totalSpent + spent,
         'visits': profile.visits + 1,
         'bonusAccruedFor': sessionId,
         'activeSessionId': '',
         'activeTableId': '',
         'lastVisitAt': Timestamp.fromDate(DateTime.now()),
       });
+    });
+
+    if (!counted) return; // этот чек уже засчитан раньше
+
+    // Вечная история визитов гостя. Живёт отдельным документом, потому что
+    // сами чеки (коллекция sessions) гостю читать нельзя — там чужие счета.
+    // Id документа — id чека, поэтому повторная запись просто перезапишет
+    // ту же строку, а не создаст дубль.
+    await _clients.doc(clientUid).collection('visits').doc(sessionId).set({
+      'date': Timestamp.fromDate(DateTime.now()),
+      'tableName': tableName,
+      'total': spent,
+      'paid': paidAmount,
+      'bonusEarned': bonus,
+      'bonusSpent': bonusSpent,
+      'items': items
+          .map((i) => {'name': i.name, 'qty': i.qty, 'price': i.price})
+          .toList(),
     });
 
     if (bonus <= 0) return;
@@ -458,6 +519,16 @@ class GuestLinkService {
       'createdAt': Timestamp.fromDate(DateTime.now()),
     });
   }
+
+  /// Вечная история визитов гостя, от самого свежего. Источник — та самая
+  /// подколлекция, что пишется при закрытии чека.
+  Stream<List<GuestVisit>> visitsStream(String uid, {int limit = 100}) => _clients
+      .doc(uid)
+      .collection('visits')
+      .orderBy('date', descending: true)
+      .limit(limit)
+      .snapshots()
+      .map((s) => s.docs.map(GuestVisit.fromDoc).toList());
 
   Future<double> redeemBonuses({
     required String clientUid,

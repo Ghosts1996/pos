@@ -247,6 +247,17 @@ exports.onSessionClosed = onDocumentUpdated(
       (after.paymentTerminal || 0);
     if (paid <= 0) return;
 
+    // Полная сумма чека со скидкой. Кешбэк считается с живых денег (paid),
+    // а уровень лояльности двигает именно эта сумма: гость «наел» на неё,
+    // чем бы он её ни закрыл. Логика должна совпадать с accrueBonuses в
+    // guest_link_service.dart, иначе сервер и касса дадут разный уровень.
+    const orderTotal = (after.orderItems || []).reduce(
+      (sum, i) => sum + (i.price || 0) * (i.qty || 0),
+      0
+    );
+    const billTotal = orderTotal * (1 - (after.discountPercent || 0) / 100);
+    const spentDelta = billTotal > 0 ? billTotal : paid;
+
     const clients = await db
       .collection("clients")
       .where("activeSessionId", "==", event.params.id)
@@ -269,7 +280,7 @@ exports.onSessionClosed = onDocumentUpdated(
       const c = snap.data() || {};
       if (c.bonusAccruedFor === event.params.id) return null;
 
-      const spent = (c.totalSpent || 0) + paid;
+      const spent = (c.totalSpent || 0) + spentDelta;
       // Пороги и проценты должны совпадать с ClientProfile.cashbackPercent
       // в приложении — иначе гость видит в профиле один процент, а
       // получает другой. Алмаз (15% от 100 000) здесь раньше отсутствовал.
@@ -296,6 +307,22 @@ exports.onSessionClosed = onDocumentUpdated(
 
     const { bonus } = result;
     const c = { pushToken: result.pushToken };
+
+    // Вечная история визитов гостя — её же пишет касса. Id документа равен
+    // id чека, поэтому повторная запись не создаёт дубль.
+    await ref.collection("visits").doc(event.params.id).set({
+      date: new Date(),
+      tableName: after.tableName || "",
+      total: spentDelta,
+      paid,
+      bonusEarned: bonus,
+      bonusSpent: 0,
+      items: (after.orderItems || []).map((i) => ({
+        name: i.name || "",
+        qty: i.qty || 0,
+        price: i.price || 0,
+      })),
+    });
 
     await db.collection("bonusOperations").add({
       clientUid: ref.id,

@@ -53,30 +53,54 @@ class ClientProfile {
     this.lastVisitAt,
   });
 
+  /// Пороги уровней лояльности по сумме всех закрытых чеков гостя.
+  /// Одно место, из которого берут данные и сам уровень, и прогресс-бар в
+  /// профиле, — чтобы пороги нельзя было развести по разным экранам.
+  static const tiers = <({String name, double from, double cashback})>[
+    (name: 'Бронза', from: 0, cashback: 3),
+    (name: 'Серебро', from: 10000, cashback: 5),
+    (name: 'Золото', from: 25000, cashback: 7),
+    (name: 'Платина', from: 50000, cashback: 10),
+    (name: 'Алмаз', from: 100000, cashback: 15),
+  ];
+
   /// Уровень лояльности — считается от суммы закрытых чеков.
-  String get tier {
-    if (totalSpent >= 100000) return 'Алмаз';
-    if (totalSpent >= 50000) return 'Платина';
-    if (totalSpent >= 25000) return 'Золото';
-    if (totalSpent >= 10000) return 'Серебро';
-    return 'Бронза';
+  String get tier => _currentTier.name;
+
+  ({String name, double from, double cashback}) get _currentTier {
+    var result = tiers.first;
+    for (final t in tiers) {
+      if (totalSpent >= t.from) result = t;
+    }
+    return result;
+  }
+
+  /// Следующий уровень, если он есть. null — гость уже на «Алмазе».
+  ({String name, double from, double cashback})? get nextTier {
+    for (final t in tiers) {
+      if (totalSpent < t.from) return t;
+    }
+    return null;
+  }
+
+  /// Сколько ещё потратить до следующего уровня. 0 — уровень максимальный.
+  double get toNextTier {
+    final next = nextTier;
+    return next == null ? 0 : next.from - totalSpent;
+  }
+
+  /// Доля пройденного пути до следующего уровня (0..1) — для прогресс-бара.
+  double get tierProgress {
+    final next = nextTier;
+    if (next == null) return 1;
+    final from = _currentTier.from;
+    final span = next.from - from;
+    if (span <= 0) return 1;
+    return ((totalSpent - from) / span).clamp(0.0, 1.0);
   }
 
   /// Процент кешбэка бонусами по уровню.
-  double get cashbackPercent {
-    switch (tier) {
-      case 'Алмаз':
-        return 15;
-      case 'Платина':
-        return 10;
-      case 'Золото':
-        return 7;
-      case 'Серебро':
-        return 5;
-      default:
-        return 3;
-    }
-  }
+  double get cashbackPercent => _currentTier.cashback;
 
   factory ClientProfile.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -118,6 +142,71 @@ class ClientProfile {
         'createdAt': Timestamp.fromDate(createdAt),
         'lastVisitAt': lastVisitAt != null ? Timestamp.fromDate(lastVisitAt!) : null,
       };
+}
+
+/// Один визит гостя — документ clients/{uid}/visits/{sessionId}.
+///
+/// Отдельная «вечная» запись, а не ссылка на чек: коллекцию sessions гостю
+/// читать нельзя (там чужие счета), а историю своих посещений он видеть
+/// должен. Пишется кассой один раз при закрытии чека и больше не меняется.
+class GuestVisit {
+  final String id;
+  final DateTime date;
+  final String tableName;
+
+  /// Сумма чека со скидкой — она же копится в totalSpent и двигает уровень.
+  final double total;
+
+  /// Сколько из неё получено живыми деньгами (с них считается кешбэк).
+  final double paid;
+
+  final double bonusEarned;
+  final double bonusSpent;
+  final List<GuestVisitItem> items;
+
+  const GuestVisit({
+    required this.id,
+    required this.date,
+    this.tableName = '',
+    this.total = 0,
+    this.paid = 0,
+    this.bonusEarned = 0,
+    this.bonusSpent = 0,
+    this.items = const [],
+  });
+
+  factory GuestVisit.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    final date = data['date'];
+    return GuestVisit(
+      id: doc.id,
+      date: date is Timestamp ? date.toDate() : DateTime.now(),
+      tableName: data['tableName'] ?? '',
+      total: (data['total'] ?? 0).toDouble(),
+      paid: (data['paid'] ?? 0).toDouble(),
+      bonusEarned: (data['bonusEarned'] ?? 0).toDouble(),
+      bonusSpent: (data['bonusSpent'] ?? 0).toDouble(),
+      items: ((data['items'] ?? []) as List)
+          .map((e) => GuestVisitItem.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+    );
+  }
+}
+
+/// Строка заказа внутри визита — хранится копией, чтобы история не
+/// «поехала», если позицию меню потом переименуют или удалят.
+class GuestVisitItem {
+  final String name;
+  final int qty;
+  final double price;
+
+  const GuestVisitItem({required this.name, this.qty = 1, this.price = 0});
+
+  factory GuestVisitItem.fromMap(Map<String, dynamic> m) => GuestVisitItem(
+        name: m['name']?.toString() ?? '',
+        qty: (m['qty'] as num?)?.toInt() ?? 1,
+        price: (m['price'] ?? 0).toDouble(),
+      );
 }
 
 /// Тип обращения гостя из-за стола.
