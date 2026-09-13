@@ -41,9 +41,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     super.initState();
     _name.text = widget.profile?.name ?? '';
     _phone.text = widget.profile?.phone ?? '';
-    _auth.getShortDeviceId().then((id) {
-      if (mounted) setState(() => _shortDeviceId = id);
-    });
+    _initShortId();
+  }
+
+  Future<void> _initShortId() async {
+    final id = await _auth.getShortDeviceId();
+    if (mounted) setState(() => _shortDeviceId = id);
+    // Записываем shortDeviceId в Firestore при каждом открытии профиля —
+    // кассир сможет найти устройство по 6-значному коду сразу.
+    if (_auth.uid.isNotEmpty) {
+      await _link.updateProfile(_auth.uid, {'shortDeviceId': id});
+    }
   }
 
   @override
