@@ -247,6 +247,19 @@ class ReservationService {
         throw NoTablesAvailableException(reservation.startTime);
       }
       reservation = reservation.copyWith(tableId: free.first.id, tableName: free.first.name);
+    } else if (reservation.tableId.isNotEmpty) {
+      // Стол выбран вручную — на карте (гостем в приложении или сотрудником
+      // на POS). Карта могла устареть, пока человек её листал, поэтому
+      // перепроверяем прямо перед записью — иначе два гостя могут выбрать
+      // один и тот же стол на одно время.
+      final free = await availableTables(
+        start: reservation.startTime,
+        durationMinutes: reservation.durationMinutes,
+        guestsCount: reservation.guestsCount,
+      );
+      if (!free.any((t) => t.id == reservation.tableId)) {
+        throw NoTablesAvailableException(reservation.startTime);
+      }
     }
 
     final ref = _col.doc();
