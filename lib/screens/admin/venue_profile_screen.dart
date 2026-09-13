@@ -23,6 +23,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _phone = TextEditingController();
   final _about = TextEditingController();
   final _rules = TextEditingController();
+  final _lat = TextEditingController();
+  final _lon = TextEditingController();
   final _hours = <int, TextEditingController>{};
 
   bool _loading = true;
@@ -43,6 +45,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _phone.text = p.phone;
     _about.text = p.about;
     _rules.text = p.rules;
+    _lat.text = p.lat == 0 ? '' : p.lat.toString();
+    _lon.text = p.lon == 0 ? '' : p.lon.toString();
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -56,6 +60,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       phone: _phone.text.trim(),
       about: _about.text.trim(),
       rules: _rules.text.trim(),
+      lat: double.tryParse(_lat.text.trim().replaceAll(',', '.')) ?? 0,
+      lon: double.tryParse(_lon.text.trim().replaceAll(',', '.')) ?? 0,
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
@@ -107,6 +113,33 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               labelText: 'Правила',
               helperText: 'Возраст, депозит, можно ли со своим, дресс-код',
             ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _lat,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                  decoration: const InputDecoration(labelText: 'Широта (lat)', hintText: '55.7558'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _lon,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                  decoration: const InputDecoration(labelText: 'Долгота (lon)', hintText: '37.6173'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Координаты заведения — по ним ИИ-сомелье и консьерж смотрят погоду '
+            'и учитывают её в подборе микса. Найдите точку на Яндекс.Картах или '
+            'Google Maps: координаты показаны при долгом нажатии на точку.',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
           ),
 
           const Divider(height: 32),

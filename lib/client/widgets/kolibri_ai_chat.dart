@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
+import '../../services/guest_link_service.dart';
 import '../theme/kolibri_theme.dart';
 
 /// ИИ-консьерж гостя в «Колибри Лаундж».
@@ -64,6 +65,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
   final _scroll = ScrollController();
   final _msgs = <_Msg>[];
   final _history = <AiMessage>[];
+  final _link = GuestLinkService();
   bool _busy = false;
   String? _error;
 
@@ -104,6 +106,20 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       _msgs.add(_Msg(true, text));
       _input.clear();
     });
+
+    // Каждый вопрос стоит денег на шлюзе ИИ, поэтому доступ ограничен:
+    // нужен указанный телефон, реальное присутствие за столом (QR) и не
+    // больше 10 вопросов в день — иначе показываем причину и на ИИ не идём.
+    final quota = await _link.consumeAiQuota(widget.guestUid);
+    if (!quota.allowed) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = quota.reason ?? 'ИИ-консьерж сейчас недоступен.';
+        });
+      }
+      return;
+    }
 
     try {
       final reply = widget.sommelierMode

@@ -27,6 +27,12 @@ class VenueProfile {
   final double depositFrom;
   final int depositGuests;
 
+  /// Координаты заведения — нужны только инструменту ИИ «погода сейчас»,
+  /// который сомелье и консьерж используют, чтобы подобрать микс под
+  /// погоду за окном. 0/0 — не заданы, инструмент тогда отвечает без погоды.
+  final double lat;
+  final double lon;
+
   const VenueProfile({
     this.name = 'Колибри Лаундж',
     this.address = '',
@@ -37,6 +43,8 @@ class VenueProfile {
     this.rules = '',
     this.depositFrom = 0,
     this.depositGuests = 6,
+    this.lat = 0,
+    this.lon = 0,
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -56,6 +64,8 @@ class VenueProfile {
       rules: data['rules'] ?? '',
       depositFrom: (data['depositFrom'] ?? 0).toDouble(),
       depositGuests: (data['depositGuests'] as num?)?.toInt() ?? 6,
+      lat: (data['lat'] ?? 0).toDouble(),
+      lon: (data['lon'] ?? 0).toDouble(),
     );
   }
 
@@ -69,6 +79,8 @@ class VenueProfile {
         'rules': rules,
         'depositFrom': depositFrom,
         'depositGuests': depositGuests,
+        'lat': lat,
+        'lon': lon,
       };
 
   /// Часы работы на сегодня — строкой, как их показывают гостю.
@@ -84,6 +96,8 @@ class VenueProfile {
     String? rules,
     double? depositFrom,
     int? depositGuests,
+    double? lat,
+    double? lon,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -95,6 +109,8 @@ class VenueProfile {
         rules: rules ?? this.rules,
         depositFrom: depositFrom ?? this.depositFrom,
         depositGuests: depositGuests ?? this.depositGuests,
+        lat: lat ?? this.lat,
+        lon: lon ?? this.lon,
       );
 }
 

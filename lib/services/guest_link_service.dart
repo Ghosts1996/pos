@@ -97,6 +97,51 @@ class GuestLinkService {
         'activeTableId': '',
       }, SetOptions(merge: true));
 
+  // ---------- ЛИМИТ ИИ-КОНСЬЕРЖА ----------
+
+  /// Каждый вызов ИИ-консьержа/сомелье стоит денег на шлюзе, поэтому доступ
+  /// ограничен: гость должен указать телефон (иначе анонимный аккаунт можно
+  /// плодить бесконечно) и физически сидеть за столом (отсканировал QR —
+  /// activeSessionId не пуст), и не больше [dailyLimit] вопросов в день.
+  /// Счётчик и дата лежат прямо в профиле гостя и атомарно проверяются и
+  /// увеличиваются транзакцией — параллельные быстрые тапы не дадут пробить
+  /// лимит гонкой запросов.
+  Future<AiQuotaResult> consumeAiQuota(String uid, {int dailyLimit = 10}) {
+    final ref = _clients.doc(uid);
+    return _db.runTransaction<AiQuotaResult>((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) {
+        return const AiQuotaResult(false, 'Сначала откройте профиль в приложении.');
+      }
+      final data = snap.data()!;
+      final phone = ((data['phone'] as String?) ?? '').trim();
+      if (phone.isEmpty) {
+        return const AiQuotaResult(
+            false, 'Укажите номер телефона в профиле — так доступен ИИ-консьерж.');
+      }
+      final activeSessionId = (data['activeSessionId'] as String?) ?? '';
+      if (activeSessionId.isEmpty) {
+        return const AiQuotaResult(
+            false, 'ИИ-консьерж доступен только за столом — отсканируйте QR-код на столе.');
+      }
+
+      final today = _dayKey(DateTime.now());
+      final storedDay = (data['aiQuotaDate'] as String?) ?? '';
+      final used = storedDay == today ? ((data['aiQuotaCount'] as num?)?.toInt() ?? 0) : 0;
+
+      if (used >= dailyLimit) {
+        return AiQuotaResult(false,
+            'На сегодня лимит в $dailyLimit вопросов консьержу исчерпан — обратитесь к кальянщику.');
+      }
+
+      tx.set(ref, {'aiQuotaDate': today, 'aiQuotaCount': used + 1}, SetOptions(merge: true));
+      return const AiQuotaResult(true);
+    });
+  }
+
+  String _dayKey(DateTime d) => '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   /// Живой счёт гостя: сумма, позиции, таймер стола — тот же документ,
   /// который правит кассир на POS.
   Stream<SessionModel?> sessionStream(String sessionId) => _db
@@ -366,4 +411,12 @@ class GuestLinkService {
       .orderBy('order')
       .snapshots()
       .map((s) => s.docs.map(MenuCategory.fromDoc).toList());
+}
+
+/// Результат проверки лимита ИИ-консьержа: allowed — можно спрашивать
+/// дальше, иначе reason — что показать гостю вместо ответа ИИ.
+class AiQuotaResult {
+  final bool allowed;
+  final String? reason;
+  const AiQuotaResult(this.allowed, [this.reason]);
 }
