@@ -3,6 +3,7 @@ import '../models/client_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
+import '../utils/phone_utils.dart';
 
 /// Мост между POS и клиентским приложением «Колибри Лаундж»:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -24,13 +25,23 @@ class GuestLinkService {
   Future<ClientProfile> ensureProfile(String uid, {String name = '', String phone = ''}) async {
     final doc = await _clients.doc(uid).get();
     if (doc.exists) return ClientProfile.fromDoc(doc);
-    final profile = ClientProfile(uid: uid, name: name, phone: phone, createdAt: DateTime.now());
+    final normPhone = phone.isNotEmpty ? normalizePhone(phone) : '';
+    final profile = ClientProfile(uid: uid, name: name, phone: normPhone, createdAt: DateTime.now());
     await _clients.doc(uid).set(profile.toMap());
     return profile;
   }
 
-  Future<void> updateProfile(String uid, Map<String, dynamic> patch) =>
-      _clients.doc(uid).set(patch, SetOptions(merge: true));
+  Future<void> updateProfile(String uid, Map<String, dynamic> patch) {
+    // Нормализуем телефон если он есть в patch
+    if (patch.containsKey('phone') && patch['phone'] is String) {
+      final raw = patch['phone'] as String;
+      if (raw.isNotEmpty) {
+        patch = Map<String, dynamic>.from(patch);
+        patch['phone'] = normalizePhone(raw);
+      }
+    }
+    return _clients.doc(uid).set(patch, SetOptions(merge: true));
+  }
 
   Future<void> toggleFavorite(String uid, String menuItemId, bool favorite) =>
       _clients.doc(uid).set({
@@ -38,8 +49,22 @@ class GuestLinkService {
             favorite ? FieldValue.arrayUnion([menuItemId]) : FieldValue.arrayRemove([menuItemId]),
       }, SetOptions(merge: true));
 
+  /// Ищет профиль по номеру телефона в любом формате.
+  /// Нормализует запрос, поэтому 79995061580, +79995061580 и 89995061580
+  /// дают одинаковый результат.
   Future<ClientProfile?> findByPhone(String phone) async {
-    final snap = await _clients.where('phone', isEqualTo: phone).limit(1).get();
+    final normalized = normalizePhone(phone);
+    final snap = await _clients.where('phone', isEqualTo: normalized).limit(1).get();
+    if (snap.docs.isEmpty) return null;
+    return ClientProfile.fromDoc(snap.docs.first);
+  }
+
+  /// Найти профиль по короткому ID устройства (6 символов).
+  Future<ClientProfile?> findByShortDeviceId(String shortId) async {
+    final snap = await _clients
+        .where('shortDeviceId', isEqualTo: shortId.toUpperCase())
+        .limit(1)
+        .get();
     if (snap.docs.isEmpty) return null;
     return ClientProfile.fromDoc(snap.docs.first);
   }
@@ -54,9 +79,10 @@ class GuestLinkService {
   /// сумму трат, визиты и историю операций на [newUid] и удаляет старую
   /// запись, чтобы бонусы не задваивались.
   Future<void> mergeGuestProfiles({required String phone, required String newUid}) async {
-    final old = await findByPhone(phone);
+    final normalized = normalizePhone(phone);
+    final old = await findByPhone(normalized);
     if (old == null) {
-      throw StateError('Гость с номером $phone не найден');
+      throw StateError('Гость с номером $normalized не найден');
     }
     if (old.uid == newUid) {
       throw StateError('Это уже тот же самый профиль');
@@ -77,7 +103,7 @@ class GuestLinkService {
       final newName = (newData['name'] as String?) ?? '';
 
       tx.set(newRef, {
-        'phone': phone,
+        'phone': normalized,
         'name': newName.isNotEmpty ? newName : old.name,
         'bonusBalance': old.bonusBalance + newBonus,
         'totalSpent': old.totalSpent + newSpent,
@@ -215,10 +241,6 @@ class GuestLinkService {
     String guestName = '',
     String comment = '',
   }) async {
-    // Пишем вызов сразу, без предварительной проверки дублей: лишний
-    // круг к серверу задерживал нажатие почти на секунду. Повторные
-    // нажатия гасит сам экран, а дубль в зале кальянщик закрывает одним
-    // касанием.
     final call = WaiterCall(
       id: '',
       tableId: tableId,
@@ -242,8 +264,6 @@ class GuestLinkService {
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
 
   /// Вызовы конкретного гостя — для его же экрана «Мой стол».
-  /// Фильтр по clientUid обязателен: правила безопасности не отдают гостю
-  /// чужие вызовы, и запрос по одному столу вернул бы ошибку доступа.
   Stream<List<WaiterCall>> myCallsStream(String clientUid) => _calls
       .where('clientUid', isEqualTo: clientUid)
       .where('status', isEqualTo: 'new')
@@ -296,11 +316,6 @@ class GuestLinkService {
       .snapshots()
       .map((s) => s.docs.map(GuestOrder.fromDoc).toList());
 
-  /// Подтверждение заказа гостя кассиром: позиции переносятся в чек
-  /// (существующие строки увеличиваются по qty), заказ помечается принятым.
-  ///
-  /// Списание склада отрабатывает как обычно при закрытии чека —
-  /// FirestoreService.closeSessionWithPayment, отдельная логика не нужна.
   Future<void> acceptGuestOrder(GuestOrder order, String employeeName) async {
     final sessionRef = _db.collection('sessions').doc(order.sessionId);
     final orderRef = _orders.doc(order.id);
@@ -332,7 +347,6 @@ class GuestLinkService {
     });
   }
 
-  /// Заказ готов: гость получает push «несём к столу».
   Future<void> markOrderReady(GuestOrder order, String employeeName) async {
     await _orders.doc(order.id).update({
       'status': 'ready',
@@ -364,12 +378,6 @@ class GuestLinkService {
 
   // ---------- БОНУСЫ ----------
 
-  /// Начисление кешбэка после закрытия чека.
-  ///
-  /// Считается на кассе, а не на сервере: Cloud Functions требуют платного
-  /// тарифа Firebase. Защита от двойного начисления — отметка
-  /// bonusAccruedFor в профиле: повторный вызов с тем же чеком ничего не
-  /// сделает, даже если два планшета одновременно закрыли один чек.
   Future<void> accrueBonuses({
     required String clientUid,
     required String sessionId,
@@ -384,7 +392,7 @@ class GuestLinkService {
       if (!snap.exists) return;
 
       final data = snap.data() as Map<String, dynamic>;
-      if (data['bonusAccruedFor'] == sessionId) return; // уже начислено
+      if (data['bonusAccruedFor'] == sessionId) return;
 
       final profile = ClientProfile.fromDoc(snap);
       bonus = (paidAmount * profile.cashbackPercent / 100).roundToDouble();
@@ -411,8 +419,6 @@ class GuestLinkService {
     });
   }
 
-  /// Списание бонусов в счёт оплаты. Возвращает фактически списанную сумму
-  /// (не больше баланса и не больше [requested]).
   Future<double> redeemBonuses({
     required String clientUid,
     required String sessionId,
@@ -454,7 +460,6 @@ class GuestLinkService {
 
   // ---------- МЕНЮ ДЛЯ ГОСТЯ ----------
 
-  /// Витрина меню для клиентского приложения — только доступные позиции.
   Stream<List<MenuItem>> publicMenuStream() => _db
       .collection('menuItems')
       .snapshots()
@@ -467,8 +472,7 @@ class GuestLinkService {
       .map((s) => s.docs.map(MenuCategory.fromDoc).toList());
 }
 
-/// Результат проверки лимита ИИ-консьержа: allowed — можно спрашивать
-/// дальше, иначе reason — что показать гостю вместо ответа ИИ.
+/// Результат проверки лимита ИИ-консьержа.
 class AiQuotaResult {
   final bool allowed;
   final String? reason;

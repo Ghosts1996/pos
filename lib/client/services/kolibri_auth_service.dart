@@ -1,4 +1,6 @@
+import 'dart:math';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 
@@ -13,6 +15,8 @@ class KolibriAuthService {
   final _auth = FirebaseAuth.instance;
   final _link = GuestLinkService();
 
+  static const _shortIdKey = 'kolibri_short_device_id';
+
   User? get user => _auth.currentUser;
   String get uid => _auth.currentUser?.uid ?? '';
   bool get isAnonymous => _auth.currentUser?.isAnonymous ?? true;
@@ -20,13 +24,31 @@ class KolibriAuthService {
 
   Stream<User?> authStateChanges() => _auth.authStateChanges();
 
+  /// Короткий ID устройства — 6 символов (буквы+цифры), хранится локально.
+  /// Генерируется один раз и не меняется. Показывается гостю в профиле.
+  Future<String> getShortDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    var id = prefs.getString(_shortIdKey) ?? '';
+    if (id.isEmpty) {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      final rng = Random.secure();
+      id = List.generate(6, (_) => chars[rng.nextInt(chars.length)]).join();
+      await prefs.setString(_shortIdKey, id);
+    }
+    return id;
+  }
+
   /// Гарантирует, что есть хоть какой-то аккаунт (анонимный) и профиль
   /// в коллекции clients — иначе гость не сможет читать меню по правилам.
   Future<ClientProfile> ensureGuest() async {
     if (_auth.currentUser == null) {
       await _auth.signInAnonymously();
     }
-    return _link.ensureProfile(uid);
+    // Сохраняем shortDeviceId в профиль, чтобы кассир мог найти гостя по нему.
+    final shortId = await getShortDeviceId();
+    final profile = await _link.ensureProfile(uid);
+    await _link.updateProfile(uid, {'shortDeviceId': shortId});
+    return profile;
   }
 
   /// Шаг 1 телефонного входа: отправка SMS.
