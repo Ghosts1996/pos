@@ -129,15 +129,35 @@ class FirestoreService {
           .get();
 
       DateTime? maxEnd;
+      final checks = <Map<String, dynamic>>[];
       for (final doc in snap.docs) {
-        final ts = doc.data()['plannedEnd'];
-        if (ts is! Timestamp) continue;
-        final end = ts.toDate();
-        if (maxEnd == null || end.isAfter(maxEnd)) maxEnd = end;
+        final data = doc.data();
+        final ts = data['plannedEnd'];
+        if (ts is Timestamp) {
+          final end = ts.toDate();
+          if (maxEnd == null || end.isAfter(maxEnd)) maxEnd = end;
+        }
+        // Витрина открытых чеков стола для гостевого приложения: по ней
+        // гость выбирает СВОЙ чек, когда за столом их несколько. Читать
+        // коллекцию sessions ему нельзя, а карточку стола — можно, поэтому
+        // краткая сводка живёт здесь. Ни позиций, ни сумм: только чем один
+        // чек отличается от другого — подпись кассира и время открытия.
+        final started = data['startTime'];
+        checks.add({
+          'id': doc.id,
+          'label': (data['guestTag'] as String?) ?? '',
+          'openedAt': started is Timestamp ? started : null,
+        });
       }
+      checks.sort((a, b) {
+        final x = a['openedAt'], y = b['openedAt'];
+        if (x is! Timestamp || y is! Timestamp) return 0;
+        return x.compareTo(y);
+      });
 
       await _db.collection('tables').doc(tableId).update({
         'busyUntil': maxEnd == null ? null : Timestamp.fromDate(maxEnd),
+        'openChecks': checks,
       });
     } catch (_) {
       // Денормализация — не критичный путь.
@@ -217,6 +237,9 @@ class FirestoreService {
       });
     });
 
+    // Витрину открытых чеков собираем после транзакции: внутри неё нельзя
+    // прочитать запросом остальные чеки стола.
+    await syncTableBusyUntil(table.id);
     return sessionRef.id;
   }
 
@@ -239,8 +262,11 @@ class FirestoreService {
 
   /// Установить/сменить подпись чека — кто сидит за столом (гость, номер
   /// компании и т.п.). Пустая строка убирает подпись.
-  Future<void> setGuestTag(String sessionId, String tag) {
-    return _db.collection('sessions').doc(sessionId).update({'guestTag': tag});
+  Future<void> setGuestTag(String sessionId, String tag, {String tableId = ''}) async {
+    await _db.collection('sessions').doc(sessionId).update({'guestTag': tag});
+    // Подпись — то, по чему гость узнаёт свой чек в списке за столом,
+    // поэтому витрину открытых чеков надо обновить сразу.
+    await syncTableBusyUntil(tableId);
   }
 
   /// Обновить/продлить таймер на N минут (может быть отрицательным)
