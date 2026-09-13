@@ -24,6 +24,17 @@ class ClientProfile {
   final String activeSessionId;
   final String activeTableId;
 
+  /// Последний закрытый чек гостя и чек, за который он уже поставил
+  /// оценку.
+  ///
+  /// Нужны, чтобы экран «Спасибо за визит» с оценкой не исчезал. При
+  /// оплате касса обнуляет activeSessionId — и экран, построенный на нём,
+  /// пропадал ровно в тот момент, когда появлялся. Теперь после закрытия
+  /// чека предложение оценить визит живёт само по себе, пока гость не
+  /// поставит оценку или не закроет его.
+  final String lastVisitId;
+  final String ratedVisitId;
+
   final List<String> favoriteItemIds;
 
   /// Токен push-уведомлений (FCM) клиентского устройства.
@@ -47,6 +58,8 @@ class ClientProfile {
     this.discountPercent = 0,
     this.activeSessionId = '',
     this.activeTableId = '',
+    this.lastVisitId = '',
+    this.ratedVisitId = '',
     this.favoriteItemIds = const [],
     this.pushToken = '',
     this.aiProfile = '',
@@ -117,6 +130,8 @@ class ClientProfile {
       discountCardId: data['discountCardId'] ?? '',
       discountPercent: (data['discountPercent'] ?? 0).toDouble(),
       activeSessionId: data['activeSessionId'] ?? '',
+      lastVisitId: data['lastVisitId'] ?? '',
+      ratedVisitId: data['ratedVisitId'] ?? '',
       activeTableId: data['activeTableId'] ?? '',
       favoriteItemIds:
           ((data['favoriteItemIds'] ?? []) as List).map((e) => e.toString()).toList(),
@@ -136,6 +151,8 @@ class ClientProfile {
         'discountCardId': discountCardId,
         'discountPercent': discountPercent,
         'activeSessionId': activeSessionId,
+        'lastVisitId': lastVisitId,
+        'ratedVisitId': ratedVisitId,
         'activeTableId': activeTableId,
         'favoriteItemIds': favoriteItemIds,
         'pushToken': pushToken,

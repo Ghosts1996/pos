@@ -35,7 +35,20 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionId = widget.profile?.activeSessionId ?? '';
-    if (sessionId.isEmpty) return _notAtTable();
+
+    // Гость уже не за столом. Но если последний визит закрыт только что и
+    // оценка за него не поставлена — показываем «Спасибо за визит».
+    //
+    // Раньше этот экран строился на activeSessionId, а касса обнуляет его
+    // при оплате: предложение оценить визит появлялось и пропадало в тот
+    // же миг. Теперь оно держится на записи визита, которая никуда не
+    // денется, и живёт, пока гость не оценит или не закроет его.
+    if (sessionId.isEmpty) {
+      final last = widget.profile?.lastVisitId ?? '';
+      final rated = widget.profile?.ratedVisitId ?? '';
+      if (last.isNotEmpty && last != rated) return _finishedVisit(last);
+      return _notAtTable();
+    }
 
     return StreamBuilder<SessionModel?>(
       stream: _link.sessionStream(sessionId),
@@ -321,15 +334,60 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
     );
   }
 
-  Widget _visitFinished(SessionModel s) => ListView(
+  /// «Спасибо за визит» по записи визита (чек уже закрыт и гостю недоступен).
+  Widget _finishedVisit(String visitId) {
+    return StreamBuilder<GuestVisit?>(
+      stream: _link.visitById(_auth.uid, visitId),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final v = snap.data;
+        if (v == null) return _notAtTable();
+        // Предложение оценить имеет смысл по свежим следам. Визит
+        // недельной давности не должен встречать гостя вместо его стола.
+        if (DateTime.now().difference(v.date) > const Duration(hours: 12)) {
+          return _notAtTable();
+        }
+        return _thankYou(
+          tableName: v.tableName,
+          total: v.paid > 0 ? v.paid : v.total,
+          bonusEarned: v.bonusEarned,
+          sessionId: visitId,
+        );
+      },
+    );
+  }
+
+  /// Тот же экран, пока чек ещё виден гостю (касса не успела начислить
+  /// бонусы и обнулить привязку).
+  Widget _visitFinished(SessionModel s) => _thankYou(
+        tableName: s.tableName,
+        total: s.paymentTotal,
+        bonusEarned: 0,
+        sessionId: s.id,
+      );
+
+  Widget _thankYou({
+    required String tableName,
+    required double total,
+    required double bonusEarned,
+    required String sessionId,
+  }) =>
+      ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
         children: [
           const Text('Спасибо за визит!',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          Text('Счёт за столом ${s.tableName} закрыт на '
-              '${s.paymentTotal.toStringAsFixed(0)} ₽.',
+          Text('Счёт за столом $tableName закрыт на '
+              '${total.toStringAsFixed(0)} ₽.',
               style: const TextStyle(color: KolibriColors.textMuted)),
+          if (bonusEarned > 0) ...[
+            const SizedBox(height: 6),
+            Text('Начислено ${bonusEarned.toStringAsFixed(0)} бонусов',
+                style: const TextStyle(color: KolibriColors.primary)),
+          ],
           const SizedBox(height: 24),
           const Text('Как всё прошло?',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -338,13 +396,16 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             onRated: (rating, text) async {
               await _link.addReview(GuestReview(
                 id: '',
-                sessionId: s.id,
+                sessionId: sessionId,
                 clientUid: _auth.uid,
                 guestName: widget.profile?.name ?? '',
                 rating: rating,
                 text: text,
                 createdAt: DateTime.now(),
               ));
+              // Отмечаем визит оценённым — иначе предложение оценить
+              // висело бы до следующего визита.
+              await _link.markVisitRated(_auth.uid, sessionId);
               await _link.unbind(_auth.uid);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -352,6 +413,16 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                 );
               }
             },
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: TextButton(
+              onPressed: () async {
+                await _link.markVisitRated(_auth.uid, sessionId);
+                if (mounted) setState(() {});
+              },
+              child: const Text('Не сейчас'),
+            ),
           ),
         ],
       );
