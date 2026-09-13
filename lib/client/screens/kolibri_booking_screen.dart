@@ -174,9 +174,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         _label('Продолжительность'),
         Wrap(
           spacing: 8,
-          children: [60, 90, 120, 180]
+          // Шаг длительности под кальянный сеанс: час, полтора, три и
+          // «на весь вечер». Двухчасовой вариант убран — им не пользовались.
+          children: [60, 90, 180, 270]
               .map((m) => ChoiceChip(
-                    label: Text(m >= 60 ? '${m ~/ 60} ч${m % 60 == 0 ? '' : ' 30 м'}' : '$m мин'),
+                    label: Text(_durationLabel(m)),
                     selected: _duration == m,
                     onSelected: (_) {
                       setState(() => _duration = m);
@@ -416,6 +418,13 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       }
     }
     if (mounted) setState(() => _sending = false);
+  }
+
+  /// «1 ч», «1 ч 30 м», «4 ч 30 м» — без ручных склеек в нескольких местах.
+  String _durationLabel(int minutes) {
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m == 0 ? '$h ч' : '$h ч $m м';
   }
 
   Widget _label(String text) => Padding(
