@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/guest_link_service.dart';
+import '../widgets/check_picker_sheet.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 
@@ -70,16 +71,34 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
 
     try {
       await _auth.ensureGuest();
-      final sessionId = await _link.bindToTable(_auth.uid, tableId);
+      final result = await _link.bindToTable(_auth.uid, tableId);
       if (!mounted) return;
-      if (sessionId == null) {
+      if (result.isEmpty) {
         setState(() {
           _handling = false;
           _error = 'За этим столом сейчас нет открытого счёта — попросите кальянщика начать сеанс';
         });
         return;
       }
-      Navigator.pop(context, sessionId);
+      // За столом несколько счетов — гость выбирает свой, иначе он увидел
+      // бы чужой заказ и чужую сумму.
+      if (result.needsChoice) {
+        final picked = await CheckPickerSheet.show(
+          context,
+          tableName: result.tableName,
+          checks: result.choices,
+        );
+        if (!mounted) return;
+        if (picked == null) {
+          setState(() => _handling = false);
+          return;
+        }
+        await _link.bindToSession(_auth.uid, tableId, picked.id);
+        if (!mounted) return;
+        Navigator.pop(context, picked.id);
+        return;
+      }
+      Navigator.pop(context, result.sessionId);
     } catch (e) {
       if (mounted) {
         setState(() {

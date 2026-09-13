@@ -266,15 +266,43 @@ class GuestLinkService {
   // ---------- ПРИВЯЗКА ГОСТЯ К ЧЕКУ ----------
 
   /// Гость сканирует QR стола (в QR зашит tableId) и «садится» за свой счёт.
-  /// Если за столом открыто несколько чеков — берём последний открытый.
-  /// Возвращает id чека или null, если стол свободен.
-  Future<String?> bindToTable(String uid, String tableId) async {
+  ///
+  /// Если за столом открыт ОДИН чек — привязываемся сразу. Если несколько
+  /// (стол поддерживает раздельные счета, см. TableModel.maxOpenSessions) —
+  /// возвращаем список чеков, чтобы гость выбрал свой: раньше молча брался
+  /// последний открытый, и двое гостей за одним столом видели один и тот же
+  /// чужой счёт вместо каждый своего.
+  Future<TableBindResult> bindToTable(String uid, String tableId) async {
     final tableDoc = await _db.collection('tables').doc(tableId).get();
-    if (!tableDoc.exists) return null;
+    if (!tableDoc.exists) return const TableBindResult.empty();
     final table = TableModel.fromDoc(tableDoc);
-    if (table.activeSessionIds.isEmpty) return null;
+    if (table.activeSessionIds.isEmpty) return const TableBindResult.empty();
 
-    final sessionId = table.activeSessionIds.last;
+    // Витрина чеков живёт на карточке стола: читать sessions гостю нельзя.
+    final checks = table.openChecks.where((c) => c.id.isNotEmpty).toList();
+    if (checks.length > 1) {
+      return TableBindResult.choose(checks, table.name);
+    }
+
+    // Витрина могла ещё не построиться (старые данные) — тогда работаем по
+    // activeSessionIds, как раньше.
+    final sessionId =
+        checks.length == 1 ? checks.first.id : table.activeSessionIds.last;
+    if (table.activeSessionIds.length > 1 && checks.isEmpty) {
+      return TableBindResult.choose(
+        table.activeSessionIds
+            .map((id) => TableCheck(id: id, label: ''))
+            .toList(),
+        table.name,
+      );
+    }
+    await bindToSession(uid, tableId, sessionId);
+    return TableBindResult.bound(sessionId);
+  }
+
+  /// Привязать гостя к конкретному чеку стола — используется после выбора
+  /// из нескольких открытых счетов.
+  Future<void> bindToSession(String uid, String tableId, String sessionId) async {
     await _clients.doc(uid).set({
       'activeSessionId': sessionId,
       'activeTableId': tableId,
@@ -303,7 +331,6 @@ class GuestLinkService {
     } catch (_) {
       // Нет прав/сети — гость всё равно уже за столом.
     }
-    return sessionId;
   }
 
   Future<void> unbind(String uid) => _clients.doc(uid).set({

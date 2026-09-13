@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:app_links/app_links.dart';
+import '../../models/table_model.dart';
 import '../../services/guest_link_service.dart';
 import 'kolibri_auth_service.dart';
 
@@ -25,6 +26,10 @@ class KolibriDeepLinks {
 
   /// Вызывается, если за столом нет открытого чека.
   void Function(String message)? onFailed;
+
+  /// За столом несколько открытых чеков — нужно спросить гостя, какой его.
+  void Function(String tableId, String tableName, List<TableCheck> checks)?
+      onChooseCheck;
 
   Future<void> start() async {
     if (_sub != null) return;
@@ -53,13 +58,17 @@ class KolibriDeepLinks {
 
     try {
       await _auth.ensureGuest();
-      final sessionId = await _guest.bindToTable(_auth.uid, tableId);
-      if (sessionId == null) {
+      final result = await _guest.bindToTable(_auth.uid, tableId);
+      if (result.isEmpty) {
         onFailed?.call('За этим столом сейчас нет открытого счёта — '
             'попросите кальянщика начать сеанс');
         return;
       }
-      onTableBound?.call(sessionId);
+      if (result.needsChoice) {
+        onChooseCheck?.call(tableId, result.tableName, result.choices);
+        return;
+      }
+      onTableBound?.call(result.sessionId!);
     } catch (e) {
       onFailed?.call('Не удалось открыть стол: $e');
     }

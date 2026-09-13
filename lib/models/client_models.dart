@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'session_model.dart';
+import 'table_model.dart';
 
 /// Профиль гостя приложения «Колибри Лаундж».
 /// Документ clients/{uid}, где uid — Firebase Auth UID клиентского приложения.
@@ -142,6 +143,33 @@ class ClientProfile {
         'createdAt': Timestamp.fromDate(createdAt),
         'lastVisitAt': lastVisitAt != null ? Timestamp.fromDate(lastVisitAt!) : null,
       };
+}
+
+/// Чем закончилась попытка «сесть за стол» по QR-коду.
+///
+/// Три исхода: за столом нет открытых чеков; привязались к единственному;
+/// чеков несколько и гостю нужно выбрать свой.
+class TableBindResult {
+  final String? sessionId;
+  final List<TableCheck> choices;
+  final String tableName;
+
+  const TableBindResult.empty()
+      : sessionId = null,
+        choices = const [],
+        tableName = '';
+
+  const TableBindResult.bound(String this.sessionId)
+      : choices = const [],
+        tableName = '';
+
+  const TableBindResult.choose(this.choices, this.tableName) : sessionId = null;
+
+  /// За столом нет ни одного открытого чека.
+  bool get isEmpty => sessionId == null && choices.isEmpty;
+
+  /// Нужно спросить гостя, какой чек его.
+  bool get needsChoice => sessionId == null && choices.isNotEmpty;
 }
 
 /// Один визит гостя — документ clients/{uid}/visits/{sessionId}.
