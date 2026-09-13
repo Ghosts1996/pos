@@ -227,7 +227,7 @@ exports.onSessionClosed = onDocumentUpdated(
     if (c.bonusAccruedFor === event.params.id) return;
 
     const spent = (c.totalSpent || 0) + paid;
-    const percent = spent >= 50000 ? 10 : spent >= 30000 ? 7 : spent >= 10000 ? 5 : 3;
+    const percent = spent >= 40000 ? 10 : spent >= 25000 ? 7 : spent >= 10000 ? 5 : 3;
     const bonus = Math.round((paid * percent) / 100);
 
     await ref.update({
