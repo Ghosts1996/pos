@@ -9,6 +9,7 @@ import '../../services/reservation_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/ai_assistant_sheet.dart';
+import '../../widgets/table_picker_map.dart';
 import 'table_detail_screen.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
@@ -266,38 +267,79 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   }
 
   Future<void> _assignTable(ReservationModel r) async {
-    final free = await _service.availableTables(
+    final picked = await _pickTableOnMap(
       start: r.startTime,
       durationMinutes: r.durationMinutes,
       guestsCount: r.guestsCount,
     );
-    if (!mounted) return;
-
-    final picked = await showModalBottomSheet<TableModel>(
-      context: context,
-      backgroundColor: AppColors.surface,
-      builder: (_) => SafeArea(
-        child: free.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('Свободных столов на это время нет'),
-              )
-            : ListView(
-                shrinkWrap: true,
-                children: free
-                    .map((t) => ListTile(
-                          leading: const Icon(Icons.table_restaurant),
-                          title: Text(t.name),
-                          subtitle: Text('${t.seats} мест'),
-                          onTap: () => Navigator.pop(context, t),
-                        ))
-                    .toList(),
-              ),
-      ),
-    );
     if (picked != null) {
       await _guard(() => _service.assignTable(r.id, picked));
     }
+  }
+
+  /// Открывает карту зала и возвращает выбранный (свободный на этот
+  /// интервал) стол — используется и при смене стола у существующей брони,
+  /// и при выборе стола для новой брони по телефону.
+  Future<TableModel?> _pickTableOnMap({
+    required DateTime start,
+    required int durationMinutes,
+    required int guestsCount,
+  }) async {
+    final results = await Future.wait([
+      _fs.tablesStream().first,
+      _service.availableTables(
+        start: start,
+        durationMinutes: durationMinutes,
+        guestsCount: guestsCount,
+      ),
+      _service.dayStream(start).first,
+    ]);
+    if (!mounted) return null;
+
+    final allTables = results[0] as List<TableModel>;
+    final freeIds = (results[1] as List<TableModel>).map((t) => t.id).toSet();
+    final dayReservations = results[2] as List<ReservationModel>;
+
+    if (allTables.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Столы ещё не добавлены администратором')));
+      return null;
+    }
+
+    return showModalBottomSheet<TableModel>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('Выберите стол на карте',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              ),
+              Expanded(
+                child: TablePickerMap(
+                  tables: allTables,
+                  freeTableIds: freeIds,
+                  dayReservations: dayReservations,
+                  start: start,
+                  durationMinutes: durationMinutes,
+                  showGuestNames: true, // сотрудник видит, кто и когда бронировал
+                  onSelect: (t) => Navigator.pop(ctx, t),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _createManual() async {
@@ -305,6 +347,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     final phoneCtrl = TextEditingController();
     var guests = 2;
     var time = TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
+    TableModel? pickedTable;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -329,12 +372,18 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   const Text('Гостей:'),
                   const SizedBox(width: 12),
                   IconButton(
-                    onPressed: () => setLocal(() => guests = (guests - 1).clamp(1, 20)),
+                    onPressed: () => setLocal(() {
+                      guests = (guests - 1).clamp(1, 20);
+                      pickedTable = null; // вместимость изменилась — выбор стола сбрасываем
+                    }),
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
                   Text('$guests', style: const TextStyle(fontSize: 16)),
                   IconButton(
-                    onPressed: () => setLocal(() => guests = (guests + 1).clamp(1, 20)),
+                    onPressed: () => setLocal(() {
+                      guests = (guests + 1).clamp(1, 20);
+                      pickedTable = null;
+                    }),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                 ],
@@ -342,10 +391,30 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
               TextButton.icon(
                 onPressed: () async {
                   final picked = await showTimePicker(context: ctx, initialTime: time);
-                  if (picked != null) setLocal(() => time = picked);
+                  if (picked != null) {
+                    setLocal(() {
+                      time = picked;
+                      pickedTable = null; // время изменилось — стол мог освободиться/занят
+                    });
+                  }
                 },
                 icon: const Icon(Icons.schedule),
                 label: Text('Время: ${time.format(ctx)}'),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  final start = DateTime(_day.year, _day.month, _day.day, time.hour, time.minute);
+                  final t = await _pickTableOnMap(
+                    start: start,
+                    durationMinutes: 90,
+                    guestsCount: guests,
+                  );
+                  if (t != null) setLocal(() => pickedTable = t);
+                },
+                icon: const Icon(Icons.table_restaurant),
+                label: Text(pickedTable == null
+                    ? 'Стол: подберём автоматически'
+                    : 'Стол: ${pickedTable!.name}'),
               ),
             ],
           ),
@@ -375,6 +444,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         guestName: nameCtrl.text.trim().isEmpty ? 'Гость' : nameCtrl.text.trim(),
         phone: phone,
         guestsCount: guests,
+        tableId: pickedTable?.id ?? '',
+        tableName: pickedTable?.name ?? '',
         startTime: start,
         status: ReservationStatus.confirmed,
         source: 'phone',

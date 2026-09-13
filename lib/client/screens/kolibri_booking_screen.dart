@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
+import '../../models/table_model.dart';
+import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/reservation_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../../models/venue_models.dart';
 import '../../services/venue_service.dart';
+import '../../widgets/table_picker_map.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_menu_screen.dart';
 
@@ -23,6 +26,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   final _service = ReservationService();
   final _link = GuestLinkService();
   final _auth = KolibriAuthService();
+  final _fs = FirestoreService();
 
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
@@ -34,6 +38,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   DateTime? _slot;
   List<DateTime> _slots = const [];
   List<OrderItem> _preOrder = const [];
+  TableModel? _pickedTable;
 
   bool _loadingSlots = false;
   bool _sending = false;
@@ -81,6 +86,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     setState(() {
       _loadingSlots = true;
       _slot = null;
+      _pickedTable = null; // выбор стола привязан к конкретному времени
     });
     try {
       final slots = await _service.availableSlots(
@@ -224,13 +230,28 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                 .map((s) => ChoiceChip(
                       label: Text(_fmtTime(s)),
                       selected: _slot == s,
-                      onSelected: (_) => setState(() => _slot = s),
+                      onSelected: (_) => setState(() {
+                        _slot = s;
+                        _pickedTable = null;
+                      }),
                       backgroundColor: KolibriColors.surface,
                       selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
                       side: const BorderSide(color: KolibriColors.border),
                     ))
                 .toList(),
           ),
+
+        if (_slot != null) ...[
+          const SizedBox(height: 20),
+          _label('Стол'),
+          OutlinedButton.icon(
+            onPressed: _pickTable,
+            icon: const Icon(Icons.table_restaurant),
+            label: Text(_pickedTable == null
+                ? 'Стол подберём автоматически — выбрать на карте'
+                : 'Выбран: ${_pickedTable!.name} (${_pickedTable!.seats} мест)'),
+          ),
+        ],
 
         const SizedBox(height: 24),
         _label('Контакты'),
@@ -364,6 +385,62 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     }
   }
 
+  /// Карта зала для выбора конкретного стола. Гостю не показываем, кто
+  /// именно занимает другие столы (только время занятости) — это чужие
+  /// личные данные, в отличие от карты на POS.
+  Future<void> _pickTable() async {
+    if (_slot == null) return;
+    final results = await Future.wait([
+      _fs.tablesStream().first,
+      _service.availableTables(
+        start: _slot!,
+        durationMinutes: _duration,
+        guestsCount: _guests,
+      ),
+      _service.dayStream(_slot!).first,
+    ]);
+    if (!mounted) return;
+
+    final allTables = results[0] as List<TableModel>;
+    final freeIds = (results[1] as List<TableModel>).map((t) => t.id).toSet();
+    final dayReservations = results[2] as List<ReservationModel>;
+
+    final picked = await showModalBottomSheet<TableModel>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: KolibriColors.surface,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('Выберите стол', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              ),
+              Expanded(
+                child: TablePickerMap(
+                  tables: allTables,
+                  freeTableIds: freeIds,
+                  dayReservations: dayReservations,
+                  start: _slot!,
+                  durationMinutes: _duration,
+                  showGuestNames: false,
+                  onSelect: (t) => Navigator.pop(ctx, t),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null && mounted) setState(() => _pickedTable = picked);
+  }
+
   Future<void> _submit() async {
     if (_slot == null) return;
     setState(() => _sending = true);
@@ -381,6 +458,8 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         guestName: _nameCtrl.text.trim().isEmpty ? 'Гость' : _nameCtrl.text.trim(),
         phone: _phoneCtrl.text.trim(),
         guestsCount: _guests,
+        tableId: _pickedTable?.id ?? '',
+        tableName: _pickedTable?.name ?? '',
         startTime: _slot!,
         durationMinutes: _duration,
         comment: _commentCtrl.text.trim(),
@@ -393,6 +472,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       setState(() {
         _preOrder = const [];
         _commentCtrl.clear();
+        _pickedTable = null;
       });
       await _loadSlots();
       if (!mounted) return;
