@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/staff_session_store.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
 import '../screens/login_screen.dart';
@@ -259,10 +260,16 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Сменить сотрудника'),
-              onTap: () => Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginScreen()),
-                (_) => false,
-              ),
+              // Забываем сохранённый вход — иначе экран PIN тут же
+              // вернул бы в приложение того же сотрудника.
+              onTap: () async {
+                await StaffSessionStore.instance.forget();
+                if (!context.mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (_) => false,
+                );
+              },
             ),
             const SizedBox(height: 8),
           ],

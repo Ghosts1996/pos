@@ -164,6 +164,12 @@ jobs:
           add_permission "android.permission.USE_EXACT_ALARM"
           add_permission "android.permission.RECEIVE_BOOT_COMPLETED"
           add_permission "android.permission.VIBRATE"
+          # Постоянное уведомление «касса следит за залом». Без работающей
+          # службы Android выгружает свёрнутое приложение, подписки на базу
+          # обрываются, и вызовы гостей перестают доходить.
+          add_permission "android.permission.FOREGROUND_SERVICE"
+          add_permission "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+          add_permission "android.permission.WAKE_LOCK"
 
           if ! grep -q "android.hardware.camera" "$MANIFEST"; then
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
@@ -190,6 +196,15 @@ jobs:
           import sys
           path = sys.argv[1]
           xml = open(path, encoding='utf-8').read()
+          if 'flutter_foreground_task' not in xml:
+              service = (
+                  '        <service\n'
+                  '            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"\n'
+                  '            android:foregroundServiceType="dataSync"\n'
+                  '            android:exported="false" />\n'
+              )
+              xml = xml.replace('</application>', service + '    </application>', 1)
+              open(path, 'w', encoding='utf-8').write(xml)
           if 'ScheduledNotificationReceiver' not in xml:
               receivers = (
                   '        <receiver android:exported="false" '
