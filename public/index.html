@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Колибри Лаундж · установить приложение</title>
+<!--
+  Страница-«прослойка» для QR-кодов на столах.
+
+  Зачем она нужна. В QR нельзя зашивать сразу kolibri://table/{id}: это
+  собственная схема приложения, и если приложение не установлено, телефону
+  нечем обработать такую ссылку — гость видит либо непонятную строку, либо
+  «не найдено приложение», и никакой подсказки показать невозможно, потому
+  что ничего нашего в этот момент не выполняется.
+
+  Поэтому в новых QR зашивается обычный https-адрес этой страницы. Она
+  сразу пытается открыть приложение по kolibri://, и если оно есть —
+  гость даже не успевает её разглядеть. Если приложения нет, переход не
+  срабатывает, и через полторы секунды показывается предложение установить.
+-->
+<style>
+  :root {
+    --bg: #0E1512;
+    --surface: #16211D;
+    --border: #24332D;
+    --text: #EAF3EF;
+    --muted: #8FA39B;
+    --primary: #12B886;
+    --gold: #D9B45B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  }
+  .card { width: 100%; max-width: 420px; text-align: center; }
+  .brand {
+    color: var(--primary);
+    font-size: 13px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  h1 { font-size: 24px; margin: 10px 0 12px; }
+  p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+  .table-name { color: var(--gold); font-weight: 600; }
+  .links { margin-top: 26px; display: grid; gap: 12px; }
+  a.btn {
+    display: block;
+    padding: 16px 18px;
+    border-radius: 14px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  a.primary { background: var(--primary); color: #04140E; }
+  a.ghost {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .hint {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  #opening { display: block; }
+  #install { display: none; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 18px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div id="install" style="display:block">
+    <div class="brand">Колибри Лаундж</div>
+    <h1>Приложение «Колибри Лаундж»</h1>
+    <p>
+      Свой стол и счёт в телефоне, заказ не вставая, бонусы за визиты и
+      бронь столика. Установка занимает меньше минуты.
+    </p>
+
+    <div class="links">
+      <a class="btn primary" id="ya" href="https://disk.yandex.ru/d/paXh-on3x8kEKA">
+        Скачать с Яндекс&nbsp;Диска
+      </a>
+      <a class="btn ghost" id="gd" href="https://drive.google.com/drive/folders/1WXJ1VFGuBLkVAAGb6hqqvnFC35h37BvM">
+        Скачать с Google&nbsp;Диска
+      </a>
+    </div>
+
+    <p class="hint">
+      После установки Android спросит разрешение на установку из этого
+      источника — это нормально для приложений не из Play Маркета.
+      Установили? Отсканируйте QR-код на своём столе.
+    </p>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -133,6 +133,27 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // ---- Закрепление чека за гостем ----
+    // Один счёт — один гость: иначе двое, отсканировав один и тот же QR,
+    // садились на один чек и оба им распоряжались. Проверить занятость
+    // через clients нельзя (запрос по коллекции гостю запрещён), поэтому
+    // она лежит здесь отдельным документом с одним полем uid.
+    //
+    // Занять можно только свободный чек (create срабатывает лишь для
+    // несуществующего документа) и только на себя, а освободить — свой или
+    // силами кассы. Так чек не «уводится» и не остаётся занятым навсегда.
+    match /sessionClaims/{sessionId} {
+      allow read: if signedIn();
+      allow create: if isStaff() ||
+        (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff() ||
+        (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
     // ---- Вечная история визитов гостя ----
     // Свои визиты гость видит, но не правит: запись создаёт касса при
     // закрытии чека. Отдельная подколлекция нужна потому, что сами чеки

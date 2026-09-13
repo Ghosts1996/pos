@@ -78,7 +78,14 @@ class _KolibriShellState extends State<KolibriShell> {
           checks: checks,
         );
         if (picked == null || !mounted) return;
-        await _link.bindToSession(_auth.uid, tableId, picked.id);
+        try {
+          await _link.bindToSession(_auth.uid, tableId, picked.id);
+        } on SessionTakenException catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('$e')));
+          return;
+        }
         if (!mounted) return;
         setState(() => _index = 3);
         ScaffoldMessenger.of(context).showSnackBar(
