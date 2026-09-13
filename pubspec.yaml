@@ -23,7 +23,7 @@ dependencies:
   intl: ^0.20.3
   uuid: ^4.4.2
 
-  # --- Колибри Лаундж, push, ИИ ---
+  # --- Colibri Lounge, уведомления, ИИ ---
   firebase_messaging: ^15.1.3        # push: вызовы гостей, брони, бонусы
   cloud_functions: ^5.1.3            # прокси к tooken.club для гостевых агентов
   qr_flutter: ^4.1.0                 # QR-коды столов для печати
