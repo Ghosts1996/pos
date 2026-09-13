@@ -44,6 +44,15 @@ class GuestLinkService {
     return ClientProfile.fromDoc(snap.docs.first);
   }
 
+  /// Все гости для админского экрана «Гости»: имя, телефон, уровень
+  /// лояльности, визиты, траты — сортировка по тратам. Фильтрация по
+  /// имени/телефону — на клиенте: гостей обычно не тысячи, а Firestore не
+  /// умеет полнотекстовый поиск без отдельного индекса-сервиса.
+  Stream<List<ClientProfile>> allClientsStream() => _clients
+      .orderBy('totalSpent', descending: true)
+      .snapshots()
+      .map((s) => s.docs.map(ClientProfile.fromDoc).toList());
+
   /// Найти гостя по открытому чеку — нужно кассиру при оплате
   /// (бонусы, сертификаты, чаевые).
   Future<ClientProfile?> findBySession(String sessionId) async {
