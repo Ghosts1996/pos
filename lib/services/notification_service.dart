@@ -156,6 +156,33 @@ class NotificationService {
     await _plugin.cancelAll();
   }
 
+  // ---------- РАЗРЕШЕНИЕ ----------
+
+  /// Включены ли уведомления для приложения на уровне системы.
+  ///
+  /// Начиная с Android 13 разрешение спрашивают отдельно, и отказ ничем не
+  /// проявляется: приложение продолжает «показывать» уведомления, а на
+  /// экране не появляется ничего. Отличить это от «уведомления не
+  /// работают» изнутри приложения нельзя — поэтому спрашиваем систему
+  /// напрямую и говорим гостю прямым текстом.
+  Future<bool> areEnabled() async {
+    await init();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return true;
+    return await android.areNotificationsEnabled() ?? true;
+  }
+
+  /// Повторно запросить разрешение. Если гость уже отказывал, система
+  /// диалог не покажет — тогда остаётся открыть настройки приложения.
+  Future<bool> requestPermission() async {
+    await init();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final granted = await android?.requestNotificationsPermission();
+    return granted ?? await areEnabled();
+  }
+
   /// Стабильный числовой id из строки: у каждого чека свои уведомления,
   /// и при закрытии стола их нужно уметь отменить.
   static int idFor(String key) => key.hashCode & 0x7FFFFFFF;
