@@ -86,6 +86,54 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     }
   }
 
+  /// Гость сменил номер, но остался на том же устройстве/аккаунте
+  /// приложения — переносим его бонусы и историю на новый номер:
+  /// достаточно поменять поле phone на том же профиле (uid), бонусы
+  /// и totalSpent уже привязаны к uid, а не к номеру.
+  Future<void> _changePhone() async {
+    if (_profile == null) return;
+    final ctrl = TextEditingController();
+    final newPhone = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Новый номер гостя'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(labelText: 'Новый телефон'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (newPhone == null || newPhone.isEmpty || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await _link.updateProfile(_profile!.uid, {'phone': newPhone});
+      final refreshed = await _link.findByPhone(newPhone);
+      if (mounted) {
+        setState(() {
+          _profile = refreshed ?? _profile;
+          _busy = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
   Future<void> _redeem(double amount) async {
     if (_profile == null || amount <= 0) return;
     setState(() => _busy = true);
@@ -159,10 +207,21 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
               ],
             ),
           ] else ...[
-            Text(
-              '${_profile!.name.isEmpty ? 'Гость' : _profile!.name} · уровень «${_profile!.tier}» · '
-              'баланс ${_profile!.bonusBalance.toStringAsFixed(0)} ₽',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    '${_profile!.name.isEmpty ? 'Гость' : _profile!.name} · уровень «${_profile!.tier}» · '
+                    'баланс ${_profile!.bonusBalance.toStringAsFixed(0)} ₽ · ${_profile!.phone}',
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _busy ? null : _changePhone,
+                  child: const Text('Сменить номер', style: TextStyle(fontSize: 12)),
+                ),
+              ],
             ),
             const SizedBox(height: 10),
             if (_applied == 0) ...[
