@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.kolibrilounge",
+      "sha256_cert_fingerprints": [
+        "C9:19:75:24:17:BA:B0:AB:0D:25:AA:A0:50:69:2A:1F:72:50:92:38:B9:2B:0E:32:69:47:96:16:2C:BF:20:C8"
+      ]
+    }
+  }
+]
