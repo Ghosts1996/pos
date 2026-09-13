@@ -220,14 +220,21 @@ exports.onSessionClosed = onDocumentUpdated(
 
     const ref = clients.docs[0].ref;
     const c = clients.docs[0].data();
+
+    // Бонус может начислить и касса на планшете (accrueBonuses в
+    // guest_link_service.dart) — если сюда доедет тот же чек ещё раз,
+    // ничего не делаем, чтобы не задвоить бонус.
+    if (c.bonusAccruedFor === event.params.id) return;
+
     const spent = (c.totalSpent || 0) + paid;
-    const percent = spent >= 150000 ? 10 : spent >= 60000 ? 7 : spent >= 20000 ? 5 : 3;
+    const percent = spent >= 50000 ? 10 : spent >= 30000 ? 7 : spent >= 10000 ? 5 : 3;
     const bonus = Math.round((paid * percent) / 100);
 
     await ref.update({
       bonusBalance: (c.bonusBalance || 0) + bonus,
       totalSpent: spent,
       visits: (c.visits || 0) + 1,
+      bonusAccruedFor: event.params.id,
       activeSessionId: "",
       activeTableId: "",
       lastVisitAt: new Date(),
