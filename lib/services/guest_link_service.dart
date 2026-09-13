@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/client_models.dart';
 import '../models/menu_models.dart';
@@ -479,9 +480,16 @@ class GuestLinkService {
       comment: comment,
       createdAt: DateTime.now(),
     );
-    final ref = await _calls.add(call.toMap());
+    // НЕ ждём подтверждения сервера. Firestore применяет запись локально
+    // сразу и досылает её сам, как только появится связь, поэтому ждать
+    // тут нечего — а ждали: на слабой связи кнопка «Позвать» висела
+    // секундами, гость успевал нажать её ещё несколько раз, и кальянщик
+    // получал пачку одинаковых вызовов.
+    final ref = _calls.doc();
+    unawaited(ref.set(call.toMap()));
     return ref.id;
   }
+
 
   /// Все открытые вызовы — баннер и подсветка столов на POS.
   Stream<List<WaiterCall>> openCallsStream() => _calls
@@ -491,11 +499,25 @@ class GuestLinkService {
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
 
   /// Вызовы конкретного гостя — для его же экрана «Мой стол».
+  /// Вызовы гостя, ожидающие кальянщика.
+  ///
+  /// Отсекаются старые: если вызов забыли закрыть на кассе, он висел у
+  /// гостя вечно и копился вместе со следующими — экран превращался в
+  /// столбик «крутилок», по которому невозможно понять, что происходит
+  /// сейчас.
   Stream<List<WaiterCall>> myCallsStream(String clientUid) => _calls
       .where('clientUid', isEqualTo: clientUid)
       .where('status', isEqualTo: 'new')
       .snapshots()
-      .map((s) => s.docs.map(WaiterCall.fromDoc).toList());
+      .map((s) {
+        final fresh = DateTime.now().subtract(const Duration(minutes: 30));
+        final list = s.docs
+            .map(WaiterCall.fromDoc)
+            .where((c) => c.createdAt.isAfter(fresh))
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return list.take(4).toList();
+      });
 
   Future<void> closeCall(String callId, String employeeName) => _calls.doc(callId).update({
         'status': 'done',
