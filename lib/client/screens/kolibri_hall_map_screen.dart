@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
-import '../../services/guest_link_service.dart';
-import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 
 /// Карта зала для гостя — та же схема столов, что видит кальянщик на POS,
-/// в реальном времени.
+/// в реальном времени. Только просмотр занятости.
 ///
 /// Что можно сделать:
 ///  • свободный стол — посмотреть вместимость (бронировать через «Бронь»);
-///  • занятый стол — открыть свой счёт, если это ваш стол.
+///  • занятый стол — подсказка отсканировать QR на нём.
 ///
-/// Гость не может «занять» стол сам: чек открывает кальянщик. Поэтому
-/// нажатие на занятый стол только привязывает гостя к уже открытому чеку.
+/// Открыть свой счёт с карты нельзя специально: раньше нажатие на занятый
+/// стол сразу привязывало гостя к чужому счёту без физического
+/// присутствия — счёт можно было «занять» удалённо. Единственный способ
+/// сесть за стол — отсканировать QR-код, наклеенный физически на столе.
 class KolibriHallMapScreen extends StatelessWidget {
   /// true — режим выбора стола (для брони): возвращает выбранный стол.
   final bool pickMode;
@@ -138,7 +138,11 @@ class KolibriHallMapScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _onTap(BuildContext context, TableModel table, bool busy) async {
+  /// Карта — только просмотр занятости. Открыть свой счёт можно исключительно
+  /// сканированием QR на самом столе: раньше нажатие на занятый стол на карте
+  /// само привязывало гостя к чужому счёту без физического присутствия —
+  /// этим можно было «сесть» за стол удалённо, просто открыв карту из дома.
+  void _onTap(BuildContext context, TableModel table, bool busy) {
     if (pickMode) {
       Navigator.pop(context, table);
       return;
@@ -151,36 +155,9 @@ class KolibriHallMapScreen extends StatelessWidget {
       return;
     }
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KolibriColors.surface,
-        title: Text('Это ваш стол?'),
-        content: Text(
-          'За столом ${table.name} открыт счёт. Если вы сидите за ним, '
-          'откроем ваш счёт и кнопки вызова кальянщика.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Нет')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Да, мой')),
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
-
-    final auth = KolibriAuthService();
-    final sessionId = await GuestLinkService().bindToTable(auth.uid, table.id);
-    if (!context.mounted) return;
-
-    if (sessionId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Стол уже освободился — обновите карту')),
-      );
-      return;
-    }
-    Navigator.pop(context, table);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Готово! Ваш счёт открыт на вкладке «Мой стол»')),
+      SnackBar(content: Text(
+          'Это ваш стол? Отсканируйте QR-код на столе «${table.name}», чтобы открыть свой счёт.')),
     );
   }
 }

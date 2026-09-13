@@ -201,22 +201,31 @@ class AiContextService {
     if (!doc.exists) return 'Новый гость, истории нет.';
     final p = ClientProfile.fromDoc(doc);
 
-    final past = await _db
-        .collection('sessions')
-        .where('status', isEqualTo: 'closed')
-        .orderBy('closedAt', descending: true)
-        .limit(60)
-        .get();
+    // Список любимых позиций — best-effort: если индекс Firestore для
+    // status+closedAt ещё строится или временно недоступен, гостю не
+    // должно быть видно «Консьерж недоступен» из-за этого одного поля —
+    // просто отвечаем без истории заказов.
+    var top = const <MapEntry<String, int>>[];
+    try {
+      final past = await _db
+          .collection('sessions')
+          .where('status', isEqualTo: 'closed')
+          .orderBy('closedAt', descending: true)
+          .limit(60)
+          .get();
 
-    final favNames = <String, int>{};
-    for (final d in past.docs) {
-      final s = SessionModel.fromDoc(d);
-      if (s.guestTag.isEmpty || s.guestTag != p.name) continue;
-      for (final i in s.orderItems) {
-        favNames[i.name] = (favNames[i.name] ?? 0) + i.qty;
+      final favNames = <String, int>{};
+      for (final d in past.docs) {
+        final s = SessionModel.fromDoc(d);
+        if (s.guestTag.isEmpty || s.guestTag != p.name) continue;
+        for (final i in s.orderItems) {
+          favNames[i.name] = (favNames[i.name] ?? 0) + i.qty;
+        }
       }
+      top = favNames.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    } catch (_) {
+      // Индекс не готов / нет сети — не роняем весь ответ ИИ из-за этого.
     }
-    final top = favNames.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
     return [
       'Уровень: ${p.tier}, визитов ${p.visits}, бонусов ${p.bonusBalance.toStringAsFixed(0)}',

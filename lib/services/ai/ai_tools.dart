@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import '../../models/client_models.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
 import '../guest_link_service.dart';
 import '../reservation_service.dart';
+import '../venue_service.dart';
 import 'ai_context_service.dart';
 
 /// Кому разрешён инструмент.
@@ -372,6 +374,42 @@ class AiToolRegistry {
     ),
 
     AiTool(
+      name: 'get_weather',
+      description: 'Погода у заведения сейчас: температура, осадки, ветер. '
+          'Используй, чтобы подобрать микс под погоду (жара — свежее и кислое, '
+          'дождь/холод — тёплое, десертное, крепче).',
+      parameters: _params({}),
+      scopes: {AiToolScope.staff, AiToolScope.guest},
+      run: (args, ctx) async {
+        final venue = await VenueService.instance.load();
+        if (venue.lat == 0 && venue.lon == 0) {
+          return 'Координаты заведения не заданы в профиле — погода недоступна, '
+              'ориентируйся на время и день недели.';
+        }
+        try {
+          final uri = Uri.parse(
+              'https://api.open-meteo.com/v1/forecast?latitude=${venue.lat}&longitude=${venue.lon}'
+              '&current=temperature_2m,precipitation,wind_speed_10m,weather_code'
+              '&timezone=auto');
+          final resp = await http.get(uri).timeout(const Duration(seconds: 6));
+          if (resp.statusCode != 200) return 'Погода сейчас недоступна.';
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final cur = (data['current'] as Map?) ?? const {};
+          final temp = (cur['temperature_2m'] as num?)?.toDouble();
+          final precip = (cur['precipitation'] as num?)?.toDouble() ?? 0;
+          final wind = (cur['wind_speed_10m'] as num?)?.toDouble();
+          final code = (cur['weather_code'] as num?)?.toInt() ?? 0;
+          if (temp == null) return 'Погода сейчас недоступна.';
+          return 'Температура ${temp.toStringAsFixed(0)}°C, ${_weatherCodeLabel(code)}'
+              '${precip > 0 ? ', осадки ${precip.toStringAsFixed(1)} мм' : ''}'
+              '${wind != null ? ', ветер ${wind.toStringAsFixed(0)} км/ч' : ''}.';
+        } catch (_) {
+          return 'Погода сейчас недоступна — нет связи с сервисом погоды.';
+        }
+      },
+    ),
+
+    AiTool(
       name: 'notify_staff',
       description: 'Отправить заметку персоналу в ленту уведомлений POS (без изменения чеков).',
       parameters: _params({
@@ -432,6 +470,22 @@ class AiToolRegistry {
       });
     } catch (_) {}
   }
+}
+
+/// Коды погоды Open-Meteo (WMO) в короткое описание по-русски —
+/// используется инструментом get_weather.
+String _weatherCodeLabel(int code) {
+  if (code == 0) return 'ясно';
+  if (code <= 2) return 'малооблачно';
+  if (code == 3) return 'пасмурно';
+  if (code == 45 || code == 48) return 'туман';
+  if (code >= 51 && code <= 57) return 'морось';
+  if (code >= 61 && code <= 67) return 'дождь';
+  if (code >= 71 && code <= 77) return 'снег';
+  if (code >= 80 && code <= 82) return 'ливень';
+  if (code >= 85 && code <= 86) return 'снегопад';
+  if (code >= 95) return 'гроза';
+  return 'переменная облачность';
 }
 
 extension<T> on Iterable<T> {

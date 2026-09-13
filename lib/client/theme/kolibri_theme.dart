@@ -35,10 +35,13 @@ class KolibriColors {
   static const tierSilver = Color(0xFFB4C4CC);
   static const tierGold = gold;
   static const tierPlatinum = Color(0xFFAEEFE6);
+  static const tierDiamond = Color(0xFFB388FF);
 
   /// Цвет карточки/акцента под текущий уровень гостя (см. ClientProfile.tier).
   static Color tierColor(String tier) {
     switch (tier) {
+      case 'Алмаз':
+        return tierDiamond;
       case 'Платина':
         return tierPlatinum;
       case 'Золото':

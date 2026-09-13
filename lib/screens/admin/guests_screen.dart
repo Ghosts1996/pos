@@ -27,6 +27,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
 
   Color _tierColor(String tier) {
     switch (tier) {
+      case 'Алмаз':
+        return const Color(0xFFB388FF);
       case 'Платина':
         return const Color(0xFFAEEFE6);
       case 'Золото':

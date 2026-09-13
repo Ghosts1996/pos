@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
-import '../../models/table_model.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
@@ -100,15 +98,10 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             label: const Text('Карта зала'),
           ),
           const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _pickTable,
-            icon: const Icon(Icons.list),
-            label: const Text('Выбрать стол из списка'),
-          ),
-          const SizedBox(height: 12),
           const Text(
-            'Проще всего отсканировать код со стола. Если кода нет — '
-            'найдите свой стол на карте зала.',
+            'Открыть свой стол можно только по QR-коду на столе — так '
+            'счёт не откроют по ошибке за компанию за соседним столиком. '
+            'Кода нет или не сканируется — позовите кальянщика.',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
           ),
         ],
@@ -389,52 +382,6 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         label: Text(type.label, style: const TextStyle(fontSize: 13)),
       );
 
-  /// Выбор своего стола из списка занятых столов зала. Гость не может
-  /// «сесть» за свободный стол — счёт открывает только кальянщик.
-  Future<void> _pickTable() async {
-    final snap = await FirebaseFirestore.instance.collection('tables').get();
-    final busy = snap.docs
-        .map(TableModel.fromDoc)
-        .where((t) => t.activeSessionIds.isNotEmpty)
-        .toList();
-
-    if (!mounted) return;
-    if (busy.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сейчас нет открытых столов — попросите кальянщика начать сеанс')),
-      );
-      return;
-    }
-
-    final picked = await showModalBottomSheet<TableModel>(
-      context: context,
-      backgroundColor: KolibriColors.surface,
-      builder: (_) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: busy
-              .map((t) => ListTile(
-                    leading: const Icon(Icons.table_restaurant, color: KolibriColors.primary),
-                    title: Text(t.name),
-                    subtitle: Text('${t.seats} мест'),
-                    onTap: () => Navigator.pop(context, t),
-                  ))
-              .toList(),
-        ),
-      ),
-    );
-
-    if (picked == null) return;
-    final sessionId = await _link.bindToTable(_auth.uid, picked.id);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(sessionId == null
-            ? 'Стол уже свободен — обновите список'
-            : 'Готово! Ваш счёт открыт'),
-      ),
-    );
-  }
 }
 
 /// Оценка визита: звёзды + необязательный комментарий.

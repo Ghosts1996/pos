@@ -169,7 +169,11 @@ class ReservationService {
     final hall = await _loadHall(window.open);
 
     final result = <DateTime>[];
-    final earliest = DateTime.now().add(const Duration(minutes: 30));
+    // Буфер на подготовку стола перед посадкой. Был 30 минут — из-за него
+    // при открытии брони, скажем, в 16:11 при работе с 16:00 первый
+    // доступный слот получался только в 17:00, хотя заведение уже открыто.
+    // 15 минут — тот же запас, но ближе к реальному открытию.
+    final earliest = DateTime.now().add(const Duration(minutes: 15));
     var cursor = window.open;
 
     // Бронь должна успеть закончиться до закрытия — иначе гостя выгонят

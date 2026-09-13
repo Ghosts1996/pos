@@ -55,6 +55,7 @@ class ClientProfile {
 
   /// Уровень лояльности — считается от суммы закрытых чеков.
   String get tier {
+    if (totalSpent >= 100000) return 'Алмаз';
     if (totalSpent >= 50000) return 'Платина';
     if (totalSpent >= 25000) return 'Золото';
     if (totalSpent >= 10000) return 'Серебро';
@@ -64,6 +65,8 @@ class ClientProfile {
   /// Процент кешбэка бонусами по уровню.
   double get cashbackPercent {
     switch (tier) {
+      case 'Алмаз':
+        return 15;
       case 'Платина':
         return 10;
       case 'Золото':
