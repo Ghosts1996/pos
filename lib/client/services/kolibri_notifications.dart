@@ -78,7 +78,11 @@ class KolibriNotifications {
     _uid = uid;
     _running = true;
     _startedAt = DateTime.now();
-    await _notify.init();
+    // Осечка в подготовке уведомлений не должна отменять сами подписки:
+    // иначе приложение перестаёт замечать изменения броней и заказов.
+    try {
+      await _notify.init();
+    } catch (_) {}
     await _restore();
 
     _watchReservations();

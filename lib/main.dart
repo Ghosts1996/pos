@@ -14,7 +14,6 @@ import 'services/chestny_znak_api_service.dart';
 import 'services/push_service.dart';
 import 'services/venue_service.dart';
 import 'services/auto_stoplist_service.dart';
-import 'services/notification_service.dart';
 import 'services/session_alerts_service.dart';
 import 'services/ai/ai_settings.dart';
 import 'services/ai/ai_scheduler.dart';
@@ -73,9 +72,16 @@ void main() async {
       // Локальные уведомления зала: новые брони, вызовы гостей, угли через
       // 35 минут и предупреждение за 10 минут до конца сеанса. Работают без
       // сервера и без платного тарифа Firebase.
-      unawaited(NotificationService.instance.init().then(
-        (_) => SessionAlertsService.instance.start(),
-      ));
+      // ВАЖНО: старт слежения за залом НЕ ставится в зависимость от
+      // успеха подготовки уведомлений. Раньше было
+      // `init().then((_) => start())` — и стоило init() споткнуться на
+      // любой мелочи (запрос разрешения на точные будильники на части
+      // прошивок бросает исключение), как then не выполнялся и сервис не
+      // стартовал вовсе. Снаружи это выглядело необъяснимо: каналы
+      // уведомлений в настройках телефона есть и включены (их создаёт та
+      // же init, но раньше по порядку), вызовы гостей на экране видны, а
+      // в шторке — ни одного уведомления, и нигде ни одной ошибки.
+      unawaited(SessionAlertsService.instance.start());
       VenueService.instance.watch();
 
       // Автостоп-лист следит за остатками и сам убирает из меню то, чего
