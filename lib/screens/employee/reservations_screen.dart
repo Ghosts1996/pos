@@ -54,6 +54,27 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     await _checkNotifications();
   }
 
+  /// Показывает тестовое уведомление и объясняет, что получилось.
+  /// Молчание уведомлений ничем не отличается от «событий не было», и без
+  /// такой проверки причину не найти.
+  Future<void> _testNotifications() async {
+    final report = await NotificationService.instance.diagnose();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Проверка уведомлений'),
+        content: SingleChildScrollView(child: Text(report)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Понятно')),
+        ],
+      ),
+    );
+    await _checkNotifications();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -74,6 +95,11 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                 'Какие брони рискуют не прийти?',
               ],
             ),
+          ),
+          IconButton(
+            tooltip: 'Проверить уведомления',
+            icon: const Icon(Icons.notifications_active_outlined),
+            onPressed: _testNotifications,
           ),
           IconButton(
             icon: const Icon(Icons.calendar_month),

@@ -61,6 +61,29 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     if (mounted) setState(() => _notificationsOn = on);
   }
 
+  /// Проверка уведомлений: показывает тестовое и объясняет результат.
+  /// Нужна потому, что молчание уведомлений ничем не отличается от
+  /// «всё работает, просто событий не было».
+  Future<void> _testNotifications() async {
+    final report = await NotificationService.instance.diagnose();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KolibriColors.surface,
+        title: const Text('Проверка уведомлений'),
+        content: SingleChildScrollView(child: Text(report)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Понятно'),
+          ),
+        ],
+      ),
+    );
+    await _checkNotifications();
+  }
+
   Future<void> _enableNotifications() async {
     final granted = await NotificationService.instance.requestPermission();
     if (!granted) {
@@ -443,7 +466,16 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           },
         ),
 
-        const SizedBox(height: 32),
+        const SizedBox(height: 24),
+        Center(
+          child: TextButton.icon(
+            onPressed: _testNotifications,
+            icon: const Icon(Icons.notifications_active_outlined, size: 18),
+            label: const Text('Проверить уведомления'),
+          ),
+        ),
+
+        const SizedBox(height: 8),
         // Номер сборки: приложение ставится файлом, и без него нельзя
         // понять, свежая ли версия стоит на конкретном телефоне.
         const Text(
