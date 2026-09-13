@@ -72,18 +72,35 @@ class GuestLinkService {
   /// Объединение гостя, пришедшего с НОВОГО устройства, с его же старым
   /// профилем (найденным по номеру телефона).
   ///
-  /// Бесплатная альтернатива SMS-подтверждению: без платного тарифа
-  /// Firebase нельзя проверить владение номером автоматически, поэтому
-  /// подтверждает личность кальянщик на кассе — так же, как раньше
-  /// вручную переносил историю визитов. Метод переносит бонусный баланс,
-  /// сумму трат, визиты и историю операций на [newUid] и удаляет старую
-  /// запись, чтобы бонусы не задваивались.
-  Future<void> mergeGuestProfiles({required String phone, required String newUid}) async {
+  /// [newDeviceInput] — либо короткий ID устройства (6 символов, напр. UXVA4J),
+  /// либо полный Firebase UID. Метод сам разбирается что это такое.
+  Future<void> mergeGuestProfiles({
+    required String phone,
+    required String newDeviceInput,
+  }) async {
     final normalized = normalizePhone(phone);
     final old = await findByPhone(normalized);
     if (old == null) {
       throw StateError('Гость с номером $normalized не найден');
     }
+
+    // Определяем реальный uid нового устройства:
+    // если ввод короткий (≤10 символов) — ищем по shortDeviceId,
+    // иначе считаем что это Firebase UID напрямую.
+    String newUid;
+    if (newDeviceInput.length <= 10) {
+      final byShort = await findByShortDeviceId(newDeviceInput);
+      if (byShort == null) {
+        throw StateError(
+          'Устройство с ID $newDeviceInput не найдено — '
+          'попросите гостя открыть приложение и профиль ещё раз',
+        );
+      }
+      newUid = byShort.uid;
+    } else {
+      newUid = newDeviceInput;
+    }
+
     if (old.uid == newUid) {
       throw StateError('Это уже тот же самый профиль');
     }

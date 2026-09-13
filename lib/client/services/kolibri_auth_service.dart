@@ -40,13 +40,15 @@ class KolibriAuthService {
 
   /// Гарантирует, что есть хоть какой-то аккаунт (анонимный) и профиль
   /// в коллекции clients — иначе гость не сможет читать меню по правилам.
+  /// Каждый раз обновляет shortDeviceId — чтобы у старых профилей тоже
+  /// появилось это поле после обновления приложения.
   Future<ClientProfile> ensureGuest() async {
     if (_auth.currentUser == null) {
       await _auth.signInAnonymously();
     }
-    // Сохраняем shortDeviceId в профиль, чтобы кассир мог найти гостя по нему.
     final shortId = await getShortDeviceId();
     final profile = await _link.ensureProfile(uid);
+    // Всегда записываем shortDeviceId (идемпотентно — значение не меняется).
     await _link.updateProfile(uid, {'shortDeviceId': shortId});
     return profile;
   }
