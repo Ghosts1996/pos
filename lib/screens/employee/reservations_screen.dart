@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/employee.dart';
 import '../../models/reservation_model.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/guest_link_service.dart';
 import '../../services/reservation_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
@@ -23,6 +25,7 @@ class ReservationsScreen extends StatefulWidget {
 class _ReservationsScreenState extends State<ReservationsScreen> {
   final _service = ReservationService();
   final _fs = FirestoreService();
+  final _guestLink = GuestLinkService();
   DateTime _day = DateTime.now();
 
   @override
@@ -356,11 +359,21 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
 
     if (ok != true) return;
     final start = DateTime(_day.year, _day.month, _day.day, time.hour, time.minute);
+    final phone = _normalizePhone(phoneCtrl.text.trim());
+
+    // Если гость уже ставил себе телефон в «Колибри Лаундж» — находим его
+    // профиль и привязываем бронь к нему: тогда она сразу появится в его
+    // приложении и придёт пуш о подтверждении. Если профиля ещё нет —
+    // бронь всё равно создаётся, просто без привязки (гость не увидит её
+    // в приложении, пока не зарегистрируется тем же номером).
+    final existingClient = phone.isEmpty ? null : await _guestLink.findByPhone(phone);
+
     await _guard(() async {
       await _service.create(ReservationModel(
         id: '',
+        clientUid: existingClient?.uid ?? '',
         guestName: nameCtrl.text.trim().isEmpty ? 'Гость' : nameCtrl.text.trim(),
-        phone: phoneCtrl.text.trim(),
+        phone: phone,
         guestsCount: guests,
         startTime: start,
         status: ReservationStatus.confirmed,
@@ -369,6 +382,27 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         createdAt: DateTime.now(),
       ));
     });
+
+    if (existingClient == null && phone.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Бронь создана. Гость не найден в приложении — '
+            'уведомление не отправлено, покажется только при входе тем же номером.'),
+      ));
+    }
+  }
+
+  /// Приводит номер к формату, в котором он хранится в профиле гостя
+  /// («Колибри Лаундж» использует Firebase Phone Auth — там номер всегда
+  /// в E.164: +7XXXXXXXXXX). Без этого поиск по строке findByPhone почти
+  /// никогда не совпадёт с тем, что ввёл сотрудник.
+  String _normalizePhone(String raw) {
+    var digits = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (digits.isEmpty) return '';
+    if (digits.startsWith('+7')) return digits;
+    if (digits.startsWith('8') && digits.length == 11) return '+7${digits.substring(1)}';
+    if (digits.startsWith('7') && digits.length == 11) return '+$digits';
+    if (digits.startsWith('9') && digits.length == 10) return '+7$digits';
+    return digits.startsWith('+') ? digits : '+$digits';
   }
 
   Future<void> _pickDay() async {
@@ -381,8 +415,13 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     if (picked != null) setState(() => _day = picked);
   }
 
-  void _showPhone(String phone) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(phone)));
+  Future<void> _showPhone(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(phone)));
+    }
   }
 
   String _fmtDay(DateTime d) =>
