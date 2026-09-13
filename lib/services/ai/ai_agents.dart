@@ -108,7 +108,7 @@ class AiAgents {
     id: 'hookah_sommelier',
     title: 'Кальянный сомелье',
     description: 'Подбирает микс и сопровождение под вкусы гостя.',
-    tools: {'get_menu', 'get_guest_profile', 'save_guest_taste_note'},
+    tools: {'get_menu', 'get_guest_profile', 'save_guest_taste_note', 'get_weather'},
     systemPrompt: '''$_brandRules
 Роль: кальянный сомелье.
 
@@ -118,6 +118,13 @@ class AiAgents {
 назвать только как строку счёта с ценой.
 
 $_hookahKnowledge
+
+Перед подбором микса вызови get_weather и учти день недели и время (уже
+есть в системном сообщении «Текущее время»): жара или духота — свежее и
+кислое, короче доля мяты/льда; дождь, холод, поздний вечер буднего дня —
+тёплое, десертное, можно чуть крепче; пятница-суббота вечером — крепче и
+ярче, гостей обычно компанией. Если погода недоступна — молча подбирай по
+времени и дню недели, не упоминай, что погоды нет.
 
 Формат ответа:
 1) Два-три микса: название микса, состав в долях, крепость, вкус в одной
@@ -160,7 +167,7 @@ $_hookahKnowledge
     title: 'Консьерж Колибри',
     description: 'Чат гостя: меню, бронь, бонусы, вызов кальянщика.',
     scope: AiToolScope.guest,
-    tools: {'get_menu', 'get_free_slots', 'create_reservation', 'get_session', 'call_staff', 'save_guest_taste_note', 'get_guest_profile'},
+    tools: {'get_menu', 'get_free_slots', 'create_reservation', 'get_session', 'call_staff', 'save_guest_taste_note', 'get_guest_profile', 'get_weather'},
     systemPrompt: '''$_brandRules
 Роль: консьерж гостя в приложении «Колибри Лаундж». Обращайся на «вы», тепло,
 без фамильярности, ответ до 80 слов.
@@ -172,6 +179,11 @@ $_hookahKnowledge
 проси гостя выбрать из меню: меню содержит только уровни кальяна с ценой,
 а вкусовой микс собирает мастер. Предложи два микса с составом в долях и
 назови уровень из меню с ценой отдельной строкой.
+
+Перед таким советом вызови get_weather и учти день недели и время (есть в
+системном сообщении «Текущее время»): жара — свежее и кислое, холод/дождь —
+тёплое и десертное, поздний будний вечер — спокойнее, пятница-суббота —
+ярче и чуть крепче. Если погода недоступна, просто не упоминай её.
 
 $_hookahKnowledge
 Перед созданием брони обязательно назови дату, время и число гостей и получи
@@ -382,7 +394,8 @@ class AiService {
     final schemas = _registry.schemasFor(agent.scope, only: agent.tools);
     final messages = <AiMessage>[
       AiMessage.system(agent.systemPrompt),
-      AiMessage.system('Текущее время: ${DateTime.now().toIso8601String()}'),
+      AiMessage.system(
+          'Текущее время: ${DateTime.now().toIso8601String()} (${_weekdayRu(DateTime.now())})'),
       if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
       ...history,
       AiMessage.user(userMessage),
@@ -611,4 +624,11 @@ class UpsellSuggestion {
 
   @override
   String toString() => jsonEncode({'name': name, 'price': price, 'reason': reason});
+}
+
+/// День недели по-русски — модели проще ориентироваться на «пятница»,
+/// чем самой считать день недели по ISO-дате.
+String _weekdayRu(DateTime d) {
+  const names = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+  return names[d.weekday - 1];
 }
