@@ -55,8 +55,8 @@ class ClientProfile {
 
   /// Уровень лояльности — считается от суммы закрытых чеков.
   String get tier {
-    if (totalSpent >= 50000) return 'Платина';
-    if (totalSpent >= 30000) return 'Золото';
+    if (totalSpent >= 40000) return 'Платина';
+    if (totalSpent >= 25000) return 'Золото';
     if (totalSpent >= 10000) return 'Серебро';
     return 'Бронза';
   }
