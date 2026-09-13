@@ -17,6 +17,7 @@
     "predeploy": "npm --prefix \"$RESOURCE_DIR\" install"
   },
   "hosting": {
+    "site": "colibri-lounge",
     "public": "public",
     "ignore": [
       "firebase.json",

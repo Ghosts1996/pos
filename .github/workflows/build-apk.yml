@@ -10,7 +10,7 @@ on:
 # иконкой:
 #
 #   POS            lib/main.dart                → com.hookahpos      → hookah-pos-apk
-#   Колибри Лаундж lib/client/kolibri_main.dart → com.kolibrilounge  → kolibri-lounge-apk
+#   Colibri Lounge lib/client/kolibri_main.dart → com.kolibrilounge  → kolibri-lounge-apk
 #
 # Разные applicationId обязательны: с одинаковым id второй APK затирает
 # первый при установке на одно устройство и их нельзя развести в Play.
@@ -35,7 +35,7 @@ jobs:
           - app: kolibri
             entrypoint: lib/client/kolibri_main.dart
             project_name: kolibrilounge      # applicationId = com.kolibrilounge
-            label: Колибри Лаундж
+            label: Colibri Lounge
             icon: assets/icon/kolibri.png
             artifact: kolibri-lounge-apk
             gservices_secret: GOOGLE_SERVICES_JSON_KOLIBRI
@@ -338,7 +338,7 @@ jobs:
         run: |
           # Без своего keystore Flutter подписывает release-сборку debug-ключом,
           # который в CI генерируется заново на каждом запуске. SHA-1 при этом
-          # меняется, и Firebase Phone Auth (вход по SMS в «Колибри Лаундж»)
+          # меняется, и Firebase Phone Auth (вход по SMS в «Colibri Lounge»)
           # перестаёт работать. Поэтому подписываем постоянным ключом из
           # секретов; если секретов нет — предупреждаем и собираем как раньше.
           if [ -z "$KEYSTORE_BASE64" ]; then

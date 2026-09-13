@@ -122,7 +122,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       m.controller.addListener(() => setState(() {}));
     }
 
-    // Гость из «Колибри Лаундж», сидящий за этим чеком, — нужен для
+    // Гость из «Colibri Lounge», сидящий за этим чеком, — нужен для
     // бонусов и реферальной программы. Если приложения у гостя нет,
     // панель бонусов просто предложит найти его по телефону.
     GuestLinkService().findBySession(widget.session.id).then((profile) {

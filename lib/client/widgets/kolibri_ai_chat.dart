@@ -5,7 +5,7 @@ import '../../services/ai/tooken_client.dart';
 import '../../services/guest_link_service.dart';
 import '../theme/kolibri_theme.dart';
 
-/// ИИ-консьерж гостя в «Колибри Лаундж».
+/// ИИ-консьерж гостя в «Colibri Lounge».
 ///
 /// Работает поверх того же ключа tooken.club, что и POS: агент `concierge`
 /// видит актуальное меню (без стоп-листа) и обезличенный портрет гостя,
@@ -179,7 +179,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(widget.sommelierMode ? 'Кальянный сомелье' : 'Консьерж Колибри',
+                      Text(widget.sommelierMode ? 'Кальянный сомелье' : 'Консьерж Colibri',
                           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
                       const Text('Подскажу по меню, броням и бонусам',
                           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),

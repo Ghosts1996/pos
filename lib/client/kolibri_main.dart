@@ -9,7 +9,7 @@ import 'screens/kolibri_shell.dart';
 import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
 
-/// Точка входа клиентского приложения «Колибри Лаундж».
+/// Точка входа клиентского приложения «Colibri Lounge».
 ///
 /// Это второе приложение того же проекта: общий Firebase, общие модели и
 /// сервисы, отдельный main. Сборка:
@@ -52,7 +52,7 @@ class KolibriApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Колибри Лаундж',
+      title: 'Colibri Lounge',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

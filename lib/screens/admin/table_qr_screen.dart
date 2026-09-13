@@ -22,9 +22,11 @@ import '../../theme/app_colors.dart';
 class TableQrScreen extends StatelessWidget {
   const TableQrScreen({super.key});
 
-  /// Домен Firebase Hosting этого проекта. Меняется только вместе с
-  /// проектом Firebase (см. `.firebaserc`).
-  static const hostingDomain = 'https://hoocah-pos.web.app';
+  /// Домен Firebase Hosting. Это отдельный сайт `colibri-lounge` внутри
+  /// проекта hoocah-pos (Firebase → Hosting → Add another site), а не сайт
+  /// проекта по умолчанию: адрес должен читаться гостю как название
+  /// заведения. Привязан в `firebase.json` → hosting.site.
+  static const hostingDomain = 'https://colibri-lounge.web.app';
 
   /// Ссылка для НОВЫХ наклеек — через страницу-прослойку.
   static String linkFor(String tableId) => '$hostingDomain/table/$tableId';
@@ -104,7 +106,7 @@ class TableQrScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('Колибри Лаундж',
+            const Text('Colibri Lounge',
                 style: TextStyle(
                     color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13)),
             const SizedBox(height: 8),

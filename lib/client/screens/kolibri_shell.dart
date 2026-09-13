@@ -15,7 +15,7 @@ import 'kolibri_menu_screen.dart';
 import 'kolibri_profile_screen.dart';
 import 'kolibri_visit_screen.dart';
 
-/// Корневой каркас «Колибри Лаундж»: 5 вкладок + плавающая кнопка
+/// Корневой каркас «Colibri Lounge»: 5 вкладок + плавающая кнопка
 /// ИИ-консьержа снизу справа, доступная с любого экрана.
 class KolibriShell extends StatefulWidget {
   const KolibriShell({super.key});

@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 
-/// Авторизация гостя в «Колибри Лаундж».
+/// Авторизация гостя в «Colibri Lounge».
 ///
 /// Два режима:
 ///  • по номеру телефона (Firebase Phone Auth) — основной, даёт бонусы и
