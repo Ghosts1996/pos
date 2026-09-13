@@ -77,7 +77,7 @@ say "Проверяю, что сайт отвечает"
 # его прятало правило ignore "**/.*"), App Links молча не включатся:
 # ссылка будет открываться в браузере, и никакой ошибки нигде не появится.
 AL="https://$SITE.web.app/.well-known/assetlinks.json"
-if curl -fsS --max-time 20 "$AL" | grep -q "com.kolibrilounge"; then
+if curl -fsS --max-time 20 "$AL" 2>/dev/null | grep -q "com.kolibrilounge"; then
   ok "assetlinks.json на месте — приложение сможет открывать ссылки само"
 else
   warn "assetlinks.json не отдаётся ($AL)."
@@ -85,7 +85,7 @@ else
   warn "будет открываться через браузер, а не напрямую."
 fi
 
-if curl -fsS --max-time 20 "https://$SITE.web.app/table/1" | grep -q "Colibri Lounge"; then
+if curl -fsS --max-time 20 "https://$SITE.web.app/table/1" 2>/dev/null | grep -q "Colibri Lounge"; then
   ok "страница стола открывается"
 else
   warn "страница стола не открылась — проверьте https://$SITE.web.app/table/1"
