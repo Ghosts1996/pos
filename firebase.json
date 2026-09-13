@@ -15,5 +15,19 @@
       "firebase-debug.*.log"
     ],
     "predeploy": "npm --prefix \"$RESOURCE_DIR\" install"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/table/**",
+        "destination": "/table.html"
+      }
+    ]
   }
 }

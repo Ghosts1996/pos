@@ -89,12 +89,15 @@ class CheckPickerSheet extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
+      child: Opacity(
+        opacity: check.taken ? 0.45 : 1,
+        child: Material(
         color: KolibriColors.surfaceElevated,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: () => Navigator.pop(context, check),
+          // Занятый чек выбрать нельзя — он уже открыт у другого гостя.
+          onTap: check.taken ? null : () => Navigator.pop(context, check),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -111,16 +114,26 @@ class CheckPickerSheet extends StatelessWidget {
                             fontWeight: FontWeight.w600, fontSize: 15),
                       ),
                       const SizedBox(height: 2),
-                      Text(subtitle,
-                          style: const TextStyle(
-                              color: KolibriColors.textMuted, fontSize: 12)),
+                      Text(
+                        check.taken ? 'Уже открыт у другого гостя' : subtitle,
+                        style: TextStyle(
+                          color: check.taken
+                              ? KolibriColors.warning
+                              : KolibriColors.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: KolibriColors.textMuted),
+                Icon(
+                  check.taken ? Icons.lock_outline : Icons.chevron_right,
+                  color: KolibriColors.textMuted,
+                ),
               ],
             ),
           ),
+        ),
         ),
       ),
     );

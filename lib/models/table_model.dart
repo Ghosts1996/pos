@@ -140,7 +140,23 @@ class TableCheck {
   final String label;
   final DateTime? openedAt;
 
-  const TableCheck({required this.id, this.label = '', this.openedAt});
+  /// Чек уже закреплён за другим гостем. Поле вычисляемое: в базе его нет,
+  /// занятость лежит в отдельной коллекции sessionClaims.
+  final bool taken;
+
+  const TableCheck({
+    required this.id,
+    this.label = '',
+    this.openedAt,
+    this.taken = false,
+  });
+
+  TableCheck copyWith({bool? taken}) => TableCheck(
+        id: id,
+        label: label,
+        openedAt: openedAt,
+        taken: taken ?? this.taken,
+      );
 
   factory TableCheck.fromMap(Map<String, dynamic> m) {
     final ts = m['openedAt'];

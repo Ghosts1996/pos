@@ -69,6 +69,8 @@ class KolibriDeepLinks {
         return;
       }
       onTableBound?.call(result.sessionId!);
+    } on SessionTakenException catch (e) {
+      onFailed?.call('$e');
     } catch (e) {
       onFailed?.call('Не удалось открыть стол: $e');
     }
