@@ -1381,13 +1381,17 @@ function screenHall(pickMode) {
       const cls = tooSmall ? 'small' : (occupied || bookedNow) ? 'busy' : 'free';
       const canPick = pickMode && cls === 'free';
       // Координаты 0..1 — те же, что расставил администратор на кассе.
-      const x = Math.max(0, Math.min(1, Number(t.x) || 0.1)) * 100;
-      const y = Math.max(0, Math.min(1, Number(t.y) || 0.1)) * 100;
+      // Раскладываем их в «от края до края минус ширина плитки»: иначе
+      // стол с координатой 0 или 1 наполовину уезжал за границу карты, и
+      // на узких экранах подписи обрезались.
+      const x = Math.max(0, Math.min(1, Number(t.x) || 0.1));
+      const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
       return `
         <div class="table-dot ${cls} ${canPick ? 'pick' : ''}
              ${pickedTable && pickedTable.id === t.id ? 'chosen' : ''}"
              ${canPick ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"` : ''}
-             style="left:calc(${x}% - 44px);top:calc(${y}% - 36px)">
+             style="left:calc(${x} * (100% - var(--tile-w)));
+                    top:calc(${y} * (100% - var(--tile-h)))">
           ${esc(t.name || '')}
           <small>${Number(t.seats) || 0} мест${tooSmall ? ' · мало' : ''}</small>
         </div>`;
