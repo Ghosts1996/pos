@@ -43,7 +43,14 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
         stream: _db.collection('stories').orderBy('createdAt', descending: true).snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final stories = snap.data!.docs.map(StoryCard.fromDoc).toList();
+          // Порядок ровно тот же, что видит гость в ленте: иначе
+          // администратор переставляет карточки вслепую — у него они идут
+          // по времени создания, а у гостя по полю order.
+          final stories = snap.data!.docs.map(StoryCard.fromDoc).toList()
+            ..sort((a, b) {
+              final byOrder = a.order.compareTo(b.order);
+              return byOrder != 0 ? byOrder : b.createdAt.compareTo(a.createdAt);
+            });
           if (stories.isEmpty) {
             return const Center(
               child: Text('Карточек нет — создайте вручную или попросите ИИ',
@@ -54,14 +61,32 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
             padding: const EdgeInsets.all(16),
             itemCount: stories.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _tile(stories[i]),
+            itemBuilder: (_, i) => _tile(stories[i], i, stories),
           );
         },
       ),
     );
   }
 
-  Widget _tile(StoryCard s) => Container(
+  /// Переставляет карточку на одну позицию.
+  ///
+  /// Порядок хранится числом в поле order, и после перестановки он
+  /// переписывается подряд у ВСЕХ карточек — иначе у карточек, созданных
+  /// раньше, там остаются нули, и любая перестановка их не разводит.
+  Future<void> _move(List<StoryCard> list, int from, int to) async {
+    if (to < 0 || to >= list.length) return;
+    final reordered = [...list];
+    final moved = reordered.removeAt(from);
+    reordered.insert(to, moved);
+
+    final batch = _db.batch();
+    for (var i = 0; i < reordered.length; i++) {
+      batch.update(_db.collection('stories').doc(reordered[i].id), {'order': i});
+    }
+    await batch.commit();
+  }
+
+  Widget _tile(StoryCard s, int index, List<StoryCard> all) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -86,6 +111,20 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                     padding: EdgeInsets.only(right: 8),
                     child: Icon(Icons.auto_awesome, size: 16, color: AppColors.primary),
                   ),
+                IconButton(
+                  tooltip: 'Выше в ленте',
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: index == 0 ? null : () => _move(all, index, index - 1),
+                ),
+                IconButton(
+                  tooltip: 'Ниже в ленте',
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: index == all.length - 1
+                      ? null
+                      : () => _move(all, index, index + 1),
+                ),
                 Switch(
                   value: s.published,
                   onChanged: (v) =>
@@ -180,7 +219,20 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
     final title = TextEditingController(text: story?.title ?? '');
     final body = TextEditingController(text: story?.text ?? '');
     final image = TextEditingController(text: story?.imageUrl ?? '');
+    final label = TextEditingController(text: story?.actionLabel ?? '');
     var action = story?.action ?? 'none';
+
+    // Подпись по умолчанию — та, что подходит выбранному переходу. Если
+    // администратор ничего своего не написал, при смене перехода она
+    // меняется вслед; как только написал — не трогаем.
+    String defaultLabel(String a) => switch (a) {
+          'menu' => 'Смотреть меню',
+          'booking' => 'Забронировать',
+          _ => '',
+        };
+    var labelIsDefault = label.text.isEmpty ||
+        label.text == defaultLabel(action);
+    if (label.text.isEmpty) label.text = defaultLabel(action);
 
     final ok = await showDialog<bool>(
       context: context,
@@ -207,8 +259,23 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                     DropdownMenuItem(value: 'menu', child: Text('В меню')),
                     DropdownMenuItem(value: 'booking', child: Text('К брони')),
                   ],
-                  onChanged: (v) => setLocal(() => action = v ?? 'none'),
+                  onChanged: (v) => setLocal(() {
+                    action = v ?? 'none';
+                    if (labelIsDefault) label.text = defaultLabel(action);
+                  }),
                 ),
+                if (action != 'none')
+                  TextField(
+                    controller: label,
+                    maxLength: 24,
+                    onChanged: (v) =>
+                        labelIsDefault = v.trim() == defaultLabel(action),
+                    decoration: InputDecoration(
+                      labelText: 'Надпись на кнопке',
+                      hintText: defaultLabel(action),
+                      helperText: 'Её видит гость в карточке',
+                    ),
+                  ),
               ],
             ),
           ),
@@ -226,11 +293,10 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       'text': body.text.trim(),
       'imageUrl': image.text.trim(),
       'action': action,
-      'actionLabel': action == 'menu'
-          ? 'Смотреть меню'
-          : action == 'booking'
-              ? 'Забронировать'
-              : '',
+      // Раньше подпись подставлялась жёстко по переходу и затирала любую
+      // свою — в том числе ту, что придумал ИИ под конкретную карточку.
+      'actionLabel':
+          action == 'none' ? '' : (label.text.trim().isEmpty ? defaultLabel(action) : label.text.trim()),
     };
     if (story == null) {
       await _db.collection('stories').add({
