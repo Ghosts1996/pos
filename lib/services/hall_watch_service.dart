@@ -1,4 +1,10 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+import '../firebase_options.dart';
+import 'auth_service.dart';
+import 'notification_service.dart';
+import 'session_alerts_service.dart';
 
 /// Держит POS «живым», пока приложение свёрнуто.
 ///
@@ -32,14 +38,33 @@ class HallWatchService {
 
   bool _started = false;
 
-  Future<void> start() async {
-    if (_started) return;
+  /// Возвращает true, если служба поднялась. Вызывающий по ответу решает,
+  /// вести ли слежение самому: если служба не запустилась, за залом
+  /// придётся следить основному приложению — хуже, но лучше, чем ничего.
+  Future<bool> start() async {
+    if (_started) return true;
     _started = true;
+    await _dropOldChannels();
     // Сначала пробуем совсем беззвучный вариант, а если система откажется
     // с ним запускать службу — обычный тихий. Подробности у _tryStart.
-    if (await _tryStart(NotificationChannelImportance.NONE, 'silent')) return;
-    if (await _tryStart(NotificationChannelImportance.MIN, 'min')) return;
+    if (await _tryStart(NotificationChannelImportance.NONE, 'silent')) return true;
+    if (await _tryStart(NotificationChannelImportance.MIN, 'min')) return true;
     _started = false;
+    return false;
+  }
+
+  /// Убирает каналы прошлых версий из настроек телефона.
+  ///
+  /// Важность канала задаётся один раз, при создании, поэтому каждый новый
+  /// вариант заводит свой канал — а старые остаются висеть в списке
+  /// категорий. У пользователя их набралось два с одинаковым названием
+  /// «Работа в фоне», и какой из них что делает, понять невозможно.
+  Future<void> _dropOldChannels() async {
+    for (final id in const ['colibri_hall_watch', 'colibri_hall_watch_min']) {
+      try {
+        await NotificationService.instance.deleteChannel(id);
+      } catch (_) {}
+    }
   }
 
   /// Запускает службу с заданной «заметностью» уведомления.
@@ -125,15 +150,45 @@ void hallWatchCallback() {
   FlutterForegroundTask.setTaskHandler(_HallWatchHandler());
 }
 
-/// Пустой обработчик: вся работа идёт в основном изоляте, сервису нужно
-/// лишь существовать.
+/// Здесь и ведётся слежение за залом.
+///
+/// Это ключевой момент, и он не очевиден. Когда приложение смахивают из
+/// списка задач, Android уничтожает его экран — а вместе с экраном умирает
+/// и весь основной изолят Dart со всеми подписками на базу. Служба при
+/// этом продолжает работать, но в СВОЁМ отдельном изоляте, который
+/// запускается вот этой функцией.
+///
+/// Раньше обработчик был пустым: служба держала процесс живым, а следить
+/// за вызовами гостей было уже некому — подписки жили в изоляте, которого
+/// больше нет. Со стороны это выглядело как «уведомления не приходят после
+/// смахивания», хотя служба честно работала.
+///
+/// Теперь подписки живут здесь. Изолят свой, поэтому всё нужно поднять
+/// заново: Firebase, вход устройства, уведомления.
 class _HallWatchHandler extends TaskHandler {
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+            options: DefaultFirebaseOptions.currentPlatform);
+      }
+      // Вход берётся сохранённый — тот же uid, что у приложения. Иначе
+      // правила базы не признают устройство рабочим и молча не отдадут
+      // ни вызовов, ни броней.
+      await AuthService().ensureSignedIn();
+      await NotificationService.instance.init();
+      await SessionAlertsService.instance.start();
+    } catch (_) {
+      // Не вышло — уведомлений в фоне не будет, но приложение цело.
+    }
+  }
 
   @override
   void onRepeatEvent(DateTime timestamp) {}
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {}
+  Future<void> onDestroy(DateTime timestamp) async {
+    await SessionAlertsService.instance.stop();
+  }
 }

@@ -288,6 +288,18 @@ class NotificationService {
     return granted ?? await areEnabled();
   }
 
+  /// Удаляет канал уведомлений из настроек телефона.
+  ///
+  /// Нужно, чтобы каналы прошлых версий не копились в списке категорий:
+  /// важность канала задаётся один раз при создании, поэтому смена
+  /// поведения означает новый канал, а старый остаётся висеть.
+  Future<void> deleteChannel(String channelId) async {
+    await init();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await android?.deleteNotificationChannel(channelId);
+  }
+
   // ---------- ПРОВЕРКА ----------
 
   /// Пробует показать тестовое уведомление и рассказывает, что вышло.
