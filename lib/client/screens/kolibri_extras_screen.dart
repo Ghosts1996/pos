@@ -274,7 +274,9 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Вы ${result.position}-й в очереди, ждать ~${result.minutes} мин')),
+      SnackBar(content: Text(result.position > 0
+          ? 'Вы ${result.position}-й в очереди, ждать ~${result.minutes} мин'
+          : 'Вы в очереди, ждать ~${result.minutes} мин')),
     );
   }
 

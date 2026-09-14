@@ -56,6 +56,9 @@ const money = (v) => `${Math.round(Number(v) || 0).toLocaleString('ru-RU')} ₽`
 const pad = (n) => String(n).padStart(2, '0');
 const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const dmy = (d) => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`;
+// С годом — для истории бонусов: операции копятся годами, и «14.09»
+// без года в списке за несколько лет ничего не говорит.
+const dmyy = (d) => `${dmy(d)}.${d.getFullYear()}`;
 
 /// Firestore отдаёт время объектом Timestamp; при чтении из кэша поле
 /// может быть ещё пустым — поэтому всегда через проверку.
@@ -241,8 +244,11 @@ function route() {
   const bind = hash.match(/^#\/t\/(.+)$/);
   const tab = bind ? 'table' : (hash.replace('#/', '') || 'home');
 
+  // «Ещё» — подраздел профиля, отдельной вкладки у него нет: пусть в
+  // нижнем меню остаётся подсвеченным «Профиль», а не гаснет всё сразу.
+  const activeTab = tab === 'extras' ? 'profile' : (tab === '' ? 'home' : tab);
   document.querySelectorAll('.tabbar a').forEach((a) => {
-    a.classList.toggle('on', a.dataset.tab === (tab === '' ? 'home' : tab));
+    a.classList.toggle('on', a.dataset.tab === activeTab);
   });
   window.scrollTo(0, 0);
 
@@ -256,6 +262,7 @@ function route() {
     case 'booking': return screenBooking();
     case 'table': return screenTable();
     case 'profile': return screenProfile();
+    case 'extras': return screenExtras();
     default: return screenHome();
   }
 }
@@ -1593,8 +1600,17 @@ function screenProfile() {
       </div>
     </div>
 
+    <a class="btn btn-ghost" href="#/extras"
+       style="display:flex;align-items:center;gap:12px;text-align:left">
+      <span class="muted">•••</span>
+      <span class="grow">Чаевые, сертификат, очередь, пригласить друга</span>
+    </a>
+
     <h2>История визитов</h2>
     <div id="visits"><div class="spinner"></div></div>
+
+    <h2>История бонусов</h2>
+    <div id="bonusOps"><div class="spinner"></div></div>
 
     <p class="small muted center" style="margin-top:28px">
       Colibri Lounge · веб-версия</p>`;
@@ -1616,6 +1632,60 @@ function screenProfile() {
     };
   }
   watchVisits();
+  watchBonusOps();
+}
+
+/// История бонусов — начисления и списания.
+///
+/// orderBy обязателен: limit(50) без сортировки отдаёт первые пятьдесят
+/// документов в порядке id, то есть случайные. У постоянного гостя свежие
+/// начисления в такую выборку просто не попадали. Составной индекс для
+/// этого запроса уже есть — его использует приложение на Android.
+function watchBonusOps() {
+  sub(onSnapshot(
+    query(collection(state.db, 'bonusOperations'),
+      where('clientUid', '==', state.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)),
+    (snap) => {
+      const box = $('bonusOps');
+      if (!box) return;
+      if (snap.empty) {
+        box.innerHTML = '<p class="muted small">Операций пока нет</p>';
+        return;
+      }
+      box.innerHTML = snap.docs.map((d) => {
+        const v = d.data();
+        const accrual = v.type === 'accrual';
+        const amount = Number(v.amount) || 0;
+        const when = toDate(v.createdAt);
+        return `
+          <div class="row" style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <span style="color:${accrual ? 'var(--primary)' : 'var(--warning)'}">
+              ${accrual ? '⊕' : '⊖'}</span>
+            <div class="grow">
+              <div>${esc(bonusReason(v.reason, accrual))}</div>
+              <div class="small muted">${when ? dmyy(when) : ''}</div>
+            </div>
+            <div style="font-weight:700;color:${accrual ? 'var(--primary)' : 'var(--warning)'}">
+              ${accrual ? '+' : '−'}${Math.round(Math.abs(amount))}</div>
+          </div>`;
+      }).join('');
+    },
+    () => {
+      const box = $('bonusOps');
+      if (box) box.innerHTML = '<p class="muted small">Не удалось загрузить историю</p>';
+    }));
+}
+
+/// Человеческая подпись к бонусной операции — те же слова, что в приложении.
+function bonusReason(reason, accrual) {
+  switch (reason) {
+    case 'referral_invitee': return 'Бонус за код друга';
+    case 'referral_inviter': return 'Друг дошёл до нас';
+    case 'visit': return 'Начисление за визит';
+    default: return accrual ? 'Начисление за визит' : 'Списание бонусов';
+  }
 }
 
 /// Занят ли номер ДРУГИМ профилем. Чтение одного документа по id —
@@ -1715,6 +1785,327 @@ function watchVisits() {
       const box = $('visits');
       if (box) box.innerHTML = `<p class="muted small">Не удалось загрузить историю.</p>`;
     }));
+}
+
+
+// ---------- ЕЩЁ: ЧАЕВЫЕ, СЕРТИФИКАТ, ОЧЕРЕДЬ, ДРУГ ----------
+//
+// Четыре редких действия на одном экране — как в приложении на Android.
+// Отдельная вкладка под каждое только запутывала бы нижнее меню.
+
+/// Сколько бонусов получает каждая сторона — те же числа, что в
+/// ReferralService на Android.
+const INVITER_BONUS = 300;
+const INVITEE_BONUS = 200;
+
+function screenExtras() {
+  screenEl().innerHTML = `
+    <div class="row" style="margin-bottom:6px">
+      <a class="btn-ghost" href="#/profile" style="padding:6px 10px">←</a>
+      <h1 style="margin:0">Ещё</h1>
+    </div>
+
+    <div class="card">
+      <div class="row"><span style="color:var(--primary)">🫶</span>
+        <b class="grow">Чаевые кальянщику</b></div>
+      <div id="xTips" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span style="color:var(--primary)">🎁</span>
+        <b class="grow">Подарочный сертификат</b></div>
+      <div class="row" style="margin-top:12px;gap:10px">
+        <input id="xCard" class="grow" placeholder="KLB-XXXX-XXXX"
+          autocapitalize="characters" spellcheck="false">
+        <button class="btn-ghost" id="xCardBtn">Проверить</button>
+      </div>
+      <div id="xCardMsg" class="small" style="margin-top:10px"></div>
+      <p class="small muted" style="margin:8px 0 0">Назовите код кальянщику
+        при оплате — сумма спишется с сертификата.</p>
+    </div>
+
+    <div class="card">
+      <div class="row"><span style="color:var(--primary)">⏳</span>
+        <b class="grow">Занять очередь</b></div>
+      <div id="xQueue" style="margin-top:12px"><div class="spinner"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span style="color:var(--primary)">👥</span>
+        <b class="grow">Пригласить друга</b></div>
+      <div style="margin-top:12px">
+        <div id="xMyCode" style="font-size:18px;font-weight:700">Ваш код: …</div>
+        <p class="small muted" style="margin:6px 0 14px">Друг называет его в
+          первый визит: ему ${INVITEE_BONUS} бонусов, вам — ${INVITER_BONUS}.</p>
+        <div class="row" style="gap:10px">
+          <input id="xRef" class="grow" placeholder="Код друга"
+            autocapitalize="characters" spellcheck="false">
+          <button class="btn-ghost" id="xRefBtn">Применить</button>
+        </div>
+        <div id="xRefMsg" class="small" style="margin-top:10px;color:var(--gold)"></div>
+      </div>
+    </div>`;
+
+  renderTips();
+  renderQueue();
+  ensureReferralCode();
+  $('xCardBtn').onclick = checkGiftCard;
+  $('xRefBtn').onclick = applyReferralCode;
+}
+
+// ---------- ЧАЕВЫЕ ----------
+
+function renderTips() {
+  const box = $('xTips');
+  if (!box) return;
+  const sessionId = (state.profile || {}).activeSessionId || '';
+  if (!sessionId) {
+    box.innerHTML = `<p class="small muted">Чаевые можно оставить во время
+      визита — откройте свой стол.</p>`;
+    return;
+  }
+
+  // Имя кальянщика лежит в чеке. Свой чек гостю читать можно — чужие нет.
+  sub(onSnapshot(doc(state.db, 'sessions', sessionId), (d) => {
+    const who = d.exists() ? (d.data().employeeName || '') : '';
+    box.innerHTML = `
+      <p class="small muted">${who ? 'Ваш кальянщик: ' + esc(who) : 'Ваш кальянщик'}</p>
+      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+        ${[200, 500, 1000].map((a) =>
+          `<button class="btn-ghost" data-tip="${a}">${a} ₽</button>`).join('')}
+      </div>`;
+    box.querySelectorAll('[data-tip]').forEach((el) => {
+      el.onclick = () => leaveTip(Number(el.dataset.tip), who, sessionId, el);
+    });
+  }, () => {
+    box.innerHTML = `<p class="small muted">Чаевые можно оставить во время
+      визита — откройте свой стол.</p>`;
+  }));
+}
+
+async function leaveTip(amount, employeeName, sessionId, btn) {
+  btn.disabled = true;
+  try {
+    await addDoc(collection(state.db, 'tips'), {
+      amount,
+      employeeId: '',
+      employeeName: employeeName || 'Смена',
+      sessionId,
+      clientUid: state.uid,
+      comment: '',
+      method: 'app',
+      // Правила базы разрешают гостю создавать чаевые только в этом
+      // статусе: подтверждает оплату касса.
+      status: 'pending',
+      createdAt: Timestamp.fromDate(new Date()),
+    });
+    // Деньги списывает платёжный провайдер на следующем шаге; здесь мы
+    // зафиксировали намерение и сообщили смене.
+    toast(`Спасибо! ${amount} ₽ передадим кальянщику`);
+  } catch (_) {
+    toast('Не удалось отправить — проверьте связь');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- СЕРТИФИКАТ ----------
+
+async function checkGiftCard() {
+  const msg = $('xCardMsg');
+  const code = ($('xCard').value || '').trim().toUpperCase();
+  if (!code) { msg.textContent = 'Введите код'; msg.style.color = 'var(--warning)'; return; }
+
+  msg.textContent = 'Проверяем…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const d = await getDoc(doc(state.db, 'giftCards', code));
+    if (!d.exists()) {
+      msg.textContent = 'Сертификат не найден';
+      msg.style.color = 'var(--warning)';
+      return;
+    }
+    const v = d.data();
+    const expires = toDate(v.expiresAt);
+    const usable = v.active !== false && Number(v.balance) > 0
+      && (!expires || expires > new Date());
+    msg.textContent = usable
+      ? `Остаток ${Math.round(Number(v.balance) || 0)} ₽`
+      : 'Сертификат уже использован или истёк';
+    msg.style.color = usable ? 'var(--primary)' : 'var(--warning)';
+  } catch (_) {
+    msg.textContent = 'Не удалось проверить — нет связи';
+    msg.style.color = 'var(--warning)';
+  }
+}
+
+// ---------- ОЧЕРЕДЬ ----------
+
+function renderQueue() {
+  sub(onSnapshot(
+    query(collection(state.db, 'waitlist'), where('clientUid', '==', state.uid)),
+    (snap) => {
+      const box = $('xQueue');
+      if (!box) return;
+      const open = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((e) => e.status === 'waiting' || e.status === 'invited')
+        .sort((a, b) => (toDate(b.createdAt) || 0) - (toDate(a.createdAt) || 0));
+
+      if (open.length) {
+        const e = open[0];
+        box.innerHTML = `
+          <p style="color:${e.status === 'invited' ? 'var(--primary)' : 'inherit'}">
+            ${e.status === 'invited'
+              ? 'Ваш стол готов — ждём вас!'
+              : `Вы в очереди, ждать примерно ${Number(e.promisedMinutes) || 0} мин`}</p>
+          <button class="btn-ghost" id="xLeave"
+            style="margin-top:10px;color:var(--danger)">Выйти из очереди</button>`;
+        $('xLeave').onclick = async () => {
+          $('xLeave').disabled = true;
+          try {
+            await updateDoc(doc(state.db, 'waitlist', e.id), { status: 'left' });
+            toast('Вы вышли из очереди');
+          } catch (_) {
+            toast('Не удалось — проверьте связь');
+            $('xLeave').disabled = false;
+          }
+        };
+        return;
+      }
+
+      box.innerHTML = `
+        <p class="small muted">Если все столы заняты — встаньте в очередь,
+          мы напишем, как только стол освободится.</p>
+        <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+          ${[2, 4, 6].map((n) =>
+            `<button class="btn-ghost" data-queue="${n}">${n} чел.</button>`).join('')}
+        </div>`;
+      box.querySelectorAll('[data-queue]').forEach((el) => {
+        el.onclick = () => joinQueue(Number(el.dataset.queue), el);
+      });
+    },
+    () => {
+      const box = $('xQueue');
+      if (box) box.innerHTML = '<p class="small muted">Не удалось загрузить очередь.</p>';
+    }));
+}
+
+/// Оценка ожидания — тот же расчёт, что в приложении: по таймерам открытых
+/// чеков, а не «минут двадцать». Занятость берётся из tables.busyUntil:
+/// чужие чеки гостю читать нельзя.
+async function estimateWait(guests) {
+  try {
+    const snap = await getDocs(collection(state.db, 'tables'));
+    const waits = [];
+    snap.docs.forEach((d) => {
+      const v = d.data();
+      if ((Number(v.seats) || 4) < guests) return;
+      const end = toDate(v.busyUntil);
+      // Свободный стол — гость сядет сразу, но 5 минут на уборку
+      // закладываем всё равно.
+      if (!end) { waits.push(5); return; }
+      const mins = Math.round((end.getTime() - Date.now()) / 60000);
+      waits.push(Math.min(240, Math.max(5, mins)));
+    });
+    if (!waits.length) return 60;
+    waits.sort((a, b) => a - b);
+    return waits[0] + 10; // запас на уборку и посадку
+  } catch (_) {
+    return 30;
+  }
+}
+
+async function joinQueue(guests, btn) {
+  btn.disabled = true;
+  try {
+    const minutes = await estimateWait(guests);
+    const p = state.profile || {};
+    await addDoc(collection(state.db, 'waitlist'), {
+      guestName: (p.name || '').trim() || 'Гость',
+      phone: p.phone || '',
+      clientUid: state.uid,
+      guestsCount: guests,
+      comment: '',
+      // Правила базы разрешают гостю вставать в очередь только так.
+      status: 'waiting',
+      promisedMinutes: minutes,
+      source: 'kolibri',
+      createdAt: Timestamp.fromDate(new Date()),
+    });
+    // Позицию в очереди не показываем: чужие записи гостю читать нельзя,
+    // а придумывать номер честнее не пытаться.
+    toast(`Вы в очереди, ждать ~${minutes} мин`);
+  } catch (_) {
+    toast('Не удалось встать в очередь — проверьте связь');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- ПРИГЛАСИТЬ ДРУГА ----------
+
+/// Код гостя. Генерируется один раз и живёт в профиле — тот же алгоритм,
+/// что в ReferralService на Android, чтобы код в вебе и в приложении у
+/// одного гостя совпадал.
+async function ensureReferralCode() {
+  const box = $('xMyCode');
+  try {
+    const existing = ((state.profile || {}).referralCode || '').trim();
+    if (existing) { if (box) box.textContent = `Ваш код: ${existing}`; return; }
+
+    const tail = state.uid.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const base = 'KLB-' + tail.slice(0, 4).padEnd(4, '0');
+
+    // Столкновения редки, но код всё же проверяем: занять чужой указатель
+    // правила базы не дадут, и код молча не сохранился бы.
+    let code = base;
+    for (let i = 0; i < 5; i++) {
+      const d = await getDoc(doc(state.db, 'referralCodes', code));
+      const owner = d.exists() ? (d.data().uid || '') : '';
+      if (!owner || owner === state.uid) break;
+      code = base + (i + 1);
+    }
+
+    // Сначала закрепляем код в указателе, потом пишем в профиль: если
+    // закрепить не вышло, профиль не получит код, на который нельзя сослаться.
+    await setDoc(doc(state.db, 'referralCodes', code), { uid: state.uid });
+    await setDoc(doc(state.db, 'clients', state.uid), { referralCode: code }, { merge: true });
+    if (box) box.textContent = `Ваш код: ${code}`;
+  } catch (_) {
+    if (box) box.textContent = 'Ваш код появится позже';
+  }
+}
+
+/// Гость вводит код пригласившего. Бонусы начисляются не сразу, а после
+/// первого оплаченного визита — иначе код можно было бы фармить, не
+/// приходя в заведение. Проверки те же, что в приложении.
+async function applyReferralCode() {
+  const msg = $('xRefMsg');
+  const code = ($('xRef').value || '').trim().toUpperCase();
+  const p = state.profile || {};
+
+  const say = (text) => { msg.textContent = text; };
+
+  if (!code) return say('Введите код.');
+  if ((p.referredBy || '').length > 0) return say('Код уже применён раньше.');
+  if ((p.referralCode || '') === code) return say('Это ваш собственный код.');
+  if ((Number(p.visits) || 0) > 0) return say('Код можно применить только до первого визита.');
+
+  say('Проверяем…');
+  try {
+    const d = await getDoc(doc(state.db, 'referralCodes', code));
+    const inviter = d.exists() ? (d.data().uid || '') : '';
+    if (!inviter) return say('Такого кода нет.');
+    if (inviter === state.uid) return say('Это ваш собственный код.');
+
+    await setDoc(doc(state.db, 'clients', state.uid),
+      { referredBy: inviter, referralCodeUsed: code }, { merge: true });
+    say(`Код принят: после первого визита вам начислим ${INVITEE_BONUS} бонусов, `
+      + `другу — ${INVITER_BONUS}.`);
+  } catch (_) {
+    say('Не удалось применить код — проверьте связь.');
+  }
 }
 
 // ---------- СКАНЕР QR ----------
