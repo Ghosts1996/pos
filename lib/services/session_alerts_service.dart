@@ -103,21 +103,57 @@ class SessionAlertsService {
   }
 
   void _watchShift() {
+    // Без limit(1) и без orderBy: сортировка вместе с фильтром по статусу
+    // потребовала бы составного индекса, а без него запрос молча падает и
+    // смену не видит никто. Открытых смен всё равно единицы — выбрать
+    // самую свежую проще на месте.
     _shift = _db
         .collection('shifts')
         .where('status', isEqualTo: 'open')
-        .limit(1)
         .snapshots()
         .listen((snap) {
+      final wasId = _shiftEmployeeId;
+
       if (snap.docs.isEmpty) {
         _shiftEmployeeId = '';
         _shiftEmployeeName = '';
-        return;
+      } else {
+        // Если вчерашнюю смену забыли закрыть, открытых окажется две.
+        // Работает та, которую открыли последней.
+        final docs = snap.docs.toList()
+          ..sort((a, b) {
+            final x = a.data()['openedAt'];
+            final y = b.data()['openedAt'];
+            if (x is! Timestamp || y is! Timestamp) return 0;
+            return y.compareTo(x);
+          });
+        final data = docs.first.data();
+        _shiftEmployeeId = (data['openedById'] as String?) ?? '';
+        _shiftEmployeeName = (data['openedBy'] as String?) ?? '';
       }
-      final data = snap.docs.first.data();
-      _shiftEmployeeId = (data['openedById'] as String?) ?? '';
-      _shiftEmployeeName = (data['openedBy'] as String?) ?? '';
+
+      // Смену принял другой сотрудник — напоминания по уже открытым столам
+      // надо переставить. Без этого кальянщик, вышедший в середине вечера,
+      // не получал уведомлений об углях по столам, открытым до него: они
+      // были запланированы один раз и больше не пересматривались.
+      if (wasId != _shiftEmployeeId) unawaited(_replanSessions());
     }, onError: (_) {});
+  }
+
+  /// Перепланировать напоминания по всем живым чекам.
+  ///
+  /// Проще всего переподписаться: первый снапшот отдаст все открытые чеки
+  /// как новые, и каждый получит свои будильники заново — уже с учётом
+  /// того, кто теперь на смене.
+  Future<void> _replanSessions() async {
+    // До первой подписки переставлять нечего: start() сам подпишется и
+    // запланирует всё с нуля. Иначе получили бы две подписки на чеки — и
+    // по два уведомления на каждый стол.
+    if (_sessions == null) return;
+    await _sessions?.cancel();
+    _sessions = null;
+    _planned.clear();
+    _watchSessions();
   }
 
   Future<void> stop() async {

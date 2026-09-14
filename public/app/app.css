@@ -196,7 +196,7 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 .table-dot.small { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
 .table-dot.pick { cursor: pointer; }
 .table-dot.chosen { outline: 3px solid var(--gold); outline-offset: -3px; }
-.legend { display: flex; gap: 16px; justify-content: center; margin-top: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; margin-top: 12px; }
 .legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: block; }
 

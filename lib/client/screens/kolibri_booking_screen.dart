@@ -88,6 +88,10 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   /// уже стоит и сколько столов может не освободиться из-за перезабивки.
   SlotStats? _stats;
   bool _loadingStats = false;
+  // Номер последнего запроса сводки. Гость успевает потыкать несколько
+  // времён подряд, ответы приходят не по порядку — без этого счётчика
+  // на экране оседала сводка по времени, которое уже не выбрано.
+  int _statsRequest = 0;
 
   Future<void> _prefill() async {
     final p = await _link.profileStream(_auth.uid).first;
@@ -172,6 +176,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   Future<void> _loadStats() async {
     final slot = _slot;
     if (slot == null) return;
+    final request = ++_statsRequest;
     setState(() => _loadingStats = true);
     try {
       final stats = await _service.slotStats(
@@ -179,11 +184,13 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         durationMinutes: _duration,
         guestsCount: _guests,
       );
-      if (mounted) setState(() => _stats = stats);
+      if (mounted && request == _statsRequest) setState(() => _stats = stats);
     } catch (_) {
-      if (mounted) setState(() => _stats = null);
+      if (mounted && request == _statsRequest) setState(() => _stats = null);
     } finally {
-      if (mounted) setState(() => _loadingStats = false);
+      if (mounted && request == _statsRequest) {
+        setState(() => _loadingStats = false);
+      }
     }
   }
 
@@ -192,6 +199,8 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       _loadingSlots = true;
       _slot = null;
       _stats = null;
+      _loadingStats = false;
+      _statsRequest++; // ответ на прошлое время уже не нужен
       _pickedTable = null; // выбор стола привязан к конкретному времени
     });
     try {

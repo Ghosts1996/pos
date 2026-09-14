@@ -94,11 +94,11 @@ class ReservationService {
 
     final tables = results[0].docs.map(TableModel.fromDoc).toList();
 
-    final reservations = results[1]
-        .docs
-        .map(_ReservedSlot.fromDoc)
-        .where((r) => r.active && r.tableId.isNotEmpty)
-        .toList();
+    // Брони без назначенного стола тоже остаются в снимке: стол им ещё не
+    // выбран, но зал они занимают, и в сводке для гостя их надо посчитать.
+    // Расчёт занятости конкретных столов сам отбрасывает их по tableId.
+    final reservations =
+        results[1].docs.map(_ReservedSlot.fromDoc).where((r) => r.active).toList();
 
     // До какого момента стол занят живым гостем: планируемый конец плюс
     // 20 минут на уборку. Просроченный сеанс держит стол ещё час.
@@ -268,10 +268,11 @@ class ReservationService {
   }) async {
     final hall = await _loadHall(start);
     final end = start.add(Duration(minutes: durationMinutes));
-    final now = DateTime.now();
 
-    final booked = hall.reservations
-        .where((r) => r.overlaps(start, end) && r.tableId.isNotEmpty)
+    final overlapping =
+        hall.reservations.where((r) => r.overlaps(start, end)).toList();
+    final booked = overlapping
+        .where((r) => r.tableId.isNotEmpty)
         .map((r) => r.tableId)
         .toSet();
 
@@ -280,16 +281,23 @@ class ReservationService {
     var occupiedNow = 0;
 
     for (final t in hall.tables) {
-      final rawEnd = t.busyUntil;
-      if (rawEnd != null && rawEnd.isAfter(now)) occupiedNow++;
+      // «Сидят сейчас» — это открытые чеки стола, а не плановое время
+      // окончания: у просроченного сеанса busyUntil уже в прошлом, но
+      // гости-то за столом остались.
+      if (t.activeSessionIds.isNotEmpty) occupiedNow++;
+
       if (t.seats < guestsCount) continue;
       if (booked.contains(t.id)) continue;
 
-      final until = hall.busyUntil[t.id];
-      if (until != null && start.isBefore(until)) continue; // занят
+      // freeAt — момент, когда стол реально освободится: плановый конец
+      // сеанса плюс уборка, а для просроченного сеанса — час от текущего
+      // момента. Ровно то же значение использует подбор свободных столов,
+      // иначе сводка и карта зала расходились бы между собой.
+      final freeAt = hall.busyUntil[t.id];
+      if (freeAt != null && start.isBefore(freeAt)) continue; // занят
 
       // Сеанс кончается меньше чем за час до брони — возможна перезабивка.
-      if (rawEnd != null && start.difference(rawEnd) < extensionRisk) {
+      if (freeAt != null && start.difference(freeAt) < extensionRisk) {
         risky++;
       } else {
         free++;
@@ -300,7 +308,7 @@ class ReservationService {
       tablesTotal: hall.tables.length,
       freeTables: free,
       riskyTables: risky,
-      bookingsAtTime: booked.length,
+      bookingsAtTime: overlapping.length,
       occupiedNow: occupiedNow,
     );
   }

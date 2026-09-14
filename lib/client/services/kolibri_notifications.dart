@@ -222,7 +222,13 @@ class KolibriNotifications {
     final hourId = NotificationService.idFor('res_soon_${r.id}');
     final soonId = NotificationService.idFor('res_20min_${r.id}');
 
-    if (_silenced || !r.status.blocksTable) {
+    // Здесь намеренно НЕТ проверки _silenced. Флаг cloudFunctionsEnabled
+    // отключает мгновенные уведомления, потому что вместо них приходит
+    // push из облака. Но напоминание за час и за 20 минут — это будильник
+    // в самом телефоне: он срабатывает при закрытом приложении и без
+    // интернета, и облако такого не умеет. Отключать его «за компанию»
+    // значило бы просто лишить гостя напоминания.
+    if (!r.status.blocksTable) {
       unawaited(_notify.cancel(hourId));
       unawaited(_notify.cancel(soonId));
       return;
