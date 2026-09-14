@@ -319,17 +319,41 @@ class _CountTab extends StatelessWidget {
           children: [
             if (open != null)
               Card(
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  leading: const Icon(Icons.fact_check_outlined, color: AppColors.primary),
-                  title: const Text('Инвентаризация в процессе'),
-                  subtitle: Text(
-                      'Посчитано ${open.countedCount} из ${open.totalCount} · начата ${_fmtDate(open.startedAt)} · ${open.startedBy}'),
-                  trailing: FilledButton(
-                    onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => InventoryCountScreen(countId: open.id, employee: employee),
-                    )),
-                    child: const Text('Продолжить'),
+                // Кнопка отдельной строкой, а не в trailing: рядом с длинной
+                // подписью она забирала ширину себе, и на телефоне заголовок
+                // печатался по одной букве в строку.
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.fact_check_outlined, color: AppColors.primary),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text('Инвентаризация в процессе',
+                                style: TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Посчитано ${open.countedCount} из ${open.totalCount} · '
+                        'начата ${_fmtDate(open.startedAt)} · ${open.startedBy}',
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => InventoryCountScreen(countId: open.id, employee: employee),
+                          )),
+                          child: const Text('Продолжить'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               )
