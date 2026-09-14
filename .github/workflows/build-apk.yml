@@ -201,6 +201,10 @@ jobs:
                   '        <service\n'
                   '            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"\n'
                   '            android:foregroundServiceType="dataSync"\n'
+                  # Служба переживает смахивание приложения из списка задач:
+                  # именно в ней живут подписки на вызовы гостей, и умирать
+                  # вместе с экраном ей нельзя.
+                  '            android:stopWithTask="false"\n'
                   '            android:exported="false" />\n'
               )
               xml = xml.replace('</application>', service + '    </application>', 1)
