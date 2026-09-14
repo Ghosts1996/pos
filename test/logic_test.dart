@@ -10,6 +10,7 @@ import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/marking_code.dart';
 import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
+import 'package:hookah_pos/models/venue_models.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
 
@@ -262,6 +263,50 @@ void main() {
 
     test('код без серийного номера отбрасывается', () {
       expect(MarkingCode.tryParse('010460406000005621'), isNull);
+    });
+  });
+
+  group('Подарочный сертификат', () {
+    GiftCard card({double balance = 1000, int maxUses = 0, int usedCount = 0,
+        bool active = true, DateTime? expiresAt}) {
+      return GiftCard(
+        code: 'KLB-TEST-0001',
+        faceValue: 3000,
+        balance: balance,
+        createdAt: DateTime(2026, 1, 1),
+        expiresAt: expiresAt ?? DateTime(2030, 1, 1),
+        maxUses: maxUses,
+        usedCount: usedCount,
+      );
+    }
+
+    test('без лимита списаний сертификат живёт, пока есть деньги', () {
+      expect(card().isUsable, isTrue);
+      expect(card().usesLeft, isNull);
+      expect(card(balance: 0).isUsable, isFalse);
+    });
+
+    test('лимит списаний исчерпан — платить нельзя, даже если деньги остались', () {
+      final spent = card(maxUses: 3, usedCount: 3);
+      expect(spent.balance, 1000);
+      expect(spent.hasUsesLeft, isFalse);
+      expect(spent.isUsable, isFalse);
+      expect(spent.usesLeft, 0);
+    });
+
+    test('остаток списаний считается от лимита', () {
+      expect(card(maxUses: 3, usedCount: 1).usesLeft, 2);
+      expect(card(maxUses: 1).usesLeft, 1);
+    });
+
+    test('истёкший срок важнее оставшихся списаний', () {
+      final old = card(maxUses: 5, expiresAt: DateTime(2020, 1, 1));
+      expect(old.hasUsesLeft, isTrue);
+      expect(old.isUsable, isFalse);
+    });
+
+    test('старые сертификаты без полей лимита читаются как безлимитные', () {
+      expect(card(maxUses: 0, usedCount: 0).hasUsesLeft, isTrue);
     });
   });
 }

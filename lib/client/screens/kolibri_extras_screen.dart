@@ -191,7 +191,11 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
                         ? 'Сертификат не найден'
                         : card.isUsable
                             ? 'Остаток ${card.balance.toStringAsFixed(0)} ₽'
-                            : 'Сертификат уже использован или истёк';
+                                '${card.usesLeft == null ? '' : ', ещё ${card.usesLeft} '
+                                    '${card.usesLeft == 1 ? 'списание' : 'списаний'}'}'
+                            : !card.hasUsesLeft
+                                ? 'Сертификат уже использован полностью'
+                                : 'Сертификат уже использован или истёк';
                   });
                 },
                 child: const Text('Проверить'),

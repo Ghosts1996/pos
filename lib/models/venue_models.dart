@@ -306,6 +306,17 @@ class GiftCard {
   final DateTime createdAt;
   final DateTime? expiresAt;
 
+  /// Сколько раз сертификатом можно расплатиться. 0 — без ограничения:
+  /// гасится частями, пока не кончится баланс.
+  ///
+  /// Зачем отдельно от баланса: сертификат на 3000 ₽ можно задумать и как
+  /// «один поход на всю сумму», и как «три визита по тысяче». Одним только
+  /// балансом это не выразить — гость просто списал бы всё сразу.
+  final int maxUses;
+
+  /// Сколько раз им уже расплатились.
+  final int usedCount;
+
   const GiftCard({
     required this.code,
     required this.faceValue,
@@ -316,10 +327,21 @@ class GiftCard {
     this.active = true,
     required this.createdAt,
     this.expiresAt,
+    this.maxUses = 0,
+    this.usedCount = 0,
   });
 
+  /// Остались ли ещё списания. Без ограничения — всегда да.
+  bool get hasUsesLeft => maxUses <= 0 || usedCount < maxUses;
+
+  /// Сколько списаний осталось; null — без ограничения.
+  int? get usesLeft => maxUses <= 0 ? null : (maxUses - usedCount).clamp(0, maxUses);
+
   bool get isUsable =>
-      active && balance > 0 && (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
+      active &&
+      balance > 0 &&
+      hasUsesLeft &&
+      (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
 
   factory GiftCard.fromDoc(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>? ?? {};
@@ -335,6 +357,10 @@ class GiftCard {
       active: d['active'] ?? true,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       expiresAt: expires is Timestamp ? expires.toDate() : null,
+      // Сертификаты, выпущенные до появления лимита, читаются как
+      // безлимитные — ровно так они и работали.
+      maxUses: (d['maxUses'] as num?)?.toInt() ?? 0,
+      usedCount: (d['usedCount'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -347,5 +373,7 @@ class GiftCard {
         'active': active,
         'createdAt': Timestamp.fromDate(createdAt),
         'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
+        'maxUses': maxUses,
+        'usedCount': usedCount,
       };
 }

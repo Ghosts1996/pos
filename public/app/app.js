@@ -1927,11 +1927,22 @@ async function checkGiftCard() {
     }
     const v = d.data();
     const expires = toDate(v.expiresAt);
-    const usable = v.active !== false && Number(v.balance) > 0
+    // Сертификат можно ограничить не только суммой, но и числом списаний:
+    // «3000 ₽ на три визита». Выпущенные до появления лимита читаются как
+    // безлимитные — ровно так они и работали.
+    const maxUses = Number(v.maxUses) || 0;
+    const used = Number(v.usedCount) || 0;
+    const usesLeft = maxUses > 0 ? Math.max(0, maxUses - used) : null;
+    const hasUses = maxUses <= 0 || used < maxUses;
+    const usable = v.active !== false && Number(v.balance) > 0 && hasUses
       && (!expires || expires > new Date());
+
     msg.textContent = usable
       ? `Остаток ${Math.round(Number(v.balance) || 0)} ₽`
-      : 'Сертификат уже использован или истёк';
+        + (usesLeft === null ? ''
+          : `, ещё ${usesLeft} ${usesLeft === 1 ? 'списание' : 'списаний'}`)
+      : (!hasUses ? 'Сертификат уже использован полностью'
+        : 'Сертификат уже использован или истёк');
     msg.style.color = usable ? 'var(--primary)' : 'var(--warning)';
   } catch (_) {
     msg.textContent = 'Не удалось проверить — нет связи';

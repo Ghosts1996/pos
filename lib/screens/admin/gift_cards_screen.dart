@@ -85,6 +85,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                 child: Text(
                   '${_found!.code}: остаток ${_found!.balance.toStringAsFixed(0)} ₽ '
                   'из ${_found!.faceValue.toStringAsFixed(0)} ₽'
+                  '${_usesLabel(_found!)}'
                   '${_found!.isUsable ? '' : ' · неактивен'}',
                   style: const TextStyle(color: AppColors.textPrimary),
                 ),
@@ -114,6 +115,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                       title: Text(c.code, style: const TextStyle(color: AppColors.textPrimary)),
                       subtitle: Text(
                         'Остаток ${c.balance.toStringAsFixed(0)} из ${c.faceValue.toStringAsFixed(0)} ₽'
+                        '${_usesLabel(c)}'
                         '${c.issuedTo.isEmpty ? '' : ' · ${c.issuedTo}'}',
                         style: const TextStyle(fontSize: 12),
                       ),
@@ -148,27 +150,55 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
     );
   }
 
+  /// «· осталось 2 из 3 списаний» — или ничего, если лимита нет.
+  String _usesLabel(GiftCard c) {
+    final left = c.usesLeft;
+    if (left == null) return '';
+    return ' · осталось $left из ${c.maxUses} ${_uses(c.maxUses)}';
+  }
+
+  String _uses(int n) {
+    final last = n % 10;
+    final teen = n % 100 >= 11 && n % 100 <= 14;
+    if (!teen && last == 1) return 'списания';
+    return 'списаний';
+  }
+
   Future<void> _issue() async {
     final amount = TextEditingController(text: '3000');
     final to = TextEditingController();
+    final uses = TextEditingController(text: '1');
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Выпустить сертификат'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amount,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Номинал, ₽'),
-            ),
-            TextField(
-              controller: to,
-              decoration: const InputDecoration(labelText: 'Кому (необязательно)'),
-            ),
-          ],
+        // Три поля с подсказками не помещаются в диалог на невысоком
+        // экране — особенно когда снизу выезжает клавиатура.
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amount,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Номинал, ₽'),
+              ),
+              TextField(
+                controller: uses,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Сколько раз можно расплатиться',
+                  helperText: '0 — без ограничения, пока не кончится сумма',
+                  helperMaxLines: 2,
+                ),
+              ),
+              TextField(
+                controller: to,
+                decoration: const InputDecoration(labelText: 'Кому (необязательно)'),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
@@ -185,6 +215,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
       faceValue: value,
       issuedTo: to.text.trim(),
       issuedBy: widget.employee.name,
+      maxUses: int.tryParse(uses.text.trim()) ?? 0,
     );
     if (!mounted) return;
 
@@ -194,6 +225,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
         title: const Text('Сертификат выпущен'),
         content: SelectableText(
           '${card.code}\nНоминал ${card.faceValue.toStringAsFixed(0)} ₽\n'
+          '${card.maxUses > 0 ? 'Расплатиться можно ${card.maxUses} ${_uses(card.maxUses)}\n' : 'Списаний сколько угодно, пока не кончится сумма\n'}'
           'Действует до ${card.expiresAt?.day}.${card.expiresAt?.month}.${card.expiresAt?.year}',
           style: const TextStyle(fontSize: 18),
         ),
