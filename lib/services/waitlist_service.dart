@@ -31,7 +31,8 @@ class WaitlistService {
       .snapshots()
       .map((s) => s.docs.map(WaitlistEntry.fromDoc).toList());
 
-  /// Встать в очередь. Возвращает позицию в очереди и обещанное время.
+  /// Встать в очередь. Возвращает обещанное время и позицию в очереди —
+  /// 0, если посчитать её не удалось (см. ниже).
   Future<({String id, int position, int minutes})> join({
     required String guestName,
     required int guestsCount,
@@ -40,9 +41,24 @@ class WaitlistService {
     String comment = '',
     String source = 'kolibri',
   }) async {
-    final open = await _col.where('status', isEqualTo: 'waiting').get();
-    final position = open.docs.length + 1;
-    final minutes = await estimateWait(guestsCount: guestsCount, position: position);
+    // Сколько человек уже ждёт. Гостю по firestore.rules видны только
+    // СВОИ записи в очереди, поэтому запрос по всей коллекции у него падал
+    // с permission-denied — и «Занять очередь» в приложении гостя не
+    // работала вовсе: кнопка молча ничего не делала. На кассе прав больше,
+    // там позиция считается как раньше.
+    //
+    // Не посчитали — не выдумываем: ноль означает «позиция неизвестна», и
+    // гостю показывается только время ожидания. Обещать «вы первый», не
+    // зная очереди, хуже, чем не обещать ничего.
+    var position = 0;
+    try {
+      final open = await _col.where('status', isEqualTo: 'waiting').get();
+      position = open.docs.length + 1;
+    } catch (_) {
+      // Прав на чтение чужих записей нет — это гость.
+    }
+    final minutes = await estimateWait(
+        guestsCount: guestsCount, position: position == 0 ? 1 : position);
 
     final ref = await _col.add(WaitlistEntry(
       id: '',
