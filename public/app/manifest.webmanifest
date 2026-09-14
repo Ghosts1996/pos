@@ -1,0 +1,13 @@
+{
+  "name": "Colibri Lounge",
+  "short_name": "Colibri",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0E1512",
+  "theme_color": "#0E1512",
+  "lang": "ru",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

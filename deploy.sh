@@ -91,6 +91,20 @@ else
   warn "страница стола не открылась — проверьте https://$SITE.web.app/table/1"
 fi
 
+# Веб-версия для iPhone берёт настройки проекта с самого хостинга. Этот
+# адрес отдаёт их, только если в проекте зарегистрировано веб-приложение
+# (Firebase → Project settings → Your apps → Web). Без него страница
+# откроется, но подключиться к базе не сможет — и понять это по виду
+# страницы нельзя.
+if curl -fsS --max-time 20 "https://$SITE.web.app/__/firebase/init.json" 2>/dev/null | grep -q "projectId"; then
+  ok "веб-версия для iPhone настроена: https://$SITE.web.app/app/"
+else
+  warn "Веб-версия для iPhone не заработает: в проекте нет веб-приложения."
+  warn "Firebase → Project settings → Your apps → значок </> (Web) →"
+  warn "любое имя → Register app. Один раз, ничего настраивать не нужно:"
+  warn "https://console.firebase.google.com/project/$PROJECT/settings/general"
+fi
+
 say "Готово"
 ok "страница столов: https://$SITE.web.app/table/1"
 printf '\nОсталось только: залить свежие APK на Яндекс Диск и Google Диск.\n\n'
