@@ -234,6 +234,9 @@ function route() {
   window.scrollTo(0, 0);
 
   if (bind) return bindToTable(decodeURIComponent(bind[1]));
+  const hall = hash.match(/^#\/hall(\/pick)?$/);
+  if (hall) return screenHall(!!hall[1]);
+
   switch (tab) {
     case 'scan': return screenScan();
     case 'menu': return screenMenu();
@@ -340,16 +343,22 @@ function screenMenu() {
       box.innerHTML = `<p class="muted">Меню пока пустое.</p>`;
       return;
     }
+    // Отдельный чип «Всё меню»: гость чаще хочет посмотреть всё сразу,
+    // чем перебирать категории — особенно когда их много.
     const known = cats.map((c) => c.id);
-    if (!activeCat || !known.includes(activeCat)) activeCat = cats[0]?.id || null;
+    if (activeCat !== 'all' && (!activeCat || !known.includes(activeCat))) activeCat = 'all';
 
-    const shown = items.filter((i) => i.categoryId === activeCat);
+    const shown = activeCat === 'all'
+      ? items
+      : items.filter((i) => i.categoryId === activeCat);
     const atTable = !!(state.profile && state.profile.activeSessionId);
 
     box.innerHTML = `
-      <div>${cats.map((c) => `
-        <span class="chip ${c.id === activeCat ? 'on' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</span>
-      `).join('')}</div>
+      <div>
+        <span class="chip ${activeCat === 'all' ? 'on' : ''}" data-cat="all">Всё меню</span>
+        ${cats.map((c) => `
+          <span class="chip ${c.id === activeCat ? 'on' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</span>
+        `).join('')}</div>
 
       <div class="card">
         ${shown.length ? shown.map((i) => `
@@ -357,7 +366,9 @@ function screenMenu() {
             ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
             <div class="grow">
               <div style="font-weight:600">${esc(i.name)}</div>
-              <div class="small muted">${money(i.price)}</div>
+              <div class="small muted">${money(i.price)}${activeCat === 'all'
+                ? ' · ' + esc((cats.find((c) => c.id === i.categoryId) || {}).name || '')
+                : ''}</div>
             </div>
             ${atTable ? `
               <div class="qty">
@@ -565,6 +576,8 @@ function tableEmpty() {
     <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт,
     таймер сеанса и кнопки вызова кальянщика.</p>
     <a class="btn btn-primary" href="#/scan">📷 Сканировать QR стола</a>
+    <div style="height:10px"></div>
+    <a class="btn btn-ghost" href="#/hall">🗺 Карта зала</a>
     <div style="height:14px"></div>
     <p class="small muted">Стол открывается только по коду с самого стола —
     так вы наверняка попадёте на свой счёт, а не на соседний. Если код не
@@ -801,6 +814,10 @@ function screenBooking() {
   const soon = new Date(now.getTime() + 2 * 60 * 60 * 1000);
   soon.setMinutes(soon.getMinutes() < 30 ? 0 : 30, 0, 0);
 
+  // Возвращаемся с карты зала — форма должна остаться заполненной.
+  if (!bookingDraft.date) bookingDraft.date = soon.toISOString().slice(0, 10);
+  if (!bookingDraft.time) bookingDraft.time = `${pad(soon.getHours())}:${pad(soon.getMinutes())}`;
+
   screenEl().innerHTML = `
     <h1>Бронь стола</h1>
     <div class="card">
@@ -811,14 +828,26 @@ function screenBooking() {
           placeholder="+7 999 123-45-67"></label>
       <div class="btn-row">
         <label class="field"><span>Дата</span>
-          <input id="bDate" type="date" value="${soon.toISOString().slice(0, 10)}"></label>
+          <input id="bDate" type="date" value="${esc(bookingDraft.date)}"></label>
         <label class="field"><span>Время</span>
-          <input id="bTime" type="time" value="${pad(soon.getHours())}:${pad(soon.getMinutes())}"></label>
+          <input id="bTime" type="time" value="${esc(bookingDraft.time)}"></label>
       </div>
       <label class="field"><span>Сколько гостей</span>
         <select id="bGuests">
-          ${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
+          ${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}"
+            ${n === bookingGuests() ? 'selected' : ''}>${n}</option>`).join('')}
         </select></label>
+
+      <label class="field"><span>Стол</span></label>
+      <div class="row" style="margin:-6px 0 12px">
+        <div class="grow small ${pickedTable ? '' : 'muted'}">
+          ${pickedTable ? '🪑 Стол ' + esc(pickedTable.name) : 'Любой свободный — подберём сами'}
+        </div>
+        <a class="btn-link" href="#/hall/pick" style="width:auto">
+          ${pickedTable ? 'Изменить' : 'Выбрать на карте'}</a>
+      </div>
+      ${pickedTable ? `<button class="btn-ghost" id="bClearTable"
+        style="margin-bottom:12px">Убрать выбор стола</button>` : ''}
       <label class="field"><span>Пожелания (необязательно)</span>
         <input id="bComment" placeholder="Например: подальше от колонок"></label>
       <button class="btn-primary" id="bSend">Отправить заявку</button>
@@ -828,6 +857,23 @@ function screenBooking() {
 
     <h2>Мои брони</h2>
     <div id="myBookings"><div class="spinner"></div></div>`;
+
+  // Черновик обновляем на лету: карта зала показывает занятость именно на
+  // выбранные дату и время, а форма живёт на другом экране.
+  const sync = () => {
+    bookingDraft.date = $('bDate').value;
+    bookingDraft.time = $('bTime').value;
+    bookingDraft.guests = Number($('bGuests').value) || 2;
+  };
+  ['bDate', 'bTime', 'bGuests'].forEach((id) => {
+    $(id).onchange = () => {
+      sync();
+      // Время изменилось — прежний выбор стола к нему уже не относится.
+      if (pickedTable) { pickedTable = null; route(); }
+    };
+  });
+  const clear = $('bClearTable');
+  if (clear) clear.onclick = () => { pickedTable = null; route(); };
 
   $('bSend').onclick = sendBooking;
   watchMyBookings();
@@ -859,13 +905,13 @@ async function sendBooking() {
 
   $('bSend').disabled = true;
   try {
-    await addDoc(collection(state.db, 'reservations'), {
+    const ref = await addDoc(collection(state.db, 'reservations'), {
       clientUid: state.uid,
       guestName: name,
       phone,
       guestsCount: guests,
-      tableId: '',
-      tableName: '',
+      tableId: (pickedTable && pickedTable.id) || '',
+      tableName: (pickedTable && pickedTable.name) || '',
       startTime: Timestamp.fromDate(start),
       durationMinutes: 90,
       status: 'new',
@@ -877,12 +923,31 @@ async function sendBooking() {
       guestConfirmed: false,
       createdAt: Timestamp.fromDate(new Date()),
     });
+    // Обезличенное зеркало занятости стола. Нужно, чтобы следующий гость
+    // сразу увидел стол занятым на это время: сами брони ему читать
+    // нельзя — там чужие имена и телефоны. Приложение на Android пишет
+    // его так же, тем же id, что у брони.
+    if (pickedTable && pickedTable.id) {
+      try {
+        await setDoc(doc(state.db, 'reservationSlots', ref.id), {
+          tableId: pickedTable.id,
+          clientUid: state.uid,
+          startTime: Timestamp.fromDate(start),
+          endTime: Timestamp.fromDate(new Date(start.getTime() + 90 * 60 * 1000)),
+          active: true,
+        }, { merge: true });
+      } catch (_) {
+        // Зеркало вторично: сама бронь создана и видна кассе.
+      }
+    }
+
     // Имя и телефон пригодятся в следующий раз — сохраняем в профиль.
     // Телефон меняется только если его ещё не задавали: к нему привязаны
     // бонусы, и правила базы менять его гостю не дают.
     const patch = { name };
     if (!(state.profile || {}).phone) patch.phone = phone;
     await setDoc(doc(state.db, 'clients', state.uid), patch, { merge: true });
+    pickedTable = null;
     toast('Заявка отправлена — скоро подтвердим');
   } catch (e) {
     toast('Не удалось отправить заявку');
@@ -931,6 +996,12 @@ function watchMyBookings() {
           el.disabled = true;
           try {
             await updateDoc(doc(state.db, 'reservations', el.dataset.cancel), { status: 'cancelled' });
+            // Снимаем занятость стола: иначе отменённая бронь продолжала
+            // бы держать его в карте зала у других гостей.
+            try {
+              await setDoc(doc(state.db, 'reservationSlots', el.dataset.cancel),
+                { active: false, clientUid: state.uid }, { merge: true });
+            } catch (_) {}
             toast('Бронь отменена');
           } catch (_) { toast('Не удалось отменить'); el.disabled = false; }
         };
@@ -1265,3 +1336,115 @@ function tableIdFrom(raw) {
   if (/^[A-Za-z0-9_-]{1,40}$/.test(v)) return v;
   return null;
 }
+
+// ---------- КАРТА ЗАЛА ----------
+//
+// Та же схема столов, что видит кальянщик на кассе, в реальном времени.
+//
+// Открыть чужой счёт отсюда нельзя намеренно: сесть за стол можно только
+// отсканировав код, физически наклеенный на этом столе. Иначе счёт можно
+// было бы «занять» удалённо, не приходя в заведение.
+
+/// Стол, выбранный для брони. Живёт между экранами: гость уходит на карту
+/// и возвращается в форму брони, где выбор должен сохраниться.
+let pickedTable = null;
+
+function screenHall(pickMode) {
+  screenEl().innerHTML = `
+    <h1>${pickMode ? 'Выберите стол' : 'Карта зала'}</h1>
+    <p class="muted small">${pickMode
+      ? 'Серым отмечены столы, которых не хватит на вашу компанию, красным — занятые на выбранное время.'
+      : 'Занятость столов обновляется в реальном времени.'}</p>
+    <div class="hall" id="hall"><div class="spinner"></div></div>
+    <div class="legend">
+      <span><i style="background:#3F9D5B"></i> свободен</span>
+      <span><i style="background:#C24A4A"></i> занят</span>
+    </div>
+    <div style="height:16px"></div>
+    <a class="btn btn-ghost" href="${pickMode ? '#/booking' : '#/table'}">${pickMode ? 'Отмена' : 'Назад'}</a>`;
+
+  // Занятость по броням на выбранное время — только в режиме выбора.
+  let busyByBooking = new Set();
+  const when = pickMode ? bookingStart() : null;
+
+  const draw = (tables) => {
+    const box = $('hall');
+    if (!box) return;
+    if (!tables.length) {
+      box.innerHTML = `<p class="muted small" style="padding:20px">Карта зала пока не настроена.</p>`;
+      return;
+    }
+    box.innerHTML = tables.map((t) => {
+      const occupied = (t.activeSessionIds || []).length > 0 || t.status === 'occupied';
+      const bookedNow = busyByBooking.has(t.id);
+      const tooSmall = pickMode && bookingGuests() > (Number(t.seats) || 0);
+      const cls = tooSmall ? 'small' : (occupied || bookedNow) ? 'busy' : 'free';
+      const canPick = pickMode && cls === 'free';
+      // Координаты 0..1 — те же, что расставил администратор на кассе.
+      const x = Math.max(0, Math.min(1, Number(t.x) || 0.1)) * 100;
+      const y = Math.max(0, Math.min(1, Number(t.y) || 0.1)) * 100;
+      return `
+        <div class="table-dot ${cls} ${canPick ? 'pick' : ''}
+             ${pickedTable && pickedTable.id === t.id ? 'chosen' : ''}"
+             ${canPick ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"` : ''}
+             style="left:calc(${x}% - 44px);top:calc(${y}% - 36px)">
+          ${esc(t.name || '')}
+          <small>${Number(t.seats) || 0} мест${tooSmall ? ' · мало' : ''}</small>
+        </div>`;
+    }).join('');
+
+    box.querySelectorAll('[data-pick]').forEach((el) => {
+      el.onclick = () => {
+        pickedTable = { id: el.dataset.pick, name: el.dataset.name };
+        toast(`Выбран стол ${el.dataset.name}`);
+        location.hash = '#/booking';
+      };
+    });
+  };
+
+  let tables = [];
+  sub(onSnapshot(collection(state.db, 'tables'), (snap) => {
+    tables = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+    draw(tables);
+  }, () => {
+    const box = $('hall');
+    if (box) box.innerHTML = `<p class="muted small" style="padding:20px">Не удалось загрузить карту зала.</p>`;
+  }));
+
+  // Обезличенное зеркало броней: стол и интервал, без имён и телефонов.
+  // Самих броней гостю читать нельзя — там чужие контакты.
+  if (pickMode && when) {
+    const from = new Date(when.getTime() - 6 * 60 * 60 * 1000);
+    const to = new Date(when.getTime() + 6 * 60 * 60 * 1000);
+    const end = new Date(when.getTime() + 90 * 60 * 1000);
+    sub(onSnapshot(
+      query(collection(state.db, 'reservationSlots'),
+        where('startTime', '>=', Timestamp.fromDate(from)),
+        where('startTime', '<', Timestamp.fromDate(to))),
+      (snap) => {
+        busyByBooking = new Set();
+        snap.docs.forEach((d) => {
+          const v = d.data();
+          if (v.active === false) return;
+          const s = toDate(v.startTime);
+          const e = toDate(v.endTime);
+          if (!s || !e) return;
+          // Пересекается с нашим интервалом — стол занят.
+          if (s < end && e > when && v.tableId) busyByBooking.add(v.tableId);
+        });
+        draw(tables);
+      }, () => {}));
+  }
+}
+
+/// Что гость выбрал в форме брони — время и число гостей. Форма живёт на
+/// другом экране, поэтому значения запоминаются при уходе на карту.
+let bookingDraft = { date: '', time: '', guests: 2 };
+
+function bookingStart() {
+  if (!bookingDraft.date || !bookingDraft.time) return null;
+  const d = new Date(`${bookingDraft.date}T${bookingDraft.time}:00`);
+  return isNaN(d) ? null : d;
+}
+function bookingGuests() { return Number(bookingDraft.guests) || 2; }
