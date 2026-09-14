@@ -111,10 +111,16 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _rules,
-            maxLines: 3,
+            maxLines: 5,
             decoration: const InputDecoration(
-              labelText: 'Правила',
-              helperText: 'Возраст, депозит, можно ли со своим, дресс-код',
+              labelText: 'Правила заведения',
+              hintText: 'Один кальян рассчитан на 3 гостей, 1,5 часа\n'
+                  'Вход с 18 лет\n'
+                  'Со своим табаком нельзя',
+              helperText: 'Каждое правило с новой строки. Гость видит их в '
+                  'приложении на вкладке «Мой стол» — изменения появляются '
+                  'сразу, как сохраните.',
+              helperMaxLines: 3,
             ),
           ),
           const SizedBox(height: 12),
