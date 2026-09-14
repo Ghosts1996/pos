@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/reservation_model.dart';
@@ -14,27 +16,97 @@ import '../theme/kolibri_theme.dart';
 ///
 /// Ответ «Не приду» сразу отменяет бронь: заведение узнаёт о неявке за
 /// двадцать минут и успевает отдать стол, а не держит его пустым час.
-class BookingSoonCard extends StatelessWidget {
+class BookingSoonCard extends StatefulWidget {
   final String clientUid;
 
   const BookingSoonCard({super.key, required this.clientUid});
 
   @override
+  State<BookingSoonCard> createState() => _BookingSoonCardState();
+}
+
+class _BookingSoonCardState extends State<BookingSoonCard> {
+  Timer? _tick;
+  bool _busy = false;
+  // Поток создаётся один раз. Если собирать его прямо в build(), каждый
+  // тик таймера давал бы StreamBuilder новый объект: подписка на Firestore
+  // пересоздавалась бы раз в полминуты, а плашка на мгновение пропадала
+  // бы с экрана, пока не придут данные.
+  late Stream<List<ReservationModel>> _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = ReservationService().clientStream(widget.clientUid);
+    // Плашка зависит не только от данных, но и от текущего времени: гость
+    // может открыть приложение за час до брони и держать его открытым.
+    // Без этого таймера StreamBuilder пересчитывался бы только при
+    // изменении брони в базе — то есть плашка не появлялась бы вовсе, а
+    // «через N минут» показывало время открытия экрана.
+    _tick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didUpdateWidget(BookingSoonCard old) {
+    super.didUpdateWidget(old);
+    // Экран могли построить до того, как завершился анонимный вход: тогда
+    // uid приходит позже, и поток надо пересобрать — иначе плашка на этом
+    // запуске приложения не появится уже никогда.
+    if (old.clientUid != widget.clientUid) {
+      _stream = ReservationService().clientStream(widget.clientUid);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _answer(Future<void> Function() action, String ok) async {
+    if (_busy) return; // защита от второго нажатия, пока идёт запись
+    setState(() => _busy = true);
+    try {
+      await action();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(ok)));
+      }
+    } catch (_) {
+      // Молчать нельзя: гость нажал кнопку и должен понимать, что ответ
+      // не ушёл, — иначе он будет уверен, что бронь отменена.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось отправить ответ. Проверьте связь')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (clientUid.isEmpty) return const SizedBox.shrink();
+    if (widget.clientUid.isEmpty) return const SizedBox.shrink();
 
     return StreamBuilder<List<ReservationModel>>(
-      stream: ReservationService().clientStream(clientUid),
+      stream: _stream,
       builder: (context, snap) {
         final now = DateTime.now();
-        final soon = snap.data?.where((r) {
+        final soon = (snap.data ?? const <ReservationModel>[]).where((r) {
           if (r.guestConfirmed) return false;
           if (!r.status.blocksTable) return false;
           final left = r.startTime.difference(now);
           // Полчаса до начала и не больше десяти минут после: опоздавшего
           // тоже стоит спросить, ждать ли его.
           return left.inMinutes <= 30 && left.inMinutes >= -10;
-        }).toList() ?? const <ReservationModel>[];
+        }).toList()
+          // Поток отсортирован от поздних к ранним, а спрашивать надо про
+          // ближайшую бронь — иначе при двух бронях подряд гость отвечал бы
+          // про вечернюю, а вот-вот начиналась утренняя.
+          ..sort((a, b) => a.startTime.compareTo(b.startTime));
         if (soon.isEmpty) return const SizedBox.shrink();
 
         final r = soon.first;
@@ -76,29 +148,21 @@ class BookingSoonCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: FilledButton(
-                      onPressed: () async {
-                        await ReservationService().guestConfirm(r.id);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Спасибо, ждём вас')),
-                          );
-                        }
-                      },
+                      onPressed: _busy
+                          ? null
+                          : () => _answer(() => ReservationService().guestConfirm(r.id),
+                              'Спасибо, ждём вас'),
                       child: const Text('Приду'),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () async {
-                        await ReservationService().cancel(r.id, by: 'гость');
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('Бронь отменена. Спасибо, что предупредили')),
-                          );
-                        }
-                      },
+                      onPressed: _busy
+                          ? null
+                          : () => _answer(
+                              () => ReservationService().cancel(r.id, by: 'гость'),
+                              'Бронь отменена. Спасибо, что предупредили'),
                       child: const Text('Не приду'),
                     ),
                   ),
