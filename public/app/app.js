@@ -195,8 +195,21 @@ function watchProfile() {
 }
 
 function watchVenue() {
-  state.accountSubs.push(onSnapshot(doc(state.db, 'venue', 'profile'), (d) => {
+  // Путь ровно тот же, что у приложения: meta/venueProfile. Раньше здесь
+  // стоял выдуманный 'venue/profile' — документа по нему нет, поэтому
+  // веб-версия считала, что часы работы не заданы, и объявляла закрытым
+  // любой день, а правила заведения не показывались вовсе.
+  state.accountSubs.push(onSnapshot(doc(state.db, 'meta', 'venueProfile'), (d) => {
+    const had = !!state.venue;
     state.venue = d.exists() ? d.data() : null;
+    // Профиль заведения приезжает асинхронно и почти всегда ПОЗЖЕ первой
+    // отрисовки. Экраны, которые от него зависят — часы работы в брони и
+    // правила на «Моём столе», — нужно перерисовать, иначе гость видит
+    // «часы не заданы», даже когда они давно пришли.
+    if (!had && state.venue) {
+      const h = location.hash;
+      if (h === '#/booking' || h === '#/table' || h === '#/' || h === '') route();
+    }
   }, () => {}));
 }
 
