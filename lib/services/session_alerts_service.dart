@@ -4,6 +4,7 @@ import '../models/client_models.dart';
 import '../models/reservation_model.dart';
 import '../models/session_model.dart';
 import 'notification_service.dart';
+import 'staff_session_store.dart';
 
 /// Следит за залом и ставит уведомления кальянщику.
 ///
@@ -32,6 +33,32 @@ class SessionAlertsService {
 
   final _db = FirebaseFirestore.instance;
   final _notify = NotificationService.instance;
+
+  /// Кто вошёл на этом устройстве и кто открыл текущую смену.
+  ///
+  /// Уведомления о вызовах гостей и новых бронях должны приходить тому,
+  /// кто сейчас работает, а не на все планшеты и телефоны разом. Раньше
+  /// их получал каждый, где приложение просто было запущено: и админ
+  /// дома, и сменщик, который придёт вечером.
+  ///
+  /// Сравниваем по id, а не по имени: тёзки в заведении не редкость, а
+  /// имя сотрудник может и переименовать.
+  String _myEmployeeId = '';
+  String _shiftEmployeeId = '';
+  String _shiftEmployeeName = '';
+  StreamSubscription? _shift;
+
+  /// Показывать ли уведомления на этом устройстве.
+  ///
+  /// Молчим только когда точно известно, что смену открыл КТО-ТО ДРУГОЙ.
+  /// Во всех остальных случаях — смена не открыта, старая запись без id,
+  /// вход не сохранён — уведомляем: потерянный вызов гостя хуже лишнего
+  /// уведомления.
+  bool get _mine =>
+      _shiftEmployeeId.isEmpty || _myEmployeeId.isEmpty || _shiftEmployeeId == _myEmployeeId;
+
+  /// Имя того, кто сейчас на смене, — для экранов кассы.
+  String get shiftEmployeeName => _shiftEmployeeName;
 
   StreamSubscription? _sessions;
   StreamSubscription? _reservations;
@@ -64,12 +91,38 @@ class SessionAlertsService {
       await _notify.init();
     } catch (_) {}
 
+    // Кто вошёл на этом устройстве. Читается из памяти телефона, поэтому
+    // доступно и в изоляте фоновой службы, где нет ни экранов, ни
+    // вошедшего сотрудника в памяти процесса.
+    _myEmployeeId = await StaffSessionStore.instance.savedEmployeeId();
+    _watchShift();
+
     _watchSessions();
     _watchReservations();
     _watchCalls();
   }
 
+  void _watchShift() {
+    _shift = _db
+        .collection('shifts')
+        .where('status', isEqualTo: 'open')
+        .limit(1)
+        .snapshots()
+        .listen((snap) {
+      if (snap.docs.isEmpty) {
+        _shiftEmployeeId = '';
+        _shiftEmployeeName = '';
+        return;
+      }
+      final data = snap.docs.first.data();
+      _shiftEmployeeId = (data['openedById'] as String?) ?? '';
+      _shiftEmployeeName = (data['openedBy'] as String?) ?? '';
+    }, onError: (_) {});
+  }
+
   Future<void> stop() async {
+    await _shift?.cancel();
+    _shift = null;
     await _sessions?.cancel();
     await _reservations?.cancel();
     await _calls?.cancel();
@@ -123,6 +176,11 @@ class SessionAlertsService {
     await _notify.cancel(coalId);
     await _notify.cancel(endId);
 
+    // Напоминания об углях и конце сеанса — тоже дело того, кто на смене.
+    // Отменили выше в любом случае: если сменщик ушёл, его будильники не
+    // должны сработать на уже чужом столе.
+    if (!_mine) return;
+
     await _notify.scheduleAt(
       id: coalId,
       when: coalFrom.add(coalAfter),
@@ -157,6 +215,7 @@ class SessionAlertsService {
 
         final r = ReservationModel.fromDoc(change.doc);
         if (r.source != 'kolibri') continue;
+        if (!_mine) continue; // на смене другой сотрудник — это его вызов
 
         final t = r.startTime;
         unawaited(_notify.show(
@@ -186,6 +245,7 @@ class SessionAlertsService {
         if (change.type != DocumentChangeType.added) continue;
 
         final c = WaiterCall.fromDoc(change.doc);
+        if (!_mine) continue; // на смене другой сотрудник — это его вызов
 
         unawaited(_notify.show(
           id: NotificationService.idFor('call_${c.id}'),

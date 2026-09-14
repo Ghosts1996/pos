@@ -11,6 +11,12 @@ class ShiftModel {
   final DateTime openedAt;
   final DateTime? closedAt;
   final String openedBy;
+
+  /// Id сотрудника, открывшего смену. Имя для человека, id — для техники:
+  /// по нему устройство понимает, оно ли сейчас «на смене», и показывать
+  /// ли уведомления о вызовах гостей именно здесь.
+  final String openedById;
+
   final String? closedBy;
   final String status; // 'open' | 'closed'
 
@@ -19,6 +25,7 @@ class ShiftModel {
     required this.openedAt,
     this.closedAt,
     required this.openedBy,
+    this.openedById = '',
     this.closedBy,
     this.status = 'open',
   });
@@ -34,6 +41,7 @@ class ShiftModel {
       openedAt: opened is Timestamp ? opened.toDate() : DateTime.now(),
       closedAt: closed is Timestamp ? closed.toDate() : null,
       openedBy: data['openedBy'] ?? '',
+      openedById: data['openedById'] ?? '',
       closedBy: data['closedBy'],
       status: data['status'] ?? 'open',
     );

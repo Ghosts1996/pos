@@ -6,6 +6,7 @@ import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/staff_session_store.dart';
 import '../../services/reservation_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
@@ -38,10 +39,31 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   /// именно здесь замечают, что «уведомления не приходят».
   bool _notificationsOn = true;
 
+  /// Кто на смене и я ли это.
+  ///
+  /// Уведомления о вызовах гостей и новых бронях приходят только тому,
+  /// кто открыл смену: иначе они сыпались бы на все устройства сразу — и
+  /// админу дома, и сменщику, который придёт вечером. Здесь это видно,
+  /// чтобы «мне не приходит» не оказалось загадкой.
+  String _onShift = '';
+  bool _shiftIsMine = true;
+
   @override
   void initState() {
     super.initState();
     _checkNotifications();
+    _checkShift();
+  }
+
+  Future<void> _checkShift() async {
+    final shift = await _fs.currentOpenShift();
+    final myId = await StaffSessionStore.instance.savedEmployeeId();
+    if (!mounted) return;
+    setState(() {
+      _onShift = shift?.openedBy ?? '';
+      final ownerId = shift?.openedById ?? '';
+      _shiftIsMine = ownerId.isEmpty || myId.isEmpty || ownerId == myId;
+    });
   }
 
   Future<void> _checkNotifications() async {
@@ -114,6 +136,27 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       ),
       body: Column(
         children: [
+          if (!_shiftIsMine && _onShift.isNotEmpty)
+            Material(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.badge_outlined,
+                        color: AppColors.primary, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'На смене $_onShift — вызовы гостей и новые брони '
+                        'приходят уведомлениями ему',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (!_notificationsOn)
             Material(
               color: AppColors.warning.withValues(alpha: 0.15),
