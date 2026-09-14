@@ -16,8 +16,12 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 /// приложении, при выключенном экране и после того, как приложение
 /// смахнули из списка задач.
 ///
-/// Уведомление намеренно тихое и без звука: это метка в шторке, а не
-/// сообщение.
+/// Уведомление намеренно незаметное: канал создаётся с важностью NONE, и
+/// система его в шторке не показывает — приложение просто попадает в
+/// общую системную строку «приложения работают в фоне». Совсем без
+/// уведомления Android держать приложение в фоне не разрешает никому: это
+/// защита от программ, которые тихо работают за спиной у владельца
+/// телефона.
 ///
 /// Только для кассы. В приложении гостя постоянное уведомление было бы
 /// назойливым и неуместным — гостю важны уведомления, пока он за столом и
@@ -31,16 +35,45 @@ class HallWatchService {
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    // Сначала пробуем совсем беззвучный вариант, а если система откажется
+    // с ним запускать службу — обычный тихий. Подробности у _tryStart.
+    if (await _tryStart(NotificationChannelImportance.NONE, 'silent')) return;
+    if (await _tryStart(NotificationChannelImportance.MIN, 'min')) return;
+    _started = false;
+  }
+
+  /// Запускает службу с заданной «заметностью» уведомления.
+  ///
+  /// Android не разрешает держать приложение живым в фоне вообще без
+  /// уведомления — это защита от программ, которые тихо работают за спиной
+  /// у владельца телефона. Обойти это нельзя, но можно сделать уведомление
+  /// таким, что его не видно: канал с важностью NONE система в шторке не
+  /// показывает, а само приложение просто попадает в системную строку
+  /// «приложения работают в фоне». Служба при этом работает как работала,
+  /// и вызовы гостей приходят.
+  ///
+  /// Важность канала задаётся ОДИН раз, при его создании: дальше ею
+  /// распоряжается владелец телефона, и менять её из кода Android не даёт.
+  /// Поэтому у каждого варианта свой id канала — иначе у тех, у кого канал
+  /// уже создан, ничего бы не изменилось.
+  Future<bool> _tryStart(
+      NotificationChannelImportance importance, String suffix) async {
     try {
       FlutterForegroundTask.init(
         androidNotificationOptions: AndroidNotificationOptions(
-          channelId: 'colibri_hall_watch',
+          channelId: 'colibri_hall_watch_$suffix',
           channelName: 'Работа в фоне',
           channelDescription:
-              'Пока это уведомление висит, касса получает вызовы гостей и '
-              'новые брони даже со свёрнутым приложением.',
-          channelImportance: NotificationChannelImportance.LOW,
-          priority: NotificationPriority.LOW,
+              'Служебная запись. Пока она есть, касса получает вызовы гостей '
+              'и новые брони со свёрнутым приложением.',
+          channelImportance: importance,
+          priority: NotificationPriority.MIN,
+          // На заблокированном экране не показывать вовсе.
+          visibility: NotificationVisibility.VISIBILITY_SECRET,
+          enableVibration: false,
+          playSound: false,
+          showWhen: false,
+          showBadge: false,
           onlyAlertOnce: true,
         ),
         iosNotificationOptions: const IOSNotificationOptions(
@@ -64,17 +97,16 @@ class HallWatchService {
         ),
       );
 
-      if (await FlutterForegroundTask.isRunningService) return;
+      if (await FlutterForegroundTask.isRunningService) return true;
 
       await FlutterForegroundTask.startService(
-        notificationTitle: 'Colibri POS следит за залом',
-        notificationText: 'Вызовы гостей и брони приходят даже в фоне',
+        notificationTitle: 'Colibri POS',
+        notificationText: 'Служебная запись — не выключайте',
         callback: hallWatchCallback,
       );
+      return true;
     } catch (_) {
-      // Не вышло — приложение работает как раньше, только уведомления
-      // перестанут приходить после выгрузки из памяти.
-      _started = false;
+      return false;
     }
   }
 
