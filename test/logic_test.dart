@@ -267,46 +267,69 @@ void main() {
   });
 
   group('Подарочный сертификат', () {
-    GiftCard card({double balance = 1000, int maxUses = 0, int usedCount = 0,
+    GiftCard card({double bonusAmount = 500, int maxUses = 0, int usedCount = 0,
         bool active = true, DateTime? expiresAt}) {
       return GiftCard(
         code: 'KLB-TEST-0001',
-        faceValue: 3000,
-        balance: balance,
-        createdAt: DateTime(2026, 1, 1),
-        expiresAt: expiresAt ?? DateTime(2030, 1, 1),
+        bonusAmount: bonusAmount,
         maxUses: maxUses,
         usedCount: usedCount,
+        active: active,
+        createdAt: DateTime(2026, 1, 1),
+        expiresAt: expiresAt ?? DateTime(2030, 1, 1),
       );
     }
 
-    test('без лимита списаний сертификат живёт, пока есть деньги', () {
+    test('без лимита активаций код работает, пока не остановят', () {
       expect(card().isUsable, isTrue);
       expect(card().usesLeft, isNull);
-      expect(card(balance: 0).isUsable, isFalse);
+      expect(card().problem, isNull);
     });
 
-    test('лимит списаний исчерпан — платить нельзя, даже если деньги остались', () {
+    test('сумма достаётся каждому, а не делится между всеми', () {
+      // Это и отличает сертификат от кошелька: три активации по 500 —
+      // это 1500 начислений, а не 500 на троих.
+      final c = card(bonusAmount: 500, maxUses: 3);
+      expect(c.bonusAmount, 500);
+      expect(c.usesLeft, 3);
+    });
+
+    test('активации кончились — остальным отказ', () {
       final spent = card(maxUses: 3, usedCount: 3);
-      expect(spent.balance, 1000);
       expect(spent.hasUsesLeft, isFalse);
       expect(spent.isUsable, isFalse);
       expect(spent.usesLeft, 0);
+      expect(spent.problem, contains('разобрали'));
     });
 
-    test('остаток списаний считается от лимита', () {
+    test('остаток активаций считается от лимита', () {
       expect(card(maxUses: 3, usedCount: 1).usesLeft, 2);
       expect(card(maxUses: 1).usesLeft, 1);
     });
 
-    test('истёкший срок важнее оставшихся списаний', () {
+    test('истёкший срок важнее оставшихся активаций', () {
       final old = card(maxUses: 5, expiresAt: DateTime(2020, 1, 1));
       expect(old.hasUsesLeft, isTrue);
+      expect(old.isExpired, isTrue);
       expect(old.isUsable, isFalse);
+      expect(old.problem, contains('истёк'));
     });
 
-    test('старые сертификаты без полей лимита читаются как безлимитные', () {
-      expect(card(maxUses: 0, usedCount: 0).hasUsesLeft, isTrue);
+    test('остановленный код не активируется', () {
+      expect(card(active: false).isUsable, isFalse);
+      expect(card(active: false).problem, contains('не действует'));
+    });
+
+    test('заявка гостя по умолчанию ждёт начисления и ничего не начисляет', () {
+      final claim = GiftCardClaim(
+        id: 'x',
+        code: 'KLB-TEST-0001',
+        clientUid: 'uid',
+        createdAt: DateTime(2026, 1, 1),
+      );
+      expect(claim.isPending, isTrue);
+      expect(claim.isGranted, isFalse);
+      expect(claim.amount, 0);
     });
   });
 }

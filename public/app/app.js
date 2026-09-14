@@ -1683,6 +1683,7 @@ function bonusReason(reason, accrual) {
   switch (reason) {
     case 'referral_invitee': return 'Бонус за код друга';
     case 'referral_inviter': return 'Друг дошёл до нас';
+    case 'giftCard': return 'Сертификат активирован';
     case 'visit': return 'Начисление за визит';
     default: return accrual ? 'Начисление за визит' : 'Списание бонусов';
   }
@@ -1814,14 +1815,15 @@ function screenExtras() {
     <div class="card">
       <div class="row"><span style="color:var(--primary)">🎁</span>
         <b class="grow">Подарочный сертификат</b></div>
+      <p class="small muted" style="margin:12px 0 0">Код из нашего канала.
+        Активируйте — бонусы сразу появятся на счёте.</p>
       <div class="row" style="margin-top:12px;gap:10px">
         <input id="xCard" class="grow" placeholder="KLB-XXXX-XXXX"
           autocapitalize="characters" spellcheck="false">
-        <button class="btn-ghost" id="xCardBtn">Проверить</button>
+        <button class="btn-ghost" id="xCardBtn">Активировать</button>
       </div>
       <div id="xCardMsg" class="small" style="margin-top:10px"></div>
-      <p class="small muted" style="margin:8px 0 0">Назовите код кальянщику
-        при оплате — сумма спишется с сертификата.</p>
+      <div id="xCardClaim" class="small muted" style="margin-top:10px"></div>
     </div>
 
     <div class="card">
@@ -1849,7 +1851,8 @@ function screenExtras() {
   renderTips();
   renderQueue();
   ensureReferralCode();
-  $('xCardBtn').onclick = checkGiftCard;
+  $('xCardBtn').onclick = activateGiftCard;
+  watchGiftClaims();
   $('xRefBtn').onclick = applyReferralCode;
 }
 
@@ -1911,43 +1914,106 @@ async function leaveTip(amount, employeeName, sessionId, btn) {
 
 // ---------- СЕРТИФИКАТ ----------
 
-async function checkGiftCard() {
+/// Гость вводит код сертификата.
+///
+/// Сам себе бонусы гость начислить не может — правила базы этого не
+/// разрешают, и правильно делают. Поэтому отсюда уходит заявка, а
+/// начисляет её касса. Пока заведение работает, это занимает секунды.
+async function activateGiftCard() {
   const msg = $('xCardMsg');
+  const btn = $('xCardBtn');
   const code = ($('xCard').value || '').trim().toUpperCase();
-  if (!code) { msg.textContent = 'Введите код'; msg.style.color = 'var(--warning)'; return; }
 
-  msg.textContent = 'Проверяем…';
+  const say = (text, ok) => {
+    msg.textContent = text;
+    msg.style.color = ok ? 'var(--primary)' : 'var(--warning)';
+  };
+
+  if (!code) return say('Введите код сертификата.', false);
+
+  btn.disabled = true;
+  msg.textContent = 'Отправляем…';
   msg.style.color = 'var(--muted)';
   try {
     const d = await getDoc(doc(state.db, 'giftCards', code));
-    if (!d.exists()) {
-      msg.textContent = 'Сертификат не найден';
-      msg.style.color = 'var(--warning)';
-      return;
-    }
-    const v = d.data();
-    const expires = toDate(v.expiresAt);
-    // Сертификат можно ограничить не только суммой, но и числом списаний:
-    // «3000 ₽ на три визита». Выпущенные до появления лимита читаются как
-    // безлимитные — ровно так они и работали.
-    const maxUses = Number(v.maxUses) || 0;
-    const used = Number(v.usedCount) || 0;
-    const usesLeft = maxUses > 0 ? Math.max(0, maxUses - used) : null;
-    const hasUses = maxUses <= 0 || used < maxUses;
-    const usable = v.active !== false && Number(v.balance) > 0 && hasUses
-      && (!expires || expires > new Date());
+    if (!d.exists()) return say('Такого сертификата нет. Проверьте код.', false);
 
-    msg.textContent = usable
-      ? `Остаток ${Math.round(Number(v.balance) || 0)} ₽`
-        + (usesLeft === null ? ''
-          : `, ещё ${usesLeft} ${usesLeft === 1 ? 'списание' : 'списаний'}`)
-      : (!hasUses ? 'Сертификат уже использован полностью'
-        : 'Сертификат уже использован или истёк');
-    msg.style.color = usable ? 'var(--primary)' : 'var(--warning)';
+    const problem = giftCardProblem(d.data());
+    if (problem) return say(problem, false);
+
+    // Один гость — одна активация. Свои заявки читать можно, чужие нет.
+    const mine = await getDocs(query(collection(state.db, 'giftCardClaims'),
+      where('clientUid', '==', state.uid), where('code', '==', code)));
+    if (!mine.empty) {
+      const v = mine.docs[0].data();
+      if (v.status === 'granted') return say('Вы уже активировали этот сертификат.', false);
+      if (v.status === 'new') return say('Заявка уже отправлена — ждём начисления.', false);
+      return say(v.reason || 'Сертификат уже использован.', false);
+    }
+
+    await addDoc(collection(state.db, 'giftCardClaims'), {
+      code,
+      clientUid: state.uid,
+      // Правила базы разрешают гостю создавать заявку только такой:
+      // сумму проставляет касса при начислении.
+      status: 'new',
+      reason: '',
+      amount: 0,
+      createdAt: Timestamp.fromDate(new Date()),
+      processedAt: null,
+    });
+    $('xCard').value = '';
+    say('Заявка принята — бонусы начислим в ближайшие минуты.', true);
   } catch (_) {
-    msg.textContent = 'Не удалось проверить — нет связи';
-    msg.style.color = 'var(--warning)';
+    say('Не удалось отправить — проверьте связь.', false);
+  } finally {
+    btn.disabled = false;
   }
+}
+
+/// Почему код не сработает — те же проверки, что в приложении.
+function giftCardProblem(v) {
+  const expires = toDate(v.expiresAt);
+  const maxUses = Number(v.maxUses) || 0;
+  const used = Number(v.usedCount) || 0;
+  // bonusAmount — новое имя поля; faceValue осталось от версии, где
+  // сертификат был кошельком, и читается ради старых кодов.
+  const amount = Number(v.bonusAmount ?? v.faceValue) || 0;
+
+  if (v.active === false) return 'Этот сертификат больше не действует.';
+  if (expires && expires <= new Date()) return 'Срок действия сертификата истёк.';
+  if (maxUses > 0 && used >= maxUses) return 'Сертификат разобрали — активации закончились.';
+  if (amount <= 0) return 'Этот сертификат ничего не начисляет.';
+  return null;
+}
+
+/// Что стало с отправленными заявками. Начисляет касса, поэтому показать
+/// «ждём» честнее, чем оставить экран молчать.
+function watchGiftClaims() {
+  sub(onSnapshot(
+    query(collection(state.db, 'giftCardClaims'), where('clientUid', '==', state.uid)),
+    (snap) => {
+      const box = $('xCardClaim');
+      if (!box) return;
+      if (snap.empty) { box.textContent = ''; return; }
+
+      const last = snap.docs
+        .map((d) => d.data())
+        .sort((a, b) => (toDate(b.createdAt) || 0) - (toDate(a.createdAt) || 0))[0];
+
+      if (last.status === 'granted') {
+        box.textContent = `Сертификат ${last.code}: начислено `
+          + `${Math.round(Number(last.amount) || 0)} бонусов`;
+        box.style.color = 'var(--primary)';
+      } else if (last.status === 'rejected') {
+        box.textContent = `Сертификат ${last.code}: `
+          + (last.reason || 'активировать не вышло');
+        box.style.color = 'var(--warning)';
+      } else {
+        box.textContent = `Сертификат ${last.code}: ждём начисления…`;
+        box.style.color = 'var(--muted)';
+      }
+    }, () => {}));
 }
 
 // ---------- ОЧЕРЕДЬ ----------

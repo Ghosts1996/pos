@@ -187,6 +187,24 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
+  /// Человеческая подпись к бонусной операции.
+  ///
+  /// Раньше любое начисление подписывалось «за визит» — и бонусы за
+  /// сертификат или за приведённого друга выглядели как поход в кальянную,
+  /// которого не было.
+  String _bonusReason(String? reason, bool accrual) {
+    switch (reason) {
+      case 'giftCard':
+        return 'Сертификат активирован';
+      case 'referral_invitee':
+        return 'Бонус за код друга';
+      case 'referral_inviter':
+        return 'Друг дошёл до нас';
+      default:
+        return accrual ? 'Начисление за визит' : 'Списание бонусов';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
@@ -453,7 +471,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                     accrual ? Icons.add_circle_outline : Icons.remove_circle_outline,
                     color: accrual ? KolibriColors.success : KolibriColors.warning,
                   ),
-                  title: Text(accrual ? 'Начисление за визит' : 'Списание бонусов'),
+                  title: Text(_bonusReason(data['reason'] as String?, accrual)),
                   subtitle: Text(
                     '${date.day.toString().padLeft(2, '0')}.'
                     '${date.month.toString().padLeft(2, '0')}.${date.year}',

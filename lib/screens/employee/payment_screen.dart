@@ -12,7 +12,6 @@ import '../../services/chestny_znak_service.dart';
 import '../../services/egais_service.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../utils/constants.dart';
-import '../../services/gift_card_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/referral_service.dart';
 import '../../widgets/bonus_redeem_panel.dart';
@@ -76,21 +75,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
   // В чек они уходят в поле "за счёт заведения" (paymentComp), чтобы итог
   // сходился и X-отчёт не показывал недостачу.
   double _bonusPaid = 0;
-  double _giftPaid = 0;
-  String? _giftMessage;
-  final _giftCtrl = TextEditingController();
   String _clientUid = '';
 
   /// Какие сертификаты и на какую сумму уже погашены на этом экране —
   /// нужно, чтобы вернуть деньги, если оплату так и не провели.
-  final Map<String, double> _giftRedeemed = {};
 
   /// Оплата проведена — списанные бонусы/сертификаты возврату не подлежат.
   bool _paidDone = false;
 
   /// Есть что возвращать, если кассир уйдёт с экрана, не оплатив.
   bool get _hasPendingRedemptions =>
-      !_paidDone && (_bonusPaid > 0 || _giftRedeemed.isNotEmpty);
+      !_paidDone && _bonusPaid > 0;
 
   bool _closeWithoutPayment = false;
   bool _printReceipt = false;
@@ -101,7 +96,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// Сумма, которую ещё нужно взять с гостя: счёт со скидкой минус
   /// списанные бонусы и сертификат.
   double get _total {
-    final rest = widget.session.totalWithDiscount - _bonusPaid - _giftPaid;
+    final rest = widget.session.totalWithDiscount - _bonusPaid;
     return rest < 0 ? 0 : rest;
   }
 
@@ -144,7 +139,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
       m.dispose();
     }
     _contactCtrl.dispose();
-    _giftCtrl.dispose();
     super.dispose();
   }
 
@@ -158,14 +152,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// полную сумму.
   Future<void> _rollbackRedemptions() async {
     final bonus = _bonusPaid;
-    final gifts = Map<String, double>.from(_giftRedeemed);
-    if (bonus <= 0 && gifts.isEmpty) return;
+    if (bonus <= 0) return;
 
     // Обнуляем локально сразу — повторный вызов (быстрый двойной «назад»)
-    // не должен вернуть деньги дважды.
+    // не должен вернуть бонусы дважды.
     _bonusPaid = 0;
-    _giftPaid = 0;
-    _giftRedeemed.clear();
 
     try {
       if (bonus > 0 && _clientUid.isNotEmpty) {
@@ -173,14 +164,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
           clientUid: _clientUid,
           sessionId: widget.session.id,
           amount: bonus,
-        );
-      }
-      for (final entry in gifts.entries) {
-        await GiftCardService.instance.refund(
-          code: entry.key,
-          amount: entry.value,
-          sessionId: widget.session.id,
-          employeeName: widget.session.employeeName,
         );
       }
     } catch (_) {
@@ -303,7 +286,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         cash: _closeWithoutPayment ? 0 : _cash.parse(),
         card: _closeWithoutPayment ? 0 : _card.parse(),
         terminal: _closeWithoutPayment ? 0 : _terminal.parse(),
-        comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid + _giftPaid,
+        comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid,
         guestContact: _contactCtrl.text.trim(),
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
@@ -331,7 +314,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               // пользуется.
               billTotal: widget.session.totalWithDiscount,
               tableName: widget.session.tableName,
-              bonusSpent: _bonusPaid + _giftPaid,
+              bonusSpent: _bonusPaid,
               items: widget.session.orderItems,
             )
             .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
@@ -374,7 +357,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
               if (_bonusPaid > 0) 'бонусы ${_bonusPaid.toStringAsFixed(0)}₽',
-              if (_giftPaid > 0) 'сертификат ${_giftPaid.toStringAsFixed(0)}₽',
             ].join(', ');
       await printer.printReceipt(ReceiptData(
         venueName: 'Кальянная',
@@ -466,7 +448,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // скидкой). Бонусы и сертификат — это деньги, полученные заведением
       // РАНЬШЕ, поэтому по ФФД они идут отдельным видом расчёта
       // «предоплата» (тег 1215), а не теряются, как было до этого.
-      final prepaid = _bonusPaid + _giftPaid;
+      final prepaid = _bonusPaid;
       final billTotal = widget.session.totalWithDiscount;
       final payments = <FiscalPayment>[
         if (_closeWithoutPayment)
@@ -562,13 +544,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
             children: [
               Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
-              if (_bonusPaid > 0 || _giftPaid > 0)
+              if (_bonusPaid > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     [
                       if (_bonusPaid > 0) 'бонусами ${_fmt(_bonusPaid)}',
-                      if (_giftPaid > 0) 'сертификатом ${_fmt(_giftPaid)}',
                     ].join(', '),
                     style: const TextStyle(color: AppColors.success, fontSize: 14),
                   ),
@@ -592,7 +573,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                _giftCardRow(),
                 const Divider(height: 28),
               ],
               for (final m in _methods)
@@ -671,112 +651,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ),
       ),
     );
-  }
-
-  /// Поле подарочного сертификата. Код гость называет вслух или
-  /// показывает в приложении; списывается не больше остатка на карте и не
-  /// больше суммы к оплате.
-  Widget _giftCardRow() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.card_giftcard, color: AppColors.warning, size: 20),
-              const SizedBox(width: 8),
-              const Text('Сертификат',
-                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
-              const Spacer(),
-              if (_giftPaid > 0)
-                Text('Списано ${_fmt(_giftPaid)}',
-                    style: const TextStyle(color: AppColors.success)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _giftCtrl,
-                  textCapitalization: TextCapitalization.characters,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    hintText: 'KLB-XXXX-XXXX',
-                    isDense: true,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton(
-                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
-                onPressed: _busy ? null : _applyGiftCard,
-                child: const Text('Списать'),
-              ),
-            ],
-          ),
-          if (_giftMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(_giftMessage!,
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _applyGiftCard() async {
-    final code = _giftCtrl.text.trim().toUpperCase();
-    if (code.isEmpty) return;
-    setState(() => _giftMessage = null);
-
-    final card = await GiftCardService.instance.find(code);
-    if (card == null) {
-      setState(() => _giftMessage = 'Сертификат не найден');
-      return;
-    }
-    // Причины разные, и объяснять их гостю приходится по-разному:
-    // «кончились списания» — это не «истёк».
-    if (!card.hasUsesLeft) {
-      setState(() => _giftMessage =
-          'Сертификат использован полностью: ${card.maxUses} из ${card.maxUses} списаний');
-      return;
-    }
-    if (!card.isUsable) {
-      setState(() => _giftMessage = 'Сертификат неактивен или истёк');
-      return;
-    }
-
-    try {
-      final applied = await GiftCardService.instance.redeem(
-        code: code,
-        amount: _total,
-        sessionId: widget.session.id,
-        employeeName: widget.session.employeeName,
-      );
-      setState(() {
-        _giftPaid += applied;
-        _giftRedeemed[code] = (_giftRedeemed[code] ?? 0) + applied;
-        final left = card.usesLeft == null ? null : card.usesLeft! - 1;
-        _giftMessage = 'Списано ${_fmt(applied)} ${AppConstants.currencySymbol}, '
-            'остаток на сертификате ${_fmt(card.balance - applied)}'
-            '${left == null ? '' : ', списаний осталось $left'}';
-        _giftCtrl.clear();
-        _cash.controller.text = _fmt(_total);
-        for (final m in _methods) {
-          if (m != _cash) m.controller.text = '0';
-        }
-      });
-    } catch (e) {
-      setState(() => _giftMessage = '$e');
-    }
   }
 
   /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа
