@@ -328,14 +328,34 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             groupValue: _printerType,
             onChanged: (v) => setState(() => _printerType = v!),
           ),
+          // Кнопка выбора устройства стоит ОТДЕЛЬНОЙ строкой, а не в
+          // secondary у самой плитки. В secondary она забирала себе всю
+          // нужную ей ширину, а заголовку с подписью не оставалось почти
+          // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
+          // печатались по одной букве в строку.
           RadioListTile<String>(
             title: const Text('Bluetooth'),
-            subtitle: Text(_btMac.isEmpty ? 'Устройство не выбрано' : _btMac),
+            subtitle: Text(
+              _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             value: 'bluetooth',
             groupValue: _printerType,
             onChanged: (v) => setState(() => _printerType = v!),
-            secondary: TextButton(onPressed: _pickBluetoothDevice, child: const Text('Выбрать')),
           ),
+          if (_printerType == 'bluetooth')
+            Padding(
+              padding: const EdgeInsets.only(left: 16, bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _pickBluetoothDevice,
+                  icon: const Icon(Icons.bluetooth_searching, size: 18),
+                  label: const Text('Выбрать устройство'),
+                ),
+              ),
+            ),
           RadioListTile<String>(
             title: const Text('Wi-Fi / LAN (порт 9100)'),
             value: 'network',
