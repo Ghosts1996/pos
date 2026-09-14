@@ -98,6 +98,10 @@ fi
 # страницы нельзя.
 if curl -fsS --max-time 20 "https://$SITE.web.app/__/firebase/init.json" 2>/dev/null | grep -q "projectId"; then
   ok "веб-версия для iPhone настроена: https://$SITE.web.app/app/"
+  warn "Для входа по SMS в браузере адрес $SITE.web.app должен быть в списке"
+  warn "разрешённых: Firebase → Authentication → Settings → Authorized domains."
+  warn "Без него вход по номеру выдаст ошибку, всё остальное работает."
+  warn "https://console.firebase.google.com/project/$PROJECT/authentication/settings"
 else
   warn "Веб-версия для iPhone не заработает: в проекте нет веб-приложения."
   warn "Firebase → Project settings → Your apps → значок </> (Web) →"
