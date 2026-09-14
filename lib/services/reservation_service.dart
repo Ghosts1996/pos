@@ -237,7 +237,7 @@ class ReservationService {
         .map((r) => r.tableId)
         .toSet();
 
-    return hall.tables.where((t) {
+    final free = hall.tables.where((t) {
       if (t.seats < guestsCount) return false;
       if (busyByReservation.contains(t.id)) return false;
 
@@ -245,8 +245,24 @@ class ReservationService {
       if (occupiedUntil != null && start.isBefore(occupiedUntil)) return false;
 
       return true;
-    }).toList()
-      ..sort((a, b) => a.seats.compareTo(b.seats)); // подбираем стол «впритык»
+    }).toList();
+
+    // Сначала столы, которые точно будут свободны, и только потом те, чей
+    // сеанс кончается незадолго до брони: их часто продлевают, и сажать
+    // туда бронь стоит лишь когда других столов не осталось. Внутри каждой
+    // группы — по возрастанию мест, чтобы не отдавать компании из двоих
+    // человек стол на восьмерых.
+    int risk(TableModel t) {
+      final freeAt = hall.busyUntil[t.id];
+      if (freeAt == null) return 0;
+      return start.difference(freeAt) < extensionRisk ? 1 : 0;
+    }
+
+    free.sort((a, b) {
+      final byRisk = risk(a).compareTo(risk(b));
+      return byRisk != 0 ? byRisk : a.seats.compareTo(b.seats);
+    });
+    return free;
   }
 
   /// Насколько плотно занято заведение на выбранный интервал.
