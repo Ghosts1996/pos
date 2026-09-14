@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
+import '../../models/venue_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/venue_service.dart';
 import '../../widgets/clock_ticker.dart';
 import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
@@ -73,9 +75,9 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           const Text(
-            'Когда вы придёте, откройте свой стол — и увидите счёт, таймер '
-            'и сможете звать кальянщика из приложения.',
-            style: TextStyle(color: KolibriColors.textMuted),
+            'Отсканируйте QR-код на своём столе — откроются счёт, таймер '
+            'сеанса и кнопки вызова кальянщика.',
+            style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
@@ -101,13 +103,15 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             icon: const Icon(Icons.map_outlined),
             label: const Text('Карта зала'),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           const Text(
-            'Открыть свой стол можно только по QR-коду на столе — так '
-            'счёт не откроют по ошибке за компанию за соседним столиком. '
-            'Кода нет или не сканируется — позовите кальянщика.',
-            style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+            'Стол открывается только по коду с самого стола — так вы '
+            'наверняка попадёте на свой счёт, а не на соседний. Если код '
+            'не сканируется, позовите кальянщика: он откроет стол сам.',
+            style: TextStyle(
+                color: KolibriColors.textMuted, fontSize: 12, height: 1.5),
           ),
+          _venueRules(),
         ],
       );
 
@@ -335,6 +339,91 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           },
         ),
       ],
+    );
+  }
+
+  /// Правила заведения — те же, что администратор пишет в профиле
+  /// заведения на кассе.
+  ///
+  /// Читаются подпиской, а не разовым запросом: исправил правила в
+  /// админке — у гостей они поменялись сразу, без переустановки
+  /// приложения и без ожидания следующего запуска.
+  ///
+  /// Каждая строка поля превращается в отдельный пункт списка: так их
+  /// пишут («Один кальян до 3 гостей», «18+»), и так их проще читать,
+  /// чем сплошным абзацем.
+  Widget _venueRules() {
+    return StreamBuilder<VenueProfile>(
+      stream: VenueService.instance.stream(),
+      initialData: VenueService.instance.cached,
+      builder: (context, snap) {
+        final rules = (snap.data?.rules ?? '')
+            .split('\n')
+            .map((l) => l.trim().replaceFirst(RegExp(r'^[-•*]\s*'), ''))
+            .where((l) => l.isNotEmpty)
+            .toList();
+        if (rules.isEmpty) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 28),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            decoration: BoxDecoration(
+              color: KolibriColors.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: KolibriColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 18, color: KolibriColors.gold),
+                    SizedBox(width: 8),
+                    Text('Правила заведения',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                for (final rule in rules)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 7, right: 10),
+                          child: SizedBox(
+                            width: 5,
+                            height: 5,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: KolibriColors.gold,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            rule,
+                            style: const TextStyle(
+                              color: KolibriColors.textMuted,
+                              fontSize: 13,
+                              height: 1.45,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
