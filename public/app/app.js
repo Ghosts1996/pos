@@ -13,7 +13,8 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
+  getAuth, signInAnonymously, onAuthStateChanged, signOut,
+  RecaptchaVerifier, signInWithPhoneNumber, linkWithPhoneNumber,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
@@ -24,14 +25,21 @@ import {
 
 const state = {
   db: null,
+  auth: null,
   uid: '',
+  /// Вошёл по номеру телефона — значит это тот же аккаунт, что и в
+  /// приложении на Android: бонусы, уровень и история общие.
+  phone: '',
   profile: null,
   venue: null,
   /// Отписки от «живых» запросов текущего экрана. При каждом переходе
   /// снимаются все: иначе экраны копят подписки, телефон греется, а
   /// трафик уходит впустую.
   screenSubs: [],
-  /// Подписки на весь сеанс (профиль, заведение) — не снимаются.
+  /// Подписки уровня аккаунта (профиль, заведение). Снимаются при смене
+  /// аккаунта — иначе после входа по телефону приложение продолжало бы
+  /// слушать профиль прежнего, анонимного гостя.
+  accountSubs: [],
   ticker: null,
   cart: {},
 };
@@ -103,6 +111,9 @@ async function boot() {
   state.db = getFirestore(app);
   const auth = getAuth(app);
 
+  state.auth = auth;
+  let routerReady = false;
+
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
       try {
@@ -115,12 +126,26 @@ async function boot() {
       return;
     }
     if (state.uid === user.uid) return;
+
+    // Смена аккаунта (вход по телефону или выход): снимаем всё, что
+    // слушало прежнего гостя, иначе на экране смешались бы два профиля.
+    state.accountSubs.forEach((off) => { try { off(); } catch (_) {} });
+    state.accountSubs = [];
+    clearScreen();
+
     state.uid = user.uid;
+    state.phone = (user.phoneNumber || '').replace(/\D/g, '');
+    state.profile = null;
+    state.cart = {};
+
     await ensureProfile();
     watchProfile();
     watchVenue();
     $('tabbar').hidden = false;
-    window.addEventListener('hashchange', route);
+    if (!routerReady) {
+      routerReady = true;
+      window.addEventListener('hashchange', route);
+    }
     route();
   });
 }
@@ -140,17 +165,17 @@ async function ensureProfile() {
 }
 
 function watchProfile() {
-  onSnapshot(doc(state.db, 'clients', state.uid), (d) => {
+  state.accountSubs.push(onSnapshot(doc(state.db, 'clients', state.uid), (d) => {
     state.profile = d.exists() ? { id: d.id, ...d.data() } : null;
     // Экран «Мой стол» и «Главная» зависят от профиля — перерисуем.
     if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
-  }, () => {});
+  }, () => {}));
 }
 
 function watchVenue() {
-  onSnapshot(doc(state.db, 'venue', 'profile'), (d) => {
+  state.accountSubs.push(onSnapshot(doc(state.db, 'venue', 'profile'), (d) => {
     state.venue = d.exists() ? d.data() : null;
-  }, () => {});
+  }, () => {}));
 }
 
 // ---------- УРОВНИ ЛОЯЛЬНОСТИ ----------
@@ -188,6 +213,8 @@ function route() {
 
   if (bind) return bindToTable(decodeURIComponent(bind[1]));
   switch (tab) {
+    case 'scan': return screenScan();
+    case 'login': return screenLogin();
     case 'menu': return screenMenu();
     case 'booking': return screenBooking();
     case 'table': return screenTable();
@@ -235,7 +262,10 @@ function screenHome() {
       <a class="btn btn-ghost" href="#/menu">🍽 Меню</a>
     </div>
     <div style="height:10px"></div>
-    <a class="btn btn-ghost" href="#/table">🔥 Мой стол</a>
+    <a class="btn btn-primary" href="#/scan">📷 Я за столом — сканировать QR</a>
+    ${state.phone ? '' : `
+      <div style="height:10px"></div>
+      <a class="btn btn-ghost" href="#/login">🔗 Войти по номеру — перенести бонусы</a>`}
   `;
 
   renderStories();
@@ -516,6 +546,8 @@ function tableEmpty() {
     <h1>Мой стол</h1>
     <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт,
     таймер сеанса и кнопки вызова кальянщика.</p>
+    <a class="btn btn-primary" href="#/scan">📷 Сканировать QR стола</a>
+    <div style="height:14px"></div>
     <p class="small muted">Стол открывается только по коду с самого стола —
     так вы наверняка попадёте на свой счёт, а не на соседний. Если код не
     сканируется, позовите кальянщика: он откроет стол сам.</p>
@@ -930,6 +962,27 @@ function screenProfile() {
       ` : ''}
     </div>
 
+    <div class="card ${state.phone ? '' : 'warn'}">
+      ${state.phone ? `
+        <div class="row">
+          <div class="grow">
+            <div style="font-weight:600">Вход выполнен</div>
+            <div class="small muted">${esc(prettyPhone(state.phone))} — бонусы и история
+              общие с приложением на Android</div>
+          </div>
+        </div>
+        <button class="btn-danger" id="pOut" style="margin-top:12px">Выйти</button>
+      ` : `
+        <div style="font-weight:600;margin-bottom:6px">Один аккаунт на все устройства</div>
+        <div class="small muted" style="margin-bottom:12px">
+          Сейчас вы гость этого браузера: бонусы и история копятся только здесь.
+          Войдите по номеру телефона — и увидите тот же баланс, уровень и визиты,
+          что в приложении на Android.
+        </div>
+        <a class="btn btn-primary" href="#/login">Войти по номеру</a>
+      `}
+    </div>
+
     <div class="card">
       <label class="field"><span>Имя</span>
         <input id="pName" value="${esc(p.name || '')}" placeholder="Как к вам обращаться"></label>
@@ -949,6 +1002,8 @@ function screenProfile() {
       Colibri Lounge · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
+  const out = $('pOut');
+  if (out) out.onclick = doSignOut;
   watchVisits();
 }
 
@@ -1021,4 +1076,310 @@ function watchVisits() {
       const box = $('visits');
       if (box) box.innerHTML = `<p class="muted small">Не удалось загрузить историю.</p>`;
     }));
+}
+
+// ---------- ВХОД ПО НОМЕРУ: ОДИН АККАУНТ НА ВСЕ УСТРОЙСТВА ----------
+//
+// Пока гость не вошёл, браузер работает под анонимным аккаунтом — своим
+// на каждом устройстве. Бонусы, уровень и история визитов привязаны к
+// аккаунту, поэтому без входа айфон и Android были бы двумя разными
+// гостями с разными балансами.
+//
+// Вход по номеру телефона это чинит: Firebase выдаёт один и тот же
+// аккаунт для одного номера, на любом устройстве и в любом приложении.
+// Вошли тем же номером — увидели те же бонусы, тот же уровень и ту же
+// историю, что в приложении на Android.
+
+let confirmation = null;   // результат отправки SMS
+let recaptcha = null;
+let loginPhone = '';
+
+function screenLogin() {
+  screenEl().innerHTML = `
+    <h1>Вход по номеру</h1>
+    <p class="muted">Бонусы и история визитов привязаны к номеру телефона.
+    Войдите тем же номером, что и в приложении на Android — увидите тот же
+    баланс, уровень и все прошлые визиты.</p>
+
+    <div class="card">
+      <label class="field"><span>Номер телефона</span>
+        <input id="lPhone" type="tel" inputmode="tel" placeholder="+7 999 123-45-67"
+          value="${esc(loginPhone ? prettyPhone(loginPhone) : '')}"></label>
+      <button class="btn-primary" id="lSend">Получить код в SMS</button>
+      <div id="lStep2" hidden style="margin-top:14px">
+        <label class="field"><span>Код из SMS</span>
+          <input id="lCode" type="tel" inputmode="numeric" maxlength="6" placeholder="123456"></label>
+        <button class="btn-primary" id="lConfirm">Войти</button>
+      </div>
+      <div id="recaptcha"></div>
+      <p class="small muted" style="margin:14px 0 0">
+        SMS приходит от Firebase. Номер нужен только чтобы узнать вас —
+        рассылок мы не делаем.</p>
+    </div>
+
+    <a class="btn btn-ghost" href="#/profile">Назад</a>`;
+
+  $('lSend').onclick = sendCode;
+  $('lConfirm').onclick = confirmCode;
+}
+
+async function sendCode() {
+  const phone = normalizePhone($('lPhone').value);
+  if (phone.length !== 11) return toast('Проверьте номер телефона');
+  loginPhone = phone;
+
+  const btn = $('lSend');
+  btn.disabled = true;
+  btn.textContent = 'Отправляем…';
+
+  try {
+    // Невидимая проверка «вы не робот» — обязательное требование
+    // Firebase для входа по SMS в браузере.
+    if (!recaptcha) {
+      recaptcha = new RecaptchaVerifier(state.auth, 'recaptcha', { size: 'invisible' });
+    }
+
+    // Кому принадлежит номер, смотрим в своём указателе phoneIndex — том
+    // же, что ведёт приложение на Android. Если номер уже за кем-то
+    // закреплён, это вход в существующий аккаунт; если свободен —
+    // привязываем его к текущему анонимному, чтобы не потерять то, что
+    // гость успел тут сделать.
+    let taken = false;
+    try {
+      const idx = await getDoc(doc(state.db, 'phoneIndex', phone));
+      taken = idx.exists() && idx.data().uid && idx.data().uid !== state.uid;
+    } catch (_) {}
+
+    const e164 = '+' + phone;
+    const user = state.auth.currentUser;
+    confirmation = (!taken && user && user.isAnonymous)
+      ? await linkWithPhoneNumber(user, e164, recaptcha)
+      : await signInWithPhoneNumber(state.auth, e164, recaptcha);
+
+    $('lStep2').hidden = false;
+    $('lCode').focus();
+    toast('Код отправлен');
+  } catch (e) {
+    loginFailed(e);
+  }
+  const b = $('lSend');
+  if (b) { b.disabled = false; b.textContent = 'Получить код в SMS'; }
+}
+
+function loginFailed(e) {
+  const code = (e && e.code) || '';
+  // Ошибки Firebase на английском и гостю ничего не говорят — переводим
+  // те, что случаются на самом деле.
+  if (code.includes('invalid-phone-number')) return toast('Неверный номер телефона');
+  if (code.includes('too-many-requests')) {
+    return toast('Слишком много попыток. Попробуйте через несколько минут');
+  }
+  if (code.includes('captcha') || code.includes('unauthorized-domain')) {
+    return toast('Вход по SMS для этого адреса ещё не разрешён в Firebase');
+  }
+  if (code.includes('quota')) return toast('Лимит SMS на сегодня исчерпан');
+  toast('Не удалось отправить код. Попробуйте ещё раз');
+  // Проверку придётся создать заново: использованную Firebase не примет.
+  try { if (recaptcha) recaptcha.clear(); } catch (_) {}
+  recaptcha = null;
+}
+
+async function confirmCode() {
+  const code = ($('lCode').value || '').trim();
+  if (code.length < 4) return toast('Введите код из SMS');
+  if (!confirmation) return toast('Сначала запросите код');
+
+  const btn = $('lConfirm');
+  btn.disabled = true;
+  try {
+    await confirmation.confirm(code);
+    // Указатель «номер → гость»: по нему и приложение, и касса понимают,
+    // что это один и тот же человек.
+    try { await setDoc(doc(state.db, 'phoneIndex', loginPhone), { uid: state.auth.currentUser.uid }); } catch (_) {}
+    try {
+      await setDoc(doc(state.db, 'clients', state.auth.currentUser.uid),
+        { phone: loginPhone }, { merge: true });
+    } catch (_) {}
+    confirmation = null;
+    toast('Вы вошли — бонусы и история подтянулись');
+    location.hash = '#/profile';
+  } catch (e) {
+    const c = (e && e.code) || '';
+    if (c.includes('invalid-verification-code')) toast('Неверный код из SMS');
+    else if (c.includes('code-expired')) toast('Код устарел — запросите новый');
+    else if (c.includes('credential-already-in-use')) {
+      toast('Этот номер уже у другого аккаунта — запросите код ещё раз, войдём в него');
+      confirmation = null;
+    } else toast('Не удалось войти');
+    btn.disabled = false;
+  }
+}
+
+async function doSignOut() {
+  try { await signOut(state.auth); } catch (_) {}
+  // Дальше onAuthStateChanged сам заведёт новый анонимный вход.
+  toast('Вы вышли');
+}
+
+// ---------- СКАНЕР QR ----------
+//
+// Камера телефона и так открывает ссылку со стола сама — но гость,
+// который уже сидит в приложении, ждёт кнопку внутри него, а не «выйдите
+// и наведите камеру». Здесь она и есть.
+//
+// Safari на iPhone не умеет встроенный разбор кодов (BarcodeDetector),
+// поэтому там подключается разбор на JavaScript. На Android и в Chrome
+// используется встроенный — он быстрее и не тянет ничего лишнего.
+
+let scanStream = null;
+let scanRaf = null;
+
+function screenScan() {
+  screenEl().innerHTML = `
+    <h1>Сканировать QR стола</h1>
+    <p class="muted small">Наведите камеру на код, наклеенный на вашем столе.</p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <video id="cam" playsinline muted autoplay
+        style="width:100%;display:block;background:#000;aspect-ratio:1/1;object-fit:cover"></video>
+    </div>
+    <div id="scanHint" class="small muted center">Запрашиваем доступ к камере…</div>
+    <div style="height:14px"></div>
+    <a class="btn btn-ghost" href="#/table">Отмена</a>`;
+
+  startScanner();
+  // Экран уходит — камеру обязательно гасим, иначе индикатор горит и
+  // батарея тает, даже когда гость давно на другой вкладке.
+  sub(stopScanner);
+}
+
+async function startScanner() {
+  const video = $('cam');
+  const hint = $('scanHint');
+  if (!video) return;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    hint.textContent = 'Этот браузер не умеет работать с камерой. '
+      + 'Отсканируйте код обычной камерой телефона — она откроет стол сама.';
+    return;
+  }
+
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+  } catch (e) {
+    hint.innerHTML = 'Нет доступа к камере. Разрешите его в настройках '
+      + 'браузера — или просто отсканируйте код обычной камерой телефона, '
+      + 'она откроет стол сама.';
+    return;
+  }
+
+  // Пока браузер спрашивал разрешение, гость мог уйти с экрана. Если так
+  // — камеру сразу гасим: иначе индикатор горит, а поток живёт впустую.
+  if (!location.hash.startsWith('#/scan')) return stopScanner();
+
+  video.srcObject = scanStream;
+  try { await video.play(); } catch (_) {}
+  hint.textContent = 'Наведите на код…';
+
+  const detector = ('BarcodeDetector' in window)
+    ? new window.BarcodeDetector({ formats: ['qr_code'] })
+    : null;
+
+  let jsQR = null;
+  if (!detector) {
+    try {
+      // Safari своего разбора не имеет — подключаем библиотеку.
+      await loadScript('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
+      jsQR = window.jsQR;
+    } catch (_) {
+      hint.textContent = 'Не удалось загрузить распознавание кода. '
+        + 'Отсканируйте код обычной камерой телефона.';
+      return;
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let done = false;
+
+  const tick = async () => {
+    if (done || !scanStream) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      let raw = null;
+      try {
+        if (detector) {
+          const found = await detector.detect(video);
+          if (found && found.length) raw = found[0].rawValue;
+        } else {
+          // Кадр меньше исходного: для кода этого хватает, а работы
+          // телефону заметно меньше.
+          const w = 420;
+          const scale = w / video.videoWidth;
+          canvas.width = w;
+          canvas.height = Math.round(video.videoHeight * scale);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const res = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+          if (res) raw = res.data;
+        }
+      } catch (_) {}
+
+      if (raw) {
+        const tableId = tableIdFrom(raw);
+        if (tableId) {
+          done = true;
+          stopScanner();
+          location.hash = '#/t/' + encodeURIComponent(tableId);
+          return;
+        }
+        hint.textContent = 'Это не код стола — наведите на код на столе.';
+      }
+    }
+    scanRaf = requestAnimationFrame(tick);
+  };
+  scanRaf = requestAnimationFrame(tick);
+}
+
+function stopScanner() {
+  if (scanRaf) { cancelAnimationFrame(scanRaf); scanRaf = null; }
+  if (scanStream) {
+    scanStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+    scanStream = null;
+  }
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('не загрузилось'));
+    document.head.appendChild(el);
+  });
+}
+
+/// Достаёт номер стола из чего угодно, что может оказаться в коде.
+///
+/// Коды печатались в разное время и в разных форматах: сначала
+/// kolibri://table/5, потом https://colibri-lounge.web.app/table/5.
+/// Понимаем оба, адрес веб-версии и просто номер — перепечатывать
+/// наклейки из-за формата не придётся никогда.
+function tableIdFrom(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+
+  const m = v.match(/[#/]t\/([^/?#\s]+)/) || v.match(/\/table\/([^/?#\s]+)/);
+  if (m) return decodeURIComponent(m[1]);
+
+  const scheme = v.match(/^kolibri:\/\/table\/([^/?#\s]+)/i);
+  if (scheme) return decodeURIComponent(scheme[1]);
+
+  const param = v.match(/[?&]table=([^&\s]+)/);
+  if (param) return decodeURIComponent(param[1]);
+
+  // «Голый» номер стола — тоже допустим.
+  if (/^[A-Za-z0-9_-]{1,40}$/.test(v)) return v;
+  return null;
 }
