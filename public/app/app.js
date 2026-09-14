@@ -1685,7 +1685,21 @@ function screenHall(pickMode) {
       return;
     }
     box.innerHTML = tables.map((t) => {
-      const occupied = (t.activeSessionIds || []).length > 0 || t.status === 'occupied';
+      // ВАЖНО: занятость считается по-разному для двух режимов.
+      //
+      // Карта зала показывает, что происходит СЕЙЧАС: занят тот стол, за
+      // которым сидят.
+      //
+      // Выбор стола для брони — про БУДУЩЕЕ. Здесь «за столом сейчас
+      // сидят» ничего не значит: гости уйдут задолго до вечера. Важно
+      // только, дотянется ли текущий сеанс до времени брони (busyUntil) и
+      // нет ли на это время чужой брони. Раньше тут стояла проверка «за
+      // столом кто-то есть», и половина зала выглядела занятой на завтра
+      // только потому, что была занята в эту минуту.
+      const until = toDate(t.busyUntil);
+      const occupied = pickMode
+          ? (!!when && !!until && when < until)
+          : ((t.activeSessionIds || []).length > 0 || t.status === 'occupied');
       const bookedNow = busyByBooking.has(t.id);
       const tooSmall = pickMode && bookingGuests() > (Number(t.seats) || 0);
       const cls = tooSmall ? 'small' : (occupied || bookedNow) ? 'busy' : 'free';
@@ -1696,10 +1710,19 @@ function screenHall(pickMode) {
       // на узких экранах подписи обрезались.
       const x = Math.max(0, Math.min(1, Number(t.x) || 0.1));
       const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
+      // Нажатие по недоступному столу объясняет, почему он недоступен:
+      // молчащая плитка выглядит как сломанная кнопка.
+      const why = tooSmall
+        ? `Стол на ${Number(t.seats) || 0} мест — для ${bookingGuests()} гостей мало`
+        : bookedNow
+          ? 'Этот стол уже забронирован на выбранное время'
+          : 'Стол занят до этого времени — выберите другое время или стол';
       return `
         <div class="table-dot ${cls} ${canPick ? 'pick' : ''}
              ${pickedTable && pickedTable.id === t.id ? 'chosen' : ''}"
-             ${canPick ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"` : ''}
+             ${canPick
+               ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"`
+               : (pickMode ? `data-why="${esc(why)}"` : '')}
              style="left:calc(${x} * (100% - var(--tile-w)));
                     top:calc(${y} * (100% - var(--tile-h)))">
           ${esc(t.name || '')}
@@ -1710,9 +1733,12 @@ function screenHall(pickMode) {
     box.querySelectorAll('[data-pick]').forEach((el) => {
       el.onclick = () => {
         pickedTable = { id: el.dataset.pick, name: el.dataset.name };
-        toast(`Выбран стол ${el.dataset.name}`);
+        toast(`Выбран ${el.dataset.name}`);
         location.hash = '#/booking';
       };
+    });
+    box.querySelectorAll('[data-why]').forEach((el) => {
+      el.onclick = () => toast(el.dataset.why);
     });
   };
 
