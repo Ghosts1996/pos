@@ -742,6 +742,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
       setState(() => _giftMessage = 'Сертификат не найден');
       return;
     }
+    // Причины разные, и объяснять их гостю приходится по-разному:
+    // «кончились списания» — это не «истёк».
+    if (!card.hasUsesLeft) {
+      setState(() => _giftMessage =
+          'Сертификат использован полностью: ${card.maxUses} из ${card.maxUses} списаний');
+      return;
+    }
     if (!card.isUsable) {
       setState(() => _giftMessage = 'Сертификат неактивен или истёк');
       return;
@@ -757,8 +764,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       setState(() {
         _giftPaid += applied;
         _giftRedeemed[code] = (_giftRedeemed[code] ?? 0) + applied;
+        final left = card.usesLeft == null ? null : card.usesLeft! - 1;
         _giftMessage = 'Списано ${_fmt(applied)} ${AppConstants.currencySymbol}, '
-            'остаток на сертификате ${_fmt(card.balance - applied)}';
+            'остаток на сертификате ${_fmt(card.balance - applied)}'
+            '${left == null ? '' : ', списаний осталось $left'}';
         _giftCtrl.clear();
         _cash.controller.text = _fmt(_total);
         for (final m in _methods) {

@@ -34,6 +34,7 @@ class GiftCardService {
     String issuedBy = '',
     String purchasedByUid = '',
     int validMonths = 12,
+    int maxUses = 0,
   }) async {
     var code = _generateCode();
     // Коллизия почти невероятна, но проверим — повтор кода испортил бы
@@ -51,6 +52,7 @@ class GiftCardService {
       purchasedByUid: purchasedByUid,
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(Duration(days: 30 * validMonths)),
+      maxUses: maxUses < 0 ? 0 : maxUses,
     );
     await _col.doc(code).set(card.toMap());
     return card;
@@ -76,11 +78,20 @@ class GiftCardService {
       final snap = await tx.get(ref);
       if (!snap.exists) throw StateError('Сертификат не найден');
       final card = GiftCard.fromDoc(snap);
+      // Проверяем лимит отдельной веткой, чтобы кассир видел настоящую
+      // причину: «списания кончились» и «сертификат истёк» — разные вещи,
+      // и объяснять их гостю приходится по-разному.
+      if (!card.hasUsesLeft) {
+        throw StateError('Сертификат использован ${card.maxUses} раз(а) — лимит исчерпан');
+      }
       if (!card.isUsable) throw StateError('Сертификат неактивен или истёк');
 
       applied = amount > card.balance ? card.balance : amount;
       if (applied <= 0) throw StateError('На сертификате нет средств');
-      tx.update(ref, {'balance': card.balance - applied});
+      tx.update(ref, {
+        'balance': card.balance - applied,
+        'usedCount': card.usedCount + 1,
+      });
     });
 
     await _db.collection('giftCardOperations').add({
@@ -104,7 +115,20 @@ class GiftCardService {
   }) async {
     if (amount <= 0) return;
     final normalized = code.trim().toUpperCase();
-    await _col.doc(normalized).update({'balance': FieldValue.increment(amount)});
+    // Возврат отменяет списание целиком, значит и потраченное «использование»
+    // тоже: иначе сертификат на три визита сгорал бы за один несостоявшийся
+    // платёж. Считаем в транзакции, а не через increment(-1): счётчик не
+    // должен уходить в минус, если возврат вызовут без списания.
+    final ref = _col.doc(normalized);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) return;
+      final card = GiftCard.fromDoc(snap);
+      tx.update(ref, {
+        'balance': card.balance + amount,
+        'usedCount': card.usedCount > 0 ? card.usedCount - 1 : 0,
+      });
+    });
     await _db.collection('giftCardOperations').add({
       'code': normalized,
       'sessionId': sessionId,

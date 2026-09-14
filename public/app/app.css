@@ -94,6 +94,17 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 .row { display: flex; align-items: center; gap: 10px; }
 .row + .row { margin-top: 8px; }
 .grow { flex: 1; min-width: 0; }
+
+/* Кнопки по умолчанию во всю ширину — так они и задуманы отдельными
+   действиями. Но внутри строки такая кнопка съедала всё место: поле ввода
+   рядом схлопывалось в полоску, а ряд одинаковых кнопок («2 чел.»,
+   «4 чел.», «6 чел.») рассыпался по одной на строку. В строке кнопка
+   занимает ровно свою надпись. */
+.row > button, .row > .btn { width: auto; flex: 0 0 auto; }
+
+/* Поля внутри строки не тащат за собой нижний отступ — иначе они стоят
+   выше кнопки рядом, и строка выглядит съехавшей. */
+.row > input, .row > select, .row > textarea { margin-bottom: 0; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bill-line { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; }
 .bill-total { display: flex; justify-content: space-between; font-size: 18px; font-weight: 700;
