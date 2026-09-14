@@ -6,6 +6,7 @@ import '../../models/session_model.dart';
 import '../../models/shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
+import '../../widgets/shift_open_dialog.dart';
 
 enum _Period { shift, pastShift, custom }
 
@@ -150,7 +151,7 @@ class _XReportScreenState extends State<XReportScreen> {
   Future<void> _openShift() async {
     setState(() => _busy = true);
     try {
-      await _fs.openShiftIfNeeded(widget.employee.name, employeeId: widget.employee.id);
+      if (mounted) await ensureShiftOpen(context, me: widget.employee);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

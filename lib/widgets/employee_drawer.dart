@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/staff_session_store.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
+import 'shift_open_dialog.dart';
 import '../screens/login_screen.dart';
 import '../screens/employee/floor_plan_screen.dart';
 import '../screens/employee/x_report_screen.dart';
@@ -38,11 +39,10 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
   Future<void> _openShift() async {
     setState(() => _busy = true);
     try {
-      await _fs.openShiftIfNeeded(widget.employee.name, employeeId: widget.employee.id);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Смена открыта')));
-      }
+      // Спрашиваем, кто выходит в зал: смену нередко открывает админ или
+      // сменщик с чужого планшета, а уведомления должны идти работающему.
+      // Сообщение об успехе показывает сам диалог.
+      if (mounted) await ensureShiftOpen(context, me: widget.employee);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

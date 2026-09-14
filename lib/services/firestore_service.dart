@@ -899,6 +899,20 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList());
   }
 
+  /// Кто может стоять на смене — все, кроме администраторов.
+  ///
+  /// Администратор заводит меню, правит цены и смотрит отчёты; в зале он не
+  /// работает. Слать ему вызовы гостей и напоминания об углях незачем,
+  /// поэтому в списке «кто на смене» его нет.
+  Future<List<Employee>> shiftCandidates() async {
+    final snap = await _db.collection('employees').get();
+    return snap.docs
+        .map(Employee.fromDoc)
+        .where((e) => e.role != AppConstants.roleAdmin)
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
   Future<void> addEmployee(Employee e) => _db.collection('employees').add(e.toMap());
 
   Future<void> updateEmployee(Employee e) =>
