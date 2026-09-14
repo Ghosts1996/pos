@@ -294,54 +294,68 @@ class WaitlistEntry {
 
 // ---------------------------------------------------------- сертификаты
 
-/// Подарочный сертификат. Коллекция: giftCards, id документа = код.
+/// Подарочный сертификат — код на бонусы.
+///
+/// Заведение выпускает код на определённую сумму и на определённое число
+/// активаций, постит его в Telegram-канале, а гость вводит код у себя в
+/// приложении. Каждому успевшему на бонусный счёт падает вся указанная
+/// сумма: сертификат «1000 ₽, 3 активации» — это тысяча троим, а не
+/// тысяча на всех.
+///
+/// Бонусами гость платит на кассе как обычно, поэтому отдельного способа
+/// оплаты «сертификатом» не нужно: сертификат превращается в бонусы один
+/// раз, при активации.
+///
+/// Коллекция: giftCards, id документа = код.
 class GiftCard {
   final String code;
-  final double faceValue;
-  final double balance;
-  final String issuedTo;
-  final String issuedBy;
-  final String purchasedByUid;
+
+  /// Сколько бонусов получает КАЖДЫЙ успевший гость.
+  final double bonusAmount;
+
+  /// Сколько гостей всего может активировать код. 0 — без ограничения.
+  final int maxUses;
+
+  /// Сколько уже активировали.
+  final int usedCount;
+
   final bool active;
   final DateTime createdAt;
   final DateTime? expiresAt;
 
-  /// Сколько раз сертификатом можно расплатиться. 0 — без ограничения:
-  /// гасится частями, пока не кончится баланс.
-  ///
-  /// Зачем отдельно от баланса: сертификат на 3000 ₽ можно задумать и как
-  /// «один поход на всю сумму», и как «три визита по тысяче». Одним только
-  /// балансом это не выразить — гость просто списал бы всё сразу.
-  final int maxUses;
-
-  /// Сколько раз им уже расплатились.
-  final int usedCount;
+  /// Заметка для администратора: «пост в ТГ 14 сентября».
+  final String comment;
+  final String issuedBy;
 
   const GiftCard({
     required this.code,
-    required this.faceValue,
-    required this.balance,
-    this.issuedTo = '',
-    this.issuedBy = '',
-    this.purchasedByUid = '',
+    required this.bonusAmount,
+    this.maxUses = 0,
+    this.usedCount = 0,
     this.active = true,
     required this.createdAt,
     this.expiresAt,
-    this.maxUses = 0,
-    this.usedCount = 0,
+    this.comment = '',
+    this.issuedBy = '',
   });
 
-  /// Остались ли ещё списания. Без ограничения — всегда да.
   bool get hasUsesLeft => maxUses <= 0 || usedCount < maxUses;
 
-  /// Сколько списаний осталось; null — без ограничения.
+  /// Сколько активаций осталось; null — без ограничения.
   int? get usesLeft => maxUses <= 0 ? null : (maxUses - usedCount).clamp(0, maxUses);
 
-  bool get isUsable =>
-      active &&
-      balance > 0 &&
-      hasUsesLeft &&
-      (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
+  bool get isExpired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
+
+  bool get isUsable => active && hasUsesLeft && !isExpired && bonusAmount > 0;
+
+  /// Почему код не сработает — текст для гостя. null, если всё в порядке.
+  String? get problem {
+    if (!active) return 'Этот сертификат больше не действует.';
+    if (isExpired) return 'Срок действия сертификата истёк.';
+    if (!hasUsesLeft) return 'Сертификат разобрали — активации закончились.';
+    if (bonusAmount <= 0) return 'Этот сертификат ничего не начисляет.';
+    return null;
+  }
 
   factory GiftCard.fromDoc(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>? ?? {};
@@ -349,31 +363,97 @@ class GiftCard {
     final expires = d['expiresAt'];
     return GiftCard(
       code: doc.id,
-      faceValue: (d['faceValue'] ?? 0).toDouble(),
-      balance: (d['balance'] ?? 0).toDouble(),
-      issuedTo: d['issuedTo'] ?? '',
-      issuedBy: d['issuedBy'] ?? '',
-      purchasedByUid: d['purchasedByUid'] ?? '',
+      // faceValue — имя поля из прежней версии, где сертификат был
+      // кошельком. Читаем и его, чтобы выпущенные раньше коды не
+      // превратились в «сертификат на 0 бонусов».
+      bonusAmount: (d['bonusAmount'] ?? d['faceValue'] ?? 0).toDouble(),
+      maxUses: (d['maxUses'] as num?)?.toInt() ?? 0,
+      usedCount: (d['usedCount'] as num?)?.toInt() ?? 0,
       active: d['active'] ?? true,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       expiresAt: expires is Timestamp ? expires.toDate() : null,
-      // Сертификаты, выпущенные до появления лимита, читаются как
-      // безлимитные — ровно так они и работали.
-      maxUses: (d['maxUses'] as num?)?.toInt() ?? 0,
-      usedCount: (d['usedCount'] as num?)?.toInt() ?? 0,
+      comment: d['comment'] ?? '',
+      issuedBy: d['issuedBy'] ?? '',
     );
   }
 
   Map<String, dynamic> toMap() => {
-        'faceValue': faceValue,
-        'balance': balance,
-        'issuedTo': issuedTo,
-        'issuedBy': issuedBy,
-        'purchasedByUid': purchasedByUid,
+        'bonusAmount': bonusAmount,
+        'maxUses': maxUses,
+        'usedCount': usedCount,
         'active': active,
         'createdAt': Timestamp.fromDate(createdAt),
         'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
-        'maxUses': maxUses,
-        'usedCount': usedCount,
+        'comment': comment,
+        'issuedBy': issuedBy,
+      };
+}
+
+/// Заявка гостя на активацию сертификата.
+///
+/// Гость не может начислить себе бонусы сам — правила базы это запрещают,
+/// и правильно делают: иначе любой желающий выписывал бы себе сколько
+/// угодно. Поэтому гость оставляет заявку, а начисляет её касса, у которой
+/// права есть. Пока заведение работает, это занимает секунды.
+///
+/// Здесь же решается, кто «успел»: заявки обрабатываются по времени
+/// создания, и когда активации кончаются, остальным приходит отказ.
+///
+/// Коллекция: giftCardClaims.
+class GiftCardClaim {
+  final String id;
+  final String code;
+  final String clientUid;
+
+  /// 'new' — ждёт начисления, 'granted' — начислено, 'rejected' — отказ.
+  final String status;
+
+  /// Причина отказа — её видит гость.
+  final String reason;
+
+  /// Сколько начислено (для 'granted').
+  final double amount;
+
+  final DateTime createdAt;
+  final DateTime? processedAt;
+
+  const GiftCardClaim({
+    required this.id,
+    required this.code,
+    required this.clientUid,
+    this.status = 'new',
+    this.reason = '',
+    this.amount = 0,
+    required this.createdAt,
+    this.processedAt,
+  });
+
+  bool get isPending => status == 'new';
+  bool get isGranted => status == 'granted';
+
+  factory GiftCardClaim.fromDoc(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>? ?? {};
+    final created = d['createdAt'];
+    final processed = d['processedAt'];
+    return GiftCardClaim(
+      id: doc.id,
+      code: d['code'] ?? '',
+      clientUid: d['clientUid'] ?? '',
+      status: d['status'] ?? 'new',
+      reason: d['reason'] ?? '',
+      amount: (d['amount'] ?? 0).toDouble(),
+      createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
+      processedAt: processed is Timestamp ? processed.toDate() : null,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'code': code,
+        'clientUid': clientUid,
+        'status': status,
+        'reason': reason,
+        'amount': amount,
+        'createdAt': Timestamp.fromDate(createdAt),
+        'processedAt': processedAt != null ? Timestamp.fromDate(processedAt!) : null,
       };
 }

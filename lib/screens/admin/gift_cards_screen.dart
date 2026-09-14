@@ -5,10 +5,16 @@ import '../../models/venue_models.dart';
 import '../../services/gift_card_service.dart';
 import '../../theme/app_colors.dart';
 
-/// Подарочные сертификаты: выпуск, проверка баланса, деактивация.
+/// Подарочные сертификаты — коды на бонусы.
 ///
-/// Код печатается на карточке или диктуется по телефону — алфавит подобран
-/// так, чтобы «О» и «0» не путались.
+/// Как это работает. Админ выпускает код на сумму и на число активаций,
+/// постит его в Telegram-канале, а гости вводят код у себя в приложении.
+/// Каждому успевшему на бонусный счёт падает вся указанная сумма: код
+/// «1000 бонусов, 3 активации» — это тысяча троим, а не тысяча на всех.
+/// Когда активации кончились, остальным приходит отказ.
+///
+/// Алфавит кода подобран так, чтобы «О» и «0» не путались: код диктуют
+/// вслух и переписывают из поста руками.
 class GiftCardsScreen extends StatefulWidget {
   final Employee employee;
   const GiftCardsScreen({super.key, required this.employee});
@@ -19,14 +25,6 @@ class GiftCardsScreen extends StatefulWidget {
 
 class _GiftCardsScreenState extends State<GiftCardsScreen> {
   final _service = GiftCardService.instance;
-  final _search = TextEditingController();
-  GiftCard? _found;
-
-  @override
-  void dispose() {
-    _search.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,59 +37,14 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _search,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(
-                      labelText: 'Проверить код',
-                      hintText: 'KLB-XXXX-XXXX',
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
-                  onPressed: () async {
-                    final messenger = ScaffoldMessenger.of(context);
-                    final card = await _service.find(_search.text);
-                    if (!mounted) return;
-                    setState(() => _found = card);
-                    if (card == null) {
-                      messenger.showSnackBar(
-                        const SnackBar(content: Text('Сертификат не найден')),
-                      );
-                    }
-                  },
-                  child: const Text('Найти'),
-                ),
-              ],
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'Выпустите код, опубликуйте его в канале — и гости активируют '
+              'его в приложении. Каждому успевшему начисляется вся сумма.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
             ),
           ),
-          if (_found != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.selection,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${_found!.code}: остаток ${_found!.balance.toStringAsFixed(0)} ₽ '
-                  'из ${_found!.faceValue.toStringAsFixed(0)} ₽'
-                  '${_usesLabel(_found!)}'
-                  '${_found!.isUsable ? '' : ' · неактивен'}',
-                  style: const TextStyle(color: AppColors.textPrimary),
-                ),
-              ),
-            ),
-          const SizedBox(height: 8),
           Expanded(
             child: StreamBuilder<List<GiftCard>>(
               stream: _service.activeCardsStream(),
@@ -107,40 +60,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: cards.length,
-                  itemBuilder: (_, i) {
-                    final c = cards[i];
-                    return ListTile(
-                      leading: Icon(Icons.card_giftcard,
-                          color: c.isUsable ? AppColors.success : AppColors.disabled),
-                      title: Text(c.code, style: const TextStyle(color: AppColors.textPrimary)),
-                      subtitle: Text(
-                        'Остаток ${c.balance.toStringAsFixed(0)} из ${c.faceValue.toStringAsFixed(0)} ₽'
-                        '${_usesLabel(c)}'
-                        '${c.issuedTo.isEmpty ? '' : ' · ${c.issuedTo}'}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            tooltip: 'Скопировать код',
-                            icon: const Icon(Icons.copy, size: 18),
-                            onPressed: () {
-                              Clipboard.setData(ClipboardData(text: c.code));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Код скопирован')),
-                              );
-                            },
-                          ),
-                          IconButton(
-                            tooltip: 'Деактивировать',
-                            icon: const Icon(Icons.block, size: 18, color: AppColors.danger),
-                            onPressed: () => _service.deactivate(c.code),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                  itemBuilder: (_, i) => _cardTile(cards[i]),
                 );
               },
             ),
@@ -150,30 +70,73 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
     );
   }
 
-  /// «· осталось 2 из 3 списаний» — или ничего, если лимита нет.
-  String _usesLabel(GiftCard c) {
+  Widget _cardTile(GiftCard c) {
     final left = c.usesLeft;
-    if (left == null) return '';
-    return ' · осталось $left из ${c.maxUses} ${_uses(c.maxUses)}';
+    return ListTile(
+      leading: Icon(Icons.card_giftcard,
+          color: c.isUsable ? AppColors.success : AppColors.disabled),
+      title: Text(c.code,
+          style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        '${c.bonusAmount.toStringAsFixed(0)} бонусов каждому · '
+        '${left == null
+            ? 'активаций без ограничения, использовано ${c.usedCount}'
+            : 'активировали ${c.usedCount} из ${c.maxUses}, осталось $left'}'
+        '${c.problem == null ? '' : ' · ${c.problem}'}'
+        '${c.comment.isEmpty ? '' : '\n${c.comment}'}',
+        style: const TextStyle(fontSize: 12),
+      ),
+      isThreeLine: c.comment.isNotEmpty,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Скопировать код',
+            icon: const Icon(Icons.copy, size: 18),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: c.code));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Код скопирован — можно вставлять в пост')),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Остановить',
+            icon: const Icon(Icons.block, size: 18, color: AppColors.danger),
+            onPressed: () => _confirmStop(c),
+          ),
+        ],
+      ),
+    );
   }
 
-  String _uses(int n) {
-    final last = n % 10;
-    final teen = n % 100 >= 11 && n % 100 <= 14;
-    if (!teen && last == 1) return 'списания';
-    return 'списаний';
+  Future<void> _confirmStop(GiftCard c) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Остановить сертификат?'),
+        content: Text('Код ${c.code} перестанет активироваться. '
+            'Уже начисленные бонусы у гостей останутся.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Остановить')),
+        ],
+      ),
+    );
+    if (ok == true) await _service.deactivate(c.code);
   }
 
   Future<void> _issue() async {
-    final amount = TextEditingController(text: '3000');
-    final to = TextEditingController();
-    final uses = TextEditingController(text: '1');
+    final amount = TextEditingController(text: '500');
+    final uses = TextEditingController(text: '3');
+    final days = TextEditingController(text: '30');
+    final comment = TextEditingController();
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Выпустить сертификат'),
-        // Три поля с подсказками не помещаются в диалог на невысоком
+        // Четыре поля с подсказками не помещаются в диалог на невысоком
         // экране — особенно когда снизу выезжает клавиатура.
         content: SingleChildScrollView(
           child: Column(
@@ -182,20 +145,34 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
               TextField(
                 controller: amount,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Номинал, ₽'),
+                decoration: const InputDecoration(
+                  labelText: 'Бонусов каждому',
+                  helperText: 'Столько получит на счёт каждый успевший гость',
+                  helperMaxLines: 2,
+                ),
               ),
               TextField(
                 controller: uses,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'Сколько раз можно расплатиться',
-                  helperText: '0 — без ограничения, пока не кончится сумма',
-                  helperMaxLines: 2,
+                  labelText: 'Сколько человек успеет',
+                  helperText: '0 — без ограничения',
                 ),
               ),
               TextField(
-                controller: to,
-                decoration: const InputDecoration(labelText: 'Кому (необязательно)'),
+                controller: days,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Действует дней',
+                  helperText: '0 — без срока',
+                ),
+              ),
+              TextField(
+                controller: comment,
+                decoration: const InputDecoration(
+                  labelText: 'Заметка (необязательно)',
+                  hintText: 'Пост в ТГ на выходные',
+                ),
               ),
             ],
           ),
@@ -209,33 +186,59 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
     if (ok != true) return;
 
     final value = double.tryParse(amount.text.replaceAll(',', '.')) ?? 0;
-    if (value <= 0) return;
+    if (value <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Укажите, сколько бонусов начислять')),
+      );
+      return;
+    }
 
     final card = await _service.issue(
-      faceValue: value,
-      issuedTo: to.text.trim(),
-      issuedBy: widget.employee.name,
+      bonusAmount: value,
       maxUses: int.tryParse(uses.text.trim()) ?? 0,
+      validDays: int.tryParse(days.text.trim()) ?? 0,
+      comment: comment.text.trim(),
+      issuedBy: widget.employee.name,
     );
     if (!mounted) return;
+    _showIssued(card);
+  }
+
+  void _showIssued(GiftCard card) {
+    // Готовый текст для поста: чтобы не собирать его вручную каждый раз.
+    final post = 'Промокод: ${card.code}\n'
+        '${card.bonusAmount.toStringAsFixed(0)} бонусов на счёт'
+        '${card.maxUses > 0 ? ' — первым ${card.maxUses}' : ''}.\n'
+        'Введите код в приложении Colibri Lounge: Профиль → Ещё → Сертификат.';
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Сертификат выпущен'),
-        content: SelectableText(
-          '${card.code}\nНоминал ${card.faceValue.toStringAsFixed(0)} ₽\n'
-          '${card.maxUses > 0 ? 'Расплатиться можно ${card.maxUses} ${_uses(card.maxUses)}\n' : 'Списаний сколько угодно, пока не кончится сумма\n'}'
-          'Действует до ${card.expiresAt?.day}.${card.expiresAt?.month}.${card.expiresAt?.year}',
-          style: const TextStyle(fontSize: 18),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(card.code,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 12),
+              SelectableText(post,
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: card.code));
+              Clipboard.setData(ClipboardData(text: post));
               Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Текст поста скопирован')),
+              );
             },
-            child: const Text('Скопировать'),
+            child: const Text('Скопировать пост'),
           ),
           FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Готово')),
         ],

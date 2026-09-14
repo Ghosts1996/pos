@@ -31,8 +31,9 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   final _cardCode = TextEditingController();
   final _referralCode = TextEditingController();
 
-  GiftCard? _card;
   String? _cardMessage;
+  bool _cardOk = false;
+  bool _activating = false;
   String? _referralMessage;
   String _myCode = '';
 
@@ -168,6 +169,10 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   Widget _giftCardBlock() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text('Код из нашего канала. Активируйте — бонусы сразу '
+              'появятся на счёте.',
+              style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -182,23 +187,8 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
               ),
               const SizedBox(width: 10),
               OutlinedButton(
-                onPressed: () async {
-                  final card = await _cards.find(_cardCode.text);
-                  if (!mounted) return;
-                  setState(() {
-                    _card = card;
-                    _cardMessage = card == null
-                        ? 'Сертификат не найден'
-                        : card.isUsable
-                            ? 'Остаток ${card.balance.toStringAsFixed(0)} ₽'
-                                '${card.usesLeft == null ? '' : ', ещё ${card.usesLeft} '
-                                    '${card.usesLeft == 1 ? 'списание' : 'списаний'}'}'
-                            : !card.hasUsesLeft
-                                ? 'Сертификат уже использован полностью'
-                                : 'Сертификат уже использован или истёк';
-                  });
-                },
-                child: const Text('Проверить'),
+                onPressed: _activating ? null : _activateCard,
+                child: Text(_activating ? 'Отправляем…' : 'Активировать'),
               ),
             ],
           ),
@@ -208,15 +198,73 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
               child: Text(
                 _cardMessage!,
                 style: TextStyle(
-                  color: _card?.isUsable == true ? KolibriColors.success : KolibriColors.warning,
+                  color: _cardOk ? KolibriColors.success : KolibriColors.warning,
                 ),
               ),
             ),
-          const SizedBox(height: 8),
-          const Text('Назовите код кальянщику при оплате — сумма спишется с сертификата.',
-              style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+          _claimStatus(),
         ],
       );
+
+  /// Что стало с уже отправленными заявками.
+  ///
+  /// Бонусы начисляет касса — сам себе гость их начислить не может, и это
+  /// правильно. Пока заведение работает, начисление занимает секунды, но
+  /// показать «ждём» всё равно честнее, чем оставить экран молчать.
+  Widget _claimStatus() => StreamBuilder<List<GiftCardClaim>>(
+        stream: _cards.clientClaimsStream(_auth.uid),
+        builder: (context, snap) {
+          final list = snap.data ?? const <GiftCardClaim>[];
+          if (list.isEmpty) return const SizedBox.shrink();
+          final last = list.first;
+
+          final (text, color) = switch (last.status) {
+            'granted' => (
+                'Сертификат ${last.code}: начислено '
+                    '${last.amount.toStringAsFixed(0)} бонусов',
+                KolibriColors.success
+              ),
+            'rejected' => (
+                'Сертификат ${last.code}: '
+                    '${last.reason.isEmpty ? 'активировать не вышло' : last.reason}',
+                KolibriColors.warning
+              ),
+            _ => ('Сертификат ${last.code}: ждём начисления…', KolibriColors.textMuted),
+          };
+
+          return Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(text, style: TextStyle(color: color, fontSize: 13)),
+          );
+        },
+      );
+
+  Future<void> _activateCard() async {
+    setState(() {
+      _activating = true;
+      _cardMessage = null;
+    });
+    try {
+      final problem = await _cards.requestActivation(
+        code: _cardCode.text,
+        clientUid: _auth.uid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _cardOk = problem == null;
+        _cardMessage = problem ?? 'Заявка принята — бонусы начислим в ближайшие минуты.';
+        if (problem == null) _cardCode.clear();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cardOk = false;
+        _cardMessage = 'Не удалось отправить — проверьте связь.';
+      });
+    } finally {
+      if (mounted) setState(() => _activating = false);
+    }
+  }
 
   // ---------- ОЧЕРЕДЬ ----------
 

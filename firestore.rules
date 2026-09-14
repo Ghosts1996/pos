@@ -339,14 +339,35 @@ service cloud.firestore {
     }
 
     // ---- Сертификаты ----
-    // Гость может проверить код (чтение по конкретному документу), но не
-    // изменить баланс — списывает только касса.
+    // Сертификат — это код на бонусы: гость вводит его в приложении, и
+    // каждому успевшему начисляется указанная сумма.
+    //
+    // get, но НЕ list: код гость должен знать (его публикуют в канале), а
+    // выкачать всю коллекцию и узнать коды будущих акций заранее — нет.
     match /giftCards/{code} {
-      allow read: if signedIn();
+      allow get: if signedIn();
+      allow list: if isStaff();
       allow write: if isStaff();
     }
     match /giftCardOperations/{doc} {
       allow read, write: if isStaff();
+    }
+
+    // ---- Заявки на активацию сертификата ----
+    // Начислить себе бонусы гость не может — правило на clients это
+    // запрещает, и это главная защита от «выпишу себе десять тысяч».
+    // Поэтому он оставляет заявку, а разбирает её касса: проверяет код,
+    // считает активации и начисляет. Гость видит только свои заявки.
+    match /giftCardClaims/{doc} {
+      allow read: if isStaff() ||
+        (signedIn() && resource.data.clientUid == request.auth.uid);
+      allow create: if signedIn() &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'new' &&
+        // Сумму проставляет касса при начислении: если её позволить
+        // указывать гостю, он просто напишет себе любую.
+        request.resource.data.amount == 0;
+      allow update, delete: if isStaff();
     }
 
     // ---- Чаевые ----
