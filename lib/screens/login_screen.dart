@@ -134,7 +134,8 @@ class _LoginScreenState extends State<LoginScreen> {
     // источник данных для X-отчёта. Делаем в фоне и не блокируем вход даже
     // при сетевой ошибке: сотрудник всё равно должен попасть в приложение,
     // а открыть смену можно будет вручную из X-отчёта.
-    unawaited(_fs.openShiftIfNeeded(loggedInEmployee.name));
+    unawaited(_fs.openShiftIfNeeded(loggedInEmployee.name,
+        employeeId: loggedInEmployee.id));
     // Разовая достройка обезличенного зеркала занятости столов — нужна
     // заведениям, которые обновились с версии без reservationSlots.
     // Проверка стоит один документ и ничего не делает, если всё на месте.

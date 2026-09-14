@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/booking_soon_card.dart';
 import '../../utils/phone_utils.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
@@ -116,6 +117,10 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 120),
       children: [
+        // Плашка «придёте?» — дубль уведомления за 20 минут. Уведомление
+        // могут не заметить или отключить, а это видно всякому, кто
+        // открыл приложение.
+        BookingSoonCard(clientUid: _auth.uid),
         const Text('Бронь стола',
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),

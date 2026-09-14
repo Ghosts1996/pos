@@ -278,6 +278,7 @@ function screenHome() {
       ` : `<div class="small muted" style="margin-top:8px">Максимальный уровень — спасибо, что вы с нами</div>`}
     </div>
 
+    <div id="soon"></div>
     <div id="stories"></div>
 
     <h2>Быстрые действия</h2>
@@ -290,6 +291,7 @@ function screenHome() {
   `;
 
   renderStories();
+  renderBookingSoon('soon');
 }
 
 function progressPercent(spent) {
@@ -920,6 +922,8 @@ function screenBooking() {
         Мы подтвердим бронь и закрепим стол. За 20 минут до начала напомним.</p>
     </div>
 
+    <div id="soon"></div>
+
     <h2>Мои брони</h2>
     <div id="myBookings"><div class="spinner"></div></div>`;
 
@@ -937,6 +941,7 @@ function screenBooking() {
 
   $('bSend').onclick = sendBooking;
   if (window) loadSlots(day, window);
+  renderBookingSoon('soon');
   watchMyBookings();
 }
 
@@ -1213,6 +1218,84 @@ function isValidRuPhone(normalized) {
 function prettyPhone(d) {
   if (!d || d.length !== 11) return d || '';
   return `+${d[0]} (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}`;
+}
+
+/// Плашка «Бронь скоро — придёте?».
+///
+/// В вебе она особенно важна: браузер не умеет показывать уведомления по
+/// расписанию, как приложение, поэтому спросить гостя можно только когда
+/// он сам открыл страницу. Ответ «Не приду» сразу отменяет бронь —
+/// заведение узнаёт о неявке заранее и успевает отдать стол.
+function renderBookingSoon(boxId) {
+  sub(onSnapshot(
+    query(collection(state.db, 'reservations'), where('clientUid', '==', state.uid)),
+    (snap) => {
+      const box = $(boxId);
+      if (!box) return;
+      const now = Date.now();
+      const soon = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => {
+        if (r.guestConfirmed) return false;
+        if (r.status !== 'new' && r.status !== 'confirmed') return false;
+        const t = toDate(r.startTime);
+        if (!t) return false;
+        const left = (t.getTime() - now) / 60000;
+        // Полчаса до начала и не больше десяти минут после: опоздавшего
+        // тоже стоит спросить, ждать ли его.
+        return left <= 30 && left >= -10;
+      }).sort((a, b) => toDate(a.startTime) - toDate(b.startTime));
+
+      if (!soon.length) { box.innerHTML = ''; return; }
+      const r = soon[0];
+      const t = toDate(r.startTime);
+      const left = Math.round((t.getTime() - now) / 60000);
+
+      box.innerHTML = `
+        <div class="card" style="border-color:var(--gold)">
+          <div class="row">
+            <span style="color:var(--gold)">📅</span>
+            <div class="grow" style="font-weight:700">
+              ${left > 0 ? `Бронь через ${left} ${minutesWord(left)}` : 'Ваша бронь уже началась'}
+            </div>
+          </div>
+          <div class="small muted" style="margin-top:6px">
+            ${hhmm(t)}${r.tableName ? ', стол ' + esc(r.tableName) : ''} ·
+            ${r.guestsCount || 2} чел. Подтвердите, что придёте, — или освободите
+            стол для других.
+          </div>
+          <div class="btn-row" style="margin-top:14px">
+            <button class="btn-primary" data-come="${esc(r.id)}">Приду</button>
+            <button class="btn-ghost" data-nocome="${esc(r.id)}">Не приду</button>
+          </div>
+        </div>`;
+
+      box.querySelector('[data-come]').onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          await updateDoc(doc(state.db, 'reservations', r.id), { guestConfirmed: true });
+          toast('Спасибо, ждём вас');
+        } catch (_) { toast('Не удалось отметить'); e.target.disabled = false; }
+      };
+      box.querySelector('[data-nocome]').onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          await updateDoc(doc(state.db, 'reservations', r.id), { status: 'cancelled' });
+          try {
+            await setDoc(doc(state.db, 'reservationSlots', r.id),
+              { active: false, clientUid: state.uid }, { merge: true });
+          } catch (_) {}
+          toast('Бронь отменена. Спасибо, что предупредили');
+        } catch (_) { toast('Не удалось отменить'); e.target.disabled = false; }
+      };
+    }, () => {}));
+}
+
+/// «через 1 минуту», «через 2 минуты», «через 25 минут».
+function minutesWord(n) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last === 1) return 'минуту';
+  if (!teen && last >= 2 && last <= 4) return 'минуты';
+  return 'минут';
 }
 
 // ---------- ПРОФИЛЬ ----------
