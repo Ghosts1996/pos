@@ -695,7 +695,7 @@ class FirestoreService {
   /// через этот документ безопасно проверяем и фиксируем, что смена уже
   /// открыта, даже если два сотрудника входят почти одновременно.
   /// Возвращает id открытой смены (новой или уже существующей).
-  Future<String> openShiftIfNeeded(String employeeName) async {
+  Future<String> openShiftIfNeeded(String employeeName, {String employeeId = ''}) async {
     final stateRef = _db.collection('meta').doc('shiftState');
     final shiftRef = _db.collection('shifts').doc();
     final now = DateTime.now();
@@ -733,6 +733,7 @@ class FirestoreService {
         id: shiftRef.id,
         openedAt: now,
         openedBy: employeeName,
+        openedById: employeeId,
         status: 'open',
       );
       tx.set(shiftRef, shift.toMap());

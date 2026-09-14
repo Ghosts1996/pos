@@ -150,7 +150,7 @@ class _XReportScreenState extends State<XReportScreen> {
   Future<void> _openShift() async {
     setState(() => _busy = true);
     try {
-      await _fs.openShiftIfNeeded(widget.employee.name);
+      await _fs.openShiftIfNeeded(widget.employee.name, employeeId: widget.employee.id);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

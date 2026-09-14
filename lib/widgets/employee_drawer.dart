@@ -38,7 +38,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
   Future<void> _openShift() async {
     setState(() => _busy = true);
     try {
-      await _fs.openShiftIfNeeded(widget.employee.name);
+      await _fs.openShiftIfNeeded(widget.employee.name, employeeId: widget.employee.id);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Смена открыта')));

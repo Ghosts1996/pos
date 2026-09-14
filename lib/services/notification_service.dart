@@ -184,12 +184,12 @@ class NotificationService {
     await init();
     if (when.isBefore(DateTime.now().add(const Duration(seconds: 30)))) return;
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      NotificationDetails(
+    await _schedule(
+      id: id,
+      when: when,
+      title: title,
+      body: body,
+      details: NotificationDetails(
         android: AndroidNotificationDetails(
           _channelTimers.id,
           _channelTimers.name,
@@ -199,12 +199,48 @@ class NotificationService {
           styleInformation: BigTextStyleInformation(body),
         ),
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      // Обязательный параметр плагина: указанное время трактуется как
-      // абсолютное в локальной зоне устройства.
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
+  }
+
+  /// Ставит отложенное уведомление, переживая запрет точных будильников.
+  ///
+  /// Точный будильник на Android 13+ — отдельное разрешение, и если оно
+  /// не выдано, плагин не «сдвигает» уведомление, а БРОСАЕТ исключение.
+  /// Вызовы обёрнуты в unawaited, поэтому оно исчезало бесследно, и
+  /// напоминание не приходило вообще: ни за час до брони, ни за двадцать
+  /// минут, ни про угли. Теперь в этом случае планируем неточно —
+  /// система покажет его с небольшим запозданием, но покажет.
+  Future<void> _schedule({
+    required int id,
+    required DateTime when,
+    required String title,
+    required String body,
+    required NotificationDetails details,
+    String? payload,
+  }) async {
+    Future<void> put(AndroidScheduleMode mode) => _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tz.TZDateTime.from(when, tz.local),
+          details,
+          payload: payload,
+          androidScheduleMode: mode,
+          // Обязательный параметр плагина: указанное время трактуется как
+          // абсолютное в локальной зоне устройства.
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+
+    try {
+      await put(AndroidScheduleMode.exactAllowWhileIdle);
+    } catch (_) {
+      try {
+        await put(AndroidScheduleMode.inexactAllowWhileIdle);
+      } catch (e) {
+        _initError = '$e';
+      }
+    }
   }
 
   /// Запланированное уведомление с кнопками ответа.
@@ -225,12 +261,13 @@ class NotificationService {
     await init();
     if (when.isBefore(DateTime.now().add(const Duration(seconds: 30)))) return;
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      NotificationDetails(
+    await _schedule(
+      id: id,
+      when: when,
+      title: title,
+      body: body,
+      payload: payload,
+      details: NotificationDetails(
         android: AndroidNotificationDetails(
           _channelInstant.id,
           _channelInstant.name,
@@ -244,10 +281,6 @@ class NotificationService {
           ],
         ),
       ),
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 

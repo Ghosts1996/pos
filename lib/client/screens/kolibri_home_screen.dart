@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/booking_soon_card.dart';
 import '../../models/client_models.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
@@ -28,6 +29,8 @@ class KolibriHomeScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
       children: [
+        // Скоро бронь и гость ещё не ответил — спрашиваем прямо здесь.
+        BookingSoonCard(clientUid: auth.uid),
         Row(
           children: [
             Expanded(
