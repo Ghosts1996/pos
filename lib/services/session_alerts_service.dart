@@ -44,6 +44,12 @@ class SessionAlertsService {
   /// Сравниваем по id, а не по имени: тёзки в заведении не редкость, а
   /// имя сотрудник может и переименовать.
   String _myEmployeeId = '';
+
+  /// На кого с ЭТОГО устройства открыли смену. В заведении с одним
+  /// планшетом смену нередко открывает админ на кальянщика — планшет всё
+  /// равно стоит в зале, и вызовы гостей должны быть слышны именно тут.
+  String _deviceShiftOwnerId = '';
+
   String _shiftEmployeeId = '';
   String _shiftEmployeeName = '';
   StreamSubscription? _shift;
@@ -55,7 +61,9 @@ class SessionAlertsService {
   /// вход не сохранён — уведомляем: потерянный вызов гостя хуже лишнего
   /// уведомления.
   bool get _mine =>
-      _shiftEmployeeId.isEmpty || _myEmployeeId.isEmpty || _shiftEmployeeId == _myEmployeeId;
+      _shiftEmployeeId.isEmpty ||
+      _shiftEmployeeId == _deviceShiftOwnerId ||
+      (_myEmployeeId.isEmpty || _shiftEmployeeId == _myEmployeeId);
 
   /// Имя того, кто сейчас на смене, — для экранов кассы.
   String get shiftEmployeeName => _shiftEmployeeName;
@@ -95,6 +103,7 @@ class SessionAlertsService {
     // доступно и в изоляте фоновой службы, где нет ни экранов, ни
     // вошедшего сотрудника в памяти процесса.
     _myEmployeeId = await StaffSessionStore.instance.savedEmployeeId();
+    _deviceShiftOwnerId = await StaffSessionStore.instance.savedShiftOwnerId();
     _watchShift();
 
     _watchSessions();
@@ -136,8 +145,21 @@ class SessionAlertsService {
       // надо переставить. Без этого кальянщик, вышедший в середине вечера,
       // не получал уведомлений об углях по столам, открытым до него: они
       // были запланированы один раз и больше не пересматривались.
-      if (wasId != _shiftEmployeeId) unawaited(_replanSessions());
+      if (wasId != _shiftEmployeeId) unawaited(_onShiftChanged());
     }, onError: (_) {});
+  }
+
+  /// Смену открыл кто-то другой (или её только что открыли).
+  Future<void> _onShiftChanged() async {
+    // Смену могли открыть с этого же устройства прямо сейчас — перечитаем,
+    // на кого именно. Иначе планшет в зале молчал бы до перезапуска
+    // приложения, хотя смену открыли именно с него.
+    try {
+      _deviceShiftOwnerId = await StaffSessionStore.instance.savedShiftOwnerId();
+    } catch (_) {
+      // Память недоступна — останемся на прежнем значении.
+    }
+    await _replanSessions();
   }
 
   /// Перепланировать напоминания по всем живым чекам.
