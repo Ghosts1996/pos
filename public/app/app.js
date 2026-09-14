@@ -903,6 +903,7 @@ function screenBooking() {
     <h2>Свободное время</h2>
     <div id="slots">${window ? '<div class="spinner"></div>'
       : '<p class="muted small">В этот день мы закрыты — выберите другую дату.</p>'}</div>
+    <div id="slotSummary"></div>
 
     <h2>Контакты</h2>
     <div class="card">
@@ -1048,6 +1049,10 @@ async function loadSlots(day, window) {
     return;
   }
 
+  // Сводка по выбранному времени. Держим данные под рукой: сводка
+  // считается по тем же столам и броням, что и сетка времени.
+  lastHall = { tables, slots };
+
   box.innerHTML = `<div>${free.map((t) => {
     const key = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
     return `<span class="chip ${key === bookingDraft.time ? 'on' : ''}"
@@ -1061,6 +1066,100 @@ async function loadSlots(day, window) {
       route();
     };
   });
+
+  renderSlotSummary();
+}
+
+/// Столы и брони, загруженные для сетки времени. Сводка считается по ним
+/// же — второй раз ходить в базу незачем.
+let lastHall = { tables: [], slots: [] };
+
+/// Насколько близко к брони может кончиться чужой сеанс, чтобы стол
+/// считался «впритык». Час — типичная перезабивка плюс уборка. То же
+/// значение, что в приложении.
+const EXTENSION_RISK_MS = 60 * 60 * 1000;
+
+/// Свободен ли стол на интервал брони и не «впритык» ли он.
+///
+/// Возвращает 'free' — точно свободен, 'risky' — освободится незадолго до
+/// брони (гости могут взять перезабивку и остаться), 'busy' — занят,
+/// 'small' — мало мест.
+function tableStateFor(t, start, end, bookedIds, guests) {
+  if ((Number(t.seats) || 0) < guests) return 'small';
+  if (bookedIds.has(t.id)) return 'busy';
+  const rawEnd = toDate(t.busyUntil);
+  if (!rawEnd) return 'free';
+  // Плюс двадцать минут на уборку — как считает приложение.
+  const until = new Date(rawEnd.getTime() + 20 * 60 * 1000);
+  if (start < until) return 'busy';
+  return (start - rawEnd) < EXTENSION_RISK_MS ? 'risky' : 'free';
+}
+
+/// Какие столы заняты бронями на интервал.
+function bookedTableIds(slots, start, end) {
+  const out = new Set();
+  slots.forEach((v) => {
+    const s = toDate(v.startTime);
+    const e = toDate(v.endTime);
+    if (s && e && v.tableId && s < end && e > start) out.add(v.tableId);
+  });
+  return out;
+}
+
+/// Плашка «что на это время». Только числа: имён и телефонов других
+/// гостей здесь нет и быть не должно.
+function renderSlotSummary() {
+  const box = $('slotSummary');
+  if (!box) return;
+  const start = bookingStart();
+  if (!start) { box.innerHTML = ''; return; }
+
+  const duration = bookingDraft.duration || 90;
+  const end = new Date(start.getTime() + duration * 60 * 1000);
+  const guests = bookingGuests();
+  const booked = bookedTableIds(lastHall.slots, start, end);
+  const now = Date.now();
+
+  let free = 0;
+  let risky = 0;
+  let occupiedNow = 0;
+  lastHall.tables.forEach((t) => {
+    const rawEnd = toDate(t.busyUntil);
+    if (rawEnd && rawEnd.getTime() > now) occupiedNow++;
+    const st = tableStateFor(t, start, end, booked, guests);
+    if (st === 'free') free++;
+    else if (st === 'risky') risky++;
+  });
+
+  const lines = [
+    free > 0
+      ? `Свободных подходящих столов: ${free}`
+      : 'Подходящих свободных столов нет — попробуйте другое время',
+    booked.size > 0
+      ? `На это время уже ${booked.size} ${plural(booked.size, 'бронь', 'брони', 'броней')}`
+      : null,
+    occupiedNow > 0
+      ? `Сейчас в зале занято ${occupiedNow} из ${lastHall.tables.length}`
+      : null,
+    risky > 0
+      ? `Ещё ${risky} ${plural(risky, 'стол освободится', 'стола освободятся', 'столов освободятся')}`
+        + ' незадолго до брони — гости могут взять перезабивку и остаться'
+      : null,
+  ].filter(Boolean);
+
+  box.innerHTML = `
+    <div class="card" style="${free > 0 ? '' : 'border-color:var(--warning)'}">
+      ${lines.map((l) => `<div class="small muted" style="margin-bottom:4px">· ${esc(l)}</div>`).join('')}
+    </div>`;
+}
+
+/// «1 бронь», «2 брони», «5 броней».
+function plural(n, one, few, many) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last === 1) return one;
+  if (!teen && last >= 2 && last <= 4) return few;
+  return many;
 }
 
 const STATUS_LABEL = {
@@ -1667,6 +1766,7 @@ function screenHall(pickMode) {
     <div class="hall" id="hall"><div class="spinner"></div></div>
     <div class="legend">
       <span><i style="background:#3F9D5B"></i> свободен</span>
+      <span><i style="background:#D9A441"></i> впритык</span>
       <span><i style="background:#C24A4A"></i> занят</span>
     </div>
     <div style="height:16px"></div>
@@ -1696,14 +1796,18 @@ function screenHall(pickMode) {
       // нет ли на это время чужой брони. Раньше тут стояла проверка «за
       // столом кто-то есть», и половина зала выглядела занятой на завтра
       // только потому, что была занята в эту минуту.
-      const until = toDate(t.busyUntil);
-      const occupied = pickMode
-          ? (!!when && !!until && when < until)
-          : ((t.activeSessionIds || []).length > 0 || t.status === 'occupied');
+      const state = pickMode && when
+          ? tableStateFor(t, when, new Date(when.getTime() + durMs),
+              busyByBooking, bookingGuests())
+          : ((t.activeSessionIds || []).length > 0 || t.status === 'occupied')
+              ? 'busy' : 'free';
+      const tooSmall = state === 'small';
       const bookedNow = busyByBooking.has(t.id);
-      const tooSmall = pickMode && bookingGuests() > (Number(t.seats) || 0);
-      const cls = tooSmall ? 'small' : (occupied || bookedNow) ? 'busy' : 'free';
-      const canPick = pickMode && cls === 'free';
+      const cls = state === 'small' ? 'small'
+          : state === 'busy' ? 'busy'
+          : state === 'risky' ? 'risky' : 'free';
+      // «Впритык» выбрать можно — это решение гостя, но он должен знать.
+      const canPick = pickMode && (cls === 'free' || cls === 'risky');
       // Координаты 0..1 — те же, что расставил администратор на кассе.
       // Раскладываем их в «от края до края минус ширина плитки»: иначе
       // стол с координатой 0 или 1 наполовину уезжал за границу карты, и
@@ -1721,7 +1825,8 @@ function screenHall(pickMode) {
         <div class="table-dot ${cls} ${canPick ? 'pick' : ''}
              ${pickedTable && pickedTable.id === t.id ? 'chosen' : ''}"
              ${canPick
-               ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"`
+               ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"
+                  ${cls === 'risky' ? 'data-risky="1"' : ''}`
                : (pickMode ? `data-why="${esc(why)}"` : '')}
              style="left:calc(${x} * (100% - var(--tile-w)));
                     top:calc(${y} * (100% - var(--tile-h)))">
@@ -1733,7 +1838,9 @@ function screenHall(pickMode) {
     box.querySelectorAll('[data-pick]').forEach((el) => {
       el.onclick = () => {
         pickedTable = { id: el.dataset.pick, name: el.dataset.name };
-        toast(`Выбран ${el.dataset.name}`);
+        toast(el.dataset.risky
+          ? `${el.dataset.name}: освободится незадолго до брони — гости могут остаться`
+          : `Выбран ${el.dataset.name}`);
         location.hash = '#/booking';
       };
     });

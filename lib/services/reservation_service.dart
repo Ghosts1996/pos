@@ -249,6 +249,66 @@ class ReservationService {
       ..sort((a, b) => a.seats.compareTo(b.seats)); // подбираем стол «впритык»
   }
 
+  /// Насколько плотно занято заведение на выбранный интервал.
+  ///
+  /// Гость видит только ЧИСЛА: сколько столов свободно, сколько броней уже
+  /// стоит на это время и сколько столов занято прямо сейчас. Ни имён, ни
+  /// телефонов, ни чьих-либо чеков — знать, кто именно сидит за седьмым
+  /// столом, гостю незачем, а персональные данные чужих людей тем более
+  /// не его дело.
+  ///
+  /// Отдельно считаются столы «впритык» — те, чей текущий сеанс кончается
+  /// незадолго до брони. Формально они свободны, но гости часто берут
+  /// перезабивку и остаются: обещать такой стол на 18:00, когда за ним
+  /// сидят до 17:40, — верный способ встретить гостя стоя в дверях.
+  Future<SlotStats> slotStats({
+    required DateTime start,
+    int durationMinutes = 90,
+    int guestsCount = 2,
+  }) async {
+    final hall = await _loadHall(start);
+    final end = start.add(Duration(minutes: durationMinutes));
+    final now = DateTime.now();
+
+    final booked = hall.reservations
+        .where((r) => r.overlaps(start, end) && r.tableId.isNotEmpty)
+        .map((r) => r.tableId)
+        .toSet();
+
+    var free = 0;
+    var risky = 0;
+    var occupiedNow = 0;
+
+    for (final t in hall.tables) {
+      final rawEnd = t.busyUntil;
+      if (rawEnd != null && rawEnd.isAfter(now)) occupiedNow++;
+      if (t.seats < guestsCount) continue;
+      if (booked.contains(t.id)) continue;
+
+      final until = hall.busyUntil[t.id];
+      if (until != null && start.isBefore(until)) continue; // занят
+
+      // Сеанс кончается меньше чем за час до брони — возможна перезабивка.
+      if (rawEnd != null && start.difference(rawEnd) < extensionRisk) {
+        risky++;
+      } else {
+        free++;
+      }
+    }
+
+    return SlotStats(
+      tablesTotal: hall.tables.length,
+      freeTables: free,
+      riskyTables: risky,
+      bookingsAtTime: booked.length,
+      occupiedNow: occupiedNow,
+    );
+  }
+
+  /// Насколько близко к брони может кончиться чужой сеанс, чтобы стол
+  /// считался «впритык». Час — типичная перезабивка плюс уборка.
+  static const extensionRisk = Duration(hours: 1);
+
   /// Столы, свободные на интервал [start] + [durationMinutes].
   Future<List<TableModel>> availableTables({
     required DateTime start,
@@ -578,6 +638,25 @@ class _ReservedSlot {
 }
 
 /// Разовый снимок занятости зала для расчёта слотов.
+/// Сводка по выбранному времени. Только числа — см. [ReservationService.slotStats].
+class SlotStats {
+  final int tablesTotal;
+  final int freeTables;
+  final int riskyTables;
+  final int bookingsAtTime;
+  final int occupiedNow;
+
+  const SlotStats({
+    this.tablesTotal = 0,
+    this.freeTables = 0,
+    this.riskyTables = 0,
+    this.bookingsAtTime = 0,
+    this.occupiedNow = 0,
+  });
+
+  bool get isEmpty => tablesTotal == 0;
+}
+
 class _HallSnapshot {
   final List<TableModel> tables;
   final List<_ReservedSlot> reservations;
