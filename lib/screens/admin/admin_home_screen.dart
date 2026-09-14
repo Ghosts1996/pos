@@ -12,6 +12,7 @@ import 'ai_settings_screen.dart';
 import 'ai_insights_screen.dart';
 import 'activity_log_screen.dart';
 import 'stories_editor_screen.dart';
+import 'reviews_screen.dart';
 import 'table_qr_screen.dart';
 import 'venue_profile_screen.dart';
 import 'gift_cards_screen.dart';
@@ -41,6 +42,7 @@ class AdminHomeScreen extends StatelessWidget {
         _AdminTile('Скидочные карты', Icons.credit_card, (ctx) => const DiscountCardsScreen()),
         _AdminTile('Сертификаты', Icons.card_giftcard,
             (ctx) => GiftCardsScreen(employee: employee)),
+        _AdminTile('Отзывы', Icons.reviews_outlined, (ctx) => const ReviewsScreen()),
         _AdminTile('Лента для гостей', Icons.dynamic_feed, (ctx) => const StoriesEditorScreen()),
         _AdminTile('QR-коды столов', Icons.qr_code_2, (ctx) => const TableQrScreen()),
         _AdminTile('Профиль заведения', Icons.storefront, (ctx) => const VenueProfileScreen()),
