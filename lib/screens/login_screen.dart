@@ -8,6 +8,7 @@ import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
 import '../services/staff_session_store.dart';
 import '../utils/constants.dart';
+import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
 import 'staff_device_setup_screen.dart';
@@ -72,7 +73,10 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
       if (!mounted) return;
-      _enter(employee);
+      // Ждём: _enter может спросить, кто на смене, и до ответа экран
+      // должен оставаться ожиданием, а не мигать клавиатурой PIN
+      // за спиной у диалога.
+      await _enter(employee);
     } catch (_) {
       // Нет связи — покажем обычный вход, он сообщит об этом понятнее.
     }
@@ -130,22 +134,24 @@ class _LoginScreenState extends State<LoginScreen> {
     // Запоминаем вошедшего на этом устройстве — при следующем запуске PIN
     // спрашиваться не будет. Хранится только id, сам PIN — нет.
     unawaited(_session.remember(loggedInEmployee.id));
-    // Открываем кассовую смену при входе, если сейчас нет открытой — это
-    // источник данных для X-отчёта. Делаем в фоне и не блокируем вход даже
-    // при сетевой ошибке: сотрудник всё равно должен попасть в приложение,
-    // а открыть смену можно будет вручную из X-отчёта.
-    unawaited(_fs.openShiftIfNeeded(loggedInEmployee.name,
-        employeeId: loggedInEmployee.id));
+    // Смену открывает _enter(): там спрашиваем, кто именно выходит в зал.
     // Разовая достройка обезличенного зеркала занятости столов — нужна
     // заведениям, которые обновились с версии без reservationSlots.
     // Проверка стоит один документ и ничего не делает, если всё на месте.
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
     unawaited(GuestLinkService().backfillGuestIndexes());
-    _enter(loggedInEmployee);
+    await _enter(loggedInEmployee);
   }
 
-  void _enter(Employee employee) {
+  Future<void> _enter(Employee employee) async {
+    if (!mounted) return;
+    // Если открытой смены нет — спрашиваем, кто выходит в зал, и открываем
+    // её на него. Спрашиваем именно здесь, а не после ввода PIN: сюда
+    // приходит и восстановленный вход (PIN сохраняется на планшете), а
+    // ночная смена к утру уже закрыта — иначе дневной кальянщик остался бы
+    // без смены и без уведомлений.
+    await ensureShiftOpen(context, me: employee);
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(

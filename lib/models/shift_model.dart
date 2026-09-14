@@ -52,6 +52,11 @@ class ShiftModel {
       'openedAt': Timestamp.fromDate(openedAt),
       'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
       'openedBy': openedBy,
+      // Без этой строки id открывшего смену никогда не доезжал до базы:
+      // читался он исправно, а записывался только openedBy. Из-за этого
+      // устройства не могли понять, кто на смене, и уведомления о вызовах
+      // гостей приходили на все планшеты сразу.
+      'openedById': openedById,
       'closedBy': closedBy,
       'status': status,
     };
