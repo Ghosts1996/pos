@@ -20,6 +20,13 @@ class NotificationService {
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
 
+  /// Кто разбирает нажатия по уведомлению и его кнопкам.
+  ///
+  /// Передаются actionId (пусто — нажали по самому уведомлению) и payload,
+  /// который клали при планировании. Приложение подставляет сюда свой
+  /// обработчик, чтобы сервис не знал ничего о бронях и столах.
+  void Function(String actionId, String payload)? onAction;
+
   /// Каналы разнесены, чтобы кальянщик мог отключить, например, только
   /// напоминания об углях, не потеряв уведомления о бронях.
   static const _channelInstant = AndroidNotificationChannel(
@@ -62,6 +69,10 @@ class NotificationService {
           // Монохромная иконка: системная панель рисует только силуэт, и
           // цветной ic_launcher превращался в серый квадрат.
           android: AndroidInitializationSettings(_icon),
+        ),
+        onDidReceiveNotificationResponse: (r) => onAction?.call(
+          r.actionId ?? '',
+          r.payload ?? '',
         ),
       );
       if (ok == false) throw Exception('плагин не инициализировался');
@@ -191,6 +202,50 @@ class NotificationService {
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       // Обязательный параметр плагина: указанное время трактуется как
       // абсолютное в локальной зоне устройства.
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  /// Запланированное уведомление с кнопками ответа.
+  ///
+  /// Кнопки помечены как открывающие приложение: ответ гостя нужно
+  /// записать в базу, а фоновый обработчик уведомления живёт в отдельном
+  /// изоляте, где нет ни соединения с Firestore, ни входа гостя. Поэтому
+  /// нажатие поднимает приложение, а оно уже делает запись — это заодно
+  /// честнее выглядит: гость видит, что ответ принят.
+  Future<void> scheduleWithActions({
+    required int id,
+    required DateTime when,
+    required String title,
+    required String body,
+    required String payload,
+    required List<({String id, String label})> actions,
+  }) async {
+    await init();
+    if (when.isBefore(DateTime.now().add(const Duration(seconds: 30)))) return;
+
+    await _plugin.zonedSchedule(
+      id,
+      title,
+      body,
+      tz.TZDateTime.from(when, tz.local),
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelInstant.id,
+          _channelInstant.name,
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: _icon,
+          styleInformation: BigTextStyleInformation(body),
+          actions: [
+            for (final a in actions)
+              AndroidNotificationAction(a.id, a.label, showsUserInterface: true),
+          ],
+        ),
+      ),
+      payload: payload,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );

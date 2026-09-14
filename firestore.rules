@@ -190,11 +190,20 @@ service cloud.firestore {
         (signedIn() &&
          request.resource.data.clientUid == request.auth.uid &&
          request.resource.data.status == 'new');
-      // Гость может лишь отменить свою бронь; подтверждение и посадка — персонал.
+      // Гость может отменить свою бронь и ответить «приду» на напоминание
+      // за 20 минут. Больше ничего: подтверждение брони, назначение стола
+      // и посадка — дело персонала.
+      //
+      // Ответ «приду» меняет ровно одно поле и не трогает статус, поэтому
+      // разрешён отдельной веткой: иначе пришлось бы разрешить гостю
+      // произвольную правку своей брони.
       allow update: if isStaff() ||
         (signedIn() &&
          resource.data.clientUid == request.auth.uid &&
-         request.resource.data.status == 'cancelled');
+         (request.resource.data.status == 'cancelled' ||
+          (request.resource.data.status == resource.data.status &&
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['guestConfirmed']))));
       allow delete: if isStaff();
     }
 

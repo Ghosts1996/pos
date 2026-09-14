@@ -53,8 +53,14 @@ class HallWatchService {
           eventAction: ForegroundTaskEventAction.nothing(),
           autoRunOnBoot: true,
           autoRunOnMyPackageReplaced: true,
-          allowWakeLock: true,
-          allowWifiLock: true,
+          // Без вейклоков. Они держат процессор и Wi-Fi включёнными
+          // постоянно и съедают батарею за часы — а нужны только для
+          // непрерывных задач вроде записи трека. Здесь задача другая: не
+          // дать системе выгрузить приложение. Соединение с базой система
+          // сама поднимает, когда устройство просыпается, поэтому вызов
+          // гостя доходит и без круглосуточно включённого процессора.
+          allowWakeLock: false,
+          allowWifiLock: false,
         ),
       );
 

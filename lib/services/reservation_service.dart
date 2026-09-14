@@ -399,6 +399,14 @@ class ReservationService {
         'handledBy': employeeName,
       });
 
+  /// Гость ответил на напоминание за 20 минут.
+  ///
+  /// «Приду» — только отметка: бронь остаётся как была, но хостес видит,
+  /// что стол точно понадобится. «Не приду» — обычная отмена, стол
+  /// освобождается сразу, а не через час ожидания.
+  Future<void> guestConfirm(String id) =>
+      _db.collection('reservations').doc(id).update({'guestConfirmed': true});
+
   Future<void> cancel(String id, {String by = ''}) async {
     await _col.doc(id).update({
       'status': ReservationStatus.cancelled.code,

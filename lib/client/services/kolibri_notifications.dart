@@ -84,6 +84,7 @@ class KolibriNotifications {
       await _notify.init();
     } catch (_) {}
     await _restore();
+    _notify.onAction = (actionId, payload) => unawaited(_handleAction(actionId, payload));
 
     _watchReservations();
     _watchOrders();
@@ -207,25 +208,83 @@ class KolibriNotifications {
     }
   }
 
-  /// Планирует (или снимает) напоминание за час до брони.
+  /// Планирует (или снимает) напоминания о брони: за час и за 20 минут.
   ///
-  /// Именно отложенное системное уведомление, а не push: оно сработает и
+  /// Именно отложенные системные уведомления, а не push: они сработают и
   /// при закрытом приложении, и без интернета — ровно то, что нужно, чтобы
   /// гость не забыл про вечер, пока едет по городу.
+  ///
+  /// За 20 минут — с кнопками «Приду» и «Не приду». Это не вежливость, а
+  /// рабочий инструмент: заведение узнаёт о неявке за двадцать минут до
+  /// начала и успевает отдать стол, вместо того чтобы держать его пустым
+  /// час и записывать бронь в «не пришёл» задним числом.
   void _syncReminder(ReservationModel r) {
-    final id = NotificationService.idFor('res_soon_${r.id}');
+    final hourId = NotificationService.idFor('res_soon_${r.id}');
+    final soonId = NotificationService.idFor('res_20min_${r.id}');
+
     if (_silenced || !r.status.blocksTable) {
-      unawaited(_notify.cancel(id));
+      unawaited(_notify.cancel(hourId));
+      unawaited(_notify.cancel(soonId));
       return;
     }
+
+    final where = r.tableName.isEmpty ? '' : ', стол ${r.tableName}';
+
     unawaited(_notify.scheduleAt(
-      id: id,
+      id: hourId,
       when: r.startTime.subtract(const Duration(hours: 1)),
       title: 'Через час ждём вас',
-      body: '${_fmtTime(r.startTime)}'
-          '${r.tableName.isEmpty ? '' : ', стол ${r.tableName}'}'
-          ' · ${r.guestsCount} чел.',
+      body: '${_fmtTime(r.startTime)}$where · ${r.guestsCount} чел.',
     ));
+
+    // Гость уже ответил — второй раз не дёргаем.
+    if (r.guestConfirmed) {
+      unawaited(_notify.cancel(soonId));
+      return;
+    }
+
+    unawaited(_notify.scheduleWithActions(
+      id: soonId,
+      when: r.startTime.subtract(const Duration(minutes: 20)),
+      title: 'Бронь через 20 минут',
+      body: '${_fmtTime(r.startTime)}$where · ${r.guestsCount} чел. '
+          'Подтвердите, что придёте, — или освободите стол для других.',
+      payload: 'res:${r.id}',
+      actions: const [
+        (id: 'res_coming', label: 'Приду'),
+        (id: 'res_not_coming', label: 'Не приду'),
+      ],
+    ));
+  }
+
+  /// Разбирает нажатие по кнопке напоминания.
+  ///
+  /// Кнопки открывают приложение, а запись делается здесь: у фонового
+  /// обработчика уведомлений свой изолят, где нет ни соединения с базой,
+  /// ни входа гостя.
+  Future<void> _handleAction(String actionId, String payload) async {
+    if (!payload.startsWith('res:')) return;
+    final id = payload.substring(4);
+    if (id.isEmpty) return;
+    try {
+      if (actionId == 'res_coming') {
+        await _reservations.guestConfirm(id);
+        unawaited(_notify.show(
+          id: NotificationService.idFor('res_ok_$id'),
+          title: 'Ждём вас',
+          body: 'Спасибо, стол за вами.',
+        ));
+      } else if (actionId == 'res_not_coming') {
+        await _reservations.cancel(id, by: 'гость');
+        unawaited(_notify.show(
+          id: NotificationService.idFor('res_no_$id'),
+          title: 'Бронь отменена',
+          body: 'Спасибо, что предупредили. Ждём вас в другой раз.',
+        ));
+      }
+    } catch (_) {
+      // Нет связи — гость увидит бронь в приложении и ответит там.
+    }
   }
 
   // ---------- ЗАКАЗЫ ЗА СТОЛОМ ----------

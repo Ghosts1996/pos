@@ -26,3 +26,15 @@ String normalizePhone(String raw) {
 /// Проверяет, что нормализованный номер выглядит как российский (11 цифр, начиная с 7).
 bool isValidRuPhone(String normalized) =>
     normalized.length == 11 && normalized.startsWith('7');
+
+/// Человекочитаемый вид номера: +7 (999) 506-15-80.
+///
+/// В базе телефон хранится нормализованным (11 цифр без знаков) — так его
+/// удобно сравнивать и искать, но показывать сотруднику сплошную строку
+/// цифр неудобно: по ней тяжело сверить номер на слух.
+String formatPhone(String normalized) {
+  final d = normalized.replaceAll(RegExp(r'\D'), '');
+  if (d.length != 11) return normalized;
+  return '+${d[0]} (${d.substring(1, 4)}) ${d.substring(4, 7)}-'
+      '${d.substring(7, 9)}-${d.substring(9)}';
+}

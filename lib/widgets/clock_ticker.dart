@@ -13,27 +13,66 @@ import 'package:flutter/material.dart';
 /// [removeListener] гасит при последнем. Виджеты подписываются через
 /// [TickerBuilder].
 class ClockTicker extends ValueNotifier<DateTime> {
-  ClockTicker._() : super(DateTime.now());
+  ClockTicker._() : super(DateTime.now()) {
+    // Пока приложение не на экране, тикать бессмысленно: перерисовывать
+    // нечего, а секундный таймер не даёт процессору уснуть и заметно ест
+    // батарею — особенно на кассе, где приложение открыто всю смену и
+    // часто лежит свёрнутым. При возвращении время обновляется сразу, до
+    // первого тика, иначе таймеры столов на секунду показали бы старое.
+    _lifecycle = AppLifecycleListener(
+      onShow: _resume,
+      onHide: _pause,
+      onPause: _pause,
+      onRestart: _resume,
+    );
+  }
   static final ClockTicker instance = ClockTicker._();
 
   Timer? _timer;
+  late final AppLifecycleListener _lifecycle;
+  bool _visible = true;
 
-  @override
-  void addListener(VoidCallback listener) {
-    super.addListener(listener);
+  void _start() {
+    if (!_visible || !hasListeners) return;
     _timer ??= Timer.periodic(
       const Duration(seconds: 1),
       (_) => value = DateTime.now(),
     );
   }
 
+  void _stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void _pause() {
+    _visible = false;
+    _stop();
+  }
+
+  void _resume() {
+    _visible = true;
+    value = DateTime.now();
+    _start();
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+    _start();
+  }
+
   @override
   void removeListener(VoidCallback listener) {
     super.removeListener(listener);
-    if (!hasListeners) {
-      _timer?.cancel();
-      _timer = null;
-    }
+    if (!hasListeners) _stop();
+  }
+
+  @override
+  void dispose() {
+    _stop();
+    _lifecycle.dispose();
+    super.dispose();
   }
 }
 
