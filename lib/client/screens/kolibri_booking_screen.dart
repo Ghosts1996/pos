@@ -84,6 +84,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   /// первым, и его отказ до создания брони просто не доходил.
   bool _phoneLocked = false;
 
+  /// Сводка по выбранному времени: сколько столов свободно, сколько броней
+  /// уже стоит и сколько столов может не освободиться из-за перезабивки.
+  SlotStats? _stats;
+  bool _loadingStats = false;
+
   Future<void> _prefill() async {
     final p = await _link.profileStream(_auth.uid).first;
     if (p != null && mounted) {
@@ -93,10 +98,100 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     }
   }
 
+  /// Плашка «что на это время»: сколько столов свободно, сколько броней
+  /// уже стоит и сколько столов может не освободиться из-за перезабивки.
+  ///
+  /// Гостю это отвечает на вопрос «стоит ли вообще пытаться», а заодно
+  /// объясняет, почему подходящих столов меньше, чем он видит в зале.
+  Widget _slotSummary() {
+    if (_loadingStats) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(),
+      );
+    }
+    final st = _stats;
+    if (st == null || st.isEmpty) return const SizedBox.shrink();
+
+    final lines = <String>[
+      st.freeTables > 0
+          ? 'Свободных подходящих столов: ${st.freeTables}'
+          : 'Подходящих свободных столов нет — попробуйте другое время',
+      if (st.bookingsAtTime > 0)
+        'На это время уже ${st.bookingsAtTime} ${_plural(st.bookingsAtTime, 'бронь', 'брони', 'броней')}',
+      if (st.occupiedNow > 0)
+        'Сейчас в зале занято ${st.occupiedNow} из ${st.tablesTotal}',
+      if (st.riskyTables > 0)
+        'Ещё ${st.riskyTables} ${_plural(st.riskyTables, 'стол освободится', 'стола освободятся', 'столов освободятся')} '
+            'незадолго до брони — гости могут взять перезабивку и остаться',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: KolibriColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: st.freeTables > 0 ? KolibriColors.border : KolibriColors.warning,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final l in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('· ', style: TextStyle(color: KolibriColors.textMuted)),
+                  Expanded(
+                    child: Text(l,
+                        style: const TextStyle(
+                            color: KolibriColors.textMuted, fontSize: 13, height: 1.4)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// «1 бронь», «2 брони», «5 броней».
+  String _plural(int n, String one, String few, String many) {
+    final last = n % 10;
+    final teen = n % 100 >= 11 && n % 100 <= 14;
+    if (!teen && last == 1) return one;
+    if (!teen && last >= 2 && last <= 4) return few;
+    return many;
+  }
+
+  /// Сводка по выбранному времени. Только числа: имён и телефонов других
+  /// гостей здесь нет и быть не должно.
+  Future<void> _loadStats() async {
+    final slot = _slot;
+    if (slot == null) return;
+    setState(() => _loadingStats = true);
+    try {
+      final stats = await _service.slotStats(
+        start: slot,
+        durationMinutes: _duration,
+        guestsCount: _guests,
+      );
+      if (mounted) setState(() => _stats = stats);
+    } catch (_) {
+      if (mounted) setState(() => _stats = null);
+    } finally {
+      if (mounted) setState(() => _loadingStats = false);
+    }
+  }
+
   Future<void> _loadSlots() async {
     setState(() {
       _loadingSlots = true;
       _slot = null;
+      _stats = null;
       _pickedTable = null; // выбор стола привязан к конкретному времени
     });
     try {
@@ -245,10 +340,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                 .map((s) => ChoiceChip(
                       label: Text(_fmtTime(s)),
                       selected: _slot == s,
-                      onSelected: (_) => setState(() {
-                        _slot = s;
-                        _pickedTable = null;
-                      }),
+                      onSelected: (_) {
+                        setState(() {
+                          _slot = s;
+                          _pickedTable = null;
+                          _stats = null;
+                        });
+                        _loadStats();
+                      },
                       backgroundColor: KolibriColors.surface,
                       selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
                       side: const BorderSide(color: KolibriColors.border),
@@ -257,6 +356,8 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           ),
 
         if (_slot != null) ...[
+          const SizedBox(height: 16),
+          _slotSummary(),
           const SizedBox(height: 20),
           _label('Стол'),
           OutlinedButton.icon(
