@@ -122,6 +122,7 @@
       <a class="btn ghost" id="gd" href="https://drive.google.com/drive/folders/1WXJ1VFGuBLkVAAGb6hqqvnFC35h37BvM">
         Скачать с Google&nbsp;Диска
       </a>
+      <a class="btn ghost" id="web" href="/app/">Открыть в браузере (для iPhone)</a>
       <a class="btn ghost" id="retry" href="#">Приложение уже есть — открыть стол</a>
     </div>
 
@@ -129,6 +130,9 @@
       После установки Android спросит разрешение на установку из этого
       источника — это нормально для приложений не из Play Маркета.
       Установили? Отсканируйте код на столе ещё раз.
+      <br><br>
+      На iPhone приложение не ставится — там работает версия в браузере,
+      кнопка выше. Умеет то же самое.
     </p>
   </div>
 
@@ -187,6 +191,11 @@
   });
   window.addEventListener('pagehide', function () { shown = true; });
 
+  var webBtn = document.getElementById('web');
+  if (webBtn && tableId) {
+    webBtn.href = '/app/#/t/' + encodeURIComponent(tableId);
+  }
+
   document.getElementById('retry').addEventListener('click', function (e) {
     e.preventDefault();
     shown = false;
@@ -196,7 +205,17 @@
     timer = setTimeout(showInstall, 2000);
   });
 
-  if (query.indexOf('noapp=1') !== -1 || !tableId) {
+  // iPhone и iPad: приложения для iOS нет и быть не может без платного
+  // аккаунта разработчика Apple, поэтому там открывается веб-версия — она
+  // работает с той же базой и умеет то же самое. Печатать новые QR для
+  // этого не нужно: адрес в коде тот же, меняется только то, что делает
+  // эта страница.
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (isIOS && tableId) {
+    window.location.replace('/app/#/t/' + encodeURIComponent(tableId));
+  } else if (query.indexOf('noapp=1') !== -1 || !tableId) {
     // Chrome уже сходил за приложением и не нашёл его.
     showInstall();
   } else {
