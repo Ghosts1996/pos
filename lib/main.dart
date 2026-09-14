@@ -13,6 +13,7 @@ import 'services/kassa_service.dart';
 import 'services/egais_service.dart';
 import 'services/chestny_znak_api_service.dart';
 import 'services/push_service.dart';
+import 'services/gift_card_service.dart';
 import 'services/venue_service.dart';
 import 'services/auto_stoplist_service.dart';
 import 'services/session_alerts_service.dart';
@@ -97,6 +98,12 @@ void main() async {
         if (!ok) unawaited(SessionAlertsService.instance.start());
       }));
       VenueService.instance.watch();
+
+      // Сертификаты из Telegram-канала: гость вводит код у себя, а
+      // начисляет бонусы касса — сам себе гость их начислить не может, и
+      // правила базы этого не разрешают. Пока заведение работает,
+      // начисление занимает секунды.
+      GiftCardService.instance.watchClaims();
 
       // Автостоп-лист следит за остатками и сам убирает из меню то, чего
       // нет в зале, — иначе гость закажет это в «Colibri Lounge».

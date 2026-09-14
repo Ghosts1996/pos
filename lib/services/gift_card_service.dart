@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/venue_models.dart';
@@ -27,116 +28,207 @@ class GiftCardService {
     return 'KLB-${block()}-${block()}';
   }
 
-  /// Выпустить сертификат. Возвращает код, который печатается гостю.
+  /// Выпустить сертификат. Возвращает код — его и постят в канал.
+  ///
+  /// [bonusAmount] — сколько бонусов получит каждый успевший гость,
+  /// [maxUses] — сколько гостей успеет (0 — без ограничения).
   Future<GiftCard> issue({
-    required double faceValue,
-    String issuedTo = '',
-    String issuedBy = '',
-    String purchasedByUid = '',
-    int validMonths = 12,
+    required double bonusAmount,
     int maxUses = 0,
+    String comment = '',
+    String issuedBy = '',
+    int validDays = 30,
   }) async {
     var code = _generateCode();
-    // Коллизия почти невероятна, но проверим — повтор кода испортил бы
-    // баланс чужого сертификата.
+    // Коллизия почти невероятна, но проверим — повтор кода смешал бы
+    // активации двух разных акций.
     while ((await _col.doc(code).get()).exists) {
       code = _generateCode();
     }
 
     final card = GiftCard(
       code: code,
-      faceValue: faceValue,
-      balance: faceValue,
-      issuedTo: issuedTo,
-      issuedBy: issuedBy,
-      purchasedByUid: purchasedByUid,
-      createdAt: DateTime.now(),
-      expiresAt: DateTime.now().add(Duration(days: 30 * validMonths)),
+      bonusAmount: bonusAmount,
       maxUses: maxUses < 0 ? 0 : maxUses,
+      comment: comment,
+      issuedBy: issuedBy,
+      createdAt: DateTime.now(),
+      expiresAt: validDays > 0 ? DateTime.now().add(Duration(days: validDays)) : null,
     );
     await _col.doc(code).set(card.toMap());
     return card;
   }
 
+  /// Найти сертификат по коду. Гость читает его по id — по правилам базы
+  /// перебрать всю коллекцию он не может.
   Future<GiftCard?> find(String code) async {
-    final doc = await _col.doc(code.trim().toUpperCase()).get();
+    final normalized = code.trim().toUpperCase();
+    if (normalized.isEmpty) return null;
+    final doc = await _col.doc(normalized).get();
     return doc.exists ? GiftCard.fromDoc(doc) : null;
   }
 
-  /// Списать с сертификата. Возвращает фактически списанную сумму —
-  /// не больше остатка и не больше запрошенного.
-  Future<double> redeem({
+  CollectionReference<Map<String, dynamic>> get _claims =>
+      _db.collection('giftCardClaims');
+
+  /// Гость вводит код у себя в приложении.
+  ///
+  /// Сам себе бонусы гость начислить не может — правила базы этого не
+  /// разрешают, и правильно делают. Поэтому он оставляет заявку, а
+  /// начисляет её касса (см. [watchClaims]). Заявки разбираются по времени
+  /// создания: кто успел, тот и получил.
+  ///
+  /// Возвращает текст для гостя, если активировать нельзя уже сейчас, —
+  /// чтобы не плодить заведомо отказные заявки. null означает «заявка
+  /// создана, ждём начисления».
+  Future<String?> requestActivation({
     required String code,
-    required double amount,
-    required String sessionId,
-    String employeeName = '',
+    required String clientUid,
   }) async {
-    final ref = _col.doc(code.trim().toUpperCase());
-    double applied = 0;
+    final normalized = code.trim().toUpperCase();
+    if (normalized.isEmpty) return 'Введите код сертификата.';
 
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) throw StateError('Сертификат не найден');
-      final card = GiftCard.fromDoc(snap);
-      // Проверяем лимит отдельной веткой, чтобы кассир видел настоящую
-      // причину: «списания кончились» и «сертификат истёк» — разные вещи,
-      // и объяснять их гостю приходится по-разному.
-      if (!card.hasUsesLeft) {
-        throw StateError('Сертификат использован ${card.maxUses} раз(а) — лимит исчерпан');
-      }
-      if (!card.isUsable) throw StateError('Сертификат неактивен или истёк');
+    final card = await find(normalized);
+    if (card == null) return 'Такого сертификата нет. Проверьте код.';
+    final problem = card.problem;
+    if (problem != null) return problem;
 
-      applied = amount > card.balance ? card.balance : amount;
-      if (applied <= 0) throw StateError('На сертификате нет средств');
-      tx.update(ref, {
-        'balance': card.balance - applied,
-        'usedCount': card.usedCount + 1,
-      });
-    });
+    // Один гость — одна активация. Свои заявки гостю читать можно.
+    final mine = await _claims
+        .where('clientUid', isEqualTo: clientUid)
+        .where('code', isEqualTo: normalized)
+        .limit(1)
+        .get();
+    if (mine.docs.isNotEmpty) {
+      final claim = GiftCardClaim.fromDoc(mine.docs.first);
+      if (claim.isGranted) return 'Вы уже активировали этот сертификат.';
+      if (claim.isPending) return 'Заявка уже отправлена — ждём начисления.';
+      return claim.reason.isEmpty ? 'Сертификат уже использован.' : claim.reason;
+    }
 
-    await _db.collection('giftCardOperations').add({
-      'code': code.trim().toUpperCase(),
-      'sessionId': sessionId,
-      'amount': applied,
-      'employeeName': employeeName,
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
-    return applied;
+    await _claims.add(GiftCardClaim(
+      id: '',
+      code: normalized,
+      clientUid: clientUid,
+      createdAt: DateTime.now(),
+    ).toMap());
+    return null;
   }
 
-  /// Вернуть на сертификат сумму, списанную при незавершённой оплате.
-  /// Симметрично [redeem]: если кассир вышел с экрана оплаты, не проведя
-  /// её, деньги сертификата не должны сгорать.
-  Future<void> refund({
-    required String code,
-    required double amount,
-    required String sessionId,
-    String employeeName = '',
-  }) async {
-    if (amount <= 0) return;
-    final normalized = code.trim().toUpperCase();
-    // Возврат отменяет списание целиком, значит и потраченное «использование»
-    // тоже: иначе сертификат на три визита сгорал бы за один несостоявшийся
-    // платёж. Считаем в транзакции, а не через increment(-1): счётчик не
-    // должен уходить в минус, если возврат вызовут без списания.
-    final ref = _col.doc(normalized);
+  /// Заявки конкретного гостя — по ним приложение показывает результат.
+  Stream<List<GiftCardClaim>> clientClaimsStream(String clientUid) => _claims
+      .where('clientUid', isEqualTo: clientUid)
+      .snapshots()
+      .map((s) => s.docs.map(GiftCardClaim.fromDoc).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
+
+  StreamSubscription? _claimsSub;
+
+  /// Касса разбирает заявки гостей. Запускается на POS при старте.
+  ///
+  /// Обрабатываем по времени создания: активаций может быть меньше, чем
+  /// желающих, и «успел» должно означать «раньше отправил», а не «чей
+  /// документ Firestore отдал первым».
+  void watchClaims() {
+    _claimsSub?.cancel();
+    _claimsSub = _claims
+        .where('status', isEqualTo: 'new')
+        .snapshots()
+        .listen((snap) async {
+      final pending = snap.docs.map(GiftCardClaim.fromDoc).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      for (final claim in pending) {
+        try {
+          await _process(claim);
+        } catch (_) {
+          // Нет сети или кто-то уже обработал — вернёмся к заявке
+          // следующим снапшотом.
+        }
+      }
+    }, onError: (_) {});
+  }
+
+  Future<void> stopWatching() async {
+    await _claimsSub?.cancel();
+    _claimsSub = null;
+  }
+
+  /// Начислить бонусы по одной заявке.
+  ///
+  /// Всё в одной транзакции: счётчик активаций, баланс гостя и сама
+  /// заявка. Иначе два планшета, разобрав одну заявку одновременно,
+  /// начислили бы бонусы дважды, а активацию списали бы один раз.
+  Future<void> _process(GiftCardClaim claim) async {
+    final claimRef = _claims.doc(claim.id);
+    final cardRef = _col.doc(claim.code);
+    final clientRef = _db.collection('clients').doc(claim.clientUid);
+
+    double granted = 0;
+
     await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) return;
-      final card = GiftCard.fromDoc(snap);
-      tx.update(ref, {
-        'balance': card.balance + amount,
-        'usedCount': card.usedCount > 0 ? card.usedCount - 1 : 0,
+      final claimSnap = await tx.get(claimRef);
+      if (!claimSnap.exists) return;
+      // Уже разобрана другим устройством — не трогаем.
+      if ((claimSnap.data()?['status'] as String?) != 'new') return;
+
+      final cardSnap = await tx.get(cardRef);
+      final now = Timestamp.fromDate(DateTime.now());
+
+      void reject(String reason) {
+        tx.update(claimRef, {
+          'status': 'rejected',
+          'reason': reason,
+          'processedAt': now,
+        });
+      }
+
+      if (!cardSnap.exists) {
+        reject('Такого сертификата нет.');
+        return;
+      }
+      final card = GiftCard.fromDoc(cardSnap);
+      final problem = card.problem;
+      if (problem != null) {
+        reject(problem);
+        return;
+      }
+
+      final clientSnap = await tx.get(clientRef);
+      if (!clientSnap.exists) {
+        reject('Профиль гостя не найден.');
+        return;
+      }
+
+      granted = card.bonusAmount;
+      final balance = (clientSnap.data()?['bonusBalance'] as num?)?.toDouble() ?? 0;
+
+      tx.update(cardRef, {'usedCount': card.usedCount + 1});
+      tx.set(clientRef, {'bonusBalance': balance + granted}, SetOptions(merge: true));
+      tx.update(claimRef, {
+        'status': 'granted',
+        'amount': granted,
+        'reason': '',
+        'processedAt': now,
       });
     });
-    await _db.collection('giftCardOperations').add({
-      'code': normalized,
-      'sessionId': sessionId,
-      'amount': -amount,
-      'reason': 'redeem_cancelled',
-      'employeeName': employeeName,
+
+    if (granted <= 0) return;
+
+    // Запись в историю бонусов — её гость видит у себя в профиле.
+    await _db.collection('bonusOperations').add({
+      'clientUid': claim.clientUid,
+      'type': 'accrual',
+      'amount': granted,
+      'reason': 'giftCard',
+      'comment': claim.code,
       'createdAt': Timestamp.fromDate(DateTime.now()),
     });
+
+    await PushService.instance.enqueue(
+      clientUid: claim.clientUid,
+      title: 'Сертификат активирован',
+      body: 'Вам начислено ${granted.toStringAsFixed(0)} бонусов. Ждём в гости!',
+    );
   }
 
   Stream<List<GiftCard>> activeCardsStream() => _col
