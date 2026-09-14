@@ -502,8 +502,12 @@ async function bindToTable(tableId) {
         + 'попросите кальянщика начать сеанс.');
     }
 
-    // Несколько счетов за столом — гость выбирает свой.
-    if (checks.length > 1) return chooseCheck(tableId, data.name || '', checks);
+    // Несколько счетов за столом — гость выбирает свой. Чужие показываем,
+    // но выбрать не даём: так же, как в приложении на Android.
+    if (checks.length > 1) {
+      const marked = await markTakenChecks(checks);
+      return chooseCheck(tableId, data.name || '', marked);
+    }
 
     const sessionId = checks.length === 1 ? checks[0].id : ids[ids.length - 1];
     await claimSession(tableId, sessionId);
@@ -519,6 +523,20 @@ function failBind(message) {
     <a class="btn btn-ghost" href="#/">На главную</a>`;
 }
 
+/// Кто занял чек: sessionClaims/{sessionId} → {uid}. Читать эту коллекцию
+/// гостю можно, а чужие профили — нет, поэтому занятость лежит здесь.
+async function markTakenChecks(checks) {
+  return Promise.all(checks.map(async (c) => {
+    try {
+      const d = await getDoc(doc(state.db, 'sessionClaims', c.id));
+      const owner = d.exists() ? (d.data().uid || '') : '';
+      return { ...c, taken: !!owner && owner !== state.uid };
+    } catch (_) {
+      return { ...c, taken: false }; // не проверили — не мешаем сесть
+    }
+  }));
+}
+
 function chooseCheck(tableId, tableName, checks) {
   screenEl().innerHTML = `
     <h1>${tableName ? 'Стол ' + esc(tableName) : 'Ваш стол'}</h1>
@@ -527,13 +545,16 @@ function chooseCheck(tableId, tableName, checks) {
     ${checks.map((c, i) => {
       const opened = toDate(c.openedAt);
       return `
-        <div class="card" data-check="${esc(c.id)}" style="cursor:pointer">
+        <div class="card" ${c.taken ? '' : `data-check="${esc(c.id)}"`}
+             style="${c.taken ? 'opacity:.5' : 'cursor:pointer'}">
           <div class="row">
             <div class="grow">
               <div style="font-weight:600">${esc(c.label || 'Счёт ' + (i + 1))}</div>
-              <div class="small muted">${opened ? 'Открыт в ' + hhmm(opened) : 'Время открытия неизвестно'}</div>
+              <div class="small muted">${c.taken
+                ? 'Уже открыт у другого гостя'
+                : (opened ? 'Открыт в ' + hhmm(opened) : 'Время открытия неизвестно')}</div>
             </div>
-            <div class="muted">›</div>
+            <div class="muted">${c.taken ? '🔒' : '›'}</div>
           </div>
         </div>`;
     }).join('')}`;
@@ -550,8 +571,14 @@ async function claimSession(tableId, sessionId) {
     // телефонов выигрывает ровно один.
     await setDoc(doc(state.db, 'sessionClaims', sessionId), { uid: state.uid });
   } catch (e) {
-    return failBind('Этот счёт уже открыт у другого гостя. '
-      + 'Если это ваш стол — попросите кальянщика открыть вам свой счёт.');
+    // Отказ правил — счёт действительно чужой. Любая другая ошибка это
+    // просто нет связи, и говорить гостю «стол занят» неправда: он пойдёт
+    // разбираться к кальянщику вместо того, чтобы повторить попытку.
+    if (e && e.code === 'permission-denied') {
+      return failBind('Этот счёт уже открыт у другого гостя. '
+        + 'Если это ваш стол — попросите кальянщика открыть вам свой счёт.');
+    }
+    return failBind('Не удалось открыть стол. Проверьте интернет и попробуйте ещё раз.');
   }
   try {
     await setDoc(doc(state.db, 'clients', state.uid), {
@@ -1009,9 +1036,16 @@ async function loadSlots(day, window) {
     tables = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
     slots = sSnap.docs.map((d) => d.data()).filter((v) => v.active !== false);
   } catch (_) {
+    lastHall = { tables: [], slots: [] };
+    renderSlotSummary();
     box.innerHTML = `<p class="muted small">Не удалось загрузить свободное время.</p>`;
     return;
   }
+
+  // Сводка и карта зала считаются по этим же столам и броням — второй раз
+  // в базу не ходим. Запоминаем сразу: ниже есть ранние выходы, и на них
+  // сводка показывала бы данные прошлого дня.
+  lastHall = { tables, slots };
 
   const duration = bookingDraft.duration || 90;
   const guests = bookingGuests();
@@ -1035,8 +1069,8 @@ async function loadSlots(day, window) {
     const ok = tables.some((t) => {
       if ((Number(t.seats) || 0) < guests) return false;
       if (busy.has(t.id)) return false;
-      const until = toDate(t.busyUntil);
-      if (until && cur < until) return false;
+      const freeAt = tableFreeAt(t);
+      if (freeAt && cur < freeAt) return false;
       return true;
     });
     if (ok) free.push(new Date(cur));
@@ -1046,12 +1080,9 @@ async function loadSlots(day, window) {
     box.innerHTML = `<p class="muted small">На выбранные день и условия
       свободного времени нет. Попробуйте другую дату, другую длительность
       или меньшую компанию.</p>`;
+    renderSlotSummary();
     return;
   }
-
-  // Сводка по выбранному времени. Держим данные под рукой: сводка
-  // считается по тем же столам и броням, что и сетка времени.
-  lastHall = { tables, slots };
 
   box.innerHTML = `<div>${free.map((t) => {
     const key = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
@@ -1079,6 +1110,20 @@ let lastHall = { tables: [], slots: [] };
 /// значение, что в приложении.
 const EXTENSION_RISK_MS = 60 * 60 * 1000;
 
+/// Момент, когда стол реально освободится, или null, если он свободен.
+///
+/// Один в один расчёт приложения (ReservationService._loadHall): плановый
+/// конец сеанса плюс двадцать минут на уборку, а просроченный сеанс держит
+/// стол ещё час от текущего момента — гости, засидевшиеся сверх времени,
+/// со стола сами не встают.
+function tableFreeAt(t) {
+  const end = toDate(t.busyUntil);
+  if (!end) return null;
+  const now = Date.now();
+  const base = end.getTime() < now ? now + 60 * 60 * 1000 : end.getTime();
+  return new Date(base + 20 * 60 * 1000);
+}
+
 /// Свободен ли стол на интервал брони и не «впритык» ли он.
 ///
 /// Возвращает 'free' — точно свободен, 'risky' — освободится незадолго до
@@ -1087,12 +1132,10 @@ const EXTENSION_RISK_MS = 60 * 60 * 1000;
 function tableStateFor(t, start, end, bookedIds, guests) {
   if ((Number(t.seats) || 0) < guests) return 'small';
   if (bookedIds.has(t.id)) return 'busy';
-  const rawEnd = toDate(t.busyUntil);
-  if (!rawEnd) return 'free';
-  // Плюс двадцать минут на уборку — как считает приложение.
-  const until = new Date(rawEnd.getTime() + 20 * 60 * 1000);
-  if (start < until) return 'busy';
-  return (start - rawEnd) < EXTENSION_RISK_MS ? 'risky' : 'free';
+  const freeAt = tableFreeAt(t);
+  if (!freeAt) return 'free';
+  if (start < freeAt) return 'busy';
+  return (start - freeAt) < EXTENSION_RISK_MS ? 'risky' : 'free';
 }
 
 /// Какие столы заняты бронями на интервал.
@@ -1118,14 +1161,21 @@ function renderSlotSummary() {
   const end = new Date(start.getTime() + duration * 60 * 1000);
   const guests = bookingGuests();
   const booked = bookedTableIds(lastHall.slots, start, end);
-  const now = Date.now();
+  // Броней на это время — штуками, включая те, которым стол ещё не
+  // назначен: место в зале они всё равно занимают.
+  const bookings = lastHall.slots.filter((v) => {
+    const s0 = toDate(v.startTime);
+    const e0 = toDate(v.endTime);
+    return s0 && e0 && s0 < end && e0 > start;
+  }).length;
 
   let free = 0;
   let risky = 0;
   let occupiedNow = 0;
   lastHall.tables.forEach((t) => {
-    const rawEnd = toDate(t.busyUntil);
-    if (rawEnd && rawEnd.getTime() > now) occupiedNow++;
+    // «Сидят сейчас» — по открытым чекам стола: у просроченного сеанса
+    // busyUntil уже в прошлом, а гости за столом остались.
+    if ((t.activeSessionIds || []).length > 0) occupiedNow++;
     const st = tableStateFor(t, start, end, booked, guests);
     if (st === 'free') free++;
     else if (st === 'risky') risky++;
@@ -1135,8 +1185,8 @@ function renderSlotSummary() {
     free > 0
       ? `Свободных подходящих столов: ${free}`
       : 'Подходящих свободных столов нет — попробуйте другое время',
-    booked.size > 0
-      ? `На это время уже ${booked.size} ${plural(booked.size, 'бронь', 'брони', 'броней')}`
+    bookings > 0
+      ? `На это время уже ${bookings} ${plural(bookings, 'бронь', 'брони', 'броней')}`
       : null,
     occupiedNow > 0
       ? `Сейчас в зале занято ${occupiedNow} из ${lastHall.tables.length}`
@@ -1616,7 +1666,7 @@ function screenScan() {
 async function startScanner() {
   const video = $('cam');
   const hint = $('scanHint');
-  if (!video) return;
+  if (!video || !hint) return;
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     hint.textContent = 'Этот браузер не умеет работать с камерой. '
@@ -1664,10 +1714,23 @@ async function startScanner() {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   let done = false;
+  let lastLook = 0;
 
   const tick = async () => {
     if (done || !scanStream) return;
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+
+    // Разбирать каждый кадр незачем: на разбор уходит больше времени, чем
+    // телефон успевает между кадрами, и на iPhone экран начинает дёргаться,
+    // а батарея — греться. Десять раз в секунду код ловится так же.
+    const nowMs = Date.now();
+    // readyState сравниваем «не меньше», а не «равно»: Safari на iPhone
+    // часто держит поток на HAVE_CURRENT_DATA и до HAVE_ENOUGH_DATA не
+    // доходит вовсе — с проверкой на равенство сканер там просто никогда
+    // не начинал смотреть в кадр. А ради iPhone этот экран и сделан.
+    const ready = video.readyState >= 2 && video.videoWidth > 0;
+
+    if (ready && nowMs - lastLook >= 100) {
+      lastLook = nowMs;
       let raw = null;
       try {
         if (detector) {
@@ -1676,10 +1739,10 @@ async function startScanner() {
         } else {
           // Кадр меньше исходного: для кода этого хватает, а работы
           // телефону заметно меньше.
-          const w = 420;
+          const w = Math.min(420, video.videoWidth);
           const scale = w / video.videoWidth;
           canvas.width = w;
-          canvas.height = Math.round(video.videoHeight * scale);
+          canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const res = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
@@ -1695,7 +1758,7 @@ async function startScanner() {
           location.hash = '#/t/' + encodeURIComponent(tableId);
           return;
         }
-        hint.textContent = 'Это не код стола — наведите на код на столе.';
+        if (hint) hint.textContent = 'Это не код стола — наведите на код на столе.';
       }
     }
     scanRaf = requestAnimationFrame(tick);
@@ -1777,9 +1840,14 @@ function screenHall(pickMode) {
   const when = pickMode ? bookingStart() : null;
   const durMs = (bookingDraft.duration || 90) * 60 * 1000;
 
+  let tablesLoaded = false;
+
   const draw = (tables) => {
     const box = $('hall');
     if (!box) return;
+    // Зеркало броней иногда приходит раньше самих столов: без этой
+    // проверки карта на мгновение писала «не настроена» и мигала.
+    if (!tablesLoaded) return;
     if (!tables.length) {
       box.innerHTML = `<p class="muted small" style="padding:20px">Карта зала пока не настроена.</p>`;
       return;
@@ -1796,16 +1864,19 @@ function screenHall(pickMode) {
       // нет ли на это время чужой брони. Раньше тут стояла проверка «за
       // столом кто-то есть», и половина зала выглядела занятой на завтра
       // только потому, что была занята в эту минуту.
-      const state = pickMode && when
+      // Имя намеренно НЕ state: глобальный state хранит соединение с базой
+      // и профиль гостя, и локальная переменная с тем же именем перекрыла
+      // бы его внутри всего этого блока.
+      const st = pickMode && when
           ? tableStateFor(t, when, new Date(when.getTime() + durMs),
               busyByBooking, bookingGuests())
           : ((t.activeSessionIds || []).length > 0 || t.status === 'occupied')
               ? 'busy' : 'free';
-      const tooSmall = state === 'small';
+      const tooSmall = st === 'small';
       const bookedNow = busyByBooking.has(t.id);
-      const cls = state === 'small' ? 'small'
-          : state === 'busy' ? 'busy'
-          : state === 'risky' ? 'risky' : 'free';
+      const cls = st === 'small' ? 'small'
+          : st === 'busy' ? 'busy'
+          : st === 'risky' ? 'risky' : 'free';
       // «Впритык» выбрать можно — это решение гостя, но он должен знать.
       const canPick = pickMode && (cls === 'free' || cls === 'risky');
       // Координаты 0..1 — те же, что расставил администратор на кассе.
@@ -1851,6 +1922,7 @@ function screenHall(pickMode) {
 
   let tables = [];
   sub(onSnapshot(collection(state.db, 'tables'), (snap) => {
+    tablesLoaded = true;
     tables = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
     draw(tables);
