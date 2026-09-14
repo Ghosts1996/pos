@@ -16,7 +16,7 @@ import {
   getAuth, signInAnonymously, onAuthStateChanged,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
@@ -807,19 +807,89 @@ function tableFinished(s) {
 }
 
 // ---------- БРОНЬ ----------
+//
+// Экран повторяет тот, что в приложении: день, число гостей,
+// продолжительность и — главное — СЕТКА СВОБОДНОГО ВРЕМЕНИ. Свободное
+// время считается из часов работы заведения и занятости столов, поэтому
+// забронировать в нерабочий час нельзя в принципе: такого времени просто
+// нет в списке. Раньше здесь стояло обычное поле «Время», и гость мог
+// выбрать хоть 4 утра.
+
+const DURATIONS = [60, 90, 180, 270];
+const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10];
+
+function durationLabel(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h} ч` : `${h} ч ${m} м`;
+}
+
+const WEEKDAYS_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+/// Часы работы на день недели. В базе они лежат под номером дня так же,
+/// как их понимает приложение: 1 — понедельник, 7 — воскресенье.
+function workingWindow(day) {
+  const hours = (state.venue && state.venue.workingHours) || {};
+  const dartWeekday = day.getDay() === 0 ? 7 : day.getDay();
+  const raw = String(hours[dartWeekday] || hours[String(dartWeekday)] || '').trim();
+  if (!raw) return null;
+
+  const m = raw.match(/(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/);
+  if (!m) return null;
+
+  const open = new Date(day.getFullYear(), day.getMonth(), day.getDate(),
+    Number(m[1]), Number(m[2]), 0, 0);
+  let close = new Date(day.getFullYear(), day.getMonth(), day.getDate(),
+    Number(m[3]), Number(m[4]), 0, 0);
+  // Закрытие «раньше» открытия означает следующие сутки: 16:00–02:00.
+  if (close <= open) close = new Date(close.getTime() + 24 * 60 * 60 * 1000);
+  return { open, close, raw };
+}
 
 function screenBooking() {
   const p = state.profile || {};
-  const now = new Date();
-  const soon = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-  soon.setMinutes(soon.getMinutes() < 30 ? 0 : 30, 0, 0);
 
-  // Возвращаемся с карты зала — форма должна остаться заполненной.
-  if (!bookingDraft.date) bookingDraft.date = soon.toISOString().slice(0, 10);
-  if (!bookingDraft.time) bookingDraft.time = `${pad(soon.getHours())}:${pad(soon.getMinutes())}`;
+  if (!bookingDraft.date) {
+    const today = new Date();
+    bookingDraft.date = localDate(today);
+  }
+  if (!bookingDraft.duration) bookingDraft.duration = 90;
+
+  const day = dayFromDraft();
+  const window = workingWindow(day);
+  const todayHours = workingWindow(new Date());
 
   screenEl().innerHTML = `
     <h1>Бронь стола</h1>
+    ${todayHours
+      ? `<p class="small" style="color:var(--gold);margin-bottom:16px">Работаем ${esc(todayHours.raw)}</p>`
+      : `<p class="small muted">Часы работы не заданы — уточните у кальянщика.</p>`}
+
+    <h2 style="margin-top:0">Дата</h2>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch">
+      ${dateOptions().map((d) => {
+        const key = localDate(d);
+        const on = key === bookingDraft.date;
+        return `<button class="daychip ${on ? 'on' : ''}" data-day="${key}">
+          <small>${WEEKDAYS_SHORT[d.getDay()]}</small>${d.getDate()}</button>`;
+      }).join('')}
+    </div>
+
+    <h2>Гостей</h2>
+    <div>${GUEST_OPTIONS.map((n) => `
+      <span class="chip ${n === bookingGuests() ? 'on' : ''}" data-guests="${n}">${n}</span>
+    `).join('')}</div>
+
+    <h2>Продолжительность</h2>
+    <div>${DURATIONS.map((mn) => `
+      <span class="chip ${mn === bookingDraft.duration ? 'on' : ''}" data-dur="${mn}">${durationLabel(mn)}</span>
+    `).join('')}</div>
+
+    <h2>Свободное время</h2>
+    <div id="slots">${window ? '<div class="spinner"></div>'
+      : '<p class="muted small">В этот день мы закрыты — выберите другую дату.</p>'}</div>
+
+    <h2>Контакты</h2>
     <div class="card">
       <label class="field"><span>Ваше имя</span>
         <input id="bName" value="${esc(p.name || '')}" placeholder="Как к вам обращаться"></label>
@@ -827,32 +897,24 @@ function screenBooking() {
         <input id="bPhone" type="tel" inputmode="tel"
           value="${esc(p.phone ? prettyPhone(p.phone) : '')}"
           placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
-      ${p.phone ? `<p class="small muted" style="margin:-4px 0 12px">
-        🔒 Номер привязан — сменить его можно только через администратора</p>` : ''}
-      <div class="btn-row">
-        <label class="field"><span>Дата</span>
-          <input id="bDate" type="date" value="${esc(bookingDraft.date)}"></label>
-        <label class="field"><span>Время</span>
-          <input id="bTime" type="time" value="${esc(bookingDraft.time)}"></label>
-      </div>
-      <label class="field"><span>Сколько гостей</span>
-        <select id="bGuests">
-          ${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}"
-            ${n === bookingGuests() ? 'selected' : ''}>${n}</option>`).join('')}
-        </select></label>
+      <p class="small muted" style="margin:-4px 0 12px">
+        ${p.phone
+          ? '🔒 Номер привязан — сменить его можно только через администратора'
+          : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
 
       <label class="field"><span>Стол</span></label>
       <div class="row" style="margin:-6px 0 12px">
         <div class="grow small ${pickedTable ? '' : 'muted'}">
-          ${pickedTable ? '🪑 Стол ' + esc(pickedTable.name) : 'Любой свободный — подберём сами'}
+          ${pickedTable ? '🪑 ' + esc(pickedTable.name) : 'Любой свободный — подберём сами'}
         </div>
         <a class="btn-link" href="#/hall/pick" style="width:auto">
           ${pickedTable ? 'Изменить' : 'Выбрать на карте'}</a>
       </div>
       ${pickedTable ? `<button class="btn-ghost" id="bClearTable"
         style="margin-bottom:12px">Убрать выбор стола</button>` : ''}
+
       <label class="field"><span>Пожелания (необязательно)</span>
-        <input id="bComment" placeholder="Например: подальше от колонок"></label>
+        <input id="bComment" placeholder="Диван у окна, день рождения, без музыки…"></label>
       <button class="btn-primary" id="bSend">Отправить заявку</button>
       <p class="small muted center" style="margin:12px 0 0">
         Мы подтвердим бронь и закрепим стол. За 20 минут до начала напомним.</p>
@@ -861,25 +923,126 @@ function screenBooking() {
     <h2>Мои брони</h2>
     <div id="myBookings"><div class="spinner"></div></div>`;
 
-  // Черновик обновляем на лету: карта зала показывает занятость именно на
-  // выбранные дату и время, а форма живёт на другом экране.
-  const sync = () => {
-    bookingDraft.date = $('bDate').value;
-    bookingDraft.time = $('bTime').value;
-    bookingDraft.guests = Number($('bGuests').value) || 2;
-  };
-  ['bDate', 'bTime', 'bGuests'].forEach((id) => {
-    $(id).onchange = () => {
-      sync();
-      // Время изменилось — прежний выбор стола к нему уже не относится.
-      if (pickedTable) { pickedTable = null; route(); }
-    };
+  screenEl().querySelectorAll('[data-day]').forEach((el) => {
+    el.onclick = () => { bookingDraft.date = el.dataset.day; resetSlot(); route(); };
+  });
+  screenEl().querySelectorAll('[data-guests]').forEach((el) => {
+    el.onclick = () => { bookingDraft.guests = Number(el.dataset.guests); resetSlot(); route(); };
+  });
+  screenEl().querySelectorAll('[data-dur]').forEach((el) => {
+    el.onclick = () => { bookingDraft.duration = Number(el.dataset.dur); resetSlot(); route(); };
   });
   const clear = $('bClearTable');
   if (clear) clear.onclick = () => { pickedTable = null; route(); };
 
   $('bSend').onclick = sendBooking;
+  if (window) loadSlots(day, window);
   watchMyBookings();
+}
+
+/// Смена дня, компании или длительности обнуляет выбор: прежние время и
+/// стол к новым условиям уже не относятся.
+function resetSlot() {
+  bookingDraft.time = '';
+  pickedTable = null;
+}
+
+/// Дата в местном виде ГГГГ-ММ-ДД. Через toISOString нельзя: он переводит
+/// в UTC, и поздним вечером выбранный день «уезжал» на следующий.
+function localDate(d) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function dateOptions() {
+  const out = [];
+  const base = new Date();
+  for (let i = 0; i < 14; i++) {
+    out.push(new Date(base.getFullYear(), base.getMonth(), base.getDate() + i));
+  }
+  return out;
+}
+
+function dayFromDraft() {
+  const [y, m, d] = String(bookingDraft.date).split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+/// Считает свободное время так же, как приложение.
+///
+/// Слот годится, если: заведение в это время работает, бронь успевает
+/// закончиться до закрытия, до начала осталось хотя бы 15 минут и есть
+/// хотя бы один подходящий свободный стол.
+async function loadSlots(day, window) {
+  const box = $('slots');
+  if (!box) return;
+
+  let tables = [];
+  let slots = [];
+  try {
+    const from = new Date(window.open.getTime() - 14 * 60 * 60 * 1000);
+    const to = new Date(window.open.getTime() + 26 * 60 * 60 * 1000);
+    const [tSnap, sSnap] = await Promise.all([
+      getDocs(collection(state.db, 'tables')),
+      getDocs(query(collection(state.db, 'reservationSlots'),
+        where('startTime', '>=', Timestamp.fromDate(from)),
+        where('startTime', '<', Timestamp.fromDate(to)))),
+    ]);
+    tables = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    slots = sSnap.docs.map((d) => d.data()).filter((v) => v.active !== false);
+  } catch (_) {
+    box.innerHTML = `<p class="muted small">Не удалось загрузить свободное время.</p>`;
+    return;
+  }
+
+  const duration = bookingDraft.duration || 90;
+  const guests = bookingGuests();
+  // Запас на подготовку стола: 15 минут, как в приложении.
+  const earliest = new Date(Date.now() + 15 * 60 * 1000);
+  const lastStart = new Date(window.close.getTime() - duration * 60 * 1000);
+
+  const free = [];
+  for (let cur = new Date(window.open); cur <= lastStart;
+       cur = new Date(cur.getTime() + 30 * 60 * 1000)) {
+    if (cur <= earliest) continue;
+    const end = new Date(cur.getTime() + duration * 60 * 1000);
+
+    const busy = new Set();
+    slots.forEach((v) => {
+      const s = toDate(v.startTime);
+      const e = toDate(v.endTime);
+      if (s && e && v.tableId && s < end && e > cur) busy.add(v.tableId);
+    });
+
+    const ok = tables.some((t) => {
+      if ((Number(t.seats) || 0) < guests) return false;
+      if (busy.has(t.id)) return false;
+      const until = toDate(t.busyUntil);
+      if (until && cur < until) return false;
+      return true;
+    });
+    if (ok) free.push(new Date(cur));
+  }
+
+  if (!free.length) {
+    box.innerHTML = `<p class="muted small">На выбранные день и условия
+      свободного времени нет. Попробуйте другую дату, другую длительность
+      или меньшую компанию.</p>`;
+    return;
+  }
+
+  box.innerHTML = `<div>${free.map((t) => {
+    const key = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
+    return `<span class="chip ${key === bookingDraft.time ? 'on' : ''}"
+      data-slot="${key}">${key}</span>`;
+  }).join('')}</div>`;
+
+  box.querySelectorAll('[data-slot]').forEach((el) => {
+    el.onclick = () => {
+      bookingDraft.time = el.dataset.slot;
+      pickedTable = null; // стол выбирается уже под конкретное время
+      route();
+    };
+  });
 }
 
 const STATUS_LABEL = {
@@ -892,19 +1055,29 @@ const STATUS_LABEL = {
 
 async function sendBooking() {
   const name = $('bName').value.trim();
-  const phoneRaw = $('bPhone').value.trim();
-  const phone = normalizePhone(phoneRaw);
-  const date = $('bDate').value;
-  const time = $('bTime').value;
-  const guests = Number($('bGuests').value) || 2;
+  const locked = !!((state.profile || {}).phone);
+  const phone = locked
+    ? (state.profile.phone || '')
+    : normalizePhone($('bPhone').value.trim());
+  const guests = bookingGuests();
   const comment = $('bComment').value.trim();
+  const duration = bookingDraft.duration || 90;
 
   if (!name) return toast('Укажите имя');
-  if (phone.length !== 11) return toast('Проверьте номер телефона');
-  if (!date || !time) return toast('Выберите дату и время');
+  if (!isValidRuPhone(phone)) return toast('Проверьте номер телефона');
+  if (!bookingDraft.time) return toast('Выберите время из списка свободного');
 
-  const start = new Date(`${date}T${time}:00`);
-  if (isNaN(start) || start < new Date()) return toast('Это время уже прошло');
+  const start = bookingStart();
+  if (!start) return toast('Выберите дату и время');
+  if (start < new Date()) return toast('Это время уже прошло');
+
+  // Страховка на случай, если гость выбрал время, а потом сменил день:
+  // бронировать в нерабочий час нельзя, даже если слот остался на экране.
+  const win = workingWindow(dayFromDraft());
+  const end = new Date(start.getTime() + duration * 60 * 1000);
+  if (!win || start < win.open || end > win.close) {
+    return toast('В это время мы закрыты — выберите время из списка');
+  }
 
   $('bSend').disabled = true;
   try {
@@ -916,7 +1089,7 @@ async function sendBooking() {
       tableId: (pickedTable && pickedTable.id) || '',
       tableName: (pickedTable && pickedTable.name) || '',
       startTime: Timestamp.fromDate(start),
-      durationMinutes: 90,
+      durationMinutes: duration,
       status: 'new',
       comment,
       source: 'kolibri',
@@ -936,7 +1109,7 @@ async function sendBooking() {
           tableId: pickedTable.id,
           clientUid: state.uid,
           startTime: Timestamp.fromDate(start),
-          endTime: Timestamp.fromDate(new Date(start.getTime() + 90 * 60 * 1000)),
+          endTime: Timestamp.fromDate(end),
           active: true,
         }, { merge: true });
       } catch (_) {
@@ -951,6 +1124,7 @@ async function sendBooking() {
     if (!(state.profile || {}).phone) patch.phone = phone;
     await setDoc(doc(state.db, 'clients', state.uid), patch, { merge: true });
     pickedTable = null;
+    bookingDraft.time = '';
     toast('Заявка отправлена — скоро подтвердим');
   } catch (e) {
     toast('Не удалось отправить заявку');
@@ -1405,6 +1579,7 @@ function screenHall(pickMode) {
   // Занятость по броням на выбранное время — только в режиме выбора.
   let busyByBooking = new Set();
   const when = pickMode ? bookingStart() : null;
+  const durMs = (bookingDraft.duration || 90) * 60 * 1000;
 
   const draw = (tables) => {
     const box = $('hall');
@@ -1460,7 +1635,7 @@ function screenHall(pickMode) {
   if (pickMode && when) {
     const from = new Date(when.getTime() - 6 * 60 * 60 * 1000);
     const to = new Date(when.getTime() + 6 * 60 * 60 * 1000);
-    const end = new Date(when.getTime() + 90 * 60 * 1000);
+    const end = new Date(when.getTime() + durMs);
     sub(onSnapshot(
       query(collection(state.db, 'reservationSlots'),
         where('startTime', '>=', Timestamp.fromDate(from)),
@@ -1483,7 +1658,7 @@ function screenHall(pickMode) {
 
 /// Что гость выбрал в форме брони — время и число гостей. Форма живёт на
 /// другом экране, поэтому значения запоминаются при уходе на карту.
-let bookingDraft = { date: '', time: '', guests: 2 };
+let bookingDraft = { date: '', time: '', guests: 2, duration: 90 };
 
 function bookingStart() {
   if (!bookingDraft.date || !bookingDraft.time) return null;
