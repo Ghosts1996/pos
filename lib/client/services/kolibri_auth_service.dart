@@ -44,7 +44,16 @@ class KolibriAuthService {
   /// появилось это поле после обновления приложения.
   Future<ClientProfile> ensureGuest() async {
     if (_auth.currentUser == null) {
-      await _auth.signInAnonymously();
+      // Сохранённый вход поднимается с диска не мгновенно. Проверка
+      // «пусто — значит входим заново» сразу после старта создавала гостю
+      // НОВЫЙ анонимный аккаунт: бонусы, уровень и вся история визитов
+      // оставались на прежнем, а гость видел пустой профиль. Сначала
+      // дожидаемся восстановления.
+      final restored = await _auth
+          .authStateChanges()
+          .first
+          .timeout(const Duration(seconds: 8), onTimeout: () => null);
+      if (restored == null) await _auth.signInAnonymously();
     }
     final shortId = await getShortDeviceId();
     final profile = await _link.ensureProfile(uid);
