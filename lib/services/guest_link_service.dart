@@ -819,6 +819,18 @@ class GuestLinkService {
 
   Future<void> addReview(GuestReview review) => _reviews.add(review.toMap());
 
+  /// Профиль гостя по uid — нужен на экране отзывов, чтобы рядом с оценкой
+  /// было видно, кто её поставил, и как с ним связаться.
+  Future<ClientProfile?> profileOnce(String uid) async {
+    if (uid.isEmpty) return null;
+    try {
+      final doc = await _clients.doc(uid).get();
+      return doc.exists ? ClientProfile.fromDoc(doc) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Stream<List<GuestReview>> recentReviewsStream({int limit = 50}) => _reviews
       .orderBy('createdAt', descending: true)
       .limit(limit)

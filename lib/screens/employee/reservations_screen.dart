@@ -216,7 +216,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                     Text(
                       '${r.tableName.isEmpty ? 'стол не назначен' : r.tableName} · '
                       '${r.durationMinutes} мин · ${r.status.label}'
-                      '${r.source == 'kolibri' ? ' · Colibri' : ''}',
+                      '${r.source == 'kolibri' ? ' · Colibri' : ''}'
+                      '${r.guestConfirmed ? ' · гость подтвердил' : ''}',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
                   ],

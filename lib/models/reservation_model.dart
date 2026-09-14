@@ -100,6 +100,12 @@ class ReservationModel {
   /// Чек, открытый по этой брони (после посадки).
   final String sessionId;
 
+  /// Гость подтвердил, что придёт, — ответил на напоминание за 20 минут.
+  /// Хостес видит это в списке: подтверждённая бронь почти не рискует
+  /// остаться пустым столом, а молчание за двадцать минут — наоборот,
+  /// повод позвонить.
+  final bool guestConfirmed;
+
   final DateTime createdAt;
   final DateTime? confirmedAt;
   final String handledBy;
@@ -120,6 +126,7 @@ class ReservationModel {
     this.preOrder = const [],
     this.aiNote = '',
     this.sessionId = '',
+    this.guestConfirmed = false,
     required this.createdAt,
     this.confirmedAt,
     this.handledBy = '',
@@ -156,6 +163,7 @@ class ReservationModel {
           .toList(),
       aiNote: data['aiNote'] ?? '',
       sessionId: data['sessionId'] ?? '',
+      guestConfirmed: data['guestConfirmed'] == true,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       confirmedAt: confirmed is Timestamp ? confirmed.toDate() : null,
       handledBy: data['handledBy'] ?? '',
@@ -177,6 +185,7 @@ class ReservationModel {
         'preOrder': preOrder.map((e) => e.toMap()).toList(),
         'aiNote': aiNote,
         'sessionId': sessionId,
+        'guestConfirmed': guestConfirmed,
         'createdAt': Timestamp.fromDate(createdAt),
         'confirmedAt': confirmedAt != null ? Timestamp.fromDate(confirmedAt!) : null,
         'handledBy': handledBy,
@@ -195,6 +204,7 @@ class ReservationModel {
     List<OrderItem>? preOrder,
     String? aiNote,
     String? sessionId,
+    bool? guestConfirmed,
     DateTime? confirmedAt,
     String? handledBy,
   }) =>
@@ -214,6 +224,7 @@ class ReservationModel {
         preOrder: preOrder ?? this.preOrder,
         aiNote: aiNote ?? this.aiNote,
         sessionId: sessionId ?? this.sessionId,
+        guestConfirmed: guestConfirmed ?? this.guestConfirmed,
         createdAt: createdAt,
         confirmedAt: confirmedAt ?? this.confirmedAt,
         handledBy: handledBy ?? this.handledBy,
