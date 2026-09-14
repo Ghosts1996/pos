@@ -154,11 +154,18 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 .rule { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
 .rule i { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); margin-top: 8px; flex: none; }
 
-/* Карта зала: столы стоят по координатам 0..1, как на кассе. */
+/* Карта зала: столы стоят по координатам 0..1, как на кассе.
+   Размер плитки зависит от ширины экрана, а координата раскладывается в
+   диапазон «от края до края минус плитка» — так стол с координатой 0 или 1
+   прижимается к краю целиком, а не наполовину уезжает за него. Именно так
+   карта считается и на кассе. */
 .hall {
+  --tile-w: clamp(58px, 20vw, 96px);
+  --tile-h: calc(var(--tile-w) * 0.82);
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
+  max-height: 62vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -166,20 +173,28 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 }
 .table-dot {
   position: absolute;
-  width: 88px; height: 72px;
-  border-radius: 14px;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  border-radius: 12px;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  text-align: center; padding: 6px;
-  font-size: 13px; font-weight: 700; line-height: 1.2;
+  text-align: center; padding: 4px;
+  font-size: clamp(10px, 3vw, 13px);
+  font-weight: 700; line-height: 1.15;
   border: 1px solid transparent;
+  overflow: hidden;
+  word-break: break-word;
 }
-.table-dot small { display: block; font-weight: 400; font-size: 11px; opacity: .85; }
+.table-dot small {
+  display: block; font-weight: 400;
+  font-size: clamp(9px, 2.6vw, 11px);
+  opacity: .85; margin-top: 2px;
+}
 .table-dot.free { background: #3F9D5B; color: #04140E; }
 .table-dot.busy { background: #C24A4A; color: #fff; }
 .table-dot.small { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
 .table-dot.pick { cursor: pointer; }
-.table-dot.chosen { outline: 3px solid var(--gold); }
+.table-dot.chosen { outline: 3px solid var(--gold); outline-offset: -3px; }
 .legend { display: flex; gap: 16px; justify-content: center; margin-top: 12px; }
 .legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: block; }
