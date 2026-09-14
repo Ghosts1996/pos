@@ -1138,6 +1138,33 @@ function tableStateFor(t, start, end, bookedIds, guests) {
   return (start - freeAt) < EXTENSION_RISK_MS ? 'risky' : 'free';
 }
 
+/// Свободные столы на интервал — так же, как считает приложение.
+///
+/// Сначала те, что точно будут свободны, потом «впритык» (их часто
+/// продлевают), внутри группы — по возрастанию мест, чтобы двоим не
+/// доставался стол на восьмерых.
+async function freeTablesFor(start, end, guests) {
+  const from = new Date(start.getTime() - 14 * 60 * 60 * 1000);
+  const to = new Date(start.getTime() + 26 * 60 * 60 * 1000);
+  const [tSnap, sSnap] = await Promise.all([
+    getDocs(collection(state.db, 'tables')),
+    getDocs(query(collection(state.db, 'reservationSlots'),
+      where('startTime', '>=', Timestamp.fromDate(from)),
+      where('startTime', '<', Timestamp.fromDate(to)))),
+  ]);
+  const tables = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const slots = sSnap.docs.map((d) => d.data()).filter((v) => v.active !== false);
+  const booked = bookedTableIds(slots, start, end);
+
+  return tables
+    .map((t) => ({ t, st: tableStateFor(t, start, end, booked, guests) }))
+    .filter((v) => v.st === 'free' || v.st === 'risky')
+    .sort((a, b) => (a.st === b.st
+      ? (Number(a.t.seats) || 0) - (Number(b.t.seats) || 0)
+      : (a.st === 'free' ? -1 : 1)))
+    .map((v) => v.t);
+}
+
 /// Какие столы заняты бронями на интервал.
 function bookedTableIds(slots, start, end) {
   const out = new Set();
@@ -1248,13 +1275,34 @@ async function sendBooking() {
 
   $('bSend').disabled = true;
   try {
+    // Стол назначается всегда — ровно как в приложении на Android. Если
+    // гость его не выбирал, подбираем сами; если выбирал, перепроверяем
+    // прямо сейчас: карту он мог листать долго, и стол могли занять.
+    // Без этого бронь уходила без стола и никого не занимала — второй
+    // гость спокойно бронировал то же место на то же время.
+    let table = pickedTable;
+    const free = await freeTablesFor(start, end, guests);
+    if (table && table.id) {
+      if (!free.some((t) => t.id === table.id)) {
+        toast('Этот стол только что заняли — выберите другой');
+        pickedTable = null;
+        return;
+      }
+    } else {
+      if (!free.length) {
+        toast('На это время свободных столов не осталось');
+        return;
+      }
+      table = { id: free[0].id, name: free[0].name || '' };
+    }
+
     const ref = await addDoc(collection(state.db, 'reservations'), {
       clientUid: state.uid,
       guestName: name,
       phone,
       guestsCount: guests,
-      tableId: (pickedTable && pickedTable.id) || '',
-      tableName: (pickedTable && pickedTable.name) || '',
+      tableId: table.id,
+      tableName: table.name || '',
       startTime: Timestamp.fromDate(start),
       durationMinutes: duration,
       status: 'new',
@@ -1270,34 +1318,50 @@ async function sendBooking() {
     // сразу увидел стол занятым на это время: сами брони ему читать
     // нельзя — там чужие имена и телефоны. Приложение на Android пишет
     // его так же, тем же id, что у брони.
-    if (pickedTable && pickedTable.id) {
-      try {
-        await setDoc(doc(state.db, 'reservationSlots', ref.id), {
-          tableId: pickedTable.id,
-          clientUid: state.uid,
-          startTime: Timestamp.fromDate(start),
-          endTime: Timestamp.fromDate(end),
-          active: true,
-        }, { merge: true });
-      } catch (_) {
-        // Зеркало вторично: сама бронь создана и видна кассе.
-      }
+    try {
+      await setDoc(doc(state.db, 'reservationSlots', ref.id), {
+        tableId: table.id,
+        clientUid: state.uid,
+        startTime: Timestamp.fromDate(start),
+        endTime: Timestamp.fromDate(end),
+        active: true,
+      }, { merge: true });
+    } catch (_) {
+      // Зеркало вторично: сама бронь создана и видна кассе.
     }
 
     // Имя и телефон пригодятся в следующий раз — сохраняем в профиль.
     // Телефон меняется только если его ещё не задавали: к нему привязаны
     // бонусы, и правила базы менять его гостю не дают.
     const patch = { name };
-    if (!(state.profile || {}).phone) patch.phone = phone;
+    if (!(state.profile || {}).phone) {
+      // Указатель «номер → гость» занимаем так же, как это делает
+      // приложение: иначе касса по этому номеру нашла бы чужой профиль,
+      // а бонусы уехали бы не туда.
+      if (await phoneTakenByOther(phone)) {
+        alert('Номер уже зарегистрирован\n\n'
+          + 'На этот номер уже есть профиль. Назовите кальянщику номер и '
+          + '«ID устройства» из профиля — он объединит их на кассе. '
+          + 'Бронь при этом уже отправлена.');
+      } else {
+        patch.phone = phone;
+        try {
+          await setDoc(doc(state.db, 'phoneIndex', phone), { uid: state.uid });
+        } catch (_) {}
+      }
+    }
     await setDoc(doc(state.db, 'clients', state.uid), patch, { merge: true });
     pickedTable = null;
     bookingDraft.time = '';
     toast('Заявка отправлена — скоро подтвердим');
   } catch (e) {
     toast('Не удалось отправить заявку');
+  } finally {
+    // Именно finally: выше есть выходы по «стол заняли» и «столов не
+    // осталось», и без него кнопка навсегда оставалась бы серой.
+    const btn = $('bSend');
+    if (btn) btn.disabled = false;
   }
-  const btn = $('bSend');
-  if (btn) btn.disabled = false;
 }
 
 function watchMyBookings() {
@@ -1328,7 +1392,7 @@ function watchMyBookings() {
             </div>
             ${active ? `
               <div class="btn-row" style="margin-top:12px">
-                ${r.status === 'confirmed' && !r.guestConfirmed
+                ${(r.status === 'new' || r.status === 'confirmed') && !r.guestConfirmed
                   ? `<button class="btn-ghost" data-come="${esc(r.id)}">Приду</button>` : '<span></span>'}
                 <button class="btn-danger" data-cancel="${esc(r.id)}">Отменить</button>
               </div>` : ''}
@@ -1389,66 +1453,81 @@ function prettyPhone(d) {
 /// он сам открыл страницу. Ответ «Не приду» сразу отменяет бронь —
 /// заведение узнаёт о неявке заранее и успевает отдать стол.
 function renderBookingSoon(boxId) {
+  // Плашка зависит не только от данных, но и от текущего времени: гость
+  // может открыть страницу за час до брони и не закрывать её. Без этого
+  // таймера перерисовка случалась бы только при изменении брони в базе —
+  // то есть плашка не появлялась бы вовсе, а «через N минут» показывало
+  // бы время открытия страницы.
+  let draw = () => {};
+  const tick = setInterval(() => draw(), 30 * 1000);
+  sub(() => clearInterval(tick));
+
   sub(onSnapshot(
     query(collection(state.db, 'reservations'), where('clientUid', '==', state.uid)),
     (snap) => {
-      const box = $(boxId);
-      if (!box) return;
-      const now = Date.now();
-      const soon = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => {
-        if (r.guestConfirmed) return false;
-        if (r.status !== 'new' && r.status !== 'confirmed') return false;
-        const t = toDate(r.startTime);
-        if (!t) return false;
-        const left = (t.getTime() - now) / 60000;
-        // Полчаса до начала и не больше десяти минут после: опоздавшего
-        // тоже стоит спросить, ждать ли его.
-        return left <= 30 && left >= -10;
-      }).sort((a, b) => toDate(a.startTime) - toDate(b.startTime));
-
-      if (!soon.length) { box.innerHTML = ''; return; }
-      const r = soon[0];
-      const t = toDate(r.startTime);
-      const left = Math.round((t.getTime() - now) / 60000);
-
-      box.innerHTML = `
-        <div class="card" style="border-color:var(--gold)">
-          <div class="row">
-            <span style="color:var(--gold)">📅</span>
-            <div class="grow" style="font-weight:700">
-              ${left > 0 ? `Бронь через ${left} ${minutesWord(left)}` : 'Ваша бронь уже началась'}
-            </div>
-          </div>
-          <div class="small muted" style="margin-top:6px">
-            ${hhmm(t)}${r.tableName ? ', стол ' + esc(r.tableName) : ''} ·
-            ${r.guestsCount || 2} чел. Подтвердите, что придёте, — или освободите
-            стол для других.
-          </div>
-          <div class="btn-row" style="margin-top:14px">
-            <button class="btn-primary" data-come="${esc(r.id)}">Приду</button>
-            <button class="btn-ghost" data-nocome="${esc(r.id)}">Не приду</button>
-          </div>
-        </div>`;
-
-      box.querySelector('[data-come]').onclick = async (e) => {
-        e.target.disabled = true;
-        try {
-          await updateDoc(doc(state.db, 'reservations', r.id), { guestConfirmed: true });
-          toast('Спасибо, ждём вас');
-        } catch (_) { toast('Не удалось отметить'); e.target.disabled = false; }
-      };
-      box.querySelector('[data-nocome]').onclick = async (e) => {
-        e.target.disabled = true;
-        try {
-          await updateDoc(doc(state.db, 'reservations', r.id), { status: 'cancelled' });
-          try {
-            await setDoc(doc(state.db, 'reservationSlots', r.id),
-              { active: false, clientUid: state.uid }, { merge: true });
-          } catch (_) {}
-          toast('Бронь отменена. Спасибо, что предупредили');
-        } catch (_) { toast('Не удалось отменить'); e.target.disabled = false; }
-      };
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      draw = () => renderSoonCard(boxId, docs);
+      draw();
     }, () => {}));
+}
+
+function renderSoonCard(boxId, docs) {
+  const box = $(boxId);
+  if (!box) return;
+  const now = Date.now();
+  const soon = docs.filter((r) => {
+    if (r.guestConfirmed) return false;
+    if (r.status !== 'new' && r.status !== 'confirmed') return false;
+    const t = toDate(r.startTime);
+    if (!t) return false;
+    const left = (t.getTime() - now) / 60000;
+    // Полчаса до начала и не больше десяти минут после: опоздавшего
+    // тоже стоит спросить, ждать ли его.
+    return left <= 30 && left >= -10;
+  }).sort((a, b) => toDate(a.startTime) - toDate(b.startTime));
+
+  if (!soon.length) { box.innerHTML = ''; return; }
+  const r = soon[0];
+  const t = toDate(r.startTime);
+  const left = Math.round((t.getTime() - now) / 60000);
+
+  box.innerHTML = `
+    <div class="card" style="border-color:var(--gold)">
+      <div class="row">
+        <span style="color:var(--gold)">📅</span>
+        <div class="grow" style="font-weight:700">
+          ${left > 0 ? `Бронь через ${left} ${minutesWord(left)}` : 'Ваша бронь уже началась'}
+        </div>
+      </div>
+      <div class="small muted" style="margin-top:6px">
+        ${hhmm(t)}${r.tableName ? ', стол ' + esc(r.tableName) : ''} ·
+        ${r.guestsCount || 2} чел. Подтвердите, что придёте, — или освободите
+        стол для других.
+      </div>
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn-primary" data-come="${esc(r.id)}">Приду</button>
+        <button class="btn-ghost" data-nocome="${esc(r.id)}">Не приду</button>
+      </div>
+    </div>`;
+
+  box.querySelector('[data-come]').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      await updateDoc(doc(state.db, 'reservations', r.id), { guestConfirmed: true });
+      toast('Спасибо, ждём вас');
+    } catch (_) { toast('Не удалось отметить'); e.target.disabled = false; }
+  };
+  box.querySelector('[data-nocome]').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      await updateDoc(doc(state.db, 'reservations', r.id), { status: 'cancelled' });
+      try {
+        await setDoc(doc(state.db, 'reservationSlots', r.id),
+          { active: false, clientUid: state.uid }, { merge: true });
+      } catch (_) {}
+      toast('Бронь отменена. Спасибо, что предупредили');
+    } catch (_) { toast('Не удалось отменить'); e.target.disabled = false; }
+  };
 }
 
 /// «через 1 минуту», «через 2 минуты», «через 25 минут».
@@ -1539,6 +1618,19 @@ function screenProfile() {
   watchVisits();
 }
 
+/// Занят ли номер ДРУГИМ профилем. Чтение одного документа по id —
+/// запрос по коллекции гостю правила базы не разрешают.
+async function phoneTakenByOther(phone) {
+  if (!phone) return false;
+  try {
+    const idx = await getDoc(doc(state.db, 'phoneIndex', phone));
+    const owner = idx.exists() ? (idx.data().uid || '') : '';
+    return !!owner && owner !== state.uid;
+  } catch (_) {
+    return false; // не проверили — не мешаем гостю
+  }
+}
+
 async function saveProfile() {
   const btn = $('pSave');
   const locked = !!((state.profile || {}).phone);
@@ -1558,14 +1650,7 @@ async function saveProfile() {
         toast('Введите корректный номер (например, 79995061580)');
         return;
       }
-      let takenByOther = false;
-      try {
-        const idx = await getDoc(doc(state.db, 'phoneIndex', phone));
-        const owner = idx.exists() ? (idx.data().uid || '') : '';
-        takenByOther = !!owner && owner !== state.uid;
-      } catch (_) {}
-
-      if (takenByOther) {
+      if (await phoneTakenByOther(phone)) {
         // Про чужой профиль не рассказываем ничего — ни имени, ни
         // баланса: иначе бонусный счёт любого человека мог бы увидеть
         // тот, кто угадал его номер телефона.
