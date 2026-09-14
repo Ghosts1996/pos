@@ -824,8 +824,11 @@ function screenBooking() {
       <label class="field"><span>Ваше имя</span>
         <input id="bName" value="${esc(p.name || '')}" placeholder="Как к вам обращаться"></label>
       <label class="field"><span>Телефон</span>
-        <input id="bPhone" type="tel" inputmode="tel" value="${esc(p.phone ? '+' + p.phone : '')}"
-          placeholder="+7 999 123-45-67"></label>
+        <input id="bPhone" type="tel" inputmode="tel"
+          value="${esc(p.phone ? prettyPhone(p.phone) : '')}"
+          placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
+      ${p.phone ? `<p class="small muted" style="margin:-4px 0 12px">
+        🔒 Номер привязан — сменить его можно только через администратора</p>` : ''}
       <div class="btn-row">
         <label class="field"><span>Дата</span>
           <input id="bDate" type="date" value="${esc(bookingDraft.date)}"></label>
@@ -1018,12 +1021,20 @@ function watchMyBookings() {
     }, () => {}));
 }
 
-/// Приводит номер к 11 цифрам, как в базе: 79995061580.
+/// Приводит любой российский номер к единому виду без «+»: 79995061580.
+/// Правила те же, что в приложении (lib/utils/phone_utils.dart):
+///   +7 999 506-15-80 · 7(999)506-15-80 · 8 999 506 15 80 · 9995061580
 function normalizePhone(raw) {
-  let d = String(raw || '').replace(/\D/g, '');
-  if (d.length === 10) d = '7' + d;
-  if (d.length === 11 && d[0] === '8') d = '7' + d.slice(1);
+  const d = String(raw || '').replace(/\D/g, '');
+  if (!d) return String(raw || '').trim();
+  if (d.length === 11) return d[0] === '8' ? '7' + d.slice(1) : d;
+  if (d.length === 10 && d[0] === '9') return '7' + d;
   return d;
+}
+
+/// Похоже ли на российский номер: 11 цифр, начиная с 7.
+function isValidRuPhone(normalized) {
+  return normalized.length === 11 && normalized[0] === '7';
 }
 function prettyPhone(d) {
   if (!d || d.length !== 11) return d || '';
@@ -1057,9 +1068,11 @@ function screenProfile() {
       <label class="field"><span>Телефон</span>
         <input id="pPhone" type="tel" inputmode="tel"
           value="${esc(p.phone ? prettyPhone(p.phone) : '')}"
-          placeholder="+7 999 123-45-67" ${p.phone ? 'disabled' : ''}></label>
-      ${p.phone ? `<p class="small muted">Номер привязан — к нему прикреплены бонусы.
-        Изменить его может только кальянщик на кассе.</p>` : ''}
+          placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
+      <p class="small muted" style="margin:-4px 0 12px">
+        ${p.phone
+          ? '🔒 Сменить номер можно только через администратора'
+          : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
       <button class="btn-primary" id="pSave">Сохранить</button>
     </div>
 
@@ -1089,6 +1102,10 @@ function screenProfile() {
       Colibri Lounge · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
+  if ((state.profile || {}).phone) {
+    $('pPhone').onclick = () => toast('Номер уже привязан. Попросите '
+      + 'администратора изменить его на кассе.');
+  }
   const idBox = $('deviceId');
   if (idBox) {
     idBox.onclick = async () => {
@@ -1105,36 +1122,58 @@ function screenProfile() {
 
 async function saveProfile() {
   const btn = $('pSave');
-  btn.disabled = true;
-  const name = $('pName').value.trim();
-  const patch = { name };
+  const locked = !!((state.profile || {}).phone);
+  const raw = $('pPhone').value.trim();
+  const phone = raw ? normalizePhone(raw) : '';
 
-  const already = (state.profile || {}).phone;
-  if (!already) {
-    const phone = normalizePhone($('pPhone').value);
-    if (phone) {
-      if (phone.length !== 11) { toast('Проверьте номер телефона'); btn.disabled = false; return; }
-      // Указатель «номер → гость». Нужен, чтобы один номер не оказался у
-      // двоих: занять можно только свободный, чужой переписать нельзя.
-      try {
-        await setDoc(doc(state.db, 'phoneIndex', phone), { uid: state.uid });
-      } catch (_) {
-        toast('Этот номер уже привязан к другому гостю');
-        btn.disabled = false;
+  btn.disabled = true;
+  btn.textContent = 'Сохраняем…';
+
+  // Как и в приложении: что бы ни случилось внутри, кнопка обязана
+  // вернуться в рабочее состояние. Иначе она навсегда застревает на
+  // «Сохраняем…», не показывая причины.
+  try {
+    // Номер новый — сначала проверяем, не занят ли он другим гостем.
+    if (!locked && phone) {
+      if (!isValidRuPhone(phone)) {
+        toast('Введите корректный номер (например, 79995061580)');
         return;
       }
-      patch.phone = phone;
-    }
-  }
+      let takenByOther = false;
+      try {
+        const idx = await getDoc(doc(state.db, 'phoneIndex', phone));
+        const owner = idx.exists() ? (idx.data().uid || '') : '';
+        takenByOther = !!owner && owner !== state.uid;
+      } catch (_) {}
 
-  try {
+      if (takenByOther) {
+        // Про чужой профиль не рассказываем ничего — ни имени, ни
+        // баланса: иначе бонусный счёт любого человека мог бы увидеть
+        // тот, кто угадал его номер телефона.
+        alert('Номер уже зарегистрирован\n\n'
+          + 'На этот номер уже есть профиль. Чтобы его бонусы и история '
+          + 'появились на этом устройстве, назовите кальянщику номер и '
+          + '«ID устройства» ниже — он объединит профили на кассе за пару '
+          + 'секунд.');
+        return;
+      }
+    }
+
+    const patch = { name: $('pName').value.trim() };
+    if (!locked && phone) {
+      patch.phone = phone;
+      // Указатель «номер → гость»: вторичен, поэтому его осечка не должна
+      // мешать сохранению самого профиля.
+      try { await setDoc(doc(state.db, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
+    }
     await setDoc(doc(state.db, 'clients', state.uid), patch, { merge: true });
     toast('Сохранено');
   } catch (_) {
-    toast('Не удалось сохранить');
+    toast('Не удалось сохранить: проверьте интернет и попробуйте снова');
+  } finally {
+    const b = $('pSave');
+    if (b) { b.disabled = false; b.textContent = 'Сохранить'; }
   }
-  const b = $('pSave');
-  if (b) b.disabled = false;
 }
 
 function watchVisits() {

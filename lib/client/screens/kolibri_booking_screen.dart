@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/phone_utils.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
@@ -73,12 +74,21 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     if (mounted) setState(() => _venue = v);
   }
 
+  /// Номер уже привязан к профилю — менять его гость не может.
+  ///
+  /// Так же, как на экране профиля: к номеру привязаны бонусы, и смена
+  /// номера означала бы доступ к чужому счёту. Правила базы это и так не
+  /// пропускают — но раньше поле здесь было открыто, и правка номера
+  /// молча роняла ВСЮ отправку брони: обновление профиля выполняется
+  /// первым, и его отказ до создания брони просто не доходил.
+  bool _phoneLocked = false;
+
   Future<void> _prefill() async {
     final p = await _link.profileStream(_auth.uid).first;
     if (p != null && mounted) {
       _nameCtrl.text = p.name;
       _phoneCtrl.text = p.phone;
-      setState(() {});
+      setState(() => _phoneLocked = p.phone.isNotEmpty);
     }
   }
 
@@ -263,7 +273,16 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         TextField(
           controller: _phoneCtrl,
           keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(labelText: 'Телефон'),
+          readOnly: _phoneLocked,
+          decoration: InputDecoration(
+            labelText: 'Телефон',
+            helperText: _phoneLocked
+                ? 'Сменить номер можно только через администратора'
+                : 'Укажите номер в любом формате: +7, 8 или просто 9...',
+            suffixIcon: _phoneLocked
+                ? const Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
+                : null,
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -450,7 +469,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       final profile = await _link.ensureProfile(_auth.uid);
       await _link.updateProfile(_auth.uid, {
         'name': _nameCtrl.text.trim(),
-        'phone': _phoneCtrl.text.trim(),
+        // Номер отправляем, только если он ещё не привязан: попытка
+        // изменить привязанный отклоняется правилами базы и уронила бы
+        // всю отправку брони — она идёт следующим шагом.
+        if (!_phoneLocked && _phoneCtrl.text.trim().isNotEmpty)
+          'phone': normalizePhone(_phoneCtrl.text.trim()),
       });
 
       await _service.create(ReservationModel(
