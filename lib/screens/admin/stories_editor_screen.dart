@@ -76,6 +76,8 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
               children: [
                 Expanded(
                   child: Text(s.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 16)),
                 ),
@@ -92,7 +94,36 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
               ],
             ),
             const SizedBox(height: 6),
-            Text(s.text, style: const TextStyle(color: AppColors.textMuted)),
+            Text(s.text,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.textMuted)),
+            if (s.actionLabel.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    s.action == 'booking'
+                        ? Icons.event_seat
+                        : s.action == 'menu'
+                            ? Icons.restaurant_menu
+                            : Icons.link_off,
+                    size: 15,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${s.actionLabel} · '
+                      '${s.action == 'booking' ? 'ведёт на бронь' : s.action == 'menu' ? 'ведёт в меню' : 'без перехода'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: AppColors.primary, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [
@@ -110,19 +141,19 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
   Future<void> _generateDrafts() async {
     setState(() => _busy = true);
     try {
-      final text = await AiService.instance.storyIdeas(count: 3);
-      // Ответ агента режем на карточки по пустой строке: заголовок —
-      // первая строка блока, остальное — текст.
-      final blocks = text.split(RegExp(r'\n\s*\n')).where((b) => b.trim().isNotEmpty);
-      for (final block in blocks.take(5)) {
-        final lines = block.trim().split('\n');
-        final title = lines.first.replaceAll(RegExp(r'^[\d\.\-\s#*]+'), '').trim();
-        final body = lines.skip(1).join(' ').trim();
-        if (title.isEmpty) continue;
+      // Агент отдаёт готовые поля: заголовок, текст, призыв и куда ведёт
+      // кнопка. Раньше здесь резали свободный текст по пустым строкам, и в
+      // заголовок попадала разметка вместе со служебными подписями —
+      // «**Сторис 3 — Ночной формат**», а в текст «Заголовок: … Текст: …
+      // Призыв: …» одной строкой.
+      final drafts = await AiService.instance.storyDrafts(count: 3);
+      for (final d in drafts) {
         await _db.collection('stories').add(StoryCard(
               id: '',
-              title: title.length > 60 ? title.substring(0, 60) : title,
-              text: body,
+              title: d.title,
+              text: d.text,
+              action: d.action,
+              actionLabel: d.cta,
               byAi: true,
               published: false,
               createdAt: DateTime.now(),
@@ -130,7 +161,11 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Черновики созданы — проверьте и опубликуйте')),
+          SnackBar(
+            content: Text(drafts.isEmpty
+                ? 'ИИ не вернул черновиков — попробуйте ещё раз'
+                : 'Черновиков создано: ${drafts.length}. Проверьте и опубликуйте'),
+          ),
         );
       }
     } catch (e) {

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/ai/ai_agents.dart' show cleanAiText;
 
 /// Карточка ленты в приложении гостя: новый микс, ивент, акция.
 /// Публикуется администратором вручную или создаётся ИИ-редактором
@@ -49,8 +50,13 @@ class StoryCard {
     final until = data['publishUntil'];
     return StoryCard(
       id: doc.id,
-      title: data['title'] ?? '',
-      text: data['text'] ?? '',
+      // Чистим при чтении, а не только при записи. Черновики от ИИ уже
+      // лежат в базе с разметкой и служебными подписями («**Сторис 3 —
+      // Ночной формат**», «Заголовок: … Текст: …»), и без этого их пришлось
+      // бы удалять вручную. Заодно страховка на будущее: модель может
+      // прислать markdown вопреки указанию, а гость не должен его видеть.
+      title: cleanAiText(data['title'], maxLength: 80),
+      text: cleanAiText(data['text'], maxLength: 400),
       imageUrl: data['imageUrl'] ?? '',
       action: data['action'] ?? 'none',
       actionLabel: data['actionLabel'] ?? '',

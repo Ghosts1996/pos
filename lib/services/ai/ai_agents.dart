@@ -292,10 +292,26 @@ $_hookahKnowledge
     title: 'Контент-редактор',
     description: 'Тексты сторис и постов для приложения и соцсетей.',
     tools: {'get_menu', 'get_sales'},
+    // Ответ строго в JSON. Свободный текст модель отдавала с разметкой и
+    // служебными словами — «**Сторис 3 — Ночной формат**», «Заголовок: …
+    // Текст: … Призыв: …» — и всё это одной строкой уезжало в карточку.
+    // Гость видел не сторис, а черновик с внутренними подписями.
     systemPrompt: '''$_brandRules
-Роль: контент для ленты приложения и соцсетей.
-Формат каждой сторис: заголовок до 30 символов, текст до 140 символов,
-призыв к действию. Без штампов и восклицательных знаков в каждой строке.''',
+Роль: контент для ленты приложения.
+
+Отвечай ОДНИМ JSON-объектом:
+{"stories":[{"title":"","text":"","cta":"","action":"booking|menu|none"}]}
+
+Правила для каждой сторис:
+- title: до 30 символов, без кавычек, без точки в конце, без слова «Сторис»
+  и без нумерации — это то, что гость видит крупно;
+- text: одно-два предложения до 140 символов, по делу: что это, чем хорошо;
+- cta: 1-3 слова на кнопку («Забронировать», «Открыть меню»);
+- action: booking — если зовём бронировать, menu — если смотреть меню,
+  иначе none.
+
+Ничего, кроме JSON. Без markdown, без ** и #, без слов «Заголовок»,
+«Текст», «Призыв» внутри значений. Без восклицательных знаков и штампов.''',
   );
 
   static const menuWriter = AiAgent(
@@ -548,6 +564,33 @@ class AiService {
   Future<String> storyIdeas({int count = 3}) =>
       ask(AiAgents.storyteller, 'Придумай $count сторис для ленты приложения на эту неделю.');
 
+  /// Готовые черновики сторис — разобранные по полям, а не сплошным текстом.
+  ///
+  /// Раньше ответ агента резался на карточки по пустым строкам: заголовком
+  /// становилась первая строка блока вместе с разметкой («**Сторис 3 —
+  /// Ночной формат**»), а в текст попадало всё остальное, включая
+  /// служебные подписи «Заголовок:», «Текст:», «Призыв:». В ленте у гостя
+  /// это выглядело как кусок черновика, а не как сторис.
+  Future<List<StoryDraft>> storyDrafts({int count = 3}) async {
+    if (!AiAgents.storyteller.enabled || !_settings.isReady) return const [];
+    final json = await _client.completeJson(
+      messages: [
+        AiMessage.system(AiAgents.storyteller.systemPrompt),
+        AiMessage.user('Придумай $count сторис для ленты приложения на эту '
+            'неделю. Опирайся на меню и на то, что гости берут чаще.\n\n'
+            'МЕНЮ:\n${await _ctx.menuSnapshot()}'),
+      ],
+      model: _settings.model,
+      agentId: AiAgents.storyteller.id,
+      maxTokens: 900,
+    );
+    return ((json['stories'] as List?) ?? const [])
+        .map((e) => StoryDraft.fromMap(Map<String, dynamic>.from(e as Map)))
+        .where((d) => d.title.isNotEmpty && d.text.isNotEmpty)
+        .take(count)
+        .toList();
+  }
+
   Future<String> describeMenuItem(String name, {String hint = ''}) => ask(
         AiAgents.menuWriter,
         'Позиция: $name.${hint.isNotEmpty ? ' Уточнение: $hint.' : ''} Дай 3 варианта описания.',
@@ -600,6 +643,61 @@ class AiService {
       return const [];
     }
   }
+}
+
+/// Черновик сторис от ИИ, уже разобранный по полям.
+class StoryDraft {
+  final String title;
+  final String text;
+  final String cta;
+  final String action;
+
+  const StoryDraft({
+    required this.title,
+    required this.text,
+    this.cta = '',
+    this.action = 'none',
+  });
+
+  factory StoryDraft.fromMap(Map<String, dynamic> m) => StoryDraft(
+        title: cleanAiText(m['title'], maxLength: 40),
+        text: cleanAiText(m['text'], maxLength: 180),
+        cta: cleanAiText(m['cta'], maxLength: 24),
+        action: switch (m['action']?.toString()) {
+          'booking' => 'booking',
+          'menu' => 'menu',
+          _ => 'none',
+        },
+      );
+}
+
+/// Приводит строку от модели к виду, пригодному для показа гостю.
+///
+/// Модель периодически возвращает то, что попросили НЕ возвращать:
+/// markdown-звёздочки, решётки заголовков, нумерацию «1.», служебные
+/// подписи «Заголовок:» и переводы строк посреди фразы. Одна такая
+/// оплошность — и гость видит в ленте «**Сторис 3 — Ночной формат**».
+/// Просить вежливее бесполезно, поэтому чистим на своей стороне.
+String cleanAiText(Object? raw, {int maxLength = 200}) {
+  var v = (raw?.toString() ?? '').trim();
+  if (v.isEmpty) return '';
+  v = v.replaceAll(RegExp(r'[*#`_]+'), '');
+  v = v.replaceAll(RegExp(r'^\s*(сторис|история)\s*\d*\s*[—\-:.]\s*',
+      caseSensitive: false), '');
+  v = v.replaceAll(
+      RegExp(r'^\s*(заголовок|текст|призыв|описание)\s*:\s*',
+          caseSensitive: false),
+      '');
+  v = v.replaceAll(RegExp(r'^\s*\d+\s*[.)]\s*'), '');
+  v = v.replaceAll(RegExp(r'\s+'), ' ').trim();
+  v = v.replaceAll(RegExp(r'^["«»\s]+|["«»\s]+$'), '');
+  if (v.length > maxLength) {
+    // Режем по границе слова, чтобы не обрывать на половине буквы.
+    final cut = v.substring(0, maxLength);
+    final space = cut.lastIndexOf(' ');
+    v = '${space > maxLength ~/ 2 ? cut.substring(0, space) : cut}…';
+  }
+  return v;
 }
 
 class UpsellSuggestion {

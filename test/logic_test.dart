@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/client_models.dart';
 import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/marking_code.dart';
+import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -212,6 +213,34 @@ void main() {
       // Серебро 10 000 → Золото 25 000: на 17 500 пройдена половина.
       expect(guest(17500).tierProgress, closeTo(0.5, 0.001));
       expect(guest(10000).tierProgress, 0);
+    });
+  });
+
+  group('Очистка текста от ИИ', () {
+    test('снимает markdown и служебные подписи', () {
+      // Ровно то, что приезжало в ленту гостя вместо сторис.
+      expect(cleanAiText('**Сторис 3 — Ночной формат**'), 'Ночной формат');
+      expect(cleanAiText('Заголовок: Хит недели'), 'Хит недели');
+      expect(cleanAiText('1. Кальян Счастья'), 'Кальян Счастья');
+      expect(cleanAiText('### Премиум'), 'Премиум');
+    });
+
+    test('склеивает переносы и лишние пробелы', () {
+      expect(cleanAiText('Мягкий дым,\n  приятная   цена'), 'Мягкий дым, приятная цена');
+    });
+
+    test('обрезает по границе слова, а не по букве', () {
+      final v = cleanAiText('Самые яркие вечера начинаются поздно', maxLength: 20);
+      expect(v.endsWith('…'), isTrue);
+      expect(v.length <= 21, isTrue);
+      // Последнее слово не должно оказаться разрезанным пополам.
+      expect(v, 'Самые яркие вечера…');
+    });
+
+    test('пустое остаётся пустым', () {
+      expect(cleanAiText(null), '');
+      expect(cleanAiText('   '), '');
+      expect(cleanAiText('**  **'), '');
     });
   });
 
