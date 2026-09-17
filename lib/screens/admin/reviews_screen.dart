@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
@@ -195,7 +194,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 // Позвонить прямо отсюда: с плохим отзывом это и нужно
                 // сделать, пока гость не ушёл навсегда.
                 InkWell(
-                  onTap: () => launchUrl(Uri.parse('tel:+$phone')),
+                  onTap: () => callGuest(context, phone),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Row(
