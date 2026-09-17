@@ -78,7 +78,19 @@ service cloud.firestore {
         (signedIn() &&
          exists(/databases/$(database)/documents/clients/$(request.auth.uid)) &&
          myActiveSession() == doc);
-      allow write: if isStaff();
+
+      // Гость, привязанный к этому чеку (см. sessionClaims), может
+      // подписать его своим именем — и больше ничего. Раньше update тоже
+      // требовал isStaff(), и попытка гостевых приложений проставить
+      // guestTag при посадке за стол всегда отклонялась: подпись на
+      // плитке зала появлялась только если сотрудник вписывал её вручную.
+      allow update: if isStaff() ||
+        (signedIn() &&
+         exists(/databases/$(database)/documents/sessionClaims/$(doc)) &&
+         get(/databases/$(database)/documents/sessionClaims/$(doc)).data.uid == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestTag']));
+
+      allow create, delete: if isStaff();
     }
 
     // ---- Профили гостей ----
