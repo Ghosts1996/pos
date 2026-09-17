@@ -257,6 +257,60 @@ class GuestLinkService {
       .snapshots()
       .map((s) => s.docs.map(ClientProfile.fromDoc).toList());
 
+  /// Удалить гостя из справочника — например, дубль профиля или пробный
+  /// вход, который занял чей-то номер.
+  ///
+  /// Удаляется профиль, обезличенные указатели («номер → uid»,
+  /// «реферальный код → uid») и вечная история визитов гостя — это его
+  /// личные данные, они уходят вместе с профилем.
+  ///
+  /// НЕ трогаем: закрытые чеки (sessions), бронирования, чаевые, отзывы,
+  /// операции с бонусами и заявки на сертификаты — там chek/отчёт остаётся
+  /// частью финансовой истории заведения независимо от того, жив ли ещё
+  /// профиль гостя, который его когда-то оплатил. Это тот же принцип, что
+  /// и в интернет-магазинах: удалили аккаунт — заказы в бухгалтерии никуда
+  /// не делись.
+  Future<void> deleteClient(String uid) async {
+    final doc = await _clients.doc(uid).get();
+    if (!doc.exists) return;
+    final data = doc.data() ?? {};
+    final phone = (data['phone'] as String?) ?? '';
+    final referralCode = (data['referralCode'] as String?) ?? '';
+
+    // Указатели снимаем, только если они ещё ведут на этого гостя: если
+    // номер успели переоформить на другой профиль, чужую запись трогать
+    // нельзя.
+    if (phone.isNotEmpty) {
+      final idx = await _phoneIndex.doc(phone).get();
+      if (idx.exists && (idx.data()?['uid'] as String?) == uid) {
+        await _phoneIndex.doc(phone).delete();
+      }
+    }
+    if (referralCode.isNotEmpty) {
+      final codes = _db.collection('referralCodes');
+      final idx = await codes.doc(referralCode).get();
+      if (idx.exists && (idx.data()?['uid'] as String?) == uid) {
+        await codes.doc(referralCode).delete();
+      }
+    }
+
+    // Подколлекция visits может быть длинной за годы — удаляем пачками,
+    // чтобы не упереться в лимит 500 операций на один batch.
+    final visits = _clients.doc(uid).collection('visits');
+    while (true) {
+      final page = await visits.limit(300).get();
+      if (page.docs.isEmpty) break;
+      final batch = _db.batch();
+      for (final d in page.docs) {
+        batch.delete(d.reference);
+      }
+      await batch.commit();
+      if (page.docs.length < 300) break;
+    }
+
+    await _clients.doc(uid).delete();
+  }
+
   /// Найти гостя по открытому чеку — нужно кассиру при оплате
   /// (бонусы, сертификаты, чаевые).
   Future<ClientProfile?> findBySession(String sessionId) async {

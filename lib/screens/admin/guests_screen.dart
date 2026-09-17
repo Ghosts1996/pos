@@ -40,6 +40,47 @@ class _GuestsScreenState extends State<GuestsScreen> {
     }
   }
 
+  Future<void> _deleteGuest(ClientProfile profile) async {
+    final name = profile.name.isEmpty ? 'Гость' : profile.name;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Удалить «$name»?'),
+        content: Text(
+          'Профиль, номер телефона и история визитов гостя будут удалены '
+          'безвозвратно.${profile.bonusBalance > 0 ? '\n\nНа счету ещё '
+              '${profile.bonusBalance.toStringAsFixed(0)} ₽ бонусов — они '
+              'сгорят вместе с профилем.' : ''}'
+          '${profile.activeSessionId.isNotEmpty ? '\n\nВНИМАНИЕ: гость сейчас '
+              'сидит за столом — удаление профиля не закроет его чек, но '
+              'отвяжет гостя от него в приложении.' : ''}\n\n'
+          'Брони, чеки и отзывы гостя останутся в отчётах заведения.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _link.deleteClient(profile.uid);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Гость «$name» удалён')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось удалить: $e')));
+      }
+    }
+  }
+
   Future<void> _changePhone(ClientProfile profile) async {
     final ctrl = TextEditingController(text: profile.phone);
     final newPhone = await showDialog<String>(
@@ -196,10 +237,30 @@ class _GuestsScreenState extends State<GuestsScreen> {
                         'бонусов ${g.bonusBalance.toStringAsFixed(0)} ₽',
                       ),
                       isThreeLine: true,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.edit_outlined),
-                        tooltip: 'Сменить номер',
-                        onPressed: () => _changePhone(g),
+                      trailing: PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert),
+                        onSelected: (v) {
+                          if (v == 'phone') _changePhone(g);
+                          if (v == 'delete') _deleteGuest(g);
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'phone',
+                            child: ListTile(
+                              leading: Icon(Icons.edit_outlined),
+                              title: Text('Сменить номер'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: ListTile(
+                              leading: Icon(Icons.delete_outline, color: AppColors.danger),
+                              title: Text('Удалить гостя', style: TextStyle(color: AppColors.danger)),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },

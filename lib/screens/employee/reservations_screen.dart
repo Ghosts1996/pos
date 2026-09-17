@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../models/employee.dart';
 import '../../models/reservation_model.dart';
 import '../../models/table_model.dart';
@@ -10,6 +9,7 @@ import '../../services/staff_session_store.dart';
 import '../../services/reservation_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/phone_utils.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/table_picker_map.dart';
 import 'table_detail_screen.dart';
@@ -269,7 +269,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
               if (r.phone.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.phone, color: AppColors.textMuted),
-                  onPressed: () => _showPhone(r.phone),
+                  onPressed: () => callGuest(context, r.phone),
                 ),
             ],
           ),
@@ -623,15 +623,6 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       lastDate: DateTime.now().add(const Duration(days: 120)),
     );
     if (picked != null) setState(() => _day = picked);
-  }
-
-  Future<void> _showPhone(String phone) async {
-    final uri = Uri(scheme: 'tel', path: phone);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(phone)));
-    }
   }
 
   String _fmtDay(DateTime d) =>
