@@ -23,7 +23,15 @@ body {
   padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
   overscroll-behavior-y: contain;
 }
-.wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 24px; }
+/* iPhone: status-bar-style="black-translucent" (нужен, чтобы при запуске с
+   «Домой» не было чёрной полосы вместо строки состояния) означает, что
+   страница рисуется ПОД строкой состояния и «островом» камеры — safe-area
+   сверху сама по себе не резервируется. Без этого отступа верхние кнопки
+   («Это не мой стол» и т.п.) оказывались под вырезом и не нажимались —
+   ровно то, что видно на скриншотах с iPhone. В обычном Safari (не
+   установлено на «Домой») env(safe-area-inset-top) равен 0, и здесь просто
+   остаётся исходный отступ 20px. */
+.wrap { max-width: 560px; margin: 0 auto; padding: calc(20px + env(safe-area-inset-top)) 16px 24px; }
 h1 { font-size: 24px; font-weight: 700; margin: 4px 0 8px; }
 h2 { font-size: 16px; font-weight: 600; margin: 24px 0 12px; }
 p { margin: 0 0 10px; }
