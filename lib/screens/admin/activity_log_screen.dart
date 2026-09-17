@@ -187,10 +187,11 @@ class _AuditTabState extends State<_AuditTab> {
                         setState(() => _busy = true);
                         try {
                           final journal = await AuditLogService.instance.snapshotForAi();
+                          final sales = await AiService.instance.auditContext();
                           final text = await AiService.instance.ask(
                             AiAgents.auditor,
                             'Проверь журнал кассы и продажи за неделю на аномалии.',
-                            extraContext: 'ЖУРНАЛ КАССЫ:\n$journal',
+                            extraContext: 'ЖУРНАЛ КАССЫ:\n$journal\n\nПРОДАЖИ ЗА НЕДЕЛЮ:\n$sales',
                           );
                           if (mounted) setState(() => _aiResult = text);
                         } catch (e) {

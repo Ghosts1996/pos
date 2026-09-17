@@ -327,7 +327,15 @@ class GuestLinkService {
   /// возвращаем список чеков, чтобы гость выбрал свой: раньше молча брался
   /// последний открытый, и двое гостей за одним столом видели один и тот же
   /// чужой счёт вместо каждый своего.
+  /// Без номера в профиле садиться за стол нельзя: кассир не сможет найти
+  /// гостя для брони, начисления бонусов на новом устройстве или связи по
+  /// проблеме с чеком. Проверяем ДО обращения к столу — если номера нет,
+  /// саму привязку даже не начинаем.
   Future<TableBindResult> bindToTable(String uid, String tableId) async {
+    final profile = await _clients.doc(uid).get();
+    final phone = (profile.data()?['phone'] as String?) ?? '';
+    if (phone.isEmpty) return const TableBindResult.needsPhone();
+
     final tableDoc = await _db.collection('tables').doc(tableId).get();
     if (!tableDoc.exists) return const TableBindResult.empty();
     final table = TableModel.fromDoc(tableDoc);

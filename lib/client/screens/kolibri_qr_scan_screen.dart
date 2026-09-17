@@ -4,6 +4,7 @@ import '../../services/guest_link_service.dart';
 import '../widgets/check_picker_sheet.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
+import 'kolibri_profile_screen.dart';
 
 /// Сканер QR-кода стола.
 ///
@@ -73,6 +74,15 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
       await _auth.ensureGuest();
       final result = await _link.bindToTable(_auth.uid, tableId);
       if (!mounted) return;
+      if (result.phoneRequired) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Укажите номер телефона в профиле, чтобы сесть за стол')),
+        );
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const KolibriProfileScreen(profile: null)),
+        );
+        return;
+      }
       if (result.isEmpty) {
         setState(() {
           _handling = false;

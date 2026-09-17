@@ -10,6 +10,7 @@ import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/marking_code.dart';
 import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
+import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/models/venue_models.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -330,6 +331,40 @@ void main() {
       expect(claim.isPending, isTrue);
       expect(claim.isGranted, isFalse);
       expect(claim.amount, 0);
+    });
+  });
+
+  group('Привязка к столу', () {
+    test('нет номера в профиле — привязка не происходит ни к чему', () {
+      const r = TableBindResult.needsPhone();
+      expect(r.phoneRequired, isTrue);
+      expect(r.isEmpty, isFalse);
+      expect(r.needsChoice, isFalse);
+      expect(r.sessionId, isNull);
+    });
+
+    test('стол без открытых чеков', () {
+      const r = TableBindResult.empty();
+      expect(r.isEmpty, isTrue);
+      expect(r.phoneRequired, isFalse);
+      expect(r.needsChoice, isFalse);
+    });
+
+    test('один открытый чек — привязка сразу', () {
+      const r = TableBindResult.bound('session-1');
+      expect(r.sessionId, 'session-1');
+      expect(r.isEmpty, isFalse);
+      expect(r.needsChoice, isFalse);
+    });
+
+    test('несколько чеков — гость выбирает свой', () {
+      const r = TableBindResult.choose(
+        [TableCheck(id: 'a'), TableCheck(id: 'b')],
+        'Стол 3',
+      );
+      expect(r.needsChoice, isTrue);
+      expect(r.isEmpty, isFalse);
+      expect(r.tableName, 'Стол 3');
     });
   });
 }

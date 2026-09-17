@@ -67,6 +67,13 @@ class _KolibriShellState extends State<KolibriShell> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
+      ..onNeedsPhone = () {
+        if (!mounted) return;
+        setState(() => _index = 4);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Укажите номер телефона в профиле, чтобы сесть за стол')),
+        );
+      }
       // За столом несколько счетов — спрашиваем, какой из них гостя.
       // Раньше приложение молча цепляло последний открытый, и соседи по
       // столу видели один и тот же чужой чек.
