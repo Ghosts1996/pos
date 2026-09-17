@@ -574,8 +574,30 @@ class AiService {
   Future<String> occupancyForecast() =>
       ask(AiAgents.forecaster, 'Дай прогноз загрузки и график смен на 7 дней.');
 
-  Future<String> shiftAudit({int days = 7}) =>
-      ask(AiAgents.auditor, 'Проверь смены за последние $days дней на аномалии.');
+  /// Контекст для контролёра: журнал кассы (передаётся отдельно вызывающим
+  /// экраном — сам журнал не хранится здесь) плюс продажи за период. Без
+  /// продаж контролёр не может оценить долю аномалий от общего оборота и
+  /// честно отвечает, что ему нечем считать — это как раз тот случай,
+  /// который решает предзагрузка данных вместо надежды на вызов инструмента.
+  Future<String> auditContext({int days = 7}) =>
+      _ctx.salesSnapshot(from: DateTime.now().subtract(Duration(days: days)), to: DateTime.now());
+
+  Future<String> shiftAudit({int days = 7}) async => ask(
+        AiAgents.auditor,
+        'Проверь смены за последние $days дней на аномалии.',
+        extraContext: 'ПРОДАЖИ ЗА ПЕРИОД:\n${await auditContext(days: days)}',
+      );
+
+  /// Контекст для аналитика в свободном диалоге: продажи за последние
+  /// [days] дней и проблемные остатки склада — то же самое, что показывают
+  /// готовые карточки на экране «ИИ-разборы», только без выбора периода.
+  Future<String> analystContext({int days = 30}) async {
+    final parts = await Future.wait([
+      _ctx.salesSnapshot(from: DateTime.now().subtract(Duration(days: days)), to: DateTime.now()),
+      _ctx.stockSnapshot(onlyProblems: true),
+    ]);
+    return 'ПРОДАЖИ ЗА $days ДНЕЙ:\n${parts[0]}\n\nПРОБЛЕМЫ СКЛАДА:\n${parts[1]}';
+  }
 
   Future<String> marketingIdeas({int days = 14}) =>
       ask(AiAgents.marketing, 'Предложи акции на следующую неделю по данным за $days дней.');

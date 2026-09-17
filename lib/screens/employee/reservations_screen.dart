@@ -110,7 +110,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
               context,
               agent: AiAgents.hostess,
               initialQuestion: 'Разбери брони на ближайшую смену.',
-              asyncContextBuilder: () async => '',
+              asyncContextBuilder: AiService.instance.hallContext,
               quickPrompts: const [
                 'Где конфликты по столам?',
                 'Кого лучше пересадить?',

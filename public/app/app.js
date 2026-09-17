@@ -498,6 +498,25 @@ async function placeOrder(items, redraw) {
 async function bindToTable(tableId) {
   screenEl().innerHTML = `<h1>Открываем стол…</h1><div class="spinner"></div>`;
   try {
+    // Без номера в профиле садиться за стол нельзя: кассир не сможет найти
+    // гостя для брони, начисления бонусов на новом устройстве или связи по
+    // проблеме с чеком — то же правило, что и в приложении на Android.
+    //
+    // Читаем документ напрямую, а не через state.profile: сразу после
+    // запуска по ссылке со стола подписка watchProfile() ещё не успела
+    // получить первый снапшот, и state.profile какое-то время пуст даже у
+    // гостя с уже сохранённым номером — свежий getDoc от этой гонки не
+    // зависит.
+    const own = await getDoc(doc(state.db, 'clients', state.uid));
+    if (!(own.exists() && own.data().phone)) {
+      screenEl().innerHTML = `
+        <h1>Сначала укажите номер</h1>
+        <p class="muted small">Чтобы сесть за стол, добавьте номер телефона в профиле —
+          это нужно, чтобы кассир мог найти вас при брони и переносе бонусов.</p>
+        <a class="btn btn-primary" href="#/profile">Открыть профиль</a>`;
+      return;
+    }
+
     const t = await getDoc(doc(state.db, 'tables', tableId));
     if (!t.exists()) return failBind('Такого стола нет. Отсканируйте код ещё раз.');
     const data = t.data();
