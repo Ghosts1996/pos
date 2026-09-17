@@ -615,6 +615,27 @@ async function claimSession(tableId, sessionId) {
   } catch (e) {
     return failBind('Не удалось закрепить стол за вами. Попробуйте ещё раз.');
   }
+
+  // Подписываем чек именем гостя, если подпись ещё пуста — кассир сразу
+  // видит на плитке зала, кто сел за стол, без ручного ввода. По
+  // возможности: правила базы разрешают это только владельцу claim'а
+  // (see firestore.rules), а если имени в профиле ещё нет — просто
+  // нечем подписать, и это не повод срывать посадку за стол.
+  try {
+    // Читаем профиль напрямую, а не через state.profile: сразу после
+    // перехода по ссылке со стола подписка на профиль ещё может быть не
+    // готова, и state.profile — пуст даже у гостя с уже заполненным именем.
+    const own = await getDoc(doc(state.db, 'clients', state.uid));
+    const name = (own.exists() ? (own.data().name || '') : '').trim();
+    if (name) {
+      const sessionRef = doc(state.db, 'sessions', sessionId);
+      const s = await getDoc(sessionRef);
+      if (s.exists() && !(s.data().guestTag || '')) {
+        await updateDoc(sessionRef, { guestTag: name });
+      }
+    }
+  } catch (_) {}
+
   location.hash = '#/table';
   toast('Готово! Ваш счёт открыт');
 }
