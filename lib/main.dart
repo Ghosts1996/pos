@@ -10,6 +10,7 @@ import 'services/hall_watch_service.dart';
 import 'services/auth_service.dart';
 import 'services/printer_service.dart';
 import 'services/kassa_service.dart';
+import 'services/payment_terminal_service.dart';
 import 'services/egais_service.dart';
 import 'services/chestny_znak_api_service.dart';
 import 'services/push_service.dart';
@@ -66,6 +67,7 @@ void main() async {
       // позже, если настроены, а не настроены — ничего не сломается.
       unawaited(loadSavedPrinterSettings());
       unawaited(loadSavedKassaSettings());
+      unawaited(loadSavedTerminalSettings());
       unawaited(loadSavedEgaisSettings());
       unawaited(loadSavedChestnyZnakSettings());
       unawaited(AiSettingsStore.instance.init());

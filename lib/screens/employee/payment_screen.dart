@@ -251,7 +251,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     if (amount <= 0) return;
     setState(() => _terminalBusy = true);
     try {
-      final result = await paymentTerminalService.pay(amount);
+      final result = await paymentTerminalService.pay(amount, context: context);
       if (!mounted) return;
       if (result.success) {
         setState(() {
