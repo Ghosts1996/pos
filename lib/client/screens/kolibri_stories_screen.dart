@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/story_model.dart';
+import '../../utils/linkify_utils.dart';
 import '../theme/kolibri_theme.dart';
 
 /// Лента заведения в приложении гостя: новые миксы, ивенты, акции.
@@ -104,11 +105,15 @@ class KolibriStoriesScreen extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 6),
-                  Text(
-                    s.text,
+                  Text.rich(
+                    TextSpan(
+                      children: linkifySpans(
+                        s.text,
+                        style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                      ),
+                    ),
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                   ),
                   if (s.actionLabel.isNotEmpty) ...[
                     const SizedBox(height: 8),

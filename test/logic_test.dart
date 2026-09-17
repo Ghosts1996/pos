@@ -4,6 +4,7 @@
 // Раньше в test/ лежал пустой файл без main(), из-за чего `flutter test`
 // падал на загрузке и проверять было нечего.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/client_models.dart';
 import 'package:hookah_pos/models/inventory_models.dart';
@@ -12,6 +13,7 @@ import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/models/venue_models.dart';
+import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
 
@@ -365,6 +367,36 @@ void main() {
       expect(r.needsChoice, isTrue);
       expect(r.isEmpty, isFalse);
       expect(r.tableName, 'Стол 3');
+    });
+  });
+
+  group('Ссылки в тексте (афиша)', () {
+    test('текст без ссылок остаётся одним span без recognizer', () {
+      final spans = linkifySpans('Просто текст без ссылок.');
+      expect(spans, hasLength(1));
+      expect((spans.first as TextSpan).text, 'Просто текст без ссылок.');
+      expect((spans.first as TextSpan).recognizer, isNull);
+    });
+
+    test('ссылка становится кликабельным span, хвостовая точка — нет', () {
+      final spans = linkifySpans(
+        'Подписывайтесь: https://t.me/colibrilounge. Ждём вас!',
+      );
+      final linkSpan = spans.firstWhere(
+        (s) => (s as TextSpan).recognizer != null,
+      ) as TextSpan;
+      expect(linkSpan.text, 'https://t.me/colibrilounge');
+
+      final full = spans.map((s) => (s as TextSpan).text).join();
+      expect(full, 'Подписывайтесь: https://t.me/colibrilounge. Ждём вас!');
+    });
+
+    test('www-ссылка без протокола тоже находится', () {
+      final spans = linkifySpans('Сайт: www.example.com');
+      final linkSpan = spans.firstWhere(
+        (s) => (s as TextSpan).recognizer != null,
+      ) as TextSpan;
+      expect(linkSpan.text, 'www.example.com');
     });
   });
 }

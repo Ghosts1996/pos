@@ -48,6 +48,7 @@ p { margin: 0 0 10px; }
 }
 .card.warn { border-color: var(--warning); }
 .card.bad { border-color: var(--danger); }
+.card a { color: var(--primary); }
 
 button, .btn {
   font: inherit;

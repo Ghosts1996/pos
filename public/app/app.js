@@ -51,6 +51,23 @@ function esc(s) {
   ));
 }
 
+// Экранирует текст и превращает ссылки внутри него в кликабельные <a>.
+// Хвостовая пунктуация («...канал.», «(сайт)») в ссылку не включается.
+function linkify(s) {
+  const escaped = esc(s);
+  return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (url) => {
+    let trail = '';
+    const trailMatch = url.match(/[.,!?;:)\]}"'”»]+$/);
+    if (trailMatch) {
+      trail = trailMatch[0];
+      url = url.slice(0, -trail.length);
+    }
+    if (!url) return trail;
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${url}</a>${trail}`;
+  });
+}
+
 const money = (v) => `${Math.round(Number(v) || 0).toLocaleString('ru-RU')} ₽`;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -342,7 +359,7 @@ function renderStories() {
         : s.action === 'booking' ? 'onclick="location.hash=\'#/booking\'"' : ''}
         style="${s.action && s.action !== 'none' ? 'cursor:pointer' : ''}">
         <div style="font-weight:600;margin-bottom:6px">${esc(s.title)}</div>
-        <div class="small muted">${esc(s.text)}</div>
+        <div class="small muted">${linkify(s.text)}</div>
         ${s.actionLabel ? `<div class="small" style="color:var(--primary);margin-top:10px;font-weight:600">${esc(s.actionLabel)} →</div>` : ''}
       </div>
     `).join('');
