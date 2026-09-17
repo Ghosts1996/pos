@@ -29,6 +29,7 @@ jobs:
             project_name: hookahpos          # applicationId = com.hookahpos
             label: Colibri POS
             icon: assets/icon/icon.png
+            adaptiveIcon: assets/icon/icon_foreground.png
             artifact: hookah-pos-apk
             gservices_secret: GOOGLE_SERVICES_JSON
             deeplink: 'false'
@@ -37,6 +38,7 @@ jobs:
             project_name: kolibrilounge      # applicationId = com.kolibrilounge
             label: Colibri Lounge
             icon: assets/icon/kolibri.png
+            adaptiveIcon: assets/icon/kolibri_foreground.png
             artifact: kolibri-lounge-apk
             gservices_secret: GOOGLE_SERVICES_JSON_KOLIBRI
             deeplink: 'true'
@@ -178,9 +180,17 @@ jobs:
           # <queries>: системная камера (image_picker), движок распознавания
           # речи и звонок по tel: (кнопка телефона в бронях) — без этого
           # блока Android 11+ считает их «невидимыми» для приложения, и
-          # canLaunchUrl('tel:...') всегда возвращает false.
+          # canLaunchUrl(...) всегда возвращает false.
+          #
+          # НАЙДЕННЫЙ БАГ: для tel: тут стояло только ACTION_DIAL. А
+          # url_launcher проверяет видимость набора номера через
+          # ACTION_VIEW (см. UrlLauncher.canLaunchUrl в его Android-коде) —
+          # действие не совпадало, Android скрывал телефонное приложение, и
+          # canLaunchUrl('tel:...') ВСЕГДА отвечал false. Кнопка звонка в
+          # бронях из-за этого никогда не открывала набор — падала в
+          # запасную ветку «просто показать номер». Держим оба действия.
           if ! grep -q "<queries>" "$MANIFEST"; then
-            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.DIAL\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n    </queries>" "$MANIFEST"
+            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.VIEW\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.DIAL\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n    </queries>" "$MANIFEST"
           fi
 
           if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
@@ -497,7 +507,30 @@ jobs:
                 android:pathData="M12,18.6m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"/>
           </vector>
           XMLEOF
-          echo "иконка уведомлений создана"
+
+          # НАЙДЕННЫЙ БАГ: flutter build apk --release включает shrinkResources
+          # по умолчанию (это делает сам Flutter Gradle Plugin, без всякой
+          # настройки с нашей стороны). R8 решает, какие ресурсы «не
+          # используются», по статическим ссылкам вида R.drawable.xxx в коде.
+          # А иконку уведомления плагин flutter_local_notifications находит
+          # по ИМЕНИ СТРОКОЙ в рантайме (Resources.getIdentifier) — такую
+          # ссылку статический анализ не видит, и R8 вырезал ic_notification
+          # из финального APK. Отсюда PlatformException(invalid_icon,
+          # ...ic_notification could not be found...) при каждой попытке
+          # показать уведомление, и приложение молча откатывалось на
+          # @mipmap/ic_launcher — некрасивую иконку из цветной картинки.
+          #
+          # Лечится ровно так, как советует сам плагин в своём README:
+          # tools:keep помечает ресурс как используемый для шейкера ресурсов,
+          # не влияя на R8-обфускацию кода.
+          KEEP=android/app/src/main/res/raw
+          mkdir -p "$KEEP"
+          cat > "$KEEP/keep.xml" <<'XMLEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources xmlns:tools="http://schemas.android.com/tools"
+              tools:keep="@drawable/ic_notification" />
+          XMLEOF
+          echo "иконка уведомлений создана, ресурс защищён от R8 resource shrinker"
 
       - name: Install dependencies
         run: flutter pub get
@@ -513,6 +546,20 @@ jobs:
             ICON="assets/icon/icon.png"
           fi
           sed -i -E "s|image_path: \".*\"|image_path: \"$ICON\"|" pubspec.yaml
+
+          # Подложенный под адаптивную иконку рисунок, вписанный в безопасную
+          # зону (см. комментарий у adaptive_icon_foreground в pubspec.yaml).
+          # У каждого приложения он свой (это не просто версия ICON поменьше
+          # — foreground/*.png уже сжат и с прозрачными полями). Файла нет —
+          # используем обычную картинку: адаптивная иконка выйдет без запаса
+          # по краям, но сборка не упадёт.
+          FG="${{ matrix.adaptiveIcon }}"
+          if [ ! -f "$FG" ]; then
+            echo "::warning::$FG не найден — адаптивная иконка возьмёт $ICON как есть"
+            FG="$ICON"
+          fi
+          sed -i -E "s|adaptive_icon_foreground: \".*\"|adaptive_icon_foreground: \"$FG\"|" pubspec.yaml
+
           dart run flutter_launcher_icons
 
       - name: Analyze (informational — does not block the build)

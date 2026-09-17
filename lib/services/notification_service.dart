@@ -86,6 +86,10 @@ class NotificationService {
             android: AndroidInitializationSettings(_icon),
           ),
         );
+        // Запасной вариант сработал — ошибка больше не актуальна. Раньше
+        // _initError оставался навсегда, и «Проверка уведомлений» пугала
+        // текстом об иконке даже когда всё вокруг уже работало нормально.
+        _initError = null;
       } catch (e2) {
         _initError = '$e2';
       }
