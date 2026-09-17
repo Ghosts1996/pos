@@ -164,29 +164,41 @@ class ClientProfile {
 
 /// Чем закончилась попытка «сесть за стол» по QR-коду.
 ///
-/// Три исхода: за столом нет открытых чеков; привязались к единственному;
+/// Четыре исхода: в профиле нет телефона, и его нужно указать перед
+/// привязкой; за столом нет открытых чеков; привязались к единственному;
 /// чеков несколько и гостю нужно выбрать свой.
 class TableBindResult {
   final String? sessionId;
   final List<TableCheck> choices;
   final String tableName;
+  final bool phoneRequired;
 
   const TableBindResult.empty()
       : sessionId = null,
         choices = const [],
-        tableName = '';
+        tableName = '',
+        phoneRequired = false;
 
   const TableBindResult.bound(String this.sessionId)
       : choices = const [],
-        tableName = '';
+        tableName = '',
+        phoneRequired = false;
 
-  const TableBindResult.choose(this.choices, this.tableName) : sessionId = null;
+  const TableBindResult.choose(this.choices, this.tableName)
+      : sessionId = null,
+        phoneRequired = false;
+
+  const TableBindResult.needsPhone()
+      : sessionId = null,
+        choices = const [],
+        tableName = '',
+        phoneRequired = true;
 
   /// За столом нет ни одного открытого чека.
-  bool get isEmpty => sessionId == null && choices.isEmpty;
+  bool get isEmpty => !phoneRequired && sessionId == null && choices.isEmpty;
 
   /// Нужно спросить гостя, какой чек его.
-  bool get needsChoice => sessionId == null && choices.isNotEmpty;
+  bool get needsChoice => !phoneRequired && sessionId == null && choices.isNotEmpty;
 }
 
 /// Один визит гостя — документ clients/{uid}/visits/{sessionId}.

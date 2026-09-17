@@ -70,7 +70,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
             onPressed: () => AiAssistantSheet.show(
               context,
               agent: AiAgents.analyst,
-              asyncContextBuilder: () async => '',
+              asyncContextBuilder: AiService.instance.analystContext,
               quickPrompts: const [
                 'Почему упал средний чек?',
                 'Какие позиции убрать из меню?',

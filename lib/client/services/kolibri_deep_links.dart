@@ -27,6 +27,10 @@ class KolibriDeepLinks {
   /// Вызывается, если за столом нет открытого чека.
   void Function(String message)? onFailed;
 
+  /// Вызывается, если в профиле гостя ещё нет номера телефона — привязку
+  /// к столу мы не начинаем, пока его не укажут.
+  void Function()? onNeedsPhone;
+
   /// За столом несколько открытых чеков — нужно спросить гостя, какой его.
   void Function(String tableId, String tableName, List<TableCheck> checks)?
       onChooseCheck;
@@ -59,6 +63,10 @@ class KolibriDeepLinks {
     try {
       await _auth.ensureGuest();
       final result = await _guest.bindToTable(_auth.uid, tableId);
+      if (result.phoneRequired) {
+        onNeedsPhone?.call();
+        return;
+      }
       if (result.isEmpty) {
         onFailed?.call('За этим столом сейчас нет открытого счёта — '
             'попросите кальянщика начать сеанс');
