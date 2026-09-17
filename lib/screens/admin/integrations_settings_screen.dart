@@ -5,6 +5,7 @@ import '../../services/printer_service.dart';
 import '../../services/egais_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
+import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
 import '../../models/fiscal_receipt.dart';
 
@@ -34,11 +35,16 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   String _czCircuit = 'pilot'; // pilot | prod
   final _czTokenCtrl = TextEditingController();
   final _czTestCodeCtrl = TextEditingController();
+  TerminalProvider _terminalProvider = TerminalProvider.manual;
+  final _terminalLoginCtrl = TextEditingController();
+  final _terminalPasswordCtrl = TextEditingController();
   bool _loading = true;
   bool _testing = false;
   String? _testResult;
   bool _czTesting = false;
   String? _czTestResult;
+  bool _terminalTesting = false;
+  String? _terminalTestResult;
 
   @override
   void initState() {
@@ -60,6 +66,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaPasswordCtrl.text = data['kassaPassword'] ?? '';
     _czCircuit = data['czCircuit'] ?? 'pilot';
     _czTokenCtrl.text = data['czToken'] ?? '';
+    _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
+    _terminalLoginCtrl.text = data['terminalLogin'] ?? '';
+    _terminalPasswordCtrl.text = data['terminalPassword'] ?? '';
     _applyActivePrinter();
     setState(() => _loading = false);
   }
@@ -87,11 +96,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaPassword': _kassaPasswordCtrl.text.trim(),
       'czCircuit': _czCircuit,
       'czToken': _czTokenCtrl.text.trim(),
+      'terminalProvider': _terminalProvider.id,
+      'terminalLogin': _terminalLoginCtrl.text.trim(),
+      'terminalPassword': _terminalPasswordCtrl.text.trim(),
     }, SetOptions(merge: true));
     _applyActivePrinter();
     _applyActiveKassa();
     _applyActiveEgais();
     _applyActiveChestnyZnak();
+    _applyActiveTerminal();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сохранено')));
     }
@@ -108,6 +121,14 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     } else {
       kassaService = MockKassaService();
     }
+  }
+
+  void _applyActiveTerminal() {
+    paymentTerminalService = buildTerminalService({
+      'terminalProvider': _terminalProvider.id,
+      'terminalLogin': _terminalLoginCtrl.text.trim(),
+      'terminalPassword': _terminalPasswordCtrl.text.trim(),
+    });
   }
 
   void _applyActiveEgais() {
@@ -235,6 +256,65 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     });
   }
 
+  /// Какие поля показывать под выбранным провайдером терминала — у каждого
+  /// банка свои названия учётных данных, а у ручного терминала их нет
+  /// вовсе. null/null — полей не показываем.
+  ({String? first, String? second}) _terminalFields(TerminalProvider p) {
+    switch (p) {
+      case TerminalProvider.manual:
+      case TerminalProvider.mock:
+        return (first: null, second: null);
+      case TerminalProvider.tinkoffSbp:
+        return (first: 'TerminalKey', second: 'Пароль терминала');
+      case TerminalProvider.sber:
+        return (first: 'Логин', second: 'Пароль');
+      case TerminalProvider.vtb:
+        return (first: 'Merchant ID', second: 'Секретный ключ');
+      case TerminalProvider.alfa:
+        return (first: 'Логин', second: 'Пароль');
+      case TerminalProvider.tochka:
+        return (first: 'Merchant ID', second: 'API-токен');
+      case TerminalProvider.mpos:
+        return (first: 'API-ключ', second: null);
+      case TerminalProvider.ingenico:
+      case TerminalProvider.verifone:
+        return (first: 'Сопряжение (MAC/серийный номер)', second: null);
+    }
+  }
+
+  /// Пробный платёж на 1 ₽ — для Т-Банка это реальный запрос Init+GetQr к
+  /// боевому API (тестовых сумм там не бывает, зато рубль не жалко), для
+  /// остальных провайдеров без реализации просто покажет, что дальше
+  /// нужна их документация. Ручной терминал и заглушку тестировать
+  /// незачем — они по определению «доступны».
+  Future<void> _testTerminal() async {
+    if (_terminalProvider == TerminalProvider.manual || _terminalProvider == TerminalProvider.mock) {
+      setState(() => _terminalTestResult = 'Этот режим ничего не запрашивает у банка — '
+          'проверять нечего, он «доступен» всегда.');
+      return;
+    }
+    setState(() {
+      _terminalTesting = true;
+      _terminalTestResult = null;
+    });
+    _applyActiveTerminal();
+    if (!paymentTerminalService.isAvailable) {
+      setState(() {
+        _terminalTesting = false;
+        _terminalTestResult = 'Заполните логин/пароль терминала';
+      });
+      return;
+    }
+    final result = await paymentTerminalService.pay(1, context: mounted ? context : null);
+    if (!mounted) return;
+    setState(() {
+      _terminalTesting = false;
+      _terminalTestResult = result.success
+          ? 'Готово: ${result.operationId ?? 'оплата подтверждена'}'
+          : 'Ошибка: ${result.errorMessage}';
+    });
+  }
+
   /// Проверяет один код через реальный метод `codes/check` выбранного
   /// контура «Честного знака» — удобно, чтобы прямо из настроек убедиться,
   /// что токен и контур подобраны верно, до того как проверка заработает
@@ -301,6 +381,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaPasswordCtrl.dispose();
     _czTokenCtrl.dispose();
     _czTestCodeCtrl.dispose();
+    _terminalLoginCtrl.dispose();
+    _terminalPasswordCtrl.dispose();
     super.dispose();
   }
 
@@ -511,6 +593,60 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             icon: const Icon(Icons.receipt_long),
             label: const Text('Тестовый чек'),
           ),
+          const Divider(height: 40),
+          const Text('Терминал оплаты', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text(
+            'Ручной терминал работает уже сейчас с ЛЮБЫМ банком и ЛЮБЫМ '
+            'физическим терминалом (Ingenico, Verifone, mPOS, фирменный '
+            'терминал банка) — приложение просто спрашивает у сотрудника, '
+            'прошла ли оплата на самом терминале. Т-Банк по QR СБП вообще '
+            'обходится без терминала: гость платит сам со своего телефона. '
+            'Остальные банки ниже — это заготовки настроек: сама интеграция '
+            'ждёт технической документации по вашему договору эквайринга '
+            '(у каждого банка свой протокол, угадывать его нельзя).',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          ...TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
+                (p) => RadioListTile<TerminalProvider>(
+                  title: Text(p.label),
+                  value: p,
+                  groupValue: _terminalProvider,
+                  onChanged: (v) => setState(() => _terminalProvider = v!),
+                ),
+              ),
+          if (_terminalFields(_terminalProvider).first != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _terminalLoginCtrl,
+                    decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).first),
+                  ),
+                  if (_terminalFields(_terminalProvider).second != null)
+                    TextField(
+                      controller: _terminalPasswordCtrl,
+                      decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).second),
+                      obscureText: true,
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _terminalTesting ? null : _testTerminal,
+            icon: const Icon(Icons.point_of_sale),
+            label: Text(_terminalProvider == TerminalProvider.tinkoffSbp
+                ? 'Тест: показать QR на 1 ₽'
+                : 'Проверить'),
+          ),
+          if (_terminalTestResult != null) ...[
+            const SizedBox(height: 12),
+            Text(_terminalTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
           const SizedBox(height: 32),
           FilledButton(onPressed: _save, child: const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),

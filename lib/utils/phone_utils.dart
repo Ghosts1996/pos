@@ -75,9 +75,14 @@ Future<void> callGuest(BuildContext context, String phone) async {
   final e164 = '+$normalized'; // +79995061580 — «формат +7» из просьбы
   await Clipboard.setData(ClipboardData(text: e164));
 
+  // БАГ БЫЛ ЗДЕСЬ: в номер для набора уходил normalized (без «+»), а «+»
+  // клали только в то, что копируется в буфер. Из-за этого набор
+  // открывался с номером без плюса — ровно то, что было на скриншоте.
+  // Строим URI из строки, а не через Uri(scheme:..., path:...): структурный
+  // конструктор не гарантирует, что «+» переживёт кодирование пути.
   bool opened = false;
   try {
-    opened = await launchUrl(Uri(scheme: 'tel', path: normalized));
+    opened = await launchUrl(Uri.parse('tel:$e164'));
   } catch (_) {
     opened = false;
   }
