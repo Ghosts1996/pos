@@ -47,10 +47,16 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   }
 
   Future<void> _startSession() async {
+    final guestTag = await _askGuestTag();
+    if (guestTag == null) return; // отменили диалог
+
     setState(() => _busy = true);
     try {
-      final id =
-          await _fs.openSession(table: widget.table, employeeName: widget.employee.name);
+      final id = await _fs.openSession(
+        table: widget.table,
+        employeeName: widget.employee.name,
+        guestTag: guestTag,
+      );
       if (mounted) setState(() => _sessionId = id);
     } on TableFullException catch (e) {
       _showError(e);
@@ -59,6 +65,41 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Имя гостя, чтобы на плитке зала было видно, кто сидит за столом —
+  /// не только таймер. Поле необязательное: подтвердить можно и пустым.
+  /// Возвращает null, если сотрудник закрыл диалог кнопкой «Отмена».
+  Future<String?> _askGuestTag() async {
+    final ctrl = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Кто за столом?'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Имя гостя (необязательно)',
+            hintText: 'Например, Константин',
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Начать сеанс'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return result;
   }
 
   Future<void> _refill(String sessionId, String tableId) async {
