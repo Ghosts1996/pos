@@ -196,6 +196,7 @@ class FirestoreService {
     required TableModel table,
     required String employeeName,
     int durationMinutes = AppConstants.defaultSessionMinutes,
+    String guestTag = '',
   }) async {
     final tableRef = _db.collection('tables').doc(table.id);
     final sessionRef = _db.collection('sessions').doc();
@@ -220,6 +221,7 @@ class FirestoreService {
         employeeName: employeeName,
         startTime: now,
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
+        guestTag: guestTag,
       );
       tx.set(sessionRef, session.toMap());
 
