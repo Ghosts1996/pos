@@ -17,7 +17,7 @@ import 'session_alerts_service.dart';
 /// Настоящий push решил бы это раз и навсегда, но для него нужен сервер, а
 /// Cloud Functions доступны только на платном тарифе Firebase. Бесплатный
 /// способ дать тот же результат один: постоянное («foreground») уведомление
-/// «Colibri POS следит за залом». Пока оно висит, Android обязан держать
+/// «Hoocah POS следит за залом». Пока оно висит, Android обязан держать
 /// процесс живым — и подписки продолжают работать при свёрнутом
 /// приложении, при выключенном экране и после того, как приложение
 /// смахнули из списка задач.
@@ -125,7 +125,7 @@ class HallWatchService {
       if (await FlutterForegroundTask.isRunningService) return true;
 
       await FlutterForegroundTask.startService(
-        notificationTitle: 'Colibri POS',
+        notificationTitle: 'Hoocah POS',
         notificationText: 'Служебная запись — не выключайте',
         callback: hallWatchCallback,
       );

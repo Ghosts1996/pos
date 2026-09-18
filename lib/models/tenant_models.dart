@@ -248,8 +248,8 @@ class BrandingConfig {
   // литералы, а не импорт AppColors, — эта модель намеренно не зависит от
   // слоя темы/UI, см. заголовок файла.)
   const BrandingConfig({
-    this.appName = 'Colibri POS',
-    this.shortName = 'Colibri',
+    this.appName = 'Hoocah POS',
+    this.shortName = 'Hoocah',
     this.primaryColor = '#0B5ED7',
     this.secondaryColor = '#162A4A',
     this.accentColor = '#0B5ED7',
@@ -263,8 +263,8 @@ class BrandingConfig {
   factory BrandingConfig.fromMap(Map<String, dynamic>? d) {
     if (d == null) return const BrandingConfig();
     return BrandingConfig(
-      appName: d['appName'] as String? ?? 'Colibri POS',
-      shortName: d['shortName'] as String? ?? 'Colibri',
+      appName: d['appName'] as String? ?? 'Hoocah POS',
+      shortName: d['shortName'] as String? ?? 'Hoocah',
       primaryColor: d['primaryColor'] as String? ?? '#0B5ED7',
       secondaryColor: d['secondaryColor'] as String? ?? '#162A4A',
       accentColor: d['accentColor'] as String? ?? '#0B5ED7',
