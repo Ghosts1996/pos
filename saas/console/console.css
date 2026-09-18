@@ -108,7 +108,11 @@ a { color: var(--primary); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .toast {
-  position: fixed; left: 16px; right: 16px; bottom: 16px;
+  /* 88px — с запасом выше нижней навигации личного кабинета (.tabbar),
+     чтобы тост не перекрывался/не сливался с ней; на экранах без неё
+     тост просто на комфортном расстоянии от края, а не наглухо у нижней
+     кромки под большим пальцем. */
+  position: fixed; left: 16px; right: 16px; bottom: 88px;
   max-width: 480px; margin: 0 auto;
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 14px; padding: 14px 16px; z-index: 20;
@@ -147,3 +151,59 @@ a { color: var(--primary); }
 }
 .palette-swatch-colors span { flex: 1; }
 .palette-swatch-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+
+/* Нижняя навигация личного кабинета владельца — превращает один длинный
+   скролл в набор отдельных разделов (обзор/устройства/подписка/брендинг/
+   команда), как в обычном мобильном приложении, а не в веб-форму. */
+.wrap.has-tabbar { padding-bottom: 96px; }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  display: flex; justify-content: space-around;
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
+  z-index: 15;
+}
+.tabbar-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: none; color: var(--muted);
+  font: inherit; font-size: 11px; font-weight: 600; padding: 4px 6px;
+  cursor: pointer; flex: 1; min-width: 0; position: relative;
+}
+.tabbar-item .tabbar-icon { font-size: 20px; line-height: 1; }
+.tabbar-item.active { color: var(--primary); }
+.tabbar-item .tabbar-dot {
+  position: absolute; top: 0; right: 22%;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
+}
+
+.quick-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.quick-actions .btn { flex-direction: row; justify-content: flex-start; padding: 14px; }
+
+/* Лендинг: сетка карточек возможностей вместо плоского списка строк —
+   ощущается как продукт, а не как техническая справка. */
+.feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.feature-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.feature-icon {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex: none;
+}
+.feature-title { font-weight: 700; font-size: 13.5px; }
+.feature-desc { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+
+.plan-badge {
+  display: inline-block; background: var(--primary); color: var(--text);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; margin-bottom: 8px;
+}
+
+.hero-badge {
+  display: inline-block; color: var(--primary); border: 1px solid var(--primary);
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px; margin-bottom: 10px;
+}

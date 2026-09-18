@@ -31,7 +31,7 @@ const FUNCTIONS_REGION = 'europe-west1';
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-18.2';
+const CONSOLE_BUILD = '2026-09-18.3';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -145,6 +145,9 @@ function toast(msg) {
 function clearScreen() {
   state.screenSubs.forEach((off) => { try { off(); } catch (_) {} });
   state.screenSubs = [];
+  // Нижняя навигация — только у личного кабинета владельца (screenDashboard
+  // включает его сама); любой другой экран должен начинать без него.
+  screenEl().classList.remove('has-tabbar');
 }
 function sub(off) { state.screenSubs.push(off); }
 
@@ -505,7 +508,7 @@ const LANDING_FEATURES = [
   { icon: '📊', title: 'Отчёты', desc: 'выручка, средний чек, топ позиций меню, X-отчёты по сменам' },
 ];
 
-function landingPlanCardHtml(p, selected) {
+function landingPlanCardHtml(p, selected, popular) {
   const priceText = Number(p.priceRub) > 0
     ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
     : 'По запросу';
@@ -524,6 +527,7 @@ function landingPlanCardHtml(p, selected) {
   if (p.features?.advancedReports) perks.push('расширенные отчёты');
   return `
     <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
+      ${popular ? '<div class="plan-badge">Популярный выбор</div>' : ''}
       <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
       <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}${yearlyText ? ` <span class="small muted" style="font-weight:400">или ${esc(yearlyText)}</span>` : ''}</div>
       <div class="small muted">${limits.join(' · ')}</div>
@@ -540,12 +544,13 @@ function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
 
   screenEl().innerHTML = `
+    <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
     <div class="brand">Hoocah POS</div>
-    <h1>Облачная касса для кальянных и лаунжей</h1>
+    <h1>Своя касса — без разработчиков и без своих серверов</h1>
     <p class="muted">Карта зала, чеки и оплата, склад, брони и лист ожидания,
     программа лояльности, гостевое приложение и ИИ-помощники персоналу —
     всё в одной системе. Работает на обычном Android-планшете, разворачивается
-    за 10–15 минут.</p>
+    за 10–15 минут, без затрат на оборудование или IT-специалиста.</p>
 
     <div class="card" style="margin-top:6px">
       <label class="field"><span>Email</span>
@@ -557,10 +562,12 @@ function screenLanding() {
     </div>
 
     <h2 style="margin-top:26px">Что умеет система</h2>
-    <div class="card">
+    <div class="feature-grid">
       ${LANDING_FEATURES.map((f) => `
-        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">
-          ${f.icon} <b>${esc(f.title)}</b> — ${esc(f.desc)}
+        <div class="feature-card">
+          <div class="feature-icon">${f.icon}</div>
+          <div class="feature-title">${esc(f.title)}</div>
+          <div class="feature-desc">${esc(f.desc)}</div>
         </div>
       `).join('')}
     </div>
@@ -610,8 +617,14 @@ function screenLanding() {
     const plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
     const body = $('landing-plans');
     if (!body) return;
+    // "Популярный" — средний по цене из реально продаваемых тарифов (не
+    // "по запросу"), классическая подсказка "бери этот", если есть из чего
+    // выбирать — не сама дорогая (звучит навязчиво) и не самая дешёвая
+    // (выглядит как самая слабая уценка).
+    const sellable = plans.filter((p) => Number(p.priceRub) > 0);
+    const popularId = sellable.length >= 3 ? sellable[1].id : null;
     body.innerHTML = plans.length
-      ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId)).join('')
+      ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId, p.id === popularId)).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
     document.querySelectorAll('.f-landing-plan-pick').forEach((el) => {
       el.onclick = () => {
@@ -902,6 +915,7 @@ function screenOnboarding() {
 // ---------- ЛИЧНЫЙ КАБИНЕТ ----------
 
 function screenDashboard() {
+  screenEl().classList.add('has-tabbar');
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div class="brand">Hoocah POS</div>
@@ -932,8 +946,31 @@ function screenDashboard() {
   watchDashboardData(state.activeTenantId);
 }
 
+const DASHBOARD_TABS = [
+  { id: 'overview', icon: '🏠', label: 'Обзор' },
+  { id: 'devices', icon: '📲', label: 'Устройства' },
+  { id: 'subscription', icon: '💳', label: 'Подписка' },
+  { id: 'branding', icon: '🎨', label: 'Брендинг' },
+  { id: 'team', icon: '👥', label: 'Команда' },
+];
+
+function dashboardTabBarHtml(activeTab, showSubscriptionDot) {
+  return `
+    <div class="tabbar">
+      ${DASHBOARD_TABS.map((t) => `
+        <button class="tabbar-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
+          <span class="tabbar-icon">${t.icon}</span>
+          <span>${esc(t.label)}</span>
+          ${t.id === 'subscription' && showSubscriptionDot ? '<span class="tabbar-dot"></span>' : ''}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
 function watchDashboardData(tenantId) {
   const body = $('dash-body');
+  let activeTab = 'overview';
   let tenant = null;
   let invite = null;
   let branding = null;
@@ -977,22 +1014,45 @@ function watchDashboardData(tenantId) {
     const backgroundColor = existingColor('f-color-bg') ?? (branding?.backgroundColor || '#02050B');
     const textColor = existingColor('f-color-text') ?? (branding?.textColor || '#F8FAFC');
 
-    body.innerHTML = `
+    const daysLeft = daysUntilDataPurge(subscription);
+    const dangerBannerHtml = daysLeft === null ? '' : `
+      <div class="card danger">
+        <div style="font-weight:700;margin-bottom:6px">⚠ Подписка не продлена</div>
+        <div class="small">
+          Касса и приложение на всех устройствах заведения уже заблокированы.
+          ${daysLeft > 0
+            ? `Данные заведения будут БЕЗВОЗВРАТНО удалены через ${daysLeft} ${pluralDays(daysLeft)}, если подписку не продлить.`
+            : 'Срок продления истёк — данные заведения будут удалены при ближайшей проверке.'}
+          После удаления заведение придётся настраивать заново — меню, столы, сотрудников и всё остальное.
+        </div>
+      </div>
+    `;
+
+    const overviewHtml = () => `
       <div class="card">
         <div class="muted small">Заведение</div>
-        <div style="font-size:18px;font-weight:700;margin:4px 0">${esc(tenant.name || '')}</div>
+        <div style="font-size:20px;font-weight:700;margin:4px 0">${esc(tenant.name || '')}</div>
         <div class="small muted">
           Код: <code>${esc(tenant.slug || '')}</code> ·
           статус: ${esc(TENANT_STATUS_LABELS[tenant.status] || tenant.status || '—')} ·
           роль: ${esc(ROLE_LABELS[role] || role)}
         </div>
       </div>
+      ${dangerBannerHtml}
+      <div class="small muted" style="margin-bottom:8px">Быстрый доступ</div>
+      <div class="quick-actions">
+        <button class="btn btn-ghost f-dash-tab" data-tab="devices">📲 Устройства</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="subscription">💳 Подписка</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="branding">🎨 Брендинг</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="team">👥 Команда</button>
+      </div>
+    `;
 
-      <h2>Устройства</h2>
+    const devicesHtml = () => `
+      <h2>Код приглашения устройства</h2>
       <div class="card">
-        <p class="small muted">Код приглашения — введите его на планшете
-        вместе с кодом заведения (<code>${esc(tenant.slug || '')}</code>),
-        чтобы привязать устройство к этому заведению.</p>
+        <p class="small muted">Введите его на планшете вместе с кодом заведения
+        (<code>${esc(tenant.slug || '')}</code>), чтобы привязать устройство к этому заведению.</p>
         <div class="row" style="justify-content:space-between;align-items:center">
           <div style="font-size:26px;font-weight:700;letter-spacing:.08em">${esc(invite?.code || '—')}</div>
           <button class="btn-link" id="f-copy-code">Скопировать</button>
@@ -1000,46 +1060,62 @@ function watchDashboardData(tenantId) {
         ${canManage ? `<button class="btn btn-ghost" id="f-rotate-code" style="margin-top:12px">Обновить код</button>` : ''}
       </div>
 
-      <h2>Команда</h2>
+      <h2>Сборка APK</h2>
       <div class="card">
-        ${members === null ? '<div class="small muted">Загрузка…</div>' : sortedMembers.map((m) => `
-          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div class="grow" style="min-width:0">
-              <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
-              <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
+        <p class="small muted">Универсальный APK кассы для этой платформы —
+        после установки на планшет он сам предложит присоединиться по коду
+        заведения и коду приглашения устройства выше.</p>
+        ${canManage ? `<button class="btn btn-ghost" id="f-request-build">Собрать APK</button>` : ''}
+        <div id="f-build-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+        ${(buildJobs || []).length ? buildJobs.map((j) => `
+          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+            <div class="grow small muted">
+              ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
+              ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
             </div>
-            ${canManage && m.userId !== state.uid && ['manager', 'employee'].includes(m.role) ? `
-              <select class="f-member-role" data-uid="${esc(m.userId)}" style="width:auto;margin:0">
-                <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Менеджер</option>
-                <option value="employee" ${m.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
-              </select>
-              <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
-                ${m.status === 'active' ? 'Отключить' : 'Включить'}
-              </button>
+            ${j.status === 'success' && j.downloadPath ? `
+              <button class="btn-link f-build-download" data-path="${esc(j.downloadPath)}" style="width:auto">Скачать</button>
             ` : ''}
           </div>
-        `).join('') || '<div class="small muted">Пока только вы</div>'}
+        `).join('') : '<p class="small muted" style="margin-top:10px">Сборок пока не было.</p>'}
+      </div>
+    `;
 
-        ${canManage ? `
+    const subscriptionHtml = () => `
+      ${dangerBannerHtml}
+      <h2>Подписка</h2>
+      <div class="card">
+        <div class="small muted">Тариф: ${esc(planName(plans, subscription?.planId) || subscription?.planId || '—')}</div>
+        <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
+        ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
+        ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
+        ${canManage && plans ? `
           <div style="margin-top:14px">
-            <label class="field"><span>Пригласить по email</span>
-              <input id="f-invite-email" type="email" placeholder="coworker@example.com">
-            </label>
-            <div class="row">
-              <select id="f-invite-role" class="grow">
-                <option value="manager">Менеджер</option>
-                <option value="employee" selected>Сотрудник</option>
-              </select>
-              <button class="btn btn-ghost" id="f-invite-submit" style="width:auto">Пригласить</button>
-            </div>
-            <p class="small muted" style="margin-top:6px">Приглашаемый должен
-            сначала сам зарегистрироваться в этой консоли (email + пароль) —
-            тогда его можно будет найти по email.</p>
-            <div id="f-invite-error" class="small" style="color:var(--danger)"></div>
+            ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
+              <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+                <div class="grow">
+                  <div>${esc(p.name || p.id)}</div>
+                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
+                  ${Number(p.priceRubYearly) > 0 ? `
+                    <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
+                      <option value="monthly">Помесячно</option>
+                      <option value="yearly">На год (выгоднее)</option>
+                    </select>
+                  ` : ''}
+                </div>
+                <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
+                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
+                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
+                </button>
+              </div>
+            `).join('')}
+            <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
           </div>
         ` : ''}
       </div>
+    `;
 
+    const brandingHtml = () => `
       <h2>Брендинг</h2>
       <div class="card">
         <label class="field"><span>Имя приложения</span>
@@ -1079,74 +1155,59 @@ function watchDashboardData(tenantId) {
         ${canManage ? `<button class="btn btn-primary" id="f-save-branding" style="margin-top:16px">Сохранить брендинг</button>` : ''}
         <div id="f-branding-error" class="small" style="color:var(--danger);margin-top:8px"></div>
       </div>
+    `;
 
-      <h2>Подписка</h2>
-      ${(() => {
-        const daysLeft = daysUntilDataPurge(subscription);
-        if (daysLeft === null) return '';
-        return `
-          <div class="card danger">
-            <div style="font-weight:700;margin-bottom:6px">⚠ Подписка не продлена</div>
-            <div class="small">
-              Касса и приложение на всех устройствах заведения уже заблокированы.
-              ${daysLeft > 0
-                ? `Данные заведения будут БЕЗВОЗВРАТНО удалены через ${daysLeft} ${pluralDays(daysLeft)}, если подписку не продлить.`
-                : 'Срок продления истёк — данные заведения будут удалены при ближайшей проверке.'}
-              После удаления заведение придётся настраивать заново — меню, столы, сотрудников и всё остальное.
-            </div>
-          </div>
-        `;
-      })()}
+    const teamHtml = () => `
+      <h2>Команда</h2>
       <div class="card">
-        <div class="small muted">Тариф: ${esc(planName(plans, subscription?.planId) || subscription?.planId || '—')}</div>
-        <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
-        ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
-        ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
-        ${canManage && plans ? `
+        ${members === null ? '<div class="small muted">Загрузка…</div>' : sortedMembers.map((m) => `
+          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div class="grow" style="min-width:0">
+              <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
+              <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
+            </div>
+            ${canManage && m.userId !== state.uid && ['manager', 'employee'].includes(m.role) ? `
+              <select class="f-member-role" data-uid="${esc(m.userId)}" style="width:auto;margin:0">
+                <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Менеджер</option>
+                <option value="employee" ${m.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
+              </select>
+              <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
+                ${m.status === 'active' ? 'Отключить' : 'Включить'}
+              </button>
+            ` : ''}
+          </div>
+        `).join('') || '<div class="small muted">Пока только вы</div>'}
+
+        ${canManage ? `
           <div style="margin-top:14px">
-            ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
-              <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-                <div class="grow">
-                  <div>${esc(p.name || p.id)}</div>
-                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
-                  ${Number(p.priceRubYearly) > 0 ? `
-                    <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
-                      <option value="monthly">Помесячно</option>
-                      <option value="yearly">На год (выгоднее)</option>
-                    </select>
-                  ` : ''}
-                </div>
-                <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
-                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
-                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
-                </button>
-              </div>
-            `).join('')}
-            <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+            <label class="field"><span>Пригласить по email</span>
+              <input id="f-invite-email" type="email" placeholder="coworker@example.com">
+            </label>
+            <div class="row">
+              <select id="f-invite-role" class="grow">
+                <option value="manager">Менеджер</option>
+                <option value="employee" selected>Сотрудник</option>
+              </select>
+              <button class="btn btn-ghost" id="f-invite-submit" style="width:auto">Пригласить</button>
+            </div>
+            <p class="small muted" style="margin-top:6px">Приглашаемый должен
+            сначала сам зарегистрироваться в этой консоли (email + пароль) —
+            тогда его можно будет найти по email.</p>
+            <div id="f-invite-error" class="small" style="color:var(--danger)"></div>
           </div>
         ` : ''}
       </div>
-
-      <h2>Сборка APK</h2>
-      <div class="card">
-        <p class="small muted">Универсальный APK кассы для этой платформы —
-        после установки на планшет он сам предложит присоединиться по коду
-        заведения и коду приглашения устройства выше.</p>
-        ${canManage ? `<button class="btn btn-ghost" id="f-request-build">Собрать APK</button>` : ''}
-        <div id="f-build-error" class="small" style="color:var(--danger);margin-top:6px"></div>
-        ${(buildJobs || []).length ? buildJobs.map((j) => `
-          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
-            <div class="grow small muted">
-              ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
-              ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
-            </div>
-            ${j.status === 'success' && j.downloadPath ? `
-              <button class="btn-link f-build-download" data-path="${esc(j.downloadPath)}" style="width:auto">Скачать</button>
-            ` : ''}
-          </div>
-        `).join('') : '<p class="small muted" style="margin-top:10px">Сборок пока не было.</p>'}
-      </div>
     `;
+
+    const TAB_RENDERERS = {
+      overview: overviewHtml, devices: devicesHtml, subscription: subscriptionHtml,
+      branding: brandingHtml, team: teamHtml,
+    };
+    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardTabBarHtml(activeTab, daysLeft !== null);
+
+    document.querySelectorAll('.f-dash-tab').forEach((el) => {
+      el.onclick = () => { activeTab = el.dataset.tab; draw(); };
+    });
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
