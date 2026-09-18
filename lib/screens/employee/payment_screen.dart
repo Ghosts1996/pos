@@ -472,6 +472,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
       if (!result.success) {
         _showKassaWarning('Касса отклонила чек: ${result.errorMessage}');
       } else {
+        if (result.pending) {
+          // Касса приняла чек, но итоговый ФД ещё не подтверждён (обычно
+          // догоняет за секунды-минуты) — это не ошибка, просто кассир не
+          // должен думать, что чек потерялся.
+          _showKassaWarning('Чек принят кассой, номер ФД уточняется');
+        }
         if (markingCodes.isNotEmpty) {
           // Успешная фискализация с кодами маркировки в чеке — именно этот
           // момент официально выводит их из оборота через ОФД → ИС МП.
