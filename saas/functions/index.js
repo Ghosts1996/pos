@@ -172,7 +172,13 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
   const tenantRef = db.collection("tenants").doc();
   const tenantId = tenantRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const trialDays = 14; // TOR §34 — конфигурируемый срок; пока константа, вынести в plans при необходимости
+  // TOR §34 — пробный период конфигурируется на уровне тарифа (поле
+  // trialDays в "Тарифы" панели платформы), а не общей константой на всю
+  // платформу: у премиального тарифа может быть смысл дать более короткий
+  // или более длинный триал, чем у стартового.
+  const resolvedPlanId = planId || "start";
+  const planSnap = await db.collection("plans").doc(resolvedPlanId).get();
+  const trialDays = Number(planSnap.data()?.trialDays) || 14;
 
   const batch = db.batch();
 
@@ -181,7 +187,7 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
     slug,
     status: "trial",
     subscriptionStatus: "trial",
-    planId: planId || "start",
+    planId: resolvedPlanId,
     ownerUserId: uid,
     createdAt: now,
     updatedAt: now,
@@ -238,7 +244,7 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
 
   batch.set(db.collection("subscriptions").doc(tenantId), {
     tenantId,
-    planId: planId || "start",
+    planId: resolvedPlanId,
     status: "trial",
     provider: null,
     externalSubscriptionId: null,
