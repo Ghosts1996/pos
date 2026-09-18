@@ -25,6 +25,16 @@ import {
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
 const FUNCTIONS_REGION = 'europe-west1';
 
+// Метка версии консоли — меняется при каждой заметной правке этого файла.
+// Показывается мелко внизу экрана входа и панели платформы: единственный
+// способ на глаз отличить "деплой прошёл, но браузер показывает старый
+// кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
+// в терминале заново.
+const CONSOLE_BUILD = '2026-09-18.2';
+function versionFooterHtml() {
+  return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
+}
+
 const state = {
   auth: null,
   db: null,
@@ -144,6 +154,14 @@ function fmtDate(ts) {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
+// Timestamp -> "YYYY-MM-DD" для value инпута <input type="date"> — ручное
+// управление подпиской в панели платформы (см. saveSubscriptionOverride).
+function tsToDateInputValue(ts) {
+  const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
+  if (!d) return '';
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function fmtDateTime(ts) {
   const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
   if (!d) return '—';
@@ -198,6 +216,26 @@ async function copyToClipboard(text) {
   } catch (_) {
     toast('Не удалось скопировать — выделите код вручную');
   }
+}
+
+function csvCell(v) {
+  const s = String(v ?? '');
+  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// BOM в начале — иначе Excel на Windows показывает кириллицу в CSV
+// абракадаброй, считая файл однобайтовой кодировкой без явного маркера.
+function downloadCsv(filename, rows) {
+  const csv = '﻿' + rows.map((row) => row.map(csvCell).join(';')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 // Тот же алфавит, что в Cloud Function randomInviteCode() и в коротком ID
@@ -416,6 +454,7 @@ function screenAuth() {
       ${authMode === 'login' ? 'Ещё нет аккаунта?' : 'Уже есть аккаунт?'}
       <a href="#" id="f-switch">${authMode === 'login' ? 'Зарегистрироваться' : 'Войти'}</a>
     </p>
+    ${versionFooterHtml()}
   `;
 
   $('f-switch').onclick = (e) => {
@@ -1117,6 +1156,7 @@ function screenSuperAdmin() {
 
     <h2>Аналитика</h2>
     <div id="admin-analytics"><div class="spinner"></div></div>
+    <button class="btn btn-ghost" id="f-export-payments-csv" style="margin:10px 0 14px">Экспорт последних платежей в CSV</button>
 
     <h2>Тарифы</h2>
     <div id="admin-plans"><div class="spinner"></div></div>
@@ -1124,7 +1164,7 @@ function screenSuperAdmin() {
 
     <h2>Все заведения</h2>
     <div class="row" style="margin-bottom:14px">
-      <input id="f-tenant-search" class="grow" placeholder="Поиск по названию или коду заведения">
+      <input id="f-tenant-search" class="grow" placeholder="Название, код или email владельца">
       <select id="f-tenant-status-filter" style="width:auto">
         <option value="">Все статусы</option>
         <option value="trial">Пробный период</option>
@@ -1134,6 +1174,7 @@ function screenSuperAdmin() {
         <option value="cancelled">Отменено</option>
       </select>
     </div>
+    <button class="btn btn-ghost" id="f-export-tenants-csv" style="margin-bottom:14px">Экспорт заведений в CSV</button>
     <div id="admin-body"><div class="spinner"></div></div>
 
     <h2>Сотрудники платформы</h2>
@@ -1152,6 +1193,7 @@ function screenSuperAdmin() {
 
     <h2>Журнал платформы</h2>
     <div id="admin-audit"><div class="spinner"></div></div>
+    ${versionFooterHtml()}
   `;
   watchAllTenants();
   watchAuditLog();
@@ -1164,13 +1206,134 @@ function watchAllTenants() {
   const body = $('admin-body');
   const attentionBody = $('admin-attention');
   // limit(200) без постраничности — заведомо достаточно на старте
-  // платформы; поиск ниже фильтрует уже загрученный список на клиенте, а
+  // платформы; поиск ниже фильтрует уже загруженный список на клиенте, а
   // не делает отдельный запрос — простое и рабочее решение, пока
   // заведений меньше пары сотен (настоящая курсорная пагинация — отдельная
   // задача, когда/если платформа вырастет за этот предел).
   const q = query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(200));
   let allTenants = [];
   let plans = [];
+  // "Подробнее" на карточке заведения — раскрытые id и подгруженные для них
+  // данные (команда/код приглашения/заметки), которые НЕ идут в основной
+  // снапшот заведений: дорого тянуть это для всех 200 заведений сразу, а
+  // нужно обычно для одного-двух за раз, когда реально требуется помочь
+  // клиенту или свериться по оплате.
+  const expandedIds = new Set();
+  const detailsCache = new Map();
+
+  const ensureDetailsLoaded = async (tenantId) => {
+    try {
+      const [membersSnap, inviteSnap, notesSnap] = await Promise.all([
+        getDocs(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId))),
+        getDoc(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite')),
+        getDoc(doc(state.db, 'tenants', tenantId, 'internal', 'adminNotes')),
+      ]);
+      detailsCache.set(tenantId, {
+        members: membersSnap.docs.map((d) => d.data()),
+        invite: inviteSnap.exists() ? inviteSnap.data() : null,
+        notes: notesSnap.exists() ? (notesSnap.data().text || '') : '',
+      });
+    } catch (_) {
+      detailsCache.set(tenantId, { members: [], invite: null, notes: '' });
+    }
+    draw();
+  };
+
+  const toggleTenantDetail = (tenantId) => {
+    if (expandedIds.has(tenantId)) {
+      expandedIds.delete(tenantId);
+      draw();
+    } else {
+      expandedIds.add(tenantId);
+      draw();
+      if (!detailsCache.has(tenantId)) ensureDetailsLoaded(tenantId);
+    }
+  };
+
+  const saveTenantNotes = async (tenantId) => {
+    const el = document.querySelector(`.f-tenant-notes[data-id="${tenantId}"]`);
+    const btn = document.querySelector(`.f-tenant-notes-save[data-id="${tenantId}"]`);
+    if (!el) return;
+    if (btn) btn.disabled = true;
+    try {
+      await setDoc(doc(state.db, 'tenants', tenantId, 'internal', 'adminNotes'), {
+        text: el.value, updatedAt: Timestamp.fromDate(new Date()), updatedBy: state.uid,
+      }, { merge: true });
+      const cached = detailsCache.get(tenantId) || { members: [], invite: null };
+      cached.notes = el.value;
+      detailsCache.set(tenantId, cached);
+      toast('Заметка сохранена');
+    } catch (e) {
+      toast(`Не удалось сохранить заметку: ${e?.message || e}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  const saveSubscriptionOverride = async (tenantId) => {
+    const statusEl = document.querySelector(`.f-sub-status[data-id="${tenantId}"]`);
+    const periodEl = document.querySelector(`.f-sub-period-end[data-id="${tenantId}"]`);
+    const trialEl = document.querySelector(`.f-sub-trial-end[data-id="${tenantId}"]`);
+    const btn = document.querySelector(`.f-sub-save[data-id="${tenantId}"]`);
+    if (!statusEl) return;
+    if (btn) btn.disabled = true;
+    try {
+      const payload = { status: statusEl.value };
+      if (periodEl.value) payload.currentPeriodEnd = Timestamp.fromDate(new Date(`${periodEl.value}T12:00:00`));
+      if (trialEl.value) payload.trialEndsAt = Timestamp.fromDate(new Date(`${trialEl.value}T12:00:00`));
+      // Ручной override всегда означает "разобрались вручную" — сбрасываем
+      // pastDueSince, иначе отсчёт до удаления данных продолжит тикать по
+      // старой дате даже после того, как деньги на самом деле пришли.
+      if (statusEl.value !== 'past_due') payload.pastDueSince = null;
+      await setDoc(doc(state.db, 'subscriptions', tenantId), payload, { merge: true });
+      toast('Подписка обновлена');
+    } catch (e) {
+      toast(`Не удалось обновить подписку: ${e?.message || e}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  const renderTenantDetail = (t) => {
+    const d = detailsCache.get(t.id);
+    if (!d) return '<div class="small muted" style="margin-top:10px">Загрузка…</div>';
+    const sortedMembers = (d.members || []).slice().sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
+    return `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div class="small muted" style="margin-bottom:8px">Владелец: ${esc(t.ownerEmail || t.ownerUserId || '—')}</div>
+
+        <div class="small muted" style="margin-bottom:4px">Команда</div>
+        ${sortedMembers.length ? sortedMembers.map((m) => `
+          <div class="small" style="padding:2px 0">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)} — ${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
+        `).join('') : '<div class="small muted">Пусто</div>'}
+
+        <div class="row" style="justify-content:space-between;align-items:center;margin-top:12px">
+          <div class="small muted">Код приглашения устройства: <code>${esc(d.invite?.code || '—')}</code></div>
+          <button class="btn-link f-tenant-rotate-invite" data-id="${esc(t.id)}" style="width:auto">Обновить</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="small muted" style="margin-bottom:6px">Заметки (видны только супер-админам)</div>
+          <textarea class="f-tenant-notes" data-id="${esc(t.id)}" rows="3" placeholder="Например: платит переводом, звонил по поводу..." style="width:100%;resize:vertical">${esc(d.notes || '')}</textarea>
+          <button class="btn btn-ghost f-tenant-notes-save" data-id="${esc(t.id)}" style="margin-top:6px">Сохранить заметку</button>
+        </div>
+
+        <div style="margin-top:14px">
+          <div class="small muted" style="margin-bottom:6px">Ручное управление подпиской (оплата вне ЮKassa — перевод, наличные)</div>
+          <select class="f-sub-status" data-id="${esc(t.id)}">
+            ${Object.keys(SUB_STATUS_LABELS).map((s) => `<option value="${s}" ${t.subscription?.status === s ? 'selected' : ''}>${esc(SUB_STATUS_LABELS[s])}</option>`).join('')}
+          </select>
+          <label class="field"><span>Оплачено до</span>
+            <input type="date" class="f-sub-period-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.currentPeriodEnd)}">
+          </label>
+          <label class="field"><span>Триал до</span>
+            <input type="date" class="f-sub-trial-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
+          </label>
+          <button class="btn btn-ghost f-sub-save" data-id="${esc(t.id)}">Сохранить подписку</button>
+        </div>
+      </div>
+    `;
+  };
 
   const drawAttention = () => {
     if (!attentionBody) return;
@@ -1199,7 +1362,8 @@ function watchAllTenants() {
     const term = ($('f-tenant-search')?.value || '').trim().toLowerCase();
     const statusFilter = $('f-tenant-status-filter')?.value || '';
     let filtered = allTenants.filter((t) =>
-      (!term || (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term)) &&
+      (!term || (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term) ||
+        (t.ownerEmail || '').toLowerCase().includes(term)) &&
       (!statusFilter || t.status === statusFilter));
     // Проблемные заведения — наверх списка, чтобы не листать сотню
     // здоровых ради тех, что горят.
@@ -1249,6 +1413,10 @@ function watchAllTenants() {
             </select>
           </div>
         ` : ''}
+        <button class="btn-link f-tenant-detail-toggle" data-id="${esc(t.id)}" style="margin-top:8px">
+          ${expandedIds.has(t.id) ? 'Свернуть ▲' : 'Подробнее ▾'}
+        </button>
+        ${expandedIds.has(t.id) ? renderTenantDetail(t) : ''}
       </div>
     `).join('') : `<p class="small muted">${term || statusFilter ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`;
 
@@ -1257,6 +1425,21 @@ function watchAllTenants() {
     });
     document.querySelectorAll('.f-tenant-plan').forEach((el) => {
       el.onchange = () => changeTenantPlan(el.dataset.id, el.value);
+    });
+    document.querySelectorAll('.f-tenant-detail-toggle').forEach((el) => {
+      el.onclick = () => toggleTenantDetail(el.dataset.id);
+    });
+    document.querySelectorAll('.f-tenant-rotate-invite').forEach((el) => {
+      el.onclick = async () => {
+        await rotateInviteCode(el.dataset.id);
+        ensureDetailsLoaded(el.dataset.id);
+      };
+    });
+    document.querySelectorAll('.f-tenant-notes-save').forEach((el) => {
+      el.onclick = () => saveTenantNotes(el.dataset.id);
+    });
+    document.querySelectorAll('.f-sub-save').forEach((el) => {
+      el.onclick = () => saveSubscriptionOverride(el.dataset.id);
     });
   };
 
@@ -1298,6 +1481,19 @@ function watchAllTenants() {
         t.daysLeft = null;
         t.trialEndingSoonDays = null;
       }
+      // Для поиска по email владельца и отображения в "Подробнее" — не
+      // критично, если недоступно (например у совсем старой записи нет
+      // ownerUserId), тогда просто не участвует в поиске по email.
+      try {
+        if (t.ownerUserId) {
+          const uSnap = await getDoc(doc(state.db, 'users', t.ownerUserId));
+          t.ownerEmail = uSnap.exists() ? uSnap.data().email || null : null;
+        } else {
+          t.ownerEmail = null;
+        }
+      } catch (_) {
+        t.ownerEmail = null;
+      }
     }));
     allTenants = tenants;
     draw();
@@ -1305,6 +1501,27 @@ function watchAllTenants() {
   }, () => {
     body.innerHTML = '<p class="small" style="color:var(--danger)">Нет доступа к списку заведений.</p>';
   }));
+
+  if ($('f-export-tenants-csv')) {
+    $('f-export-tenants-csv').onclick = () => {
+      const rows = [[
+        'Название', 'Код', 'Статус', 'Тариф', 'Статус подписки', 'Оплачено до', 'Триал до',
+        'Владелец (email)', 'Сотрудников', 'Устройств', 'Столов', 'Гостей', 'Создано',
+      ]];
+      allTenants.forEach((t) => {
+        rows.push([
+          t.name || t.id, t.slug || '', TENANT_STATUS_LABELS[t.status] || t.status || '',
+          planName(plans, t.subscription?.planId) || t.subscription?.planId || '',
+          SUB_STATUS_LABELS[t.subscription?.status] || t.subscription?.status || '',
+          t.subscription?.currentPeriodEnd ? fmtDate(t.subscription.currentPeriodEnd) : '',
+          t.subscription?.trialEndsAt ? fmtDate(t.subscription.trialEndsAt) : '',
+          t.ownerEmail || '', t.usage?.employees ?? '', t.usage?.devices ?? '', t.usage?.tables ?? '', t.usage?.guests ?? '',
+          fmtDate(t.createdAt),
+        ]);
+      });
+      downloadCsv(`hoocah-pos-заведения-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    };
+  }
 }
 
 function watchAuditLog() {
@@ -1477,6 +1694,30 @@ function watchAnalytics() {
     revenueEvents = snap.docs.map((d) => d.data());
     maybeDraw();
   }, () => { revenueEvents = []; maybeDraw(); }));
+
+  if ($('f-export-payments-csv')) {
+    $('f-export-payments-csv').onclick = () => exportPaymentsCsv();
+  }
+}
+
+async function exportPaymentsCsv() {
+  const btn = $('f-export-payments-csv');
+  if (btn) btn.disabled = true;
+  try {
+    // Свежий запрос, а не данные из watchAnalytics() — экспорт может
+    // понадобиться раньше, чем отрисуется первая аналитика.
+    const snap = await getDocs(query(collection(state.db, 'billingEvents'), orderBy('receivedAt', 'desc'), limit(500)));
+    const rows = [['Дата', 'Заведение (id)', 'Статус', 'Назначение', 'Сумма, ₽']];
+    snap.docs.forEach((d) => {
+      const e = d.data();
+      rows.push([fmtDateTime(e.receivedAt), e.tenantId || '—', SUB_STATUS_LABELS[e.status] || e.status || '—', e.purpose || '—', Number(e.amount) || 0]);
+    });
+    downloadCsv(`hoocah-pos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  } catch (e) {
+    toast(`Не удалось выгрузить платежи: ${e?.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function toggleTenantSuspension(tenantId, isSuspended) {
