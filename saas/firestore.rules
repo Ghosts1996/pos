@@ -1,0 +1,533 @@
+rules_version = '2';
+
+// Правила SaaS-платформы Colibri POS — multi-tenant.
+//
+// Живёт ОТДЕЛЬНО от корневого firestore.rules, который обслуживает
+// одно действующее заведение (проект hoocah-pos) и его трогать нельзя.
+// Этот файл разворачивается в НОВЫЙ Firebase-проект (см. saas/README.md).
+//
+// Модель идентичности:
+//   • users/{uid}            — SaaS-аккаунт человека (владелец/сотрудник),
+//                               настоящий Firebase Auth (email+password —
+//                               НЕ анонимный, в отличие от гостей).
+//   • superAdmins/{uid}      — маркер: этот uid управляет платформой
+//                               целиком, а не одним заведением. Документ
+//                               создаётся только вручную из консоли
+//                               Firebase при бутстрапе платформы — ни один
+//                               клиентский путь не может создать себе такую
+//                               запись.
+//   • tenants/{tenantId}     — заведение-клиент SaaS.
+//   • tenantMembers/{id}     — членство: id = "<tenantId>_<uid>", одно
+//                               членство на пару (пользователь, заведение).
+//                               Роль хранится тут, а не в users — так один
+//                               и тот же человек может быть admin в одном
+//                               заведении и employee в другом.
+//   • tenants/{tenantId}/... — все рабочие данные заведения (столы, чеки,
+//                               меню, гости и т.д.) — вложены под tenantId,
+//                               поэтому изоляция арендаторов проверяется
+//                               ОДНИМ способом во всех этих коллекциях:
+//                               "состоит ли текущий пользователь в
+//                               tenantMembers этого tenantId".
+//
+// Гости (посетители заведения через QR/веб) по-прежнему анонимны — им
+// членство не нужно, они получают доступ к узкому набору документов внутри
+// tenants/{tenantId}/... по тем же принципам, что и в исходном приложении
+// (видят только свой чек, свой профиль, свои брони и т.д.), просто путь
+// теперь на один уровень вложенности глубже.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ---- Платформенный супер-админ ----
+    function isSuperAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/superAdmins/$(request.auth.uid));
+    }
+
+    // ---- Членство в заведении ----
+    function memberId(tenantId) {
+      return tenantId + '_' + request.auth.uid;
+    }
+
+    function memberDoc(tenantId) {
+      return get(/databases/$(database)/documents/tenantMembers/$(memberId(tenantId)));
+    }
+
+    function isMember(tenantId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/tenantMembers/$(memberId(tenantId))) &&
+        memberDoc(tenantId).data.status == 'active';
+    }
+
+    function memberRole(tenantId) {
+      return memberDoc(tenantId).data.role;
+    }
+
+    // roles — список строк, например ['owner','admin']. Супер-админ
+    // платформы проходит через isMember() тоже, потому что владеет
+    // "правом делать что угодно" — но здесь именно проверка РОЛИ внутри
+    // заведения, поэтому супер-админа явно добавляем отдельным условием.
+    function hasRole(tenantId, roles) {
+      return isSuperAdmin() || (isMember(tenantId) && memberRole(tenantId) in roles);
+    }
+
+    // Любой сотрудник заведения (все роли, кроме отсутствия членства).
+    function isStaff(tenantId) {
+      return hasRole(tenantId, ['owner', 'admin', 'manager', 'employee']);
+    }
+
+    // Гость ЭТОГО заведения — определяется не самим фактом входа в Firebase
+    // (в мультитенантном проекте один и тот же анонимный аккаунт гостя
+    // валиден для ЛЮБОГО заведения на платформе), а наличием собственного
+    // профиля clients в поддереве именно этого tenantId. Такой профиль
+    // создаётся первым делом при запуске гостевого приложения/веб-версии
+    // (ensureProfile/ensureGuest), до того как экран показывает меню, зал
+    // или афишу — поэтому к моменту любого такого чтения профиль уже есть.
+    //
+    // Без этой проверки было бы достаточно просто быть авторизованным (а
+    // авторизован в проекте платформы КАЖДЫЙ гость КАЖДОГО заведения), чтобы
+    // читать меню, зал и афишу чужого заведения — прямое нарушение раздела
+    // 9 ТЗ ("данные Tenant A никогда не должны быть доступны Tenant B").
+    function isTenantGuest(tenantId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid));
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ---- users: свой профиль читает/правит сам, супер-админ — любой ----
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isSuperAdmin();
+      allow create: if isSelf(uid);
+      // email/createdAt не должны переписываться пользователем задним числом.
+      allow update: if isSelf(uid) &&
+        !('email' in request.resource.data.diff(resource.data).affectedKeys()) &&
+        !('createdAt' in request.resource.data.diff(resource.data).affectedKeys());
+      allow delete: if isSuperAdmin();
+    }
+
+    // Супер-админов заводит только консоль Firebase — ни read, ни write
+    // отсюда не должно быть возможности изменить список себе на пользу.
+    match /superAdmins/{uid} {
+      allow read: if isSelf(uid) || isSuperAdmin();
+      allow write: if false;
+    }
+
+    // ---- tenants: сам факт существования заведения и его статус ----
+    match /tenants/{tenantId} {
+      allow read: if isMember(tenantId) || isSuperAdmin();
+      // Создание нового tenant — привилегированная операция. Клиент НЕ
+      // создаёт tenant напрямую: это делает Cloud Function createTenant
+      // (см. saas/functions/index.js), которая работает от имени admin SDK
+      // и не подчиняется этим правилам вовсе. Прямая запись из приложения
+      // запрещена, чтобы никто не мог завести себе tenant в обход
+      // онбординга/лимитов/биллинга.
+      allow create: if false;
+      // Статус/подписку/владельца меняет либо супер-админ, либо Cloud
+      // Function биллинга (тоже вне правил). Обычный owner/admin может
+      // менять только некритичные поля (name) — проверено явно, а не
+      // "всё, кроме…", чтобы новое опасное поле не проскочило по забывчивости.
+      allow update: if isSuperAdmin() ||
+        (hasRole(tenantId, ['owner', 'admin']) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']));
+      allow delete: if isSuperAdmin();
+    }
+
+    // ---- tenantMembers: кто состоит в заведении и с какой ролью ----
+    match /tenantMembers/{id} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() &&
+         (resource.data.userId == request.auth.uid ||
+          isMember(resource.data.tenantId)));
+      // Добавление/смена роли сотрудника — на бэкенде (Cloud Function),
+      // либо владельцем/админом заведения для рядовых ролей. Владелец не
+      // может назначить второго owner сам себе в обход биллинга (лимит
+      // тарифа на число совладельцев считает функция), поэтому роль
+      // 'owner' тут запрещена клиенту явно.
+      //
+      // Третья ветка — самостоятельное присоединение ПЛАНШЕТА: устройство
+      // уже прошло проверку кода приглашения при создании своего документа
+      // в tenants/{tenantId}/devices/{uid} (см. правило ниже) — раз тот
+      // документ существует, повторно спрашивать код не нужно, и устройство
+      // может завести себе БАЗОВУЮ роль employee (не выше) для того же uid.
+      allow create: if isSuperAdmin() ||
+        (hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
+         request.resource.data.role in ['manager', 'employee']) ||
+        (isSelf(request.resource.data.userId) &&
+         request.resource.data.role == 'employee' &&
+         request.resource.data.status == 'active' &&
+         id == request.resource.data.tenantId + '_' + request.resource.data.userId &&
+         exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)/devices/$(request.auth.uid)));
+      allow update: if isSuperAdmin() ||
+        (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
+         resource.data.role in ['manager', 'employee'] &&
+         request.resource.data.role in ['manager', 'employee']);
+      allow delete: if isSuperAdmin() ||
+        hasRole(resource.data.tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Настройки заведения ----
+    match /tenants/{tenantId}/settings/{doc} {
+      allow read: if isMember(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Брендинг ----
+    match /tenants/{tenantId}/branding/{doc} {
+      // Гостевые приложения тоже читают брендинг (название, цвета, лого) —
+      // поэтому read открыт гостям этого заведения, не только сотрудникам.
+      // Само по себе название и цвет — не секрет, но привязка именно к
+      // СВОЕМУ заведению всё равно нужна (см. isTenantGuest).
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Рабочие устройства (замена staffDevices) ----
+    // Устройство присоединяется к заведению по коду-приглашению
+    // (tenants/{tenantId}/settings/deviceInvite.code), а не по общему на
+    // всю платформу секрету — иначе угнанный код одного заведения открывал
+    // бы доступ к данным всех остальных.
+    match /tenants/{tenantId}/devices/{deviceId} {
+      allow read: if isMember(tenantId);
+      allow create: if isSelf(deviceId) &&
+        request.resource.data.inviteCode ==
+          get(/databases/$(database)/documents/tenants/$(tenantId)/settings/deviceInvite).data.code;
+      allow update, delete: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Сотрудники (PIN-вход внутри заведения, как раньше) ----
+    match /tenants/{tenantId}/employees/{employeeId} {
+      allow read: if isStaff(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Столы и чеки ----
+    match /tenants/{tenantId}/tables/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+
+    function myActiveSession(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid))
+                .data.activeSessionId;
+    }
+
+    match /tenants/{tenantId}/sessions/{doc} {
+      allow read: if isStaff(tenantId) ||
+        (signedIn() &&
+         exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid)) &&
+         myActiveSession(tenantId) == doc);
+      allow update: if isStaff(tenantId) ||
+        (signedIn() &&
+         exists(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(doc)) &&
+         get(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(doc)).data.uid == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestTag']));
+      allow create, delete: if isStaff(tenantId);
+    }
+
+    // ---- Витрина: меню ----
+    match /tenants/{tenantId}/menuCategories/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/menuItems/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+
+    // ---- Профили гостей заведения ----
+    match /tenants/{tenantId}/clients/{uid} {
+      allow read: if isSelf(uid) || isStaff(tenantId);
+
+      function sessionClaimOk(currentSid) {
+        let sid = request.resource.data.get('activeSessionId', '');
+        return sid == '' || sid == currentSid ||
+          (exists(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(sid)) &&
+           get(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(sid)).data.uid == uid);
+      }
+
+      allow create: if isStaff(tenantId) || (isSelf(uid) && sessionClaimOk(''));
+      allow update: if isStaff(tenantId) ||
+        (isSelf(uid) &&
+         sessionClaimOk(resource.data.get('activeSessionId', '')) &&
+         (!('phone' in request.resource.data) ||
+          resource.data.get('phone', '') == '' ||
+          request.resource.data.phone == resource.data.phone) &&
+         (!('bonusBalance' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('tier' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('totalSpent' in request.resource.data.diff(resource.data).affectedKeys())));
+      allow delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/clients/{uid}/visits/{visitId} {
+      allow read: if isSelf(uid) || isStaff(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+
+    // ---- Указатели «номер/код → uid» (обезличены, без query по clients) ----
+    match /tenants/{tenantId}/phoneIndex/{phone} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/referralCodes/{code} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/sessionClaims/{sessionId} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && request.resource.data.uid == request.auth.uid);
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && resource.data.uid == request.auth.uid);
+    }
+
+    // ---- Брони ----
+    match /tenants/{tenantId}/reservations/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         request.resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'new');
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.clientUid == request.auth.uid &&
+         (request.resource.data.status == 'cancelled' ||
+          (request.resource.data.status == resource.data.status &&
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['guestConfirmed']))));
+      allow delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/reservationSlots/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && request.resource.data.clientUid == request.auth.uid);
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.clientUid == request.auth.uid &&
+         request.resource.data.clientUid == request.auth.uid);
+      allow delete: if isStaff(tenantId);
+    }
+
+    // ---- Вызовы персонала, заказы, отзывы, чаевые, очередь ----
+    match /tenants/{tenantId}/waiterCalls/{doc} {
+      allow read: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) && request.resource.data.clientUid == request.auth.uid;
+      allow update, delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/guestOrders/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'new';
+      allow update, delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/reviews/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) && request.resource.data.clientUid == request.auth.uid;
+      allow update, delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/tips/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      allow update, delete: if isStaff(tenantId);
+    }
+
+    match /tenants/{tenantId}/waitlist/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'waiting';
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'left');
+      allow delete: if isStaff(tenantId);
+    }
+
+    // ---- Бонусы: пишет только касса ----
+    match /tenants/{tenantId}/bonusOperations/{doc} {
+      allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow write: if isStaff(tenantId);
+    }
+
+    // ---- Сертификаты ----
+    match /tenants/{tenantId}/giftCards/{code} {
+      allow get: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow list: if isStaff(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/giftCardClaims/{doc} {
+      allow read: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'new' &&
+        request.resource.data.amount == 0;
+      allow update, delete: if isStaff(tenantId);
+    }
+
+    // ---- Афиша, счастливые часы, профиль/правила заведения (витрина) ----
+    match /tenants/{tenantId}/stories/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/happyHours/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/meta/venueProfile {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+    match /tenants/{tenantId}/meta/aiSettings {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+    // Служебные документы meta/*, не требующие сужения до owner/admin —
+    // перечислены явно (а не через meta/{doc}), чтобы не перекрыть более
+    // узкие правила venueProfile/aiSettings выше (см. предупреждение про
+    // "общий catch-all" в конце файла).
+    match /tenants/{tenantId}/meta/jobsLock {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/meta/aiSchedulerLock {
+      allow read, write: if isStaff(tenantId);
+    }
+
+    // ---- Аудит и служебные журналы: только персонал своего заведения ----
+    match /tenants/{tenantId}/auditLog/{doc} {
+      allow read: if isStaff(tenantId);
+      allow create: if isStaff(tenantId);
+      allow update, delete: if false;
+    }
+    match /tenants/{tenantId}/aiLogs/{doc} {
+      allow read: if isStaff(tenantId);
+      allow create: if signedIn();
+      allow update, delete: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/aiActions/{doc} {
+      allow read: if isStaff(tenantId);
+      allow create: if signedIn();
+      allow update, delete: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/staffNotes/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+
+    // ---- Платформенный audit log (жизненный цикл tenant, действия
+    //      супер-админа) — top-level, с полем tenantId внутри документа.
+    match /auditLogs/{logId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
+      // Пишут только Cloud Functions (admin SDK, вне правил) — клиент
+      // не может создать себе запись аудита задним числом или подделать её.
+      allow write: if false;
+    }
+
+    // ---- Тарифы (платформенные, читает кто угодно авторизованный —
+    //      цену и лимиты нужно показать до создания заведения) ----
+    match /plans/{planId} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // ---- Подписки: владелец видит статус своей, менять может только
+    //      биллинговая Cloud Function/супер-админ ----
+    match /subscriptions/{subscriptionId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
+      allow write: if isSuperAdmin();
+    }
+
+    // ---- Сборки APK: владелец заведения видит и запрашивает свои,
+    //      сам билд выполняет GitHub Actions + Cloud Function ----
+    match /buildJobs/{buildId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
+      // Создание job'а — только через Cloud Function createBuildJob
+      // (проверяет лимиты тарифа, статус подписки, валидирует branding),
+      // не напрямую с клиента.
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ---- Остальные внутренние коллекции заведения: склад, смены,
+    //      скидочные карты, маркировка, очередь push, задачи ИИ ----
+    //
+    // ВАЖНО: здесь намеренно НЕТ рекурсивного match /tenants/{tenantId}/
+    // {document=**} "на всё остальное". Firestore разрешает операцию, если
+    // её пропускает ХОТЯ БЫ ОДНО подходящее правило (правила складываются
+    // через ИЛИ, а не "самое специфичное побеждает") — поэтому такой
+    // catch-all с условием isStaff(tenantId) тихо ПЕРЕКРЫВАЛ БЫ более узкие
+    // ограничения выше (branding/employees/venueProfile/aiSettings/devices/
+    // settings — там write разрешён только owner/admin, а catch-all снова
+    // открывал бы его любому employee). Это реальный баг, пойманный
+    // автоматическим тестом (saas/test/firestore.rules.test.js, "employee
+    // читает столы, но не может менять брендинг") — поэтому вместо catch-all
+    // каждая оставшаяся коллекция перечислена явно.
+    match /tenants/{tenantId}/inventory/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/inventoryMovements/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/inventoryCounts/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/discountCards/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/shifts/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/marking_codes_sold/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/aiJobs/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    // Счётчик обращений гостя к ИИ — ведёт только Cloud Function (admin SDK,
+    // вне этих правил); клиенту (даже персоналу) писать сюда незачем.
+    match /tenants/{tenantId}/aiUsage/{doc} {
+      allow read: if isStaff(tenantId);
+      allow write: if false;
+    }
+    // Очередь push: пишут оба приложения (гость — только в СВОЁМ заведении),
+    // читает и рассылает Cloud Function.
+    match /tenants/{tenantId}/pushQueue/{doc} {
+      allow read: if isStaff(tenantId);
+      allow create: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow update, delete: if false;
+    }
+  }
+}

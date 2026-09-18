@@ -7,6 +7,12 @@ analyzer:
     - build/**
     - android/**
     - ios/**
+    # SaaS-платформа (saas/) — отдельный Node/JS проект (Cloud Functions,
+    # тесты правил), не часть Flutter-приложения; node_modules там может
+    # содержать шаблонные .dart-файлы сторонних пакетов (например,
+    # firebase-tools), которые не относятся к этому проекту вовсе.
+    - saas/**
+
 
 linter:
   rules:

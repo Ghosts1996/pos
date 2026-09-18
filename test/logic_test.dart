@@ -14,7 +14,9 @@ import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/models/venue_models.dart';
 import 'package:hookah_pos/models/fiscal_receipt.dart';
+import 'package:hookah_pos/models/tenant_models.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
+import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -513,6 +515,173 @@ void main() {
       );
       expect(buildKassaService({'kassaType': 'cloud_kassir'}), isA<CloudKassirKassaService>());
       expect(buildKassaService({}), isA<MockKassaService>());
+    });
+  });
+
+  group('SaaS: статус заведения (tenant status)', () {
+    test('trial/active/past_due разрешают операционную работу', () {
+      expect(TenantStatus.trial.allowsOperations, isTrue);
+      expect(TenantStatus.active.allowsOperations, isTrue);
+      expect(TenantStatus.pastDue.allowsOperations, isTrue);
+    });
+
+    test('suspended/cancelled/deleted блокируют операционную работу', () {
+      expect(TenantStatus.suspended.allowsOperations, isFalse);
+      expect(TenantStatus.cancelled.allowsOperations, isFalse);
+      expect(TenantStatus.deleted.allowsOperations, isFalse);
+    });
+
+    test('владельцу закрыт доступ только у удалённого заведения', () {
+      expect(TenantStatus.suspended.allowsOwnerAccess, isTrue);
+      expect(TenantStatus.cancelled.allowsOwnerAccess, isTrue);
+      expect(TenantStatus.deleted.allowsOwnerAccess, isFalse);
+    });
+
+    test('неизвестный/пустой статус по умолчанию — trial', () {
+      expect(TenantStatusX.fromId(null), TenantStatus.trial);
+      expect(TenantStatusX.fromId('что-то не то'), TenantStatus.trial);
+      expect(TenantStatusX.fromId('past_due'), TenantStatus.pastDue);
+    });
+  });
+
+  group('SaaS: роли (tenant role hierarchy)', () {
+    test('owner выше admin выше manager выше employee', () {
+      expect(TenantRole.owner.atLeast(TenantRole.admin), isTrue);
+      expect(TenantRole.admin.atLeast(TenantRole.owner), isFalse);
+      expect(TenantRole.manager.atLeast(TenantRole.employee), isTrue);
+      expect(TenantRole.employee.atLeast(TenantRole.manager), isFalse);
+    });
+
+    test('роль сравнима сама с собой', () {
+      expect(TenantRole.admin.atLeast(TenantRole.admin), isTrue);
+    });
+
+    test('неизвестный id роли не сопоставляется ни с чем', () {
+      expect(TenantRoleX.fromId('super-hacker'), isNull);
+      expect(TenantRoleX.fromId(null), isNull);
+      expect(TenantRoleX.fromId('owner'), TenantRole.owner);
+    });
+  });
+
+  group('SaaS: длительность кальяна заведения (session settings)', () {
+    test('длительность внутри границ не меняется', () {
+      const s = SessionSettings(minimumHookahDurationMinutes: 30, maximumHookahDurationMinutes: 360);
+      expect(s.clampMinutes(90), 90);
+    });
+
+    test('слишком короткая/длинная зажимается по границам заведения', () {
+      const s = SessionSettings(minimumHookahDurationMinutes: 30, maximumHookahDurationMinutes: 360);
+      expect(s.clampMinutes(5), 30);
+      expect(s.clampMinutes(500), 360);
+    });
+
+    test('у разных заведений разные стандартные длительности не пересекаются', () {
+      final a = SessionSettings.fromMap({'defaultHookahDurationMinutes': 90});
+      final b = SessionSettings.fromMap({'defaultHookahDurationMinutes': 120});
+      expect(a.defaultHookahDurationMinutes, 90);
+      expect(b.defaultHookahDurationMinutes, 120);
+    });
+  });
+
+  group('SaaS: приоритет feature-флагов platform → plan → tenant', () {
+    test('tenant перекрывает plan и platform', () {
+      const flags = FeatureFlags(
+        platform: {'ai': false},
+        plan: {'ai': true},
+        tenant: {'ai': false},
+      );
+      expect(flags.isEnabled('ai'), isFalse);
+    });
+
+    test('при отсутствии значения на уровне tenant используется plan', () {
+      const flags = FeatureFlags(plan: {'reservations': true});
+      expect(flags.isEnabled('reservations'), isTrue);
+    });
+
+    test('при отсутствии всюду используется значение по умолчанию', () {
+      const flags = FeatureFlags();
+      expect(flags.isEnabled('advancedReports', defaultValue: false), isFalse);
+      expect(flags.isEnabled('advancedReports', defaultValue: true), isTrue);
+    });
+  });
+
+  group('SaaS: подписка и лимиты тарифа', () {
+    test('пробный период, заканчивающийся через день, считается "скоро истекает" при окне 3 дня', () {
+      final sub = SubscriptionInfo(
+        tenantId: 't1',
+        planId: 'start',
+        status: 'trial',
+        trialEndsAt: DateTime(2026, 1, 4),
+      );
+      final now = DateTime(2026, 1, 3);
+      expect(sub.isTrialExpiringWithin(const Duration(days: 3), now: now), isTrue);
+      expect(sub.isTrialExpiringWithin(const Duration(hours: 1), now: now), isFalse);
+    });
+
+    test('лимит тарифа: 0 или отрицательное значение — без ограничений', () {
+      const plan = PlanLimits(
+        planId: 'enterprise',
+        maxEmployees: 0,
+        maxDevices: 0,
+        maxTables: 0,
+        maxStorageMb: 0,
+        aiEnabled: true,
+        customBranding: true,
+        customDomain: true,
+      );
+      expect(plan.isWithinLimit(9999, plan.maxEmployees), isTrue);
+    });
+
+    test('лимит тарифа: обычное положительное ограничение реально ограничивает', () {
+      const plan = PlanLimits(
+        planId: 'start',
+        maxEmployees: 3,
+        maxDevices: 1,
+        maxTables: 10,
+        maxStorageMb: 500,
+        aiEnabled: false,
+        customBranding: false,
+        customDomain: false,
+      );
+      expect(plan.isWithinLimit(2, plan.maxEmployees), isTrue);
+      expect(plan.isWithinLimit(3, plan.maxEmployees), isFalse);
+    });
+  });
+
+  group('SaaS: TenantConfig.operationsAllowed', () {
+    TenantConfig buildConfig({required TenantStatus status, required String subStatus}) {
+      return TenantConfig(
+        tenant: Tenant(
+          id: 't1', name: 'Test', slug: 'test', status: status, planId: 'start', ownerUserId: 'u1',
+        ),
+        member: const TenantMember(tenantId: 't1', userId: 'u1', role: TenantRole.owner, status: 'active'),
+        branding: const BrandingConfig(),
+        session: const SessionSettings(),
+        features: const FeatureFlags(),
+        subscription: SubscriptionInfo(tenantId: 't1', planId: 'start', status: subStatus),
+      );
+    }
+
+    test('активное заведение с активной подпиской — работа разрешена', () {
+      expect(buildConfig(status: TenantStatus.active, subStatus: 'active').operationsAllowed, isTrue);
+    });
+
+    test('заблокированное заведение — работа запрещена, даже если подписка формально active', () {
+      expect(buildConfig(status: TenantStatus.suspended, subStatus: 'active').operationsAllowed, isFalse);
+    });
+
+    test('отменённая подписка блокирует работу, даже если сам tenant ещё не помечен', () {
+      expect(buildConfig(status: TenantStatus.active, subStatus: 'cancelled').operationsAllowed, isFalse);
+    });
+
+    test('round-trip сериализации конфигурации в локальный кэш не теряет данные', () {
+      final original = buildConfig(status: TenantStatus.trial, subStatus: 'trial');
+      final restored = tenantConfigFromCacheMap(tenantConfigToCacheMap(original));
+      expect(restored.tenant.id, original.tenant.id);
+      expect(restored.tenant.status, original.tenant.status);
+      expect(restored.member.role, original.member.role);
+      expect(restored.session.defaultHookahDurationMinutes, original.session.defaultHookahDurationMinutes);
+      expect(restored.subscription.status, original.subscription.status);
     });
   });
 }

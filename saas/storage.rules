@@ -1,0 +1,74 @@
+rules_version = '2';
+
+// Storage-правила SaaS-платформы — параллельно firestore.rules.
+//
+// Storage Security Rules умеют читать Firestore того же проекта через
+// firestore.get()/firestore.exists() — этим пользуемся, чтобы не дублировать
+// понятие "член заведения" отдельной сущностью внутри Storage.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isMember(tenantId) {
+      return request.auth != null &&
+        firestore.exists(/databases/(default)/documents/tenantMembers/$(tenantId + '_' + request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/tenantMembers/$(tenantId + '_' + request.auth.uid)).data.status == 'active';
+    }
+
+    function hasRole(tenantId, roles) {
+      return isMember(tenantId) &&
+        firestore.get(/databases/(default)/documents/tenantMembers/$(tenantId + '_' + request.auth.uid)).data.role in roles;
+    }
+
+    // Логотип/иконка/сплэш — публичные картинки, гостевые приложения и
+    // веб показывают их без токена. Загружать может только владелец/админ
+    // своего заведения, и только реальное изображение разумного размера.
+    match /tenants/{tenantId}/branding/{fileName} {
+      allow read: if true;
+      allow write: if hasRole(tenantId, ['owner', 'admin'])
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // Фото меню — тоже публичные (показываются гостю без входа), пишет
+    // персонал заведения (не обязательно admin — меню редактируют и менеджеры).
+    match /tenants/{tenantId}/menu/{fileName} {
+      allow read: if true;
+      allow write: if hasRole(tenantId, ['owner', 'admin', 'manager'])
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if hasRole(tenantId, ['owner', 'admin', 'manager']);
+    }
+
+    // Экспорт данных и артефакты сборки APK — НЕ публичные: экспорт может
+    // содержать телефоны/имена гостей, а APK download URL не должен быть
+    // угадываемым чужим tenant. Доступ — только owner/admin своего заведения.
+    match /tenants/{tenantId}/exports/{fileName} {
+      allow read, write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+    match /tenants/{tenantId}/builds/{fileName} {
+      allow read: if hasRole(tenantId, ['owner', 'admin']);
+      // Файл кладёт туда только Cloud Function сборки (admin SDK, вне
+      // этих правил) — клиент сам ничего не загружает в builds/.
+      allow write: if false;
+    }
+
+    // Файлы, которые гость мог бы приложить (например, фото к отзыву) —
+    // читает персонал заведения, пишет любой авторизованный (в т.ч. гость),
+    // но не может перезаписать чужой файл задним числом.
+    match /tenants/{tenantId}/guests/{uid}/{fileName} {
+      allow read: if hasRole(tenantId, ['owner', 'admin', 'manager', 'employee']) ||
+        (request.auth != null && request.auth.uid == uid);
+      allow write: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if hasRole(tenantId, ['owner', 'admin']) ||
+        (request.auth != null && request.auth.uid == uid);
+    }
+
+    // Всё остальное в бакете закрыто по умолчанию.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
