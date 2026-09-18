@@ -1,5 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:flutter/widgets.dart';
 
 /// Заранее скачивает и кладёт в ДИСКОВЫЙ кэш (cached_network_image /
@@ -14,18 +14,17 @@ import 'package:flutter/widgets.dart';
 /// menu_selection_screen.dart и menu_editor_screen.dart) в дальнейшем
 /// читают их с диска — мгновенно и без сети.
 class ImagePreloadService {
-  final _db = FirebaseFirestore.instance;
 
   Future<List<String>> _collectImageUrls() async {
     final urls = <String>{};
 
-    final catsSnap = await _db.collection('menuCategories').get();
+    final catsSnap = await AppScope.col('menuCategories').get();
     for (final d in catsSnap.docs) {
       final url = (d.data()['imageUrl'] as String?) ?? '';
       if (url.isNotEmpty) urls.add(url);
     }
 
-    final itemsSnap = await _db.collection('menuItems').get();
+    final itemsSnap = await AppScope.col('menuItems').get();
     for (final d in itemsSnap.docs) {
       final url = (d.data()['imageUrl'] as String?) ?? '';
       if (url.isNotEmpty) urls.add(url);

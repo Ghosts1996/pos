@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import '../../services/printer_service.dart';
@@ -21,7 +22,7 @@ class IntegrationsSettingsScreen extends StatefulWidget {
 }
 
 class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen> {
-  final _doc = FirebaseFirestore.instance.collection('settings').doc('integrations');
+  final _doc = AppScope.col('settings').doc('integrations');
 
   String _printerType = 'none'; // none | bluetooth | network
   String _btMac = '';

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_scheduler.dart';
@@ -106,8 +107,7 @@ class _AiActionsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('aiActions')
+      stream: AppScope.col('aiActions')
           .orderBy('createdAt', descending: true)
           .limit(150)
           .snapshots(),

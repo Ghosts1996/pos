@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'venue_service.dart';
@@ -12,7 +13,7 @@ import '../models/table_model.dart';
 class ReservationService {
   final _db = FirebaseFirestore.instance;
 
-  CollectionReference<Map<String, dynamic>> get _col => _db.collection('reservations');
+  CollectionReference<Map<String, dynamic>> get _col => AppScope.col('reservations');
 
   // ---------- ЧТЕНИЕ ----------
 
@@ -85,7 +86,7 @@ class ReservationService {
     final dayTo = around.add(const Duration(hours: 26));
 
     final results = await Future.wait([
-      _db.collection('tables').get(),
+      AppScope.col('tables').get(),
       _slots
           .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(dayFrom))
           .where('startTime', isLessThan: Timestamp.fromDate(dayTo))
@@ -118,7 +119,7 @@ class ReservationService {
   /// Зеркало броней без персональных данных — единственный источник
   /// занятости столов бронями, доступный гостевому приложению.
   CollectionReference<Map<String, dynamic>> get _slots =>
-      _db.collection('reservationSlots');
+      AppScope.col('reservationSlots');
 
   /// Создаёт/обновляет запись в зеркале. Вызывается при каждом изменении
   /// брони, которое влияет на занятость стола: создание, подтверждение,
@@ -489,7 +490,7 @@ class ReservationService {
   /// что стол точно понадобится. «Не приду» — обычная отмена, стол
   /// освобождается сразу, а не через час ожидания.
   Future<void> guestConfirm(String id) =>
-      _db.collection('reservations').doc(id).update({'guestConfirmed': true});
+      AppScope.col('reservations').doc(id).update({'guestConfirmed': true});
 
   Future<void> cancel(String id, {String by = ''}) async {
     await _col.doc(id).update({
@@ -555,8 +556,8 @@ class ReservationService {
       throw StateError('У брони не назначен стол — назначьте стол перед посадкой.');
     }
 
-    final tableRef = _db.collection('tables').doc(reservation.tableId);
-    final sessionRef = _db.collection('sessions').doc();
+    final tableRef = AppScope.col('tables').doc(reservation.tableId);
+    final sessionRef = AppScope.col('sessions').doc();
     final resRef = _col.doc(reservation.id);
     final now = DateTime.now();
 
@@ -607,7 +608,7 @@ class ReservationService {
     // Привязываем гостя к чеку, чтобы в его приложении сразу появился
     // живой счёт и таймер стола.
     if (reservation.clientUid.isNotEmpty) {
-      await _db.collection('clients').doc(reservation.clientUid).set({
+      await AppScope.col('clients').doc(reservation.clientUid).set({
         'activeSessionId': sessionRef.id,
         'activeTableId': reservation.tableId,
         'lastVisitAt': Timestamp.fromDate(now),
@@ -615,8 +616,7 @@ class ReservationService {
       // Закрепляем чек за тем, кто бронировал, — иначе его счёт мог бы
       // «увести» другой гость, отсканировав QR этого стола.
       try {
-        await _db
-            .collection('sessionClaims')
+        await AppScope.col('sessionClaims')
             .doc(sessionRef.id)
             .set({'uid': reservation.clientUid});
       } catch (_) {}

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'reservation_service.dart';
@@ -13,10 +14,9 @@ class WaitlistService {
   WaitlistService._();
   static final WaitlistService instance = WaitlistService._();
 
-  final _db = FirebaseFirestore.instance;
   final _reservations = ReservationService();
 
-  CollectionReference<Map<String, dynamic>> get _col => _db.collection('waitlist');
+  CollectionReference<Map<String, dynamic>> get _col => AppScope.col('waitlist');
 
   Stream<List<WaitlistEntry>> openStream() => _col
       .where('status', whereIn: ['waiting', 'invited'])
@@ -86,7 +86,7 @@ class WaitlistService {
   ///
   /// Считается по таймерам открытых чеков — это честнее, чем «минут 20».
   Future<int> estimateWait({required int guestsCount, int position = 1}) async {
-    final tables = await _db.collection('tables').get();
+    final tables = await AppScope.col('tables').get();
     final suitable = tables.docs
         .where((d) => ((d.data()['seats'] as num?)?.toInt() ?? 4) >= guestsCount)
         .toList();
@@ -124,7 +124,7 @@ class WaitlistService {
     });
 
     if (entry.clientUid.isNotEmpty) {
-      final client = await _db.collection('clients').doc(entry.clientUid).get();
+      final client = await AppScope.col('clients').doc(entry.clientUid).get();
       final token = client.data()?['pushToken'] as String?;
       if (token != null && token.isNotEmpty) {
         await PushService.instance.enqueue(

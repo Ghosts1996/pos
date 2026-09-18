@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'push_service.dart';
 
 /// Реферальная программа «приведи друга».
@@ -21,7 +22,7 @@ class ReferralService {
   /// выдавался, а чужой код не принимался. В указателе лежит только пара
   /// «код → uid», никаких персональных данных.
   CollectionReference<Map<String, dynamic>> get _codes =>
-      _db.collection('referralCodes');
+      AppScope.col('referralCodes');
 
   /// Сколько бонусов получает каждая сторона.
   static const double inviterBonus = 300;
@@ -29,7 +30,7 @@ class ReferralService {
 
   /// Код гостя. Генерируется один раз и живёт в профиле.
   Future<String> ensureCode(String uid) async {
-    final ref = _db.collection('clients').doc(uid);
+    final ref = AppScope.col('clients').doc(uid);
     final snap = await ref.get();
     final existing = snap.data()?['referralCode'] as String?;
     if (existing != null && existing.isNotEmpty) return existing;
@@ -67,7 +68,7 @@ class ReferralService {
     final normalized = code.trim().toUpperCase();
     if (normalized.isEmpty) return 'Введите код.';
 
-    final me = await _db.collection('clients').doc(uid).get();
+    final me = await AppScope.col('clients').doc(uid).get();
     if ((me.data()?['referredBy'] as String?)?.isNotEmpty == true) {
       return 'Код уже применён раньше.';
     }
@@ -83,7 +84,7 @@ class ReferralService {
     if (!inviterDoc.exists || inviterId.isEmpty) return 'Такого кода нет.';
     if (inviterId == uid) return 'Это ваш собственный код.';
 
-    await _db.collection('clients').doc(uid).set({
+    await AppScope.col('clients').doc(uid).set({
       'referredBy': inviterId,
       'referralCodeUsed': normalized,
     }, SetOptions(merge: true));
@@ -96,7 +97,7 @@ class ReferralService {
   /// Вызывается с POS после закрытия первого чека гостя.
   /// Идемпотентна: повторный вызов ничего не начислит.
   Future<void> rewardIfFirstVisit(String uid) async {
-    final ref = _db.collection('clients').doc(uid);
+    final ref = AppScope.col('clients').doc(uid);
     final snap = await ref.get();
     final data = snap.data();
     if (data == null) return;
@@ -111,19 +112,19 @@ class ReferralService {
       'bonusBalance': FieldValue.increment(inviteeBonus),
       'referralRewarded': true,
     }, SetOptions(merge: true));
-    batch.set(_db.collection('clients').doc(inviterId), {
+    batch.set(AppScope.col('clients').doc(inviterId), {
       'bonusBalance': FieldValue.increment(inviterBonus),
       'referralsCount': FieldValue.increment(1),
     }, SetOptions(merge: true));
 
-    batch.set(_db.collection('bonusOperations').doc(), {
+    batch.set(AppScope.col('bonusOperations').doc(), {
       'clientUid': uid,
       'type': 'accrual',
       'amount': inviteeBonus,
       'reason': 'referral_invitee',
       'createdAt': Timestamp.fromDate(DateTime.now()),
     });
-    batch.set(_db.collection('bonusOperations').doc(), {
+    batch.set(AppScope.col('bonusOperations').doc(), {
       'clientUid': inviterId,
       'type': 'accrual',
       'amount': inviterBonus,
@@ -150,8 +151,7 @@ class ReferralService {
   /// Смысл числа чуть строже прежнего: раньше считались все, кто ввёл код,
   /// теперь — только те, кто реально пришёл и закрыл чек. Это честнее: за
   /// них и начислены бонусы.
-  Stream<int> invitedCount(String uid) => _db
-      .collection('clients')
+  Stream<int> invitedCount(String uid) => AppScope.col('clients')
       .doc(uid)
       .snapshots()
       .map((d) => (d.data()?['referralsCount'] as num?)?.toInt() ?? 0);
