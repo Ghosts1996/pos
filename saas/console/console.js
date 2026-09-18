@@ -12,7 +12,7 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, onSnapshot,
+  getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
   collection, query, where, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
@@ -103,6 +103,7 @@ const TENANT_STATUS_LABELS = {
   suspended: 'приостановлено', cancelled: 'отменено', deleted: 'удалено',
 };
 const ROLE_LABELS = { owner: 'владелец', admin: 'администратор', manager: 'менеджер', employee: 'сотрудник' };
+const ROLE_ORDER = { owner: 0, admin: 1, manager: 2, employee: 3 };
 const SUB_STATUS_LABELS = {
   trial: 'пробный период', active: 'активна', past_due: 'просрочена',
   cancelled: 'отменена', incomplete: 'не оформлена',
@@ -380,6 +381,7 @@ function watchDashboardData(tenantId) {
   let invite = null;
   let branding = null;
   let subscription = null;
+  let members = null;
 
   const draw = () => {
     // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
@@ -388,6 +390,8 @@ function watchDashboardData(tenantId) {
     const role = (state.tenants.find((t) => t.id === tenantId) || {}).role || '';
     const canManage = role === 'owner' || role === 'admin';
     const color = branding?.primaryColor || '#12B886';
+    const sortedMembers = (members || []).slice().sort((a, b) =>
+      (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
 
     body.innerHTML = `
       <div class="card">
@@ -410,6 +414,46 @@ function watchDashboardData(tenantId) {
           <button class="btn-link" id="f-copy-code">Скопировать</button>
         </div>
         ${canManage ? `<button class="btn btn-ghost" id="f-rotate-code" style="margin-top:12px">Обновить код</button>` : ''}
+      </div>
+
+      <h2>Команда</h2>
+      <div class="card">
+        ${members === null ? '<div class="small muted">Загрузка…</div>' : sortedMembers.map((m) => `
+          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div class="grow" style="min-width:0">
+              <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
+              <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
+            </div>
+            ${canManage && m.userId !== state.uid && ['manager', 'employee'].includes(m.role) ? `
+              <select class="f-member-role" data-uid="${esc(m.userId)}" style="width:auto;margin:0">
+                <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Менеджер</option>
+                <option value="employee" ${m.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
+              </select>
+              <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
+                ${m.status === 'active' ? 'Отключить' : 'Включить'}
+              </button>
+            ` : ''}
+          </div>
+        `).join('') || '<div class="small muted">Пока только вы</div>'}
+
+        ${canManage ? `
+          <div style="margin-top:14px">
+            <label class="field"><span>Пригласить по email</span>
+              <input id="f-invite-email" type="email" placeholder="coworker@example.com">
+            </label>
+            <div class="row">
+              <select id="f-invite-role" class="grow">
+                <option value="manager">Менеджер</option>
+                <option value="employee" selected>Сотрудник</option>
+              </select>
+              <button class="btn btn-ghost" id="f-invite-submit" style="width:auto">Пригласить</button>
+            </div>
+            <p class="small muted" style="margin-top:6px">Приглашаемый должен
+            сначала сам зарегистрироваться в этой консоли (email + пароль) —
+            тогда его можно будет найти по email.</p>
+            <div id="f-invite-error" class="small" style="color:var(--danger)"></div>
+          </div>
+        ` : ''}
       </div>
 
       <h2>Фирменный цвет</h2>
@@ -442,6 +486,32 @@ function watchDashboardData(tenantId) {
     if ($('f-save-color')) {
       $('f-save-color').onclick = () => saveBrandingColor(tenantId, $('f-color').value);
     }
+    document.querySelectorAll('.f-member-role').forEach((el) => {
+      el.onchange = () => changeMemberRole(tenantId, el.dataset.uid, el.value);
+    });
+    document.querySelectorAll('.f-member-toggle').forEach((el) => {
+      el.onclick = () => toggleMemberStatus(tenantId, el.dataset.uid, el.dataset.active === '1');
+    });
+    if ($('f-invite-submit')) {
+      $('f-invite-submit').onclick = async () => {
+        const email = $('f-invite-email').value.trim();
+        const inviteRole = $('f-invite-role').value;
+        const errEl = $('f-invite-error');
+        errEl.textContent = '';
+        if (!email) { errEl.textContent = 'Введите email'; return; }
+        $('f-invite-submit').disabled = true;
+        try {
+          const inviteTenantMember = httpsCallable(state.functions, 'inviteTenantMember');
+          await inviteTenantMember({ tenantId, email, role: inviteRole });
+          $('f-invite-email').value = '';
+          toast('Приглашение добавлено');
+        } catch (e) {
+          errEl.textContent = e?.message || 'Не удалось пригласить';
+        } finally {
+          $('f-invite-submit').disabled = false;
+        }
+      };
+    }
   };
 
   sub(onSnapshot(doc(state.db, 'tenants', tenantId), (d) => {
@@ -460,6 +530,13 @@ function watchDashboardData(tenantId) {
     subscription = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
+  sub(onSnapshot(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId)), (snap) => {
+    members = snap.docs.map((d) => d.data());
+    draw();
+  }, () => {
+    members = [];
+    draw();
+  }));
 }
 
 async function rotateInviteCode(tenantId) {
@@ -472,6 +549,29 @@ async function rotateInviteCode(tenantId) {
     toast('Код обновлён');
   } catch (e) {
     toast(`Не удалось обновить код: ${e?.message || e}`);
+  }
+}
+
+async function changeMemberRole(tenantId, memberUid, role) {
+  try {
+    // Правила разрешают эту запись только когда И текущая, И новая роль —
+    // manager/employee (см. saas/firestore.rules, tenantMembers.update) —
+    // повышение до admin/owner отсюда невозможно даже случайно.
+    await updateDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`), { role });
+    toast('Роль изменена');
+  } catch (e) {
+    toast(`Не удалось изменить роль: ${e?.message || e}`);
+  }
+}
+
+async function toggleMemberStatus(tenantId, memberUid, isActive) {
+  try {
+    await updateDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`), {
+      status: isActive ? 'inactive' : 'active',
+    });
+    toast(isActive ? 'Доступ отключён' : 'Доступ включён');
+  } catch (e) {
+    toast(`Не удалось изменить доступ: ${e?.message || e}`);
   }
 }
 

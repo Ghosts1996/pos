@@ -200,6 +200,73 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
   return { tenantId, slug };
 });
 
+// -------------------------------------------------------- inviteTenantMember
+
+/**
+ * Приглашает уже зарегистрированного в консоли пользователя (по email) в
+ * заведение с ролью manager/employee.
+ *
+ * Почему это Cloud Function, а не прямая запись с клиента (как для
+ * device-присоединения, см. saas/firestore.rules, tenantMembers.create):
+ * владелец знает email приглашаемого, но не его Firebase Auth uid — а
+ * найти uid по email может только Admin SDK (admin.auth().getUserByEmail),
+ * это привилегированная операция, недоступная клиенту в принципе, а не
+ * просто закрытая правилами.
+ *
+ * Роль 'owner'/'admin' здесь НЕ выдаётся намеренно — как и в правилах для
+ * прямой записи manager/employee, повышение до совладельца остаётся вне
+ * самообслуживания (позже considered as Cloud Function с проверкой лимита
+ * тарифа на число совладельцев).
+ */
+exports.inviteTenantMember = onCall({ region: REGION }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Нужен вход в платформу");
+
+  const { tenantId, email: rawEmail, role } = request.data || {};
+  if (typeof tenantId !== "string" || !tenantId) {
+    throw new HttpsError("invalid-argument", "Не указано заведение");
+  }
+  if (!["manager", "employee"].includes(role)) {
+    throw new HttpsError("invalid-argument", "Роль должна быть 'manager' или 'employee'");
+  }
+  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+  if (!email) throw new HttpsError("invalid-argument", "Укажите email приглашаемого");
+
+  const callerMembership = await db.collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
+  const callerRole = callerMembership.exists ? callerMembership.data().role : null;
+  if (!["owner", "admin"].includes(callerRole)) {
+    throw new HttpsError("permission-denied", "Приглашать может только владелец или администратор заведения");
+  }
+
+  let invitedUser;
+  try {
+    invitedUser = await admin.auth().getUserByEmail(email);
+  } catch (e) {
+    throw new HttpsError(
+      "not-found",
+      "Пользователь с таким email ещё не регистрировался в консоли — попросите его сначала создать аккаунт (Регистрация), а потом пригласите ещё раз"
+    );
+  }
+
+  const memberId = `${tenantId}_${invitedUser.uid}`;
+  const existing = await db.collection("tenantMembers").doc(memberId).get();
+  if (existing.exists && existing.data().status === "active") {
+    throw new HttpsError("already-exists", "Этот человек уже состоит в заведении");
+  }
+
+  await db.collection("tenantMembers").doc(memberId).set({
+    tenantId,
+    userId: invitedUser.uid,
+    email,
+    role,
+    status: "active",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({ tenantId, actorId: uid, action: "memberInvited", metadata: { email, role } });
+
+  return { ok: true, userId: invitedUser.uid };
+});
+
 // ------------------------------------------------------ resolveTenantBySlug
 
 /**
