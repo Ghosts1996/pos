@@ -18,6 +18,7 @@ import 'package:hookah_pos/models/tenant_models.dart';
 import 'package:hookah_pos/services/app_scope.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
 import 'package:hookah_pos/services/tenant_config_service.dart';
+import 'package:hookah_pos/theme/app_theme.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -733,6 +734,30 @@ void main() {
       expect(pathA, isNot(equals(pathB)));
       expect(pathA, 'tenants/tenantA/tables');
       expect(pathB, 'tenants/tenantB/tables');
+    });
+  });
+
+  group('SaaS: AppTheme.branded — фирменный цвет заведения', () {
+    test('корректный HEX-цвет применяется как primary', () {
+      const branding = BrandingConfig(primaryColor: '#C7A45D');
+      final theme = AppTheme.branded(branding);
+      expect(theme.colorScheme.primary, const Color(0xFFC7A45D));
+    });
+
+    test('цвет без # тоже разбирается', () {
+      const branding = BrandingConfig(primaryColor: '112233');
+      final theme = AppTheme.branded(branding);
+      expect(theme.colorScheme.primary, const Color(0xFF112233));
+    });
+
+    test('битый HEX откатывается на цвет темы по умолчанию, а не падает', () {
+      const branding = BrandingConfig(primaryColor: 'не-цвет');
+      final theme = AppTheme.branded(branding);
+      expect(theme.colorScheme.primary, AppTheme.dark.colorScheme.primary);
+    });
+
+    test('база темы (тёмная, без брендинга) не меняется веткой branded', () {
+      expect(AppTheme.dark.brightness, Brightness.dark);
     });
   });
 }
