@@ -40,6 +40,19 @@ const YOOKASSA_SECRET_KEY = defineSecret("YOOKASSA_SECRET_KEY");
 const GITHUB_PAT = defineSecret("GITHUB_PAT");
 const BUILD_CALLBACK_SECRET = defineSecret("BUILD_CALLBACK_SECRET");
 
+// Длительность оплаченного периода в днях по billingPeriod подписки —
+// используется и при первой оплате (createCheckoutSession/webhook), и при
+// автопродлении (chargeRecurringSubscriptions), чтобы оба места считали
+// период одинаково.
+const BILLING_PERIOD_DAYS = { monthly: 30, yearly: 365 };
+
+/** Цена тарифа за billingPeriod ('monthly'|'yearly'); yearly, для которого
+ *  в тарифе не задан priceRubYearly (0/нет поля), считается недоступным. */
+function planPriceForPeriod(plan, billingPeriod) {
+  if (billingPeriod === "yearly") return Number(plan.priceRubYearly) || 0;
+  return Number(plan.priceRub) || 0;
+}
+
 // -------------------------------------------------------------- helpers
 
 /** Список зарезервированных slug — совпадение с системными путями/поддоменами
@@ -463,20 +476,23 @@ exports.createCheckoutSession = onCall(
   { region: REGION, secrets: [YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY] },
   async (request) => {
     const uid = request.auth?.uid;
-    const { tenantId, planId, returnUrl } = request.data || {};
+    const { tenantId, planId, returnUrl, billingPeriod: rawBillingPeriod } = request.data || {};
     if (typeof tenantId !== "string" || !tenantId) throw new HttpsError("invalid-argument", "Не указано заведение");
     if (typeof planId !== "string" || !planId) throw new HttpsError("invalid-argument", "Не указан тариф");
     if (typeof returnUrl !== "string" || !returnUrl) {
       throw new HttpsError("invalid-argument", "Не передан адрес возврата после оплаты");
     }
+    const billingPeriod = rawBillingPeriod === "yearly" ? "yearly" : "monthly";
     await requireTenantRole(tenantId, uid, ["owner", "admin"]);
 
     const planDoc = await db.collection("plans").doc(planId).get();
     if (!planDoc.exists) throw new HttpsError("not-found", "Тариф не найден");
     const plan = planDoc.data();
-    const price = Number(plan.priceRub) || 0;
+    const price = planPriceForPeriod(plan, billingPeriod);
     if (price <= 0) {
-      throw new HttpsError("failed-precondition", "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
+      throw new HttpsError("failed-precondition", billingPeriod === "yearly"
+        ? "Для этого тарифа не задана годовая цена — оформите помесячную оплату или обратитесь в поддержку"
+        : "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
     }
 
     const payment = await yookassaRequest("payments", {
@@ -487,8 +503,8 @@ exports.createCheckoutSession = onCall(
         capture: true,
         save_payment_method: true,
         confirmation: { type: "redirect", return_url: returnUrl },
-        description: `Hoocah POS — тариф «${plan.name || planId}», заведение ${tenantId}`,
-        metadata: { tenantId, planId, purpose: "subscription" },
+        description: `Hoocah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+        metadata: { tenantId, planId, billingPeriod, purpose: "subscription" },
       },
     });
 
@@ -534,6 +550,10 @@ exports.handleBillingWebhook = onRequest(
 
     const tenantId = payment.metadata?.tenantId;
     const planId = payment.metadata?.planId;
+    // Старые платежи (созданные до появления годовой оплаты) не несут этого
+    // поля в metadata — трактуем как помесячные, это было единственным
+    // вариантом на тот момент.
+    const billingPeriod = payment.metadata?.billingPeriod === "yearly" ? "yearly" : "monthly";
     if (!tenantId || !planId) {
       // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
       // прислала его на наш webhook, отвечаем 200, чтобы не получать
@@ -547,7 +567,7 @@ exports.handleBillingWebhook = onRequest(
       const seen = await tx.get(eventRef);
       if (seen.exists) return true;
       tx.set(eventRef, {
-        tenantId, planId, status: payment.status,
+        tenantId, planId, billingPeriod, status: payment.status,
         // Сумма — специально для аналитики платформы (панель Super Admin,
         // выручка): без неё пришлось бы на каждый показ дохода отдельно
         // дёргать API ЮKassa по каждому платежу, вместо одного чтения
@@ -564,9 +584,10 @@ exports.handleBillingWebhook = onRequest(
     }
 
     if (payment.status === "succeeded") {
-      const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 86400000);
+      const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
+      const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + periodDays * 86400000);
       const update = {
-        tenantId, planId,
+        tenantId, planId, billingPeriod,
         status: "active",
         provider: "yookassa",
         externalSubscriptionId: paymentId,
@@ -630,7 +651,12 @@ exports.chargeRecurringSubscriptions = onSchedule(
       if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
 
       const planDoc = await db.collection("plans").doc(sub.planId).get();
-      const price = Number(planDoc.data()?.priceRub) || 0;
+      // Продлеваем на том же периоде, на котором подписка была оформлена —
+      // если тариф с тех пор перестал продавать этот период (например,
+      // убрали годовую цену), price будет 0 и продление просто не пойдёт,
+      // как и раньше при отсутствии priceRub.
+      const billingPeriod = sub.billingPeriod === "yearly" ? "yearly" : "monthly";
+      const price = planPriceForPeriod(planDoc.data() || {}, billingPeriod);
       if (price <= 0) continue;
 
       await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -645,8 +671,8 @@ exports.chargeRecurringSubscriptions = onSchedule(
             amount: { value: price.toFixed(2), currency: "RUB" },
             capture: true,
             payment_method_id: sub.paymentMethodId,
-            description: `Hoocah POS — продление тарифа «${sub.planId}», заведение ${tenantId}`,
-            metadata: { tenantId, planId: sub.planId, purpose: "renewal" },
+            description: `Hoocah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+            metadata: { tenantId, planId: sub.planId, billingPeriod, purpose: "renewal" },
           },
         });
       } catch (e) {

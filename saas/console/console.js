@@ -489,6 +489,9 @@ function landingPlanCardHtml(p, selected) {
   const priceText = Number(p.priceRub) > 0
     ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
     : 'По запросу';
+  const yearlyText = Number(p.priceRubYearly) > 0
+    ? `${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год`
+    : null;
   const limits = [
     p.maxEmployees ? `до ${p.maxEmployees} сотрудников` : 'сотрудников без лимита',
     p.maxTables ? `до ${p.maxTables} столов` : 'столов без лимита',
@@ -502,7 +505,7 @@ function landingPlanCardHtml(p, selected) {
   return `
     <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
       <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
-      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}</div>
+      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}${yearlyText ? ` <span class="small muted" style="font-weight:400">или ${esc(yearlyText)}</span>` : ''}</div>
       <div class="small muted">${limits.join(' · ')}</div>
       ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
       <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
@@ -762,10 +765,25 @@ function screenOnboarding() {
         <input id="f-slug" placeholder="hookah-lounge-riga">
       </label>
       <label class="field"><span>Лейбл в приложении (короткое имя под иконкой)</span>
-        <input id="f-label" placeholder="Оставьте пустым — возьмём из названия" maxlength="12">
+        <input id="f-brand-name" placeholder="Оставьте пустым — возьмём из названия" maxlength="12">
       </label>
-      <div class="small muted" style="margin-bottom:8px">Цветовая гамма клиентского приложения — можно сменить позже в разделе «Брендинг»</div>
+      <div class="small muted" style="margin-bottom:8px">Цветовая гамма клиентского приложения — выберите готовую или настройте свою ниже, сменить можно и позже в разделе «Брендинг»</div>
       ${paletteSwatchesHtml(selectedPaletteId)}
+
+      <div class="small muted" style="margin:14px 0 8px">Свои цвета</div>
+      ${colorFieldHtml('f-color-primary', 'Основной', PREMIUM_PALETTES[0].primaryColor, true)}
+      ${colorFieldHtml('f-color-secondary', 'Вторичный', PREMIUM_PALETTES[0].secondaryColor, true)}
+      ${colorFieldHtml('f-color-button', 'Кнопки', PREMIUM_PALETTES[0].buttonColor, true)}
+      ${colorFieldHtml('f-color-bg', 'Фон', PREMIUM_PALETTES[0].backgroundColor, true)}
+      ${colorFieldHtml('f-color-text', 'Текст', PREMIUM_PALETTES[0].textColor, true)}
+      <div id="f-contrast-warning" class="small" style="color:var(--warning);margin:4px 0 12px"></div>
+
+      <div class="small muted" style="margin-bottom:8px">Предпросмотр</div>
+      <div id="f-brand-preview" style="border-radius:14px;padding:16px;border:1px solid var(--border);margin-bottom:16px">
+        <div id="f-preview-title" style="font-weight:700;margin-bottom:12px"></div>
+        <button id="f-preview-btn" type="button" style="width:auto;padding:10px 20px;border-radius:12px;border:none;font-weight:600">Оплатить</button>
+      </div>
+
       <div id="f-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
       <button class="btn btn-primary" id="f-submit">Создать заведение</button>
     </div>
@@ -788,13 +806,23 @@ function screenOnboarding() {
       document.querySelectorAll('.palette-swatch').forEach((s) => {
         s.classList.toggle('selected', s.dataset.palette === selectedPaletteId);
       });
+      const palette = PREMIUM_PALETTES.find((p) => p.id === selectedPaletteId);
+      if (palette) applyPaletteToColorInputs(palette);
     };
   });
+  BRANDING_COLOR_FIELD_IDS.forEach((id) => {
+    $(id)?.addEventListener('input', () => {
+      $(`${id}-hex`).textContent = $(id).value;
+      updateBrandPreview();
+    });
+  });
+  $('f-brand-name')?.addEventListener('input', updateBrandPreview);
+  updateBrandPreview();
 
   $('f-submit').onclick = async () => {
     const name = nameEl.value.trim();
     const slug = slugEl.value.trim();
-    const label = $('f-label').value.trim();
+    const label = $('f-brand-name').value.trim();
     const errEl = $('f-error');
     errEl.textContent = '';
     if (name.length < 2) {
@@ -822,17 +850,18 @@ function screenOnboarding() {
       // членство владельца в заведении уже закоммичено на сервере (тем же
       // батчем, что и сам tenant), поэтому правила (hasRole owner/admin)
       // это разрешают без гонки.
-      const palette = PREMIUM_PALETTES.find((p) => p.id === selectedPaletteId) || PREMIUM_PALETTES[0];
+      // Цвета берём прямо из полей, а не из объекта пресета — так учитываются
+      // и ручные правки владельца поверх выбранной гаммы (см. BRANDING_COLOR_FIELD_IDS).
       const appName = label || name;
       try {
         await writeBrandingConfig(tenantId, {
           appName,
           shortName: appName.slice(0, 12),
-          primaryColor: palette.primaryColor,
-          secondaryColor: palette.secondaryColor,
-          buttonColor: palette.buttonColor,
-          backgroundColor: palette.backgroundColor,
-          textColor: palette.textColor,
+          primaryColor: $('f-color-primary').value,
+          secondaryColor: $('f-color-secondary').value,
+          buttonColor: $('f-color-button').value,
+          backgroundColor: $('f-color-bg').value,
+          textColor: $('f-color-text').value,
         });
       } catch (_) {
         // Заведение всё равно создано с рабочим брендингом по умолчанию —
@@ -1058,7 +1087,13 @@ function watchDashboardData(tenantId) {
               <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
                 <div class="grow">
                   <div>${esc(p.name || p.id)}</div>
-                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес</div>
+                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
+                  ${Number(p.priceRubYearly) > 0 ? `
+                    <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
+                      <option value="monthly">Помесячно</option>
+                      <option value="yearly">На год (выгоднее)</option>
+                    </select>
+                  ` : ''}
                 </div>
                 <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
                   ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
@@ -1097,7 +1132,7 @@ function watchDashboardData(tenantId) {
 
     updateBrandPreview();
     if (canManage) {
-      ['f-color-primary', 'f-color-secondary', 'f-color-button', 'f-color-bg', 'f-color-text'].forEach((id) => {
+      BRANDING_COLOR_FIELD_IDS.forEach((id) => {
         $(id)?.addEventListener('input', () => {
           $(`${id}-hex`).textContent = $(id).value;
           updateBrandPreview();
@@ -1109,20 +1144,7 @@ function watchDashboardData(tenantId) {
           const palette = PREMIUM_PALETTES.find((p) => p.id === el.dataset.palette);
           if (!palette) return;
           document.querySelectorAll('.palette-swatch').forEach((s) => s.classList.toggle('selected', s === el));
-          const fields = {
-            'f-color-primary': palette.primaryColor,
-            'f-color-secondary': palette.secondaryColor,
-            'f-color-button': palette.buttonColor,
-            'f-color-bg': palette.backgroundColor,
-            'f-color-text': palette.textColor,
-          };
-          Object.entries(fields).forEach(([id, value]) => {
-            const input = $(id);
-            if (!input) return;
-            input.value = value;
-            $(`${id}-hex`).textContent = value;
-          });
-          updateBrandPreview();
+          applyPaletteToColorInputs(palette);
         };
       });
       if ($('f-logo-file')) {
@@ -1200,7 +1222,10 @@ function watchDashboardData(tenantId) {
       };
     }
     document.querySelectorAll('.f-plan-checkout').forEach((el) => {
-      el.onclick = () => startCheckout(tenantId, el.dataset.plan);
+      el.onclick = () => {
+        const periodSelect = document.querySelector(`.f-plan-period[data-plan="${el.dataset.plan}"]`);
+        startCheckout(tenantId, el.dataset.plan, periodSelect?.value || 'monthly');
+      };
     });
     if ($('f-request-build')) {
       $('f-request-build').onclick = () => requestBuild(tenantId);
@@ -1291,6 +1316,30 @@ async function writeBrandingConfig(tenantId, payload) {
 // Обновляет мини-предпросмотр карточки (фон/текст/кнопка) вживую, по мере
 // того как владелец крутит цветовые пикеры — без этого пришлось бы сначала
 // сохранить брендинг, чтобы увидеть, не получилось ли нечитаемо.
+// Общий список id цветовых инпутов брендинга — используется и на онбординге,
+// и в разделе "Брендинг" личного кабинета: одинаковая разметка (colorFieldHtml
+// с этими же id) в обоих местах, поэтому применение пресета/обновление
+// подписи-хекс тоже общее, без дублирования.
+const BRANDING_COLOR_FIELD_IDS = ['f-color-primary', 'f-color-secondary', 'f-color-button', 'f-color-bg', 'f-color-text'];
+
+function applyPaletteToColorInputs(palette) {
+  const fields = {
+    'f-color-primary': palette.primaryColor,
+    'f-color-secondary': palette.secondaryColor,
+    'f-color-button': palette.buttonColor,
+    'f-color-bg': palette.backgroundColor,
+    'f-color-text': palette.textColor,
+  };
+  Object.entries(fields).forEach(([id, value]) => {
+    const input = $(id);
+    if (!input) return;
+    input.value = value;
+    const hexEl = $(`${id}-hex`);
+    if (hexEl) hexEl.textContent = value;
+  });
+  updateBrandPreview();
+}
+
 function updateBrandPreview() {
   const preview = $('f-brand-preview');
   const title = $('f-preview-title');
@@ -1741,6 +1790,9 @@ function watchPlans() {
         <label class="field"><span>Цена, ₽/мес (0 — не продаётся напрямую, только вручную через смену тарифа заведению)</span>
           <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRub" value="${Number(p.priceRub) || 0}">
         </label>
+        <label class="field"><span>Цена, ₽/год (0 — годовая оплата для этого тарифа недоступна)</span>
+          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubYearly" value="${Number(p.priceRubYearly) || 0}">
+        </label>
         <div class="row">
           <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxEmployees" value="${Number(p.maxEmployees) || 0}">
@@ -1768,12 +1820,18 @@ function watchPlans() {
             <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="customDomain" ${p.customDomain ? 'checked' : ''}> Свой домен
           </label>
         </div>
-        <button class="btn btn-primary f-plan-save" data-plan="${esc(p.id)}">Сохранить тариф</button>
+        <div class="row">
+          <button class="btn btn-primary f-plan-save" data-plan="${esc(p.id)}">Сохранить тариф</button>
+          <button class="btn-link f-plan-delete" data-plan="${esc(p.id)}" style="width:auto;color:var(--danger)">Удалить</button>
+        </div>
       </div>
     `).join('') : '<p class="small muted">Тарифов пока нет.</p>';
 
     document.querySelectorAll('.f-plan-save').forEach((el) => {
       el.onclick = () => savePlan(el.dataset.plan);
+    });
+    document.querySelectorAll('.f-plan-delete').forEach((el) => {
+      el.onclick = () => deletePlan(el.dataset.plan);
     });
   }, () => {
     body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
@@ -1787,7 +1845,7 @@ function watchPlans() {
     }
     try {
       await setDoc(doc(state.db, 'plans', id), {
-        name: id, priceRub: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
+        name: id, priceRub: 0, priceRubYearly: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
         aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
       });
@@ -1813,6 +1871,28 @@ async function savePlan(planId) {
     toast('Тариф сохранён');
   } catch (e) {
     toast(`Не удалось сохранить тариф: ${e?.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deletePlan(planId) {
+  const btn = document.querySelector(`.f-plan-delete[data-plan="${planId}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    // Предупреждаем, если тариф ещё кому-то назначен — само удаление их не
+    // трогает (у заведения просто останется planId, ссылающийся в никуда;
+    // "Тариф: —" в его карточке подскажет, что надо назначить другой), но
+    // молча удалять тариф, которым кто-то пользуется, не стоит.
+    const inUse = await getDocs(query(collection(state.db, 'tenants'), where('planId', '==', planId), limit(1)));
+    const warning = inUse.empty
+      ? `Удалить тариф «${planId}»? Отменить нельзя.`
+      : `Тариф «${planId}» сейчас назначен как минимум одному заведению — после удаления у него останется тариф без описания, назначьте другой вручную. Удалить всё равно?`;
+    if (!confirm(warning)) return;
+    await deleteDoc(doc(state.db, 'plans', planId));
+    toast('Тариф удалён');
+  } catch (e) {
+    toast(`Не удалось удалить тариф: ${e?.message || e}`);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -2001,13 +2081,13 @@ async function revokeSuperAdmin(uid) {
 
 // ---------- ПОДПИСКА (ЮKASSA) И СБОРКА APK ----------
 
-async function startCheckout(tenantId, planId) {
+async function startCheckout(tenantId, planId, billingPeriod) {
   const errEl = $('f-checkout-error');
   if (errEl) errEl.textContent = '';
   try {
     const createCheckoutSession = httpsCallable(state.functions, 'createCheckoutSession');
     const res = await createCheckoutSession({
-      tenantId, planId,
+      tenantId, planId, billingPeriod: billingPeriod === 'yearly' ? 'yearly' : 'monthly',
       // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
       // подписки обновится сам по snapshot-подписке, как только придёт
       // webhook (обычно за секунды, но платёжная форма может быть и
