@@ -209,6 +209,26 @@ function planName(plans, planId) {
   return plan ? plan.name || plan.id : null;
 }
 
+// Список превышенных лимитов тарифа заведения ("сотрудников: 5 из 3") —
+// апсел-сигнал для супер-админа: заведение переросло свой тариф, стоит
+// предложить более дорогой, а не просто молча терпеть перегруз.
+const PLAN_LIMIT_CHECKS = [
+  ['employees', 'maxEmployees', 'сотрудников'],
+  ['devices', 'maxDevices', 'устройств'],
+  ['tables', 'maxTables', 'столов'],
+];
+function planLimitWarnings(t, plans) {
+  const plan = plans?.find((p) => p.id === t.subscription?.planId);
+  if (!plan || !t.usage) return [];
+  const warnings = [];
+  PLAN_LIMIT_CHECKS.forEach(([usageKey, limitKey, label]) => {
+    const limitValue = Number(plan[limitKey]) || 0;
+    const used = Number(t.usage[usageKey]) || 0;
+    if (limitValue > 0 && used > limitValue) warnings.push(`${label} ${used} из ${limitValue}`);
+  });
+  return warnings;
+}
+
 async function copyToClipboard(text) {
   if (!text) return;
   try {
@@ -508,6 +528,7 @@ function landingPlanCardHtml(p, selected) {
       <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}${yearlyText ? ` <span class="small muted" style="font-weight:400">или ${esc(yearlyText)}</span>` : ''}</div>
       <div class="small muted">${limits.join(' · ')}</div>
       ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
+      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 14} дней бесплатно</div>
       <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
         ${selected ? 'Тариф выбран ✓' : 'Выбрать и попробовать'}
       </button>
@@ -531,7 +552,7 @@ function screenLanding() {
         <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
       </label>
       <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
-      <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно 14 дней</button>
+      <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
       <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
     </div>
 
@@ -1426,6 +1447,9 @@ function screenSuperAdmin() {
       <div id="f-super-admin-error" class="small" style="color:var(--danger);margin-top:8px"></div>
     </div>
 
+    <h2>Сборки APK</h2>
+    <div id="admin-builds"><div class="spinner"></div></div>
+
     <h2>Журнал платформы</h2>
     <div id="admin-audit"><div class="spinner"></div></div>
     ${versionFooterHtml()}
@@ -1435,6 +1459,7 @@ function screenSuperAdmin() {
   watchPlans();
   watchAnalytics();
   watchSuperAdmins();
+  watchAllBuildJobs();
 }
 
 function watchAllTenants() {
@@ -1585,6 +1610,13 @@ function watchAllTenants() {
           text: `«${t.name || t.id}» — пробный период заканчивается ${t.trialEndingSoonDays > 0 ? `через ${t.trialEndingSoonDays} ${pluralDays(t.trialEndingSoonDays)}` : 'сегодня'}`,
         });
       }
+      const limitWarnings = planLimitWarnings(t, plans);
+      if (limitWarnings.length) {
+        items.push({
+          danger: false,
+          text: `«${t.name || t.id}» — превысило лимит тарифа: ${limitWarnings.join(', ')} — повод предложить тариф выше`,
+        });
+      }
     });
     attentionBody.innerHTML = items.length ? items.map((it) => `
       <div class="card${it.danger ? ' danger' : ''}" style="padding:12px 16px">
@@ -1603,7 +1635,12 @@ function watchAllTenants() {
     // Проблемные заведения — наверх списка, чтобы не листать сотню
     // здоровых ради тех, что горят.
     filtered = filtered.slice().sort((a, b) => {
-      const rank = (t) => (t.daysLeft !== null && t.daysLeft !== undefined ? 0 : (t.trialEndingSoonDays !== null && t.trialEndingSoonDays !== undefined ? 1 : 2));
+      const rank = (t) => {
+        if (t.daysLeft !== null && t.daysLeft !== undefined) return 0;
+        if (t.trialEndingSoonDays !== null && t.trialEndingSoonDays !== undefined) return 1;
+        if (planLimitWarnings(t, plans).length) return 2;
+        return 3;
+      };
       return rank(a) - rank(b);
     });
 
@@ -1634,6 +1671,12 @@ function watchAllTenants() {
                 столов: ${t.usage.tables ?? '—'} · гостей: ${t.usage.guests ?? '—'}
               </div>
             ` : ''}
+            ${(() => {
+              const limitWarnings = planLimitWarnings(t, plans);
+              return limitWarnings.length ? `
+                <div class="small" style="color:var(--warning);margin-top:4px">⚠ Превышен лимит тарифа: ${esc(limitWarnings.join(', '))}</div>
+              ` : '';
+            })()}
           </div>
           <button class="btn-ghost f-tenant-toggle" data-id="${esc(t.id)}"
             data-suspended="${t.status === 'suspended' ? '1' : '0'}" style="width:auto">
@@ -1684,6 +1727,7 @@ function watchAllTenants() {
   getDocs(collection(state.db, 'plans')).then((snap) => {
     plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     draw();
+    drawAttention(); // лимиты тарифа в "Требует внимания" зависят от plans, а не только от tenants
   }).catch(() => {});
 
   sub(onSnapshot(q, async (snap) => {
@@ -1777,6 +1821,38 @@ function watchAuditLog() {
   }));
 }
 
+function watchAllBuildJobs() {
+  const body = $('admin-builds');
+  const q = query(collection(state.db, 'buildJobs'), orderBy('createdAt', 'desc'), limit(50));
+  sub(onSnapshot(q, async (snap) => {
+    const jobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Имя заведения по tenantId — buildJobs его не хранит. До полусотни
+    // лишних чтений на панель, которую открывает не каждый визит, это
+    // не проблема (тот же порядок, что уже используется для usage/subscription
+    // в watchAllTenants).
+    await Promise.all(jobs.map(async (j) => {
+      try {
+        const tSnap = await getDoc(doc(state.db, 'tenants', j.tenantId));
+        j.tenantName = tSnap.exists() ? tSnap.data().name : j.tenantId;
+      } catch (_) {
+        j.tenantName = j.tenantId;
+      }
+    }));
+    body.innerHTML = jobs.length ? `<div class="card">${jobs.map((j) => `
+      <div class="row" style="justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div class="small grow" style="min-width:0">
+          <b>${esc(j.tenantName || j.tenantId)}</b> ·
+          <span style="${j.status === 'failed' ? 'color:var(--danger)' : ''}">${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</span>
+          ${j.status === 'failed' && j.errorMessage ? `<div class="muted">${esc(j.errorMessage)}</div>` : ''}
+        </div>
+        <div class="small muted">${fmtDateTime(j.createdAt)}</div>
+      </div>
+    `).join('')}</div>` : '<p class="small muted">Сборок пока не было.</p>';
+  }, () => {
+    body.innerHTML = '<p class="small muted">Сборки недоступны.</p>';
+  }));
+}
+
 function watchPlans() {
   const body = $('admin-plans');
   sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
@@ -1809,6 +1885,9 @@ function watchPlans() {
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxStorageMb" value="${Number(p.maxStorageMb) || 0}">
           </label>
         </div>
+        <label class="field"><span>Пробный период, дней (при создании заведения на этом тарифе)</span>
+          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="trialDays" value="${Number(p.trialDays) || 14}">
+        </label>
         <div class="row" style="flex-wrap:wrap;gap:14px;margin:10px 0 16px">
           <label class="row" style="width:auto;gap:6px">
             <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="aiEnabled" ${p.aiEnabled ? 'checked' : ''}> ИИ
@@ -1846,7 +1925,7 @@ function watchPlans() {
     try {
       await setDoc(doc(state.db, 'plans', id), {
         name: id, priceRub: 0, priceRubYearly: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
-        aiEnabled: false, customBranding: false, customDomain: false,
+        trialDays: 14, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
       });
       toast('Тариф создан — заполните цену и лимиты ниже');
