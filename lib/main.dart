@@ -1,27 +1,18 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'build_info.dart';
 import 'firebase_options.dart';
-import 'services/hall_watch_service.dart';
+import 'models/tenant_models.dart';
+import 'services/app_bootstrap.dart';
+import 'services/app_scope.dart';
 import 'services/auth_service.dart';
-import 'services/printer_service.dart';
-import 'services/kassa_service.dart';
-import 'services/payment_terminal_service.dart';
-import 'services/egais_service.dart';
-import 'services/chestny_znak_api_service.dart';
-import 'services/push_service.dart';
-import 'services/gift_card_service.dart';
-import 'services/venue_service.dart';
-import 'services/auto_stoplist_service.dart';
-import 'services/session_alerts_service.dart';
-import 'services/ai/ai_settings.dart';
-import 'services/ai/ai_scheduler.dart';
-import 'services/background_jobs_service.dart';
+import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
+import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -38,6 +29,13 @@ void main() async {
 
   String? startupError;
   var ready = false;
+  // true — SaaS-сборка (kSaasMode), вход прошёл, но это устройство ещё не
+  // состоит ни в одном заведении: показываем экран присоединения по коду
+  // приглашения вместо обычного запуска. В обычной (не-SaaS) сборке этот
+  // флаг всегда false — экран регистрации устройства остаётся тем же, что
+  // и был (StaffDeviceSetupScreen внутри LoginScreen), см. ниже.
+  var needsPairing = false;
+  BrandingConfig? branding;
 
   // Если firebase_options.dart ещё не заполнен реальными ключами
   // (flutterfire configure не запускался), не пытаемся инициализировать
@@ -61,81 +59,71 @@ void main() async {
         AuthService().ensureSignedIn(),
         Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
       ]);
-      ready = true;
 
-      // Не блокирует старт приложения — принтер/касса/ИИ подтянутся чуть
-      // позже, если настроены, а не настроены — ничего не сломается.
-      unawaited(loadSavedPrinterSettings());
-      unawaited(loadSavedKassaSettings());
-      unawaited(loadSavedTerminalSettings());
-      unawaited(loadSavedEgaisSettings());
-      unawaited(loadSavedChestnyZnakSettings());
-      unawaited(AiSettingsStore.instance.init());
-      unawaited(PushService.instance.initStaff());
-
-      // Локальные уведомления зала: новые брони, вызовы гостей, угли через
-      // 35 минут и предупреждение за 10 минут до конца сеанса. Работают без
-      // сервера и без платного тарифа Firebase.
-      //
-      // Старт слежения за залом не зависит от результата init(): запрос
-      // разрешения на точные будильники бросает исключение на части
-      // прошивок, и если бы старт был приклеен через `init().then(...)`,
-      // такая осечка отменяла бы весь сервис — каналы уведомлений при этом
-      // создаются и видны в настройках телефона, вызовы гостей видны на
-      // экране, но в шторку ничего не приходит.
-      // Слежение за залом ведёт ФОНОВАЯ СЛУЖБА, а не сам экран.
-      //
-      // Когда приложение смахивают из списка задач, Android уничтожает его
-      // экран, а вместе с ним — весь основной изолят Dart со всеми
-      // подписками на базу. Служба живёт в отдельном изоляте и переживает
-      // это, поэтому подписки на вызовы гостей и брони заведены именно
-      // там (см. HallWatchService).
-      //
-      // Здесь — только запасной путь: если система не дала запустить
-      // службу, следим сами. Уведомления тогда работают, пока приложение
-      // не выгрузили, — хуже, но лучше, чем ничего.
-      unawaited(HallWatchService.instance.start().then((ok) {
-        if (!ok) unawaited(SessionAlertsService.instance.start());
-      }));
-      VenueService.instance.watch();
-
-      // Сертификаты из Telegram-канала: гость вводит код у себя, а
-      // начисляет бонусы касса — сам себе гость их начислить не может, и
-      // правила базы этого не разрешают. Пока заведение работает,
-      // начисление занимает секунды.
-      GiftCardService.instance.watchClaims();
-
-      // Автостоп-лист следит за остатками и сам убирает из меню то, чего
-      // нет в зале, — иначе гость закажет это в «Colibri Lounge».
-      AutoStopListService.instance.start();
-
-      // Фоновые ИИ-задания. Замок внутри планировщика гарантирует, что
-      // работу выполнит только одно устройство в зале.
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) AiScheduler.instance.start(deviceId: uid);
-
-      // То, что раньше делали Cloud Functions: снять брони, к которым
-      // гость не пришёл, и поздравить именинников. Функции доступны только
-      // на платном тарифе Blaze, поэтому на бесплатном эту работу ведёт
-      // сам POS — тоже под замком «дежурного устройства».
-      if (uid != null) BackgroundJobsService.instance.start(deviceId: uid);
+      if (kSaasMode) {
+        // SaaS-режим: вместо общего на всю платформу секрета заведения —
+        // членство в конкретном tenant (см. lib/services/app_scope.dart,
+        // saas/firestore.rules). Устройство уже входило раньше → у него
+        // либо уже есть членство (обычный перезапуск), либо ещё нет
+        // (первый запуск на этом планшете, до сбора надо присоединиться).
+        final tenantConfigService = TenantConfigService();
+        await tenantConfigService.loadFromCache();
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        TenantConfig? config;
+        if (uid != null) {
+          try {
+            config = await tenantConfigService.refresh(uid);
+          } catch (_) {
+            // Сети нет — доверяем локальному кэшу (офлайн-грейс-период,
+            // см. TenantConfigService.isStale), а не блокируем POS.
+            config = tenantConfigService.current;
+          }
+        }
+        if (config != null) {
+          AppScope.enterTenant(config.tenant.id);
+          branding = config.branding;
+          ready = true;
+          startBackgroundServices();
+        } else {
+          needsPairing = true;
+        }
+      } else {
+        // Обычная (одно-арендная) сборка — поведение не изменилось ни на
+        // йоту по сравнению с версией до появления SaaS-режима.
+        ready = true;
+        startBackgroundServices();
+      }
     } catch (e) {
       startupError = e.toString();
     }
   }
 
-  runApp(HookahPosApp(ready: ready, startupError: startupError));
+  runApp(HookahPosApp(
+    ready: ready,
+    needsPairing: needsPairing,
+    startupError: startupError,
+    branding: branding,
+  ));
 }
 
 class HookahPosApp extends StatelessWidget {
   final bool ready;
+  final bool needsPairing;
   final String? startupError;
-  const HookahPosApp({super.key, required this.ready, this.startupError});
+  final BrandingConfig? branding;
+
+  const HookahPosApp({
+    super.key,
+    required this.ready,
+    this.needsPairing = false,
+    this.startupError,
+    this.branding,
+  });
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Colibri POS',
+      title: branding?.appName ?? 'Colibri POS',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -147,14 +135,21 @@ class HookahPosApp extends StatelessWidget {
       // POS-система работает на планшетах в зале с переменным освещением —
       // фиксируем тёмную "Midnight Blue" тему как единственную, без
       // системного light/dark переключения, чтобы кассир не терял привычную
-      // контрастность в течение смены.
-      theme: AppTheme.dark,
-      darkTheme: AppTheme.dark,
+      // контрастность в течение смены. В SaaS-режиме поверх неё накладывается
+      // фирменный цвет заведения (см. AppTheme.branded) — только акцентный
+      // цвет, не вся палитра: полный визуальный редизайн под бренд — задача
+      // отдельного этапа (предпросмотр брендинга, TOR §18).
+      theme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
+      darkTheme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
       themeMode: ThemeMode.dark,
       // Перед экраном входа — прогрев дискового кэша фото меню (см.
       // ImagePreloadScreen), чтобы дальше открытие меню не грузило фото по
       // сети и не подвисало на слабых POS-планшетах.
-      home: ready ? const ImagePreloadScreen() : SetupRequiredScreen(errorDetails: startupError),
+      home: needsPairing
+          ? const SaasDevicePairingScreen()
+          : ready
+              ? const ImagePreloadScreen()
+              : SetupRequiredScreen(errorDetails: startupError),
     );
   }
 }
