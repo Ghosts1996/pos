@@ -16,13 +16,29 @@
  *   firebase deploy --only functions --project <ваш-saas-project-id>
  */
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 
 admin.initializeApp();
 const db = admin.firestore();
 const REGION = "europe-west1";
+
+// Репозиторий, чей build-apk workflow дёргает createBuildJob — тот же, что
+// хранит этот код (Ghosts1996/pos), не параметр развёртывания: платформа
+// всегда собирает APK из одного и того же места.
+const GITHUB_OWNER = "Ghosts1996";
+const GITHUB_REPO = "pos";
+const GITHUB_SAAS_WORKFLOW = "saas-on-demand-build.yml";
+
+// Секреты — заводятся один раз в Secret Manager (`firebase functions:secrets:set <ИМЯ>`),
+// не хранятся в коде и не попадают в git. См. saas/README.md, раздел «Биллинг» и «APK-конвейер».
+const YOOKASSA_SHOP_ID = defineSecret("YOOKASSA_SHOP_ID");
+const YOOKASSA_SECRET_KEY = defineSecret("YOOKASSA_SECRET_KEY");
+const GITHUB_PAT = defineSecret("GITHUB_PAT");
+const BUILD_CALLBACK_SECRET = defineSecret("BUILD_CALLBACK_SECRET");
 
 // -------------------------------------------------------------- helpers
 
@@ -68,6 +84,23 @@ async function requireSuperAdmin(uid) {
   if (!uid) throw new HttpsError("unauthenticated", "Нужен вход");
   const doc = await db.collection("superAdmins").doc(uid).get();
   if (!doc.exists) throw new HttpsError("permission-denied", "Только для супер-администратора платформы");
+}
+
+/**
+ * Проверяет, что uid состоит в tenantId с одной из allowedRoles ролей —
+ * то же самое, что проверило бы правило Firestore для прямой записи с
+ * клиента, но здесь нужно явно: Admin SDK правилам не подчиняется, а
+ * привилегия вызывающего в конкретном заведении — единственное, что
+ * отличает "владелец приглашает себе сотрудника" от "кто угодно
+ * приглашает кого угодно в чужое заведение".
+ */
+async function requireTenantRole(tenantId, uid, allowedRoles) {
+  if (!uid) throw new HttpsError("unauthenticated", "Нужен вход в платформу");
+  const memberDoc = await db.collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
+  const member = memberDoc.data();
+  if (!memberDoc.exists || member.status !== "active" || !allowedRoles.includes(member.role)) {
+    throw new HttpsError("permission-denied", "Недостаточно прав в этом заведении");
+  }
 }
 
 function randomInviteCode() {
@@ -232,11 +265,7 @@ exports.inviteTenantMember = onCall({ region: REGION }, async (request) => {
   const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
   if (!email) throw new HttpsError("invalid-argument", "Укажите email приглашаемого");
 
-  const callerMembership = await db.collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
-  const callerRole = callerMembership.exists ? callerMembership.data().role : null;
-  if (!["owner", "admin"].includes(callerRole)) {
-    throw new HttpsError("permission-denied", "Приглашать может только владелец или администратор заведения");
-  }
+  await requireTenantRole(tenantId, uid, ["owner", "admin"]);
 
   let invitedUser;
   try {
@@ -360,98 +389,343 @@ exports.calculateUsage = onSchedule(
   }
 );
 
-// --------------------------------------------------- handleBillingWebhook
+// ------------------------------------------------------------------ billing
 
 /**
- * ЗАГОТОВКА. Провайдер биллинга ещё не выбран (Stripe/YooKassa/CloudPayments
- * и т.п. — Фаза 5 по ТЗ), поэтому подпись webhook'а здесь проверить нечем:
- * реализовать её вслепую, без реального провайдера и его секрета
- * подписи, означало бы либо принимать неаутентифицированные запросы (дыра
- * в безопасности — кто угодно смог бы прислать "invoice.paid" и продлить
- * себе подписку бесплатно), либо выдумать формат, который не совпадёт с
- * реальным провайдером. Оставлено честной заготовкой с уже готовым
- * идемпотентным каркасом (TOR §14/§37: authenticated, idempotent,
- * retry-safe, logged) — при выборе провайдера сюда добавляется проверка
- * подписи в начале функции, дальше каркас не меняется.
+ * Вызывает REST API ЮKassa (https://yookassa.ru/developers/api) с Basic-
+ * авторизацией по shopId/секретному ключу магазина. Один helper — и для
+ * создания платежа, и для его перепроверки в вебхуке.
  */
-exports.handleBillingWebhook = onCall({ region: REGION }, async (request) => {
-  // TODO(billing): проверить подпись запроса конкретного провайдера ДО
-  // того, как читать request.data — иначе это не webhook, а открытая дверь.
-  throw new HttpsError(
-    "failed-precondition",
-    "Провайдер биллинга не подключён — см. TODO(billing) в saas/functions/index.js"
-  );
-
-  // Ниже — каркас на будущее (недостижим, пока throw выше не убран):
-  // eslint-disable-next-line no-unreachable
-  const { eventId, type, tenantId, data } = request.data || {};
-  if (!eventId) throw new HttpsError("invalid-argument", "Нет eventId — webhook не идемпотентен без него");
-
-  const eventRef = db.collection("billingEvents").doc(eventId);
-  await db.runTransaction(async (tx) => {
-    const seen = await tx.get(eventRef);
-    if (seen.exists) return; // уже обработан — повтор webhook'а не должен применяться дважды
-    tx.set(eventRef, { type, tenantId, receivedAt: admin.firestore.FieldValue.serverTimestamp() });
-
-    const subRef = db.collection("subscriptions").doc(tenantId);
-    if (type === "invoice.paid") {
-      tx.update(subRef, { status: "active" });
-    } else if (type === "invoice.failed") {
-      tx.update(subRef, { status: "past_due" });
-    } else if (type === "subscription.cancelled") {
-      tx.update(subRef, { status: "cancelled", cancelAtPeriodEnd: true });
-    }
+async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = {}) {
+  const auth = Buffer.from(`${YOOKASSA_SHOP_ID.value()}:${YOOKASSA_SECRET_KEY.value()}`).toString("base64");
+  const headers = { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" };
+  if (idempotenceKey) headers["Idempotence-Key"] = idempotenceKey;
+  const res = await fetch(`https://api.yookassa.ru/v3/${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
   });
-  return { ok: true };
-});
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`YooKassa ${method} ${path} -> ${res.status}: ${JSON.stringify(json)}`);
+  return json;
+}
+
+/**
+ * Создаёт платёж ЮKassa на оплату тарифа и возвращает ссылку на форму
+ * оплаты (confirmation_url) — консоль просто делает location.href на неё.
+ * save_payment_method сохраняет способ оплаты для последующих
+ * автоматических списаний при продлении (chargeRecurringSubscriptions).
+ *
+ * Статус подписки/заведения НЕ меняется здесь — платёж на этом этапе
+ * ещё не оплачен, только создан. Единственное место, где статус реально
+ * становится "active", — handleBillingWebhook, после того как ЮKassa
+ * подтвердит оплату (и сама перепроверена нашим секретным ключом, а не
+ * просто "доверена" по факту вызова этой функции).
+ */
+exports.createCheckoutSession = onCall(
+  { region: REGION, secrets: [YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY] },
+  async (request) => {
+    const uid = request.auth?.uid;
+    const { tenantId, planId, returnUrl } = request.data || {};
+    if (typeof tenantId !== "string" || !tenantId) throw new HttpsError("invalid-argument", "Не указано заведение");
+    if (typeof planId !== "string" || !planId) throw new HttpsError("invalid-argument", "Не указан тариф");
+    if (typeof returnUrl !== "string" || !returnUrl) {
+      throw new HttpsError("invalid-argument", "Не передан адрес возврата после оплаты");
+    }
+    await requireTenantRole(tenantId, uid, ["owner", "admin"]);
+
+    const planDoc = await db.collection("plans").doc(planId).get();
+    if (!planDoc.exists) throw new HttpsError("not-found", "Тариф не найден");
+    const plan = planDoc.data();
+    const price = Number(plan.priceRub) || 0;
+    if (price <= 0) {
+      throw new HttpsError("failed-precondition", "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
+    }
+
+    const payment = await yookassaRequest("payments", {
+      method: "POST",
+      idempotenceKey: crypto.randomUUID(),
+      body: {
+        amount: { value: price.toFixed(2), currency: "RUB" },
+        capture: true,
+        save_payment_method: true,
+        confirmation: { type: "redirect", return_url: returnUrl },
+        description: `Colibri POS — тариф «${plan.name || planId}», заведение ${tenantId}`,
+        metadata: { tenantId, planId, purpose: "subscription" },
+      },
+    });
+
+    return { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id };
+  }
+);
+
+/**
+ * Webhook ЮKassa. ЮKassa НЕ подписывает уведомления секретом (в отличие,
+ * например, от Stripe) — их официально рекомендованная защита именно
+ * такая: не доверять телу запроса, а по id платежа перезапросить его
+ * напрямую в API ЮKassa своим секретным ключом и действовать по тому,
+ * что вернул API, а не по тому, что прислали в POST. Подделать уведомление
+ * так нельзя, даже зная URL этого webhook'а и формат тела: подделыватель
+ * не может заставить API ЮKassa подтвердить чужой платёж как оплаченный.
+ *
+ * Идемпотентно (billingEvents/{paymentId}) — повторная доставка того же
+ * уведомления (ЮKassa ретраит, если не получила 200 вовремя) не применяет
+ * оплату дважды.
+ */
+exports.handleBillingWebhook = onRequest(
+  { region: REGION, secrets: [YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY] },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("method not allowed");
+      return;
+    }
+
+    const paymentId = req.body?.object?.id;
+    if (typeof paymentId !== "string" || !paymentId) {
+      res.status(400).send("bad request");
+      return;
+    }
+
+    let payment;
+    try {
+      payment = await yookassaRequest(`payments/${paymentId}`);
+    } catch (e) {
+      console.error("handleBillingWebhook: не удалось перепроверить платёж в ЮKassa", e);
+      res.status(502).send("upstream error");
+      return;
+    }
+
+    const tenantId = payment.metadata?.tenantId;
+    const planId = payment.metadata?.planId;
+    if (!tenantId || !planId) {
+      // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
+      // прислала его на наш webhook, отвечаем 200, чтобы не получать
+      // бесконечные повторы того, что мы всё равно никогда не обработаем.
+      res.status(200).send("ignored");
+      return;
+    }
+
+    const eventRef = db.collection("billingEvents").doc(paymentId);
+    const alreadyProcessed = await db.runTransaction(async (tx) => {
+      const seen = await tx.get(eventRef);
+      if (seen.exists) return true;
+      tx.set(eventRef, {
+        tenantId, planId, status: payment.status,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return false;
+    });
+    if (alreadyProcessed) {
+      res.status(200).send("ok");
+      return;
+    }
+
+    if (payment.status === "succeeded") {
+      const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 86400000);
+      const update = {
+        tenantId, planId,
+        status: "active",
+        provider: "yookassa",
+        externalSubscriptionId: paymentId,
+        currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
+        currentPeriodEnd: periodEnd,
+        cancelAtPeriodEnd: false,
+      };
+      // save_payment_method делает способ оплаты сохранённым только с
+      // согласия платёжной системы (не любая карта позволяет рекуррент) —
+      // сохраняем payment_method_id, только когда ЮKassa это подтвердила.
+      if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
+
+      await db.collection("subscriptions").doc(tenantId).set(update, { merge: true });
+      // set+merge, а не update: не роняем webhook 500-й ошибкой (что заставит
+      // ЮKassa бесконечно ретраить), если документ заведения почему-то ещё
+      // не существует — такое не должно случаться, но webhook обязан быть
+      // maximally resilient, а не полагаться на то, что "не должно".
+      await db.collection("tenants").doc(tenantId).set({
+        status: "active",
+        planId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId } });
+    } else if (payment.status === "canceled") {
+      await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId } });
+    }
+
+    res.status(200).send("ok");
+  }
+);
+
+/**
+ * Раз в сутки продлевает подписки, у которых скоро закончится оплаченный
+ * период — списывает сохранённый способ оплаты (payment_method_id) без
+ * участия владельца, как и положено автоплатежу. Статус подписки этот шаг
+ * НЕ трогает при успехе (кроме renewalAttemptedAt) — единственный источник
+ * истины "оплачено" один, handleBillingWebhook, который применит
+ * подтверждение, когда оно придёт, и продлит currentPeriodEnd сам.
+ * При явном отказе списания (карта отклонена и т.п.) переводит подписку в
+ * past_due сразу, не дожидаясь webhook'а, которого в этом случае не будет.
+ */
+exports.chargeRecurringSubscriptions = onSchedule(
+  { region: REGION, schedule: "every 24 hours", secrets: [YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY] },
+  async () => {
+    const withinADay = admin.firestore.Timestamp.fromMillis(Date.now() + 86400000);
+    const subs = await db.collection("subscriptions")
+      .where("status", "==", "active")
+      .where("provider", "==", "yookassa")
+      .where("currentPeriodEnd", "<=", withinADay)
+      .get();
+
+    for (const subDoc of subs.docs) {
+      const sub = subDoc.data();
+      const tenantId = subDoc.id;
+      if (!sub.paymentMethodId) continue; // нечем продлить автоматически — сгорит в past_due само по окончании периода (см. TenantConfig.operationsAllowed на клиенте)
+
+      // Не пытаться продлевать чаще раза в сутки: без этой защёлки при
+      // задержке подтверждения от ЮKassa каждый следующий ежедневный
+      // прогон создавал бы ещё один платёж, пока не придёт первый webhook.
+      const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
+      if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
+
+      const planDoc = await db.collection("plans").doc(sub.planId).get();
+      const price = Number(planDoc.data()?.priceRub) || 0;
+      if (price <= 0) continue;
+
+      await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
+      try {
+        await yookassaRequest("payments", {
+          method: "POST",
+          // Ключ детерминирован от даты окончания периода — повторный
+          // прогон этой функции в тот же день не создаёт второй платёж,
+          // даже если что-то упало между первой попыткой и следующим тиком.
+          idempotenceKey: `renewal_${tenantId}_${sub.currentPeriodEnd.toMillis()}`,
+          body: {
+            amount: { value: price.toFixed(2), currency: "RUB" },
+            capture: true,
+            payment_method_id: sub.paymentMethodId,
+            description: `Colibri POS — продление тарифа «${sub.planId}», заведение ${tenantId}`,
+            metadata: { tenantId, planId: sub.planId, purpose: "renewal" },
+          },
+        });
+      } catch (e) {
+        console.error(`chargeRecurringSubscriptions: не удалось продлить ${tenantId}`, e);
+        await subDoc.ref.update({ status: "past_due" });
+        await writeAuditLog({ tenantId, actorId: null, action: "subscriptionRenewalFailed", metadata: { error: String(e) } });
+      }
+    }
+  }
+);
 
 // ------------------------------------------------------------ createBuildJob
 
 /**
- * ЗАГОТОВКА. Постановка задачи на сборку APK требует решить, КАК именно
- * Cloud Function запускает существующий GitHub Actions pipeline
- * (.github/workflows/build-apk.yml) с параметрами конкретного tenant —
- * это либо GitHub REST API "workflow_dispatch" с personal access token
- * заведения-платформы (хранится в Secret Manager, не в Firestore), либо
- * repository_dispatch. Не реализовано вслепую, чтобы не заложить в токен
- * доступа больше прав, чем нужно, и не собирать APK без реальной проверки
- * лимитов тарифа. Каркас документа задачи и статусов — уже по TOR §21.
+ * Ставит задачу на сборку APK и запускает существующий GitHub Actions
+ * workflow saas-on-demand-build.yml через REST API "workflow_dispatch" —
+ * personal access token хранится в Secret Manager (GITHUB_PAT), с правами
+ * ТОЛЬКО "Actions: read and write" на этот один репозиторий (fine-grained
+ * PAT), не более широкими.
+ *
+ * Сама сборка сообщает о завершении обратным вызовом в completeBuildJob
+ * (см. ниже) — а не через опрос статуса workflow run отсюда: опрос means
+ * либо Cloud Function ждала бы 5-10 минут сборки (таймаут/деньги), либо
+ * нужен был бы отдельный планировщик — обратный вызов проще и мгновенный.
  */
-exports.createBuildJob = onCall({ region: REGION }, async (request) => {
+exports.createBuildJob = onCall({ region: REGION, secrets: [GITHUB_PAT] }, async (request) => {
   const uid = request.auth?.uid;
   const { tenantId, type } = request.data || {};
-  if (!uid || !tenantId) throw new HttpsError("unauthenticated", "Нужен вход и tenantId");
-
-  const memberDoc = await db.collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
-  const role = memberDoc.data()?.role;
-  if (!memberDoc.exists || !["owner", "admin"].includes(role)) {
-    throw new HttpsError("permission-denied", "Собирать APK может владелец или админ заведения");
-  }
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpsError("invalid-argument", "Не указано заведение");
+  await requireTenantRole(tenantId, uid, ["owner", "admin"]);
 
   const sub = await db.collection("subscriptions").doc(tenantId).get();
   if (!sub.exists || !["trial", "active"].includes(sub.data().status)) {
     throw new HttpsError("failed-precondition", "Подписка неактивна — сборка APK недоступна");
   }
 
-  throw new HttpsError(
-    "unimplemented",
-    "Запуск GitHub Actions пока не реализован (нужен выбор способа аутентификации к GitHub API) — " +
-      "см. TODO в saas/functions/index.js. Задача НЕ создана."
-  );
-
-  // Каркас на будущее (недостижим):
-  // eslint-disable-next-line no-unreachable
   const jobRef = db.collection("buildJobs").doc();
+  const jobId = jobRef.id;
   await jobRef.set({
     tenantId,
-    type: type || "android_guest",
+    type: type || "apk",
     status: "queued",
+    requestedBy: uid,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    startedAt: null,
-    finishedAt: null,
-    downloadUrl: null,
-    commit: null,
-    error: null,
+    completedAt: null,
+    downloadPath: null,
+    runUrl: null,
+    errorMessage: null,
   });
-  return { buildId: jobRef.id };
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_SAAS_WORKFLOW}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${GITHUB_PAT.value()}`,
+          "Accept": "application/vnd.github+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ref: "main", inputs: { tenant_id: tenantId, job_id: jobId } }),
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`GitHub API ${res.status}: ${text}`);
+    }
+  } catch (e) {
+    await jobRef.update({
+      status: "failed",
+      errorMessage: String(e),
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    throw new HttpsError("internal", "Не удалось запустить сборку в GitHub Actions — см. запись в buildJobs");
+  }
+
+  await writeAuditLog({ tenantId, actorId: uid, action: "buildJobRequested", metadata: { jobId } });
+  return { jobId };
+});
+
+// ---------------------------------------------------------- completeBuildJob
+
+/**
+ * Обратный вызов от GitHub Actions (последний шаг
+ * saas-on-demand-build.yml) — сообщает, что сборка закончилась, успешно
+ * или нет. Это обычный HTTP-эндпойнт (onRequest), не onCall: раннер
+ * GitHub Actions не является клиентом Firebase и не может вызвать
+ * callable-функцию через её protobuf-протокол — только curl.
+ *
+ * Проверка подлинности — общий секрет в заголовке (BUILD_CALLBACK_SECRET),
+ * а не IAM/Firebase Auth: раннеру не выдаётся сервисный аккаунт Firebase
+ * ради одного узкого действия "пометь эту задачу законченной".
+ */
+exports.completeBuildJob = onRequest({ region: REGION, secrets: [BUILD_CALLBACK_SECRET] }, async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("method not allowed");
+    return;
+  }
+  if (req.get("x-callback-secret") !== BUILD_CALLBACK_SECRET.value()) {
+    res.status(403).send("forbidden");
+    return;
+  }
+
+  const { jobId, status, downloadPath, runUrl, errorMessage } = req.body || {};
+  if (typeof jobId !== "string" || !jobId || !["success", "failed"].includes(status)) {
+    res.status(400).send("bad request");
+    return;
+  }
+
+  const jobRef = db.collection("buildJobs").doc(jobId);
+  const jobDoc = await jobRef.get();
+  if (!jobDoc.exists) {
+    res.status(404).send("job not found");
+    return;
+  }
+
+  await jobRef.update({
+    status,
+    completedAt: admin.firestore.FieldValue.serverTimestamp(),
+    downloadPath: status === "success" ? (downloadPath || null) : null,
+    runUrl: runUrl || null,
+    errorMessage: status === "failed" ? (errorMessage || "неизвестная ошибка сборки") : null,
+  });
+  res.status(200).send("ok");
 });

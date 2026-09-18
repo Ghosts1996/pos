@@ -1,6 +1,7 @@
 {
   "start": {
     "name": "Start",
+    "priceRub": 2990,
     "maxEmployees": 3,
     "maxDevices": 1,
     "maxTables": 15,
@@ -12,6 +13,7 @@
   },
   "business": {
     "name": "Business",
+    "priceRub": 7990,
     "maxEmployees": 30,
     "maxDevices": 10,
     "maxTables": 100,
@@ -23,6 +25,7 @@
   },
   "enterprise": {
     "name": "Enterprise",
+    "priceRub": 0,
     "maxEmployees": 0,
     "maxDevices": 0,
     "maxTables": 0,
