@@ -27,11 +27,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
-  String _kassaType = 'mock'; // mock | atol_cloud
+  String _kassaType = 'mock'; // mock | atol_cloud | orange_data | cloud_kassir
   final _kassaBaseUrlCtrl = TextEditingController();
   final _kassaGroupCodeCtrl = TextEditingController();
   final _kassaLoginCtrl = TextEditingController();
   final _kassaPasswordCtrl = TextEditingController();
+  final _kassaInnCtrl = TextEditingController();
+  final _kassaEmailCtrl = TextEditingController();
+  final _kassaPaymentAddressCtrl = TextEditingController();
+  String _kassaSno = 'osn';
+  final _kassaOrangeKeyNameCtrl = TextEditingController();
+  final _kassaOrangeCertPemCtrl = TextEditingController();
+  final _kassaOrangeKeyPemCtrl = TextEditingController();
   String _czCircuit = 'pilot'; // pilot | prod
   final _czTokenCtrl = TextEditingController();
   final _czTestCodeCtrl = TextEditingController();
@@ -64,6 +71,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaGroupCodeCtrl.text = data['kassaGroupCode'] ?? '';
     _kassaLoginCtrl.text = data['kassaLogin'] ?? '';
     _kassaPasswordCtrl.text = data['kassaPassword'] ?? '';
+    _kassaInnCtrl.text = data['kassaInn'] ?? '';
+    _kassaEmailCtrl.text = data['kassaEmail'] ?? '';
+    _kassaPaymentAddressCtrl.text = data['kassaPaymentAddress'] ?? '';
+    _kassaSno = data['kassaSno'] ?? 'osn';
+    _kassaOrangeKeyNameCtrl.text = data['kassaOrangeKeyName'] ?? '';
+    _kassaOrangeCertPemCtrl.text = data['kassaOrangeCertPem'] ?? '';
+    _kassaOrangeKeyPemCtrl.text = data['kassaOrangeKeyPem'] ?? '';
     _czCircuit = data['czCircuit'] ?? 'pilot';
     _czTokenCtrl.text = data['czToken'] ?? '';
     _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
@@ -94,6 +108,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaGroupCode': _kassaGroupCodeCtrl.text.trim(),
       'kassaLogin': _kassaLoginCtrl.text.trim(),
       'kassaPassword': _kassaPasswordCtrl.text.trim(),
+      'kassaInn': _kassaInnCtrl.text.trim(),
+      'kassaEmail': _kassaEmailCtrl.text.trim(),
+      'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
+      'kassaSno': _kassaSno,
+      'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
+      'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
+      'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
       'czCircuit': _czCircuit,
       'czToken': _czTokenCtrl.text.trim(),
       'terminalProvider': _terminalProvider.id,
@@ -111,16 +132,20 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   }
 
   void _applyActiveKassa() {
-    if (_kassaType == 'atol_cloud') {
-      kassaService = AtolCloudKassaService(
-        baseUrl: _kassaBaseUrlCtrl.text.trim(),
-        groupCode: _kassaGroupCodeCtrl.text.trim(),
-        login: _kassaLoginCtrl.text.trim(),
-        password: _kassaPasswordCtrl.text.trim(),
-      );
-    } else {
-      kassaService = MockKassaService();
-    }
+    kassaService = buildKassaService({
+      'kassaType': _kassaType,
+      'kassaBaseUrl': _kassaBaseUrlCtrl.text.trim(),
+      'kassaGroupCode': _kassaGroupCodeCtrl.text.trim(),
+      'kassaLogin': _kassaLoginCtrl.text.trim(),
+      'kassaPassword': _kassaPasswordCtrl.text.trim(),
+      'kassaInn': _kassaInnCtrl.text.trim(),
+      'kassaEmail': _kassaEmailCtrl.text.trim(),
+      'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
+      'kassaSno': _kassaSno,
+      'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
+      'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
+      'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
+    });
   }
 
   void _applyActiveTerminal() {
@@ -379,6 +404,12 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaGroupCodeCtrl.dispose();
     _kassaLoginCtrl.dispose();
     _kassaPasswordCtrl.dispose();
+    _kassaInnCtrl.dispose();
+    _kassaEmailCtrl.dispose();
+    _kassaPaymentAddressCtrl.dispose();
+    _kassaOrangeKeyNameCtrl.dispose();
+    _kassaOrangeCertPemCtrl.dispose();
+    _kassaOrangeKeyPemCtrl.dispose();
     _czTokenCtrl.dispose();
     _czTestCodeCtrl.dispose();
     _terminalLoginCtrl.dispose();
@@ -544,8 +575,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           const Text(
             'Без подключённого провайдера чек фискализируется имитационно '
             '(в налоговую ничего не уходит) — этого достаточно, чтобы '
-            'проверить весь сценарий, но не заменяет настоящую кассу. '
-            'Нужен договор с провайдером облачной кассы и с ОФД.',
+            'проверить весь сценарий, но не заменяет настоящую кассу. Ниже — '
+            'два реально работающих протокола: подключаются сразу, как '
+            'только заключён договор с провайдером и с ОФД и получены '
+            'реквизиты — дописывать код не нужно.',
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 8),
@@ -556,7 +589,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             onChanged: (v) => setState(() => _kassaType = v!),
           ),
           RadioListTile<String>(
-            title: const Text('Облачная касса (протокол АТОЛ Онлайн)'),
+            title: const Text('Облачная касса — протокол «АТОЛ Онлайн»'),
+            subtitle: const Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
             value: 'atol_cloud',
             groupValue: _kassaType,
             onChanged: (v) => setState(() => _kassaType = v!),
@@ -583,11 +617,95 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                     decoration: const InputDecoration(labelText: 'Пароль'),
                     obscureText: true,
                   ),
+                  TextField(
+                    controller: _kassaEmailCtrl,
+                    decoration: const InputDecoration(labelText: 'E-mail продавца (для чека)'),
+                  ),
+                  TextField(
+                    controller: _kassaPaymentAddressCtrl,
+                    decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
+                  ),
                   const SizedBox(height: 8),
                 ],
               ),
             ),
           ],
+          RadioListTile<String>(
+            title: const Text('Облачная касса — OrangeData'),
+            subtitle: const Text('Отдельный протокол (mTLS + подпись запроса) — пока без поддержки маркированных товаров'),
+            value: 'orange_data',
+            groupValue: _kassaType,
+            onChanged: (v) => setState(() => _kassaType = v!),
+          ),
+          if (_kassaType == 'orange_data') ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _kassaBaseUrlCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Адрес API (необязательно)',
+                      hintText: 'https://apip.orangedata.ru:2443/api/v2',
+                    ),
+                  ),
+                  TextField(
+                    controller: _kassaGroupCodeCtrl,
+                    decoration: const InputDecoration(labelText: 'Группа устройств (group)'),
+                  ),
+                  TextField(
+                    controller: _kassaOrangeKeyNameCtrl,
+                    decoration: const InputDecoration(labelText: 'Имя ключа подписи (key, необязательно)'),
+                  ),
+                  TextField(
+                    controller: _kassaOrangeCertPemCtrl,
+                    decoration: const InputDecoration(labelText: 'Клиентский сертификат (PEM)'),
+                    maxLines: 4,
+                  ),
+                  TextField(
+                    controller: _kassaOrangeKeyPemCtrl,
+                    decoration: const InputDecoration(labelText: 'Закрытый ключ (PEM)'),
+                    maxLines: 4,
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          ],
+          if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _kassaInnCtrl,
+                    decoration: const InputDecoration(labelText: 'ИНН организации'),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: _kassaSno,
+                    decoration: const InputDecoration(labelText: 'Система налогообложения'),
+                    items: const [
+                      DropdownMenuItem(value: 'osn', child: Text('ОСН')),
+                      DropdownMenuItem(value: 'usn_income', child: Text('УСН доход')),
+                      DropdownMenuItem(value: 'usn_income_outcome', child: Text('УСН доход − расход')),
+                      DropdownMenuItem(value: 'envd', child: Text('ЕНВД')),
+                      DropdownMenuItem(value: 'esn', child: Text('ЕСН')),
+                      DropdownMenuItem(value: 'patent', child: Text('Патент')),
+                    ],
+                    onChanged: (v) => setState(() => _kassaSno = v!),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          RadioListTile<String>(
+            title: const Text('CloudKassir'),
+            subtitle: const Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
+            value: 'cloud_kassir',
+            groupValue: _kassaType,
+            onChanged: (v) => setState(() => _kassaType = v!),
+          ),
           OutlinedButton.icon(
             onPressed: _testing ? null : _testKassa,
             icon: const Icon(Icons.receipt_long),
