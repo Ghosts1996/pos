@@ -186,6 +186,16 @@ function pluralDays(n) {
   return 'дней';
 }
 
+/// «1 человек», «2 человека», «5 человек» — «человек» неправильное
+/// существительное, родительный падеж множественного числа совпадает с
+/// именительным единственного, поэтому это не то же самое, что pluralDays.
+function pluralPeople(n) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last >= 2 && last <= 4) return 'человека';
+  return 'человек';
+}
+
 function daysUntilDataPurge(subscription) {
   if (subscription?.status !== 'past_due') return null;
   const since = subscription.pastDueSince?.toDate?.();
@@ -546,7 +556,7 @@ function screenLanding() {
   screenEl().innerHTML = `
     <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
     <div class="brand">Hookah POS</div>
-    <h1>Готовая касса для заведения — без программистов и своих серверов</h1>
+    <h1>Полная система управления кальянной — от зала до кассы</h1>
     <p class="muted">Карта зала, чеки и оплата, склад, брони и лист ожидания,
     программа лояльности, гостевое приложение и ИИ-помощники персоналу —
     всё в одной системе. Работает на обычном Android-планшете, разворачивается
@@ -914,16 +924,35 @@ function screenOnboarding() {
 
 // ---------- ЛИЧНЫЙ КАБИНЕТ ----------
 
+const TIMEZONE_OPTIONS = [
+  { id: 'Europe/Kaliningrad', label: 'Калининград (UTC+2)' },
+  { id: 'Europe/Moscow', label: 'Москва (UTC+3)' },
+  { id: 'Europe/Riga', label: 'Рига / Вильнюс / Таллин (UTC+2/+3)' },
+  { id: 'Europe/Kyiv', label: 'Киев (UTC+2/+3)' },
+  { id: 'Europe/Minsk', label: 'Минск (UTC+3)' },
+  { id: 'Asia/Yekaterinburg', label: 'Екатеринбург (UTC+5)' },
+  { id: 'Asia/Almaty', label: 'Алма-Ата (UTC+6)' },
+  { id: 'Asia/Novosibirsk', label: 'Новосибирск (UTC+7)' },
+  { id: 'Asia/Vladivostok', label: 'Владивосток (UTC+10)' },
+];
+
+// Реальные, а не "рыбные" вопросы — то, что действительно спрашивают на
+// этапе выбора и подключения (честно про фискализацию: её из коробки нет,
+// это же написано и в самом приложении, см. корневой README.md).
+const FAQ_ITEMS = [
+  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока триал не закончится. Длительность зависит от тарифа, обычно 14 дней.' },
+  { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
+  { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
+  { q: 'Можно ли сменить тариф позже?', a: 'Да, в любой момент в разделе «Тарифы» — повышение и понижение доступны в один клик, без обращения в поддержку.' },
+  { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Из коробки — нет. Приложение считает суммы и ведёт чек, но настоящую фискализацию и эквайринг нужно подключать отдельно через собственное оборудование (это же явно написано в самом приложении, раздел «Настройки → Интеграции»).' },
+  { q: 'Где хранятся данные заведения?', a: 'В облаке (Google Firebase) — отдельная, изолированная база на каждое заведение. Другие заведения платформы физически не могут увидеть ваши данные — это проверено автоматическими тестами защиты.' },
+  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Зависит от тарифа — лимиты указаны в разделе «Тарифы». При превышении лимита приложение продолжает работать, но администратора платформы попросят предложить тариф выше.' },
+  { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Экспортировать данные до удаления можно, обратившись в поддержку.' },
+];
+
 function screenDashboard() {
   screenEl().classList.add('has-tabbar');
   screenEl().innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hookah POS</div>
-      <div class="row" style="width:auto;gap:14px">
-        ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
-        <button class="btn-link" id="f-signout">Выйти</button>
-      </div>
-    </div>
     ${state.tenants.length > 1 ? `
       <label class="field"><span>Заведение</span>
         <select id="f-tenant-pick">
@@ -935,7 +964,6 @@ function screenDashboard() {
     <div id="dash-body"><div class="spinner"></div></div>
   `;
 
-  $('f-signout').onclick = () => signOut(state.auth);
   if (state.tenants.length > 1) {
     $('f-tenant-pick').onchange = (e) => {
       state.activeTenantId = e.target.value;
@@ -946,24 +974,42 @@ function screenDashboard() {
   watchDashboardData(state.activeTenantId);
 }
 
-const DASHBOARD_TABS = [
+const DASHBOARD_NAV = [
   { id: 'overview', icon: '🏠', label: 'Обзор' },
   { id: 'devices', icon: '📲', label: 'Устройства' },
-  { id: 'subscription', icon: '💳', label: 'Подписка' },
+  { id: 'billing', icon: '💳', label: 'Оплата' },
+  { id: 'plans', icon: '💎', label: 'Тарифы' },
   { id: 'branding', icon: '🎨', label: 'Брендинг' },
   { id: 'team', icon: '👥', label: 'Команда' },
+  { id: 'profile', icon: '👤', label: 'Профиль' },
+  { id: 'settings', icon: '⚙️', label: 'Настройки' },
+  { id: 'faq', icon: '❓', label: 'FAQ' },
+  { id: 'support', icon: '💬', label: 'Поддержка' },
 ];
 
-function dashboardTabBarHtml(activeTab, showSubscriptionDot) {
+function dashboardNavHtml(activeTab, showBillingDot) {
   return `
-    <div class="tabbar">
-      ${DASHBOARD_TABS.map((t) => `
-        <button class="tabbar-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
-          <span class="tabbar-icon">${t.icon}</span>
+    <button class="hamburger-btn" id="f-nav-open">☰</button>
+    <div class="nav-backdrop" id="nav-backdrop"></div>
+    <div class="nav-drawer" id="nav-drawer">
+      <div class="nav-drawer-brand">Hookah POS</div>
+      ${DASHBOARD_NAV.map((t) => `
+        <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
+          <span class="nav-icon">${t.icon}</span>
           <span>${esc(t.label)}</span>
-          ${t.id === 'subscription' && showSubscriptionDot ? '<span class="tabbar-dot"></span>' : ''}
+          ${t.id === 'billing' && showBillingDot ? '<span class="nav-dot"></span>' : ''}
         </button>
       `).join('')}
+      ${state.isSuperAdmin ? `
+        <div class="nav-divider"></div>
+        <a href="#/admin" class="nav-item" style="text-decoration:none">
+          <span class="nav-icon">🛠️</span><span>Платформа</span>
+        </a>
+      ` : ''}
+      <div class="nav-divider"></div>
+      <button class="nav-item" id="f-nav-signout">
+        <span class="nav-icon">↪</span><span>Выйти</span>
+      </button>
     </div>
   `;
 }
@@ -978,6 +1024,7 @@ function watchDashboardData(tenantId) {
   let members = null;
   let plans = null;
   let buildJobs = null;
+  let generalSettings = null;
   // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
   // перерисовки (см. ниже), сбрасывается после успешного сохранения.
   let pendingLogoUrl = null;
@@ -1028,6 +1075,13 @@ function watchDashboardData(tenantId) {
       </div>
     `;
 
+    const checklistSteps = [
+      { done: !!(branding && (branding.logoUrl || (branding.primaryColor && branding.primaryColor !== '#0B5ED7'))), label: 'Настроить фирменные цвета и лого', tab: 'branding' },
+      { done: sortedMembers.length > 1, label: 'Пригласить первого сотрудника', tab: 'team' },
+      { done: (buildJobs || []).some((j) => j.status === 'success'), label: 'Собрать и установить APK на планшет', tab: 'devices' },
+    ];
+    const allStepsDone = checklistSteps.every((s) => s.done);
+
     const overviewHtml = () => `
       <div class="card">
         <div class="muted small">Заведение</div>
@@ -1039,12 +1093,26 @@ function watchDashboardData(tenantId) {
         </div>
       </div>
       ${dangerBannerHtml}
+      ${!allStepsDone ? `
+        <h2>Настройка заведения</h2>
+        <div class="card">
+          ${checklistSteps.map((s) => `
+            <div class="checklist-item${s.done ? ' done' : ''}">
+              <div class="checklist-check">✓</div>
+              <div class="checklist-label">${esc(s.label)}</div>
+              ${!s.done ? `<button class="btn-link f-dash-tab" data-tab="${s.tab}" style="width:auto">Перейти</button>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
       <div class="small muted" style="margin-bottom:8px">Быстрый доступ</div>
       <div class="quick-actions">
         <button class="btn btn-ghost f-dash-tab" data-tab="devices">📲 Устройства</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="subscription">💳 Подписка</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="billing">💳 Оплата</button>
         <button class="btn btn-ghost f-dash-tab" data-tab="branding">🎨 Брендинг</button>
         <button class="btn btn-ghost f-dash-tab" data-tab="team">👥 Команда</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="faq">❓ FAQ</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="support">💬 Поддержка</button>
       </div>
     `;
 
@@ -1081,37 +1149,42 @@ function watchDashboardData(tenantId) {
       </div>
     `;
 
-    const subscriptionHtml = () => `
+    const billingHtml = () => `
       ${dangerBannerHtml}
-      <h2>Подписка</h2>
+      <h2>Оплата</h2>
       <div class="card">
         <div class="small muted">Тариф: ${esc(planName(plans, subscription?.planId) || subscription?.planId || '—')}</div>
         <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
         ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
         ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
+        ${canManage ? `<button class="btn btn-primary f-dash-tab" data-tab="plans" style="margin-top:14px">Перейти к тарифам</button>` : ''}
+      </div>
+    `;
+
+    const plansHtml = () => `
+      <h2>Тарифы</h2>
+      <div class="card">
         ${canManage && plans ? `
-          <div style="margin-top:14px">
-            ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
-              <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-                <div class="grow">
-                  <div>${esc(p.name || p.id)}</div>
-                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
-                  ${Number(p.priceRubYearly) > 0 ? `
-                    <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
-                      <option value="monthly">Помесячно</option>
-                      <option value="yearly">На год (выгоднее)</option>
-                    </select>
-                  ` : ''}
-                </div>
-                <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
-                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
-                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
-                </button>
+          ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
+            <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div class="grow">
+                <div>${esc(p.name || p.id)}</div>
+                <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
+                ${Number(p.priceRubYearly) > 0 ? `
+                  <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
+                    <option value="monthly">Помесячно</option>
+                    <option value="yearly">На год (выгоднее)</option>
+                  </select>
+                ` : ''}
               </div>
-            `).join('')}
-            <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
-          </div>
-        ` : ''}
+              <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
+                ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
+                ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
+              </button>
+            </div>
+          `).join('')}
+          <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+        ` : '<p class="small muted">Тарифы пока не заданы платформой.</p>'}
       </div>
     `;
 
@@ -1199,15 +1272,128 @@ function watchDashboardData(tenantId) {
       </div>
     `;
 
+    const memberSince = (() => {
+      const iso = state.auth.currentUser?.metadata?.creationTime;
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    })();
+
+    const profileHtml = () => `
+      <h2>Профиль</h2>
+      <div class="card">
+        <div class="small muted">Email</div>
+        <div style="font-weight:700;margin:4px 0 14px">${esc(state.auth.currentUser?.email || '—')}</div>
+        <div class="small muted">Роль в заведении «${esc(tenant.name || '')}»</div>
+        <div style="font-weight:700;margin:4px 0 14px">${esc(ROLE_LABELS[role] || role)}</div>
+        <div class="small muted">Аккаунт создан</div>
+        <div style="font-weight:700;margin:4px 0 14px">${esc(memberSince)}</div>
+        <div class="small muted">ID заведения (для обращений в поддержку)</div>
+        <div style="margin:4px 0"><code>${esc(tenantId)}</code></div>
+      </div>
+      <div class="card">
+        <div class="small muted">Всего в команде: ${sortedMembers.length} ${pluralPeople(sortedMembers.length)}</div>
+      </div>
+      <button class="btn btn-ghost" id="f-profile-signout">Выйти из аккаунта</button>
+    `;
+
+    const settingsHtml = () => `
+      <h2>Настройки заведения</h2>
+      <div class="card">
+        <label class="field"><span>Часовой пояс</span>
+          <select id="f-timezone" ${canManage ? '' : 'disabled'}>
+            ${TIMEZONE_OPTIONS.map((tz) => `<option value="${esc(tz.id)}" ${generalSettings?.timezone === tz.id ? 'selected' : ''}>${esc(tz.label)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="small muted">Валюта: ${esc(generalSettings?.currency || 'RUB')} · Язык интерфейса: русский</div>
+        ${canManage ? `<button class="btn btn-ghost" id="f-save-settings" style="margin-top:12px">Сохранить</button>` : ''}
+        <div id="f-settings-error" class="small" style="color:var(--danger);margin-top:8px"></div>
+      </div>
+
+      <h2>Системные требования</h2>
+      <div class="card">
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет нужен постоянно — Wi-Fi или мобильный</div>
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📱 Android 8.0 и новее, экран от 8 дюймов рекомендован</div>
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🖨️ Принтер чеков — опционально, Bluetooth/USB, настраивается в самом приложении кассы</div>
+        <div class="small" style="padding:7px 0">☁️ Все данные хранятся в облаке — ничего не теряется при поломке или замене планшета</div>
+      </div>
+    `;
+
+    const faqHtml = () => `
+      <h2>Частые вопросы</h2>
+      <div class="card">
+        ${FAQ_ITEMS.map((item, i) => `
+          <div class="faq-item" data-faq="${i}">
+            <div class="faq-question">
+              <span>${esc(item.q)}</span>
+              <span class="faq-toggle">+</span>
+            </div>
+            <div class="faq-answer">${esc(item.a)}</div>
+          </div>
+        `).join('')}
+      </div>
+      <p class="small center muted">Не нашли ответ? <a href="#" class="f-dash-tab" data-tab="support">Напишите в поддержку</a></p>
+    `;
+
+    const supportHtml = () => `
+      <h2>Поддержка</h2>
+      <div class="card">
+        <p class="small muted">Чат поддержки прямо в приложении скоро появится здесь.</p>
+        <p class="small">Пока что свяжитесь с администратором платформы напрямую — укажите код заведения
+        (<code>${esc(tenant.slug || '')}</code>) и опишите, что случилось, так ответят быстрее.</p>
+      </div>
+      <p class="small center muted"><a href="#" class="f-dash-tab" data-tab="faq">← Сначала загляните в FAQ</a></p>
+    `;
+
     const TAB_RENDERERS = {
-      overview: overviewHtml, devices: devicesHtml, subscription: subscriptionHtml,
-      branding: brandingHtml, team: teamHtml,
+      overview: overviewHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
+      branding: brandingHtml, team: teamHtml, profile: profileHtml, settings: settingsHtml,
+      faq: faqHtml, support: supportHtml,
     };
-    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardTabBarHtml(activeTab, daysLeft !== null);
+    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null);
 
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
-      el.onclick = () => { activeTab = el.dataset.tab; draw(); };
+      el.onclick = (e) => {
+        e.preventDefault();
+        activeTab = el.dataset.tab;
+        draw();
+      };
     });
+
+    // Гамбургер-меню: на телефоне это выдвижная панель поверх контента, на
+    // широком экране (см. media query в console.css) она уже показана
+    // постоянно и сама кнопка/подложка скрыты — обработчики безобидны и там,
+    // и там.
+    const navDrawer = $('nav-drawer');
+    const navBackdrop = $('nav-backdrop');
+    const closeNav = () => { navDrawer?.classList.remove('open'); navBackdrop?.classList.remove('open'); };
+    if ($('f-nav-open')) $('f-nav-open').onclick = () => { navDrawer?.classList.add('open'); navBackdrop?.classList.add('open'); };
+    if (navBackdrop) navBackdrop.onclick = closeNav;
+    document.querySelectorAll('.f-dash-tab').forEach((el) => { el.addEventListener('click', closeNav); });
+    if ($('f-nav-signout')) $('f-nav-signout').onclick = () => signOut(state.auth);
+    if ($('f-profile-signout')) $('f-profile-signout').onclick = () => signOut(state.auth);
+
+    document.querySelectorAll('.faq-item').forEach((el) => {
+      el.querySelector('.faq-question')?.addEventListener('click', () => {
+        el.classList.toggle('open');
+      });
+    });
+    if ($('f-save-settings')) {
+      $('f-save-settings').onclick = async () => {
+        const btn = $('f-save-settings');
+        btn.disabled = true;
+        try {
+          await setDoc(doc(state.db, 'tenants', tenantId, 'settings', 'general'), {
+            timezone: $('f-timezone').value,
+          }, { merge: true });
+          toast('Настройки сохранены');
+        } catch (e) {
+          toast(`Не удалось сохранить: ${e?.message || e}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
@@ -1332,6 +1518,10 @@ function watchDashboardData(tenantId) {
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'branding', 'config'), (d) => {
     branding = d.exists() ? d.data() : null;
+    draw();
+  }, () => {}));
+  sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'general'), (d) => {
+    generalSettings = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'subscriptions', tenantId), (d) => {
