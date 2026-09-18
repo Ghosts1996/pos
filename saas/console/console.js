@@ -12,12 +12,15 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
   getFunctions, httpsCallable,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
+import {
+  getStorage, ref, getDownloadURL,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
 const FUNCTIONS_REGION = 'europe-west1';
@@ -26,6 +29,7 @@ const state = {
   auth: null,
   db: null,
   functions: null,
+  storage: null,
   uid: null,
   tenants: [],        // [{ id, role, name, slug }] — заведения этого владельца
   tenantsLoaded: false,
@@ -64,6 +68,18 @@ function fmtDate(ts) {
   const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
   if (!d) return '—';
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+function fmtDateTime(ts) {
+  const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
+  if (!d) return '—';
+  return `${fmtDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function planName(plans, planId) {
+  if (!plans || !planId) return null;
+  const plan = plans.find((p) => p.id === planId);
+  return plan ? plan.name || plan.id : null;
 }
 
 async function copyToClipboard(text) {
@@ -109,6 +125,9 @@ const SUB_STATUS_LABELS = {
   trial: 'пробный период', active: 'активна', past_due: 'просрочена',
   cancelled: 'отменена', incomplete: 'не оформлена',
 };
+const BUILD_STATUS_LABELS = {
+  queued: 'в очереди', success: 'готова', failed: 'ошибка',
+};
 
 function authErrorMessage(e) {
   const map = {
@@ -150,6 +169,7 @@ async function boot() {
   state.auth = getAuth(app);
   state.db = getFirestore(app);
   state.functions = getFunctions(app, FUNCTIONS_REGION);
+  state.storage = getStorage(app);
 
   onAuthStateChanged(state.auth, handleAuthChange);
 }
@@ -407,6 +427,8 @@ function watchDashboardData(tenantId) {
   let branding = null;
   let subscription = null;
   let members = null;
+  let plans = null;
+  let buildJobs = null;
 
   const draw = () => {
     // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
@@ -495,9 +517,47 @@ function watchDashboardData(tenantId) {
 
       <h2>Подписка</h2>
       <div class="card">
-        <div class="small muted">Тариф: ${esc(subscription?.planId || '—')}</div>
+        <div class="small muted">Тариф: ${esc(planName(plans, subscription?.planId) || subscription?.planId || '—')}</div>
         <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
         ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
+        ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
+        ${canManage && plans ? `
+          <div style="margin-top:14px">
+            ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
+              <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+                <div class="grow">
+                  <div>${esc(p.name || p.id)}</div>
+                  <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес</div>
+                </div>
+                <button class="btn btn-ghost f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
+                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
+                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Оформить'}
+                </button>
+              </div>
+            `).join('')}
+            <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+          </div>
+        ` : ''}
+      </div>
+
+      <h2>Сборка APK</h2>
+      <div class="card">
+        <p class="small muted">Универсальный APK кассы для этой платформы —
+        после установки на планшет он сам предложит присоединиться по коду
+        заведения и коду приглашения устройства выше.</p>
+        ${canManage ? `<button class="btn btn-ghost" id="f-request-build">Собрать APK</button>` : ''}
+        <div id="f-build-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+        ${(buildJobs || []).length ? buildJobs.map((j) => `
+          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+            <div class="grow small muted">
+              ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
+              ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
+            </div>
+            ${j.status === 'success' && j.downloadPath ? `
+              <button class="btn-link f-build-download" data-path="${esc(j.downloadPath)}" style="width:auto">Скачать</button>
+            ` : ''}
+          </div>
+        `).join('') : '<p class="small muted" style="margin-top:10px">Сборок пока не было.</p>'}
       </div>
     `;
 
@@ -537,7 +597,21 @@ function watchDashboardData(tenantId) {
         }
       };
     }
+    document.querySelectorAll('.f-plan-checkout').forEach((el) => {
+      el.onclick = () => startCheckout(tenantId, el.dataset.plan);
+    });
+    if ($('f-request-build')) {
+      $('f-request-build').onclick = () => requestBuild(tenantId);
+    }
+    document.querySelectorAll('.f-build-download').forEach((el) => {
+      el.onclick = () => downloadBuild(el.dataset.path);
+    });
   };
+
+  getDocs(collection(state.db, 'plans')).then((snap) => {
+    plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  }).catch(() => { plans = []; draw(); });
 
   sub(onSnapshot(doc(state.db, 'tenants', tenantId), (d) => {
     tenant = d.exists() ? d.data() : null;
@@ -562,6 +636,14 @@ function watchDashboardData(tenantId) {
     members = [];
     draw();
   }));
+  sub(onSnapshot(
+    query(collection(state.db, 'buildJobs'), where('tenantId', '==', tenantId), orderBy('createdAt', 'desc'), limit(10)),
+    (snap) => {
+      buildJobs = snap.docs.map((d) => d.data());
+      draw();
+    },
+    () => { buildJobs = []; draw(); },
+  ));
 }
 
 async function rotateInviteCode(tenantId) {
@@ -684,5 +766,56 @@ async function toggleTenantSuspension(tenantId, isSuspended) {
     toast(isSuspended ? 'Заведение разблокировано' : 'Заведение заблокировано');
   } catch (e) {
     toast(`Не удалось изменить статус: ${e?.message || e}`);
+  }
+}
+
+// ---------- ПОДПИСКА (ЮKASSA) И СБОРКА APK ----------
+
+async function startCheckout(tenantId, planId) {
+  const errEl = $('f-checkout-error');
+  if (errEl) errEl.textContent = '';
+  try {
+    const createCheckoutSession = httpsCallable(state.functions, 'createCheckoutSession');
+    const res = await createCheckoutSession({
+      tenantId, planId,
+      // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
+      // подписки обновится сам по snapshot-подписке, как только придёт
+      // webhook (обычно за секунды, но платёжная форма может быть и
+      // быстрее самого webhook'а — поэтому это просто "куда вернуться",
+      // а не сигнал об оплате).
+      returnUrl: `${location.origin}${location.pathname}#/`,
+    });
+    if (res.data?.confirmationUrl) {
+      location.href = res.data.confirmationUrl;
+    } else {
+      throw new Error('ЮKassa не вернула ссылку на оплату');
+    }
+  } catch (e) {
+    if (errEl) errEl.textContent = `Не удалось начать оплату: ${e?.message || e}`;
+  }
+}
+
+async function requestBuild(tenantId) {
+  const errEl = $('f-build-error');
+  if (errEl) errEl.textContent = '';
+  const btn = $('f-request-build');
+  if (btn) btn.disabled = true;
+  try {
+    const createBuildJob = httpsCallable(state.functions, 'createBuildJob');
+    await createBuildJob({ tenantId });
+    toast('Сборка запущена — обычно занимает 5–10 минут');
+  } catch (e) {
+    if (errEl) errEl.textContent = `Не удалось запустить сборку: ${e?.message || e}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function downloadBuild(storagePath) {
+  try {
+    const url = await getDownloadURL(ref(state.storage, storagePath));
+    window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    toast(`Не удалось получить файл: ${e?.message || e}`);
   }
 }
