@@ -1,0 +1,453 @@
+name: SaaS on-demand APK build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: 'ID заведения (tenants/{tenantId}) — куда положить готовый APK в Storage SaaS-проекта'
+        required: true
+      job_id:
+        description: 'ID документа buildJobs/{jobId} (Firestore SaaS-проекта), который нужно обновить по завершении'
+        required: true
+
+# Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
+# GitHub REST API "workflow_dispatch") — не по push и не вручную с обычными
+# правами: personal access token с правом Actions: write хранится в Secret
+# Manager SaaS-проекта, не здесь.
+#
+# Один и тот же универсальный APK для ВСЕХ арендаторов платформы. Заведение
+# выбирается не на этапе сборки, а во время первого запуска планшета
+# (SaasDevicePairingScreen — код заведения + код приглашения устройства, см.
+# lib/main.dart и saas/README.md): здесь --dart-define=SAAS_MODE=true и
+# ключи SaaS-проекта Firebase, а какое конкретно заведение получит эту
+# копию — вопрос доступа к файлу в Storage (tenants/{tenantId}/builds/,
+# правила уже есть в saas/storage.rules), а не содержимого APK.
+#
+# ЭТОТ ФАЙЛ НАМЕРЕННО ОТДЕЛЬНЫЙ от build-apk.yml, а не объединён с ним через
+# матрицу или общий composite action, и часть Android-шагов ниже дублирует
+# его. build-apk.yml собирает боевые одно-арендные APK текущего живого
+# заведения — трогать его ради SaaS-варианта, который ему не нужен, значило
+# бы рисковать реальной, годами обкатанной сборкой ради фичи, которая с ней
+# не связана. Если здесь найдётся баг того же рода, что уже пойман и
+# прокомментирован в build-apk.yml (ML Kit, R8, desugaring, App Links и
+# т.д.), правьте оба файла — они специально не разделяют код.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build SaaS APK
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-saas-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Generate missing Android platform files
+        run: |
+          # com.hookahpossaas — ОТДЕЛЬНЫЙ, не com.hookahpos: это другой
+          # Firebase-проект (SaaS-платформа, не hoocah-pos), и держать для
+          # него отдельный applicationId проще и безопаснее, чем пытаться
+          # развести один и тот же id между двумя проектами Firebase.
+          flutter create . --platforms=android --org com --project-name hookahpossaas
+          test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
+          rm -f test/widget_test.dart
+
+      - name: Bump compileSdk for CameraX / mobile_scanner compatibility
+        run: |
+          APP_GRADLE=android/app/build.gradle.kts
+          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
+          sed -i -E 's/compileSdk[[:space:]]*=.*/compileSdk = 36/' "$APP_GRADLE"
+          sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 36/' "$APP_GRADLE"
+          grep -E "compileSdk" "$APP_GRADLE"
+
+      - name: Add google-services.json (SaaS Firebase project)
+        env:
+          GSERVICES: ${{ secrets.GOOGLE_SERVICES_JSON_SAAS }}
+        run: |
+          # Приложение com.hookahpossaas должно быть зарегистрировано в
+          # ВАШЕМ SaaS Firebase-проекте (Project settings → Your apps) —
+          # НЕ в hoocah-pos. См. saas/README.md, раздел «APK-конвейер».
+          if [ -z "$GSERVICES" ]; then
+            echo "::error::Секрет GOOGLE_SERVICES_JSON_SAAS не задан (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          printf '%s' "$GSERVICES" > android/app/google-services.json
+          grep -q "com.hookahpossaas" android/app/google-services.json \
+            || (echo "::error::В GOOGLE_SERVICES_JSON_SAAS нет приложения com.hookahpossaas" && exit 1)
+
+      - name: Apply Google Services Gradle plugin
+        run: |
+          SETTINGS=android/settings.gradle.kts
+          [ -f "$SETTINGS" ] || SETTINGS=android/settings.gradle
+          APP_GRADLE=android/app/build.gradle.kts
+          [ -f "$APP_GRADLE" ] || APP_GRADLE=android/app/build.gradle
+          PROJECT_GRADLE=android/build.gradle.kts
+          [ -f "$PROJECT_GRADLE" ] || PROJECT_GRADLE=android/build.gradle
+
+          if grep -q "pluginManagement" "$SETTINGS" 2>/dev/null; then
+            if ! grep -q "com.google.gms.google-services" "$SETTINGS"; then
+              sed -i '/id("dev.flutter.flutter-plugin-loader")/a\    id("com.google.gms.google-services") version "4.4.2" apply false' "$SETTINGS"
+            fi
+            if ! grep -q "com.google.gms.google-services" "$APP_GRADLE"; then
+              sed -i '/^plugins {/a\    id("com.google.gms.google-services")' "$APP_GRADLE"
+            fi
+          else
+            if ! grep -q "com.google.gms:google-services" "$PROJECT_GRADLE"; then
+              sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.2'" "$PROJECT_GRADLE"
+            fi
+            if ! grep -q "com.google.gms.google-services" "$APP_GRADLE"; then
+              echo "apply plugin: 'com.google.gms.google-services'" >> "$APP_GRADLE"
+            fi
+          fi
+
+      - name: Ensure required permissions and manifest entries
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          add_permission() {
+            if ! grep -q "$1" "$MANIFEST"; then
+              sed -i "/<manifest /a\\    <uses-permission android:name=\"$1\" />" "$MANIFEST"
+            fi
+          }
+          add_permission "android.permission.INTERNET"
+          add_permission "android.permission.CAMERA"
+          add_permission "android.permission.READ_MEDIA_IMAGES"
+          add_permission "android.permission.READ_EXTERNAL_STORAGE"
+          add_permission "android.permission.RECORD_AUDIO"
+          add_permission "android.permission.POST_NOTIFICATIONS"
+          add_permission "android.permission.SCHEDULE_EXACT_ALARM"
+          add_permission "android.permission.USE_EXACT_ALARM"
+          add_permission "android.permission.RECEIVE_BOOT_COMPLETED"
+          add_permission "android.permission.VIBRATE"
+          add_permission "android.permission.FOREGROUND_SERVICE"
+          add_permission "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+          add_permission "android.permission.WAKE_LOCK"
+
+          if ! grep -q "android.hardware.camera" "$MANIFEST"; then
+            sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
+          fi
+
+          if ! grep -q "<queries>" "$MANIFEST"; then
+            sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.VIEW\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.DIAL\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n    </queries>" "$MANIFEST"
+          fi
+
+          if ! grep -q "com.google.mlkit.vision.DEPENDENCIES" "$MANIFEST"; then
+            sed -i "/<application/,/>/{/>/a\\    <meta-data android:name=\"com.google.mlkit.vision.DEPENDENCIES\" android:value=\"barcode\" />
+            }" "$MANIFEST"
+          fi
+
+          python3 - "$MANIFEST" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          xml = open(path, encoding='utf-8').read()
+          if 'flutter_foreground_task' not in xml:
+              service = (
+                  '        <service\n'
+                  '            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"\n'
+                  '            android:foregroundServiceType="dataSync"\n'
+                  '            android:stopWithTask="false"\n'
+                  '            android:exported="false" />\n'
+              )
+              xml = xml.replace('</application>', service + '    </application>', 1)
+              open(path, 'w', encoding='utf-8').write(xml)
+          if 'ScheduledNotificationReceiver' not in xml:
+              receivers = (
+                  '        <receiver android:exported="false" '
+                  'android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />\n'
+                  '        <receiver android:exported="false" '
+                  'android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.BOOT_COMPLETED" />\n'
+                  '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />\n'
+                  '                <action android:name="android.intent.action.QUICKBOOT_POWERON" />\n'
+                  '            </intent-filter>\n'
+                  '        </receiver>\n'
+              )
+              xml = xml.replace('</application>', receivers + '    </application>', 1)
+              open(path, 'w', encoding='utf-8').write(xml)
+          PYEOF
+
+          sed -i 's/android:label="[^"]*"/android:label="Colibri POS (SaaS)"/' "$MANIFEST"
+          cat "$MANIFEST"
+
+      - name: Enable core library desugaring
+        run: |
+          APP_GRADLE=android/app/build.gradle.kts
+          IS_KTS=1
+          if [ ! -f "$APP_GRADLE" ]; then
+            APP_GRADLE=android/app/build.gradle
+            IS_KTS=0
+          fi
+          python3 - "$APP_GRADLE" "$IS_KTS" <<'PYEOF'
+          import re, sys
+          path, is_kts = sys.argv[1], sys.argv[2] == '1'
+          src = open(path, encoding='utf-8').read()
+
+          if 'isCoreLibraryDesugaringEnabled' not in src and 'coreLibraryDesugaringEnabled' not in src:
+              flag = ('        isCoreLibraryDesugaringEnabled = true\n' if is_kts
+                      else '        coreLibraryDesugaringEnabled true\n')
+              if 'compileOptions' in src:
+                  src = re.sub(r'(compileOptions\s*\{)', r'\1\n' + flag.rstrip('\n'), src, count=1)
+              else:
+                  block = ('    compileOptions {\n' + flag +
+                           ('        sourceCompatibility = JavaVersion.VERSION_11\n'
+                            '        targetCompatibility = JavaVersion.VERSION_11\n' if is_kts else
+                            '        sourceCompatibility JavaVersion.VERSION_11\n'
+                            '        targetCompatibility JavaVersion.VERSION_11\n') +
+                           '    }\n')
+                  src = src.replace('    buildTypes {', block + '    buildTypes {', 1)
+
+          if 'desugar_jdk_libs' not in src:
+              dep = ('    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+                     if is_kts else
+                     "    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'")
+              if re.search(r'^dependencies\s*\{', src, re.M):
+                  src = re.sub(r'^(dependencies\s*\{)', r'\1\n' + dep, src, count=1, flags=re.M)
+              else:
+                  src += '\ndependencies {\n' + dep + '\n}\n'
+
+          open(path, 'w', encoding='utf-8').write(src)
+          print('desugaring включён')
+          PYEOF
+
+      - name: Force bundled (offline) ML Kit barcode model
+        run: |
+          APP_GRADLE=android/app/build.gradle.kts
+          IS_KTS=1
+          if [ ! -f "$APP_GRADLE" ]; then
+            APP_GRADLE=android/app/build.gradle
+            IS_KTS=0
+          fi
+          if ! grep -q "com.google.mlkit:barcode-scanning" "$APP_GRADLE"; then
+            if [ "$IS_KTS" = "1" ]; then
+              DEP_LINE='    implementation("com.google.mlkit:barcode-scanning:17.3.0")'
+            else
+              DEP_LINE="    implementation 'com.google.mlkit:barcode-scanning:17.3.0'"
+            fi
+            if grep -q "^dependencies {" "$APP_GRADLE"; then
+              sed -i "/^dependencies {/a\\${DEP_LINE}" "$APP_GRADLE"
+            else
+              printf '\ndependencies {\n%s\n}\n' "$DEP_LINE" >> "$APP_GRADLE"
+            fi
+          fi
+
+      - name: Add ProGuard/R8 keep rules for ML Kit and mobile_scanner
+        run: |
+          RULES=android/app/proguard-rules.pro
+          mkdir -p "$(dirname "$RULES")"
+          touch "$RULES"
+          if ! grep -q "google.mlkit" "$RULES" 2>/dev/null; then
+            cat >> "$RULES" <<'EOF'
+          -keep class com.google.mlkit.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
+          -keep class com.google.mlkit.vision.barcode.** { *; }
+          -keep class com.google.mlkit.vision.common.** { *; }
+          -keep class com.google.mlkit.common.** { *; }
+          -dontwarn com.google.mlkit.**
+          -keep class dev.steenbakker.mobile_scanner.** { *; }
+          -keep class androidx.camera.** { *; }
+          -dontwarn androidx.camera.**
+          EOF
+          fi
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Тот же постоянный ключ, что и у продовых сборок build-apk.yml —
+          # это другое приложение (другой applicationId), App Links здесь
+          # не нужны, а отдельный keystore ради ещё одного приложения того
+          # же издателя не даёт разработчику ничего, кроме лишнего секрета
+          # для ротации.
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+          APP_GRADLE=android/app/build.gradle.kts
+          if [ -f "$APP_GRADLE" ]; then
+            python3 - "$APP_GRADLE" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          src = open(path, encoding='utf-8').read()
+          if 'keystoreProperties' not in src:
+              header = (
+                  'import java.util.Properties\n'
+                  'import java.io.FileInputStream\n\n'
+                  'val keystoreProperties = Properties()\n'
+                  'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                  'if (keystorePropertiesFile.exists()) {\n'
+                  '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+                  '}\n\n'
+              )
+              src = header + src
+              signing = (
+                  '    signingConfigs {\n'
+                  '        create("release") {\n'
+                  '            keyAlias = keystoreProperties["keyAlias"] as String?\n'
+                  '            keyPassword = keystoreProperties["keyPassword"] as String?\n'
+                  '            storeFile = keystoreProperties["storeFile"]?.let { file(it) }\n'
+                  '            storePassword = keystoreProperties["storePassword"] as String?\n'
+                  '        }\n'
+                  '    }\n'
+              )
+              src = src.replace('    buildTypes {', signing + '    buildTypes {', 1)
+              src = src.replace('signingConfig = signingConfigs.getByName("debug")',
+                                'signingConfig = signingConfigs.getByName("release")')
+              open(path, 'w', encoding='utf-8').write(src)
+          PYEOF
+          else
+            echo "::warning::build.gradle.kts не найден — проверьте подпись вручную"
+          fi
+
+      - name: Create notification icon
+        run: |
+          DRAWABLE=android/app/src/main/res/drawable
+          mkdir -p "$DRAWABLE"
+          cat > "$DRAWABLE/ic_notification.xml" <<'XMLEOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M10.6,3.2h2.8v11.2h-2.8z"/>
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:pathData="M12,18.6m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"/>
+          </vector>
+          XMLEOF
+          KEEP=android/app/src/main/res/raw
+          mkdir -p "$KEEP"
+          cat > "$KEEP/keep.xml" <<'XMLEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources xmlns:tools="http://schemas.android.com/tools"
+              tools:keep="@drawable/ic_notification" />
+          XMLEOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate app launcher icon
+        run: |
+          # Своей иконки у SaaS-варианта пока нет — берём общую иконку POS
+          # (белый ярлык под конкретное заведение — отдельная задача,
+          # см. saas/README.md, «Полный визуальный брендинг»).
+          sed -i -E 's|image_path: ".*"|image_path: "assets/icon/icon.png"|' pubspec.yaml
+          sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "assets/icon/icon_foreground.png"|' pubspec.yaml
+          dart run flutter_launcher_icons
+
+      - name: Unit tests
+        run: flutter test
+
+      - name: Build APK (release, SaaS mode)
+        env:
+          SAAS_FIREBASE_API_KEY: ${{ secrets.SAAS_FIREBASE_API_KEY }}
+          SAAS_FIREBASE_APP_ID: ${{ secrets.SAAS_FIREBASE_APP_ID }}
+          SAAS_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.SAAS_FIREBASE_MESSAGING_SENDER_ID }}
+          SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
+          SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
+        run: |
+          if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
+            echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
+            exit 1
+          fi
+          flutter build apk --release \
+            -t lib/main.dart \
+            --dart-define=SAAS_MODE=true \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=SAAS_FIREBASE_API_KEY="$SAAS_FIREBASE_API_KEY" \
+            --dart-define=SAAS_FIREBASE_APP_ID="$SAAS_FIREBASE_APP_ID" \
+            --dart-define=SAAS_FIREBASE_MESSAGING_SENDER_ID="$SAAS_FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define=SAAS_FIREBASE_PROJECT_ID="$SAAS_FIREBASE_PROJECT_ID" \
+            --dart-define=SAAS_FIREBASE_STORAGE_BUCKET="$SAAS_FIREBASE_STORAGE_BUCKET"
+
+      - name: Rename APK
+        id: rename
+        run: |
+          # Имя файла — {job_id}.apk: google-github-actions/upload-cloud-storage
+          # с parent:false кладёт объект в Storage как "destination/<basename>",
+          # так что итоговый путь получается ровно tenants/{tenantId}/builds/{job_id}.apk,
+          # который и проверяют saas/storage.rules и ждёт консоль.
+          OUT="build/app/outputs/flutter-apk/${{ inputs.job_id }}.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact (GitHub Actions run log)
+        uses: actions/upload-artifact@v4
+        with:
+          name: colibri-pos-saas-${{ inputs.job_id }}
+          path: ${{ steps.rename.outputs.path }}
+
+      # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
+      # этому репозиторию (не владельцу заведения) — реальная точка выдачи
+      # APK владельцу это Firebase Storage SaaS-проекта, куда уже смотрят
+      # правила saas/storage.rules (tenants/{tenantId}/builds/, только
+      # owner/admin). Кладём сюда же.
+      - name: Authenticate to Google Cloud (SaaS project storage)
+        if: success()
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.SAAS_STORAGE_SERVICE_ACCOUNT }}
+
+      - name: Upload APK to Firebase Storage (SaaS project)
+        if: success()
+        uses: google-github-actions/upload-cloud-storage@v2
+        with:
+          path: ${{ steps.rename.outputs.path }}
+          destination: '${{ secrets.SAAS_STORAGE_BUCKET }}/tenants/${{ inputs.tenant_id }}/builds'
+          parent: false
+
+      # SAAS_COMPLETE_BUILD_JOB_URL — ПОЛНЫЙ url completeBuildJob (2-е
+      # поколение Cloud Functions публикует HTTP-функции как отдельный
+      # Cloud Run сервис на своём собственном хосте со случайным хэшем в
+      # имени, а не на предсказуемом заранее адресе) — берётся из вывода
+      # `firebase deploy --only functions` ПОСЛЕ первого деплоя и кладётся
+      # в секрет репозитория как есть, целиком, без добавления пути.
+      - name: Report success to buildJobs
+        if: success()
+        run: |
+          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"success\",\"downloadPath\":\"tenants/${{ inputs.tenant_id }}/builds/${{ inputs.job_id }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+
+      - name: Report failure to buildJobs
+        if: failure()
+        run: |
+          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска.\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"

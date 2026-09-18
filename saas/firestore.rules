@@ -469,6 +469,13 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
+    // ---- Идемпотентность webhook'ов биллинга (handleBillingWebhook) —
+    //      только для отладки супер-админом, клиенту не нужна и не видна ----
+    match /billingEvents/{paymentId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
     // ---- Сборки APK: владелец заведения видит и запрашивает свои,
     //      сам билд выполняет GitHub Actions + Cloud Function ----
     match /buildJobs/{buildId} {

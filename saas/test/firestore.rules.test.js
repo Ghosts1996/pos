@@ -325,3 +325,26 @@ describe("Usage-счётчики: видны владельцу/админу с�
     await assertFails(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/usage/current"), { employees: 999 }));
   });
 });
+
+describe("billingEvents: идемпотентность webhook'а видна только супер-админу", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "billingEvents/payment_1"), {
+        tenantId: "tenantA", planId: "start", status: "succeeded",
+      });
+    });
+  });
+
+  it("супер-админ читает billingEvents", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "billingEvents/payment_1")));
+  });
+
+  it("owner своего же заведения не может читать billingEvents напрямую", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "billingEvents/payment_1")));
+  });
+
+  it("клиент не может писать billingEvents (только Cloud Function)", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "billingEvents/payment_2"), { tenantId: "tenantA" }));
+  });
+});
