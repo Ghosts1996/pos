@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
+import '../models/tenant_models.dart';
 
 /// Радиусы скруглений — единая шкала на всё приложение.
 class AppRadius {
@@ -212,5 +213,42 @@ class AppTheme {
 
       splashFactory: InkRipple.splashFactory,
     );
+  }
+
+  /// Тема заведения в SaaS-режиме — накладывает фирменный акцентный цвет
+  /// поверх базовой тёмной темы (см. [dark]).
+  ///
+  /// Намеренно узкий охват: только primary-цвет (кнопки, акценты, цвет
+  /// выделения), а не вся палитра. Полноценный визуальный редизайн под
+  /// бренд (фон/текст/вторичные цвета, TOR §14/§17/§18 — визуальный
+  /// редактор с пресетами и предпросмотром) — отдельная задача следующего
+  /// этапа: здесь важно не сломать читаемость интерфейса на планшете в
+  /// зале произвольным сочетанием цветов, которое владелец введёт вслепую.
+  static ThemeData branded(BrandingConfig branding) {
+    final primary = _parseHexColor(branding.primaryColor) ?? AppColors.primary;
+    final base = dark;
+    return base.copyWith(
+      colorScheme: base.colorScheme.copyWith(primary: primary, secondary: primary),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: base.elevatedButtonTheme.style?.copyWith(
+          backgroundColor: WidgetStatePropertyAll(primary),
+        ),
+      ),
+      focusColor: primary,
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderSide: BorderSide(color: primary, width: 1.6),
+        ),
+      ),
+    );
+  }
+
+  static Color? _parseHexColor(String hex) {
+    var h = hex.trim().replaceFirst('#', '');
+    if (h.length == 6) h = 'FF$h';
+    if (h.length != 8) return null;
+    final value = int.tryParse(h, radix: 16);
+    return value == null ? null : Color(value);
   }
 }

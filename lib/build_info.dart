@@ -12,3 +12,14 @@ const String kBuildNumber = String.fromEnvironment(
   'BUILD_NUMBER',
   defaultValue: 'dev',
 );
+
+/// true — сборка SaaS-платформы (`--dart-define=SAAS_MODE=true` в CI),
+/// работает против отдельного multi-tenant Firebase-проекта (см. `saas/`):
+/// вход по email/пароль + код приглашения устройства вместо общего
+/// staffSecret, данные читаются через AppScope с учётом tenantId.
+///
+/// false (по умолчанию) — обычная сборка одного заведения, как раньше:
+/// анонимный вход, общий секрет заведения, плоские коллекции. Существующий
+/// build-apk.yml этот флаг не выставляет, поэтому уже собранные и
+/// собираемые сейчас APK ведут себя ровно как до появления SaaS-режима.
+const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
