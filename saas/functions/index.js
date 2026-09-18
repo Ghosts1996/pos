@@ -1,5 +1,5 @@
 /**
- * Cloud Functions платформы Colibri POS SaaS.
+ * Cloud Functions платформы Hoocah POS SaaS.
  *
  * Отдельный проект/деплой от functions/ в корне репозитория (те
  * обслуживают одно живое заведение и не должны меняться). Здесь живут
@@ -138,6 +138,12 @@ async function writeAuditLog({ tenantId, actorId, action, metadata }) {
 exports.createTenant = onCall({ region: REGION }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Нужен вход в платформу");
+  // Та же защита, что и в консоли (screenOnboarding/screenVerifyEmail), но
+  // на сервере: без неё кто угодно с одноразовым/чужим email мог бы дёрнуть
+  // эту функцию напрямую, минуя экран подтверждения в браузере.
+  if (!request.auth.token.email_verified) {
+    throw new HttpsError("failed-precondition", "Подтвердите email, прежде чем создавать заведение");
+  }
 
   const { name, slug: rawSlug, planId } = request.data || {};
   if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
@@ -481,7 +487,7 @@ exports.createCheckoutSession = onCall(
         capture: true,
         save_payment_method: true,
         confirmation: { type: "redirect", return_url: returnUrl },
-        description: `Colibri POS — тариф «${plan.name || planId}», заведение ${tenantId}`,
+        description: `Hoocah POS — тариф «${plan.name || planId}», заведение ${tenantId}`,
         metadata: { tenantId, planId, purpose: "subscription" },
       },
     });
@@ -639,7 +645,7 @@ exports.chargeRecurringSubscriptions = onSchedule(
             amount: { value: price.toFixed(2), currency: "RUB" },
             capture: true,
             payment_method_id: sub.paymentMethodId,
-            description: `Colibri POS — продление тарифа «${sub.planId}», заведение ${tenantId}`,
+            description: `Hoocah POS — продление тарифа «${sub.planId}», заведение ${tenantId}`,
             metadata: { tenantId, planId: sub.planId, purpose: "renewal" },
           },
         });
@@ -821,6 +827,21 @@ exports.createBuildJob = onCall({ region: REGION, secrets: [GITHUB_PAT] }, async
     errorMessage: null,
   });
 
+  // Лейбл под иконкой на устройстве владельца — берём из его же брендинга
+  // (тот же экран "Брендинг" в консоли), а не хардкодим один на всех
+  // арендаторов платформы. workflow сам ещё раз санитизирует это значение
+  // перед записью в AndroidManifest (см. saas-on-demand-build.yml) — здесь
+  // просто разумный fallback, если брендинг почему-то не задан.
+  let appLabel = "Hoocah POS (SaaS)";
+  try {
+    const branding = await db.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
+    if (branding.exists) {
+      appLabel = branding.data().shortName || branding.data().appName || appLabel;
+    }
+  } catch (_) {
+    // Не критично — сборка всё равно пойдёт с дефолтным лейблом.
+  }
+
   try {
     const res = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_SAAS_WORKFLOW}/dispatches`,
@@ -831,7 +852,7 @@ exports.createBuildJob = onCall({ region: REGION, secrets: [GITHUB_PAT] }, async
           "Accept": "application/vnd.github+json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ref: "main", inputs: { tenant_id: tenantId, job_id: jobId } }),
+        body: JSON.stringify({ ref: "main", inputs: { tenant_id: tenantId, job_id: jobId, app_label: appLabel } }),
       }
     );
     if (!res.ok) {

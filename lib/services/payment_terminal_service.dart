@@ -196,7 +196,7 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
       final init = await _post('Init', {
         'Amount': (amount * 100).round().toString(),
         'OrderId': orderId,
-        'Description': 'Оплата в Colibri POS',
+        'Description': 'Оплата в Hoocah POS',
       });
       final paymentId = init['PaymentId'].toString();
 

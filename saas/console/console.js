@@ -1,4 +1,4 @@
-// Консоль владельца заведения — веб-приложение SaaS-платформы Colibri POS.
+// Консоль владельца заведения — веб-приложение SaaS-платформы Hoocah POS.
 //
 // Отдельный сайт от гостевого public/app: тот открывает гость по ссылке на
 // столе, этот — владелец заведения, чтобы завести заведение, посмотреть код
@@ -8,11 +8,11 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
-  getAuth, onAuthStateChanged, signOut,
+  getAuth, onAuthStateChanged, signOut, sendEmailVerification,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
@@ -86,6 +86,42 @@ function contrastRatio(hexA, hexB) {
   return la > lb ? la / lb : lb / la;
 }
 
+// Готовые премиальные цветовые гаммы для брендинга клиентского приложения —
+// подобраны так, чтобы подходить любому типу заведения (не только
+// кальянным), с запасом по контрасту фон/текст (см. contrastRatio выше) и
+// с достаточно тёмной/насыщенной кнопкой, чтобы текст на ней (тот же
+// textColor, что и везде — см. updateBrandPreview) оставался читаемым.
+// Первая гамма — байт-в-байт дефолт createTenant (saas/functions/index.js)
+// и BrandingConfig (lib/models/tenant_models.dart) — выбор её эквивалентен
+// "ничего не менять".
+const PREMIUM_PALETTES = [
+  { id: 'midnight', name: 'Полночный синий', primaryColor: '#0B5ED7', secondaryColor: '#162A4A', buttonColor: '#0B5ED7', backgroundColor: '#02050B', textColor: '#F8FAFC' },
+  { id: 'emerald', name: 'Изумрудная ночь', primaryColor: '#9C7A22', secondaryColor: '#0E2A20', buttonColor: '#9C7A22', backgroundColor: '#071510', textColor: '#F4EFDD' },
+  { id: 'bordeaux', name: 'Бордовый бархат', primaryColor: '#9C4A57', secondaryColor: '#3B0D14', buttonColor: '#9C4A57', backgroundColor: '#170406', textColor: '#F7E9E9' },
+  { id: 'onyxgold', name: 'Оникс и золото', primaryColor: '#8C6B18', secondaryColor: '#1C1C1C', buttonColor: '#8C6B18', backgroundColor: '#0A0A0A', textColor: '#F5EFD6' },
+  { id: 'amethyst', name: 'Аметистовые сумерки', primaryColor: '#7A4FB0', secondaryColor: '#2A1B3D', buttonColor: '#7A4FB0', backgroundColor: '#0D0714', textColor: '#F3EAFB' },
+  { id: 'copper', name: 'Тлеющая медь', primaryColor: '#B25C29', secondaryColor: '#2B1B14', buttonColor: '#B25C29', backgroundColor: '#120B08', textColor: '#FBEDE1' },
+  { id: 'graphite', name: 'Графит и серебро', primaryColor: '#5B6472', secondaryColor: '#1D2024', buttonColor: '#5B6472', backgroundColor: '#0E0F11', textColor: '#F2F3F5' },
+  { id: 'sandstone', name: 'Песочный светлый', primaryColor: '#B5652E', secondaryColor: '#E4D8C4', buttonColor: '#B5652E', backgroundColor: '#F3ECE1', textColor: '#2B1D12' },
+];
+
+function paletteSwatchesHtml(selectedId) {
+  return `
+    <div class="palette-grid">
+      ${PREMIUM_PALETTES.map((p) => `
+        <button type="button" class="palette-swatch${p.id === selectedId ? ' selected' : ''}" data-palette="${esc(p.id)}">
+          <span class="palette-swatch-colors">
+            <span style="background:${esc(p.backgroundColor)}"></span>
+            <span style="background:${esc(p.buttonColor)}"></span>
+            <span style="background:${esc(p.textColor)}"></span>
+          </span>
+          <span class="palette-swatch-name">${esc(p.name)}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
 let toastTimer = null;
 function toast(msg) {
   const t = $('toast');
@@ -135,6 +171,17 @@ function daysUntilDataPurge(subscription) {
   const deadline = since.getTime() + GRACE_PERIOD_DAYS * 86400000;
   const remainingDays = Math.ceil((deadline - Date.now()) / 86400000);
   return Math.max(0, remainingDays);
+}
+
+// Сколько дней осталось до конца пробного периода — null, если подписка не
+// в статусе "trial" или дата не задана. Используется в "Требует внимания"
+// панели платформы, чтобы владелец не пропустил заведение, у которого вот-
+// вот кончится триал и понадобится напоминание об оплате.
+function daysUntilTrialEnd(subscription) {
+  if (subscription?.status !== 'trial') return null;
+  const end = subscription.trialEndsAt?.toDate?.();
+  if (!end) return null;
+  return Math.ceil((end.getTime() - Date.now()) / 86400000);
 }
 
 function planName(plans, planId) {
@@ -228,7 +275,7 @@ async function boot() {
     if (!config || !config.projectId) throw new Error('пусто');
   } catch (_) {
     screenEl().innerHTML = `
-      <div class="brand">Colibri POS</div>
+      <div class="brand">Hoocah POS</div>
       <h1>Почти готово</h1>
       <p class="muted">Осталось один раз зарегистрировать веб-приложение в
       Firebase: консоль → Project settings → Your apps → значок
@@ -317,6 +364,20 @@ function route() {
     // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
     return state.isSuperAdmin ? screenSuperAdmin() : screenDashboardOrOnboarding();
   }
+  // #/onboarding — явный выход на форму "Новое заведение" даже для
+  // супер-админа без своего заведения (ссылка "Своё заведение" на панели
+  // платформы). Без этого хэша супер-админ без заведения не смог бы туда
+  // попасть вообще — экран ниже подставляется по умолчанию.
+  if (location.hash === '#/onboarding') {
+    return screenDashboardOrOnboarding();
+  }
+  // Супер-админ БЕЗ собственного заведения по умолчанию попадает на панель
+  // платформы — это его рабочий экран, а не приглашение завести бизнес
+  // самому. Пока список заведений не загружен, ничего не решаем — обычный
+  // screenLoading() внутри screenDashboardOrOnboarding() покажется сам.
+  if (state.isSuperAdmin && state.tenantsLoaded && !state.tenants.length) {
+    return screenSuperAdmin();
+  }
   return screenDashboardOrOnboarding();
 }
 
@@ -335,7 +396,7 @@ let authMode = 'login'; // 'login' | 'signup' — держим отдельно 
 
 function screenAuth() {
   screenEl().innerHTML = `
-    <div class="brand">Colibri POS</div>
+    <div class="brand">Hoocah POS</div>
     <h1>${authMode === 'login' ? 'Вход в консоль' : 'Регистрация владельца'}</h1>
     <p class="muted">Личный кабинет владельца заведения: подписка, код
     приглашения устройств, фирменный цвет приложения кассы.</p>
@@ -381,6 +442,10 @@ function screenAuth() {
         await setDoc(doc(state.db, 'users', cred.user.uid), {
           email, createdAt: Timestamp.fromDate(new Date()),
         }, { merge: true });
+        // Письмо с подтверждением — до него владелец не может создать
+        // заведение (см. screenOnboarding и createTenant на сервере), это
+        // и есть защита от регистрации на случайный/чужой email.
+        try { await sendEmailVerification(cred.user); } catch (_) {}
       }
       // Дальше подхватит onAuthStateChanged — свой экран он покажет сам.
     } catch (e) {
@@ -393,15 +458,77 @@ function screenAuth() {
 }
 
 function screenLoading() {
-  screenEl().innerHTML = `<div class="brand">Colibri POS</div><div class="spinner"></div>`;
+  screenEl().innerHTML = `<div class="brand">Hoocah POS</div><div class="spinner"></div>`;
+}
+
+// ---------- ПОДТВЕРЖДЕНИЕ ПОЧТЫ ----------
+
+function screenVerifyEmail() {
+  const email = state.auth.currentUser?.email || '';
+  screenEl().innerHTML = `
+    <div class="brand">Hoocah POS</div>
+    <h1>Подтвердите почту</h1>
+    <p class="muted">Мы отправили письмо со ссылкой на <b>${esc(email)}</b>.
+    Перейдите по ней, потом вернитесь сюда и нажмите «Проверить» —
+    создание заведения открывается только после этого.</p>
+    <div class="card">
+      <button class="btn btn-primary" id="f-verify-check">Проверить</button>
+      <button class="btn btn-ghost" id="f-verify-resend" style="margin-top:10px">Отправить письмо ещё раз</button>
+      <div id="f-verify-msg" class="small muted" style="margin-top:8px"></div>
+    </div>
+    <button class="btn btn-ghost" id="f-signout">Выйти</button>
+  `;
+
+  $('f-verify-check').onclick = async () => {
+    const msgEl = $('f-verify-msg');
+    $('f-verify-check').disabled = true;
+    try {
+      await state.auth.currentUser.reload();
+      if (state.auth.currentUser.emailVerified) {
+        route();
+      } else {
+        msgEl.textContent = 'Пока не подтверждено — проверьте почту (и папку "Спам").';
+      }
+    } catch (e) {
+      msgEl.textContent = `Не удалось проверить: ${e?.message || e}`;
+    } finally {
+      $('f-verify-check').disabled = false;
+    }
+  };
+
+  $('f-verify-resend').onclick = async () => {
+    const msgEl = $('f-verify-msg');
+    $('f-verify-resend').disabled = true;
+    try {
+      await sendEmailVerification(state.auth.currentUser);
+      msgEl.textContent = 'Письмо отправлено ещё раз.';
+    } catch (e) {
+      msgEl.textContent = `Не удалось отправить: ${e?.message || e}`;
+    } finally {
+      $('f-verify-resend').disabled = false;
+    }
+  };
+
+  $('f-signout').onclick = () => signOut(state.auth);
 }
 
 // ---------- СОЗДАНИЕ ЗАВЕДЕНИЯ ----------
 
 function screenOnboarding() {
+  // Пока владелец не подтвердил почту — никакого создания заведения. Это и
+  // есть защита от "любой вписал любой email и тут же завёл себе бизнес":
+  // без клика по ссылке в реальном письме сюда не попасть, а createTenant
+  // на сервере проверяет то же самое ещё раз (request.auth.token.email_verified),
+  // так что этот экран — не единственная защита, а просто первая.
+  if (!state.auth.currentUser?.emailVerified) {
+    return screenVerifyEmail();
+  }
+
+  let selectedPaletteId = 'midnight';
+
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Colibri POS</div>
+      <div class="brand">Hoocah POS</div>
       ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
     </div>
     <h1>Новое заведение</h1>
@@ -414,6 +541,11 @@ function screenOnboarding() {
       <label class="field"><span>Код заведения</span>
         <input id="f-slug" placeholder="hookah-lounge-riga">
       </label>
+      <label class="field"><span>Лейбл в приложении (короткое имя под иконкой)</span>
+        <input id="f-label" placeholder="Оставьте пустым — возьмём из названия" maxlength="12">
+      </label>
+      <div class="small muted" style="margin-bottom:8px">Цветовая гамма клиентского приложения — можно сменить позже в разделе «Брендинг»</div>
+      ${paletteSwatchesHtml(selectedPaletteId)}
       <div id="f-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
       <button class="btn btn-primary" id="f-submit">Создать заведение</button>
     </div>
@@ -430,9 +562,19 @@ function screenOnboarding() {
     if (!slugTouched) slugEl.value = slugify(nameEl.value);
   });
 
+  document.querySelectorAll('.palette-swatch').forEach((el) => {
+    el.onclick = () => {
+      selectedPaletteId = el.dataset.palette;
+      document.querySelectorAll('.palette-swatch').forEach((s) => {
+        s.classList.toggle('selected', s.dataset.palette === selectedPaletteId);
+      });
+    };
+  });
+
   $('f-submit').onclick = async () => {
     const name = nameEl.value.trim();
     const slug = slugEl.value.trim();
+    const label = $('f-label').value.trim();
     const errEl = $('f-error');
     errEl.textContent = '';
     if (name.length < 2) {
@@ -447,7 +589,30 @@ function screenOnboarding() {
     try {
       const createTenant = httpsCallable(state.functions, 'createTenant');
       const res = await createTenant({ name, slug });
-      state.activeTenantId = res.data.tenantId;
+      const tenantId = res.data.tenantId;
+      state.activeTenantId = tenantId;
+      // createTenant уже завёл дефолтный брендинг ("Полночный синий") —
+      // если владелец выбрал другую гамму или свой лейбл, дописываем это
+      // отдельным клиентским merge-запросом сразу после: к этому моменту
+      // членство владельца в заведении уже закоммичено на сервере (тем же
+      // батчем, что и сам tenant), поэтому правила (hasRole owner/admin)
+      // это разрешают без гонки.
+      const palette = PREMIUM_PALETTES.find((p) => p.id === selectedPaletteId) || PREMIUM_PALETTES[0];
+      const appName = label || name;
+      try {
+        await writeBrandingConfig(tenantId, {
+          appName,
+          shortName: appName.slice(0, 12),
+          primaryColor: palette.primaryColor,
+          secondaryColor: palette.secondaryColor,
+          buttonColor: palette.buttonColor,
+          backgroundColor: palette.backgroundColor,
+          textColor: palette.textColor,
+        });
+      } catch (_) {
+        // Заведение всё равно создано с рабочим брендингом по умолчанию —
+        // не блокируем онбординг, если этот необязательный шаг не прошёл.
+      }
       // Новый tenantMembers придёт сам через watchMemberships — она уже
       // слушает эту коллекцию и перерисует экран в screenDashboard.
     } catch (e) {
@@ -464,7 +629,7 @@ function screenOnboarding() {
 function screenDashboard() {
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Colibri POS</div>
+      <div class="brand">Hoocah POS</div>
       <div class="row" style="width:auto;gap:14px">
         ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
         <button class="btn-link" id="f-signout">Выйти</button>
@@ -529,7 +694,7 @@ function watchDashboardData(tenantId) {
     // (createTenant) и lib/models/tenant_models.dart (BrandingConfig) —
     // заведение без кастомного брендинга выглядит как проверенный продукт,
     // а не какой-то другой палитрой по умолчанию.
-    const brandName = existingName ?? (branding?.appName || tenant.name || 'Colibri POS');
+    const brandName = existingName ?? (branding?.appName || tenant.name || 'Hoocah POS');
     const logoUrl = pendingLogoUrl ?? (branding?.logoUrl || '');
     const primaryColor = existingColor('f-color-primary') ?? (branding?.primaryColor || '#0B5ED7');
     const secondaryColor = existingColor('f-color-secondary') ?? (branding?.secondaryColor || '#162A4A');
@@ -616,6 +781,11 @@ function watchDashboardData(tenantId) {
             </div>
           ` : '<div class="grow small muted">Логотип не задан</div>'}
         </div>
+
+        ${canManage ? `
+          <div class="small muted" style="margin-bottom:8px">Готовая гамма (применяет цвета ниже — сохранить нужно отдельно)</div>
+          ${paletteSwatchesHtml(null)}
+        ` : ''}
 
         <div class="small muted" style="margin-bottom:8px">Цвета</div>
         ${colorFieldHtml('f-color-primary', 'Основной', primaryColor, canManage)}
@@ -709,6 +879,27 @@ function watchDashboardData(tenantId) {
         });
       });
       $('f-brand-name')?.addEventListener('input', updateBrandPreview);
+      document.querySelectorAll('.palette-swatch').forEach((el) => {
+        el.onclick = () => {
+          const palette = PREMIUM_PALETTES.find((p) => p.id === el.dataset.palette);
+          if (!palette) return;
+          document.querySelectorAll('.palette-swatch').forEach((s) => s.classList.toggle('selected', s === el));
+          const fields = {
+            'f-color-primary': palette.primaryColor,
+            'f-color-secondary': palette.secondaryColor,
+            'f-color-button': palette.buttonColor,
+            'f-color-bg': palette.backgroundColor,
+            'f-color-text': palette.textColor,
+          };
+          Object.entries(fields).forEach(([id, value]) => {
+            const input = $(id);
+            if (!input) return;
+            input.value = value;
+            $(`${id}-hex`).textContent = value;
+          });
+          updateBrandPreview();
+        };
+      });
       if ($('f-logo-file')) {
         $('f-logo-file').onchange = async (e) => {
           const file = e.target.files?.[0];
@@ -885,7 +1076,7 @@ function updateBrandPreview() {
   const bg = $('f-color-bg')?.value || '#02050B';
   const text = $('f-color-text')?.value || '#F8FAFC';
   const button = $('f-color-button')?.value || '#0B5ED7';
-  const name = $('f-brand-name')?.value || 'Colibri POS';
+  const name = $('f-brand-name')?.value || 'Hoocah POS';
 
   preview.style.background = bg;
   title.style.color = text;
@@ -907,12 +1098,22 @@ function updateBrandPreview() {
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ (СУПЕР-АДМИН) ----------
 
 function screenSuperAdmin() {
+  // Супер-админ без своего заведения по умолчанию и так уже здесь (см.
+  // route()) — "← В консоль" вёл бы его в никуда (обратно на эту же
+  // панель). Ему нужна не ссылка назад, а явный путь завести СВОЁ
+  // заведение, если он вообще этого хочет.
+  const backLink = state.tenants.length
+    ? '<a href="#/" class="btn-link">← В консоль</a>'
+    : '<a href="#/onboarding" class="btn-link">Своё заведение</a>';
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Colibri POS · платформа</div>
-      <a href="#/" class="btn-link">← В консоль</a>
+      <div class="brand">Hoocah POS · платформа</div>
+      ${backLink}
     </div>
     <h1>Панель платформы</h1>
+
+    <h2>Требует внимания</h2>
+    <div id="admin-attention"><div class="spinner"></div></div>
 
     <h2>Аналитика</h2>
     <div id="admin-analytics"><div class="spinner"></div></div>
@@ -922,8 +1123,32 @@ function screenSuperAdmin() {
     <button class="btn btn-ghost" id="f-new-plan" style="margin-bottom:14px">Добавить тариф</button>
 
     <h2>Все заведения</h2>
-    <input id="f-tenant-search" placeholder="Поиск по названию или коду заведения" style="margin-bottom:14px">
+    <div class="row" style="margin-bottom:14px">
+      <input id="f-tenant-search" class="grow" placeholder="Поиск по названию или коду заведения">
+      <select id="f-tenant-status-filter" style="width:auto">
+        <option value="">Все статусы</option>
+        <option value="trial">Пробный период</option>
+        <option value="active">Активно</option>
+        <option value="pastDue">Просрочена оплата</option>
+        <option value="suspended">Приостановлено</option>
+        <option value="cancelled">Отменено</option>
+      </select>
+    </div>
     <div id="admin-body"><div class="spinner"></div></div>
+
+    <h2>Сотрудники платформы</h2>
+    <p class="small muted">Есть полный доступ к панели платформы — назначайте
+    только тем, кому лично доверяете. Кандидат должен СНАЧАЛА сам
+    зарегистрироваться в этой консоли (email + пароль) и подтвердить почту —
+    только тогда его можно найти по email и назначить.</p>
+    <div id="admin-super-admins"><div class="spinner"></div></div>
+    <div class="card">
+      <label class="field"><span>Назначить супер-админом по email</span>
+        <input id="f-super-admin-email" type="email" placeholder="coworker@example.com">
+      </label>
+      <button class="btn btn-ghost" id="f-super-admin-grant">Назначить</button>
+      <div id="f-super-admin-error" class="small" style="color:var(--danger);margin-top:8px"></div>
+    </div>
 
     <h2>Журнал платформы</h2>
     <div id="admin-audit"><div class="spinner"></div></div>
@@ -932,10 +1157,12 @@ function screenSuperAdmin() {
   watchAuditLog();
   watchPlans();
   watchAnalytics();
+  watchSuperAdmins();
 }
 
 function watchAllTenants() {
   const body = $('admin-body');
+  const attentionBody = $('admin-attention');
   // limit(200) без постраничности — заведомо достаточно на старте
   // платформы; поиск ниже фильтрует уже загрученный список на клиенте, а
   // не делает отдельный запрос — простое и рабочее решение, пока
@@ -945,10 +1172,41 @@ function watchAllTenants() {
   let allTenants = [];
   let plans = [];
 
+  const drawAttention = () => {
+    if (!attentionBody) return;
+    const items = [];
+    allTenants.forEach((t) => {
+      if (t.daysLeft !== null && t.daysLeft !== undefined) {
+        items.push({
+          danger: true,
+          text: `«${t.name || t.id}» — просрочена оплата, данные удалятся ${t.daysLeft > 0 ? `через ${t.daysLeft} ${pluralDays(t.daysLeft)}` : 'при ближайшей проверке'}`,
+        });
+      } else if (t.trialEndingSoonDays !== null && t.trialEndingSoonDays !== undefined) {
+        items.push({
+          danger: false,
+          text: `«${t.name || t.id}» — пробный период заканчивается ${t.trialEndingSoonDays > 0 ? `через ${t.trialEndingSoonDays} ${pluralDays(t.trialEndingSoonDays)}` : 'сегодня'}`,
+        });
+      }
+    });
+    attentionBody.innerHTML = items.length ? items.map((it) => `
+      <div class="card${it.danger ? ' danger' : ''}" style="padding:12px 16px">
+        <div class="small">${it.danger ? '⚠' : '⏳'} ${esc(it.text)}</div>
+      </div>
+    `).join('') : '<p class="small muted">Заведений, требующих внимания, сейчас нет.</p>';
+  };
+
   const draw = () => {
     const term = ($('f-tenant-search')?.value || '').trim().toLowerCase();
-    const filtered = !term ? allTenants : allTenants.filter((t) =>
-      (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term));
+    const statusFilter = $('f-tenant-status-filter')?.value || '';
+    let filtered = allTenants.filter((t) =>
+      (!term || (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term)) &&
+      (!statusFilter || t.status === statusFilter));
+    // Проблемные заведения — наверх списка, чтобы не листать сотню
+    // здоровых ради тех, что горят.
+    filtered = filtered.slice().sort((a, b) => {
+      const rank = (t) => (t.daysLeft !== null && t.daysLeft !== undefined ? 0 : (t.trialEndingSoonDays !== null && t.trialEndingSoonDays !== undefined ? 1 : 2));
+      return rank(a) - rank(b);
+    });
 
     body.innerHTML = filtered.length ? filtered.map((t) => `
       <div class="card${t.daysLeft !== null && t.daysLeft !== undefined ? ' danger' : ''}">
@@ -959,6 +1217,12 @@ function watchAllTenants() {
               <code>${esc(t.slug || '')}</code> ·
               ${esc(TENANT_STATUS_LABELS[t.status] || t.status || '—')} ·
               создано ${fmtDate(t.createdAt)}
+            </div>
+            <div class="small muted">
+              тариф: ${esc(planName(plans, t.subscription?.planId) || t.subscription?.planId || '—')} ·
+              подписка: ${esc(SUB_STATUS_LABELS[t.subscription?.status] || t.subscription?.status || '—')}
+              ${t.subscription?.status === 'trial' && t.subscription?.trialEndsAt ? ` · триал до ${fmtDate(t.subscription.trialEndsAt)}` : ''}
+              ${t.subscription?.status === 'active' && t.subscription?.currentPeriodEnd ? ` · оплачено до ${fmtDate(t.subscription.currentPeriodEnd)}` : ''}
             </div>
             ${t.daysLeft !== null && t.daysLeft !== undefined ? `
               <div class="small" style="color:var(--danger);margin-top:4px">
@@ -986,7 +1250,7 @@ function watchAllTenants() {
           </div>
         ` : ''}
       </div>
-    `).join('') : `<p class="small muted">${term ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`;
+    `).join('') : `<p class="small muted">${term || statusFilter ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`;
 
     document.querySelectorAll('.f-tenant-toggle').forEach((el) => {
       el.onclick = () => toggleTenantSuspension(el.dataset.id, el.dataset.suspended === '1');
@@ -997,6 +1261,7 @@ function watchAllTenants() {
   };
 
   $('f-tenant-search').addEventListener('input', draw);
+  $('f-tenant-status-filter').addEventListener('change', draw);
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
     plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -1008,7 +1273,9 @@ function watchAllTenants() {
     // Usage читаем отдельно от списка заведений — это соседняя коллекция
     // (tenants/{id}/usage/current), не realtime: пересчитывается раз в
     // сутки Cloud Function calculateUsage, обновлять её на каждый снапшот
-    // списка заведений незачем.
+    // списка заведений незачем. Подписку читаем туда же — она и даёт
+    // "требует внимания" (грейс-период / скорый конец триала), и тариф с
+    // датами на карточке заведения ниже.
     await Promise.all(tenants.map(async (t) => {
       try {
         const uSnap = await getDoc(doc(state.db, 'tenants', t.id, 'usage', 'current'));
@@ -1018,13 +1285,23 @@ function watchAllTenants() {
       }
       try {
         const sSnap = await getDoc(doc(state.db, 'subscriptions', t.id));
-        t.daysLeft = sSnap.exists() ? daysUntilDataPurge(sSnap.data()) : null;
+        const subscription = sSnap.exists() ? sSnap.data() : null;
+        t.subscription = subscription;
+        t.daysLeft = daysUntilDataPurge(subscription);
+        t.trialEndingSoonDays = null;
+        if (t.daysLeft === null) {
+          const trialDays = daysUntilTrialEnd(subscription);
+          if (trialDays !== null && trialDays <= 3) t.trialEndingSoonDays = Math.max(0, trialDays);
+        }
       } catch (_) {
+        t.subscription = null;
         t.daysLeft = null;
+        t.trialEndingSoonDays = null;
       }
     }));
     allTenants = tenants;
     draw();
+    drawAttention();
   }, () => {
     body.innerHTML = '<p class="small" style="color:var(--danger)">Нет доступа к списку заведений.</p>';
   }));
@@ -1219,6 +1496,79 @@ async function changeTenantPlan(tenantId, planId) {
     toast('Тариф изменён');
   } catch (e) {
     toast(`Не удалось изменить тариф: ${e?.message || e}`);
+  }
+}
+
+// ---------- СОТРУДНИКИ ПЛАТФОРМЫ (СУПЕР-АДМИНЫ) ----------
+
+function watchSuperAdmins() {
+  const body = $('admin-super-admins');
+  sub(onSnapshot(collection(state.db, 'superAdmins'), (snap) => {
+    const admins = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    body.innerHTML = admins.length ? admins.map((a) => `
+      <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="grow" style="min-width:0">
+          <div class="ellipsis">${esc(a.email || `без email · ${a.id.slice(-6).toUpperCase()}`)}${a.id === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
+          <div class="small muted">с ${a.grantedAt ? fmtDate(a.grantedAt) : (a.since || '—')}</div>
+        </div>
+        ${a.id !== state.uid ? `<button class="btn-link f-super-admin-revoke" data-id="${esc(a.id)}" style="width:auto;color:var(--danger)">Снять доступ</button>` : ''}
+      </div>
+    `).join('') : '<p class="small muted">Список пуст.</p>';
+
+    document.querySelectorAll('.f-super-admin-revoke').forEach((el) => {
+      el.onclick = () => revokeSuperAdmin(el.dataset.id);
+    });
+  }, () => {
+    body.innerHTML = '<p class="small muted">Список недоступен.</p>';
+  }));
+
+  $('f-super-admin-grant').onclick = async () => {
+    const email = $('f-super-admin-email').value.trim();
+    const errEl = $('f-super-admin-error');
+    errEl.textContent = '';
+    if (!email) { errEl.textContent = 'Введите email'; return; }
+    $('f-super-admin-grant').disabled = true;
+    try {
+      await promoteSuperAdmin(email);
+      $('f-super-admin-email').value = '';
+      toast('Назначен супер-админом');
+    } catch (e) {
+      errEl.textContent = e?.message || 'Не удалось назначить';
+    } finally {
+      $('f-super-admin-grant').disabled = false;
+    }
+  };
+}
+
+async function promoteSuperAdmin(email) {
+  // Найти можно только того, кто уже сам зарегистрировался в консоли —
+  // ровно тот же приём, что и приглашение сотрудника заведения
+  // (inviteTenantMember): нельзя выдать роль тому, у кого ещё даже нет
+  // аккаунта, потому что не к чему привязать документ (нужен его uid).
+  const q = query(collection(state.db, 'users'), where('email', '==', email), limit(1));
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    throw new Error('Этот email ещё не зарегистрирован в консоли — попросите сотрудника сначала зарегистрироваться (кнопка «Зарегистрироваться» на экране входа), затем попробуйте снова');
+  }
+  const uid = snap.docs[0].id;
+  await setDoc(doc(state.db, 'superAdmins', uid), {
+    email,
+    grantedAt: Timestamp.fromDate(new Date()),
+    grantedBy: state.uid,
+  });
+}
+
+async function revokeSuperAdmin(uid) {
+  if (uid === state.uid) {
+    toast('Нельзя снять доступ у самого себя — попросите другого супер-админа');
+    return;
+  }
+  if (!confirm('Снять права супер-админа платформы у этого пользователя?')) return;
+  try {
+    await deleteDoc(doc(state.db, 'superAdmins', uid));
+    toast('Доступ снят');
+  } catch (e) {
+    toast(`Не удалось снять доступ: ${e?.message || e}`);
   }
 }
 

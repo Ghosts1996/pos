@@ -11,7 +11,7 @@
  * (или см. saas/test/run.sh — обёртка с тем же вызовом)
  */
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require("@firebase/rules-unit-testing");
-const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc } = require("firebase/firestore");
+const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where } = require("firebase/firestore");
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
@@ -367,5 +367,55 @@ describe("Тарифы (plans): управляет только супер-ад�
 
   it("владелец заведения не может менять тарифы платформы", async () => {
     await assertFails(setDoc(doc(ctxFor("ownerA"), "plans/start"), { priceRub: 1 }, { merge: true }));
+  });
+});
+
+describe("superAdmins: только существующий супер-админ может назначать/снимать других", () => {
+  beforeEach(seedTwoTenants);
+
+  it("супер-админ может назначить нового супер-админа", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "superAdmins/ownerA"), { email: "a@x.com" }));
+  });
+
+  it("супер-админ может снять доступ у другого супер-админа", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("superAdmins/ownerA"), { email: "a@x.com" });
+    });
+    await assertSucceeds(deleteDoc(doc(ctxFor("root"), "superAdmins/ownerA")));
+  });
+
+  it("обычный владелец не может назначить супер-админом даже самого себя", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "superAdmins/ownerA"), { email: "a@x.com" }));
+  });
+
+  it("обычный владелец не может назначить супер-админом кого-то другого", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "superAdmins/ownerB"), { email: "b@x.com" }));
+  });
+
+  it("анонимный/сторонний пользователь не может писать в superAdmins", async () => {
+    await assertFails(setDoc(doc(ctxFor("stranger"), "superAdmins/stranger"), { email: "s@x.com" }));
+  });
+});
+
+describe("users: поиск по email для назначения супер-админа (панель платформы)", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("users/ownerA"), { email: "ownera@x.com" });
+    });
+  });
+
+  it("супер-админ может найти пользователя коллекционным запросом по email", async () => {
+    const q = query(collection(ctxFor("root"), "users"), where("email", "==", "ownera@x.com"));
+    const snap = await assertSucceeds(getDocs(q));
+    assert.strictEqual(snap.size, 1);
+  });
+
+  it("обычный владелец не может прочитать чужой профиль users", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "users/ownerA")));
+  });
+
+  it("владелец читает свой собственный профиль users", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "users/ownerA")));
   });
 });

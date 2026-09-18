@@ -9,6 +9,9 @@ on:
       job_id:
         description: 'ID документа buildJobs/{jobId} (Firestore SaaS-проекта), который нужно обновить по завершении'
         required: true
+      app_label:
+        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения; пусто = дефолт "Hoocah POS (SaaS)"'
+        required: false
 
 # Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
 # GitHub REST API "workflow_dispatch") — не по push и не вручную с обычными
@@ -121,6 +124,8 @@ jobs:
           fi
 
       - name: Ensure required permissions and manifest entries
+        env:
+          APP_LABEL: ${{ inputs.app_label }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           add_permission() {
@@ -156,7 +161,7 @@ jobs:
           fi
 
           python3 - "$MANIFEST" <<'PYEOF'
-          import sys
+          import os, re, sys
           path = sys.argv[1]
           xml = open(path, encoding='utf-8').read()
           if 'flutter_foreground_task' not in xml:
@@ -184,9 +189,25 @@ jobs:
               )
               xml = xml.replace('</application>', receivers + '    </application>', 1)
               open(path, 'w', encoding='utf-8').write(xml)
+
+          # Лейбл под иконкой на телефоне владельца — из branding заведения
+          # (createBuildJob подставляет его сюда, см. saas/functions/index.js),
+          # не заведённый хардкод: разные арендаторы платформы получают
+          # разные подписанные приложения с разными именами. Санитизация тут,
+          # а не только на сервере, — потому что workflow_dispatch technically
+          # можно дёрнуть и не через createBuildJob, а значений оттуда доверять
+          # нельзя вслепую (это идёт прямо в XML-атрибут манифеста).
+          label = (os.environ.get('APP_LABEL') or '').strip()
+          label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
+          if not label:
+              label = 'Hoocah POS (SaaS)'
+          label = (label.replace('&', '&amp;').replace('<', '&lt;')
+                        .replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;'))
+          xml = open(path, encoding='utf-8').read()
+          xml = re.sub(r'android:label="[^"]*"', 'android:label="' + label + '"', xml, count=1)
+          open(path, 'w', encoding='utf-8').write(xml)
           PYEOF
 
-          sed -i 's/android:label="[^"]*"/android:label="Colibri POS (SaaS)"/' "$MANIFEST"
           cat "$MANIFEST"
 
       - name: Enable core library desugaring
@@ -408,7 +429,7 @@ jobs:
       - name: Upload APK artifact (GitHub Actions run log)
         uses: actions/upload-artifact@v4
         with:
-          name: colibri-pos-saas-${{ inputs.job_id }}
+          name: hoocah-pos-saas-${{ inputs.job_id }}
           path: ${{ steps.rename.outputs.path }}
 
       # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
