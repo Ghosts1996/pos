@@ -42,7 +42,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
   Widget build(BuildContext context) {
     final days = SubscriptionGate.daysUntilDataPurge;
     final branding = AppScope.branding;
-    final appName = branding?.appName ?? 'Colibri POS';
+    final appName = branding?.appName ?? 'Hoocah POS';
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B1B1F),
