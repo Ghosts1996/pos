@@ -1,5 +1,5 @@
 {
-  "name": "colibri-saas-functions",
+  "name": "hookah-saas-functions",
   "private": true,
   "engines": { "node": "20" },
   "main": "index.js",

@@ -10,7 +10,7 @@ on:
         description: 'ID документа buildJobs/{jobId} (Firestore SaaS-проекта), который нужно обновить по завершении'
         required: true
       app_label:
-        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения; пусто = дефолт "Hoocah POS (SaaS)"'
+        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения; пусто = дефолт "Hookah POS (SaaS)"'
         required: false
 
 # Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
@@ -200,7 +200,7 @@ jobs:
           label = (os.environ.get('APP_LABEL') or '').strip()
           label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
           if not label:
-              label = 'Hoocah POS (SaaS)'
+              label = 'Hookah POS (SaaS)'
           label = (label.replace('&', '&amp;').replace('<', '&lt;')
                         .replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;'))
           xml = open(path, encoding='utf-8').read()
@@ -429,7 +429,7 @@ jobs:
       - name: Upload APK artifact (GitHub Actions run log)
         uses: actions/upload-artifact@v4
         with:
-          name: hoocah-pos-saas-${{ inputs.job_id }}
+          name: hookah-pos-saas-${{ inputs.job_id }}
           path: ${{ steps.rename.outputs.path }}
 
       # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
