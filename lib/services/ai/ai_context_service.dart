@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 import '../../models/client_models.dart';
 import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
@@ -12,7 +13,6 @@ import '../../models/table_model.dart';
 /// так дешевле по токенам (tooken.club считает именно их) и точнее ответ.
 /// Ни телефоны гостей, ни ключи, ни персональные данные в промпт не идут.
 class AiContextService {
-  final _db = FirebaseFirestore.instance;
 
   String money(num v) => '${v.toStringAsFixed(0)} ₽';
 
@@ -22,8 +22,8 @@ class AiContextService {
   /// [onlyAvailable] — не показывать ИИ позиции из стоп-листа, иначе он
   /// порекомендует то, чего нет.
   Future<String> menuSnapshot({bool onlyAvailable = true, int limit = 200}) async {
-    final cats = await _db.collection('menuCategories').orderBy('order').get();
-    final items = await _db.collection('menuItems').get();
+    final cats = await AppScope.col('menuCategories').orderBy('order').get();
+    final items = await AppScope.col('menuItems').get();
 
     final byCat = <String, List<MenuItem>>{};
     for (final doc in items.docs) {
@@ -51,7 +51,7 @@ class AiContextService {
   // ---------- СКЛАД ----------
 
   Future<String> stockSnapshot({bool onlyProblems = false}) async {
-    final snap = await _db.collection('inventoryItems').get();
+    final snap = await AppScope.col('inventoryItems').get();
     final items = snap.docs.map(InventoryItem.fromDoc).toList();
 
     final buf = StringBuffer();
@@ -70,11 +70,11 @@ class AiContextService {
   // ---------- ЗАЛ ПРЯМО СЕЙЧАС ----------
 
   Future<String> hallSnapshot() async {
-    final tablesSnap = await _db.collection('tables').get();
+    final tablesSnap = await AppScope.col('tables').get();
     final tables = tablesSnap.docs.map(TableModel.fromDoc).toList();
 
     final sessionsSnap =
-        await _db.collection('sessions').where('status', isEqualTo: 'active').get();
+        await AppScope.col('sessions').where('status', isEqualTo: 'active').get();
     final sessions = sessionsSnap.docs.map(SessionModel.fromDoc).toList();
     final byTable = <String, List<SessionModel>>{};
     for (final s in sessions) {
@@ -104,8 +104,7 @@ class AiContextService {
 
   Future<String> reservationsSnapshot({int hours = 12}) async {
     final now = DateTime.now();
-    final snap = await _db
-        .collection('reservations')
+    final snap = await AppScope.col('reservations')
         .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(now))
         .where('startTime', isLessThan: Timestamp.fromDate(now.add(Duration(hours: hours))))
         .orderBy('startTime')
@@ -134,8 +133,7 @@ class AiContextService {
     // составного индекса Firestore, который пришлось бы создавать руками.
     // Статус и возвраты отсеиваем уже на устройстве — чеков за период
     // немного, и это дешевле, чем ручная настройка индексов.
-    final snap = await _db
-        .collection('sessions')
+    final snap = await AppScope.col('sessions')
         .where('closedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
         .where('closedAt', isLessThan: Timestamp.fromDate(to))
         .get();
@@ -197,7 +195,7 @@ class AiContextService {
   /// Обезличенный портрет гостя для персональных рекомендаций.
   /// Телефон и полное имя в промпт не передаются.
   Future<String> guestSnapshot(String clientUid) async {
-    final doc = await _db.collection('clients').doc(clientUid).get();
+    final doc = await AppScope.col('clients').doc(clientUid).get();
     if (!doc.exists) return 'Новый гость, истории нет.';
     final p = ClientProfile.fromDoc(doc);
 
@@ -207,8 +205,7 @@ class AiContextService {
     // просто отвечаем без истории заказов.
     var top = const <MapEntry<String, int>>[];
     try {
-      final past = await _db
-          .collection('sessions')
+      final past = await AppScope.col('sessions')
           .where('status', isEqualTo: 'closed')
           .orderBy('closedAt', descending: true)
           .limit(60)
@@ -237,8 +234,7 @@ class AiContextService {
   // ---------- ОТЗЫВЫ ----------
 
   Future<String> reviewsSnapshot({int limit = 60}) async {
-    final snap = await _db
-        .collection('reviews')
+    final snap = await AppScope.col('reviews')
         .orderBy('createdAt', descending: true)
         .limit(limit)
         .get();

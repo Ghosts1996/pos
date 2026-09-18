@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/venue_models.dart';
 
 /// Профиль заведения, FAQ и «счастливые часы».
@@ -11,7 +12,6 @@ class VenueService {
   VenueService._();
   static final VenueService instance = VenueService._();
 
-  final _db = FirebaseFirestore.instance;
 
   VenueProfile _cached = const VenueProfile();
   VenueProfile get cached => _cached;
@@ -19,43 +19,42 @@ class VenueService {
   static const _profilePath = 'meta/venueProfile';
 
   Future<VenueProfile> load() async {
-    final doc = await _db.doc(_profilePath).get();
+    final doc = await AppScope.doc(_profilePath).get();
     _cached = VenueProfile.fromMap(doc.data());
     return _cached;
   }
 
   /// Подписка при старте приложения — профиль всегда свежий.
   void watch() {
-    _db.doc(_profilePath).snapshots().listen(
+    AppScope.doc(_profilePath).snapshots().listen(
           (d) => _cached = VenueProfile.fromMap(d.data()),
           onError: (_) {},
         );
   }
 
   Stream<VenueProfile> stream() =>
-      _db.doc(_profilePath).snapshots().map((d) => VenueProfile.fromMap(d.data()));
+      AppScope.doc(_profilePath).snapshots().map((d) => VenueProfile.fromMap(d.data()));
 
   Future<void> save(VenueProfile profile) =>
-      _db.doc(_profilePath).set(profile.toMap(), SetOptions(merge: true));
+      AppScope.doc(_profilePath).set(profile.toMap(), SetOptions(merge: true));
 
   // ---------- СЧАСТЛИВЫЕ ЧАСЫ ----------
 
-  Stream<List<HappyHour>> happyHoursStream() => _db
-      .collection('happyHours')
+  Stream<List<HappyHour>> happyHoursStream() => AppScope.col('happyHours')
       .snapshots()
       .map((s) => s.docs.map(HappyHour.fromDoc).toList());
 
   Future<void> saveHappyHour(HappyHour hh) => hh.id.isEmpty
-      ? _db.collection('happyHours').add(hh.toMap())
-      : _db.collection('happyHours').doc(hh.id).set(hh.toMap());
+      ? AppScope.col('happyHours').add(hh.toMap())
+      : AppScope.col('happyHours').doc(hh.id).set(hh.toMap());
 
-  Future<void> deleteHappyHour(String id) => _db.collection('happyHours').doc(id).delete();
+  Future<void> deleteHappyHour(String id) => AppScope.col('happyHours').doc(id).delete();
 
   /// Акция, действующая прямо сейчас (берём самую выгодную для гостя).
   /// Возвращает null, если сейчас обычное время.
   Future<HappyHour?> activeHappyHour([DateTime? at]) async {
     final moment = at ?? DateTime.now();
-    final snap = await _db.collection('happyHours').where('active', isEqualTo: true).get();
+    final snap = await AppScope.col('happyHours').where('active', isEqualTo: true).get();
     final matching = snap.docs.map(HappyHour.fromDoc).where((h) => h.matches(moment)).toList();
     if (matching.isEmpty) return null;
     matching.sort((a, b) => b.discountPercent.compareTo(a.discountPercent));
@@ -69,7 +68,7 @@ class VenueService {
     final happy = await activeHappyHour();
     if (happy == null) return null;
 
-    final ref = _db.collection('sessions').doc(sessionId);
+    final ref = AppScope.col('sessions').doc(sessionId);
     final snap = await ref.get();
     if (!snap.exists) return null;
     final current = (snap.data()?['discountPercent'] ?? 0).toDouble();

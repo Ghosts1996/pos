@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/inventory_models.dart';
 import '../models/menu_models.dart';
 
@@ -27,7 +28,7 @@ class AutoStopListService {
   /// Запускается один раз при входе сотрудника на POS.
   void start() {
     _sub?.cancel();
-    _sub = _db.collection('inventoryItems').snapshots().listen(
+    _sub = AppScope.col('inventoryItems').snapshots().listen(
       (_) => _scheduleSync(),
       // Пока планшет не зарегистрирован как рабочее устройство, прав на
       // склад нет и стрим завершается ошибкой. Это не повод сыпать
@@ -60,12 +61,12 @@ class AutoStopListService {
   /// Полный пересчёт стоп-листа. Можно дёрнуть вручную из админки.
   /// Возвращает описание изменений для показа сотруднику.
   Future<List<String>> sync() async {
-    final invSnap = await _db.collection('inventoryItems').get();
+    final invSnap = await AppScope.col('inventoryItems').get();
     final stock = <String, InventoryItem>{
       for (final d in invSnap.docs) d.id: InventoryItem.fromDoc(d)
     };
 
-    final menuSnap = await _db.collection('menuItems').get();
+    final menuSnap = await AppScope.col('menuItems').get();
     final changes = <String>[];
     final batch = _db.batch();
 
@@ -97,7 +98,7 @@ class AutoStopListService {
 
     if (changes.isNotEmpty) {
       await batch.commit();
-      await _db.collection('staffNotes').add({
+      await AppScope.col('staffNotes').add({
         'title': 'Автостоп-лист',
         'text': changes.join('\n'),
         'priority': 'warning',

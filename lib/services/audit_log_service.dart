@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 
 /// Журнал действий на кассе.
 ///
@@ -13,7 +14,6 @@ class AuditLogService {
   AuditLogService._();
   static final AuditLogService instance = AuditLogService._();
 
-  final _db = FirebaseFirestore.instance;
 
   /// Универсальная запись. [action] — короткий код, [details] — что именно.
   Future<void> log({
@@ -25,7 +25,7 @@ class AuditLogService {
     Map<String, dynamic> details = const {},
   }) async {
     try {
-      await _db.collection('auditLog').add({
+      await AppScope.col('auditLog').add({
         'action': action,
         'employeeName': employeeName,
         'sessionId': sessionId,
@@ -123,16 +123,14 @@ class AuditLogService {
       );
 
   /// Лента журнала за период — для экрана админа и для ИИ-контролёра.
-  Stream<QuerySnapshot<Map<String, dynamic>>> stream({int limit = 200}) => _db
-      .collection('auditLog')
+  Stream<QuerySnapshot<Map<String, dynamic>>> stream({int limit = 200}) => AppScope.col('auditLog')
       .orderBy('createdAt', descending: true)
       .limit(limit)
       .snapshots();
 
   Future<String> snapshotForAi({int days = 7}) async {
     final from = DateTime.now().subtract(Duration(days: days));
-    final snap = await _db
-        .collection('auditLog')
+    final snap = await AppScope.col('auditLog')
         .where('createdAt', isGreaterThan: Timestamp.fromDate(from))
         .get();
     if (snap.docs.isEmpty) return 'Событий в журнале нет.';

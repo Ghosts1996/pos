@@ -15,6 +15,7 @@ import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/models/venue_models.dart';
 import 'package:hookah_pos/models/fiscal_receipt.dart';
 import 'package:hookah_pos/models/tenant_models.dart';
+import 'package:hookah_pos/services/app_scope.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
 import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
@@ -682,6 +683,56 @@ void main() {
       expect(restored.member.role, original.member.role);
       expect(restored.session.defaultHookahDurationMinutes, original.session.defaultHookahDurationMinutes);
       expect(restored.subscription.status, original.subscription.status);
+    });
+  });
+
+  group('SaaS: AppScope — переключатель одно-арендного/SaaS режима', () {
+    // AppScope — глобальный синглтон-переключатель, поэтому явно сбрасываем
+    // его до и после каждого теста, иначе тесты влияют друг на друга.
+    setUp(AppScope.reset);
+    tearDown(AppScope.reset);
+
+    test('по умолчанию — одно-арендный режим', () {
+      expect(AppScope.isSaasMode, isFalse);
+      expect(AppScope.tenantId, isNull);
+    });
+
+    test('enterTenant включает SaaS-режим', () {
+      AppScope.enterTenant('tenantA');
+      expect(AppScope.isSaasMode, isTrue);
+      expect(AppScope.tenantId, 'tenantA');
+    });
+
+    test('reset() возвращает в одно-арендный режим', () {
+      AppScope.enterTenant('tenantA');
+      AppScope.reset();
+      expect(AppScope.isSaasMode, isFalse);
+      expect(AppScope.tenantId, isNull);
+    });
+
+    test('пустой tenantId в enterTenant отклоняется явной ошибкой', () {
+      expect(() => AppScope.enterTenant(''), throwsArgumentError);
+      expect(() => AppScope.enterTenant('   '), throwsArgumentError);
+    });
+  });
+
+  group('SaaS: scopedPath — построение пути к данным (без реального Firebase)', () {
+    test('без арендатора путь не меняется — гарантия для текущего живого заведения', () {
+      expect(scopedPath(null, 'sessions'), 'sessions');
+      expect(scopedPath(null, 'meta/aiSettings'), 'meta/aiSettings');
+    });
+
+    test('с арендатором путь вкладывается под tenants/{id}/', () {
+      expect(scopedPath('tenantA', 'sessions'), 'tenants/tenantA/sessions');
+      expect(scopedPath('tenantA', 'meta/aiSettings'), 'tenants/tenantA/meta/aiSettings');
+    });
+
+    test('разные арендаторы получают непересекающиеся пути к одной и той же коллекции', () {
+      final pathA = scopedPath('tenantA', 'tables');
+      final pathB = scopedPath('tenantB', 'tables');
+      expect(pathA, isNot(equals(pathB)));
+      expect(pathA, 'tenants/tenantA/tables');
+      expect(pathB, 'tenants/tenantB/tables');
     });
   });
 }

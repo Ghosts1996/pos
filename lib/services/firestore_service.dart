@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:uuid/uuid.dart';
 import '../models/table_model.dart';
 import '../models/session_model.dart';
@@ -17,24 +18,24 @@ class FirestoreService {
 
   // ---------- СТОЛЫ ----------
   Stream<List<TableModel>> tablesStream() {
-    return _db.collection('tables').snapshots().map(
+    return AppScope.col('tables').snapshots().map(
         (snap) => snap.docs.map((d) => TableModel.fromDoc(d)).toList());
   }
 
   Future<void> addTable(TableModel table) {
-    return _db.collection('tables').doc(table.id).set(table.toMap());
+    return AppScope.col('tables').doc(table.id).set(table.toMap());
   }
 
   Future<void> updateTable(TableModel table) {
-    return _db.collection('tables').doc(table.id).update(table.toMap());
+    return AppScope.col('tables').doc(table.id).update(table.toMap());
   }
 
   Future<void> updateTablePosition(String tableId, double x, double y) {
-    return _db.collection('tables').doc(tableId).update({'x': x, 'y': y});
+    return AppScope.col('tables').doc(tableId).update({'x': x, 'y': y});
   }
 
   Future<void> deleteTable(String tableId) {
-    return _db.collection('tables').doc(tableId).delete();
+    return AppScope.col('tables').doc(tableId).delete();
   }
 
   /// Стрим ОДНОГО стола по id. В отличие от [tablesStream] не тянет всю
@@ -42,8 +43,7 @@ class FirestoreService {
   /// открытие/изменение любого другого стола в зале не вызывало лишних
   /// перестроений и сетевого трафика на этом экране.
   Stream<TableModel?> tableStream(String tableId) {
-    return _db
-        .collection('tables')
+    return AppScope.col('tables')
         .doc(tableId)
         .snapshots()
         .map((doc) => doc.exists ? TableModel.fromDoc(doc) : null);
@@ -67,9 +67,9 @@ class FirestoreService {
   }) async {
     if (fromTableId == toTableId) return;
 
-    final sessionRef = _db.collection('sessions').doc(sessionId);
-    final fromRef = _db.collection('tables').doc(fromTableId);
-    final toRef = _db.collection('tables').doc(toTableId);
+    final sessionRef = AppScope.col('sessions').doc(sessionId);
+    final fromRef = AppScope.col('tables').doc(fromTableId);
+    final toRef = AppScope.col('tables').doc(toTableId);
 
     await _db.runTransaction((tx) async {
       final toSnap = await tx.get(toRef);
@@ -122,8 +122,7 @@ class FirestoreService {
   Future<void> syncTableBusyUntil(String tableId) async {
     if (tableId.isEmpty) return;
     try {
-      final snap = await _db
-          .collection('sessions')
+      final snap = await AppScope.col('sessions')
           .where('tableId', isEqualTo: tableId)
           .where('status', isEqualTo: 'active')
           .get();
@@ -155,7 +154,7 @@ class FirestoreService {
         return x.compareTo(y);
       });
 
-      await _db.collection('tables').doc(tableId).update({
+      await AppScope.col('tables').doc(tableId).update({
         'busyUntil': maxEnd == null ? null : Timestamp.fromDate(maxEnd),
         'openChecks': checks,
       });
@@ -166,7 +165,7 @@ class FirestoreService {
 
   // ---------- СЕССИИ (ЧЕКИ) ----------
   Stream<SessionModel?> sessionStream(String sessionId) {
-    return _db.collection('sessions').doc(sessionId).snapshots().map(
+    return AppScope.col('sessions').doc(sessionId).snapshots().map(
         (doc) => doc.exists ? SessionModel.fromDoc(doc) : null);
   }
 
@@ -175,8 +174,7 @@ class FirestoreService {
   /// умеет объединять такие простые условия без ручного составного
   /// индекса, поэтому сортировку делаем на клиенте, а не в самом запросе.
   Stream<List<SessionModel>> activeSessionsStream(String tableId) {
-    return _db
-        .collection('sessions')
+    return AppScope.col('sessions')
         .where('tableId', isEqualTo: tableId)
         .where('status', isEqualTo: 'active')
         .snapshots()
@@ -198,8 +196,8 @@ class FirestoreService {
     int durationMinutes = AppConstants.defaultSessionMinutes,
     String guestTag = '',
   }) async {
-    final tableRef = _db.collection('tables').doc(table.id);
-    final sessionRef = _db.collection('sessions').doc();
+    final tableRef = AppScope.col('tables').doc(table.id);
+    final sessionRef = AppScope.col('sessions').doc();
     final now = DateTime.now();
 
     await _db.runTransaction((tx) async {
@@ -252,7 +250,7 @@ class FirestoreService {
       {int durationMinutes = AppConstants.defaultSessionMinutes,
       String tableId = ''}) async {
     final now = DateTime.now();
-    await _db.collection('sessions').doc(sessionId).update({
+    await AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(now.add(Duration(minutes: durationMinutes))),
       'refillCount': FieldValue.increment(1),
       'refillHistory': FieldValue.arrayUnion([
@@ -265,7 +263,7 @@ class FirestoreService {
   /// Установить/сменить подпись чека — кто сидит за столом (гость, номер
   /// компании и т.п.). Пустая строка убирает подпись.
   Future<void> setGuestTag(String sessionId, String tag, {String tableId = ''}) async {
-    await _db.collection('sessions').doc(sessionId).update({'guestTag': tag});
+    await AppScope.col('sessions').doc(sessionId).update({'guestTag': tag});
     // Подпись — то, по чему гость узнаёт свой чек в списке за столом,
     // поэтому витрину открытых чеков надо обновить сразу.
     await syncTableBusyUntil(tableId);
@@ -275,7 +273,7 @@ class FirestoreService {
   Future<void> extendSession(String sessionId, DateTime currentPlannedEnd, int minutes,
       {String tableId = ''}) async {
     final newEnd = currentPlannedEnd.add(Duration(minutes: minutes));
-    await _db.collection('sessions').doc(sessionId).update({
+    await AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
     });
     await syncTableBusyUntil(tableId);
@@ -283,7 +281,7 @@ class FirestoreService {
 
   /// Установить таймер на конкретное время вручную
   Future<void> setSessionEnd(String sessionId, DateTime newEnd, {String tableId = ''}) async {
-    await _db.collection('sessions').doc(sessionId).update({
+    await AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
     });
     await syncTableBusyUntil(tableId);
@@ -294,7 +292,7 @@ class FirestoreService {
   /// Обёрнуто в транзакцию, чтобы два одновременных нажатия "Добавить" не
   /// перезаписали друг друга.
   Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1}) async {
-    final ref = _db.collection('sessions').doc(sessionId);
+    final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -320,7 +318,7 @@ class FirestoreService {
   /// Изменить количество позиции в заказе на delta (может быть отрицательным).
   /// Если количество опускается до 0 или ниже — позиция удаляется из счёта.
   Future<void> changeOrderItemQty(String sessionId, String menuItemId, int delta) async {
-    final ref = _db.collection('sessions').doc(sessionId);
+    final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -342,7 +340,7 @@ class FirestoreService {
 
   /// Полностью убрать позицию из заказа независимо от количества.
   Future<void> removeOrderItem(String sessionId, String menuItemId) async {
-    final ref = _db.collection('sessions').doc(sessionId);
+    final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -356,7 +354,7 @@ class FirestoreService {
   }
 
   Future<void> applyDiscountCard(String sessionId, DiscountCard? card) {
-    return _db.collection('sessions').doc(sessionId).update({
+    return AppScope.col('sessions').doc(sessionId).update({
       'discountCardId': card?.id,
       'discountPercent': card?.discountPercent ?? 0,
     });
@@ -386,7 +384,7 @@ class FirestoreService {
     //    вызов уже не переписывает чек и, главное, НЕ списывает склад
     //    второй раз. Раньше именно так остатки уезжали в минус на величину
     //    целого заказа.
-    final sessionRef = _db.collection('sessions').doc(sessionId);
+    final sessionRef = AppScope.col('sessions').doc(sessionId);
     final alreadyClosed = await _db.runTransaction<bool>((tx) async {
       final snap = await tx.get(sessionRef);
       if ((snap.data()?['status'] as String?) == 'closed') return true;
@@ -406,7 +404,7 @@ class FirestoreService {
     });
 
     // 2. Убираем сессию из стола
-    final tableRef = _db.collection('tables').doc(tableId);
+    final tableRef = AppScope.col('tables').doc(tableId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(tableRef);
       final data = doc.data();
@@ -424,7 +422,7 @@ class FirestoreService {
     //    закрепление чека за гостем: счёт закрыт, держать его незачем.
     await syncTableBusyUntil(tableId);
     try {
-      await _db.collection('sessionClaims').doc(sessionId).delete();
+      await AppScope.col('sessionClaims').doc(sessionId).delete();
     } catch (_) {
       // Не критично: id чека больше не повторится, запись просто устареет.
     }
@@ -452,7 +450,7 @@ class FirestoreService {
 
     // Загружаем данные позиций меню одним батчем
     final menuDocs = await Future.wait(menuItemIds
-        .map((id) => _db.collection('menuItems').doc(id).get()));
+        .map((id) => AppScope.col('menuItems').doc(id).get()));
 
     // Строим карту menuItemId → MenuItem
     final menuMap = <String, MenuItem>{};
@@ -470,8 +468,7 @@ class FirestoreService {
         for (final component in menuItem.components) {
           if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
           try {
-            final invDoc = await _db
-                .collection('inventoryItems')
+            final invDoc = await AppScope.col('inventoryItems')
                 .doc(component.inventoryItemId)
                 .get();
             if (!invDoc.exists) continue;
@@ -500,8 +497,7 @@ class FirestoreService {
       } else {
         // Простая позиция: одна привязка к складу
         try {
-          final invDoc = await _db
-              .collection('inventoryItems')
+          final invDoc = await AppScope.col('inventoryItems')
               .doc(menuItem.inventoryItemId)
               .get();
           if (!invDoc.exists) continue;
@@ -548,7 +544,7 @@ class FirestoreService {
     if (menuItemIds.isEmpty) return [];
 
     final menuDocs =
-        await Future.wait(menuItemIds.map((id) => _db.collection('menuItems').doc(id).get()));
+        await Future.wait(menuItemIds.map((id) => AppScope.col('menuItems').doc(id).get()));
     final menuMap = <String, MenuItem>{};
     for (final doc in menuDocs) {
       if (doc.exists) menuMap[doc.id] = MenuItem.fromDoc(doc);
@@ -563,7 +559,7 @@ class FirestoreService {
     }
     if (invIds.isEmpty) return [];
 
-    final invDocs = await Future.wait(invIds.map((id) => _db.collection('inventoryItems').doc(id).get()));
+    final invDocs = await Future.wait(invIds.map((id) => AppScope.col('inventoryItems').doc(id).get()));
     final invMap = <String, InventoryItem>{};
     for (final doc in invDocs) {
       if (doc.exists) invMap[doc.id] = InventoryItem.fromDoc(doc);
@@ -612,7 +608,7 @@ class FirestoreService {
   /// остаётся в истории, но помечается как возвращённый и больше не
   /// учитывается в выручке X- и обычных отчётов.
   Future<void> refundSession(String sessionId) {
-    return _db.collection('sessions').doc(sessionId).update({
+    return AppScope.col('sessions').doc(sessionId).update({
       'refunded': true,
       'refundedAt': Timestamp.fromDate(DateTime.now()),
     });
@@ -621,7 +617,7 @@ class FirestoreService {
   /// Отменить возврат чека (если оформили по ошибке) — снова учитывается
   /// в отчётах как обычный оплаченный чек.
   Future<void> undoRefundSession(String sessionId) {
-    return _db.collection('sessions').doc(sessionId).update({
+    return AppScope.col('sessions').doc(sessionId).update({
       'refunded': false,
       'refundedAt': null,
     });
@@ -633,8 +629,7 @@ class FirestoreService {
   /// поэтому запросу достаточно автоматического одиночного индекса
   /// Firestore — не нужно вручную создавать составной индекс в консоли.
   Future<List<SessionModel>> closedSessionsInRange(DateTime start, DateTime end) async {
-    final snap = await _db
-        .collection('sessions')
+    final snap = await AppScope.col('sessions')
         .where('closedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('closedAt', isLessThan: Timestamp.fromDate(end))
         .orderBy('closedAt', descending: true)
@@ -660,8 +655,7 @@ class FirestoreService {
     // FAILED_PRECONDITION. Открытая смена в системе всегда одна
     // (гарантируется транзакцией в openShiftIfNeeded/closeShift через
     // meta/shiftState), поэтому сортировка тут не нужна.
-    final snap = await _db
-        .collection('shifts')
+    final snap = await AppScope.col('shifts')
         .where('status', isEqualTo: 'open')
         .limit(1)
         .get();
@@ -675,8 +669,7 @@ class FirestoreService {
     // См. комментарий в currentOpenShift() — без orderBy, чтобы не требовать
     // составной индекс, из-за отсутствия которого стрим падал в ошибку
     // сразу после открытия смены и переставал обновляться.
-    return _db
-        .collection('shifts')
+    return AppScope.col('shifts')
         .where('status', isEqualTo: 'open')
         .limit(1)
         .snapshots()
@@ -698,8 +691,8 @@ class FirestoreService {
   /// открыта, даже если два сотрудника входят почти одновременно.
   /// Возвращает id открытой смены (новой или уже существующей).
   Future<String> openShiftIfNeeded(String employeeName, {String employeeId = ''}) async {
-    final stateRef = _db.collection('meta').doc('shiftState');
-    final shiftRef = _db.collection('shifts').doc();
+    final stateRef = AppScope.col('meta').doc('shiftState');
+    final shiftRef = AppScope.col('shifts').doc();
     final now = DateTime.now();
 
     final resultId = await _db.runTransaction<String>((tx) async {
@@ -721,7 +714,7 @@ class FirestoreService {
       // Если нет (или сам документ не найден) — самовосстанавливаемся и
       // открываем новую смену, как будто указатель был пуст.
       if (currentOpenId != null && currentOpenId.isNotEmpty) {
-        final referencedShiftDoc = await tx.get(_db.collection('shifts').doc(currentOpenId));
+        final referencedShiftDoc = await tx.get(AppScope.col('shifts').doc(currentOpenId));
         final referencedData = referencedShiftDoc.data();
         final referencedStatus = referencedData?['status'] as String?;
         if (referencedShiftDoc.exists && referencedStatus == 'open') {
@@ -758,8 +751,8 @@ class FirestoreService {
   /// возможность такого рассинхрона.
   Future<void> closeShift(String shiftId, String employeeName) async {
     final now = DateTime.now();
-    final shiftRef = _db.collection('shifts').doc(shiftId);
-    final stateRef = _db.collection('meta').doc('shiftState');
+    final shiftRef = AppScope.col('shifts').doc(shiftId);
+    final stateRef = AppScope.col('meta').doc('shiftState');
     await _db.runTransaction((tx) async {
       final stateDoc = await tx.get(stateRef);
       tx.update(shiftRef, {
@@ -777,8 +770,7 @@ class FirestoreService {
   /// Последние N смен (для просмотра прошлых смен в X-отчёте), отсортированы
   /// от самой свежей к самой старой.
   Future<List<ShiftModel>> recentShifts({int limit = 30}) async {
-    final snap = await _db
-        .collection('shifts')
+    final snap = await AppScope.col('shifts')
         .orderBy('openedAt', descending: true)
         .limit(limit)
         .get();
@@ -796,12 +788,12 @@ class FirestoreService {
 
   // ---------- МЕНЮ ----------
   Stream<List<MenuCategory>> categoriesStream() {
-    return _db.collection('menuCategories').orderBy('order').snapshots().map(
+    return AppScope.col('menuCategories').orderBy('order').snapshots().map(
         (snap) => snap.docs.map((d) => MenuCategory.fromDoc(d)).toList());
   }
 
   Stream<List<MenuItem>> menuItemsStream() {
-    return _db.collection('menuItems').snapshots().map(
+    return AppScope.col('menuItems').snapshots().map(
         (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());
   }
 
@@ -813,13 +805,13 @@ class FirestoreService {
   /// одновременных "Новая категория" без Cloud Function нельзя, но это
   /// на порядок надёжнее прежнего варианта по snap.docs.length.
   Future<String> addCategory(String name, {String imageUrl = ''}) async {
-    final snap = await _db.collection('menuCategories').get();
+    final snap = await AppScope.col('menuCategories').get();
     var maxOrder = -1;
     for (final d in snap.docs) {
       final order = (d.data()['order'] as num?)?.toInt() ?? 0;
       if (order > maxOrder) maxOrder = order;
     }
-    final docRef = _db.collection('menuCategories').doc();
+    final docRef = AppScope.col('menuCategories').doc();
     await _db.runTransaction((tx) async {
       tx.set(docRef, {'name': name, 'order': maxOrder + 1, 'imageUrl': imageUrl});
     });
@@ -827,66 +819,65 @@ class FirestoreService {
   }
 
   Future<void> renameCategory(String id, String name) {
-    return _db.collection('menuCategories').doc(id).update({'name': name});
+    return AppScope.col('menuCategories').doc(id).update({'name': name});
   }
 
   /// Сохраняет ссылку на фото-плитку категории (после загрузки в Storage
   /// через StorageService) — используется в редакторе меню и на плитках
   /// категорий у сотрудника.
   Future<void> updateCategoryImage(String id, String imageUrl) {
-    return _db.collection('menuCategories').doc(id).update({'imageUrl': imageUrl});
+    return AppScope.col('menuCategories').doc(id).update({'imageUrl': imageUrl});
   }
 
   Future<void> reorderCategories(List<MenuCategory> orderedCategories) async {
     final batch = _db.batch();
     for (var i = 0; i < orderedCategories.length; i++) {
-      batch.update(_db.collection('menuCategories').doc(orderedCategories[i].id), {'order': i});
+      batch.update(AppScope.col('menuCategories').doc(orderedCategories[i].id), {'order': i});
     }
     await batch.commit();
   }
 
-  Future<void> deleteCategory(String id) => _db.collection('menuCategories').doc(id).delete();
+  Future<void> deleteCategory(String id) => AppScope.col('menuCategories').doc(id).delete();
 
   Future<void> addMenuItem(MenuItem item) {
-    return _db.collection('menuItems').add(item.toMap());
+    return AppScope.col('menuItems').add(item.toMap());
   }
 
   Future<void> updateMenuItem(MenuItem item) {
-    return _db.collection('menuItems').doc(item.id).update(item.toMap());
+    return AppScope.col('menuItems').doc(item.id).update(item.toMap());
   }
 
   /// Сохраняет фото конкретного блюда/позиции меню.
   Future<void> updateMenuItemImage(String id, String imageUrl) {
-    return _db.collection('menuItems').doc(id).update({'imageUrl': imageUrl});
+    return AppScope.col('menuItems').doc(id).update({'imageUrl': imageUrl});
   }
 
-  Future<void> deleteMenuItem(String id) => _db.collection('menuItems').doc(id).delete();
+  Future<void> deleteMenuItem(String id) => AppScope.col('menuItems').doc(id).delete();
 
   // ---------- СКИДОЧНЫЕ КАРТЫ ----------
   Stream<List<DiscountCard>> discountCardsStream() {
-    return _db.collection('discountCards').snapshots().map(
+    return AppScope.col('discountCards').snapshots().map(
         (snap) => snap.docs.map((d) => DiscountCard.fromDoc(d)).toList());
   }
 
   Future<void> addDiscountCard(DiscountCard card) {
-    return _db.collection('discountCards').add(card.toMap());
+    return AppScope.col('discountCards').add(card.toMap());
   }
 
   Future<void> updateDiscountCard(DiscountCard card) {
-    return _db.collection('discountCards').doc(card.id).update(card.toMap());
+    return AppScope.col('discountCards').doc(card.id).update(card.toMap());
   }
 
   Future<void> setDiscountCardActive(String id, bool active) {
-    return _db.collection('discountCards').doc(id).update({'active': active});
+    return AppScope.col('discountCards').doc(id).update({'active': active});
   }
 
-  Future<void> deleteDiscountCard(String id) => _db.collection('discountCards').doc(id).delete();
+  Future<void> deleteDiscountCard(String id) => AppScope.col('discountCards').doc(id).delete();
 
   /// Ищет только среди активных карт — деактивированную карту сотрудник
   /// применить не сможет, даже зная номер.
   Future<DiscountCard?> findCardByNumber(String number) async {
-    final snap = await _db
-        .collection('discountCards')
+    final snap = await AppScope.col('discountCards')
         .where('cardNumber', isEqualTo: number)
         .where('active', isEqualTo: true)
         .limit(1)
@@ -897,7 +888,7 @@ class FirestoreService {
 
   // ---------- СОТРУДНИКИ ----------
   Stream<List<Employee>> employeesStream() {
-    return _db.collection('employees').snapshots().map(
+    return AppScope.col('employees').snapshots().map(
         (snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList());
   }
 
@@ -907,7 +898,7 @@ class FirestoreService {
   /// работает. Слать ему вызовы гостей и напоминания об углях незачем,
   /// поэтому в списке «кто на смене» его нет.
   Future<List<Employee>> shiftCandidates() async {
-    final snap = await _db.collection('employees').get();
+    final snap = await AppScope.col('employees').get();
     return snap.docs
         .map(Employee.fromDoc)
         .where((e) => e.role != AppConstants.roleAdmin)
@@ -915,24 +906,24 @@ class FirestoreService {
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
-  Future<void> addEmployee(Employee e) => _db.collection('employees').add(e.toMap());
+  Future<void> addEmployee(Employee e) => AppScope.col('employees').add(e.toMap());
 
   Future<void> updateEmployee(Employee e) =>
-      _db.collection('employees').doc(e.id).update(e.toMap());
+      AppScope.col('employees').doc(e.id).update(e.toMap());
 
-  Future<void> deleteEmployee(String id) => _db.collection('employees').doc(id).delete();
+  Future<void> deleteEmployee(String id) => AppScope.col('employees').doc(id).delete();
 
   /// Сотрудник по id — по нему восстанавливается вход на планшете, где
   /// PIN уже вводили. Сам PIN на устройстве не хранится.
   Future<Employee?> employeeById(String id) async {
     if (id.isEmpty) return null;
-    final doc = await _db.collection('employees').doc(id).get();
+    final doc = await AppScope.col('employees').doc(id).get();
     return doc.exists ? Employee.fromDoc(doc) : null;
   }
 
   Future<Employee?> findByPin(String pin) async {
     final snap =
-        await _db.collection('employees').where('pinCode', isEqualTo: pin).limit(1).get();
+        await AppScope.col('employees').where('pinCode', isEqualTo: pin).limit(1).get();
     if (snap.docs.isEmpty) return null;
     return Employee.fromDoc(snap.docs.first);
   }
@@ -941,34 +932,33 @@ class FirestoreService {
   /// редактировании существующего сотрудника, чтобы не конфликтовать с самим собой)
   Future<bool> isPinTaken(String pin, {String? excludeId}) async {
     final snap =
-        await _db.collection('employees').where('pinCode', isEqualTo: pin).get();
+        await AppScope.col('employees').where('pinCode', isEqualTo: pin).get();
     return snap.docs.any((d) => d.id != excludeId);
   }
 
   /// Удаляет стол, только если на нём сейчас нет открытых чеков — чтобы не
   /// потерять активный сеанс с заказом гостя.
   Future<void> deleteTableSafe(String tableId) async {
-    final doc = await _db.collection('tables').doc(tableId).get();
+    final doc = await AppScope.col('tables').doc(tableId).get();
     final data = doc.data();
     final ids = ((data?['activeSessionIds'] ?? []) as List);
     if (data != null && (data['status'] == 'occupied' || ids.isNotEmpty)) {
       throw TableOccupiedDeleteException();
     }
-    await _db.collection('tables').doc(tableId).delete();
+    await AppScope.col('tables').doc(tableId).delete();
   }
 
   /// Удаляет категорию меню вместе со всеми её позициями (каскадно),
   /// чтобы не оставлять "осиротевшие" позиции без категории.
   Future<void> deleteCategoryCascade(String categoryId) async {
-    final items = await _db
-        .collection('menuItems')
+    final items = await AppScope.col('menuItems')
         .where('categoryId', isEqualTo: categoryId)
         .get();
     final batch = _db.batch();
     for (final doc in items.docs) {
       batch.delete(doc.reference);
     }
-    batch.delete(_db.collection('menuCategories').doc(categoryId));
+    batch.delete(AppScope.col('menuCategories').doc(categoryId));
     await batch.commit();
   }
 
@@ -979,20 +969,19 @@ class FirestoreService {
   // Список позиций полностью произвольный и настраивается админом.
 
   Stream<List<InventoryItem>> inventoryItemsStream() {
-    return _db.collection('inventoryItems').snapshots().map(
+    return AppScope.col('inventoryItems').snapshots().map(
         (snap) => snap.docs.map((d) => InventoryItem.fromDoc(d)).toList());
   }
 
   Stream<InventoryItem?> inventoryItemStream(String id) {
-    return _db
-        .collection('inventoryItems')
+    return AppScope.col('inventoryItems')
         .doc(id)
         .snapshots()
         .map((doc) => doc.exists ? InventoryItem.fromDoc(doc) : null);
   }
 
   Future<String> addInventoryItem(InventoryItem item) async {
-    final ref = await _db.collection('inventoryItems').add(item.toMap());
+    final ref = await AppScope.col('inventoryItems').add(item.toMap());
     return ref.id;
   }
 
@@ -1012,7 +1001,7 @@ class FirestoreService {
   /// известно, что именно ввёл админ — то же число в новой единице или
   /// уже осознанно новое значение.
   Future<void> updateInventoryItem(InventoryItem item) async {
-    final ref = _db.collection('inventoryItems').doc(item.id);
+    final ref = AppScope.col('inventoryItems').doc(item.id);
     final map = item.toMap()..remove('quantity');
     final current = await ref.get();
     final currentUnitName = current.data()?['unit'] as String?;
@@ -1031,19 +1020,18 @@ class FirestoreService {
   /// пропадает из активного списка и из будущих инвентаризаций, пока её не
   /// включат обратно.
   Future<void> setInventoryItemActive(String id, bool active) {
-    return _db.collection('inventoryItems').doc(id).update({'active': active});
+    return AppScope.col('inventoryItems').doc(id).update({'active': active});
   }
 
   Future<void> deleteInventoryItem(String id) =>
-      _db.collection('inventoryItems').doc(id).delete();
+      AppScope.col('inventoryItems').doc(id).delete();
 
   /// Ищет позицию склада по GTIN (штрихкод/код маркировки) — используется
   /// при сканировании на экране меню, чтобы найти, какую позицию добавить
   /// в чек. GTIN хранится в поле [InventoryItem.gtin], которое заполняется
   /// один раз при заведении позиции.
   Future<InventoryItem?> findInventoryItemByGtin(String gtin) async {
-    final snap = await _db
-        .collection('inventoryItems')
+    final snap = await AppScope.col('inventoryItems')
         .where('gtin', isEqualTo: gtin)
         .limit(1)
         .get();
@@ -1055,8 +1043,7 @@ class FirestoreService {
   /// сканирования штрихкода/кода маркировки добавить в чек не саму
   /// складскую позицию, а соответствующую ей позицию меню (с ценой).
   Future<MenuItem?> findMenuItemByInventoryItemId(String inventoryItemId) async {
-    final snap = await _db
-        .collection('menuItems')
+    final snap = await AppScope.col('menuItems')
         .where('inventoryItemId', isEqualTo: inventoryItemId)
         .limit(1)
         .get();
@@ -1079,8 +1066,8 @@ class FirestoreService {
     required String employeeName,
     String reason = '',
   }) async {
-    final itemRef = _db.collection('inventoryItems').doc(itemId);
-    final moveRef = _db.collection('inventoryMovements').doc();
+    final itemRef = AppScope.col('inventoryItems').doc(itemId);
+    final moveRef = AppScope.col('inventoryMovements').doc();
     await _db.runTransaction((tx) async {
       final snap = await tx.get(itemRef);
       final current = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
@@ -1117,7 +1104,7 @@ class FirestoreService {
   /// поле ещё пустое, — обычно это ноль или пара документов.
   Future<void> backfillTablesBusyUntil() async {
     try {
-      final snap = await _db.collection('tables').get();
+      final snap = await AppScope.col('tables').get();
       for (final doc in snap.docs) {
         final data = doc.data();
         final ids = (data['activeSessionIds'] ?? []) as List;
@@ -1139,8 +1126,7 @@ class FirestoreService {
     // после limit это не чинила — она сортировала уже не те сто записей.
     // Составной индекс (itemId ASC, createdAt DESC) добавлен в
     // firestore.indexes.json.
-    return _db
-        .collection('inventoryMovements')
+    return AppScope.col('inventoryMovements')
         .where('itemId', isEqualTo: itemId)
         .orderBy('createdAt', descending: true)
         .limit(limit)
@@ -1157,8 +1143,7 @@ class FirestoreService {
   /// Стрим текущей незавершённой инвентаризации, если она есть — чтобы при
   /// заходе на экран сразу продолжить, а не потерять уже введённые цифры.
   Stream<InventoryCount?> openInventoryCountStream() {
-    return _db
-        .collection('inventoryCounts')
+    return AppScope.col('inventoryCounts')
         .where('status', isEqualTo: 'in_progress')
         .limit(1)
         .snapshots()
@@ -1166,8 +1151,7 @@ class FirestoreService {
   }
 
   Future<InventoryCount?> currentOpenInventoryCount() async {
-    final snap = await _db
-        .collection('inventoryCounts')
+    final snap = await AppScope.col('inventoryCounts')
         .where('status', isEqualTo: 'in_progress')
         .limit(1)
         .get();
@@ -1180,7 +1164,7 @@ class FirestoreService {
   /// отслеживания, в пересчёт не попадают.
   Future<String> startInventoryCount(String employeeName) async {
     final itemsSnap =
-        await _db.collection('inventoryItems').where('active', isEqualTo: true).get();
+        await AppScope.col('inventoryItems').where('active', isEqualTo: true).get();
     final entries = itemsSnap.docs.map((d) {
       final item = InventoryItem.fromDoc(d);
       return InventoryCountEntry(
@@ -1199,7 +1183,7 @@ class FirestoreService {
       return catCmp != 0 ? catCmp : a.name.compareTo(b.name);
     });
 
-    final ref = _db.collection('inventoryCounts').doc();
+    final ref = AppScope.col('inventoryCounts').doc();
     await ref.set(InventoryCount(
       id: ref.id,
       status: 'in_progress',
@@ -1211,8 +1195,7 @@ class FirestoreService {
   }
 
   Stream<InventoryCount?> inventoryCountStream(String id) {
-    return _db
-        .collection('inventoryCounts')
+    return AppScope.col('inventoryCounts')
         .doc(id)
         .snapshots()
         .map((doc) => doc.exists ? InventoryCount.fromDoc(doc) : null);
@@ -1222,7 +1205,7 @@ class FirestoreService {
   /// текущей инвентаризации. countedQty == null стирает уже введённое
   /// значение (если сотрудник хочет пересчитать позицию заново).
   Future<void> setInventoryCountValue(String countId, String itemId, double? countedQty) async {
-    final ref = _db.collection('inventoryCounts').doc(countId);
+    final ref = AppScope.col('inventoryCounts').doc(countId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -1243,7 +1226,7 @@ class FirestoreService {
   /// 'count' в истории — так же прозрачно, как приход или списание.
   /// Позиции, которые никто не успел посчитать, остаются без изменений.
   Future<void> completeInventoryCount(String countId, String employeeName) async {
-    final ref = _db.collection('inventoryCounts').doc(countId);
+    final ref = AppScope.col('inventoryCounts').doc(countId);
     final doc = await ref.get();
     final data = doc.data();
     if (data == null) return;
@@ -1256,13 +1239,13 @@ class FirestoreService {
     for (final entry in entries) {
       if (entry.countedQty == null) continue;
       final diff = entry.countedQty! - entry.expectedQty;
-      final itemRef = _db.collection('inventoryItems').doc(entry.itemId);
+      final itemRef = AppScope.col('inventoryItems').doc(entry.itemId);
       batch.update(itemRef, {
         'quantity': entry.countedQty,
         'updatedAt': Timestamp.fromDate(now),
       });
       if (diff.abs() <= 0.0001) continue;
-      final moveRef = _db.collection('inventoryMovements').doc();
+      final moveRef = AppScope.col('inventoryMovements').doc();
       batch.set(
         moveRef,
         InventoryMovement(
@@ -1290,7 +1273,7 @@ class FirestoreService {
   /// Отменяет инвентаризацию без применения введённых цифр к остаткам —
   /// на случай, если пересчёт начали по ошибке или его пришлось прервать.
   Future<void> cancelInventoryCount(String countId, String employeeName) {
-    return _db.collection('inventoryCounts').doc(countId).update({
+    return AppScope.col('inventoryCounts').doc(countId).update({
       'status': 'cancelled',
       'closedAt': Timestamp.fromDate(DateTime.now()),
       'closedBy': employeeName,
@@ -1299,8 +1282,7 @@ class FirestoreService {
 
   /// Последние завершённые/отменённые инвентаризации — для истории.
   Future<List<InventoryCount>> recentInventoryCounts({int limit = 20}) async {
-    final snap = await _db
-        .collection('inventoryCounts')
+    final snap = await AppScope.col('inventoryCounts')
         .orderBy('startedAt', descending: true)
         .limit(limit)
         .get();

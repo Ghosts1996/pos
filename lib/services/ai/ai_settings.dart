@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 
 /// Настройки подключения к Tooken Club (tooken.club) — единый
 /// OpenAI-совместимый шлюз к GPT / Claude / DeepSeek и др.
@@ -128,10 +129,7 @@ class AiSettingsStore {
   AiSettings _current = const AiSettings();
   AiSettings get current => _current;
 
-  final _db = FirebaseFirestore.instance;
-
-  Stream<AiSettings> stream() => _db
-      .doc(_path)
+  Stream<AiSettings> stream() => AppScope.doc(_path)
       .snapshots()
       .map((d) => AiSettings.fromMap(d.data()))
       .map((s) {
@@ -143,17 +141,17 @@ class AiSettingsStore {
   /// если сети нет — ИИ просто останется выключенным до первого ответа.
   Future<void> init() async {
     try {
-      final doc = await _db.doc(_path).get();
+      final doc = await AppScope.doc(_path).get();
       _current = AiSettings.fromMap(doc.data());
     } catch (_) {
       _current = const AiSettings();
     }
-    _db.doc(_path).snapshots().listen(
+    AppScope.doc(_path).snapshots().listen(
           (d) => _current = AiSettings.fromMap(d.data()),
           onError: (_) {},
         );
   }
 
   Future<void> save(AiSettings settings) =>
-      _db.doc(_path).set(settings.toMap(), SetOptions(merge: true));
+      AppScope.doc(_path).set(settings.toMap(), SetOptions(merge: true));
 }

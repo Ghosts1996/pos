@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/marking_code.dart';
 import 'chestny_znak_api_service.dart';
 
@@ -34,7 +35,6 @@ import 'chestny_znak_api_service.dart';
 ///     касса, эта очередь передаётся в её SDK одним вызовом
 ///     (см. [ChestnyZnakQueueEntry] и TODO в [attachReceipt]).
 class ChestnyZnakService {
-  final _db = FirebaseFirestore.instance;
 
   /// Пытается распознать скан как код маркировки. Возвращает null, если
   /// это обычный штрихкод (тогда вызывающий экран ищет позицию меню/склада
@@ -52,7 +52,7 @@ class ChestnyZnakService {
   /// [checkOnlineStatus] — он же в силах поймать код, проданный на ДРУГОЙ
   /// кассе/точке или вовсе поддельный, чего локальный журнал не увидит.
   Future<bool> isAlreadySold(MarkingCode code) async {
-    final doc = await _db.collection('marking_codes_sold').doc(_docId(code)).get();
+    final doc = await AppScope.col('marking_codes_sold').doc(_docId(code)).get();
     return doc.exists;
   }
 
@@ -84,7 +84,7 @@ class ChestnyZnakService {
     String menuItemId = '',
     String itemName = '',
   }) async {
-    await _db.collection('marking_codes_sold').doc(_docId(code)).set({
+    await AppScope.col('marking_codes_sold').doc(_docId(code)).set({
       'gtin': code.gtin,
       'serial': code.serial,
       'raw': code.raw,
@@ -114,7 +114,7 @@ class ChestnyZnakService {
   /// `_sendToKassa`).
   Future<List<AttachedMarkingCode>> codesForReceiptDetailed(String receiptId) async {
     final snap =
-        await _db.collection('marking_codes_sold').where('receiptId', isEqualTo: receiptId).get();
+        await AppScope.col('marking_codes_sold').where('receiptId', isEqualTo: receiptId).get();
     return snap.docs
         .map((d) => AttachedMarkingCode(
               code: MarkingCode(

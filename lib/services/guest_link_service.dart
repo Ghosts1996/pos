@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/client_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
@@ -14,10 +15,10 @@ import 'push_service.dart';
 class GuestLinkService {
   final _db = FirebaseFirestore.instance;
 
-  CollectionReference<Map<String, dynamic>> get _clients => _db.collection('clients');
-  CollectionReference<Map<String, dynamic>> get _calls => _db.collection('waiterCalls');
-  CollectionReference<Map<String, dynamic>> get _orders => _db.collection('guestOrders');
-  CollectionReference<Map<String, dynamic>> get _reviews => _db.collection('reviews');
+  CollectionReference<Map<String, dynamic>> get _clients => AppScope.col('clients');
+  CollectionReference<Map<String, dynamic>> get _calls => AppScope.col('waiterCalls');
+  CollectionReference<Map<String, dynamic>> get _orders => AppScope.col('guestOrders');
+  CollectionReference<Map<String, dynamic>> get _reviews => AppScope.col('reviews');
 
   // ---------- ПРОФИЛЬ ГОСТЯ ----------
 
@@ -57,7 +58,7 @@ class GuestLinkService {
   /// permission-denied, и сохранение телефона зависало навсегда. Здесь
   /// лежит только пара «номер → uid»: ни имени, ни бонусов, ни трат.
   CollectionReference<Map<String, dynamic>> get _phoneIndex =>
-      _db.collection('phoneIndex');
+      AppScope.col('phoneIndex');
 
   /// Занят ли номер ДРУГИМ профилем. Это чтение одного документа по id, а
   /// не запрос по коллекции, поэтому работает и у гостя.
@@ -182,7 +183,7 @@ class GuestLinkService {
     // а у постоянного гостя за пару лет операций бывает и больше — такой
     // батч отклонялся целиком, и объединение профилей падало с ошибкой,
     // уже успев слить балансы транзакцией выше.
-    final ops = await _db.collection('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
+    final ops = await AppScope.col('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
     const chunkSize = 400;
     for (var i = 0; i < ops.docs.length; i += chunkSize) {
       final batch = _db.batch();
@@ -226,7 +227,7 @@ class GuestLinkService {
   /// только персонал. Отметка о выполнении лежит в jobRuns, поэтому проход
   /// по базе делается один раз, а не на каждый вход.
   Future<void> backfillGuestIndexes() async {
-    final marker = _db.collection('jobRuns').doc('guestIndexBackfill');
+    final marker = AppScope.col('jobRuns').doc('guestIndexBackfill');
     try {
       if ((await marker.get()).exists) return;
 
@@ -239,7 +240,7 @@ class GuestLinkService {
           await _phoneIndex.doc(normalizePhone(phone)).set({'uid': doc.id});
         }
         if (code.isNotEmpty) {
-          await _db.collection('referralCodes').doc(code).set({'uid': doc.id});
+          await AppScope.col('referralCodes').doc(code).set({'uid': doc.id});
         }
       }
       await marker.set({'lastRunAt': Timestamp.fromDate(DateTime.now())});
@@ -287,7 +288,7 @@ class GuestLinkService {
       }
     }
     if (referralCode.isNotEmpty) {
-      final codes = _db.collection('referralCodes');
+      final codes = AppScope.col('referralCodes');
       final idx = await codes.doc(referralCode).get();
       if (idx.exists && (idx.data()?['uid'] as String?) == uid) {
         await codes.doc(referralCode).delete();
@@ -336,7 +337,7 @@ class GuestLinkService {
     final phone = (profile.data()?['phone'] as String?) ?? '';
     if (phone.isEmpty) return const TableBindResult.needsPhone();
 
-    final tableDoc = await _db.collection('tables').doc(tableId).get();
+    final tableDoc = await AppScope.col('tables').doc(tableId).get();
     if (!tableDoc.exists) return const TableBindResult.empty();
     final table = TableModel.fromDoc(tableDoc);
     if (table.activeSessionIds.isEmpty) return const TableBindResult.empty();
@@ -370,7 +371,7 @@ class GuestLinkService {
   /// запрещён правилами, поэтому занятость лежит отдельным документом,
   /// который гость может прочитать по id.
   CollectionReference<Map<String, dynamic>> get _sessionClaims =>
-      _db.collection('sessionClaims');
+      AppScope.col('sessionClaims');
 
   /// Занят ли чек другим гостем.
   Future<bool> isSessionTakenByOther(String sessionId, String uid) async {
@@ -438,7 +439,7 @@ class GuestLinkService {
       final client = await _clients.doc(uid).get();
       final name = (client.data()?['name'] as String?) ?? '';
       if (name.isNotEmpty) {
-        final sessionRef = _db.collection('sessions').doc(sessionId);
+        final sessionRef = AppScope.col('sessions').doc(sessionId);
         final s = await sessionRef.get();
         if (((s.data()?['guestTag'] as String?) ?? '').isEmpty) {
           await sessionRef.update({'guestTag': name});
@@ -514,8 +515,7 @@ class GuestLinkService {
 
   /// Живой счёт гостя: сумма, позиции, таймер стола — тот же документ,
   /// который правит кассир на POS.
-  Stream<SessionModel?> sessionStream(String sessionId) => _db
-      .collection('sessions')
+  Stream<SessionModel?> sessionStream(String sessionId) => AppScope.col('sessions')
       .doc(sessionId)
       .snapshots()
       .map((d) => d.exists ? SessionModel.fromDoc(d) : null);
@@ -628,7 +628,7 @@ class GuestLinkService {
       .map((s) => s.docs.map(GuestOrder.fromDoc).toList());
 
   Future<void> acceptGuestOrder(GuestOrder order, String employeeName) async {
-    final sessionRef = _db.collection('sessions').doc(order.sessionId);
+    final sessionRef = AppScope.col('sessions').doc(order.sessionId);
     final orderRef = _orders.doc(order.id);
 
     await _db.runTransaction((tx) async {
@@ -773,7 +773,7 @@ class GuestLinkService {
     });
 
     if (bonus <= 0) return;
-    await _db.collection('bonusOperations').add({
+    await AppScope.col('bonusOperations').add({
       'clientUid': clientUid,
       'sessionId': sessionId,
       'type': 'accrual',
@@ -840,7 +840,7 @@ class GuestLinkService {
     });
 
     if (applied > 0) {
-      await _db.collection('bonusOperations').add({
+      await AppScope.col('bonusOperations').add({
         'clientUid': clientUid,
         'sessionId': sessionId,
         'type': 'redeem',
@@ -868,7 +868,7 @@ class GuestLinkService {
       {'bonusBalance': FieldValue.increment(amount)},
       SetOptions(merge: true),
     );
-    await _db.collection('bonusOperations').add({
+    await AppScope.col('bonusOperations').add({
       'clientUid': clientUid,
       'sessionId': sessionId,
       'type': 'redeem_cancelled',
@@ -901,13 +901,11 @@ class GuestLinkService {
 
   // ---------- МЕНЮ ДЛЯ ГОСТЯ ----------
 
-  Stream<List<MenuItem>> publicMenuStream() => _db
-      .collection('menuItems')
+  Stream<List<MenuItem>> publicMenuStream() => AppScope.col('menuItems')
       .snapshots()
       .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList());
 
-  Stream<List<MenuCategory>> publicCategoriesStream() => _db
-      .collection('menuCategories')
+  Stream<List<MenuCategory>> publicCategoriesStream() => AppScope.col('menuCategories')
       .orderBy('order')
       .snapshots()
       .map((s) => s.docs.map(MenuCategory.fromDoc).toList());

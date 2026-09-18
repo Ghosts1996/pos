@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 
 /// Реальный HTTP-клиент к True API системы маркировки «Честный ЗНАК» —
@@ -150,7 +150,7 @@ ChestnyZnakApiService? activeChestnyZnakApi;
 /// один раз при старте приложения, аналогично [loadSavedEgaisSettings].
 Future<void> loadSavedChestnyZnakSettings() async {
   try {
-    final doc = await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+    final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     final token = data?['czToken'] as String?;
     final circuit = data?['czCircuit'] as String? ?? 'pilot';

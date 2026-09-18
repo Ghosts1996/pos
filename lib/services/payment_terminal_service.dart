@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -449,7 +449,7 @@ PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
 Future<void> loadSavedTerminalSettings() async {
   try {
     final doc =
-        await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+        await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     if (data == null) return;
     paymentTerminalService = buildTerminalService(data);

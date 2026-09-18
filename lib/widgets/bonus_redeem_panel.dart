@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../models/client_models.dart';
 import '../services/guest_link_service.dart';
@@ -61,8 +61,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
   }
 
   Future<void> _findBySession() async {
-    final snap = await FirebaseFirestore.instance
-        .collection('clients')
+    final snap = await AppScope.col('clients')
         .where('activeSessionId', isEqualTo: widget.sessionId)
         .limit(1)
         .get();
