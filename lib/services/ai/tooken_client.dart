@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'ai_settings.dart';
 
@@ -78,7 +79,6 @@ class TookenClient {
   static final TookenClient instance = TookenClient._();
 
   final _http = http.Client();
-  final _db = FirebaseFirestore.instance;
 
   /// Кэш идентичных запросов в пределах запуска приложения: один и тот же
   /// вопрос по неизменившимся данным не тратит токены дважды.
@@ -611,7 +611,7 @@ class TookenClient {
 
   Future<void> _log(String agentId, String model, AiResult res) async {
     try {
-      await _db.collection('aiLogs').add({
+      await AppScope.col('aiLogs').add({
         'agentId': agentId,
         'model': model,
         'promptTokens': res.promptTokens,

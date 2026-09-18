@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 import 'ai_agents.dart';
 import 'ai_settings.dart';
 
@@ -54,8 +55,7 @@ class AiScheduler {
       });
 
       await _runIfDue('review_digest', const Duration(hours: 24), () async {
-        final fresh = await _db
-            .collection('reviews')
+        final fresh = await AppScope.col('reviews')
             .where('createdAt',
                 isGreaterThan: Timestamp.fromDate(now.subtract(const Duration(hours: 24))))
             .limit(1)
@@ -77,7 +77,7 @@ class AiScheduler {
 
   /// Мягкий замок: держится 20 минут, продлевается «дежурным» устройством.
   Future<bool> _acquireLock() async {
-    final ref = _db.doc('meta/aiSchedulerLock');
+    final ref = AppScope.doc('meta/aiSchedulerLock');
     try {
       return await _db.runTransaction<bool>((tx) async {
         final snap = await tx.get(ref);
@@ -107,7 +107,7 @@ class AiScheduler {
     Duration interval,
     Future<String?> Function() job,
   ) async {
-    final ref = _db.collection('aiJobs').doc(jobId);
+    final ref = AppScope.col('aiJobs').doc(jobId);
     final snap = await ref.get();
     final ts = snap.data()?['lastRunAt'];
     final last = ts is Timestamp ? ts.toDate() : DateTime(2000);
@@ -120,7 +120,7 @@ class AiScheduler {
     final text = await job();
     if (text == null || text.trim().isEmpty) return;
 
-    await _db.collection('staffNotes').add({
+    await AppScope.col('staffNotes').add({
       'text': text,
       'title': _titles[jobId] ?? 'ИИ-сводка',
       'priority': jobId == 'stock_watch' ? 'warning' : 'info',
@@ -138,12 +138,11 @@ class AiScheduler {
   };
 
   /// Лента ИИ-сводок и уведомлений для экранов POS.
-  Stream<QuerySnapshot<Map<String, dynamic>>> notesStream({int limit = 30}) => _db
-      .collection('staffNotes')
+  Stream<QuerySnapshot<Map<String, dynamic>>> notesStream({int limit = 30}) => AppScope.col('staffNotes')
       .orderBy('createdAt', descending: true)
       .limit(limit)
       .snapshots();
 
   Future<void> markNoteRead(String id) =>
-      _db.collection('staffNotes').doc(id).update({'read': true});
+      AppScope.col('staffNotes').doc(id).update({'read': true});
 }

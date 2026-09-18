@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
@@ -40,7 +41,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final doc = await FirebaseFirestore.instance.doc('meta/aiSettings').get();
+    final doc = await AppScope.doc('meta/aiSettings').get();
     _settings = AiSettings.fromMap(doc.data());
     _apiKey.text = _settings.apiKey;
     _baseUrl.text = _settings.baseUrl;
@@ -322,8 +323,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   Widget _usage() {
     final from = DateTime.now().subtract(const Duration(days: 30));
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('aiLogs')
+      stream: AppScope.col('aiLogs')
           .where('createdAt', isGreaterThan: Timestamp.fromDate(from))
           .snapshots(),
       builder: (context, snap) {

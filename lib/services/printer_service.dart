@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
@@ -217,7 +217,7 @@ ReceiptPrinter? activeReceiptPrinter;
 /// заходить в настройки на каждом планшете/после переустановки.
 Future<void> loadSavedPrinterSettings() async {
   try {
-    final doc = await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+    final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     if (data == null) return;
     final type = data['printerType'] as String? ?? 'none';

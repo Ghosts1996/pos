@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 import 'package:http/http.dart' as http;
 import '../../models/client_models.dart';
 import '../../models/reservation_model.dart';
@@ -83,7 +84,6 @@ class AiToolRegistry {
   AiToolRegistry._();
   static final AiToolRegistry instance = AiToolRegistry._();
 
-  final _db = FirebaseFirestore.instance;
   final _ctx = AiContextService();
   final _reservations = ReservationService();
   final _link = GuestLinkService();
@@ -183,11 +183,11 @@ class AiToolRegistry {
       run: (args, ctx) async {
         var id = (args['session_id'] as String?) ?? ctx.sessionId;
         if (ctx.scope == AiToolScope.guest) {
-          final profile = await _db.collection('clients').doc(ctx.guestUid).get();
+          final profile = await AppScope.col('clients').doc(ctx.guestUid).get();
           id = (profile.data()?['activeSessionId'] as String?) ?? '';
         }
         if (id.isEmpty) return 'Открытого чека нет.';
-        final doc = await _db.collection('sessions').doc(id).get();
+        final doc = await AppScope.col('sessions').doc(id).get();
         if (!doc.exists) return 'Чек не найден.';
         final s = SessionModel.fromDoc(doc);
         return [
@@ -252,7 +252,7 @@ class AiToolRegistry {
         var name = args['guest_name']?.toString() ?? '';
         var phone = args['phone']?.toString() ?? '';
         if (ctx.scope == AiToolScope.guest) {
-          final p = await _db.collection('clients').doc(ctx.guestUid).get();
+          final p = await AppScope.col('clients').doc(ctx.guestUid).get();
           name = (p.data()?['name'] as String?) ?? name;
           phone = (p.data()?['phone'] as String?) ?? phone;
         }
@@ -295,7 +295,7 @@ class AiToolRegistry {
       run: (args, ctx) async {
         final id = args['menu_item_id']?.toString() ?? '';
         if (id.isEmpty) return 'Не указана позиция.';
-        await _db.collection('menuItems').doc(id).update({'available': args['available'] == true});
+        await AppScope.col('menuItems').doc(id).update({'available': args['available'] == true});
         await _logAction(ctx, 'set_menu_item_availability', args);
         return args['available'] == true ? 'Позиция вернулась в продажу.' : 'Позиция в стоп-листе.';
       },
@@ -331,13 +331,13 @@ class AiToolRegistry {
       scopes: {AiToolScope.guest},
       mutating: true,
       run: (args, ctx) async {
-        final profileDoc = await _db.collection('clients').doc(ctx.guestUid).get();
+        final profileDoc = await AppScope.col('clients').doc(ctx.guestUid).get();
         if (!profileDoc.exists) return 'Профиль не найден.';
         final profile = ClientProfile.fromDoc(profileDoc);
         if (profile.activeTableId.isEmpty) {
           return 'Гость не привязан к столу — предложи открыть вкладку «Мой стол».';
         }
-        final tableDoc = await _db.collection('tables').doc(profile.activeTableId).get();
+        final tableDoc = await AppScope.col('tables').doc(profile.activeTableId).get();
         final table = tableDoc.exists ? TableModel.fromDoc(tableDoc) : null;
         await _link.callStaff(
           tableId: profile.activeTableId,
@@ -363,7 +363,7 @@ class AiToolRegistry {
       run: (args, ctx) async {
         final uid = ctx.scope == AiToolScope.guest ? ctx.guestUid : '';
         if (uid.isEmpty) return 'Гость не определён.';
-        final ref = _db.collection('clients').doc(uid);
+        final ref = AppScope.col('clients').doc(uid);
         final snap = await ref.get();
         final old = (snap.data()?['aiProfile'] as String?) ?? '';
         final merged = old.isEmpty ? args['note'].toString() : '$old; ${args['note']}';
@@ -422,7 +422,7 @@ class AiToolRegistry {
       scopes: {AiToolScope.staff},
       mutating: true,
       run: (args, ctx) async {
-        await _db.collection('staffNotes').add({
+        await AppScope.col('staffNotes').add({
           'text': args['text'].toString(),
           'priority': args['priority']?.toString() ?? 'info',
           'source': 'ai',
@@ -460,7 +460,7 @@ class AiToolRegistry {
   /// поменял в данных и по чьей команде.
   Future<void> _logAction(AiToolContext ctx, String tool, Map<String, dynamic> args) async {
     try {
-      await _db.collection('aiActions').add({
+      await AppScope.col('aiActions').add({
         'tool': tool,
         'args': jsonEncode(args),
         'scope': ctx.scope.name,

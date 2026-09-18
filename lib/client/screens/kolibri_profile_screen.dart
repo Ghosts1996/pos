@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -439,8 +440,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           // попадали, и «история» показывала произвольный срез за все годы.
           // Сортировка на клиенте это не чинила — она сортировала уже не те
           // записи. Составной индекс добавлен в firestore.indexes.json.
-          stream: FirebaseFirestore.instance
-              .collection('bonusOperations')
+          stream: AppScope.col('bonusOperations')
               .where('clientUid', isEqualTo: _auth.uid)
               .orderBy('createdAt', descending: true)
               .limit(50)

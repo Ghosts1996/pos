@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 /// Регистрация POS-планшета как «рабочего устройства».
@@ -13,7 +14,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 /// консоли Firebase. Администратор вводит его при установке приложения на
 /// новый планшет — как «ключ от рабочего места».
 class StaffDeviceService {
-  final _db = FirebaseFirestore.instance;
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -21,7 +21,7 @@ class StaffDeviceService {
   Future<bool> isRegistered() async {
     if (_uid.isEmpty) return false;
     try {
-      final doc = await _db.collection('staffDevices').doc(_uid).get();
+      final doc = await AppScope.col('staffDevices').doc(_uid).get();
       return doc.exists;
     } catch (_) {
       return false;
@@ -30,7 +30,7 @@ class StaffDeviceService {
 
   Stream<bool> registrationStream() {
     if (_uid.isEmpty) return Stream.value(false);
-    return _db.collection('staffDevices').doc(_uid).snapshots().map((d) => d.exists);
+    return AppScope.col('staffDevices').doc(_uid).snapshots().map((d) => d.exists);
   }
 
   /// Зарегистрировать текущее устройство. Бросает исключение, если секрет
@@ -42,7 +42,7 @@ class StaffDeviceService {
     if (_uid.isEmpty) {
       throw StateError('Нет входа в Firebase — перезапустите приложение.');
     }
-    await _db.collection('staffDevices').doc(_uid).set({
+    await AppScope.col('staffDevices').doc(_uid).set({
       'secret': secret.trim(),
       'label': deviceLabel,
       'registeredAt': Timestamp.fromDate(DateTime.now()),
@@ -50,8 +50,8 @@ class StaffDeviceService {
   }
 
   /// Снять регистрацию (планшет выводится из зала).
-  Future<void> unregister(String uid) => _db.collection('staffDevices').doc(uid).delete();
+  Future<void> unregister(String uid) => AppScope.col('staffDevices').doc(uid).delete();
 
   Stream<QuerySnapshot<Map<String, dynamic>>> devicesStream() =>
-      _db.collection('staffDevices').snapshots();
+      AppScope.col('staffDevices').snapshots();
 }

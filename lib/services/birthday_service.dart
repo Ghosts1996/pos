@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'push_service.dart';
 
 /// Дни рождения гостей.
@@ -10,13 +11,12 @@ class BirthdayService {
   BirthdayService._();
   static final BirthdayService instance = BirthdayService._();
 
-  final _db = FirebaseFirestore.instance;
 
   /// Подарок имениннику: бонусы, которые сгорают через неделю.
   static const double giftBonus = 500;
   static const int daysBefore = 3;
 
-  Future<void> setBirthday(String uid, DateTime date) => _db.collection('clients').doc(uid).set({
+  Future<void> setBirthday(String uid, DateTime date) => AppScope.col('clients').doc(uid).set({
         // Храним день и месяц отдельно: так поиск именинников — обычный
         // запрос по двум полям, без возни с годами.
         'birthdayDay': date.day,
@@ -26,8 +26,7 @@ class BirthdayService {
   /// Именинники на ближайшие дни. Вызывается планировщиком на POS раз в сутки.
   Future<List<({String uid, String name, String token})>> upcoming() async {
     final target = DateTime.now().add(const Duration(days: daysBefore));
-    final snap = await _db
-        .collection('clients')
+    final snap = await AppScope.col('clients')
         .where('birthdayMonth', isEqualTo: target.month)
         .where('birthdayDay', isEqualTo: target.day)
         .get();
@@ -51,12 +50,12 @@ class BirthdayService {
   }) async {
     final year = DateTime.now().year;
 
-    await _db.collection('clients').doc(uid).set({
+    await AppScope.col('clients').doc(uid).set({
       'bonusBalance': FieldValue.increment(giftBonus),
       'birthdayGreetedYear': year,
     }, SetOptions(merge: true));
 
-    await _db.collection('bonusOperations').add({
+    await AppScope.col('bonusOperations').add({
       'clientUid': uid,
       'type': 'accrual',
       'amount': giftBonus,
@@ -82,7 +81,7 @@ class BirthdayService {
       await greet(uid: g.uid, name: g.name, token: g.token);
     }
     if (list.isNotEmpty) {
-      await _db.collection('staffNotes').add({
+      await AppScope.col('staffNotes').add({
         'title': 'Именинники',
         'text': 'Через $daysBefore дня отмечают: ${list.map((e) => e.name).join(', ')}. '
             'Подарочные бонусы начислены.',

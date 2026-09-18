@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/venue_models.dart';
 import 'push_service.dart';
 
@@ -17,7 +18,7 @@ class GiftCardService {
   final _db = FirebaseFirestore.instance;
   final _rnd = Random.secure();
 
-  CollectionReference<Map<String, dynamic>> get _col => _db.collection('giftCards');
+  CollectionReference<Map<String, dynamic>> get _col => AppScope.col('giftCards');
 
   /// Код вида KLB-7F3A-92C1: читается вслух по телефону и не путается
   /// (без похожих символов O/0, I/1).
@@ -69,7 +70,7 @@ class GiftCardService {
   }
 
   CollectionReference<Map<String, dynamic>> get _claims =>
-      _db.collection('giftCardClaims');
+      AppScope.col('giftCardClaims');
 
   /// Гость вводит код у себя в приложении.
   ///
@@ -161,7 +162,7 @@ class GiftCardService {
   Future<void> _process(GiftCardClaim claim) async {
     final claimRef = _claims.doc(claim.id);
     final cardRef = _col.doc(claim.code);
-    final clientRef = _db.collection('clients').doc(claim.clientUid);
+    final clientRef = AppScope.col('clients').doc(claim.clientUid);
 
     double granted = 0;
 
@@ -215,7 +216,7 @@ class GiftCardService {
     if (granted <= 0) return;
 
     // Запись в историю бонусов — её гость видит у себя в профиле.
-    await _db.collection('bonusOperations').add({
+    await AppScope.col('bonusOperations').add({
       'clientUid': claim.clientUid,
       'type': 'accrual',
       'amount': granted,
@@ -249,8 +250,6 @@ class TipsService {
   TipsService._();
   static final TipsService instance = TipsService._();
 
-  final _db = FirebaseFirestore.instance;
-
   /// Создать запись о чаевых. [paymentId] заполняется после подтверждения
   /// оплаты провайдером (или вручную кассиром, если чаевые наличными).
   Future<String> leaveTip({
@@ -262,7 +261,7 @@ class TipsService {
     String comment = '',
     String method = 'app',
   }) async {
-    final ref = await _db.collection('tips').add({
+    final ref = await AppScope.col('tips').add({
       'amount': amount,
       'employeeId': employeeId,
       'employeeName': employeeName,
@@ -284,7 +283,7 @@ class TipsService {
   }
 
   Future<void> confirm(String tipId, {String paymentId = ''}) =>
-      _db.collection('tips').doc(tipId).update({
+      AppScope.col('tips').doc(tipId).update({
         'status': 'paid',
         'paymentId': paymentId,
         'paidAt': Timestamp.fromDate(DateTime.now()),
@@ -295,8 +294,7 @@ class TipsService {
     required DateTime from,
     required DateTime to,
   }) async {
-    final snap = await _db
-        .collection('tips')
+    final snap = await AppScope.col('tips')
         .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
         .where('createdAt', isLessThan: Timestamp.fromDate(to))
         .get();
@@ -311,8 +309,7 @@ class TipsService {
     return totals;
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> recentStream({int limit = 50}) => _db
-      .collection('tips')
+  Stream<QuerySnapshot<Map<String, dynamic>>> recentStream({int limit = 50}) => AppScope.col('tips')
       .orderBy('createdAt', descending: true)
       .limit(limit)
       .snapshots();

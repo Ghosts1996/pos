@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:basic_utils/basic_utils.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart';
 import '../models/fiscal_receipt.dart';
@@ -595,7 +595,7 @@ KassaService kassaService = MockKassaService();
 /// аналогично [loadSavedPrinterSettings] в `printer_service.dart`.
 Future<void> loadSavedKassaSettings() async {
   try {
-    final doc = await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+    final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     if (data == null) return;
     kassaService = buildKassaService(data);

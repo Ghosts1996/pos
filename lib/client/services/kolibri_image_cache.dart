@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../../models/menu_models.dart';
@@ -31,7 +31,7 @@ class KolibriImageCache {
     if (_running || _done) return;
     _running = true;
     try {
-      final snap = await FirebaseFirestore.instance.collection('menuItems').get();
+      final snap = await AppScope.col('menuItems').get();
       final urls = snap.docs
           .map(MenuItem.fromDoc)
           .where((i) => i.available && i.imageUrl.isNotEmpty)

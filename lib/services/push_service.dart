@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'venue_service.dart';
 
@@ -15,7 +16,6 @@ class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
-  final _db = FirebaseFirestore.instance;
   final _fcm = FirebaseMessaging.instance;
 
   /// POS: подписка планшета на уведомления зала.
@@ -29,11 +29,11 @@ class PushService {
     await _requestPermission();
     final token = await _fcm.getToken();
     if (token != null && uid.isNotEmpty) {
-      await _db.collection('clients').doc(uid).set({'pushToken': token}, SetOptions(merge: true));
+      await AppScope.col('clients').doc(uid).set({'pushToken': token}, SetOptions(merge: true));
     }
     _fcm.onTokenRefresh.listen((t) {
       if (uid.isEmpty) return;
-      _db.collection('clients').doc(uid).set({'pushToken': t}, SetOptions(merge: true));
+      AppScope.col('clients').doc(uid).set({'pushToken': t}, SetOptions(merge: true));
     });
   }
 
@@ -60,7 +60,7 @@ class PushService {
     required String body,
     Map<String, String> data = const {},
   }) async {
-    final doc = await _db.collection('clients').doc(clientUid).get();
+    final doc = await AppScope.col('clients').doc(clientUid).get();
     final token = doc.data()?['pushToken'] as String?;
     if (token == null || token.isEmpty) return;
     await enqueue(token: token, title: title, body: body, data: data);
@@ -83,7 +83,7 @@ class PushService {
     Map<String, String> data = const {},
   }) async {
     if (!VenueService.instance.cached.cloudFunctionsEnabled) return;
-    await _db.collection('pushQueue').add({
+    await AppScope.col('pushQueue').add({
       if (topic != null) 'topic': topic,
       if (token != null) 'token': token,
       if (clientUid.isNotEmpty) 'clientUid': clientUid,

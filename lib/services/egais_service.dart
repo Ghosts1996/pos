@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 import 'package:uuid/uuid.dart';
@@ -197,7 +197,7 @@ EgaisUtmService? activeEgaisService;
 /// приложения, аналогично [loadSavedKassaSettings] в `kassa_service.dart`.
 Future<void> loadSavedEgaisSettings() async {
   try {
-    final doc = await FirebaseFirestore.instance.collection('settings').doc('integrations').get();
+    final doc = await AppScope.col('settings').doc('integrations').get();
     final host = doc.data()?['utmHost'] as String?;
     activeEgaisService = (host != null && host.isNotEmpty) ? EgaisUtmService(utmHost: host) : null;
   } catch (_) {

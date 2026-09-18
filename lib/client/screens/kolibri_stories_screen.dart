@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../../models/story_model.dart';
 import '../../utils/linkify_utils.dart';
@@ -22,8 +23,7 @@ class KolibriStoriesScreen extends StatelessWidget {
       // orderBy убран сознательно: связка where + orderBy требует составного
       // индекса, без которого запрос падает с ошибкой — и лента «висела».
       // Карточек в ленте единицы, поэтому сортируем на устройстве.
-      stream: FirebaseFirestore.instance
-          .collection('stories')
+      stream: AppScope.col('stories')
           .where('published', isEqualTo: true)
           .limit(30)
           .snapshots(),

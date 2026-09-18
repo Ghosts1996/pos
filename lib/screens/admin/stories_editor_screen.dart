@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../../models/story_model.dart';
 import '../../services/ai/ai_agents.dart';
@@ -40,7 +41,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
         child: const Icon(Icons.add),
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _db.collection('stories').orderBy('createdAt', descending: true).snapshots(),
+        stream: AppScope.col('stories').orderBy('createdAt', descending: true).snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           // Порядок ровно тот же, что видит гость в ленте: иначе
@@ -81,7 +82,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
 
     final batch = _db.batch();
     for (var i = 0; i < reordered.length; i++) {
-      batch.update(_db.collection('stories').doc(reordered[i].id), {'order': i});
+      batch.update(AppScope.col('stories').doc(reordered[i].id), {'order': i});
     }
     await batch.commit();
   }
@@ -128,7 +129,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                 Switch(
                   value: s.published,
                   onChanged: (v) =>
-                      _db.collection('stories').doc(s.id).update({'published': v}),
+                      AppScope.col('stories').doc(s.id).update({'published': v}),
                 ),
               ],
             ),
@@ -168,7 +169,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
               children: [
                 TextButton(onPressed: () => _edit(s), child: const Text('Изменить')),
                 TextButton(
-                  onPressed: () => _db.collection('stories').doc(s.id).delete(),
+                  onPressed: () => AppScope.col('stories').doc(s.id).delete(),
                   child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
                 ),
               ],
@@ -187,7 +188,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       // Призыв: …» одной строкой.
       final drafts = await AiService.instance.storyDrafts(count: 3);
       for (final d in drafts) {
-        await _db.collection('stories').add(StoryCard(
+        await AppScope.col('stories').add(StoryCard(
               id: '',
               title: d.title,
               text: d.text,
@@ -299,7 +300,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
           action == 'none' ? '' : (label.text.trim().isEmpty ? defaultLabel(action) : label.text.trim()),
     };
     if (story == null) {
-      await _db.collection('stories').add({
+      await AppScope.col('stories').add({
         ...data,
         'published': false,
         'byAi': false,
@@ -307,7 +308,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
         'createdAt': Timestamp.fromDate(DateTime.now()),
       });
     } else {
-      await _db.collection('stories').doc(story.id).update(data);
+      await AppScope.col('stories').doc(story.id).update(data);
     }
   }
 }

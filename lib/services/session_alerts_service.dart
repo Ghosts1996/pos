@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 import '../models/client_models.dart';
 import '../models/reservation_model.dart';
 import '../models/session_model.dart';
@@ -31,7 +32,6 @@ class SessionAlertsService {
   /// За сколько до конца сеанса предупредить.
   static const warnBefore = Duration(minutes: 10);
 
-  final _db = FirebaseFirestore.instance;
   final _notify = NotificationService.instance;
 
   /// Кто вошёл на этом устройстве и кто открыл текущую смену.
@@ -116,8 +116,7 @@ class SessionAlertsService {
     // потребовала бы составного индекса, а без него запрос молча падает и
     // смену не видит никто. Открытых смен всё равно единицы — выбрать
     // самую свежую проще на месте.
-    _shift = _db
-        .collection('shifts')
+    _shift = AppScope.col('shifts')
         .where('status', isEqualTo: 'open')
         .snapshots()
         .listen((snap) {
@@ -194,8 +193,7 @@ class SessionAlertsService {
   // ---------- ТАЙМЕРЫ СТОЛОВ ----------
 
   void _watchSessions() {
-    _sessions = _db
-        .collection('sessions')
+    _sessions = AppScope.col('sessions')
         .where('status', isEqualTo: 'active')
         .snapshots()
         .listen((snap) {
@@ -259,8 +257,7 @@ class SessionAlertsService {
   // ---------- БРОНИ ----------
 
   void _watchReservations() {
-    _reservations = _db
-        .collection('reservations')
+    _reservations = AppScope.col('reservations')
         .where('status', isEqualTo: 'new')
         .snapshots()
         .listen((snap) {
@@ -290,8 +287,7 @@ class SessionAlertsService {
   // ---------- ВЫЗОВЫ ГОСТЕЙ ----------
 
   void _watchCalls() {
-    _calls = _db
-        .collection('waiterCalls')
+    _calls = AppScope.col('waiterCalls')
         .where('status', isEqualTo: 'new')
         .snapshots()
         .listen((snap) {

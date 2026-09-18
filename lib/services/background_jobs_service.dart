@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_scope.dart';
 
 import '../models/reservation_model.dart';
 import 'birthday_service.dart';
@@ -91,8 +92,7 @@ class BackgroundJobsService {
     final from = now.subtract(_lookBack);
     final to = now.subtract(_noShowAfter);
 
-    final snap = await _db
-        .collection('reservations')
+    final snap = await AppScope.col('reservations')
         .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
         .where('startTime', isLessThan: Timestamp.fromDate(to))
         .get();
@@ -109,8 +109,7 @@ class BackgroundJobsService {
       });
       // Освобождаем стол и в обезличенном зеркале занятости — иначе бронь
       // продолжит держать слот в гостевом приложении до конца интервала.
-      await _db
-          .collection('reservationSlots')
+      await AppScope.col('reservationSlots')
           .doc(doc.id)
           .set({'active': false}, SetOptions(merge: true));
 
@@ -119,7 +118,7 @@ class BackgroundJobsService {
     }
 
     if (names.isEmpty) return;
-    await _db.collection('staffNotes').add({
+    await AppScope.col('staffNotes').add({
       'title': 'Брони без гостя',
       'text': 'Столы освобождены автоматически: ${names.join('; ')}.',
       'priority': 'warning',
@@ -135,7 +134,7 @@ class BackgroundJobsService {
   /// Если «дежурный» планшет выключили, через 20 минут работу подхватит
   /// любой другой.
   Future<bool> _acquireLock() async {
-    final ref = _db.doc('meta/jobsLock');
+    final ref = AppScope.doc('meta/jobsLock');
     try {
       return await _db.runTransaction<bool>((tx) async {
         final snap = await tx.get(ref);
@@ -166,7 +165,7 @@ class BackgroundJobsService {
     Duration interval,
     Future<bool> Function() job,
   ) async {
-    final ref = _db.collection('jobRuns').doc(jobId);
+    final ref = AppScope.col('jobRuns').doc(jobId);
     final snap = await ref.get();
     final ts = snap.data()?['lastRunAt'];
     final last = ts is Timestamp ? ts.toDate() : DateTime(2000);
