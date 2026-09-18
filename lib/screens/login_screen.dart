@@ -14,8 +14,13 @@ import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
 import 'staff_device_setup_screen.dart';
 
-/// Вход по 4-значному PIN-коду сотрудника. Роль (админ/сотрудник) определяется
-/// автоматически по коду — отдельного экрана выбора роли не требуется.
+/// Вход по PIN-коду сотрудника. Длина кода зависит от роли — 4 цифры у
+/// сотрудника, 6 у администратора (см. AppConstants.pinLengthForRole) —
+/// поэтому, в отличие от прежней версии, роль здесь выбирается ЯВНО
+/// переключателем над клавиатурой, а не определяется по факту совпадения
+/// кода: at PIN-entry time не знаем заранее, сколько цифр ждать, чтобы
+/// сработал автовход после последней. Сотрудник — режим по умолчанию (это
+/// частый вход в течение смены), администратор — редкий, отдельным тапом.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -30,6 +35,11 @@ class _LoginScreenState extends State<LoginScreen> {
   String _pin = '';
   bool _loading = false;
   String? _error;
+  bool _adminMode = false;
+
+  int get _requiredPinLength => _adminMode
+      ? AppConstants.adminPinLength
+      : AppConstants.employeePinLength;
 
   /// Идёт восстановление прошлого входа — показываем ожидание вместо
   /// клавиатуры, чтобы не мигать экраном ввода PIN на секунду.
@@ -84,7 +94,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
-    if (_pin.length < 4 || _loading) return;
+    if (_pin.length < _requiredPinLength || _loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -164,9 +174,18 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _tap(String digit) {
-    if (_pin.length >= 4) return;
+    if (_pin.length >= _requiredPinLength) return;
     setState(() => _pin += digit);
-    if (_pin.length == 4) _submit();
+    if (_pin.length == _requiredPinLength) _submit();
+  }
+
+  void _setAdminMode(bool value) {
+    if (_adminMode == value) return;
+    setState(() {
+      _adminMode = value;
+      _pin = '';
+      _error = null;
+    });
   }
 
   void _backspace() {
@@ -224,10 +243,31 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 12),
               Text(appName,
                   style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              // Сотрудник — режим по умолчанию (частый вход в течение
+              // смены, PIN короче), администратор выбирается явно отдельным
+              // тапом: пока не знаем, сколько цифр наберут, автовход после
+              // последней цифры не может сработать сам по себе.
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(4, (i) {
+                children: [
+                  ChoiceChip(
+                    label: const Text('Сотрудник'),
+                    selected: !_adminMode,
+                    onSelected: _loading ? null : (_) => _setAdminMode(false),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Администратор'),
+                    selected: _adminMode,
+                    onSelected: _loading ? null : (_) => _setAdminMode(true),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_requiredPinLength, (i) {
                   final filled = i < _pin.length;
                   return Container(
                     margin: const EdgeInsets.all(6),

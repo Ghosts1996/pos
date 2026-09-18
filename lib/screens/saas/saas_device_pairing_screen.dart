@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../services/app_bootstrap.dart';
 import '../../services/app_scope.dart';
 import '../../services/saas_device_join_service.dart';
+import '../../services/subscription_gate.dart';
 import '../../services/tenant_config_service.dart';
 import '../../theme/app_colors.dart';
 import '../image_preload_screen.dart';
@@ -71,6 +72,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
         throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
       }
       AppScope.enterTenant(tenantId, branding: config.branding);
+      SubscriptionGate.watch(tenantId, config);
       startBackgroundServices();
 
       if (!mounted) return;

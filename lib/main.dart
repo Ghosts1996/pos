@@ -10,9 +10,11 @@ import 'models/tenant_models.dart';
 import 'services/app_bootstrap.dart';
 import 'services/app_scope.dart';
 import 'services/auth_service.dart';
+import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
 import 'screens/saas/saas_device_pairing_screen.dart';
+import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -81,6 +83,12 @@ void main() async {
         }
         if (config != null) {
           AppScope.enterTenant(config.tenant.id, branding: config.branding);
+          // Живой сторож жёсткой блокировки — держит смену
+          // tenants/subscriptions под наблюдением всё время работы
+          // приложения, а не только на старте (см. subscription_gate.dart:
+          // без этого просрочка, наступившая посреди смены, ничего бы не
+          // меняла до следующего перезапуска планшета).
+          SubscriptionGate.watch(config.tenant.id, config);
           branding = config.branding;
           ready = true;
           startBackgroundServices();
@@ -136,9 +144,8 @@ class HookahPosApp extends StatelessWidget {
       // фиксируем тёмную "Midnight Blue" тему как единственную, без
       // системного light/dark переключения, чтобы кассир не терял привычную
       // контрастность в течение смены. В SaaS-режиме поверх неё накладывается
-      // фирменный цвет заведения (см. AppTheme.branded) — только акцентный
-      // цвет, не вся палитра: полный визуальный редизайн под бренд — задача
-      // отдельного этапа (предпросмотр брендинга, TOR §18).
+      // фирменная палитра заведения (см. AppTheme.branded — фон, текст,
+      // вторичный цвет и цвет кнопок, с проверкой контраста фон/текст).
       theme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
       darkTheme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
       themeMode: ThemeMode.dark,
@@ -150,6 +157,16 @@ class HookahPosApp extends StatelessWidget {
           : ready
               ? const ImagePreloadScreen()
               : SetupRequiredScreen(errorDetails: startupError),
+      // Жёсткая блокировка при просроченной подписке (SubscriptionGate,
+      // одно-арендная сборка её никогда не поднимает — blocked остаётся
+      // false навсегда) — builder оборачивает ЛЮБОЙ текущий экран, а не
+      // только "домашний": перекрывает происходящее посреди смены, а не
+      // только при запуске.
+      builder: (context, child) => ValueListenableBuilder<bool>(
+        valueListenable: SubscriptionGate.blocked,
+        builder: (context, isBlocked, _) =>
+            isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+      ),
     );
   }
 }
