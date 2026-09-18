@@ -178,7 +178,7 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
   // или более длинный триал, чем у стартового.
   const resolvedPlanId = planId || "start";
   const planSnap = await db.collection("plans").doc(resolvedPlanId).get();
-  const trialDays = Number(planSnap.data()?.trialDays) || 14;
+  const trialDays = Number(planSnap.data()?.trialDays) || 7;
 
   const batch = db.batch();
 

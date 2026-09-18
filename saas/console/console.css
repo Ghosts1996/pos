@@ -225,6 +225,33 @@ a { color: var(--primary); }
   padding: 4px 10px; border-radius: 999px; margin-bottom: 10px;
 }
 
+/* Лендинг: «Как это работает» — нумерованные шаги */
+.step-item { display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.step-item:last-child { border-bottom: none; }
+.step-num {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--primary); color: var(--text);
+  font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none;
+}
+
+/* Лендинг: «Почему не тетрадь и Excel» — было/стало в две колонки на
+   широком экране, одной колонкой на телефоне (тексты длиннее, чем в
+   feature-grid, в две колонки на узком экране не помещаются красиво). */
+.compare-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }
+.compare-card.bad { border-color: var(--danger); }
+.compare-card.good { border-color: var(--primary); }
+@media (min-width: 640px) {
+  .compare-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* Лендинг: липкая кнопка снизу — включается через JS (см. console.js),
+   как только форма email вверху уходит за пределы экрана. */
+.sticky-cta {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 480px; margin: 0 auto;
+  z-index: 15; opacity: 0; transform: translateY(14px); pointer-events: none; transition: .25s ease;
+  box-shadow: 0 12px 30px rgba(0,0,0,.55);
+}
+.sticky-cta.show { opacity: 1; transform: none; pointer-events: auto; }
+
 /* Калькулятор окупаемости на лендинге */
 .calc-result { font-size: 28px; font-weight: 800; color: var(--primary); margin: 8px 0 2px; }
 

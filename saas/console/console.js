@@ -31,7 +31,7 @@ const FUNCTIONS_REGION = 'europe-west1';
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-18.3';
+const CONSOLE_BUILD = '2026-09-18.4';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -535,8 +535,11 @@ function landingPlanCardHtml(p, selected, popular) {
   const priceText = Number(p.priceRub) > 0
     ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
     : 'По запросу';
+  const yearlyDiscountPercent = Number(p.priceRub) > 0 && Number(p.priceRubYearly) > 0
+    ? Math.round((1 - Number(p.priceRubYearly) / (Number(p.priceRub) * 12)) * 100)
+    : 0;
   const yearlyText = Number(p.priceRubYearly) > 0
-    ? `${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год`
+    ? `${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год${yearlyDiscountPercent > 0 ? ` (−${yearlyDiscountPercent}%)` : ''}`
     : null;
   const limits = [
     p.maxEmployees ? `до ${p.maxEmployees} сотрудников` : 'сотрудников без лимита',
@@ -555,7 +558,7 @@ function landingPlanCardHtml(p, selected, popular) {
       <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}${yearlyText ? ` <span class="small muted" style="font-weight:400">или ${esc(yearlyText)}</span>` : ''}</div>
       <div class="small muted">${limits.join(' · ')}</div>
       ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
-      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 14} дней бесплатно</div>
+      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 7} дней бесплатно</div>
       <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
         ${selected ? 'Тариф выбран ✓' : 'Выбрать и попробовать'}
       </button>
@@ -566,6 +569,13 @@ function landingPlanCardHtml(p, selected, popular) {
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
 
+  const HOW_IT_WORKS = [
+    { title: 'Оставляете email', desc: 'Придёт ссылка для входа — без пароля и без банковской карты. Сразу открывается бесплатный тестовый период (срок — в карточке тарифа ниже).' },
+    { title: 'Настраиваете под свой бренд', desc: 'Название, логотип и цвета приложения, меню и склад, лимиты сотрудников и устройств — 10–15 минут в личном кабинете.' },
+    { title: 'Подключаете планшет и работаете', desc: 'Приложение кассы — прямо из личного кабинета. Вводите код заведения — касса, склад, брони и лояльность уже работают.' },
+  ];
+  const LANDING_FAQ_PREVIEW = [FAQ_ITEMS[0], FAQ_ITEMS[4], FAQ_ITEMS[5], FAQ_ITEMS[3]];
+
   screenEl().innerHTML = `
     <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
     <div class="brand">Hookah POS</div>
@@ -574,6 +584,12 @@ function screenLanding() {
     программа лояльности, гостевое приложение и ИИ-помощники персоналу —
     всё в одной системе. Работает на обычном Android-планшете, разворачивается
     за 10–15 минут, без затрат на оборудование или IT-специалиста.</p>
+
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:18px">
+      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">⚡ Запуск за 10–15 минут</span>
+      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">🔒 Данные каждого заведения изолированы</span>
+      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">💳 Без карты — только email для теста</span>
+    </div>
 
     <div class="card" style="margin-top:6px">
       <label class="field"><span>Email</span>
@@ -584,7 +600,20 @@ function screenLanding() {
       <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
     </div>
 
-    <h2 style="margin-top:26px">Что умеет система</h2>
+    <h2 style="margin-top:26px">Как это работает</h2>
+    <div class="card">
+      ${HOW_IT_WORKS.map((s, i) => `
+        <div class="step-item">
+          <div class="step-num">${i + 1}</div>
+          <div class="grow">
+            <div style="font-weight:600">${esc(s.title)}</div>
+            <div class="small muted">${esc(s.desc)}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <h2>Что умеет система</h2>
     <div class="feature-grid">
       ${LANDING_FEATURES.map((f) => `
         <div class="feature-card">
@@ -593,6 +622,24 @@ function screenLanding() {
           <div class="feature-desc">${esc(f.desc)}</div>
         </div>
       `).join('')}
+    </div>
+
+    <h2>Почему не тетрадь и Excel</h2>
+    <div class="compare-grid">
+      <div class="card compare-card bad">
+        <div style="font-weight:700;margin-bottom:10px">❌ Как обычно бывает</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Чек и скидка считаются на калькуляторе — время и ошибки</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Остатки склада — в отдельной таблице, обновляется, когда вспомнят</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони — в блокноте или переписке, иногда теряются</div>
+        <div class="small" style="padding:6px 0">Отчёт по смене — вручную, полчаса и дольше</div>
+      </div>
+      <div class="card compare-card good">
+        <div style="font-weight:700;margin-bottom:10px">✅ С Hookah POS</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Касса сама считает чек, скидки и бонусы применяются автоматически</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Склад обновляется при каждой продаже, инвентаризация — с историей расхождений</div>
+        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони из гостевого приложения сразу попадают в общий календарь зала</div>
+        <div class="small" style="padding:6px 0">X-отчёт по смене — один клик, без ручного подсчёта</div>
+      </div>
     </div>
 
     <h2>Тарифы</h2>
@@ -613,11 +660,39 @@ function screenLanding() {
       <div id="f-calc-output" style="margin-top:14px"></div>
     </div>
 
+    <h2>Безопасность и соответствие</h2>
+    <div class="card">
+      <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🔒 У каждого заведения отдельная изолированная база данных — доступ к чужим данным технически невозможен</div>
+      <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🧾 Фискализация чеков и эквайринг (54-ФЗ) подключаются отдельно, через собственное сертифицированное оборудование — сама программа их не подменяет</div>
+      <div class="small" style="padding:7px 0">☁️ Инфраструктура — Google Firebase, статус в реальном времени — на <a href="#/status">странице статуса</a></div>
+    </div>
+
+    <h2>Частые вопросы</h2>
+    <div class="card">
+      ${LANDING_FAQ_PREVIEW.map((item, i) => `
+        <div class="faq-item" data-faq="preview-${i}">
+          <div class="faq-question"><span>${esc(item.q)}</span><span class="faq-toggle">+</span></div>
+          <div class="faq-answer">${esc(item.a)}</div>
+        </div>
+      `).join('')}
+    </div>
+    <p class="small center muted"><a href="#/faq">Смотреть все вопросы →</a></p>
+
+    <div class="card" style="text-align:center;margin-top:22px">
+      <div style="font-weight:700;font-size:16px;margin-bottom:6px">Готовы попробовать?</div>
+      <p class="small muted" style="margin-bottom:14px">Бесплатный доступ по email, без карты — уже сегодня.</p>
+      <button class="btn btn-primary" id="f-landing-cta-bottom">Оставить заявку</button>
+    </div>
+
     <p class="small center muted" style="margin-top:20px">
       Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
     </p>
     ${publicFooterLinksHtml()}
     ${versionFooterHtml()}
+
+    <div class="sticky-cta" id="landing-sticky">
+      <button class="btn btn-primary" id="f-landing-sticky-btn">Попробовать бесплатно →</button>
+    </div>
   `;
 
   const submit = async () => {
@@ -651,6 +726,28 @@ function screenLanding() {
   };
   $('f-landing-start').onclick = submit;
   $('f-landing-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+  const scrollToEmail = () => {
+    $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('f-landing-email')?.focus();
+  };
+  if ($('f-landing-cta-bottom')) $('f-landing-cta-bottom').onclick = scrollToEmail;
+  if ($('f-landing-sticky-btn')) $('f-landing-sticky-btn').onclick = scrollToEmail;
+
+  document.querySelectorAll('.faq-item').forEach((el) => {
+    el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
+  });
+
+  // Липкая кнопка снизу появляется, как только форма email вверху уходит
+  // за пределы экрана — на длинной странице решение "попробовать" всегда
+  // должно быть в одно касание, а не пролистывание обратно наверх.
+  const onLandingScroll = () => {
+    const heroCard = $('f-landing-email');
+    if (!heroCard) return;
+    $('landing-sticky')?.classList.toggle('show', heroCard.getBoundingClientRect().bottom < 0);
+  };
+  window.addEventListener('scroll', onLandingScroll, { passive: true });
+  sub(() => window.removeEventListener('scroll', onLandingScroll));
 
   sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
     const plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
@@ -1107,7 +1204,7 @@ const TIMEZONE_OPTIONS = [
 // этапе выбора и подключения (честно про фискализацию: её из коробки нет,
 // это же написано и в самом приложении, см. корневой README.md).
 const FAQ_ITEMS = [
-  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока триал не закончится. Длительность зависит от тарифа, обычно 14 дней.' },
+  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока триал не закончится. Длительность зависит от тарифа, обычно 7 дней.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
   { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
   { q: 'Можно ли сменить тариф позже?', a: 'Да, в любой момент в разделе «Тарифы» — повышение и понижение доступны в один клик, без обращения в поддержку.' },
@@ -2312,7 +2409,7 @@ function watchPlans() {
           </label>
         </div>
         <label class="field"><span>Пробный период, дней (при создании заведения на этом тарифе)</span>
-          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="trialDays" value="${Number(p.trialDays) || 14}">
+          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="trialDays" value="${Number(p.trialDays) || 7}">
         </label>
         <div class="row" style="flex-wrap:wrap;gap:14px;margin:10px 0 16px">
           <label class="row" style="width:auto;gap:6px">
@@ -2351,7 +2448,7 @@ function watchPlans() {
     try {
       await setDoc(doc(state.db, 'plans', id), {
         name: id, priceRub: 0, priceRubYearly: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
-        trialDays: 14, aiEnabled: false, customBranding: false, customDomain: false,
+        trialDays: 7, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
       });
       toast('Тариф создан — заполните цену и лимиты ниже');
