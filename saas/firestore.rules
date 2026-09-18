@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Правила SaaS-платформы Hoocah POS — multi-tenant.
+// Правила SaaS-платформы Hookah POS — multi-tenant.
 //
 // Живёт ОТДЕЛЬНО от корневого firestore.rules, который обслуживает
 // одно действующее заведение (проект hoocah-pos) и его трогать нельзя.

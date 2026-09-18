@@ -1,4 +1,4 @@
-// Консоль владельца заведения — веб-приложение SaaS-платформы Hoocah POS.
+// Консоль владельца заведения — веб-приложение SaaS-платформы Hookah POS.
 //
 // Отдельный сайт от гостевого public/app: тот открывает гость по ссылке на
 // столе, этот — владелец заведения, чтобы завести заведение, посмотреть код
@@ -337,7 +337,7 @@ async function boot() {
     if (!config || !config.projectId) throw new Error('пусто');
   } catch (_) {
     screenEl().innerHTML = `
-      <div class="brand">Hoocah POS</div>
+      <div class="brand">Hookah POS</div>
       <h1>Почти готово</h1>
       <p class="muted">Осталось один раз зарегистрировать веб-приложение в
       Firebase: консоль → Project settings → Your apps → значок
@@ -494,7 +494,7 @@ boot();
 // ---------- ЛЕНДИНГ ----------
 
 // Реальные возможности приложения (см. корневой README.md, разделы
-// "Hoocah POS — возможности сотрудника/администратора") — сокращённо, для
+// "Hookah POS — возможности сотрудника/администратора") — сокращённо, для
 // человека, который видит систему первый раз, а не для того, кто уже читал
 // техническую документацию.
 const LANDING_FEATURES = [
@@ -545,8 +545,8 @@ function screenLanding() {
 
   screenEl().innerHTML = `
     <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
-    <div class="brand">Hoocah POS</div>
-    <h1>Своя касса — без разработчиков и без своих серверов</h1>
+    <div class="brand">Hookah POS</div>
+    <h1>Готовая касса для заведения — без программистов и своих серверов</h1>
     <p class="muted">Карта зала, чеки и оплата, склад, брони и лист ожидания,
     программа лояльности, гостевое приложение и ИИ-помощники персоналу —
     всё в одной системе. Работает на обычном Android-планшете, разворачивается
@@ -595,7 +595,7 @@ function screenLanding() {
       window.localStorage.setItem('emailForSignIn', email);
       if (selectedPlanId) window.localStorage.setItem('selectedPlanId', selectedPlanId);
       screenEl().innerHTML = `
-        <div class="brand">Hoocah POS</div>
+        <div class="brand">Hookah POS</div>
         <h1>Проверьте почту</h1>
         <p class="muted">Отправили ссылку для входа на <b>${esc(email)}</b>.
         Откройте письмо на этом же телефоне и перейдите по ссылке — она
@@ -651,7 +651,7 @@ let authMode = 'login'; // 'login' | 'signup' — держим отдельно 
 
 function screenAuth() {
   screenEl().innerHTML = `
-    <div class="brand">Hoocah POS</div>
+    <div class="brand">Hookah POS</div>
     <h1>${authMode === 'login' ? 'Вход в консоль' : 'Регистрация владельца'}</h1>
     <p class="muted">Личный кабинет владельца заведения: подписка, код
     приглашения устройств, фирменный цвет приложения кассы.</p>
@@ -715,7 +715,7 @@ function screenAuth() {
 }
 
 function screenLoading() {
-  screenEl().innerHTML = `<div class="brand">Hoocah POS</div><div class="spinner"></div>`;
+  screenEl().innerHTML = `<div class="brand">Hookah POS</div><div class="spinner"></div>`;
 }
 
 // ---------- ПОДТВЕРЖДЕНИЕ ПОЧТЫ ----------
@@ -723,7 +723,7 @@ function screenLoading() {
 function screenVerifyEmail() {
   const email = state.auth.currentUser?.email || '';
   screenEl().innerHTML = `
-    <div class="brand">Hoocah POS</div>
+    <div class="brand">Hookah POS</div>
     <h1>Подтвердите почту</h1>
     <p class="muted">Мы отправили письмо со ссылкой на <b>${esc(email)}</b>.
     Перейдите по ней, потом вернитесь сюда и нажмите «Проверить» —
@@ -785,7 +785,7 @@ function screenOnboarding() {
 
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hoocah POS</div>
+      <div class="brand">Hookah POS</div>
       ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
     </div>
     <h1>Новое заведение</h1>
@@ -918,7 +918,7 @@ function screenDashboard() {
   screenEl().classList.add('has-tabbar');
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hoocah POS</div>
+      <div class="brand">Hookah POS</div>
       <div class="row" style="width:auto;gap:14px">
         ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
         <button class="btn-link" id="f-signout">Выйти</button>
@@ -1006,7 +1006,7 @@ function watchDashboardData(tenantId) {
     // (createTenant) и lib/models/tenant_models.dart (BrandingConfig) —
     // заведение без кастомного брендинга выглядит как проверенный продукт,
     // а не какой-то другой палитрой по умолчанию.
-    const brandName = existingName ?? (branding?.appName || tenant.name || 'Hoocah POS');
+    const brandName = existingName ?? (branding?.appName || tenant.name || 'Hookah POS');
     const logoUrl = pendingLogoUrl ?? (branding?.logoUrl || '');
     const primaryColor = existingColor('f-color-primary') ?? (branding?.primaryColor || '#0B5ED7');
     const secondaryColor = existingColor('f-color-secondary') ?? (branding?.secondaryColor || '#162A4A');
@@ -1432,7 +1432,7 @@ function updateBrandPreview() {
   const bg = $('f-color-bg')?.value || '#02050B';
   const text = $('f-color-text')?.value || '#F8FAFC';
   const button = $('f-color-button')?.value || '#0B5ED7';
-  const name = $('f-brand-name')?.value || 'Hoocah POS';
+  const name = $('f-brand-name')?.value || 'Hookah POS';
 
   preview.style.background = bg;
   title.style.color = text;
@@ -1463,7 +1463,7 @@ function screenSuperAdmin() {
     : '<a href="#/onboarding" class="btn-link">Своё заведение</a>';
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hoocah POS · платформа</div>
+      <div class="brand">Hookah POS · платформа</div>
       ${backLink}
     </div>
     <h1>Панель платформы</h1>
@@ -1859,7 +1859,7 @@ function watchAllTenants() {
           fmtDate(t.createdAt),
         ]);
       });
-      downloadCsv(`hoocah-pos-заведения-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+      downloadCsv(`hookah-pos-заведения-${new Date().toISOString().slice(0, 10)}.csv`, rows);
     };
   }
 }
@@ -2118,7 +2118,7 @@ async function exportPaymentsCsv() {
       const e = d.data();
       rows.push([fmtDateTime(e.receivedAt), e.tenantId || '—', SUB_STATUS_LABELS[e.status] || e.status || '—', e.purpose || '—', Number(e.amount) || 0]);
     });
-    downloadCsv(`hoocah-pos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    downloadCsv(`hookah-pos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   } catch (e) {
     toast(`Не удалось выгрузить платежи: ${e?.message || e}`);
   } finally {

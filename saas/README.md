@@ -1,4 +1,4 @@
-# Hoocah POS SaaS — фундамент, онбординг, биллинг и APK-конвейер
+# Hookah POS SaaS — фундамент, онбординг, биллинг и APK-конвейер
 
 Эта папка — НЕ часть одно-арендного приложения в корне репозитория (то,
 что обслуживает ваше живое заведение, продолжает работать без изменений
@@ -496,7 +496,7 @@ SaaS-сборки приложения (`--dart-define=SAAS_MODE=true`).
 
 ```bash
 cd saas/test && npm i
-cd .. && npx firebase-tools emulators:exec --project colibri-saas-rules-test \
+cd .. && npx firebase-tools emulators:exec --project hookah-saas-rules-test \
   --only firestore "cd test && npm test"
 ```
 

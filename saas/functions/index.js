@@ -1,5 +1,5 @@
 /**
- * Cloud Functions платформы Hoocah POS SaaS.
+ * Cloud Functions платформы Hookah POS SaaS.
  *
  * Отдельный проект/деплой от functions/ в корне репозитория (те
  * обслуживают одно живое заведение и не должны меняться). Здесь живут
@@ -66,7 +66,7 @@ const RESERVED_SLUGS = new Set([
  * Нормализует и валидирует slug заведения.
  *
  * Это значение потом используется и в URL (tenant-slug.yourdomain.com), и
- * как основа Android package name (com.colibripos.client.<slug>) — то есть
+ * как основа Android package name (com.hookahpos.client.<slug>) — то есть
  * ошибка здесь становится инъекцией в две разные системы. Разрешены только
  * строчные латинские буквы, цифры и дефис, 3–40 символов, не может
  * начинаться/заканчиваться дефисом или содержать "--" (двусмысленно с URL-
@@ -509,7 +509,7 @@ exports.createCheckoutSession = onCall(
         capture: true,
         save_payment_method: true,
         confirmation: { type: "redirect", return_url: returnUrl },
-        description: `Hoocah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+        description: `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
         metadata: { tenantId, planId, billingPeriod, purpose: "subscription" },
       },
     });
@@ -677,7 +677,7 @@ exports.chargeRecurringSubscriptions = onSchedule(
             amount: { value: price.toFixed(2), currency: "RUB" },
             capture: true,
             payment_method_id: sub.paymentMethodId,
-            description: `Hoocah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+            description: `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
             metadata: { tenantId, planId: sub.planId, billingPeriod, purpose: "renewal" },
           },
         });
@@ -864,7 +864,7 @@ exports.createBuildJob = onCall({ region: REGION, secrets: [GITHUB_PAT] }, async
   // арендаторов платформы. workflow сам ещё раз санитизирует это значение
   // перед записью в AndroidManifest (см. saas-on-demand-build.yml) — здесь
   // просто разумный fallback, если брендинг почему-то не задан.
-  let appLabel = "Hoocah POS (SaaS)";
+  let appLabel = "Hookah POS (SaaS)";
   try {
     const branding = await db.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
     if (branding.exists) {

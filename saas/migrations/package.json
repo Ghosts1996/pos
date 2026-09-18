@@ -1,5 +1,5 @@
 {
-  "name": "colibri-saas-migrations",
+  "name": "hookah-saas-migrations",
   "private": true,
   "scripts": {
     "migrate": "node migrate-single-tenant-to-tenant.js"
