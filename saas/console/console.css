@@ -44,6 +44,10 @@ code {
   padding: 16px;
   margin-bottom: 14px;
 }
+.card.danger {
+  border-color: var(--danger);
+  background: rgba(224, 49, 49, .12);
+}
 
 button, .btn {
   font: inherit;

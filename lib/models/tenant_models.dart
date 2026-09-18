@@ -333,6 +333,14 @@ class FeatureFlags {
   }
 }
 
+/// Сколько дней с начала просрочки (`SubscriptionInfo.pastDueSince`) даётся
+/// на продление, прежде чем операционные данные заведения реально стираются
+/// (см. `saas/functions/index.js`, `GRACE_PERIOD_DAYS`/`enforceGracePeriod`
+/// /`purgeTenantData`) — то же самое число, задокументировано в обоих
+/// местах отдельно, поскольку это два разных рантайма (Dart и Node),
+/// синхронизировать значение можно только вручную при изменении.
+const int gracePeriodDays = 10;
+
 /// Подписка заведения (ТЗ §31/§35).
 class SubscriptionInfo {
   final String tenantId;
@@ -340,6 +348,7 @@ class SubscriptionInfo {
   final String status; // trial | active | past_due | suspended | cancelled
   final DateTime? trialEndsAt;
   final DateTime? currentPeriodEnd;
+  final DateTime? pastDueSince;
   final bool cancelAtPeriodEnd;
 
   const SubscriptionInfo({
@@ -348,6 +357,7 @@ class SubscriptionInfo {
     required this.status,
     this.trialEndsAt,
     this.currentPeriodEnd,
+    this.pastDueSince,
     this.cancelAtPeriodEnd = false,
   });
 
@@ -357,12 +367,14 @@ class SubscriptionInfo {
     }
     final trialEnds = d['trialEndsAt'];
     final periodEnd = d['currentPeriodEnd'];
+    final pastDue = d['pastDueSince'];
     return SubscriptionInfo(
       tenantId: tenantId,
       planId: d['planId'] as String? ?? 'start',
       status: d['status'] as String? ?? 'trial',
       trialEndsAt: trialEnds is Timestamp ? trialEnds.toDate() : null,
       currentPeriodEnd: periodEnd is Timestamp ? periodEnd.toDate() : null,
+      pastDueSince: pastDue is Timestamp ? pastDue.toDate() : null,
       cancelAtPeriodEnd: d['cancelAtPeriodEnd'] as bool? ?? false,
     );
   }
@@ -372,6 +384,20 @@ class SubscriptionInfo {
     if (end == null) return false;
     final n = now ?? DateTime.now();
     return end.isAfter(n) && end.difference(n) <= window;
+  }
+
+  /// Сколько дней осталось до реального удаления данных заведения — null,
+  /// если подписка не в просрочке (нечего отсчитывать). 0 означает "сегодня
+  /// последний день": `enforceGracePeriod` стирает данные при следующем
+  /// суточном прогоне после того, как пройдут все [gracePeriodDays] дней.
+  int? daysUntilDataPurge({DateTime? now}) {
+    final since = pastDueSince;
+    if (status != 'past_due' || since == null) return null;
+    final n = now ?? DateTime.now();
+    final deadline = since.add(const Duration(days: gracePeriodDays));
+    final remainingHours = deadline.difference(n).inHours;
+    final remainingDays = (remainingHours / 24).ceil();
+    return remainingDays < 0 ? 0 : remainingDays;
   }
 }
 
