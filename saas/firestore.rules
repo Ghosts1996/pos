@@ -481,6 +481,16 @@ service cloud.firestore {
       allow update, delete: if isSuperAdmin();
     }
 
+    // ---- Usage-счётчики заведения (считает calculateUsage раз в сутки,
+    //      Cloud Function, admin SDK — не подчиняется этим правилам) ----
+    // Владелец/админ видит, укладывается ли заведение в лимиты тарифа
+    // (PlanLimits в lib/models/tenant_models.dart), супер-админ — usage
+    // любого заведения для панели платформы.
+    match /tenants/{tenantId}/usage/{doc} {
+      allow read: if isSuperAdmin() || hasRole(tenantId, ['owner', 'admin']);
+      allow write: if false;
+    }
+
     // ---- Остальные внутренние коллекции заведения: склад, смены,
     //      скидочные карты, маркировка, очередь push, задачи ИИ ----
     //

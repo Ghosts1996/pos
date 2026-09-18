@@ -292,3 +292,36 @@ describe("Список сборок APK и подписки видны толь�
     await assertFails(setDoc(doc(db, "buildJobs/freeJob"), { tenantId: "tenantA", status: "queued" }));
   });
 });
+
+describe("Usage-счётчики: видны владельцу/админу своего заведения и супер-админу", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/usage/current"), { employees: 3, devices: 2, tables: 10 });
+      await setDoc(doc(db, "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+  });
+
+  it("owner A читает usage своего заведения", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "tenants/tenantA/usage/current")));
+  });
+
+  it("супер-админ читает usage любого заведения", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "tenants/tenantA/usage/current")));
+  });
+
+  it("employee (не owner/admin) не видит usage заведения", async () => {
+    await assertFails(getDoc(doc(ctxFor("empA"), "tenants/tenantA/usage/current")));
+  });
+
+  it("owner чужого заведения не видит usage tenantA", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/usage/current")));
+  });
+
+  it("клиент не может писать usage напрямую (только Cloud Function)", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/usage/current"), { employees: 999 }));
+  });
+});
