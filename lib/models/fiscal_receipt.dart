@@ -102,11 +102,18 @@ class FiscalReceiptResult {
   final String? receiptUrl; // ссылка на электронный чек для гостя
   final String? errorMessage;
 
+  /// true — касса приняла чек в обработку, но итоговые ФД/ФПД ещё не
+  /// подтверждены (кассир не обязан ждать до бесконечности на экране
+  /// оплаты). Это не ошибка: чек всё равно фискализируется, просто
+  /// асинхронно — см. опрос статуса в [AtolCloudKassaService].
+  final bool pending;
+
   const FiscalReceiptResult.success({
     this.fiscalDocumentNumber,
     this.fiscalSign,
     this.fnNumber,
     this.receiptUrl,
+    this.pending = false,
   })  : success = true,
         errorMessage = null;
 
@@ -115,5 +122,6 @@ class FiscalReceiptResult {
         fiscalDocumentNumber = null,
         fiscalSign = null,
         fnNumber = null,
-        receiptUrl = null;
+        receiptUrl = null,
+        pending = false;
 }

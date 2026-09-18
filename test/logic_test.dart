@@ -13,6 +13,8 @@ import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/models/venue_models.dart';
+import 'package:hookah_pos/models/fiscal_receipt.dart';
+import 'package:hookah_pos/services/kassa_service.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -397,6 +399,120 @@ void main() {
         (s) => (s as TextSpan).recognizer != null,
       ) as TextSpan;
       expect(linkSpan.text, 'www.example.com');
+    });
+  });
+
+  group('Онлайн-касса — коды протоколов', () {
+    test('система налогообложения переводится в коды АТОЛ и OrangeData', () {
+      expect(FiscalTaxSystem.osn.atolCode, 'osn');
+      expect(FiscalTaxSystem.usnIncome.atolCode, 'usn_income');
+      expect(FiscalTaxSystem.patent.atolCode, 'patent');
+      expect(FiscalTaxSystem.osn.orangeDataCode, 0);
+      expect(FiscalTaxSystem.usnIncomeOutcome.orangeDataCode, 2);
+      expect(FiscalTaxSystem.patent.orangeDataCode, 5);
+    });
+
+    test('неизвестный/пустой код системы налогообложения — по умолчанию ОСН', () {
+      expect(FiscalTaxSystemX.fromId(null), FiscalTaxSystem.osn);
+      expect(FiscalTaxSystemX.fromId('что-то не то'), FiscalTaxSystem.osn);
+      expect(FiscalTaxSystemX.fromId('envd'), FiscalTaxSystem.envd);
+    });
+
+    test('способ оплаты АТОЛ: наличные/карта/аванс различаются, неизвестное — «иная форма»', () {
+      expect(atolPaymentTypeCode('cash'), 1);
+      expect(atolPaymentTypeCode('card'), 2);
+      expect(atolPaymentTypeCode('prepayment'), 3);
+      expect(atolPaymentTypeCode('other'), 5);
+      expect(atolPaymentTypeCode('чепуха'), 5);
+    });
+
+    test('способ оплаты OrangeData: свои коды, не совпадающие с АТОЛ', () {
+      expect(orangeDataPaymentTypeCode('cash'), 1);
+      expect(orangeDataPaymentTypeCode('card'), 2);
+      expect(orangeDataPaymentTypeCode('prepayment'), 14);
+      expect(orangeDataPaymentTypeCode('other'), 16);
+    });
+
+    test('маркированный товар в АТОЛ передаётся как обычный "commodity"', () {
+      expect(atolPaymentObjectCode(FiscalPaymentObject.commodity), 'commodity');
+      expect(atolPaymentObjectCode(FiscalPaymentObject.markedGood), 'commodity');
+      expect(atolPaymentObjectCode(FiscalPaymentObject.service), 'service');
+      expect(atolPaymentObjectCode(FiscalPaymentObject.excise), 'excise');
+    });
+
+    test('ставки НДС OrangeData: 20%/10%/0%/без НДС — разные коды', () {
+      expect(orangeDataVatCode(FiscalVatRate.vat20), 1);
+      expect(orangeDataVatCode(FiscalVatRate.vat10), 2);
+      expect(orangeDataVatCode(FiscalVatRate.vat0), 5);
+      expect(orangeDataVatCode(FiscalVatRate.none), 6);
+    });
+
+    test('контакт покупателя определяется по формату: с "@" — email, иначе телефон', () {
+      final email = splitReceiptContact('guest@example.com');
+      expect(email.email, 'guest@example.com');
+      expect(email.phone, isNull);
+
+      final phone = splitReceiptContact('+79995061580');
+      expect(phone.phone, '+79995061580');
+      expect(phone.email, isNull);
+
+      final empty = splitReceiptContact('  ');
+      expect(empty.email, isNull);
+      expect(empty.phone, isNull);
+    });
+
+    test('OrangeData отказывает в маркированных товарах явным сообщением', () async {
+      final service = OrangeDataKassaService(
+        inn: '7700000000',
+        clientCertPem: 'x',
+        clientKeyPem: 'x',
+      );
+      final result = await service.sendReceipt(const FiscalReceipt(
+        receiptId: 'r1',
+        items: [
+          FiscalReceiptItem(
+            name: 'Кальян',
+            price: 1000,
+            quantity: 1,
+            paymentObject: FiscalPaymentObject.markedGood,
+            markingCode: '0104600439526936213abc',
+          ),
+        ],
+        payments: [FiscalPayment('cash', 1000)],
+      ));
+      expect(result.success, isFalse);
+      expect(result.errorMessage, contains('АТОЛ'));
+    });
+
+    test('CloudKassir — честная заготовка: недоступна, объясняет почему', () async {
+      final service = CloudKassirKassaService(apiKey: '');
+      expect(service.isAvailable, isFalse);
+      final result = await service.sendReceipt(const FiscalReceipt(
+        receiptId: 'r2',
+        items: [FiscalReceiptItem(name: 'Кальян', price: 1000, quantity: 1)],
+        payments: [FiscalPayment('cash', 1000)],
+      ));
+      expect(result.success, isFalse);
+      expect(result.errorMessage, contains('CloudKassir'));
+    });
+
+    test('buildKassaService выбирает провайдера по kassaType', () {
+      expect(buildKassaService({'kassaType': 'mock'}), isA<MockKassaService>());
+      expect(
+        buildKassaService({'kassaType': 'atol_cloud', 'kassaInn': '123'}),
+        isA<AtolCloudKassaService>(),
+      );
+      expect(
+        buildKassaService({
+          'kassaType': 'orange_data',
+          'kassaInn': '123',
+          'kassaOrangeCertPem': 'x',
+          'kassaOrangeKeyPem': 'x',
+        }),
+        isA<OrangeDataKassaService>(),
+      );
+      expect(buildKassaService({'kassaType': 'cloud_kassir'}), isA<CloudKassirKassaService>());
+      expect(buildKassaService({}), isA<MockKassaService>());
     });
   });
 }
