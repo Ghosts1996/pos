@@ -1,0 +1,109 @@
+/* Консоль владельца заведения SaaS-платформы — та же палитра и те же
+   компоненты, что в веб-версии гостя (public/app/app.css), без нижнего
+   таббара и гостевых экранов: здесь только вход, создание заведения и
+   личный кабинет. */
+:root {
+  --bg: #0E1512;
+  --surface: #16211D;
+  --surface-2: #1D2A25;
+  --border: #24332D;
+  --text: #EAF3EF;
+  --muted: #8FA39B;
+  --primary: #12B886;
+  --danger: #E03131;
+  --warning: #E8A317;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+.wrap { max-width: 480px; margin: 0 auto; padding: 32px 16px 40px; }
+.brand {
+  color: var(--primary); letter-spacing: .14em; text-transform: uppercase;
+  font-weight: 600; font-size: 13px; margin-bottom: 4px;
+}
+h1 { font-size: 22px; font-weight: 700; margin: 4px 0 8px; }
+h2 { font-size: 15px; font-weight: 600; margin: 22px 0 10px; }
+p { margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.center { text-align: center; }
+code {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1px 6px; font-size: 0.92em;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+button, .btn {
+  font: inherit;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 16px;
+  width: 100%;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.btn-primary { background: var(--primary); color: #04140E; }
+.btn-ghost {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+button:disabled { opacity: .5; cursor: default; }
+.btn-link {
+  background: none; border: none; color: var(--primary);
+  width: auto; padding: 4px 0; font-weight: 600;
+}
+
+input, select {
+  font: inherit;
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  margin-bottom: 10px;
+}
+label.field { display: block; margin-bottom: 12px; }
+label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+
+a { color: var(--primary); }
+
+.row { display: flex; align-items: center; gap: 10px; }
+.grow { flex: 1; min-width: 0; }
+.row > button, .row > .btn { width: auto; flex: 0 0 auto; }
+.row > input, .row > select { margin-bottom: 0; }
+
+.spinner {
+  width: 26px; height: 26px; margin: 60px auto;
+  border: 3px solid var(--border); border-top-color: var(--primary);
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.toast {
+  position: fixed; left: 16px; right: 16px; bottom: 16px;
+  max-width: 480px; margin: 0 auto;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 14px 16px; z-index: 20;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  opacity: 0; transform: translateY(12px); transition: .22s; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: none; }

@@ -16,10 +16,19 @@
     ],
     "predeploy": "npm --prefix \"$RESOURCE_DIR\" install"
   },
+  "hosting": {
+    "public": "console",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  },
   "emulators": {
     "firestore": { "port": 8080 },
     "auth": { "port": 9099 },
     "functions": { "port": 5001 },
+    "hosting": { "port": 5000 },
     "ui": { "enabled": true }
   }
 }
