@@ -457,8 +457,21 @@ function watchMemberships() {
   }));
 }
 
+// Публичные страницы (оферта, конфиденциальность, статус, FAQ) — доступны
+// и без входа, и уже вошедшему пользователю (ссылки в подвале лендинга и
+// личного кабинета), поэтому проверяются раньше ветки !state.uid.
+const PUBLIC_ROUTES = {
+  '#/legal/offer': () => screenLegalOffer(),
+  '#/legal/privacy': () => screenLegalPrivacy(),
+  '#/status': () => screenStatus(),
+  '#/faq': () => screenPublicFaq(),
+};
+
 function route() {
   clearScreen();
+  if (PUBLIC_ROUTES[location.hash]) {
+    return PUBLIC_ROUTES[location.hash]();
+  }
   if (!state.uid) {
     // Лендинг — дефолтная дверь для того, кто ещё не вошёл: что это за
     // система, какие тарифы, кнопка "Попробовать бесплатно". #/login —
@@ -585,9 +598,25 @@ function screenLanding() {
     <h2>Тарифы</h2>
     <div id="landing-plans"><div class="spinner"></div></div>
 
+    <h2>Калькулятор окупаемости</h2>
+    <div class="card">
+      <label class="field"><span>Средняя выручка заведения в месяц, ₽</span>
+        <input id="f-calc-revenue" type="number" inputmode="numeric" min="0" placeholder="500000">
+      </label>
+      <label class="field"><span>Тариф</span>
+        <select id="f-calc-plan"><option value="">Загрузка тарифов…</option></select>
+      </label>
+      <label class="field"><span>Ваша оценка потерь от ручного учёта, пересортицы и ошибок на кассе, %</span>
+        <input id="f-calc-loss" type="number" value="3" min="0" max="30" step="0.5">
+      </label>
+      <div class="small muted">Считаем строго по цифрам, которые вы укажете сами, — без наших предположений о «типичной» экономии.</div>
+      <div id="f-calc-output" style="margin-top:14px"></div>
+    </div>
+
     <p class="small center muted" style="margin-top:20px">
       Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
     </p>
+    ${publicFooterLinksHtml()}
     ${versionFooterHtml()}
   `;
 
@@ -649,10 +678,148 @@ function screenLanding() {
         $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       };
     });
+
+    const calcPlanSelect = $('f-calc-plan');
+    if (calcPlanSelect) {
+      calcPlanSelect.innerHTML = sellable.length
+        ? sellable.map((p) => `<option value="${Number(p.priceRub) || 0}">${esc(p.name || p.id)} — ${(Number(p.priceRub) || 0).toLocaleString('ru-RU')} ₽/мес</option>`).join('')
+        : '<option value="">Тарифы скоро появятся</option>';
+    }
+    const runCalc = () => {
+      const out = $('f-calc-output');
+      if (!out) return;
+      const revenue = Number($('f-calc-revenue')?.value) || 0;
+      const lossPercent = Number($('f-calc-loss')?.value) || 0;
+      const planPrice = Number($('f-calc-plan')?.value) || 0;
+      const monthlySavings = revenue * (lossPercent / 100);
+      if (revenue <= 0 || planPrice <= 0) {
+        out.innerHTML = '<p class="small muted">Укажите выручку и тариф — покажем расчёт.</p>';
+        return;
+      }
+      const daysToPayback = monthlySavings > 0 ? (planPrice / monthlySavings) * 30 : Infinity;
+      const paybackText = !isFinite(daysToPayback)
+        ? '—'
+        : daysToPayback <= 30
+          ? `${Math.max(1, Math.round(daysToPayback))} дн.`
+          : `${(daysToPayback / 30).toFixed(1)} мес.`;
+      out.innerHTML = `
+        <div class="calc-result">${paybackText}</div>
+        <div class="small muted">окупаемость тарифа при экономии ${Math.round(monthlySavings).toLocaleString('ru-RU')} ₽/мес</div>
+        <div class="small muted" style="margin-top:10px">Это ориентировочный расчёт по введённым вами цифрам, а не гарантия конкретной экономии.</div>
+      `;
+    };
+    ['f-calc-revenue', 'f-calc-loss', 'f-calc-plan'].forEach((id) => {
+      $(id)?.addEventListener('input', runCalc);
+      $(id)?.addEventListener('change', runCalc);
+    });
+    runCalc();
   }, () => {
     const body = $('landing-plans');
     if (body) body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
   }));
+}
+
+// ---------- ПУБЛИЧНЫЕ СТРАНИЦЫ (оферта, конфиденциальность, статус, FAQ) ----------
+// Доступны по прямой ссылке и без входа — см. PUBLIC_ROUTES выше.
+
+function publicFooterLinksHtml() {
+  return `
+    <p class="small center muted" style="margin-top:14px">
+      <a href="#/legal/offer">Оферта</a> ·
+      <a href="#/legal/privacy">Конфиденциальность</a> ·
+      <a href="#/status">Статус</a> ·
+      <a href="#/faq">FAQ</a>
+    </p>
+  `;
+}
+
+function publicPageWrapHtml(title, bodyHtml) {
+  return `
+    <div class="brand">Hookah POS</div>
+    <h1>${esc(title)}</h1>
+    ${bodyHtml}
+    <p class="small center muted" style="margin-top:24px"><a href="#/">← На главную</a></p>
+    ${publicFooterLinksHtml()}
+    ${versionFooterHtml()}
+  `;
+}
+
+function screenLegalOffer() {
+  screenEl().innerHTML = publicPageWrapHtml('Публичная оферта', `
+    <p class="small muted" style="padding:10px 12px;background:var(--surface-2);border-radius:10px;border:1px solid var(--border)">
+      Черновик для ознакомления. Перед использованием в реальном коммерческом
+      обороте документ должен проверить юрист под юрисдикцию, в которой
+      продаётся подписка.
+    </p>
+    <div class="card">
+      <h2 style="margin-top:0">1. Предмет договора</h2>
+      <p class="small muted">Исполнитель предоставляет Заказчику доступ к SaaS-платформе Hookah POS — программному обеспечению для управления кальянной/лаунжем (карта зала, касса, склад, брони, программа лояльности, гостевое приложение) на условиях простой (неисключительной) лицензии по модели подписки.</p>
+      <h2>2. Порядок оплаты</h2>
+      <p class="small muted">Подписка оплачивается помесячно или на год вперёд, по тарифу, выбранному Заказчиком в личном кабинете. Стоимость и состав тарифов указаны в разделе «Тарифы» и могут изменяться Исполнителем с уведомлением действующих подписчиков не менее чем за 30 дней до вступления изменений в силу.</p>
+      <h2>3. Пробный период</h2>
+      <p class="small muted">Новым Заказчикам предоставляется бесплатный пробный период (срок указан на карточке тарифа). Оплата в течение пробного периода не списывается; по окончании пробного периода доступ приостанавливается до внесения оплаты.</p>
+      <h2>4. Хранение и удаление данных</h2>
+      <p class="small muted">При просрочке оплаты доступ блокируется немедленно. Данные заведения при этом хранятся 10 дней (грейс-период) и удаляются безвозвратно, если оплата не поступит. Заказчик обязан самостоятельно выгружать резервные копии значимых данных при отказе от подписки.</p>
+      <h2>5. Ограничение ответственности</h2>
+      <p class="small muted">Исполнитель не осуществляет фискализацию чеков и эквайринг — эти функции обеспечиваются отдельным сертифицированным оборудованием и договорами Заказчика (см. 54-ФЗ и раздел FAQ). Исполнитель не гарантирует бесперебойную работу инфраструктуры сторонних облачных провайдеров (см. страницу «Статус»).</p>
+      <h2>6. Реквизиты сторон</h2>
+      <p class="small muted">Заполняются перед публикацией: наименование Исполнителя, ИНН/ОГРН, юридический адрес, банковские реквизиты, контакты для претензий.</p>
+    </div>
+  `);
+}
+
+function screenLegalPrivacy() {
+  screenEl().innerHTML = publicPageWrapHtml('Политика конфиденциальности', `
+    <p class="small muted" style="padding:10px 12px;background:var(--surface-2);border-radius:10px;border:1px solid var(--border)">
+      Черновик для ознакомления. Перед публикацией документ должен проверить
+      юрист на соответствие 152-ФЗ «О персональных данных» и требованиям
+      юрисдикции, в которой продаётся подписка.
+    </p>
+    <div class="card">
+      <h2 style="margin-top:0">Какие данные собираются</h2>
+      <p class="small muted">Email владельца и сотрудников заведения (для входа и связи), название и код заведения, а также данные о заказах, складе, бронях и гостях, которые персонал заведения вносит в процессе работы.</p>
+      <h2>Где хранятся данные</h2>
+      <p class="small muted">В облачной инфраструктуре Google Firebase — у каждого заведения отдельная изолированная база данных; доступ к данным чужого заведения технически невозможен, это проверяется автоматическими тестами правил доступа.</p>
+      <h2>Кто имеет доступ</h2>
+      <p class="small muted">Сотрудники заведения — в рамках своей роли (владелец / администратор / менеджер / сотрудник). Администрация платформы — только в объёме, необходимом для технической поддержки, и, как правило, по обращению владельца заведения.</p>
+      <h2>Передача третьим лицам</h2>
+      <p class="small muted">Данные не передаются и не продаются третьим лицам, за исключением субпроцессоров, необходимых для работы сервиса (облачный провайдер, платёжный шлюз), и государственных органов по законному требованию.</p>
+      <h2>Удаление данных</h2>
+      <p class="small muted">При отмене подписки данные хранятся 10 дней, затем удаляются безвозвратно. Владелец заведения может запросить удаление данных досрочно, обратившись в поддержку.</p>
+    </div>
+  `);
+}
+
+function screenStatus() {
+  screenEl().innerHTML = publicPageWrapHtml('Статус системы', `
+    <div class="card">
+      <div class="row" style="align-items:center;gap:10px">
+        <div style="width:10px;height:10px;border-radius:50%;background:#3DD68C;flex:none"></div>
+        <div class="small">Платформа работает на инфраструктуре Google Firebase (Firestore, Auth, Hosting, Cloud Functions)</div>
+      </div>
+      <p class="small muted" style="margin-top:12px">Отдельный мониторинг аптайма поверх инфраструктуры провайдера мы не ведём — актуальный статус самого Firebase (по всем используемым сервисам) смотрите на официальной странице:</p>
+      <a class="btn btn-ghost" href="https://status.firebase.google.com/" target="_blank" rel="noopener">Открыть status.firebase.google.com ↗</a>
+    </div>
+    <div class="card">
+      <div class="small muted">Если Firebase работает штатно, а вход в консоль или касса не открывается — это, скорее всего, проблема на нашей стороне. Опишите это в поддержке, указав код заведения и время сбоя.</div>
+    </div>
+  `);
+}
+
+function screenPublicFaq() {
+  screenEl().innerHTML = publicPageWrapHtml('Частые вопросы', `
+    <div class="card">
+      ${FAQ_ITEMS.map((item, i) => `
+        <div class="faq-item" data-faq="${i}">
+          <div class="faq-question"><span>${esc(item.q)}</span><span class="faq-toggle">+</span></div>
+          <div class="faq-answer">${esc(item.a)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `);
+  document.querySelectorAll('.faq-item').forEach((el) => {
+    el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
+  });
 }
 
 // ---------- ВХОД / РЕГИСТРАЦИЯ ----------
@@ -1317,6 +1484,13 @@ function watchDashboardData(tenantId) {
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🖨️ Принтер чеков — опционально, Bluetooth/USB, настраивается в самом приложении кассы</div>
         <div class="small" style="padding:7px 0">☁️ Все данные хранятся в облаке — ничего не теряется при поломке или замене планшета</div>
       </div>
+
+      <h2>Документы и статус</h2>
+      <div class="card">
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)"><a href="#/legal/offer">Публичная оферта</a></div>
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)"><a href="#/legal/privacy">Политика конфиденциальности</a></div>
+        <div class="small" style="padding:7px 0"><a href="#/status">Статус системы</a></div>
+      </div>
     `;
 
     const faqHtml = () => `
@@ -1343,6 +1517,7 @@ function watchDashboardData(tenantId) {
         (<code>${esc(tenant.slug || '')}</code>) и опишите, что случилось, так ответят быстрее.</p>
       </div>
       <p class="small center muted"><a href="#" class="f-dash-tab" data-tab="faq">← Сначала загляните в FAQ</a></p>
+      <p class="small center muted">Что-то не открывается вообще? Сначала проверьте <a href="#/status">статус системы</a>.</p>
     `;
 
     const TAB_RENDERERS = {
