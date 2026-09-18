@@ -43,6 +43,18 @@
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "provider", "order": "ASCENDING" },
       { "fieldPath": "currentPeriodEnd", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "subscriptions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "trialEndsAt", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "subscriptions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "currentPeriodEnd", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "subscriptions", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "pastDueSince", "order": "ASCENDING" }
     ]}
   ],
   "fieldOverrides": []
