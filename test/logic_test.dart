@@ -18,6 +18,7 @@ import 'package:hookah_pos/models/fiscal_receipt.dart';
 import 'package:hookah_pos/models/tenant_models.dart';
 import 'package:hookah_pos/services/app_scope.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
+import 'package:hookah_pos/services/subscription_gate.dart' show computeBlocked;
 import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/theme/app_theme.dart';
 import 'package:hookah_pos/theme/app_colors.dart';
@@ -523,13 +524,17 @@ void main() {
   });
 
   group('SaaS: статус заведения (tenant status)', () {
-    test('trial/active/past_due разрешают операционную работу', () {
+    test('trial/active разрешают операционную работу', () {
       expect(TenantStatus.trial.allowsOperations, isTrue);
       expect(TenantStatus.active.allowsOperations, isTrue);
-      expect(TenantStatus.pastDue.allowsOperations, isTrue);
     });
 
-    test('suspended/cancelled/deleted блокируют операционную работу', () {
+    // Жёсткая блокировка: просрочка платежа останавливает кассу немедленно
+    // (владелец явно попросил именно так, не "мягкую блокировку"), но
+    // данные ещё не удалены — на это даётся GRACE_PERIOD_DAYS дней (см.
+    // SubscriptionInfo.daysUntilDataPurge, saas/functions/index.js).
+    test('past_due/suspended/cancelled/deleted блокируют операционную работу', () {
+      expect(TenantStatus.pastDue.allowsOperations, isFalse);
       expect(TenantStatus.suspended.allowsOperations, isFalse);
       expect(TenantStatus.cancelled.allowsOperations, isFalse);
       expect(TenantStatus.deleted.allowsOperations, isFalse);
@@ -720,6 +725,10 @@ void main() {
       expect(buildConfig(status: TenantStatus.active, subStatus: 'cancelled').operationsAllowed, isFalse);
     });
 
+    test('просроченная подписка блокирует работу немедленно (жёсткая блокировка)', () {
+      expect(buildConfig(status: TenantStatus.pastDue, subStatus: 'past_due').operationsAllowed, isFalse);
+    });
+
     test('round-trip сериализации конфигурации в локальный кэш не теряет данные', () {
       final original = buildConfig(status: TenantStatus.trial, subStatus: 'trial');
       final restored = tenantConfigFromCacheMap(tenantConfigToCacheMap(original));
@@ -728,6 +737,49 @@ void main() {
       expect(restored.member.role, original.member.role);
       expect(restored.session.defaultHookahDurationMinutes, original.session.defaultHookahDurationMinutes);
       expect(restored.subscription.status, original.subscription.status);
+    });
+
+    test('round-trip сохраняет pastDueSince — иначе офлайн-кэш не смог бы '
+        'посчитать обратный отсчёт до удаления данных на экране блокировки', () {
+      final since = DateTime(2026, 1, 10);
+      final original = TenantConfig(
+        tenant: const Tenant(
+          id: 't1', name: 'Test', slug: 'test', status: TenantStatus.pastDue,
+          planId: 'start', ownerUserId: 'u1',
+        ),
+        member: const TenantMember(tenantId: 't1', userId: 'u1', role: TenantRole.owner, status: 'active'),
+        branding: const BrandingConfig(),
+        session: const SessionSettings(),
+        features: const FeatureFlags(),
+        subscription: SubscriptionInfo(
+          tenantId: 't1', planId: 'start', status: 'past_due', pastDueSince: since,
+        ),
+      );
+      final restored = tenantConfigFromCacheMap(tenantConfigToCacheMap(original));
+      expect(restored.subscription.pastDueSince, since);
+      expect(restored.subscription.daysUntilDataPurge(now: since.add(const Duration(days: 4))), 6);
+    });
+  });
+
+  group('SaaS: SubscriptionGate.computeBlocked — жёсткая блокировка кассы', () {
+    test('активное заведение с активной подпиской — не заблокировано', () {
+      expect(computeBlocked(TenantStatus.active, 'active'), isFalse);
+    });
+
+    test('пробный период — тоже не заблокировано', () {
+      expect(computeBlocked(TenantStatus.trial, 'trial'), isFalse);
+    });
+
+    test('просроченная подписка блокирует немедленно', () {
+      expect(computeBlocked(TenantStatus.pastDue, 'past_due'), isTrue);
+    });
+
+    test('заблокированное супер-админом заведение блокирует кассу, даже если подписка ещё активна', () {
+      expect(computeBlocked(TenantStatus.suspended, 'active'), isTrue);
+    });
+
+    test('отменённая подписка блокирует, даже если tenant формально active', () {
+      expect(computeBlocked(TenantStatus.active, 'cancelled'), isTrue);
     });
   });
 

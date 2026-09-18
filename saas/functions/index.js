@@ -542,6 +542,12 @@ exports.handleBillingWebhook = onRequest(
       if (seen.exists) return true;
       tx.set(eventRef, {
         tenantId, planId, status: payment.status,
+        // Сумма — специально для аналитики платформы (панель Super Admin,
+        // выручка): без неё пришлось бы на каждый показ дохода отдельно
+        // дёргать API ЮKassa по каждому платежу, вместо одного чтения
+        // Firestore.
+        amount: Number(payment.amount?.value) || 0,
+        purpose: payment.metadata?.purpose || 'subscription',
         receivedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       return false;

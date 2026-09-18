@@ -41,7 +41,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                 subtitle: Row(
                   children: [
                     Text('${e.role == AppConstants.roleAdmin ? "Администратор" : "Сотрудник"} · PIN '),
-                    Text(revealed ? e.pinCode : '••••'),
+                    Text(revealed ? e.pinCode : '•' * AppConstants.pinLengthForRole(e.role)),
                     InkWell(
                       onTap: () => setState(() {
                         revealed ? _revealed.remove(e.id) : _revealed.add(e.id);
@@ -101,9 +101,11 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя')),
               TextField(
                 controller: pinCtrl,
-                decoration: const InputDecoration(labelText: 'PIN-код (4 цифры)'),
+                decoration: InputDecoration(
+                  labelText: 'PIN-код (${AppConstants.pinLengthForRole(role)} ${role == AppConstants.roleAdmin ? "цифр" : "цифры"})',
+                ),
                 keyboardType: TextInputType.number,
-                maxLength: 4,
+                maxLength: AppConstants.pinLengthForRole(role),
                 obscureText: true,
               ),
               Row(
@@ -112,13 +114,23 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                   ChoiceChip(
                     label: const Text('Сотрудник'),
                     selected: role == AppConstants.roleEmployee,
-                    onSelected: (_) => setSt(() => role = AppConstants.roleEmployee),
+                    // Разная длина PIN у ролей — переключение роли чистит
+                    // поле, а не оставляет, например, 6 цифр под 4-значный
+                    // код: иначе сохранение упадёт на проверке длины, а
+                    // владельцу будет непонятно, что именно не так.
+                    onSelected: (_) => setSt(() {
+                      role = AppConstants.roleEmployee;
+                      pinCtrl.clear();
+                    }),
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
                     label: const Text('Администратор'),
                     selected: role == AppConstants.roleAdmin,
-                    onSelected: (_) => setSt(() => role = AppConstants.roleAdmin),
+                    onSelected: (_) => setSt(() {
+                      role = AppConstants.roleAdmin;
+                      pinCtrl.clear();
+                    }),
                   ),
                 ],
               ),
@@ -133,10 +145,16 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     );
     if (ok != true || nameCtrl.text.trim().isEmpty) return;
     final pin = pinCtrl.text.trim();
-    if (pin.length != 4 || int.tryParse(pin) == null) {
+    final requiredLength = AppConstants.pinLengthForRole(role);
+    if (pin.length != requiredLength || int.tryParse(pin) == null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('PIN должен состоять ровно из 4 цифр')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            role == AppConstants.roleAdmin
+                ? 'PIN администратора должен состоять ровно из $requiredLength цифр'
+                : 'PIN сотрудника должен состоять ровно из $requiredLength цифр',
+          ),
+        ));
       }
       return;
     }
