@@ -166,6 +166,13 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
         'tenantId': c.subscription.tenantId,
         'planId': c.subscription.planId,
         'status': c.subscription.status,
+        'trialEndsAt': c.subscription.trialEndsAt?.toIso8601String(),
+        'currentPeriodEnd': c.subscription.currentPeriodEnd?.toIso8601String(),
+        // Без этого поля восстановленный из офлайн-кэша конфиг не смог бы
+        // посчитать daysUntilDataPurge() — экран блокировки (см.
+        // SaasSubscriptionBlockedScreen) остался бы без обратного отсчёта
+        // именно тогда, когда сети нет и кэш — единственный источник данных.
+        'pastDueSince': c.subscription.pastDueSince?.toIso8601String(),
         'cancelAtPeriodEnd': c.subscription.cancelAtPeriodEnd,
       },
     };
@@ -173,6 +180,14 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
 TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
   final t = m['tenant'] as Map<String, dynamic>;
   final mem = m['member'] as Map<String, dynamic>;
+  // Кэш хранит даты как ISO-строки (jsonEncode не умеет Timestamp), поэтому
+  // SubscriptionInfo.fromMap (рассчитан на Timestamp из Firestore) здесь не
+  // подходит — собираем SubscriptionInfo напрямую.
+  final sub = m['subscription'] as Map<String, dynamic>?;
+  DateTime? parseIso(String? key) {
+    final raw = sub?[key] as String?;
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
   return TenantConfig(
     tenant: Tenant(
       id: t['id'] as String,
@@ -191,9 +206,14 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
     branding: BrandingConfig.fromMap(m['branding'] as Map<String, dynamic>?),
     session: SessionSettings.fromMap(m['session'] as Map<String, dynamic>?),
     features: const FeatureFlags(),
-    subscription: SubscriptionInfo.fromMap(
-      m['subscription'] as Map<String, dynamic>?,
-      t['id'] as String,
+    subscription: SubscriptionInfo(
+      tenantId: sub?['tenantId'] as String? ?? t['id'] as String,
+      planId: sub?['planId'] as String? ?? 'start',
+      status: sub?['status'] as String? ?? 'trial',
+      trialEndsAt: parseIso('trialEndsAt'),
+      currentPeriodEnd: parseIso('currentPeriodEnd'),
+      pastDueSince: parseIso('pastDueSince'),
+      cancelAtPeriodEnd: sub?['cancelAtPeriodEnd'] as bool? ?? false,
     ),
   );
 }

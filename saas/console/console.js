@@ -643,11 +643,11 @@ function watchDashboardData(tenantId) {
           <div class="card danger">
             <div style="font-weight:700;margin-bottom:6px">⚠ Подписка не продлена</div>
             <div class="small">
+              Касса и приложение на всех устройствах заведения уже заблокированы.
               ${daysLeft > 0
                 ? `Данные заведения будут БЕЗВОЗВРАТНО удалены через ${daysLeft} ${pluralDays(daysLeft)}, если подписку не продлить.`
                 : 'Срок продления истёк — данные заведения будут удалены при ближайшей проверке.'}
-              Кассы и зал продолжают работать, пока данные не удалены, но после удаления заведение придётся
-              настраивать заново — меню, столы, сотрудников и всё остальное.
+              После удаления заведение придётся настраивать заново — меню, столы, сотрудников и всё остальное.
             </div>
           </div>
         `;
@@ -912,14 +912,26 @@ function screenSuperAdmin() {
       <div class="brand">Colibri POS · платформа</div>
       <a href="#/" class="btn-link">← В консоль</a>
     </div>
-    <h1>Все заведения</h1>
+    <h1>Панель платформы</h1>
+
+    <h2>Аналитика</h2>
+    <div id="admin-analytics"><div class="spinner"></div></div>
+
+    <h2>Тарифы</h2>
+    <div id="admin-plans"><div class="spinner"></div></div>
+    <button class="btn btn-ghost" id="f-new-plan" style="margin-bottom:14px">Добавить тариф</button>
+
+    <h2>Все заведения</h2>
     <input id="f-tenant-search" placeholder="Поиск по названию или коду заведения" style="margin-bottom:14px">
     <div id="admin-body"><div class="spinner"></div></div>
+
     <h2>Журнал платформы</h2>
     <div id="admin-audit"><div class="spinner"></div></div>
   `;
   watchAllTenants();
   watchAuditLog();
+  watchPlans();
+  watchAnalytics();
 }
 
 function watchAllTenants() {
@@ -1034,6 +1046,160 @@ function watchAuditLog() {
   }, () => {
     body.innerHTML = '<p class="small muted">Журнал недоступен.</p>';
   }));
+}
+
+function watchPlans() {
+  const body = $('admin-plans');
+  sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
+    const plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.priceRub || 0) - (b.priceRub || 0));
+    body.innerHTML = plans.length ? plans.map((p) => `
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:10px">${esc(p.id)}</div>
+        <label class="field"><span>Название</span>
+          <input class="f-plan-field" data-plan="${esc(p.id)}" data-field="name" value="${esc(p.name || '')}">
+        </label>
+        <label class="field"><span>Цена, ₽/мес (0 — не продаётся напрямую, только вручную через смену тарифа заведению)</span>
+          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRub" value="${Number(p.priceRub) || 0}">
+        </label>
+        <div class="row">
+          <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxEmployees" value="${Number(p.maxEmployees) || 0}">
+          </label>
+          <label class="field grow"><span>Устройств (0 = без лимита)</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxDevices" value="${Number(p.maxDevices) || 0}">
+          </label>
+        </div>
+        <div class="row">
+          <label class="field grow"><span>Столов (0 = без лимита)</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxTables" value="${Number(p.maxTables) || 0}">
+          </label>
+          <label class="field grow"><span>Хранилище, МБ (0 = без лимита)</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxStorageMb" value="${Number(p.maxStorageMb) || 0}">
+          </label>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:14px;margin:10px 0 16px">
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="aiEnabled" ${p.aiEnabled ? 'checked' : ''}> ИИ
+          </label>
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="customBranding" ${p.customBranding ? 'checked' : ''}> Свой брендинг
+          </label>
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="customDomain" ${p.customDomain ? 'checked' : ''}> Свой домен
+          </label>
+        </div>
+        <button class="btn btn-primary f-plan-save" data-plan="${esc(p.id)}">Сохранить тариф</button>
+      </div>
+    `).join('') : '<p class="small muted">Тарифов пока нет.</p>';
+
+    document.querySelectorAll('.f-plan-save').forEach((el) => {
+      el.onclick = () => savePlan(el.dataset.plan);
+    });
+  }, () => {
+    body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
+  }));
+
+  $('f-new-plan').onclick = async () => {
+    const id = prompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip):');
+    if (!id || !/^[a-z0-9-]+$/.test(id)) {
+      if (id !== null) toast('Код тарифа: только латиница, цифры и дефис');
+      return;
+    }
+    try {
+      await setDoc(doc(state.db, 'plans', id), {
+        name: id, priceRub: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
+        aiEnabled: false, customBranding: false, customDomain: false,
+        features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
+      });
+      toast('Тариф создан — заполните цену и лимиты ниже');
+    } catch (e) {
+      toast(`Не удалось создать тариф: ${e?.message || e}`);
+    }
+  };
+}
+
+async function savePlan(planId) {
+  const btn = document.querySelector(`.f-plan-save[data-plan="${planId}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    const payload = {};
+    document.querySelectorAll(`.f-plan-field[data-plan="${planId}"]`).forEach((el) => {
+      payload[el.dataset.field] = el.type === 'number' ? Number(el.value) || 0 : el.value;
+    });
+    document.querySelectorAll(`.f-plan-checkbox[data-plan="${planId}"]`).forEach((el) => {
+      payload[el.dataset.field] = el.checked;
+    });
+    await setDoc(doc(state.db, 'plans', planId), payload, { merge: true });
+    toast('Тариф сохранён');
+  } catch (e) {
+    toast(`Не удалось сохранить тариф: ${e?.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function watchAnalytics() {
+  const body = $('admin-analytics');
+
+  const draw = (tenants, revenueEvents) => {
+    const now = Date.now();
+    const day = 86400000;
+    const byStatus = {};
+    tenants.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
+    const activeCount = byStatus.active || 0;
+    const mrr = tenants.reduce((sum, t) => {
+      if (t.status !== 'active') return sum;
+      const plan = state.plansById?.[t.planId];
+      return sum + (Number(plan?.priceRub) || 0);
+    }, 0);
+    const signups7d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 7 * day).length;
+    const signups30d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 30 * day).length;
+    const succeeded = revenueEvents.filter((e) => e.status === 'succeeded');
+    const totalRevenue = succeeded.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    const tile = (label, value) => `
+      <div class="card" style="text-align:center;padding:14px 8px">
+        <div style="font-size:22px;font-weight:700">${value}</div>
+        <div class="small muted">${esc(label)}</div>
+      </div>
+    `;
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        ${tile('Всего заведений', tenants.length)}
+        ${tile('Активных подписок', activeCount)}
+        ${tile('MRR (оценка)', `${mrr.toLocaleString('ru-RU')} ₽`)}
+        ${tile('Выручка (последние платежи)', `${totalRevenue.toLocaleString('ru-RU')} ₽`)}
+        ${tile('Регистраций за 7 дней', signups7d)}
+        ${tile('Регистраций за 30 дней', signups30d)}
+      </div>
+      <p class="small muted" style="margin-top:10px">
+        Разбивка по статусам: ${Object.entries(byStatus).map(([s, n]) => `${esc(TENANT_STATUS_LABELS[s] || s)} — ${n}`).join(', ') || '—'}.
+        Выручка — сумма последних ${revenueEvents.length} обработанных платежей ЮKassa, не весь исторический архив.
+      </p>
+    `;
+  };
+
+  let tenants = null;
+  let revenueEvents = null;
+  const maybeDraw = () => { if (tenants && revenueEvents) draw(tenants, revenueEvents); };
+
+  getDocs(collection(state.db, 'plans')).then((snap) => {
+    state.plansById = {};
+    snap.docs.forEach((d) => { state.plansById[d.id] = d.data(); });
+  }).catch(() => { state.plansById = {}; });
+
+  sub(onSnapshot(query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(500)), (snap) => {
+    tenants = snap.docs.map((d) => d.data());
+    maybeDraw();
+  }, () => { tenants = []; maybeDraw(); }));
+
+  // Статус фильтруем на клиенте, а не в запросе — экономит один составной
+  // индекс ради аналитики, которая и так читает не весь архив, а только
+  // последние 500 платежей (см. текст под плитками).
+  sub(onSnapshot(query(collection(state.db, 'billingEvents'), orderBy('receivedAt', 'desc'), limit(500)), (snap) => {
+    revenueEvents = snap.docs.map((d) => d.data());
+    maybeDraw();
+  }, () => { revenueEvents = []; maybeDraw(); }));
 }
 
 async function toggleTenantSuspension(tenantId, isSuspended) {

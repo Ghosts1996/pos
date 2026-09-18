@@ -348,3 +348,24 @@ describe("billingEvents: идемпотентность webhook'а видна т
     await assertFails(setDoc(doc(ctxFor("ownerA"), "billingEvents/payment_2"), { tenantId: "tenantA" }));
   });
 });
+
+describe("Тарифы (plans): управляет только супер-админ, читает любой авторизованный", () => {
+  beforeEach(seedTwoTenants);
+
+  it("любой авторизованный пользователь читает тарифы (нужно до создания заведения)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("plans/start"), { name: "Start", priceRub: 2990 });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "plans/start")));
+  });
+
+  it("супер-админ может создать и изменить тариф — панель платформы работает через прямую запись, без Cloud Function", async () => {
+    const db = ctxFor("root");
+    await assertSucceeds(setDoc(doc(db, "plans/custom-vip"), { name: "VIP", priceRub: 19990 }));
+    await assertSucceeds(setDoc(doc(db, "plans/custom-vip"), { priceRub: 24990 }, { merge: true }));
+  });
+
+  it("владелец заведения не может менять тарифы платформы", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "plans/start"), { priceRub: 1 }, { merge: true }));
+  });
+});
