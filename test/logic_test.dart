@@ -19,6 +19,7 @@ import 'package:hookah_pos/services/app_scope.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
 import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/theme/app_theme.dart';
+import 'package:hookah_pos/theme/app_colors.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -715,6 +716,19 @@ void main() {
       expect(() => AppScope.enterTenant(''), throwsArgumentError);
       expect(() => AppScope.enterTenant('   '), throwsArgumentError);
     });
+
+    test('branding отсутствует, пока не передан явно', () {
+      AppScope.enterTenant('tenantA');
+      expect(AppScope.branding, isNull);
+    });
+
+    test('branding сохраняется вместе с enterTenant и снова null после reset()', () {
+      const branding = BrandingConfig(appName: 'Тестовое заведение');
+      AppScope.enterTenant('tenantA', branding: branding);
+      expect(AppScope.branding?.appName, 'Тестовое заведение');
+      AppScope.reset();
+      expect(AppScope.branding, isNull);
+    });
   });
 
   group('SaaS: scopedPath — построение пути к данным (без реального Firebase)', () {
@@ -758,6 +772,36 @@ void main() {
 
     test('база темы (тёмная, без брендинга) не меняется веткой branded', () {
       expect(AppTheme.dark.brightness, Brightness.dark);
+    });
+
+    test('вторичный цвет и цвет кнопки применяются отдельно от primary', () {
+      const branding = BrandingConfig(
+        primaryColor: '#111111',
+        secondaryColor: '#222222',
+        buttonColor: '#333333',
+      );
+      final theme = AppTheme.branded(branding);
+      expect(theme.colorScheme.primary, const Color(0xFF111111));
+      expect(theme.colorScheme.secondary, const Color(0xFF222222));
+      expect(
+        theme.elevatedButtonTheme.style?.backgroundColor?.resolve({}),
+        const Color(0xFF333333),
+      );
+    });
+
+    test('фон и цвет текста с достаточным контрастом применяются как есть', () {
+      const branding = BrandingConfig(backgroundColor: '#000000', textColor: '#FFFFFF');
+      final theme = AppTheme.branded(branding);
+      expect(theme.scaffoldBackgroundColor, const Color(0xFF000000));
+      expect(theme.textTheme.bodyMedium?.color, const Color(0xFFFFFFFF));
+    });
+
+    test('фон и текст слишком похожи — откатывается на цвета темы по умолчанию', () {
+      // Тёмно-синий на чёрном — валидный HEX, но нечитаемая пара на планшете.
+      const branding = BrandingConfig(backgroundColor: '#000000', textColor: '#0A0A12');
+      final theme = AppTheme.branded(branding);
+      expect(theme.scaffoldBackgroundColor, AppColors.background);
+      expect(theme.textTheme.bodyMedium?.color, AppColors.textPrimary);
     });
   });
 }

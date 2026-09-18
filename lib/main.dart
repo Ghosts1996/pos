@@ -80,7 +80,7 @@ void main() async {
           }
         }
         if (config != null) {
-          AppScope.enterTenant(config.tenant.id);
+          AppScope.enterTenant(config.tenant.id, branding: config.branding);
           branding = config.branding;
           ready = true;
           startBackgroundServices();

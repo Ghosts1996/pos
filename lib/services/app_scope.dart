@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/tenant_models.dart';
 
 /// Единая точка входа в Firestore для ВСЕХ сервисов приложения.
 ///
@@ -26,6 +27,7 @@ class AppScope {
   AppScope._();
 
   static String? _tenantId;
+  static BrandingConfig? _branding;
 
   /// null — одно-арендный режим (как было исторически). Непустая строка —
   /// SaaS-режим, все обращения к данным вложены под этого арендатора.
@@ -33,22 +35,31 @@ class AppScope {
 
   static bool get isSaasMode => _tenantId != null;
 
+  /// Брендинг текущего заведения (имя, логотип, цвета) — задаётся вместе с
+  /// [enterTenant], читается экранами, которым сама тема (AppTheme.branded)
+  /// не подходит напрямую (например LoginScreen рисует свои цвета
+  /// литералами, а не через Theme.of(context)). null в одно-арендном
+  /// режиме — экраны в этом случае показывают свои прежние значения.
+  static BrandingConfig? get branding => _branding;
+
   /// Включает SaaS-режим для текущего процесса приложения — вызывается
   /// один раз, когда TenantConfigService успешно определил заведение
   /// пользователя (или устройство подтвердило код приглашения). Что именно
   /// вызывает это на старте — решает main.dart/kolibri_main.dart, сам
   /// AppScope ничего не знает про Auth/логины.
-  static void enterTenant(String tenantId) {
+  static void enterTenant(String tenantId, {BrandingConfig? branding}) {
     if (tenantId.trim().isEmpty) {
       throw ArgumentError('tenantId не может быть пустым');
     }
     _tenantId = tenantId;
+    _branding = branding;
   }
 
   /// Возврат в одно-арендный режим (например, выход из SaaS-аккаунта или
   /// смена заведения на планшете).
   static void reset() {
     _tenantId = null;
+    _branding = null;
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому

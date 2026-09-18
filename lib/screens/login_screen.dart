@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
+import '../services/app_scope.dart';
 import '../services/firestore_service.dart';
 import '../services/guest_link_service.dart';
 import '../services/reservation_service.dart';
@@ -191,6 +192,15 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     }
 
+    // Экран входа рисует свои цвета литералами, а не через Theme.of(context)
+    // (см. AppTheme.branded для остальных экранов) — здесь важна не полная
+    // фирменная палитра, а само имя и логотип заведения (TOR §17/§18), и
+    // именно это единственное, что тянем из AppScope.branding. В
+    // одно-арендной сборке branding всегда null — экран не меняется.
+    final branding = AppScope.branding;
+    final appName = branding?.appName ?? 'Hookah POS';
+    final logoUrl = branding?.logoUrl ?? '';
+
     return Scaffold(
       backgroundColor: const Color(0xFF1B1B1F),
       body: SafeArea(
@@ -198,10 +208,22 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
+              logoUrl.isNotEmpty
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Image.network(
+                        logoUrl,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
+                      ),
+                    )
+                  : const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
               const SizedBox(height: 12),
-              const Text('Hookah POS',
-                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+              Text(appName,
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,

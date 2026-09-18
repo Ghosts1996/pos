@@ -70,7 +70,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       if (config == null) {
         throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
       }
-      AppScope.enterTenant(tenantId);
+      AppScope.enterTenant(tenantId, branding: config.branding);
       startBackgroundServices();
 
       if (!mounted) return;
