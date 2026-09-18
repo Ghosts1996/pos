@@ -349,7 +349,7 @@ describe("billingEvents: идемпотентность webhook'а видна т
   });
 });
 
-describe("Тарифы (plans): управляет только супер-админ, читает любой авторизованный", () => {
+describe("Тарифы (plans): управляет только супер-админ, читает кто угодно", () => {
   beforeEach(seedTwoTenants);
 
   it("любой авторизованный пользователь читает тарифы (нужно до создания заведения)", async () => {
@@ -357,6 +357,13 @@ describe("Тарифы (plans): управляет только супер-ад�
       await setDoc(ctx.firestore().doc("plans/start"), { name: "Start", priceRub: 2990 });
     });
     await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "plans/start")));
+  });
+
+  it("неавторизованный посетитель лендинга тоже читает тарифы (публичная цена)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("plans/start"), { name: "Start", priceRub: 2990 });
+    });
+    await assertSucceeds(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "plans/start")));
   });
 
   it("супер-админ может создать и изменить тариф — панель платформы работает через прямую запись, без Cloud Function", async () => {

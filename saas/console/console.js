@@ -10,6 +10,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getAuth, onAuthStateChanged, signOut, sendEmailVerification,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
@@ -328,6 +329,35 @@ async function boot() {
   state.functions = getFunctions(app, FUNCTIONS_REGION);
   state.storage = getStorage(app);
 
+  // Возврат по ссылке из письма (см. sendLoginLink на лендинге) — сама
+  // ссылка не требует пароля вообще: клик по ней уже доказывает владение
+  // почтой, поэтому именно так закрывается регистрация "любой email без
+  // подтверждения" на самом первом шаге, ещё до онбординга.
+  if (isSignInWithEmailLink(state.auth, window.location.href)) {
+    let email = window.localStorage.getItem('emailForSignIn');
+    if (!email) {
+      email = window.prompt('Введите email, на который приходило письмо со ссылкой для входа:');
+    }
+    if (email) {
+      try {
+        const cred = await signInWithEmailLink(state.auth, email, window.location.href);
+        window.localStorage.removeItem('emailForSignIn');
+        const userRef = doc(state.db, 'users', cred.user.uid);
+        const existing = await getDoc(userRef);
+        if (!existing.exists()) {
+          await setDoc(userRef, { email, createdAt: Timestamp.fromDate(new Date()) });
+        }
+      } catch (_) {
+        // Ссылка одноразовая/просрочена — ниже просто покажется лендинг
+        // или обычный вход, ошибку тут показывать некому (мы могли даже не
+        // понять, какой email вводили).
+      }
+    }
+    // Убираем oobCode/apiKey и т.п. из адресной строки — иначе повторное
+    // обновление страницы попробует использовать уже потраченную ссылку.
+    history.replaceState(null, '', location.pathname + '#/');
+  }
+
   onAuthStateChanged(state.auth, handleAuthChange);
 }
 
@@ -396,7 +426,17 @@ function watchMemberships() {
 
 function route() {
   clearScreen();
-  if (!state.uid) return screenAuth();
+  if (!state.uid) {
+    // Лендинг — дефолтная дверь для того, кто ещё не вошёл: что это за
+    // система, какие тарифы, кнопка "Попробовать бесплатно". #/login —
+    // прежний вход по email+паролю, для тех, кто уже регистрировался так
+    // раньше (ссылка снизу лендинга ведёт туда же).
+    if (location.hash === '#/login' || location.hash === '#/signup') {
+      authMode = location.hash === '#/signup' ? 'signup' : 'login';
+      return screenAuth();
+    }
+    return screenLanding();
+  }
   if (location.hash === '#/admin') {
     // Панель платформы не зависит от того, есть ли у супер-админа
     // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
@@ -428,6 +468,146 @@ function screenDashboardOrOnboarding() {
 window.addEventListener('hashchange', route);
 boot();
 
+// ---------- ЛЕНДИНГ ----------
+
+// Реальные возможности приложения (см. корневой README.md, разделы
+// "Hoocah POS — возможности сотрудника/администратора") — сокращённо, для
+// человека, который видит систему первый раз, а не для того, кто уже читал
+// техническую документацию.
+const LANDING_FEATURES = [
+  { icon: '🗺️', title: 'Карта зала', desc: 'таймер на каждом столе, несколько чеков на одном столе, перенос между столами без потери заказа' },
+  { icon: '💳', title: 'Оплата и чек', desc: 'наличные / карта / терминал, скидочные карты, бонусы, сплит-оплата' },
+  { icon: '📦', title: 'Склад', desc: 'остатки по категориям, инвентаризация с историей расхождений' },
+  { icon: '📅', title: 'Брони и лист ожидания', desc: 'с гостевого приложения и вручную, автоподбор стола' },
+  { icon: '🎁', title: 'Программа лояльности', desc: 'бонусы, сертификаты, реферальные бонусы за приглашённых гостей' },
+  { icon: '🤖', title: 'ИИ-помощники', desc: 'для зала, кухни/бара, разбора броней и склада' },
+  { icon: '📱', title: 'Гостевое приложение', desc: 'меню, вызов официанта, свой счёт, бронь — прямо с телефона гостя, без установки' },
+  { icon: '📊', title: 'Отчёты', desc: 'выручка, средний чек, топ позиций меню, X-отчёты по сменам' },
+];
+
+function landingPlanCardHtml(p, selected) {
+  const priceText = Number(p.priceRub) > 0
+    ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
+    : 'По запросу';
+  const limits = [
+    p.maxEmployees ? `до ${p.maxEmployees} сотрудников` : 'сотрудников без лимита',
+    p.maxTables ? `до ${p.maxTables} столов` : 'столов без лимита',
+    p.maxDevices ? `до ${p.maxDevices} устройств` : 'устройств без лимита',
+  ];
+  const perks = [];
+  if (p.aiEnabled) perks.push('ИИ-помощники');
+  if (p.customBranding) perks.push('свой брендинг');
+  if (p.customDomain) perks.push('свой домен');
+  if (p.features?.advancedReports) perks.push('расширенные отчёты');
+  return `
+    <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
+      <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
+      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}</div>
+      <div class="small muted">${limits.join(' · ')}</div>
+      ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
+      <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
+        ${selected ? 'Тариф выбран ✓' : 'Выбрать и попробовать'}
+      </button>
+    </div>
+  `;
+}
+
+function screenLanding() {
+  let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
+
+  screenEl().innerHTML = `
+    <div class="brand">Hoocah POS</div>
+    <h1>Облачная касса для кальянных и лаунжей</h1>
+    <p class="muted">Карта зала, чеки и оплата, склад, брони и лист ожидания,
+    программа лояльности, гостевое приложение и ИИ-помощники персоналу —
+    всё в одной системе. Работает на обычном Android-планшете, разворачивается
+    за 10–15 минут.</p>
+
+    <div class="card" style="margin-top:6px">
+      <label class="field"><span>Email</span>
+        <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
+      <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно 14 дней</button>
+      <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
+    </div>
+
+    <h2 style="margin-top:26px">Что умеет система</h2>
+    <div class="card">
+      ${LANDING_FEATURES.map((f) => `
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">
+          ${f.icon} <b>${esc(f.title)}</b> — ${esc(f.desc)}
+        </div>
+      `).join('')}
+    </div>
+
+    <h2>Тарифы</h2>
+    <div id="landing-plans"><div class="spinner"></div></div>
+
+    <p class="small center muted" style="margin-top:20px">
+      Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
+    </p>
+    ${versionFooterHtml()}
+  `;
+
+  const submit = async () => {
+    const email = $('f-landing-email').value.trim();
+    const errEl = $('f-landing-error');
+    errEl.textContent = '';
+    if (!email) { errEl.textContent = 'Введите email'; return; }
+    $('f-landing-start').disabled = true;
+    try {
+      await sendSignInLinkToEmail(state.auth, email, {
+        url: `${location.origin}${location.pathname}#/`,
+        handleCodeInApp: true,
+      });
+      window.localStorage.setItem('emailForSignIn', email);
+      if (selectedPlanId) window.localStorage.setItem('selectedPlanId', selectedPlanId);
+      screenEl().innerHTML = `
+        <div class="brand">Hoocah POS</div>
+        <h1>Проверьте почту</h1>
+        <p class="muted">Отправили ссылку для входа на <b>${esc(email)}</b>.
+        Откройте письмо на этом же телефоне и перейдите по ссылке — она
+        сразу откроет личный кабинет, без пароля.</p>
+        <p class="small center muted" style="margin-top:20px">
+          Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
+        </p>
+        ${versionFooterHtml()}
+      `;
+    } catch (e) {
+      errEl.textContent = authErrorMessage(e);
+      $('f-landing-start').disabled = false;
+    }
+  };
+  $('f-landing-start').onclick = submit;
+  $('f-landing-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+  sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
+    const plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
+    const body = $('landing-plans');
+    if (!body) return;
+    body.innerHTML = plans.length
+      ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId)).join('')
+      : '<p class="small muted">Тарифы скоро появятся.</p>';
+    document.querySelectorAll('.f-landing-plan-pick').forEach((el) => {
+      el.onclick = () => {
+        selectedPlanId = el.dataset.id;
+        window.localStorage.setItem('selectedPlanId', selectedPlanId);
+        document.querySelectorAll('.f-landing-plan-pick').forEach((btn) => {
+          const isSel = btn.dataset.id === selectedPlanId;
+          btn.textContent = isSel ? 'Тариф выбран ✓' : 'Выбрать и попробовать';
+          btn.className = `btn ${isSel ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick`;
+          btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
+        });
+        $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
+    });
+  }, () => {
+    const body = $('landing-plans');
+    if (body) body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
+  }));
+}
+
 // ---------- ВХОД / РЕГИСТРАЦИЯ ----------
 
 let authMode = 'login'; // 'login' | 'signup' — держим отдельно от state: это выбор экрана, а не данные аккаунта.
@@ -454,6 +634,7 @@ function screenAuth() {
       ${authMode === 'login' ? 'Ещё нет аккаунта?' : 'Уже есть аккаунт?'}
       <a href="#" id="f-switch">${authMode === 'login' ? 'Зарегистрироваться' : 'Войти'}</a>
     </p>
+    <p class="small center muted"><a href="#/">← На главную</a></p>
     ${versionFooterHtml()}
   `;
 
@@ -627,7 +808,12 @@ function screenOnboarding() {
     $('f-submit').disabled = true;
     try {
       const createTenant = httpsCallable(state.functions, 'createTenant');
-      const res = await createTenant({ name, slug });
+      // Если владелец пришёл с лендинга, выбрав конкретный тариф — заводим
+      // заведение сразу на нём (пробный период всё равно бесплатный 14
+      // дней, planId лишь определяет, какие лимиты/тариф ждут ПОСЛЕ триала).
+      const chosenPlanId = window.localStorage.getItem('selectedPlanId');
+      const res = await createTenant(chosenPlanId ? { name, slug, planId: chosenPlanId } : { name, slug });
+      window.localStorage.removeItem('selectedPlanId');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
       // createTenant уже завёл дефолтный брендинг ("Полночный синий") —
