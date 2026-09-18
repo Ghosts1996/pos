@@ -419,3 +419,33 @@ describe("users: поиск по email для назначения супер-а
     await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "users/ownerA")));
   });
 });
+
+describe("Поддержка клиента из панели платформы: код приглашения и внутренние заметки", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/settings/deviceInvite"), { code: "ABC123" });
+    });
+  });
+
+  it("супер-админ читает код приглашения устройства чужого заведения", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "tenants/tenantA/settings/deviceInvite")));
+  });
+
+  it("владелец чужого заведения не читает код приглашения tenantA", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/settings/deviceInvite")));
+  });
+
+  it("супер-админ пишет и читает внутренние заметки о заведении", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "tenants/tenantA/internal/adminNotes"), { text: "Платит переводом" }));
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "tenants/tenantA/internal/adminNotes")));
+  });
+
+  it("владелец заведения не видит и не может создать внутренние заметки платформы", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/internal/adminNotes"), { text: "секрет" });
+    });
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "tenants/tenantA/internal/adminNotes")));
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/internal/adminNotes"), { text: "x" }));
+  });
+});

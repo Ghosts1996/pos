@@ -178,8 +178,18 @@ service cloud.firestore {
 
     // ---- Настройки заведения ----
     match /tenants/{tenantId}/settings/{doc} {
-      allow read: if isMember(tenantId);
+      // Супер-админ тоже читает (например deviceInvite.code) — нужно для
+      // поддержки клиента из панели платформы без захода в его кабинет;
+      // писать сюда супер-админ мог и раньше через hasRole().
+      allow read: if isMember(tenantId) || isSuperAdmin();
       allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+
+    // ---- Внутренние заметки супер-админа о заведении (CRM-заметки для
+    //      поддержки — кто оплатил вручную, о чём договорились и т.д.) ----
+    //      Никогда не видны владельцу/сотрудникам заведения.
+    match /tenants/{tenantId}/internal/{doc} {
+      allow read, write: if isSuperAdmin();
     }
 
     // ---- Брендинг ----
