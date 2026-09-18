@@ -114,6 +114,29 @@ function fmtDateTime(ts) {
   return `${fmtDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Тот же льготный период, что и на сервере (saas/functions/index.js,
+// GRACE_PERIOD_DAYS) и в приложении (lib/models/tenant_models.dart,
+// gracePeriodDays) — три рантайма, синхронизировать вручную при изменении.
+const GRACE_PERIOD_DAYS = 10;
+
+/// «1 день», «2 дня», «5 дней» — тот же приём, что и в public/app/app.js.
+function pluralDays(n) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last === 1) return 'день';
+  if (!teen && last >= 2 && last <= 4) return 'дня';
+  return 'дней';
+}
+
+function daysUntilDataPurge(subscription) {
+  if (subscription?.status !== 'past_due') return null;
+  const since = subscription.pastDueSince?.toDate?.();
+  if (!since) return null;
+  const deadline = since.getTime() + GRACE_PERIOD_DAYS * 86400000;
+  const remainingDays = Math.ceil((deadline - Date.now()) / 86400000);
+  return Math.max(0, remainingDays);
+}
+
 function planName(plans, planId) {
   if (!plans || !planId) return null;
   const plan = plans.find((p) => p.id === planId);
@@ -613,6 +636,22 @@ function watchDashboardData(tenantId) {
       </div>
 
       <h2>Подписка</h2>
+      ${(() => {
+        const daysLeft = daysUntilDataPurge(subscription);
+        if (daysLeft === null) return '';
+        return `
+          <div class="card danger">
+            <div style="font-weight:700;margin-bottom:6px">⚠ Подписка не продлена</div>
+            <div class="small">
+              ${daysLeft > 0
+                ? `Данные заведения будут БЕЗВОЗВРАТНО удалены через ${daysLeft} ${pluralDays(daysLeft)}, если подписку не продлить.`
+                : 'Срок продления истёк — данные заведения будут удалены при ближайшей проверке.'}
+              Кассы и зал продолжают работать, пока данные не удалены, но после удаления заведение придётся
+              настраивать заново — меню, столы, сотрудников и всё остальное.
+            </div>
+          </div>
+        `;
+      })()}
       <div class="card">
         <div class="small muted">Тариф: ${esc(planName(plans, subscription?.planId) || subscription?.planId || '—')}</div>
         <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
@@ -626,9 +665,9 @@ function watchDashboardData(tenantId) {
                   <div>${esc(p.name || p.id)}</div>
                   <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес</div>
                 </div>
-                <button class="btn btn-ghost f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
+                <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
                   ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
-                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Оформить'}
+                  ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
                 </button>
               </div>
             `).join('')}
@@ -900,7 +939,7 @@ function watchAllTenants() {
       (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term));
 
     body.innerHTML = filtered.length ? filtered.map((t) => `
-      <div class="card">
+      <div class="card${t.daysLeft !== null && t.daysLeft !== undefined ? ' danger' : ''}">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div class="grow" style="min-width:0">
             <div style="font-weight:700">${esc(t.name || t.id)}</div>
@@ -909,6 +948,11 @@ function watchAllTenants() {
               ${esc(TENANT_STATUS_LABELS[t.status] || t.status || '—')} ·
               создано ${fmtDate(t.createdAt)}
             </div>
+            ${t.daysLeft !== null && t.daysLeft !== undefined ? `
+              <div class="small" style="color:var(--danger);margin-top:4px">
+                ⚠ Данные будут удалены ${t.daysLeft > 0 ? `через ${t.daysLeft} ${pluralDays(t.daysLeft)}` : 'при ближайшей проверке'}
+              </div>
+            ` : ''}
             ${t.usage ? `
               <div class="small muted">
                 сотрудников: ${t.usage.employees ?? '—'} · устройств: ${t.usage.devices ?? '—'} ·
@@ -959,6 +1003,12 @@ function watchAllTenants() {
         t.usage = uSnap.exists() ? uSnap.data() : null;
       } catch (_) {
         t.usage = null;
+      }
+      try {
+        const sSnap = await getDoc(doc(state.db, 'subscriptions', t.id));
+        t.daysLeft = sSnap.exists() ? daysUntilDataPurge(sSnap.data()) : null;
+      } catch (_) {
+        t.daysLeft = null;
       }
     }));
     allTenants = tenants;

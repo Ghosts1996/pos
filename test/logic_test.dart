@@ -4,6 +4,7 @@
 // Раньше в test/ лежал пустой файл без main(), из-за чего `flutter test`
 // падал на загрузке и проверять было нечего.
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/client_models.dart';
@@ -648,6 +649,48 @@ void main() {
       );
       expect(plan.isWithinLimit(2, plan.maxEmployees), isTrue);
       expect(plan.isWithinLimit(3, plan.maxEmployees), isFalse);
+    });
+  });
+
+  group('SaaS: SubscriptionInfo.daysUntilDataPurge — льготный период перед удалением данных', () {
+    test('не в просрочке — до удаления считать нечего', () {
+      const sub = SubscriptionInfo(tenantId: 't1', planId: 'start', status: 'active');
+      expect(sub.daysUntilDataPurge(), isNull);
+    });
+
+    test('просрочка началась только что — впереди весь льготный период', () {
+      final now = DateTime(2026, 1, 20);
+      final sub = SubscriptionInfo(
+        tenantId: 't1', planId: 'start', status: 'past_due', pastDueSince: now,
+      );
+      expect(sub.daysUntilDataPurge(now: now), gracePeriodDays);
+    });
+
+    test('половина льготного периода прошла', () {
+      final since = DateTime(2026, 1, 10);
+      final now = DateTime(2026, 1, 15); // +5 дней из 10
+      final sub = SubscriptionInfo(
+        tenantId: 't1', planId: 'start', status: 'past_due', pastDueSince: since,
+      );
+      expect(sub.daysUntilDataPurge(now: now), 5);
+    });
+
+    test('льготный период уже истёк — не уходит в минус', () {
+      final since = DateTime(2026, 1, 1);
+      final now = DateTime(2026, 2, 1); // сильно больше 10 дней
+      final sub = SubscriptionInfo(
+        tenantId: 't1', planId: 'start', status: 'past_due', pastDueSince: since,
+      );
+      expect(sub.daysUntilDataPurge(now: now), 0);
+    });
+
+    test('pastDueSince читается из Firestore-документа', () {
+      final sub = SubscriptionInfo.fromMap({
+        'planId': 'start',
+        'status': 'past_due',
+        'pastDueSince': Timestamp.fromDate(DateTime(2026, 1, 1)),
+      }, 't1');
+      expect(sub.pastDueSince, DateTime(2026, 1, 1));
     });
   });
 

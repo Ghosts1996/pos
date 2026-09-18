@@ -639,12 +639,142 @@ exports.chargeRecurringSubscriptions = onSchedule(
         });
       } catch (e) {
         console.error(`chargeRecurringSubscriptions: не удалось продлить ${tenantId}`, e);
-        await subDoc.ref.update({ status: "past_due" });
+        await markPastDue(tenantId, subDoc.ref);
         await writeAuditLog({ tenantId, actorId: null, action: "subscriptionRenewalFailed", metadata: { error: String(e) } });
       }
     }
   }
 );
+
+/** Переводит и подписку, и само заведение в past_due синхронно (иначе
+ *  консоль/панель платформы показывали бы разные статусы одного и того же
+ *  заведения) и фиксирует момент начала льготного периода — от него
+ *  считаются GRACE_PERIOD_DAYS до реального удаления (enforceGracePeriod).
+ *  Не трогает pastDueSince, если он уже стоит — иначе повторный вызов
+ *  (например, ещё одна неудачная попытка списания) отодвигал бы дедлайн
+ *  удаления бесконечно. */
+async function markPastDue(tenantId, subRef) {
+  const sub = (await subRef.get()).data();
+  const update = { status: "past_due" };
+  if (!sub?.pastDueSince) update.pastDueSince = admin.firestore.FieldValue.serverTimestamp();
+  await subRef.set(update, { merge: true });
+  await db.collection("tenants").doc(tenantId).set({
+    status: "past_due",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+// Полный список вложенных коллекций заведения — ровно то же самое
+// перечисление, что и в saas/firestore.rules (там оно тоже явное, не
+// catch-all, см. комментарий в конце того файла). Если появится новая
+// коллекция tenants/{tenantId}/..., её нужно добавить в ОБА места.
+const TENANT_SUBCOLLECTIONS = [
+  "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
+  "branding", "clients", "devices", "discountCards", "employees",
+  "giftCardClaims", "giftCards", "guestOrders", "happyHours", "inventory",
+  "inventoryCounts", "inventoryMovements", "marking_codes_sold",
+  "menuCategories", "menuItems", "meta", "phoneIndex", "pushQueue",
+  "referralCodes", "reservationSlots", "reservations", "reviews",
+  "sessionClaims", "sessions", "settings", "shifts", "staffNotes", "stories",
+  "tables", "tips", "usage", "waiterCalls", "waitlist",
+];
+
+const GRACE_PERIOD_DAYS = 10;
+
+/**
+ * Реально стирает операционные данные заведения — вызывается ТОЛЬКО после
+ * того, как истёк GRACE_PERIOD_DAYS-дневный льготный период с момента
+ * pastDueSince (владелец видел предупреждение и не продлил подписку).
+ *
+ * Что остаётся НАМЕРЕННО: сам документ tenants/{tenantId} (статус
+ * "deleted") — код заведения (slug) не освобождается для повторного
+ * использования, и в auditLogs остаётся, что заведение вообще
+ * существовало; подписка (статус "cancelled") — история платежей для
+ * поддержки/бухгалтерии. Что стирается: буквально все вложенные
+ * коллекции (столы, чеки, гости, меню, склад, сотрудники, устройства,
+ * настройки, брендинг) и membership — владелец и весь персонал теряют
+ * доступ, вернуться можно только заново пройдя онбординг (новое
+ * заведение) — ровно то, что и должно происходить после реального
+ * удаления данных.
+ */
+async function purgeTenantData(tenantId) {
+  const tenantRef = db.collection("tenants").doc(tenantId);
+
+  for (const name of TENANT_SUBCOLLECTIONS) {
+    await db.recursiveDelete(tenantRef.collection(name));
+  }
+
+  const members = await db.collection("tenantMembers").where("tenantId", "==", tenantId).get();
+  if (!members.empty) {
+    const batch = db.batch();
+    members.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  await tenantRef.set({ status: "deleted", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await db.collection("subscriptions").doc(tenantId).set({ status: "cancelled" }, { merge: true });
+  await writeAuditLog({
+    tenantId, actorId: null, action: "tenantDataPurged",
+    metadata: { reason: "grace_period_expired", graceDays: GRACE_PERIOD_DAYS },
+  });
+}
+
+/**
+ * Раз в сутки продвигает жизненный цикл подписки там, где
+ * chargeRecurringSubscriptions не справляется сама:
+ *
+ * 1. Триал закончился, а оплата так и не прошла (chargeRecurringSubscriptions
+ *    вообще не видит триальные подписки — у них ещё нет provider) — включаем
+ *    тот же льготный период, что и для просроченного платежа.
+ * 2. Оплаченный период закончился, а подписка всё ещё "active" — то есть
+ *    автосписание либо было нечем провести (нет сохранённого способа
+ *    оплаты — TOR явно не гарантирует его каждому магазину, см.
+ *    saas/README.md), либо просто не случилось. Без этой подстраховки
+ *    такая подписка застряла бы в "active" навсегда.
+ * 3. Просрочка (past_due) тянется дольше GRACE_PERIOD_DAYS с момента
+ *    pastDueSince — реально стираем данные заведения (purgeTenantData).
+ *
+ * Отдельная функция от chargeRecurringSubscriptions намеренно: та отвечает
+ * за попытку СПИСАТЬ деньги, эта — за то, что происходит, когда денег
+ * никто не пытался или не смог списать вовремя.
+ */
+exports.enforceGracePeriod = onSchedule({ region: REGION, schedule: "every 24 hours" }, async () => {
+  const now = Date.now();
+  const nowTs = admin.firestore.Timestamp.fromMillis(now);
+
+  const expiredTrials = await db.collection("subscriptions")
+    .where("status", "==", "trial")
+    .where("trialEndsAt", "<=", nowTs)
+    .get();
+  for (const subDoc of expiredTrials.docs) {
+    await markPastDue(subDoc.id, subDoc.ref);
+    await writeAuditLog({ tenantId: subDoc.id, actorId: null, action: "trialExpired" });
+  }
+
+  const staleActive = await db.collection("subscriptions")
+    .where("status", "==", "active")
+    .where("currentPeriodEnd", "<=", nowTs)
+    .get();
+  for (const subDoc of staleActive.docs) {
+    const sub = subDoc.data();
+    // Списание могло быть запущено только что (chargeRecurringSubscriptions
+    // сегодня же) — даём webhook'у сутки дойти, прежде чем считать подписку
+    // просроченной, иначе можно испугать владельца, который только что
+    // заплатил, но подтверждение ещё в пути.
+    const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
+    if (now - lastAttemptMs < 24 * 3600000) continue;
+    await markPastDue(subDoc.id, subDoc.ref);
+  }
+
+  const deadline = admin.firestore.Timestamp.fromMillis(now - GRACE_PERIOD_DAYS * 86400000);
+  const overdue = await db.collection("subscriptions")
+    .where("status", "==", "past_due")
+    .where("pastDueSince", "<=", deadline)
+    .get();
+  for (const subDoc of overdue.docs) {
+    await purgeTenantData(subDoc.id);
+  }
+});
 
 // ------------------------------------------------------------ createBuildJob
 
