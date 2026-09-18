@@ -6,7 +6,7 @@
  *
  * Запуск:
  *   cd saas/test && npm i
- *   npx firebase emulators:exec --project colibri-saas-rules-test \
+ *   npx firebase emulators:exec --project hookah-saas-rules-test \
  *     --only firestore "npm test"
  * (или см. saas/test/run.sh — обёртка с тем же вызовом)
  */
@@ -16,7 +16,7 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const PROJECT_ID = "colibri-saas-rules-test";
+const PROJECT_ID = "hookah-saas-rules-test";
 
 let testEnv;
 
