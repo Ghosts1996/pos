@@ -1,0 +1,10 @@
+{
+  "name": "colibri-saas-migrations",
+  "private": true,
+  "scripts": {
+    "migrate": "node migrate-single-tenant-to-tenant.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

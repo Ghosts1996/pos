@@ -1,0 +1,35 @@
+{
+  "start": {
+    "name": "Start",
+    "maxEmployees": 3,
+    "maxDevices": 1,
+    "maxTables": 15,
+    "maxStorageMb": 500,
+    "aiEnabled": false,
+    "customBranding": false,
+    "customDomain": false,
+    "features": { "reservations": true, "loyalty": true, "guestApp": true, "advancedReports": false }
+  },
+  "business": {
+    "name": "Business",
+    "maxEmployees": 30,
+    "maxDevices": 10,
+    "maxTables": 100,
+    "maxStorageMb": 5000,
+    "aiEnabled": true,
+    "customBranding": true,
+    "customDomain": false,
+    "features": { "reservations": true, "loyalty": true, "guestApp": true, "advancedReports": true }
+  },
+  "enterprise": {
+    "name": "Enterprise",
+    "maxEmployees": 0,
+    "maxDevices": 0,
+    "maxTables": 0,
+    "maxStorageMb": 0,
+    "aiEnabled": true,
+    "customBranding": true,
+    "customDomain": true,
+    "features": { "reservations": true, "loyalty": true, "guestApp": true, "advancedReports": true }
+  }
+}
