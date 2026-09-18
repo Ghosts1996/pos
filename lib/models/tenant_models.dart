@@ -234,15 +234,22 @@ class BrandingConfig {
   final bool darkMode;
   final String logoUrl;
 
+  // Значения по умолчанию — РОВНО палитра "Midnight Blue" из
+  // lib/theme/app_colors.dart (AppColors.primary/background/textPrimary/
+  // selection), а не какие-то отдельные цвета: свежее заведение без
+  // кастомного брендинга должно выглядеть БАЙТ-В-БАЙТ как проверенный
+  // одно-арендный продукт, а не как случайно другая палитра. (Строковые
+  // литералы, а не импорт AppColors, — эта модель намеренно не зависит от
+  // слоя темы/UI, см. заголовок файла.)
   const BrandingConfig({
-    this.appName = 'Colibri',
+    this.appName = 'Colibri POS',
     this.shortName = 'Colibri',
-    this.primaryColor = '#12B886',
-    this.secondaryColor = '#0E1512',
-    this.accentColor = '#F06595',
-    this.backgroundColor = '#0E1512',
-    this.textColor = '#EAF3EF',
-    this.buttonColor = '#12B886',
+    this.primaryColor = '#0B5ED7',
+    this.secondaryColor = '#162A4A',
+    this.accentColor = '#0B5ED7',
+    this.backgroundColor = '#02050B',
+    this.textColor = '#F8FAFC',
+    this.buttonColor = '#0B5ED7',
     this.darkMode = true,
     this.logoUrl = '',
   });
@@ -250,14 +257,14 @@ class BrandingConfig {
   factory BrandingConfig.fromMap(Map<String, dynamic>? d) {
     if (d == null) return const BrandingConfig();
     return BrandingConfig(
-      appName: d['appName'] as String? ?? 'Colibri',
+      appName: d['appName'] as String? ?? 'Colibri POS',
       shortName: d['shortName'] as String? ?? 'Colibri',
-      primaryColor: d['primaryColor'] as String? ?? '#12B886',
-      secondaryColor: d['secondaryColor'] as String? ?? '#0E1512',
-      accentColor: d['accentColor'] as String? ?? '#F06595',
-      backgroundColor: d['backgroundColor'] as String? ?? '#0E1512',
-      textColor: d['textColor'] as String? ?? '#EAF3EF',
-      buttonColor: d['buttonColor'] as String? ?? '#12B886',
+      primaryColor: d['primaryColor'] as String? ?? '#0B5ED7',
+      secondaryColor: d['secondaryColor'] as String? ?? '#162A4A',
+      accentColor: d['accentColor'] as String? ?? '#0B5ED7',
+      backgroundColor: d['backgroundColor'] as String? ?? '#02050B',
+      textColor: d['textColor'] as String? ?? '#F8FAFC',
+      buttonColor: d['buttonColor'] as String? ?? '#0B5ED7',
       darkMode: d['darkMode'] as bool? ?? true,
       logoUrl: d['logoUrl'] as String? ?? '',
     );
