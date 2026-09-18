@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import '../models/tenant_models.dart';
@@ -215,23 +216,49 @@ class AppTheme {
     );
   }
 
-  /// Тема заведения в SaaS-режиме — накладывает фирменный акцентный цвет
-  /// поверх базовой тёмной темы (см. [dark]).
+  /// Тема заведения в SaaS-режиме — накладывает фирменную палитру поверх
+  /// базовой тёмной темы (см. [dark]): основной и вторичный цвет, цвет
+  /// кнопок, фон и цвет текста.
   ///
-  /// Намеренно узкий охват: только primary-цвет (кнопки, акценты, цвет
-  /// выделения), а не вся палитра. Полноценный визуальный редизайн под
-  /// бренд (фон/текст/вторичные цвета, TOR §14/§17/§18 — визуальный
-  /// редактор с пресетами и предпросмотром) — отдельная задача следующего
-  /// этапа: здесь важно не сломать читаемость интерфейса на планшете в
-  /// зале произвольным сочетанием цветов, которое владелец введёт вслепую.
+  /// Фон и текст владелец задаёт вслепую, в консоли, а не глядя на реальный
+  /// экран POS в тёмном зале — случайно перепутанная или слишком похожая
+  /// пара (например, тёмно-синий текст на чёрном фоне) сделает интерфейс
+  /// нечитаемым посреди смены. Поэтому пара фон/текст проверяется на
+  /// контраст (формула WCAG, порог 3:1 — как для крупного текста: POS и так
+  /// держит крупные жирные шрифты, это не сплошной убористый текст, для
+  /// которого WCAG требует 4.5:1) — и при недостаточном контрасте ЭТА ПАРА
+  /// откатывается на проверенную (AppColors), а не применяется как есть.
+  /// Остальные цвета (primary/secondary/button) таким образом не режутся:
+  /// они не несут текста поверх себя тем же способом, что фон.
   static ThemeData branded(BrandingConfig branding) {
     final primary = _parseHexColor(branding.primaryColor) ?? AppColors.primary;
+    final secondary = _parseHexColor(branding.secondaryColor) ?? AppColors.selection;
+    final button = _parseHexColor(branding.buttonColor) ?? primary;
+
+    var background = _parseHexColor(branding.backgroundColor) ?? AppColors.background;
+    var text = _parseHexColor(branding.textColor) ?? AppColors.textPrimary;
+    if (_contrastRatio(background, text) < 3.0) {
+      background = AppColors.background;
+      text = AppColors.textPrimary;
+    }
+
     final base = dark;
     return base.copyWith(
-      colorScheme: base.colorScheme.copyWith(primary: primary, secondary: primary),
+      scaffoldBackgroundColor: background,
+      colorScheme: base.colorScheme.copyWith(
+        primary: primary,
+        secondary: secondary,
+        onSurface: text,
+      ),
+      textTheme: base.textTheme.apply(bodyColor: text, displayColor: text),
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: background,
+        foregroundColor: text,
+      ),
+      iconTheme: base.iconTheme.copyWith(color: text),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: base.elevatedButtonTheme.style?.copyWith(
-          backgroundColor: WidgetStatePropertyAll(primary),
+          backgroundColor: WidgetStatePropertyAll(button),
         ),
       ),
       focusColor: primary,
@@ -250,5 +277,25 @@ class AppTheme {
     if (h.length != 8) return null;
     final value = int.tryParse(h, radix: 16);
     return value == null ? null : Color(value);
+  }
+
+  /// Контраст по формуле WCAG 2 — то же самое, что консоль владельца
+  /// (saas/console/console.js, contrastRatio()) считает в браузере ДО
+  /// сохранения цвета, чтобы предупредить владельца сразу. Здесь —
+  /// повторная проверка на стороне приложения: консоль можно обойти
+  /// (прямая запись в Firestore), а нечитаемый экран на планшете в зале
+  /// нельзя показывать ни при каких обстоятельствах.
+  static double _contrastRatio(Color a, Color b) {
+    final la = _relativeLuminance(a) + 0.05;
+    final lb = _relativeLuminance(b) + 0.05;
+    return la > lb ? la / lb : lb / la;
+  }
+
+  static double _relativeLuminance(Color c) {
+    return 0.2126 * _srgbChannel(c.r) + 0.7152 * _srgbChannel(c.g) + 0.0722 * _srgbChannel(c.b);
+  }
+
+  static double _srgbChannel(double c) {
+    return c <= 0.03928 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
   }
 }

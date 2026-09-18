@@ -192,15 +192,20 @@ exports.createTenant = onCall({ region: REGION }, async (request) => {
     quickExtensions: [15, 30, 60],
   });
 
+  // Ровно палитра "Midnight Blue" из lib/theme/app_colors.dart
+  // (AppColors.primary/background/textPrimary/selection) — новое
+  // заведение без кастомного брендинга должно выглядеть байт-в-байт как
+  // проверенный одно-арендный продукт, а не какой-то другой палитрой по
+  // умолчанию (см. lib/models/tenant_models.dart, BrandingConfig).
   batch.set(tenantRef.collection("branding").doc("config"), {
     appName: name.trim(),
     shortName: name.trim().slice(0, 12),
-    primaryColor: "#12B886",
-    secondaryColor: "#0E1512",
-    accentColor: "#F06595",
-    backgroundColor: "#0E1512",
-    textColor: "#EAF3EF",
-    buttonColor: "#12B886",
+    primaryColor: "#0B5ED7",
+    secondaryColor: "#162A4A",
+    accentColor: "#0B5ED7",
+    backgroundColor: "#02050B",
+    textColor: "#F8FAFC",
+    buttonColor: "#0B5ED7",
     darkMode: true,
   });
 
@@ -353,6 +358,32 @@ exports.enableTenant = onCall({ region: REGION }, async (request) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await writeAuditLog({ tenantId, actorId: request.auth.uid, action: "tenantEnabled" });
+  return { ok: true };
+});
+
+/**
+ * Ручная смена тарифа заведению из панели Super Admin — например, для
+ * заведения, оплатившего вне ЮKassa (индивидуальный договор, Enterprise),
+ * или для исправления ошибки. Обычный клиентский путь смены тарифа —
+ * createCheckoutSession (владелец сам оформляет оплату); эта функция для
+ * администрирования платформы, не для владельца заведения.
+ */
+exports.changeTenantPlan = onCall({ region: REGION }, async (request) => {
+  await requireSuperAdmin(request.auth?.uid);
+  const { tenantId, planId } = request.data || {};
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpsError("invalid-argument", "Не указано заведение");
+  if (typeof planId !== "string" || !planId) throw new HttpsError("invalid-argument", "Не указан тариф");
+
+  const planDoc = await db.collection("plans").doc(planId).get();
+  if (!planDoc.exists) throw new HttpsError("not-found", "Тариф не найден");
+
+  await db.collection("tenants").doc(tenantId).update({
+    planId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({
+    tenantId, actorId: request.auth.uid, action: "planChangedBySuperAdmin", metadata: { planId },
+  });
   return { ok: true };
 });
 

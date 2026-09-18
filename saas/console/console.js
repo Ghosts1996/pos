@@ -19,7 +19,7 @@ import {
   getFunctions, httpsCallable,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 import {
-  getStorage, ref, getDownloadURL,
+  getStorage, ref, uploadBytes, getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
@@ -46,6 +46,44 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+}
+
+// 1×1 прозрачный GIF — заглушка для <img src> логотипа, пока своего нет:
+// пустой src сам по себе триггерит повторный запрос текущей страницы.
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7';
+
+function colorFieldHtml(id, label, value, editable) {
+  return `
+    <div class="row" style="margin-bottom:10px">
+      <div style="width:84px" class="small muted">${esc(label)}</div>
+      <input type="color" id="${id}" value="${esc(value)}"
+        style="width:44px;height:36px;padding:2px;flex:none" ${editable ? '' : 'disabled'}>
+      <div class="grow small muted" id="${id}-hex">${esc(value)}</div>
+    </div>
+  `;
+}
+
+// Контраст по формуле WCAG 2 — тот же расчёт, что и на стороне приложения
+// (lib/theme/app_theme.dart, _contrastRatio) — предупреждаем владельца
+// здесь, ДО сохранения, а на устройстве нечитаемая пара фон/текст всё равно
+// откатится на цвета темы по умолчанию (двойная защита, не только совет).
+function hexToRgb01(hex) {
+  let h = String(hex ?? '').replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const num = parseInt(h, 16) || 0;
+  return { r: ((num >> 16) & 255) / 255, g: ((num >> 8) & 255) / 255, b: (num & 255) / 255 };
+}
+function srgbChannel(c) {
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function relativeLuminance(hex) {
+  const { r, g, b } = hexToRgb01(hex);
+  return 0.2126 * srgbChannel(r) + 0.7152 * srgbChannel(g) + 0.0722 * srgbChannel(b);
+}
+function contrastRatio(hexA, hexB) {
+  const la = relativeLuminance(hexA) + 0.05;
+  const lb = relativeLuminance(hexB) + 0.05;
+  return la > lb ? la / lb : lb / la;
 }
 
 let toastTimer = null;
@@ -127,6 +165,17 @@ const SUB_STATUS_LABELS = {
 };
 const BUILD_STATUS_LABELS = {
   queued: 'в очереди', success: 'готова', failed: 'ошибка',
+};
+const AUDIT_ACTION_LABELS = {
+  tenantCreated: 'Заведение создано',
+  tenantSuspended: 'Заведение заблокировано',
+  tenantEnabled: 'Заведение разблокировано',
+  memberInvited: 'Приглашён участник',
+  subscriptionPaid: 'Подписка оплачена',
+  subscriptionPaymentCanceled: 'Платёж отменён',
+  subscriptionRenewalFailed: 'Продление не прошло',
+  buildJobRequested: 'Запрошена сборка APK',
+  planChangedBySuperAdmin: 'Тариф изменён супер-админом',
 };
 
 function authErrorMessage(e) {
@@ -429,6 +478,9 @@ function watchDashboardData(tenantId) {
   let members = null;
   let plans = null;
   let buildJobs = null;
+  // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
+  // перерисовки (см. ниже), сбрасывается после успешного сохранения.
+  let pendingLogoUrl = null;
 
   const draw = () => {
     // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
@@ -436,9 +488,31 @@ function watchDashboardData(tenantId) {
     if (!tenant) return;
     const role = (state.tenants.find((t) => t.id === tenantId) || {}).role || '';
     const canManage = role === 'owner' || role === 'admin';
-    const color = branding?.primaryColor || '#12B886';
     const sortedMembers = (members || []).slice().sort((a, b) =>
       (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
+
+    // Форма брендинга не сбрасывается на середине правки: любое ДРУГОЕ
+    // обновление на этом экране (статус сборки APK, состав команды и т.п.)
+    // тоже вызывает draw() — без этого перерисовка стирала бы не
+    // сохранённые правки цветов/имени. Поэтому если поля уже отрисованы,
+    // берём их ТЕКУЩИЕ значения из DOM, а не то, что лежит в Firestore;
+    // после успешного сохранения (saveBranding) эти же значения и есть
+    // сохранённые, так что рассинхронизации не возникает.
+    const existingName = $('f-brand-name')?.value;
+    const existingColor = (id) => $(id)?.value;
+
+    // Значения по умолчанию — ровно палитра AppColors ("Midnight Blue") из
+    // lib/theme/app_colors.dart, та же, что и в saas/functions/index.js
+    // (createTenant) и lib/models/tenant_models.dart (BrandingConfig) —
+    // заведение без кастомного брендинга выглядит как проверенный продукт,
+    // а не какой-то другой палитрой по умолчанию.
+    const brandName = existingName ?? (branding?.appName || tenant.name || 'Colibri POS');
+    const logoUrl = pendingLogoUrl ?? (branding?.logoUrl || '');
+    const primaryColor = existingColor('f-color-primary') ?? (branding?.primaryColor || '#0B5ED7');
+    const secondaryColor = existingColor('f-color-secondary') ?? (branding?.secondaryColor || '#162A4A');
+    const buttonColor = existingColor('f-color-button') ?? (branding?.buttonColor || '#0B5ED7');
+    const backgroundColor = existingColor('f-color-bg') ?? (branding?.backgroundColor || '#02050B');
+    const textColor = existingColor('f-color-text') ?? (branding?.textColor || '#F8FAFC');
 
     body.innerHTML = `
       <div class="card">
@@ -503,16 +577,39 @@ function watchDashboardData(tenantId) {
         ` : ''}
       </div>
 
-      <h2>Фирменный цвет</h2>
+      <h2>Брендинг</h2>
       <div class="card">
-        <p class="small muted">Основной цвет приложения кассы на устройствах
-        этого заведения (кнопки, акценты).</p>
-        <div class="row">
-          <input type="color" id="f-color" value="${esc(color)}"
-            style="width:52px;height:44px;padding:2px;flex:none" ${canManage ? '' : 'disabled'}>
-          <div class="grow small muted" id="f-color-hex">${esc(color)}</div>
-          ${canManage ? `<button class="btn btn-primary" id="f-save-color" style="width:auto">Сохранить</button>` : ''}
+        <label class="field"><span>Имя приложения</span>
+          <input id="f-brand-name" value="${esc(brandName)}" ${canManage ? '' : 'disabled'}>
+        </label>
+
+        <div class="row" style="align-items:center;margin-bottom:16px">
+          <img id="f-logo-preview" src="${esc(logoUrl || TRANSPARENT_PIXEL)}" alt=""
+            style="width:56px;height:56px;border-radius:12px;object-fit:cover;background:var(--surface-2);flex:none">
+          ${canManage ? `
+            <div class="grow">
+              <input type="file" id="f-logo-file" accept="image/png,image/jpeg,image/webp">
+              <div id="f-logo-error" class="small" style="color:var(--danger)"></div>
+            </div>
+          ` : '<div class="grow small muted">Логотип не задан</div>'}
         </div>
+
+        <div class="small muted" style="margin-bottom:8px">Цвета</div>
+        ${colorFieldHtml('f-color-primary', 'Основной', primaryColor, canManage)}
+        ${colorFieldHtml('f-color-secondary', 'Вторичный', secondaryColor, canManage)}
+        ${colorFieldHtml('f-color-button', 'Кнопки', buttonColor, canManage)}
+        ${colorFieldHtml('f-color-bg', 'Фон', backgroundColor, canManage)}
+        ${colorFieldHtml('f-color-text', 'Текст', textColor, canManage)}
+        <div id="f-contrast-warning" class="small" style="color:var(--warning);margin:4px 0 12px"></div>
+
+        <div class="small muted" style="margin-bottom:8px">Предпросмотр</div>
+        <div id="f-brand-preview" style="border-radius:14px;padding:16px;border:1px solid var(--border)">
+          <div id="f-preview-title" style="font-weight:700;margin-bottom:12px"></div>
+          <button id="f-preview-btn" type="button" style="width:auto;padding:10px 20px;border-radius:12px;border:none;font-weight:600">Оплатить</button>
+        </div>
+
+        ${canManage ? `<button class="btn btn-primary" id="f-save-branding" style="margin-top:16px">Сохранить брендинг</button>` : ''}
+        <div id="f-branding-error" class="small" style="color:var(--danger);margin-top:8px"></div>
       </div>
 
       <h2>Подписка</h2>
@@ -563,14 +660,64 @@ function watchDashboardData(tenantId) {
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
-    if ($('f-color') && canManage) {
-      $('f-color').addEventListener('input', () => {
-        $('f-color-hex').textContent = $('f-color').value;
+
+    updateBrandPreview();
+    if (canManage) {
+      ['f-color-primary', 'f-color-secondary', 'f-color-button', 'f-color-bg', 'f-color-text'].forEach((id) => {
+        $(id)?.addEventListener('input', () => {
+          $(`${id}-hex`).textContent = $(id).value;
+          updateBrandPreview();
+        });
       });
+      $('f-brand-name')?.addEventListener('input', updateBrandPreview);
+      if ($('f-logo-file')) {
+        $('f-logo-file').onchange = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const errEl = $('f-logo-error');
+          errEl.textContent = '';
+          if (file.size > 5 * 1024 * 1024) {
+            errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
+            return;
+          }
+          try {
+            const fileName = `logo.${(file.type.split('/')[1] || 'png')}`;
+            const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
+            await uploadBytes(fileRef, file, { contentType: file.type });
+            pendingLogoUrl = await getDownloadURL(fileRef);
+            $('f-logo-preview').src = pendingLogoUrl;
+          } catch (err) {
+            errEl.textContent = `Не удалось загрузить: ${err?.message || err}`;
+          }
+        };
+      }
+      if ($('f-save-branding')) {
+        $('f-save-branding').onclick = async () => {
+          const errEl = $('f-branding-error');
+          errEl.textContent = '';
+          const btn = $('f-save-branding');
+          btn.disabled = true;
+          try {
+            await writeBrandingConfig(tenantId, {
+              appName: $('f-brand-name').value.trim() || tenant.name,
+              primaryColor: $('f-color-primary').value,
+              secondaryColor: $('f-color-secondary').value,
+              buttonColor: $('f-color-button').value,
+              backgroundColor: $('f-color-bg').value,
+              textColor: $('f-color-text').value,
+              ...(pendingLogoUrl ? { logoUrl: pendingLogoUrl } : {}),
+            });
+            pendingLogoUrl = null;
+            toast('Брендинг сохранён');
+          } catch (e) {
+            errEl.textContent = `Не удалось сохранить: ${e?.message || e}`;
+          } finally {
+            btn.disabled = false;
+          }
+        };
+      }
     }
-    if ($('f-save-color')) {
-      $('f-save-color').onclick = () => saveBrandingColor(tenantId, $('f-color').value);
-    }
+
     document.querySelectorAll('.f-member-role').forEach((el) => {
       el.onchange = () => changeMemberRole(tenantId, el.dataset.uid, el.value);
     });
@@ -682,14 +829,39 @@ async function toggleMemberStatus(tenantId, memberUid, isActive) {
   }
 }
 
-async function saveBrandingColor(tenantId, hex) {
-  try {
-    await setDoc(doc(state.db, 'tenants', tenantId, 'branding', 'config'), {
-      primaryColor: hex,
-    }, { merge: true });
-    toast('Цвет сохранён');
-  } catch (e) {
-    toast(`Не удалось сохранить: ${e?.message || e}`);
+async function writeBrandingConfig(tenantId, payload) {
+  await setDoc(doc(state.db, 'tenants', tenantId, 'branding', 'config'), payload, { merge: true });
+}
+
+// Обновляет мини-предпросмотр карточки (фон/текст/кнопка) вживую, по мере
+// того как владелец крутит цветовые пикеры — без этого пришлось бы сначала
+// сохранить брендинг, чтобы увидеть, не получилось ли нечитаемо.
+function updateBrandPreview() {
+  const preview = $('f-brand-preview');
+  const title = $('f-preview-title');
+  const btn = $('f-preview-btn');
+  const warning = $('f-contrast-warning');
+  if (!preview || !title || !btn) return;
+
+  const bg = $('f-color-bg')?.value || '#02050B';
+  const text = $('f-color-text')?.value || '#F8FAFC';
+  const button = $('f-color-button')?.value || '#0B5ED7';
+  const name = $('f-brand-name')?.value || 'Colibri POS';
+
+  preview.style.background = bg;
+  title.style.color = text;
+  title.textContent = name;
+  btn.style.background = button;
+  btn.style.color = text;
+
+  // Тот же порог 3:1, что и в lib/theme/app_theme.dart (_contrastRatio) —
+  // само приложение всё равно откатится на цвета темы по умолчанию при
+  // недостаточном контрасте, это предупреждение не единственная защита,
+  // а просто способ сказать владельцу заранее, ДО сохранения.
+  if (warning) {
+    warning.textContent = contrastRatio(bg, text) < 3.0
+      ? 'Фон и текст слишком похожи — на планшете в зале приложение применит цвета темы по умолчанию вместо этой пары.'
+      : '';
   }
 }
 
@@ -702,30 +874,32 @@ function screenSuperAdmin() {
       <a href="#/" class="btn-link">← В консоль</a>
     </div>
     <h1>Все заведения</h1>
+    <input id="f-tenant-search" placeholder="Поиск по названию или коду заведения" style="margin-bottom:14px">
     <div id="admin-body"><div class="spinner"></div></div>
+    <h2>Журнал платформы</h2>
+    <div id="admin-audit"><div class="spinner"></div></div>
   `;
   watchAllTenants();
+  watchAuditLog();
 }
 
 function watchAllTenants() {
   const body = $('admin-body');
+  // limit(200) без постраничности — заведомо достаточно на старте
+  // платформы; поиск ниже фильтрует уже загрученный список на клиенте, а
+  // не делает отдельный запрос — простое и рабочее решение, пока
+  // заведений меньше пары сотен (настоящая курсорная пагинация — отдельная
+  // задача, когда/если платформа вырастет за этот предел).
   const q = query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(200));
-  sub(onSnapshot(q, async (snap) => {
-    const tenants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // Usage читаем отдельно от списка заведений — это соседняя коллекция
-    // (tenants/{id}/usage/current), не realtime: пересчитывается раз в
-    // сутки Cloud Function calculateUsage, обновлять её на каждый снапшот
-    // списка заведений незачем.
-    await Promise.all(tenants.map(async (t) => {
-      try {
-        const uSnap = await getDoc(doc(state.db, 'tenants', t.id, 'usage', 'current'));
-        t.usage = uSnap.exists() ? uSnap.data() : null;
-      } catch (_) {
-        t.usage = null;
-      }
-    }));
+  let allTenants = [];
+  let plans = [];
 
-    body.innerHTML = tenants.length ? tenants.map((t) => `
+  const draw = () => {
+    const term = ($('f-tenant-search')?.value || '').trim().toLowerCase();
+    const filtered = !term ? allTenants : allTenants.filter((t) =>
+      (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term));
+
+    body.innerHTML = filtered.length ? filtered.map((t) => `
       <div class="card">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div class="grow" style="min-width:0">
@@ -733,7 +907,6 @@ function watchAllTenants() {
             <div class="small muted">
               <code>${esc(t.slug || '')}</code> ·
               ${esc(TENANT_STATUS_LABELS[t.status] || t.status || '—')} ·
-              тариф ${esc(t.planId || '—')} ·
               создано ${fmtDate(t.createdAt)}
             </div>
             ${t.usage ? `
@@ -748,14 +921,68 @@ function watchAllTenants() {
             ${t.status === 'suspended' ? 'Разблокировать' : 'Заблокировать'}
           </button>
         </div>
+        ${plans.length ? `
+          <div class="row" style="margin-top:10px;align-items:center">
+            <div class="small muted">Тариф:</div>
+            <select class="f-tenant-plan grow" data-id="${esc(t.id)}">
+              ${plans.map((p) => `<option value="${esc(p.id)}" ${p.id === t.planId ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
       </div>
-    `).join('') : '<p class="small muted">Заведений пока нет.</p>';
+    `).join('') : `<p class="small muted">${term ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`;
 
     document.querySelectorAll('.f-tenant-toggle').forEach((el) => {
       el.onclick = () => toggleTenantSuspension(el.dataset.id, el.dataset.suspended === '1');
     });
+    document.querySelectorAll('.f-tenant-plan').forEach((el) => {
+      el.onchange = () => changeTenantPlan(el.dataset.id, el.value);
+    });
+  };
+
+  $('f-tenant-search').addEventListener('input', draw);
+
+  getDocs(collection(state.db, 'plans')).then((snap) => {
+    plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  }).catch(() => {});
+
+  sub(onSnapshot(q, async (snap) => {
+    const tenants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Usage читаем отдельно от списка заведений — это соседняя коллекция
+    // (tenants/{id}/usage/current), не realtime: пересчитывается раз в
+    // сутки Cloud Function calculateUsage, обновлять её на каждый снапшот
+    // списка заведений незачем.
+    await Promise.all(tenants.map(async (t) => {
+      try {
+        const uSnap = await getDoc(doc(state.db, 'tenants', t.id, 'usage', 'current'));
+        t.usage = uSnap.exists() ? uSnap.data() : null;
+      } catch (_) {
+        t.usage = null;
+      }
+    }));
+    allTenants = tenants;
+    draw();
   }, () => {
     body.innerHTML = '<p class="small" style="color:var(--danger)">Нет доступа к списку заведений.</p>';
+  }));
+}
+
+function watchAuditLog() {
+  const body = $('admin-audit');
+  const q = query(collection(state.db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(50));
+  sub(onSnapshot(q, (snap) => {
+    const entries = snap.docs.map((d) => d.data());
+    body.innerHTML = entries.length ? `<div class="card">${entries.map((e) => `
+      <div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div class="small">${esc(AUDIT_ACTION_LABELS[e.action] || e.action)}
+          ${e.tenantId ? `· <code>${esc(e.tenantId)}</code>` : ''}
+        </div>
+        <div class="small muted">${fmtDateTime(e.createdAt)}</div>
+      </div>
+    `).join('')}</div>` : '<p class="small muted">Событий пока нет.</p>';
+  }, () => {
+    body.innerHTML = '<p class="small muted">Журнал недоступен.</p>';
   }));
 }
 
@@ -766,6 +993,16 @@ async function toggleTenantSuspension(tenantId, isSuspended) {
     toast(isSuspended ? 'Заведение разблокировано' : 'Заведение заблокировано');
   } catch (e) {
     toast(`Не удалось изменить статус: ${e?.message || e}`);
+  }
+}
+
+async function changeTenantPlan(tenantId, planId) {
+  try {
+    const fn = httpsCallable(state.functions, 'changeTenantPlan');
+    await fn({ tenantId, planId });
+    toast('Тариф изменён');
+  } catch (e) {
+    toast(`Не удалось изменить тариф: ${e?.message || e}`);
   }
 }
 
