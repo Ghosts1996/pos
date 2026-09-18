@@ -1,16 +1,21 @@
-/* Консоль владельца заведения SaaS-платформы — та же палитра и те же
-   компоненты, что в веб-версии гостя (public/app/app.css), без нижнего
+/* Консоль владельца заведения SaaS-платформы Hoocah POS — те же компоненты
+   (карточки/кнопки/поля), что и в веб-версии гостя (public/app/app.css), но
+   своя, премиальная палитра платформы (см. :root ниже), без нижнего
    таббара и гостевых экранов: здесь только вход, создание заведения и
    личный кабинет. */
 :root {
-  --bg: #0E1512;
-  --surface: #16211D;
-  --surface-2: #1D2A25;
-  --border: #24332D;
-  --text: #EAF3EF;
-  --muted: #8FA39B;
-  --primary: #12B886;
-  --danger: #E03131;
+  /* Премиальная гамма самой платформы (не путать с брендингом заведений —
+     тот у каждого клиента свой, см. PREMIUM_PALETTES в console.js):
+     чёрный/серый/белый + тёмно-красный/бордовый — фирменный вид Hoocah POS,
+     уместный именно для кальянного бизнеса. */
+  --bg: #0A0909;
+  --surface: #161313;
+  --surface-2: #201C1C;
+  --border: #362F2F;
+  --text: #F5F1EF;
+  --muted: #A89D9A;
+  --primary: #C23B4E;
+  --danger: #E5484D;
   --warning: #E8A317;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -46,7 +51,7 @@ code {
 }
 .card.danger {
   border-color: var(--danger);
-  background: rgba(224, 49, 49, .12);
+  background: rgba(229, 72, 77, .12);
 }
 
 button, .btn {
@@ -63,7 +68,7 @@ button, .btn {
   gap: 8px;
   text-decoration: none;
 }
-.btn-primary { background: var(--primary); color: #04140E; }
+.btn-primary { background: var(--primary); color: var(--text); }
 .btn-ghost {
   background: var(--surface-2);
   color: var(--text);
