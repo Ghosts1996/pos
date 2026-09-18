@@ -13,7 +13,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
-  collection, query, where, Timestamp,
+  collection, query, where, orderBy, limit, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
   getFunctions, httpsCallable,
@@ -30,6 +30,7 @@ const state = {
   tenants: [],        // [{ id, role, name, slug }] — заведения этого владельца
   tenantsLoaded: false,
   activeTenantId: null,
+  isSuperAdmin: false,
   accountSubs: [],     // подписки уровня аккаунта (список заведений)
   screenSubs: [],       // подписки текущего экрана (данные одного заведения)
 };
@@ -162,6 +163,7 @@ function handleAuthChange(user) {
     state.tenants = [];
     state.tenantsLoaded = false;
     state.activeTenantId = null;
+    state.isSuperAdmin = false;
     route();
     return;
   }
@@ -170,6 +172,13 @@ function handleAuthChange(user) {
   state.tenantsLoaded = false;
   route();
   watchMemberships();
+
+  // Флаг платформы, не заведения — не блокирует обычный экран владельца,
+  // поэтому отдельная лёгкая подписка, а не часть watchMemberships().
+  state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), (d) => {
+    state.isSuperAdmin = d.exists();
+    route();
+  }, () => { state.isSuperAdmin = false; }));
 }
 
 function watchMemberships() {
@@ -211,11 +220,21 @@ function watchMemberships() {
 function route() {
   clearScreen();
   if (!state.uid) return screenAuth();
+  if (location.hash === '#/admin') {
+    // Панель платформы не зависит от того, есть ли у супер-админа
+    // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
+    return state.isSuperAdmin ? screenSuperAdmin() : screenDashboardOrOnboarding();
+  }
+  return screenDashboardOrOnboarding();
+}
+
+function screenDashboardOrOnboarding() {
   if (!state.tenantsLoaded) return screenLoading();
   if (!state.tenants.length) return screenOnboarding();
   return screenDashboard();
 }
 
+window.addEventListener('hashchange', route);
 boot();
 
 // ---------- ВХОД / РЕГИСТРАЦИЯ ----------
@@ -289,7 +308,10 @@ function screenLoading() {
 
 function screenOnboarding() {
   screenEl().innerHTML = `
-    <div class="brand">Colibri POS</div>
+    <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div class="brand">Colibri POS</div>
+      ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
+    </div>
     <h1>Новое заведение</h1>
     <p class="muted">Код заведения используется в ссылках и как основа
     имени Android-приложения — только латиница, цифры и дефис.</p>
@@ -351,7 +373,10 @@ function screenDashboard() {
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div class="brand">Colibri POS</div>
-      <button class="btn-link" id="f-signout">Выйти</button>
+      <div class="row" style="width:auto;gap:14px">
+        ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
+        <button class="btn-link" id="f-signout">Выйти</button>
+      </div>
     </div>
     ${state.tenants.length > 1 ? `
       <label class="field"><span>Заведение</span>
@@ -583,5 +608,81 @@ async function saveBrandingColor(tenantId, hex) {
     toast('Цвет сохранён');
   } catch (e) {
     toast(`Не удалось сохранить: ${e?.message || e}`);
+  }
+}
+
+// ---------- ПАНЕЛЬ ПЛАТФОРМЫ (СУПЕР-АДМИН) ----------
+
+function screenSuperAdmin() {
+  screenEl().innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div class="brand">Colibri POS · платформа</div>
+      <a href="#/" class="btn-link">← В консоль</a>
+    </div>
+    <h1>Все заведения</h1>
+    <div id="admin-body"><div class="spinner"></div></div>
+  `;
+  watchAllTenants();
+}
+
+function watchAllTenants() {
+  const body = $('admin-body');
+  const q = query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(200));
+  sub(onSnapshot(q, async (snap) => {
+    const tenants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Usage читаем отдельно от списка заведений — это соседняя коллекция
+    // (tenants/{id}/usage/current), не realtime: пересчитывается раз в
+    // сутки Cloud Function calculateUsage, обновлять её на каждый снапшот
+    // списка заведений незачем.
+    await Promise.all(tenants.map(async (t) => {
+      try {
+        const uSnap = await getDoc(doc(state.db, 'tenants', t.id, 'usage', 'current'));
+        t.usage = uSnap.exists() ? uSnap.data() : null;
+      } catch (_) {
+        t.usage = null;
+      }
+    }));
+
+    body.innerHTML = tenants.length ? tenants.map((t) => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div class="grow" style="min-width:0">
+            <div style="font-weight:700">${esc(t.name || t.id)}</div>
+            <div class="small muted">
+              <code>${esc(t.slug || '')}</code> ·
+              ${esc(TENANT_STATUS_LABELS[t.status] || t.status || '—')} ·
+              тариф ${esc(t.planId || '—')} ·
+              создано ${fmtDate(t.createdAt)}
+            </div>
+            ${t.usage ? `
+              <div class="small muted">
+                сотрудников: ${t.usage.employees ?? '—'} · устройств: ${t.usage.devices ?? '—'} ·
+                столов: ${t.usage.tables ?? '—'} · гостей: ${t.usage.guests ?? '—'}
+              </div>
+            ` : ''}
+          </div>
+          <button class="btn-ghost f-tenant-toggle" data-id="${esc(t.id)}"
+            data-suspended="${t.status === 'suspended' ? '1' : '0'}" style="width:auto">
+            ${t.status === 'suspended' ? 'Разблокировать' : 'Заблокировать'}
+          </button>
+        </div>
+      </div>
+    `).join('') : '<p class="small muted">Заведений пока нет.</p>';
+
+    document.querySelectorAll('.f-tenant-toggle').forEach((el) => {
+      el.onclick = () => toggleTenantSuspension(el.dataset.id, el.dataset.suspended === '1');
+    });
+  }, () => {
+    body.innerHTML = '<p class="small" style="color:var(--danger)">Нет доступа к списку заведений.</p>';
+  }));
+}
+
+async function toggleTenantSuspension(tenantId, isSuspended) {
+  try {
+    const fn = httpsCallable(state.functions, isSuspended ? 'enableTenant' : 'disableTenant');
+    await fn(isSuspended ? { tenantId } : { tenantId, reason: 'Заблокировано вручную из консоли платформы' });
+    toast(isSuspended ? 'Заведение разблокировано' : 'Заведение заблокировано');
+  } catch (e) {
+    toast(`Не удалось изменить статус: ${e?.message || e}`);
   }
 }
