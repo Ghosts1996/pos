@@ -7,6 +7,7 @@ import '../models/menu_models.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
+import '../models/staff_shift_model.dart';
 import '../models/inventory_models.dart';
 import '../models/egais_models.dart';
 import '../utils/constants.dart';
@@ -785,6 +786,129 @@ class FirestoreService {
     final end = shift.closedAt ?? DateTime.now().add(const Duration(minutes: 1));
     return closedSessionsInRange(shift.openedAt, end);
   }
+
+  // ---------- ЛИЧНЫЕ СМЕНЫ СОТРУДНИКОВ (ДЛЯ ЗАРПЛАТЫ) ----------
+  // Это НЕ кассовая смена выше: там одна смена сразу на всё заведение, а
+  // здесь у каждого сотрудника — своя, и параллельно может быть открыто
+  // сколько угодно (несколько человек работают одновременно). Нужна отдельно
+  // для расчёта отработанных часов: по кассовой смене узнать, сколько именно
+  // часов отработал конкретный человек, нельзя — она не привязана к людям.
+  //
+  // Указатель "у кого сейчас открыта смена" хранится в meta/staffShiftState
+  // как map employeeId -> id открытой смены (или null) — так же, как
+  // meta/shiftState для кассовой смены, и по той же причине: транзакции
+  // клиентского SDK читают только конкретные документы, а не результаты
+  // запроса, поэтому проверить и зафиксировать "смена уже открыта" атомарно
+  // можно только через такой документ-указатель.
+
+  /// Начинает личную смену сотрудника, если у него сейчас нет открытой.
+  /// Если она уже открыта — просто возвращает её id, не создавая вторую.
+  Future<String> clockIn(Employee employee) async {
+    final stateRef = AppScope.col('meta').doc('staffShiftState');
+    final shiftRef = AppScope.col('staffShifts').doc();
+    final now = DateTime.now();
+
+    return _db.runTransaction<String>((tx) async {
+      final stateDoc = await tx.get(stateRef);
+      final openByEmployee =
+          Map<String, dynamic>.from(stateDoc.data()?['openByEmployee'] ?? {});
+      final currentOpenId = openByEmployee[employee.id] as String?;
+
+      // Как и в openShiftIfNeeded: доверяем указателю, только если смена,
+      // на которую он ссылается, на самом деле ещё открыта — иначе (сеть
+      // оборвалась между закрытием смены и сбросом указателя) кнопка
+      // "Начать смену" молча ничего не делала бы вечно.
+      if (currentOpenId != null && currentOpenId.isNotEmpty) {
+        final referencedDoc = await tx.get(AppScope.col('staffShifts').doc(currentOpenId));
+        if (referencedDoc.exists && referencedDoc.data()?['status'] == 'open') {
+          return currentOpenId;
+        }
+      }
+
+      final shift = StaffShiftModel(
+        id: shiftRef.id,
+        employeeId: employee.id,
+        employeeName: employee.name,
+        startedAt: now,
+        status: 'open',
+      );
+      tx.set(shiftRef, shift.toMap());
+      openByEmployee[employee.id] = shiftRef.id;
+      tx.set(stateRef, {'openByEmployee': openByEmployee}, SetOptions(merge: true));
+      return shiftRef.id;
+    });
+  }
+
+  /// Заканчивает личную смену. [endedAt] и [manual] — для ручной правки
+  /// админом (например, сотрудник забыл закончить смену вчера); при обычном
+  /// нажатии "Закончить смену" оба параметра не передаются.
+  Future<void> clockOut(String shiftId, String employeeId, {DateTime? endedAt, bool manual = false}) async {
+    final end = endedAt ?? DateTime.now();
+    final shiftRef = AppScope.col('staffShifts').doc(shiftId);
+    final stateRef = AppScope.col('meta').doc('staffShiftState');
+    await _db.runTransaction((tx) async {
+      final stateDoc = await tx.get(stateRef);
+      tx.update(shiftRef, {
+        'status': 'closed',
+        'endedAt': Timestamp.fromDate(end),
+        if (manual) 'manual': true,
+      });
+      final openByEmployee =
+          Map<String, dynamic>.from(stateDoc.data()?['openByEmployee'] ?? {});
+      if (openByEmployee[employeeId] == shiftId) {
+        openByEmployee[employeeId] = null;
+        tx.set(stateRef, {'openByEmployee': openByEmployee}, SetOptions(merge: true));
+      }
+    });
+  }
+
+  /// Стрим текущей открытой личной смены ОДНОГО сотрудника — для
+  /// переключателя "Моя смена" в меню сотрудника. Два равенства (employeeId +
+  /// status), без orderBy по другому полю — составной индекс не требуется.
+  Stream<StaffShiftModel?> openStaffShiftStream(String employeeId) {
+    return AppScope.col('staffShifts')
+        .where('employeeId', isEqualTo: employeeId)
+        .where('status', isEqualTo: 'open')
+        .limit(1)
+        .snapshots()
+        .map((snap) => snap.docs.isEmpty ? null : StaffShiftModel.fromDoc(snap.docs.first))
+        .handleError((_) => null);
+  }
+
+  /// Все сейчас открытые личные смены (по всем сотрудникам) — для
+  /// предупреждения в "Смены сотрудников"/"Зарплата": пока смена не закрыта,
+  /// в расчёт зарплаты её часы не попадают.
+  Stream<List<StaffShiftModel>> openStaffShiftsStream() {
+    return AppScope.col('staffShifts')
+        .where('status', isEqualTo: 'open')
+        .snapshots()
+        .map((snap) => snap.docs.map(StaffShiftModel.fromDoc).toList());
+  }
+
+  /// Закрытые личные смены за период [start; end) — фильтр по времени
+  /// ЗАКРЫТИЯ (endedAt), тем же приёмом, что и closedSessionsInRange для
+  /// чеков: одиночный диапазон по одному полю не требует составного индекса.
+  /// Открытые смены сюда не попадают (у них endedAt == null) — это
+  /// намеренно: пока смена не закрыта, платить не за что, а полагаться на
+  /// "текущее время минус старт" для ещё идущей смены означало бы каждый раз
+  /// пересчитывать отчёт по-разному в зависимости от момента открытия.
+  Future<List<StaffShiftModel>> closedStaffShiftsInRange(DateTime start, DateTime end) async {
+    final snap = await AppScope.col('staffShifts')
+        .where('endedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('endedAt', isLessThan: Timestamp.fromDate(end))
+        .orderBy('endedAt', descending: true)
+        .get();
+    return snap.docs.map((d) => StaffShiftModel.fromDoc(d)).toList();
+  }
+
+  /// Ручное добавление смены (админ восстанавливает забытую запись).
+  Future<void> addStaffShift(StaffShiftModel shift) =>
+      AppScope.col('staffShifts').add(shift.toMap());
+
+  Future<void> updateStaffShift(StaffShiftModel shift) =>
+      AppScope.col('staffShifts').doc(shift.id).update(shift.toMap());
+
+  Future<void> deleteStaffShift(String id) => AppScope.col('staffShifts').doc(id).delete();
 
   // ---------- МЕНЮ ----------
   Stream<List<MenuCategory>> categoriesStream() {

@@ -51,6 +51,11 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                         child: Icon(revealed ? Icons.visibility_off : Icons.visibility, size: 16),
                       ),
                     ),
+                    if (e.payrollConfigured)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.payments_outlined, size: 14, color: Colors.green),
+                      ),
                   ],
                 ),
                 trailing: IconButton(
@@ -85,56 +90,136 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     );
   }
 
+  static String _numStr(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  static double _parseNum(String s, double fallback) =>
+      double.tryParse(s.replaceAll(',', '.').trim()) ?? fallback;
+
   Future<void> _editEmployee(BuildContext context, FirestoreService fs, Employee? emp) async {
     final nameCtrl = TextEditingController(text: emp?.name ?? '');
     final pinCtrl = TextEditingController(text: emp?.pinCode ?? '');
     String role = emp?.role ?? AppConstants.roleEmployee;
+
+    bool hourlyRateEnabled = emp?.hourlyRateEnabled ?? false;
+    final hourlyRateCtrl = TextEditingController(text: _numStr(emp?.hourlyRate ?? 0));
+    bool overtimeEnabled = emp?.overtimeEnabled ?? false;
+    final overtimeThresholdCtrl =
+        TextEditingController(text: _numStr(emp?.overtimeThresholdHours ?? 8));
+    final overtimeMultiplierCtrl =
+        TextEditingController(text: _numStr(emp?.overtimeMultiplier ?? 1.5));
+    bool salesPercentEnabled = emp?.salesPercentEnabled ?? false;
+    final salesPercentCtrl = TextEditingController(text: _numStr(emp?.salesPercentRate ?? 0));
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
         return AlertDialog(
           title: Text(emp == null ? 'Новый сотрудник' : 'Редактировать'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя')),
-              TextField(
-                controller: pinCtrl,
-                decoration: InputDecoration(
-                  labelText: 'PIN-код (${AppConstants.pinLengthForRole(role)} ${role == AppConstants.roleAdmin ? "цифр" : "цифры"})',
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: AppConstants.pinLengthForRole(role),
-                obscureText: true,
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+          content: SizedBox(
+            width: 360,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ChoiceChip(
-                    label: const Text('Сотрудник'),
-                    selected: role == AppConstants.roleEmployee,
-                    // Разная длина PIN у ролей — переключение роли чистит
-                    // поле, а не оставляет, например, 6 цифр под 4-значный
-                    // код: иначе сохранение упадёт на проверке длины, а
-                    // владельцу будет непонятно, что именно не так.
-                    onSelected: (_) => setSt(() {
-                      role = AppConstants.roleEmployee;
-                      pinCtrl.clear();
-                    }),
+                  TextField(
+                      controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя')),
+                  TextField(
+                    controller: pinCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'PIN-код (${AppConstants.pinLengthForRole(role)} ${role == AppConstants.roleAdmin ? "цифр" : "цифры"})',
+                    ),
+                    keyboardType: TextInputType.number,
+                    maxLength: AppConstants.pinLengthForRole(role),
+                    obscureText: true,
                   ),
-                  const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: const Text('Администратор'),
-                    selected: role == AppConstants.roleAdmin,
-                    onSelected: (_) => setSt(() {
-                      role = AppConstants.roleAdmin;
-                      pinCtrl.clear();
-                    }),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Сотрудник'),
+                        selected: role == AppConstants.roleEmployee,
+                        // Разная длина PIN у ролей — переключение роли чистит
+                        // поле, а не оставляет, например, 6 цифр под 4-значный
+                        // код: иначе сохранение упадёт на проверке длины, а
+                        // владельцу будет непонятно, что именно не так.
+                        onSelected: (_) => setSt(() {
+                          role = AppConstants.roleEmployee;
+                          pinCtrl.clear();
+                        }),
+                      ),
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text('Администратор'),
+                        selected: role == AppConstants.roleAdmin,
+                        onSelected: (_) => setSt(() {
+                          role = AppConstants.roleAdmin;
+                          pinCtrl.clear();
+                        }),
+                      ),
+                    ],
                   ),
+                  const Divider(height: 24),
+                  Text('Зарплата', style: Theme.of(ctx).textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Можно включить несколько способов сразу — они суммируются.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Оклад (почасовая ставка)'),
+                    value: hourlyRateEnabled,
+                    onChanged: (v) => setSt(() => hourlyRateEnabled = v),
+                  ),
+                  if (hourlyRateEnabled) ...[
+                    TextField(
+                      controller: hourlyRateCtrl,
+                      decoration: const InputDecoration(labelText: 'Ставка, ₽/час'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: const Text('Переработка сверх нормы часов'),
+                      value: overtimeEnabled,
+                      onChanged: (v) => setSt(() => overtimeEnabled = v),
+                    ),
+                  ],
+                  if (hourlyRateEnabled && overtimeEnabled) ...[
+                    TextField(
+                      controller: overtimeThresholdCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'Порог, часов за одну смену'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: overtimeMultiplierCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'Множитель ставки (напр. 1.5)'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Процент с продаж'),
+                    value: salesPercentEnabled,
+                    onChanged: (v) => setSt(() => salesPercentEnabled = v),
+                  ),
+                  if (salesPercentEnabled)
+                    TextField(
+                      controller: salesPercentCtrl,
+                      decoration: const InputDecoration(labelText: 'Процент, %'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
                 ],
               ),
-            ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
@@ -168,11 +253,45 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
       return;
     }
 
+    final hourlyRate = _parseNum(hourlyRateCtrl.text, 0);
+    final overtimeThreshold = _parseNum(overtimeThresholdCtrl.text, 8);
+    final overtimeMultiplier = _parseNum(overtimeMultiplierCtrl.text, 1.5);
+    final salesPercentRate = _parseNum(salesPercentCtrl.text, 0);
+
+    if (hourlyRateEnabled && hourlyRate <= 0) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Укажите ставку больше нуля или выключите оклад')));
+      }
+      return;
+    }
+    if (hourlyRateEnabled && overtimeEnabled && overtimeThreshold <= 0) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Порог переработки должен быть больше нуля часов')));
+      }
+      return;
+    }
+    if (salesPercentEnabled && salesPercentRate <= 0) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Укажите процент больше нуля или выключите его')));
+      }
+      return;
+    }
+
     final newEmp = Employee(
       id: emp?.id ?? '',
       name: nameCtrl.text.trim(),
       pinCode: pin,
       role: role,
+      hourlyRateEnabled: hourlyRateEnabled,
+      hourlyRate: hourlyRate,
+      overtimeEnabled: overtimeEnabled,
+      overtimeThresholdHours: overtimeThreshold,
+      overtimeMultiplier: overtimeMultiplier,
+      salesPercentEnabled: salesPercentEnabled,
+      salesPercentRate: salesPercentRate,
     );
     if (emp == null) {
       await fs.addEmployee(newEmp);
