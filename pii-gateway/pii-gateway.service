@@ -1,0 +1,19 @@
+[Unit]
+Description=Hookah POS PII gateway (guest name/phone, primary storage in RF)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=pii-gateway
+WorkingDirectory=/opt/pii-gateway
+EnvironmentFile=/etc/pii-gateway.env
+ExecStart=/usr/bin/node /opt/pii-gateway/server.js
+Restart=on-failure
+RestartSec=3
+# Слушает только 127.0.0.1 (см. server.js) — наружу торчит только nginx.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
