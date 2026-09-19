@@ -378,7 +378,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Text(_referralMessage!,
-                  style: const TextStyle(color: KolibriColors.gold, fontSize: 13)),
+                  style: TextStyle(color: KolibriColors.gold, fontSize: 13)),
             ),
         ],
       );

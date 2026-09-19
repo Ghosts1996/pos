@@ -125,7 +125,7 @@ class _BookingSoonCardState extends State<BookingSoonCard> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.event_available, color: KolibriColors.gold, size: 20),
+                  Icon(Icons.event_available, color: KolibriColors.gold, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(

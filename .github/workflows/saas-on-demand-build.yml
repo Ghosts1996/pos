@@ -13,10 +13,10 @@ on:
         description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения «Colibri Lounge» (matrix.app == kolibri)'
         required: true
       app_label:
-        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения, общий для обоих приложений матрицы (гостевое получает суффикс, см. matrix.label_suffix); пусто = дефолт своего приложения (matrix.default_label)'
+        description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "Hookah POS"; пусто = дефолт "Colibri Lounge"'
         required: false
       logo_url:
-        description: 'URL логотипа заведения (branding.logoUrl) — если задан, иконка ОБОИХ приложений матрицы генерируется из него; пусто = своя общая иконка каждого приложения (matrix.default_icon)'
+        description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = общая иконка "Colibri Lounge"'
         required: false
       tenant_slug:
         description: 'Код заведения (tenants.slug) — если задан вместе с invite_code, собранный APK сам присоединится к этому заведению при первом запуске, без ручного ввода кодов'
@@ -44,13 +44,20 @@ on:
 # Технически один и тот же универсальный код для ВСЕХ арендаторов платформы
 # (SAAS_MODE=true, ключи SaaS-проекта Firebase, SaasDevicePairingScreen —
 # код заведения + код приглашения устройства, см. lib/main.dart и
-# saas/README.md) — но КАЖДАЯ сборка личная: logo_url подставляет иконку
-# заведения (см. шаг "Generate app launcher icon"), а tenant_slug+invite_code
+# saas/README.md) — но КАЖДАЯ сборка личная: tenant_slug+invite_code
 # запекаются как SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE — с ними экран
 # присоединения сам подключается к заведению владельца при первом запуске,
 # без ручного ввода кодов (см. saas_device_pairing_screen.dart). Доступ к
 # самому файлу тоже ограничен per-tenant — см. handleDownloadBuild в
 # saas-gateway/server.js.
+#
+# ВАЖНО про бренд: app_label/logo_url (брендинг заведения) применяются
+# ТОЛЬКО к гостевому приложению — касса жёстко остаётся брендом платформы
+# ("Hookah POS", своя иконка), не арендатора (см. env: у шагов "Ensure
+# required permissions..."/"Generate app launcher icon" ниже — там же и
+# почему). Раньше касса тоже подхватывала лейбл/иконку заведения — это
+# было ошибкой: касса не витрина арендатора, а инструмент персонала,
+# должна выглядеть одинаково у всех заведений платформы.
 #
 # ОДИН запуск — ДВА приложения (матрица ниже, по образцу build-apk.yml):
 # касса (lib/main.dart, com.hookahpossaas) и гостевое приложение «Colibri
@@ -93,8 +100,7 @@ jobs:
             appid_secret: SAAS_FIREBASE_APP_ID
             default_icon: assets/icon/icon.png
             default_adaptive_icon: assets/icon/icon_foreground.png
-            default_label: 'Hookah POS (SaaS)'
-            label_suffix: ''
+            default_label: 'Hookah POS'
             artifact_prefix: hookah-pos-saas
           - app: kolibri
             entrypoint: lib/client/kolibri_main.dart
@@ -105,7 +111,6 @@ jobs:
             default_icon: assets/icon/kolibri.png
             default_adaptive_icon: assets/icon/kolibri_foreground.png
             default_label: 'Colibri Lounge'
-            label_suffix: ' — гостям'
             artifact_prefix: colibri-lounge-saas
     name: Build ${{ matrix.app }}
 
@@ -203,9 +208,13 @@ jobs:
 
       - name: Ensure required permissions and manifest entries
         env:
-          APP_LABEL: ${{ inputs.app_label }}
+          # Каждый арендатор настраивает бренд СВОЕГО гостевого приложения в
+          # разделе «Брендинг» (имя, лого, цвета) — касса ЖЁСТКО остаётся
+          # брендом платформы (Hookah POS), не арендатора, поэтому для
+          # matrix.app == pos ниже APP_LABEL принудительно очищается, а не
+          # приходит из inputs.app_label вообще.
+          APP_LABEL: ${{ matrix.app == 'pos' && '' || inputs.app_label }}
           DEFAULT_LABEL: ${{ matrix.default_label }}
-          LABEL_SUFFIX: ${{ matrix.label_suffix }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           add_permission() {
@@ -270,24 +279,19 @@ jobs:
               xml = xml.replace('</application>', receivers + '    </application>', 1)
               open(path, 'w', encoding='utf-8').write(xml)
 
-          # Лейбл под иконкой на телефоне владельца — из branding заведения
-          # (createBuildJob подставляет его сюда, см. saas-gateway/server.js),
-          # не заведённый хардкод: разные арендаторы платформы получают
-          # разные подписанные приложения с разными именами. Санитизация тут,
-          # а не только на сервере, — потому что workflow_dispatch technically
-          # можно дёрнуть и не через createBuildJob, а значений оттуда доверять
-          # нельзя вслепую (это идёт прямо в XML-атрибут манифеста).
-          #
-          # LABEL_SUFFIX (у гостевого приложения — " — гостям") отличает два
-          # приложения ОДНОГО заведения друг от друга на экране — иначе оба
-          # показывали бы один и тот же branding.shortName, и было бы не
-          # понять, какое из них касса, а какое — для гостей.
+          # Лейбл под иконкой на телефоне — для matrix.app == pos APP_LABEL
+          # приходит уже принудительно пустым (см. env: этого шага) — касса
+          # всегда "Hookah POS", бренд платформы, не арендатора. Для
+          # гостевого приложения — из branding.appName заведения
+          # (createBuildJob подставляет его сюда, см. saas-gateway/server.js).
+          # Санитизация тут, а не только на сервере, — потому что
+          # workflow_dispatch technically можно дёрнуть и не через
+          # createBuildJob, а значений оттуда доверять нельзя вслепую (это
+          # идёт прямо в XML-атрибут манифеста).
           label = (os.environ.get('APP_LABEL') or '').strip()
           label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
           if not label:
-              label = os.environ.get('DEFAULT_LABEL') or 'Hookah POS (SaaS)'
-          else:
-              label = (label + (os.environ.get('LABEL_SUFFIX') or ''))[:40]
+              label = os.environ.get('DEFAULT_LABEL') or 'Hookah POS'
           label = (label.replace('&', '&amp;').replace('<', '&lt;')
                         .replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;'))
           xml = open(path, encoding='utf-8').read()
@@ -470,7 +474,11 @@ jobs:
 
       - name: Generate app launcher icon
         env:
-          LOGO_URL: ${{ inputs.logo_url }}
+          # Иконка из логотипа заведения — ТОЛЬКО для гостевого приложения
+          # (matrix.app == kolibri); касса всегда со своей иконкой платформы
+          # (assets/icon/icon.png), поэтому для pos LOGO_URL принудительно
+          # пустой независимо от того, что было в inputs.logo_url.
+          LOGO_URL: ${{ matrix.app == 'pos' && '' || inputs.logo_url }}
           DEFAULT_ICON: ${{ matrix.default_icon }}
           DEFAULT_ADAPTIVE_ICON: ${{ matrix.default_adaptive_icon }}
         run: |
@@ -480,17 +488,16 @@ jobs:
             dart run flutter_launcher_icons
           }
           # Логотип заведения (branding.logoUrl, загружается владельцем в
-          # консоли) — если задан и реально скачивается, иконка приложения
-          # генерируется из него, чтобы на телефоне владельца была именно
-          # его иконка, а не общая иконка POS. Любая неудача (нет логотипа,
-          # битый файл, сеть) откатывается на общую иконку — сборка не
-          # должна падать из-за проблемы с картинкой, которую владелец
-          # когда-то неудачно загрузил.
+          # разделе «Брендинг») — если задан и реально скачивается, иконка
+          # гостевого приложения генерируется из него. Любая неудача (нет
+          # логотипа, битый файл, сеть) откатывается на общую иконку
+          # "Colibri Lounge" — сборка не должна падать из-за проблемы с
+          # картинкой, которую владелец когда-то неудачно загрузил.
           if [ -n "$LOGO_URL" ] && curl -fsSL --max-time 20 "$LOGO_URL" -o /tmp/tenant_logo.png && [ -s /tmp/tenant_logo.png ]; then
             sed -i -E 's|image_path: ".*"|image_path: "/tmp/tenant_logo.png"|' pubspec.yaml
             sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "/tmp/tenant_logo.png"|' pubspec.yaml
             if ! dart run flutter_launcher_icons; then
-              echo "::warning::Не удалось собрать иконку из логотипа заведения — используется общая иконка POS"
+              echo "::warning::Не удалось собрать иконку из логотипа заведения — используется общая иконка"
               use_default_icon
             fi
           else

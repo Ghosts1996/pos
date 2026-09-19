@@ -37,7 +37,7 @@ class KolibriHomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Colibri Lounge',
+                  Text('Colibri Lounge',
                       style: TextStyle(
                           fontSize: 13,
                           letterSpacing: 2,
@@ -49,7 +49,7 @@ class KolibriHomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.local_fire_department, color: KolibriColors.gold, size: 32),
+            Icon(Icons.local_fire_department, color: KolibriColors.gold, size: 32),
           ],
         ),
         const SizedBox(height: 20),
@@ -78,7 +78,7 @@ class KolibriHomeScreen extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.local_fire_department,
+                            Icon(Icons.local_fire_department,
                                 color: KolibriColors.accent, size: 20),
                             const SizedBox(width: 8),
                             Text('Вы за столом ${s.tableName}',
@@ -120,7 +120,7 @@ class KolibriHomeScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(18),
                   child: Row(
                     children: [
-                      const Icon(Icons.event_available, color: KolibriColors.primary),
+                      Icon(Icons.event_available, color: KolibriColors.primary),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -232,7 +232,7 @@ class KolibriHomeScreen extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           colors: [KolibriColors.surfaceElevated, KolibriColors.surface],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -267,7 +267,7 @@ class KolibriHomeScreen extends StatelessWidget {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
-    Color color = KolibriColors.primary,
+    Color? color,
   }) =>
       InkWell(
         onTap: onTap,
@@ -282,7 +282,7 @@ class KolibriHomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: color),
+              Icon(icon, color: color ?? KolibriColors.primary),
               const SizedBox(height: 12),
               Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
               Text(subtitle,
