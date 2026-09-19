@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.3';
+const CONSOLE_BUILD = '2026-09-19.4';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -605,6 +605,11 @@ function landingPlanCardHtml(p, selected, popular) {
       <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
         ${selected ? 'Тариф выбран ✓' : 'Выбрать и попробовать'}
       </button>
+      ${Number(p.priceRub) > 0 ? `
+        <button class="btn-link f-landing-plan-buy" data-id="${esc(p.id)}" style="margin-top:6px">
+          Купить сразу, без пробного периода
+        </button>
+      ` : ''}
     </div>
   `;
 }
@@ -635,6 +640,9 @@ function screenLanding() {
     </div>
 
     <div class="card" style="margin-top:6px">
+      <p id="f-landing-skip-trial-note" class="small" style="display:none;color:var(--primary);margin-bottom:10px">
+        Выбрана оплата сразу, без пробного периода — после регистрации откроется страница оплаты.
+      </p>
       <label class="field"><span>Email</span>
         <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
       </label>
@@ -646,6 +654,12 @@ function screenLanding() {
       <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
       <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
     </div>
+
+    <div class="row" style="justify-content:center;margin-top:14px">
+      <button class="btn-link" id="f-landing-download-apk">⬇ Скачать приложение кассы (APK)</button>
+    </div>
+    <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
+    попросит код заведения и код приглашения устройства из личного кабинета (или можно нажать «Демо» прямо в приложении).</p>
 
     <h2 style="margin-top:26px">Как это работает</h2>
     <div class="card">
@@ -775,6 +789,7 @@ function screenLanding() {
   };
   $('f-landing-start').onclick = submit;
   $('f-landing-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  if ($('f-landing-download-apk')) $('f-landing-download-apk').onclick = downloadPublicApk;
 
   const scrollToEmail = () => {
     $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -811,19 +826,45 @@ function screenLanding() {
     body.innerHTML = plans.length
       ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId, p.id === popularId)).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
+    const updateSkipTrialNote = () => {
+      const note = $('f-landing-skip-trial-note');
+      if (note) note.style.display = window.localStorage.getItem('skipTrial') === '1' ? 'block' : 'none';
+    };
     document.querySelectorAll('.f-landing-plan-pick').forEach((el) => {
       el.onclick = () => {
         selectedPlanId = el.dataset.id;
         window.localStorage.setItem('selectedPlanId', selectedPlanId);
+        // Обычный путь — через пробный период, а не сразу оплата: если до
+        // этого выбирали "Купить сразу" на другом тарифе, сбрасываем флаг,
+        // иначе после регистрации владельца неожиданно перекинуло бы на
+        // оплату тарифа, который он уже передумал покупать напрямую.
+        window.localStorage.removeItem('skipTrial');
         document.querySelectorAll('.f-landing-plan-pick').forEach((btn) => {
           const isSel = btn.dataset.id === selectedPlanId;
           btn.textContent = isSel ? 'Тариф выбран ✓' : 'Выбрать и попробовать';
           btn.className = `btn ${isSel ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick`;
           btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
         });
+        updateSkipTrialNote();
         $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       };
     });
+    document.querySelectorAll('.f-landing-plan-buy').forEach((el) => {
+      el.onclick = () => {
+        selectedPlanId = el.dataset.id;
+        window.localStorage.setItem('selectedPlanId', selectedPlanId);
+        window.localStorage.setItem('skipTrial', '1');
+        document.querySelectorAll('.f-landing-plan-pick').forEach((btn) => {
+          const isSel = btn.dataset.id === selectedPlanId;
+          btn.textContent = isSel ? 'Тариф выбран ✓' : 'Выбрать и попробовать';
+          btn.className = `btn ${isSel ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick`;
+          btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
+        });
+        updateSkipTrialNote();
+        $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
+    });
+    updateSkipTrialNote();
 
     const calcPlanSelect = $('f-calc-plan');
     if (calcPlanSelect) {
@@ -1263,6 +1304,13 @@ function screenOnboarding() {
       // заведение сразу на нём (пробный период всё равно бесплатный 14
       // дней, planId лишь определяет, какие лимиты/тариф ждут ПОСЛЕ триала).
       const chosenPlanId = window.localStorage.getItem('selectedPlanId');
+      // "Купить сразу" на лендинге (см. f-landing-plan-buy) — тенант всё
+      // равно заводится обычным путём (createTenant не умеет "сразу
+      // платно", да это и не нужно: ниже сразу открываем оплату, до того
+      // как владелец увидит личный кабинет, а после реальной оплаты
+      // handleBillingWebhook переведёт статус в active — пробный период
+      // просто никогда не будет использован).
+      const skipTrial = window.localStorage.getItem('skipTrial') === '1';
       // createTenant — не Cloud Function (Blaze для неё сейчас недоступен),
       // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
       const res = await callSaasGateway(
@@ -1270,6 +1318,7 @@ function screenOnboarding() {
         chosenPlanId ? { name, slug, planId: chosenPlanId } : { name, slug }
       );
       window.localStorage.removeItem('selectedPlanId');
+      window.localStorage.removeItem('skipTrial');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
       // createTenant уже завёл дефолтный брендинг ("Полночный синий") —
@@ -1294,6 +1343,17 @@ function screenOnboarding() {
       } catch (_) {
         // Заведение всё равно создано с рабочим брендингом по умолчанию —
         // не блокируем онбординг, если этот необязательный шаг не прошёл.
+      }
+      // "Купить сразу" — уводим на оплату ДО того, как отрисуется дашборд
+      // (иначе владелец на долю секунды увидел бы личный кабинет пробного
+      // периода, которым не собирался пользоваться). Если оплата почему-то
+      // не запустится (сеть, ЮKassa недоступна), startCheckout сама
+      // проглотит ошибку молча (на этом экране нет f-checkout-error) — в
+      // таком случае просто прорисуется обычный дашборд по watchMemberships
+      // ниже, владелец сможет оплатить оттуда как обычно.
+      if (skipTrial && chosenPlanId) {
+        await startCheckout(tenantId, chosenPlanId, 'monthly');
+        return;
       }
       // Новый tenantMembers придёт сам через watchMemberships — она уже
       // слушает эту коллекцию и перерисует экран в screenDashboard.
@@ -2862,6 +2922,23 @@ async function requestBuild(tenantId) {
     if (errEl) errEl.textContent = `Не удалось запустить сборку: ${e?.message || e}`;
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// Универсальная сборка кассы для кнопки "Скачать" на лендинге — не привязана
+// ни к одному заведению (кто угодно, даже не зарегистрированный, должен
+// суметь её скачать), поэтому лежит по фиксированному публичному пути, а не
+// в tenants/{tenantId}/builds/ (см. saas/storage.rules, match /public/{file}).
+// Публикуется вручную (пересобрать/выложить свежую версию), см.
+// saas-on-demand-build.yml и saas/README.md, раздел «Публичный APK».
+const PUBLIC_APK_PATH = 'public/pos-latest.apk';
+
+async function downloadPublicApk() {
+  try {
+    const url = await getDownloadURL(ref(state.storage, PUBLIC_APK_PATH));
+    window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    toast('Файл пока не опубликован — попробуйте чуть позже или напишите в поддержку');
   }
 }
 
