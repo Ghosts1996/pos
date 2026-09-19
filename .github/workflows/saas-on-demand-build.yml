@@ -401,6 +401,7 @@ jobs:
           SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
           PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
+          SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
         run: |
           if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
@@ -415,7 +416,8 @@ jobs:
             --dart-define=SAAS_FIREBASE_MESSAGING_SENDER_ID="$SAAS_FIREBASE_MESSAGING_SENDER_ID" \
             --dart-define=SAAS_FIREBASE_PROJECT_ID="$SAAS_FIREBASE_PROJECT_ID" \
             --dart-define=SAAS_FIREBASE_STORAGE_BUCKET="$SAAS_FIREBASE_STORAGE_BUCKET" \
-            --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL"
+            --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
+            --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL"
 
       - name: Rename APK
         id: rename
@@ -453,12 +455,10 @@ jobs:
           destination: '${{ secrets.SAAS_STORAGE_BUCKET }}/tenants/${{ inputs.tenant_id }}/builds'
           parent: false
 
-      # SAAS_COMPLETE_BUILD_JOB_URL — ПОЛНЫЙ url completeBuildJob (2-е
-      # поколение Cloud Functions публикует HTTP-функции как отдельный
-      # Cloud Run сервис на своём собственном хосте со случайным хэшем в
-      # имени, а не на предсказуемом заранее адресе) — берётся из вывода
-      # `firebase deploy --only functions` ПОСЛЕ первого деплоя и кладётся
-      # в секрет репозитория как есть, целиком, без добавления пути.
+      # SAAS_COMPLETE_BUILD_JOB_URL — полный url эндпоинта completeBuildJob
+      # своего сервиса (см. saas-gateway/README.md), например
+      # https://pii.hookahpos.su/saas/completeBuildJob — не Cloud Function
+      # (Blaze для неё сейчас недоступен, см. docstring в saas-gateway/server.js).
       - name: Report success to buildJobs
         if: success()
         run: |
