@@ -581,7 +581,8 @@ jobs:
         run: |
           flutter build apk --release \
             -t ${{ matrix.entrypoint }} \
-            --dart-define=BUILD_NUMBER=${{ github.run_number }}
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=PII_GATEWAY_URL=${{ secrets.PII_GATEWAY_URL }}
 
       - name: Rename APK
         run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/${{ matrix.artifact }}.apk
