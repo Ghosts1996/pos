@@ -198,6 +198,39 @@ describe("Нельзя обойти бэкенд для создания/эск�
   });
 });
 
+describe("Полный путь joinAsDevice() как реальный клиент (без withSecurityRulesDisabled)", () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA"), { name: "Lounge A", slug: "lounge-a", status: "active" });
+      await setDoc(doc(db, "tenants/tenantA/settings/deviceInvite"), { code: "DEMO1234" });
+    });
+  });
+
+  it("шаг 1: устройство создаёт свой devices/{uid} с верным кодом приглашения", async () => {
+    const db = ctxFor("device1");
+    await assertSucceeds(
+      setDoc(doc(db, "tenants/tenantA/devices/device1"), {
+        inviteCode: "DEMO1234", deviceName: "Демо", deviceType: "pos",
+        platform: "android", userId: "device1", status: "active",
+      })
+    );
+  });
+
+  it("шаг 2: после шага 1 устройство создаёт tenantMembers тем же uid", async () => {
+    const db = ctxFor("device1");
+    await setDoc(doc(db, "tenants/tenantA/devices/device1"), {
+      inviteCode: "DEMO1234", deviceName: "Демо", deviceType: "pos",
+      platform: "android", userId: "device1", status: "active",
+    });
+    await assertSucceeds(
+      setDoc(doc(db, "tenantMembers/tenantA_device1"), {
+        tenantId: "tenantA", userId: "device1", role: "employee", status: "active",
+      })
+    );
+  });
+});
+
 describe("Ролевая модель внутри одного заведения", () => {
   beforeEach(async () => {
     await seedTwoTenants();
@@ -326,7 +359,7 @@ describe("Usage-счётчики: видны владельцу/админу с�
   });
 });
 
-describe("billingEvents: идемпотентность webhook'а видна только супер-админу", () => {
+describe("billingEvents: история платежей — владелец видит только своё, супер-админ — всё", () => {
   beforeEach(async () => {
     await seedTwoTenants();
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -340,8 +373,16 @@ describe("billingEvents: идемпотентность webhook'а видна т
     await assertSucceeds(getDoc(doc(ctxFor("root"), "billingEvents/payment_1")));
   });
 
-  it("owner своего же заведения не может читать billingEvents напрямую", async () => {
-    await assertFails(getDoc(doc(ctxFor("ownerA"), "billingEvents/payment_1")));
+  // Правило это разрешает НАМЕРЕННО (см. её же комментарий в
+  // firestore.rules — вкладка "Оплата" в консоли строит историю платежей
+  // владельца из этой же коллекции) — раньше тест ожидал обратное и просто
+  // не запускался достаточно давно, чтобы это разойтись незамеченным.
+  it("owner своего же заведения читает billingEvents своего заведения (история платежей)", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "billingEvents/payment_1")));
+  });
+
+  it("owner ЧУЖОГО заведения не читает billingEvents tenantA", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "billingEvents/payment_1")));
   });
 
   it("клиент не может писать billingEvents (только Cloud Function)", async () => {
