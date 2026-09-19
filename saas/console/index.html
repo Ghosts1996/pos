@@ -3,10 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Hookah POS — консоль</title>
+<title>Hookah POS — система управления кальянной: касса, склад, брони, лояльность</title>
 <meta name="theme-color" content="#0A0909">
-<meta name="description" content="Личный кабинет владельца заведения Hookah POS: заведение, устройства, брендинг, подписка">
-<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="SaaS-платформа для кальянных и лаунжей: касса, карта зала, склад, брони, программа лояльности и гостевое приложение. Бесплатный тестовый период, запуск за 10–15 минут.">
+<!-- Раньше здесь был noindex,nofollow — оставался с тех времён, когда эта
+     страница была только личным кабинетом (см. screenDashboard) без
+     публичного лендинга. Теперь тот же файл отдаёт и screenLanding() для
+     незалогиненных посетителей (см. PUBLIC_ROUTES в console.js) — открывать
+     его поисковикам можно и нужно, коммерческий сайт без индексации не
+     находят. Авторизованные экраны от этого не страдают: анонимный краулер
+     видит ровно то же, что и обычный посетитель без входа, — сам лендинг. -->
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://saas-3bdc8.web.app/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Hookah POS — система управления кальянной">
+<meta property="og:description" content="Касса, склад, брони, лояльность и гостевое приложение для кальянных и лаунжей. Бесплатный тестовый период.">
+<meta property="og:image" content="https://saas-3bdc8.web.app/favicon.png">
+<meta property="og:locale" content="ru_RU">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="favicon.png">
 <link rel="stylesheet" href="console.css">
 </head>
 <body>

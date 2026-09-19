@@ -72,6 +72,14 @@ async function main() {
     check("POST /createBuildJob без токена -> 401", r.status === 401);
   }
   {
+    const r = await request("POST", "/cancelSubscription", { body: { tenantId: "x" } });
+    check("POST /cancelSubscription без токена -> 401", r.status === 401);
+  }
+  {
+    const r = await request("POST", "/resumeSubscription", { body: { tenantId: "x" } });
+    check("POST /resumeSubscription без токена -> 401", r.status === 401);
+  }
+  {
     const r = await request("POST", "/completeBuildJob", {
       headers: { "x-callback-secret": "wrong-secret" },
       body: { jobId: "x", status: "success" },
