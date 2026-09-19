@@ -178,7 +178,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
           onSelected: (_) => onTap(),
           backgroundColor: KolibriColors.surface,
           selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
-          side: const BorderSide(color: KolibriColors.border),
+          side: BorderSide(color: KolibriColors.border),
         ),
       );
 
@@ -239,7 +239,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
           if (inCart == 0)
             IconButton(
               onPressed: () => _add(item),
-              icon: const Icon(Icons.add_circle, color: KolibriColors.primary, size: 30),
+              icon: Icon(Icons.add_circle, color: KolibriColors.primary, size: 30),
             )
           else
             Row(
@@ -252,7 +252,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 Text('$inCart', style: const TextStyle(fontWeight: FontWeight.w600)),
                 IconButton(
                   onPressed: () => _add(item),
-                  icon: const Icon(Icons.add_circle, color: KolibriColors.primary),
+                  icon: Icon(Icons.add_circle, color: KolibriColors.primary),
                 ),
               ],
             ),
@@ -291,7 +291,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// под кружком консьержа.
   Widget _cartBar() => Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 72, 24),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: KolibriColors.surfaceElevated,
           border: Border(top: BorderSide(color: KolibriColors.border)),
         ),

@@ -102,7 +102,7 @@ class CheckPickerSheet extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                const Icon(Icons.receipt_long, color: KolibriColors.primary),
+                Icon(Icons.receipt_long, color: KolibriColors.primary),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(

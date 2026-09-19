@@ -212,7 +212,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                             // произошло: вызов всего лишь передан и ждёт
                             // кальянщика. Галочка и время говорят правду и
                             // не создают ощущения зависшего экрана.
-                            const Icon(Icons.check_circle_outline,
+                            Icon(Icons.check_circle_outline,
                                 size: 15, color: KolibriColors.primary),
                             const SizedBox(width: 10),
                             Text('${c.type.label} — передали в '
@@ -262,11 +262,11 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                     children: [
                       Expanded(
                         child: Text('Скидка ${s.discountPercent.toStringAsFixed(0)}%',
-                            style: const TextStyle(color: KolibriColors.gold)),
+                            style: TextStyle(color: KolibriColors.gold)),
                       ),
                       Text(
                         '−${(s.orderTotal - s.totalWithDiscount).toStringAsFixed(0)} ₽',
-                        style: const TextStyle(color: KolibriColors.gold),
+                        style: TextStyle(color: KolibriColors.gold),
                       ),
                     ],
                   ),
@@ -286,7 +286,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                   Text(
                     'Доступно бонусов: ${widget.profile!.bonusBalance.toStringAsFixed(0)} ₽ — '
                     'скажите кальянщику, чтобы списать при оплате',
-                    style: const TextStyle(color: KolibriColors.gold, fontSize: 12),
+                    style: TextStyle(color: KolibriColors.gold, fontSize: 12),
                   ),
                 ],
               ],
@@ -376,7 +376,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(Icons.info_outline,
                         size: 18, color: KolibriColors.gold),
@@ -393,7 +393,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.only(top: 7, right: 10),
                           child: SizedBox(
                             width: 5,
@@ -479,7 +479,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           if (bonusEarned > 0) ...[
             const SizedBox(height: 6),
             Text('Начислено ${bonusEarned.toStringAsFixed(0)} бонусов',
-                style: const TextStyle(color: KolibriColors.primary)),
+                style: TextStyle(color: KolibriColors.primary)),
           ],
           const SizedBox(height: 24),
           const Text('Как всё прошло?',
