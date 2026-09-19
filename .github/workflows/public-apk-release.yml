@@ -424,3 +424,26 @@ jobs:
               --title "Hookah POS — публичная демо-сборка" \
               --notes "Универсальный APK кассы без привязки к заведению — при первом запуске выберите «Демо» или введите код приглашения своего заведения. Файл обновляется автоматически при перезапуске workflow «Публичный APK» (не по версиям, а на месте — старый файл в этом релизе перезаписывается)."
           fi
+
+      # Прямая доставка на собственный сервер владельца платформы — конечным
+      # пользователям файл отдаёт nginx оттуда (см. downloadPublicApk() в
+      # saas/console/console.js), а не GitHub Release: скачивание с CDN
+      # GitHub-релизов зависало у пользователей в России (см. коммит
+      # "Публичный APK: раздача со своего сервера вместо GitHub Release").
+      # Ключ ограничен forced-command на сервере (authorized_keys,
+      # command="/usr/local/bin/deploy-public-apk.sh",restrict) — им нельзя
+      # получить обычный shell, только записать этот конкретный файл.
+      - name: Deploy to own server (pii.hookahpos.su)
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "::warning::DEPLOY_SSH_KEY/DEPLOY_SSH_HOST не заданы — пропускаю прямую доставку на сервер, файл остался только в GitHub Release. См. saas/README.md, раздел «Публичный APK»."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@"$SSH_HOST" \
+            < build/app/outputs/flutter-apk/hookah-pos-public.apk
