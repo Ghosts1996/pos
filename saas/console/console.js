@@ -28,10 +28,10 @@ const FUNCTIONS_REGION = 'europe-west1';
 
 // Адрес saas-gateway (см. saas-gateway/README.md) — берёт на себя
 // createTenant/createBuildJob, которые не могут задеплоиться как Cloud
-// Functions без тарифа Blaze у этого проекта. Пусто по умолчанию: до того,
-// как сервис реально развёрнут, кнопки должны показывать понятную ошибку,
-// а не тихо падать на пустом URL.
-const SAAS_GATEWAY_URL = '';
+// Functions без тарифа Blaze у этого проекта. Тот же сервер и сертификат,
+// что и у pii-gateway (см. saas-gateway/README.md, раздел про nginx) —
+// отдельный путь /saas/, а не отдельный домен.
+const SAAS_GATEWAY_URL = 'https://pii.hookahpos.su/saas';
 
 /** Вызывает saas-gateway тем же способом, каким httpsCallable вызывал бы
  *  Cloud Function — с ID-токеном текущего пользователя в заголовке и JSON
@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.1';
+const CONSOLE_BUILD = '2026-09-19.2';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
