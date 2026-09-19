@@ -85,12 +85,24 @@ class TenantConfigService {
     final membersSnap = await membersQuery.get();
     if (membersSnap.docs.isEmpty) return null;
 
-    final memberDoc = preferredTenantId == null
-        ? membersSnap.docs.first
-        : membersSnap.docs.firstWhere(
-            (d) => d.data()['tenantId'] == preferredTenantId,
-            orElse: () => membersSnap.docs.first,
-          );
+    // Раньше здесь стоял membersSnap.docs.firstWhere(..., orElse: () =>
+    // membersSnap.docs.first) — на реальном устройстве это падало с
+    // "type '() => QueryDocumentSnapshot<Map<String, dynamic>>' is not a
+    // subtype of type '(() => _JsonQueryDocumentSnapshot)?' of 'orElse'":
+    // cloud_firestore на Android возвращает документы конкретным приватным
+    // подклассом, и closure с явно объявленным (для читаемости) типом
+    // возврата QueryDocumentSnapshot<Map<String, dynamic>> в orElse не
+    // проходит проверку типов в рантайме. Обычный цикл этой проблемы не
+    // имеет, тип элемента нигде явно не указывается.
+    var memberDoc = membersSnap.docs.first;
+    if (preferredTenantId != null) {
+      for (final d in membersSnap.docs) {
+        if (d.data()['tenantId'] == preferredTenantId) {
+          memberDoc = d;
+          break;
+        }
+      }
+    }
     final member = TenantMember.fromDoc(memberDoc);
 
     final tenantRef = _db.collection('tenants').doc(member.tenantId);
