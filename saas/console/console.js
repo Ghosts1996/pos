@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.7';
+const CONSOLE_BUILD = '2026-09-19.8';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1612,7 +1612,13 @@ function watchDashboardData(tenantId) {
         <p class="small muted">Универсальный APK кассы для этой платформы —
         после установки на планшет он сам предложит присоединиться по коду
         заведения и коду приглашения устройства выше.</p>
-        ${canManage ? `<button class="btn btn-ghost" id="f-request-build">Собрать APK</button>` : ''}
+        ${canManage ? (() => {
+          // Пока есть незавершённая сборка (см. проверку в handleCreateBuildJob
+          // на сервере) — кнопка неактивна, чтобы не плодить дубли повторными
+          // нажатиями, а не просто показывать ошибку после нажатия.
+          const hasQueued = (buildJobs || []).some((j) => j.status === 'queued');
+          return `<button class="btn btn-ghost" id="f-request-build" ${hasQueued ? 'disabled' : ''}>${hasQueued ? 'Сборка уже идёт…' : 'Собрать APK'}</button>`;
+        })() : ''}
         <div id="f-build-error" class="small" style="color:var(--danger);margin-top:6px"></div>
         ${(buildJobs || []).length ? buildJobs.map((j) => `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
