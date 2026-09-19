@@ -3036,14 +3036,17 @@ async function requestBuild(tenantId) {
 
 // Универсальная сборка кассы для кнопки "Скачать" на лендинге — не привязана
 // ни к одному заведению (кто угодно, даже не зарегистрированный, должен
-// суметь её скачать). Лежит в GitHub Release этого репозитория, а не в
-// Firebase Storage: .github/workflows/public-apk-release.yml собирает APK и
-// заливает его в релиз с тегом public-apk под этим же именем файла — ссылка
-// постоянна, при новой сборке файл в релизе просто перезаписывается
-// (--clobber), в коде ничего менять не нужно. См. saas/README.md, раздел
-// «Публичный APK».
-const PUBLIC_APK_URL =
-  'https://github.com/Ghosts1996/pos/releases/download/public-apk/hookah-pos-public.apk';
+// суметь её скачать). Лежит на собственном сервере владельца платформы
+// (том же, что pii-gateway/saas-gateway — pii.hookahpos.su), статикой через
+// nginx (location /downloads/, см. saas/README.md, раздел «Публичный APK»).
+//
+// НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze, которого
+// нет. НЕ GitHub Release: пробовали — у части пользователей в России
+// зависало скачивание независимо от VPN (видимо, сеть до CDN
+// objects.githubusercontent.com/Amazon S3 нестабильна), при этом с
+// обычного сервера (в том числе с этого же сервера) тот же файл скачивался
+// полностью и без проблем — поэтому раздача переехала туда же.
+const PUBLIC_APK_URL = 'https://pii.hookahpos.su/downloads/hookah-pos-public.apk';
 
 function downloadPublicApk() {
   window.open(PUBLIC_APK_URL, '_blank', 'noopener');
