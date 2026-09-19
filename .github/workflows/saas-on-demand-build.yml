@@ -21,6 +21,16 @@ on:
       invite_code:
         description: 'Код приглашения устройства (settings/deviceInvite.code) заведения — см. tenant_slug'
         required: false
+  # ВРЕМЕННО, только чтобы GitHub впервые "увидел" этот workflow — до первого
+  # запуска (любым способом) API workflow_dispatch отвечает 404 "workflow не
+  # найден" даже с правильным ref, см. тот же трюк для public-apk-release.yml.
+  # Job ниже пропускает себя (if: github.event_name == 'workflow_dispatch'),
+  # поэтому push реального запуска сборки не вызывает — только регистрирует
+  # файл. Удалить этот push-триггер после первого успешного дёрганья
+  # workflow_dispatch (см. историю коммитов).
+  push:
+    branches: [claude/pos-continued]
+    paths: ['.github/workflows/saas-on-demand-build.yml']
 
 # Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
 # GitHub REST API "workflow_dispatch") — не по push и не вручную с обычными
@@ -48,6 +58,10 @@ on:
 # т.д.), правьте оба файла — они специально не разделяют код.
 jobs:
   build:
+    # push-триггер выше — только чтобы GitHub зарегистрировал workflow (см.
+    # комментарий там же). Реальная сборка требует tenant_id/job_id, которых
+    # push-событие не передаёт — поэтому push-запуски просто пропускаются.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     name: Build SaaS APK
 
@@ -476,34 +490,59 @@ jobs:
 
       # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
       # этому репозиторию (не владельцу заведения) — реальная точка выдачи
-      # APK владельцу это Firebase Storage SaaS-проекта, куда уже смотрят
-      # правила saas/storage.rules (tenants/{tenantId}/builds/, только
-      # owner/admin). Кладём сюда же.
-      - name: Authenticate to Google Cloud (SaaS project storage)
+      # APK владельцу это собственный сервер платформы (pii.hookahpos.su),
+      # НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze,
+      # которого нет (та же причина, что и у публичного APK — см. её же
+      # комментарий в public-apk-release.yml и PUBLIC_APK_URL в
+      # saas/console/console.js). В отличие от публичного APK эта сборка
+      # ЛИЧНАЯ (лого/название заведения), поэтому раздаётся не статикой
+      # через nginx, а через saas-gateway (GET /downloadBuild) с проверкой
+      # Firebase Auth + роли owner/admin в заведении — см.
+      # handleDownloadBuild в saas-gateway/server.js.
+      #
+      # Отдельный от DEPLOY_SSH_KEY (публичный APK) ключ с СВОИМ forced
+      # command (authorized_keys: command="/usr/local/bin/deploy-tenant-apk.sh",
+      # restrict) — тот ключ физически не может положить файл сюда, и
+      # наоборот, даже если один из них утечёт. tenant_id/job_id идут в
+      # SSH-команду через переменные окружения, а не прямой интерполяцией
+      # ${{ }} в run: — inputs.* нельзя доверять как части shell-команды
+      # (см. тот же комментарий у шага "Build APK" выше); сервер тоже
+      # проверяет их формат перед использованием в пути (см. saas/README.md,
+      # раздел «APK-конвейер»).
+      - name: Deploy APK to own server (pii.hookahpos.su)
         if: success()
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.SAAS_STORAGE_SERVICE_ACCOUNT }}
-
-      - name: Upload APK to Firebase Storage (SaaS project)
-        if: success()
-        uses: google-github-actions/upload-cloud-storage@v2
-        with:
-          path: ${{ steps.rename.outputs.path }}
-          destination: '${{ secrets.SAAS_STORAGE_BUCKET }}/tenants/${{ inputs.tenant_id }}/builds'
-          parent: false
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
+          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          APK_PATH: ${{ steps.rename.outputs.path }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "::error::DEPLOY_SSH_KEY_TENANT/DEPLOY_SSH_HOST не заданы — без них личные сборки некуда доставлять. См. saas/README.md, раздел «APK-конвейер»."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_tenant_key
+          chmod 600 ~/.ssh/deploy_tenant_key
+          ssh -i ~/.ssh/deploy_tenant_key -o StrictHostKeyChecking=no root@"$SSH_HOST" \
+            "$TENANT_ID $JOB_ID" \
+            < "$APK_PATH"
 
       # SAAS_COMPLETE_BUILD_JOB_URL — полный url эндпоинта completeBuildJob
       # своего сервиса (см. saas-gateway/README.md), например
       # https://pii.hookahpos.su/saas/completeBuildJob — не Cloud Function
       # (Blaze для неё сейчас недоступен, см. docstring в saas-gateway/server.js).
+      # downloadPath тут уже не путь в Storage, а просто пометка для
+      # истории/отладки — саму раздачу handleDownloadBuild строит из
+      # tenantId/jobId самого buildJobs-документа, downloadPath не читает.
       - name: Report success to buildJobs
         if: success()
         run: |
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"success\",\"downloadPath\":\"tenants/${{ inputs.tenant_id }}/builds/${{ inputs.job_id }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
       - name: Report failure to buildJobs
         if: failure()

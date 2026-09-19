@@ -385,8 +385,16 @@
 |---|---|---|
 | `YOOKASSA_SHOP_ID` | id магазина ЮKassa | Личный кабинет ЮKassa → Настройки → API-ключи |
 | `YOOKASSA_SECRET_KEY` | секретный ключ магазина | Там же |
+
+**Секреты `saas-gateway`** (файл `/etc/saas-gateway.env` на сервере, НЕ
+Firebase Secret Manager — эти операции больше не Cloud Functions, см.
+`saas-gateway/README.md`):
+
+| Секрет | Что это | Откуда взять |
+|---|---|---|
 | `GITHUB_PAT` | токен для запуска сборки APK | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained → доступ ТОЛЬКО к репозиторию `Ghosts1996/pos`, права ТОЛЬКО `Actions: Read and write` |
 | `BUILD_CALLBACK_SECRET` | общий секрет для обратного вызова от GitHub Actions | Придумайте сами (`openssl rand -hex 32`) — это же значение пойдёт и в секреты GitHub ниже |
+| `GITHUB_REF` (необязательно) | ветка, из которой запускать сборку | По умолчанию `claude/pos-continued`, менять не нужно, пока код там же |
 
 **Секреты репозитория GitHub** (Settings → Secrets and variables →
 Actions → New repository secret):
@@ -398,11 +406,11 @@ Actions → New repository secret):
 | `SAAS_FIREBASE_APP_ID` | id приложения | Там же, `appId` / `mobilesdk_app_id` |
 | `SAAS_FIREBASE_MESSAGING_SENDER_ID` | sender id | Там же, `project_number` / `messagingSenderId` |
 | `SAAS_FIREBASE_PROJECT_ID` | id проекта | id вашего SaaS-проекта (тот же, что в `saas/.firebaserc`) |
-| `SAAS_FIREBASE_STORAGE_BUCKET` | бакет Storage | Firebase Console → Project settings → General → Storage bucket |
-| `SAAS_STORAGE_BUCKET` | тот же бакет, отдельно для шага загрузки APK | То же значение, что выше |
-| `SAAS_STORAGE_SERVICE_ACCOUNT` | ключ сервисного аккаунта для загрузки APK в Storage | Google Cloud Console (тот же проект) → IAM → Service accounts → Create service account → роль `Storage Object Admin` на этот бакет → Keys → Add key → JSON, вставить содержимое файла целиком |
-| `SAAS_COMPLETE_BUILD_JOB_URL` | полный URL функции `completeBuildJob` | Появится в выводе `firebase deploy --only functions` — см. шаг 8 |
-| `BUILD_CALLBACK_SECRET` | тот же секрет, что в Firebase выше | Скопировать то же значение |
+| `SAAS_FIREBASE_STORAGE_BUCKET` | бакет Storage (используется только для `--dart-define` в самом приложении, НЕ для доставки APK — см. ниже) | Firebase Console → Project settings → General → Storage bucket |
+| `SAAS_COMPLETE_BUILD_JOB_URL` | `https://pii.hookahpos.su/saas/completeBuildJob` | `saas-gateway/server.js` (не Cloud Function — Blaze недоступен), см. `saas-gateway/README.md` |
+| `BUILD_CALLBACK_SECRET` | тот же секрет, что в `/etc/saas-gateway.env` на сервере | Скопировать то же значение |
+| `DEPLOY_SSH_KEY_TENANT` | приватный SSH-ключ для доставки ЛИЧНЫХ сборок на сервер | Генерируется на сервере, см. шаг 8 ниже («Настройка доставки личных сборок») |
+| `DEPLOY_SSH_HOST` | `pii.hookahpos.su` | Тот же секрет, что уже заведён для публичного APK (см. 8b) — общий для обоих |
 | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | подпись APK | Если уже настроены для `build-apk.yml` — используются как есть, ничего нового заводить не нужно |
 
 **Важно про то, что я (модель) не могу сделать за вас**: создание
@@ -536,22 +544,18 @@ cd .. && npx firebase-tools emulators:exec --project hookah-saas-rules-test \
 
 ### 8. Настроить APK-конвейер (GitHub Actions)
 
-1. Секреты Cloud Functions (Secret Manager SaaS-проекта):
-   ```bash
-   firebase functions:secrets:set GITHUB_PAT --project <ваш-saas-project-id>
-   firebase functions:secrets:set BUILD_CALLBACK_SECRET --project <ваш-saas-project-id>
-   ```
-   `GITHUB_PAT` — fine-grained personal access token на GitHub (Settings →
-   Developer settings → Personal access tokens → Fine-grained), доступ
-   ТОЛЬКО к репозиторию `Ghosts1996/pos`, права ТОЛЬКО `Actions: Read and
-   write`. `BUILD_CALLBACK_SECRET` — любая случайная строка, которую вы же
-   придумываете (например `openssl rand -hex 32`) — она же пойдёт ниже в
-   секреты репозитория GitHub, обе стороны должны знать одно и то же
-   значение.
-2. После `firebase deploy --only functions` скопируйте боевой URL функции
-   `completeBuildJob` (аналогично `handleBillingWebhook` выше).
-3. В GitHub-репозитории (Settings → Secrets and variables → Actions →
-   New repository secret) заведите:
+`createBuildJob`/`completeBuildJob` — уже НЕ Cloud Functions (Blaze
+недоступен, см. `saas-gateway/README.md`), а часть `saas-gateway/server.js`
+на собственном сервере владельца платформы. Готовый APK тоже НЕ уходит в
+Firebase Storage (тот же Blaze-блокер) — он доставляется по SSH прямо на
+этот же сервер и раздаётся владельцу заведения через сам `saas-gateway`
+(`GET /downloadBuild`, с проверкой Firebase Auth + роли owner/admin).
+
+1. `saas-gateway` уже настроен по `saas-gateway/README.md` — GitHub PAT и
+   `BUILD_CALLBACK_SECRET` живут в `/etc/saas-gateway.env` на сервере, а не
+   в Secret Manager Firebase (это не Cloud Function).
+2. В GitHub-репозитории (Settings → Secrets and variables → Actions → New
+   repository secret) заведите:
    - `GOOGLE_SERVICES_JSON_SAAS` — конфиг Android-приложения
      `com.hookahpossaas`, зарегистрированного в консоли ВАШЕГО SaaS
      Firebase-проекта (Project settings → Your apps → Add app → Android,
@@ -562,26 +566,72 @@ cd .. && npx firebase-tools emulators:exec --project hookah-saas-rules-test \
      `google-services.json` выше/в консоли Firebase (Project settings →
      General): именно они попадают в приложение через `--dart-define` (см.
      `lib/firebase_options.dart`).
-   - `SAAS_STORAGE_BUCKET` — имя бакета Storage (Project settings → General
-     → Storage bucket, например `<project-id>.firebasestorage.app`).
-   - `SAAS_STORAGE_SERVICE_ACCOUNT` — JSON-ключ сервисного аккаунта с
-     ролью `Storage Object Admin` на этом бакете (Google Cloud Console →
-     IAM → Service accounts → Create → скачать ключ; давайте ему доступ
-     ТОЛЬКО к Storage, не ко всему проекту).
-   - `SAAS_COMPLETE_BUILD_JOB_URL` — URL `completeBuildJob` из шага 2 выше,
-     целиком (`https://...`), без добавления пути.
-   - `BUILD_CALLBACK_SECRET` — то же значение, что в Secret Manager на шаге 1.
+   - `SAAS_COMPLETE_BUILD_JOB_URL` — `https://pii.hookahpos.su/saas/completeBuildJob`
+     (см. `saas-gateway/README.md`, раздел «Секреты репозитория»).
+   - `BUILD_CALLBACK_SECRET` — то же значение, что в `/etc/saas-gateway.env`
+     на сервере.
+   - `DEPLOY_SSH_KEY_TENANT`, `DEPLOY_SSH_HOST` — доставка личных сборок на
+     сервер, см. настройку в конце этого раздела. Отдельный ключ от
+     `DEPLOY_SSH_KEY` публичного APK (см. 8b) — у каждого свой forced
+     command, значит и свой ограниченный доступ.
    - `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
      `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` — если уже настроены для
      `build-apk.yml`, переиспользуются как есть (тот же издатель, тот же
      постоянный ключ подписи).
-4. Убедитесь, что `.github/workflows/saas-on-demand-build.yml` уже в ветке
-   `main` — GitHub допускает `workflow_dispatch` только для workflow-файла,
-   присутствующего на том ref, на который дёргает `createBuildJob`
-   (`ref: "main"`).
-5. Проверьте: в консоли откройте заведение → «Сборка APK» → «Собрать APK».
+3. `saas-gateway/server.js` запускает сборку через `workflow_dispatch` с
+   `ref: GITHUB_REF` (переменная окружения, по умолчанию
+   `claude/pos-continued` — именно там сейчас живёт весь код SaaS-платформы,
+   `main` трогать нельзя, см. историю разработки). Когда ветку в итоге
+   смержат в `main`, достаточно прописать `GITHUB_REF=main` в
+   `/etc/saas-gateway.env` на сервере и перезапустить сервис
+   (`systemctl restart saas-gateway`) — код трогать не придётся.
+4. Проверьте: в консоли откройте заведение → «Сборка APK» → «Собрать APK».
    Через 5–10 минут в списке должна появиться запись «готова» со ссылкой
    «Скачать».
+
+**Настройка доставки личных сборок на сервер (один раз):**
+
+Тот же принцип, что и у публичного APK (см. 8b) — отдельный ограниченный
+SSH-ключ и forced-command скрипт, но с СВОИМ путём: личные сборки
+раскладываются по заведениям (`tenant-builds/{tenantId}/{jobId}.apk`) и не
+раздаются статикой через nginx — их видит только сам `saas-gateway`
+(`/opt/saas-gateway/tenant-builds/`), который и решает, кому можно скачать.
+
+```bash
+cat > /usr/local/bin/deploy-tenant-apk.sh << 'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+# $SSH_ORIGINAL_COMMAND приходит от workflow как "<tenantId> <jobId>" —
+# проверяем формат тут же, на сервере, а не доверяем тому, что прислали:
+# только буквы/цифры (Firestore-автоID и так им соответствует), поэтому
+# path traversal или произвольная запись в другое место исключены в
+# принципе, что бы ни пришло по этому каналу.
+read -r TENANT_ID JOB_ID <<< "${SSH_ORIGINAL_COMMAND:-}"
+[[ "$TENANT_ID" =~ ^[A-Za-z0-9]+$ ]] || { echo "bad tenant id" >&2; exit 1; }
+[[ "$JOB_ID" =~ ^[A-Za-z0-9]+$ ]] || { echo "bad job id" >&2; exit 1; }
+
+DIR="/opt/saas-gateway/tenant-builds/$TENANT_ID"
+mkdir -p "$DIR"
+TMP=$(mktemp "$DIR/.upload.XXXXXX")
+cat > "$TMP"
+mv "$TMP" "$DIR/$JOB_ID.apk"
+chown -R saas-gateway:saas-gateway "$DIR"
+chmod 640 "$DIR/$JOB_ID.apk"
+SCRIPT
+chmod +x /usr/local/bin/deploy-tenant-apk.sh
+
+ssh-keygen -t ed25519 -f /root/.ssh/github_deploy_tenant_key -N "" -C "github-actions-deploy-tenant"
+echo -n 'command="/usr/local/bin/deploy-tenant-apk.sh",restrict ' \
+  | cat - /root/.ssh/github_deploy_tenant_key.pub >> /root/.ssh/authorized_keys
+cat /root/.ssh/github_deploy_tenant_key   # скопировать в секрет DEPLOY_SSH_KEY_TENANT
+```
+
+`chown` — файл кладёт root (владелец SSH-ключа в `authorized_keys`), а
+читает его потом процесс `saas-gateway` от имени системного пользователя
+`saas-gateway` (см. `saas-gateway/setup.sh`) — без `chown` GET
+`/downloadBuild` не смог бы открыть файл. `DEPLOY_SSH_HOST` — тот же
+секрет, что уже заведён для публичного APK (`pii.hookahpos.su`), заново
+создавать не нужно.
 
 ### 8b. Публичный APK для лендинга (кнопка «Скачать»)
 
