@@ -5,9 +5,12 @@
 index.js`, а без тарифа Blaze у проекта `saas-3bdc8` просто не деплоятся
 (Cloud Functions не работают без Blaze вообще, независимо от суммы реальных
 трат): `createTenant`, `createBuildJob`, `resolveTenantBySlug`,
-`completeBuildJob`. Плюс новая функция, которой в Cloud Functions не было —
+`completeBuildJob`. Плюс новые функции, которых в Cloud Functions не было:
 `createDemoTenant` (одноразовое тестовое заведение для демонстрации
-приложения, без email/пароля, само удаляется через несколько часов).
+приложения, без email/пароля, само удаляется через несколько часов) и
+`cancelSubscription`/`resumeSubscription` (самостоятельная отмена/возврат
+автопродления — Firestore-правила не пускают владельца писать в
+`subscriptions` напрямую даже для своего заведения, см. `saas/firestore.rules`).
 
 **Что НЕ переехало** (сознательно, см. обсуждение с владельцем платформы):
 приём оплаты через ЮKassa, приглашение сотрудников по email,
