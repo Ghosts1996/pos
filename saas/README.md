@@ -610,24 +610,49 @@ hookah-pos-public.apk`, отдаётся напрямую через nginx (`loc
 Workflow `.github/workflows/public-apk-release.yml` (использует те же
 секреты `SAAS_FIREBASE_*`/`PII_GATEWAY_URL`/`SAAS_GATEWAY_URL`, что и
 `saas-on-demand-build.yml`, — заводить новые не нужно) собирает
-универсальную сборку и публикует её в GitHub Release с тегом `public-apk`
-— это межсерверный обмен (GitHub Actions runner ⇄ GitHub), он не зависит
-от сети конечного пользователя и не зависал ни разу.
+универсальную сборку, публикует её в GitHub Release с тегом `public-apk`
+(межсерверный обмен GitHub Actions runner ⇄ GitHub — не зависит от сети
+конечного пользователя) и **сам доставляет файл на сервер** по SSH,
+заменяя старую версию — руками ничего заливать не нужно.
 
-Чтобы выпустить свежую версию и раздать её пользователям:
+Прямая доставка настраивается один раз (см. `deploy-public-apk.sh` ниже) —
+без нужных секретов шаг просто пропускается с предупреждением в логе, а
+файл остаётся доступен как минимум из GitHub Release.
+
+Чтобы выпустить свежую версию:
 
 1. GitHub → вкладка **Actions** → workflow **«Публичный APK (демо-сборка
    для сайта)»** → **Run workflow** (ветка `main`).
-2. Через 5–10 минут в **Releases** репозитория обновится файл
-   `hookah-pos-public.apk` (тег `public-apk`).
-3. На сервере (там же, где pii-gateway) подтянуть свежий файл и раздать:
-   ```bash
-   wget -O /var/www/downloads/hookah-pos-public.apk \
-     "https://github.com/Ghosts1996/pos/releases/download/public-apk/hookah-pos-public.apk"
-   ```
-   Путь на сайте (`saas/console/console.js`, константа `PUBLIC_APK_URL`) не
-   меняется — обновлять код и деплоить консоль заново не нужно, только
-   перезаписать файл на сервере.
+2. Через 5–10 минут файл `hookah-pos-public.apk` на сервере обновится сам
+   — можно сразу проверять скачивание с сайта.
+
+**Настройка автодоставки (один раз), на сервере:**
+
+```bash
+cat > /usr/local/bin/deploy-public-apk.sh << 'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+TMP=$(mktemp /var/www/downloads/.upload.XXXXXX)
+cat > "$TMP"
+mv "$TMP" /var/www/downloads/hookah-pos-public.apk
+chmod 644 /var/www/downloads/hookah-pos-public.apk
+SCRIPT
+chmod +x /usr/local/bin/deploy-public-apk.sh
+
+ssh-keygen -t ed25519 -f /root/.ssh/github_deploy_key -N "" -C "github-actions-deploy"
+echo -n 'command="/usr/local/bin/deploy-public-apk.sh",restrict ' \
+  | cat - /root/.ssh/github_deploy_key.pub >> /root/.ssh/authorized_keys
+cat /root/.ssh/github_deploy_key   # скопировать в секрет DEPLOY_SSH_KEY
+```
+
+`command="...",restrict` в `authorized_keys` — ключ может ТОЛЬКО запустить
+этот скрипт (приняв файл на stdin), обычный shell по нему не открыть, даже
+если ключ утечёт. Секреты репозитория: `DEPLOY_SSH_KEY` (приватный ключ
+целиком) и `DEPLOY_SSH_HOST` (`pii.hookahpos.su`).
+
+Путь на сайте (`saas/console/console.js`, константа `PUBLIC_APK_URL`) не
+меняется — обновлять код и деплоить консоль заново для новой версии APK
+не нужно, только запустить workflow.
 
 Собранное этим путём приложение — универсальное (без привязки к
 заведению), точно то же, что описано в п. 8a, только без запечённых
