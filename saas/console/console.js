@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.6';
+const CONSOLE_BUILD = '2026-09-19.7';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1620,8 +1620,8 @@ function watchDashboardData(tenantId) {
               ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
               ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
             </div>
-            ${j.status === 'success' && j.downloadPath ? `
-              <button class="btn-link f-build-download" data-path="${esc(j.downloadPath)}" style="width:auto">Скачать</button>
+            ${j.status === 'success' ? `
+              <button class="btn-link f-build-download" data-job-id="${esc(j.id)}" style="width:auto">Скачать</button>
             ` : ''}
           </div>
         `).join('') : '<p class="small muted" style="margin-top:10px">Сборок пока не было.</p>'}
@@ -2029,7 +2029,7 @@ function watchDashboardData(tenantId) {
       $('f-request-build').onclick = () => requestBuild(tenantId);
     }
     document.querySelectorAll('.f-build-download').forEach((el) => {
-      el.onclick = () => downloadBuild(el.dataset.path);
+      el.onclick = () => downloadBuild(el.dataset.jobId);
     });
   };
 
@@ -3052,10 +3052,35 @@ function downloadPublicApk() {
   window.open(PUBLIC_APK_URL, '_blank', 'noopener');
 }
 
-async function downloadBuild(storagePath) {
+// Личная сборка заведения (в отличие от универсальной PUBLIC_APK_URL выше)
+// лежит на том же собственном сервере, но НЕ статикой через nginx — она
+// привязана к конкретному заведению (лого/название), поэтому раздаётся
+// через сам saas-gateway с проверкой Firebase Auth и роли owner/admin в
+// заведении (см. GET /downloadBuild в saas-gateway/server.js), а не через
+// Firebase Storage (у saas-3bdc8 недоступен без Blaze — та же причина, что
+// и у публичного APK, см. комментарий выше). window.open() тут не
+// подходит: он не может передать заголовок Authorization — поэтому файл
+// сначала скачивается через fetch, а затем сохраняется через blob-URL.
+async function downloadBuild(jobId) {
   try {
-    const url = await getDownloadURL(ref(state.storage, storagePath));
-    window.open(url, '_blank', 'noopener');
+    const idToken = await state.auth.currentUser?.getIdToken();
+    if (!idToken) throw new Error('нет активной сессии — войдите заново');
+    const res = await fetch(`${SAAS_GATEWAY_URL}/downloadBuild?jobId=${encodeURIComponent(jobId)}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hookah-pos-${jobId}.apk`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (e) {
     toast(`Не удалось получить файл: ${e?.message || e}`);
   }

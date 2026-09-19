@@ -2,6 +2,8 @@
 
 const http = require("http");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const admin = require("firebase-admin");
 
 /**
@@ -50,11 +52,31 @@ const admin = require("firebase-admin");
  *   BUILD_CALLBACK_SECRET — общий секрет для проверки обратного вызова от
  *     GitHub Actions (см. handleCompleteBuildJob) — то же значение должно
  *     быть прописано в секрете репозитория BUILD_CALLBACK_SECRET.
+ *   GITHUB_REF — ветка/тег, из которого GitHub должен запускать
+ *     saas-on-demand-build.yml (см. GITHUB_REF ниже) — по умолчанию
+ *     claude/pos-continued, не main: пока весь код SaaS-платформы живёт
+ *     именно там (main трогать нельзя, см. историю разработки), запрос на
+ *     запуск workflow с ref: "main" получал от GitHub 404 — файла с таким
+ *     содержимым на main просто нет. Когда ветку в итоге смержат в main,
+ *     достаточно прописать GITHUB_REF=main в /etc/saas-gateway.env и
+ *     перезапустить сервис — код трогать не придётся.
  */
 
 const GITHUB_OWNER = "Ghosts1996";
 const GITHUB_REPO = "pos";
 const GITHUB_SAAS_WORKFLOW = "saas-on-demand-build.yml";
+const GITHUB_REF = process.env.GITHUB_REF || "claude/pos-continued";
+
+// Куда saas-on-demand-build.yml кладёт готовые личные APK по SSH (шаг
+// "Deploy APK to own server" — см. её же docstring и saas/README.md,
+// раздел «APK-конвейер»). НЕ Firebase Storage: у saas-3bdc8 Storage
+// недоступен без Blaze (та же причина, что и у публичного APK — см.
+// PUBLIC_APK_URL в saas/console/console.js). Путь per-tenant
+// (tenant-builds/{tenantId}/{jobId}.apk), доступ к файлу проверяется в
+// handleDownloadBuild через Firebase Auth + роль в заведении, а не просто
+// статикой через nginx — эта сборка личная (лого/название заведения), не
+// предназначена для публичной раздачи, в отличие от универсальной.
+const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
 
 // Тот же список, что и RESERVED_SLUGS в saas/functions/index.js, плюс
 // "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса.
@@ -332,7 +354,7 @@ async function githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantS
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ref: "main", inputs }),
+      body: JSON.stringify({ ref: GITHUB_REF, inputs }),
     }
   );
   if (!res.ok) {
@@ -480,6 +502,46 @@ async function handleCompleteBuildJob(req, res) {
     errorMessage: status === "failed" ? (errorMessage || "неизвестная ошибка сборки") : null,
   });
   sendJson(res, 200, { ok: true });
+}
+
+// ----------------------------------------------------- downloadBuild
+
+/**
+ * Отдаёт владельцу/админу заведения готовый личный APK — единственный GET
+ * с проверкой прав в этом файле (остальные операции — POST с JSON-телом,
+ * см. ROUTES/server ниже). GET осознанно: консоль скачивает файл через
+ * fetch()+blob (см. downloadBuild в saas/console/console.js), а не через
+ * window.open() — тому нельзя передать заголовок Authorization, а
+ * скачивание должно быть закрыто именно им (файл не публичный).
+ */
+async function handleDownloadBuild(req, res) {
+  const decoded = await verifyAuth(req);
+  const requestUrl = new URL(req.url, "http://localhost");
+  const jobId = requestUrl.searchParams.get("jobId") || "";
+  if (!/^[A-Za-z0-9]+$/.test(jobId)) throw new HttpError(400, "некорректный jobId");
+
+  const jobDoc = await db().collection("buildJobs").doc(jobId).get();
+  if (!jobDoc.exists) throw new HttpError(404, "сборка не найдена");
+  const job = jobDoc.data();
+  if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
+
+  await requireTenantRole(job.tenantId, decoded.uid, ["owner", "admin"]);
+
+  const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
+  let stat;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch (_) {
+    throw new HttpError(404, "файл сборки не найден на сервере — попробуйте собрать заново");
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.android.package-archive",
+    "Content-Length": stat.size,
+    "Content-Disposition": `attachment; filename="hookah-pos-${jobId}.apk"`,
+    "Access-Control-Allow-Origin": "*",
+  });
+  fs.createReadStream(filePath).pipe(res);
 }
 
 // ---------------------------------------------------- createDemoTenant
@@ -701,19 +763,26 @@ const ROUTES = {
   "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
 };
 
-const server = http.createServer((req, res) => {
-  if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
-  if (req.method === "GET" && req.url === "/health") return sendJson(res, 200, { ok: true });
-  if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
-
-  const path = (req.url || "").split("?")[0];
-  const handler = ROUTES[path];
-  if (!handler) return sendJson(res, 404, { error: "not found" });
-
+function runHandler(handler, req, res) {
   handler(req, res).catch((e) => {
     const status = e instanceof HttpError ? e.status : 500;
     sendJson(res, status, { error: e.message || String(e) });
   });
+}
+
+const server = http.createServer((req, res) => {
+  if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
+
+  const urlPath = (req.url || "").split("?")[0];
+  if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true });
+  // Единственный GET с полезной нагрузкой — скачивание готового APK (см.
+  // handleDownloadBuild) — остальные операции ниже намеренно только POST.
+  if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
+  if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
+
+  const handler = ROUTES[urlPath];
+  if (!handler) return sendJson(res, 404, { error: "not found" });
+  runHandler(handler, req, res);
 });
 
 scheduleDemoCleanup();
