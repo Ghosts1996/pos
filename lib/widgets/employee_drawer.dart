@@ -13,6 +13,7 @@ import '../screens/employee/reservations_screen.dart';
 import '../screens/employee/kds_screen.dart';
 import '../screens/employee/waitlist_screen.dart';
 import '../services/firestore_service.dart';
+import '../models/staff_shift_model.dart';
 import '../services/guest_link_service.dart';
 import '../services/ai/ai_agents.dart';
 import '../models/client_models.dart';
@@ -85,10 +86,54 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     if (mounted) setState(() => _busy = false);
   }
 
+  bool _myShiftBusy = false;
+
+  // "Моя смена" — личный учёт рабочего времени для расчёта зарплаты. Не
+  // путать с кассовой сменой выше: та одна на всё заведение, эта — только
+  // у этого сотрудника, и не связана с кассовой ни открытием, ни закрытием
+  // (иначе случайный повторный вход по PIN дробил бы одну смену на
+  // несколько, а зарплата считалась бы неверно).
+  Future<void> _clockIn() async {
+    setState(() => _myShiftBusy = true);
+    try {
+      await _fs.clockIn(widget.employee);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Смена начата')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось начать смену: $e')));
+      }
+    }
+    if (mounted) setState(() => _myShiftBusy = false);
+  }
+
+  Future<void> _clockOut(StaffShiftModel shift) async {
+    setState(() => _myShiftBusy = true);
+    try {
+      await _fs.clockOut(shift.id, widget.employee.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Смена закончена')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось закончить смену: $e')));
+      }
+    }
+    if (mounted) setState(() => _myShiftBusy = false);
+  }
+
   void _go(Widget screen) {
     Navigator.pop(context);
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
+
+  String _formatTime(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +180,31 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                           width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : null,
                   onTap: _busy ? null : () => isOpen ? _closeShift(shift) : _openShift(),
+                );
+              },
+            ),
+
+            // Личная смена сотрудника (для зарплаты) — отдельно от кассовой
+            // выше: кассовая смена одна на всё заведение, эта — только его.
+            StreamBuilder<StaffShiftModel?>(
+              stream: _fs.openStaffShiftStream(widget.employee.id),
+              builder: (context, snapshot) {
+                final myShift = snapshot.data;
+                final isOpen = myShift != null && myShift.isOpen;
+                final subtitle = isOpen
+                    ? 'Началась в ${_formatTime(myShift.startedAt)} · нажмите, чтобы закончить'
+                    : 'Нажмите, чтобы начать учёт рабочего времени';
+                return ListTile(
+                  enabled: !_myShiftBusy,
+                  leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
+                      color: isOpen ? Colors.green : Colors.grey),
+                  title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
+                  subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+                  trailing: _myShiftBusy
+                      ? const SizedBox(
+                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : null,
+                  onTap: _myShiftBusy ? null : () => isOpen ? _clockOut(myShift) : _clockIn(),
                 );
               },
             ),
