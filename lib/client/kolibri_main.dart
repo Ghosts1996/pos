@@ -2,8 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../build_info.dart';
 import '../firebase_options.dart';
 import '../services/ai/ai_settings.dart';
+import '../services/app_scope.dart';
+import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
 import 'screens/kolibri_shell.dart';
 import 'services/kolibri_auth_service.dart';
@@ -17,6 +21,17 @@ import 'theme/kolibri_theme.dart';
 ///
 /// За счёт общего Firestore всё работает в связке с POS в реальном времени:
 /// меню и стоп-лист, брони, живой счёт за столом, вызовы кальянщика.
+///
+/// SaaS-режим (kSaasMode) — в отличие от POS, где планшет присоединяется
+/// интерактивно кодом приглашения (SaasDevicePairingScreen), гостю вводить
+/// нечего: эта сборка личная, заказана конкретным владельцем через
+/// «Собрать APK» и уже содержит код ЕГО заведения (kSaasPresetSlug, см.
+/// saas-on-demand-build.yml). Поэтому здесь тенант резолвится один раз при
+/// старте (и кэшируется — дальше работает офлайн), а не показывается
+/// экран выбора/присоединения. GuestLinkService/VenueService и весь
+/// остальной код гостя уже ходят в Firestore через AppScope (см. его
+/// docstring) — им не важно, откуда взялся tenantId, поэтому единственное,
+/// что нужно было изменить здесь, — это ГДЕ он определяется.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -26,21 +41,60 @@ void main() async {
   if (DefaultFirebaseOptions.isConfigured) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-      await KolibriAuthService().ensureGuest();
-      ready = true;
-      // Настройки ИИ подтягиваются в фоне — без них приложение просто
-      // работает без ИИ-консьержа.
-      unawaited(AiSettingsStore.instance.init());
-      // Профиль заведения нужен не только для часов работы: из него
-      // берётся флаг cloudFunctionsEnabled, по которому приложение решает,
-      // показывать локальные уведомления самому или ждать push с сервера.
-      VenueService.instance.watch();
+
+      if (kSaasMode) {
+        final tenantId = await _resolveSaasTenantId();
+        if (tenantId == null) {
+          startupError = 'Это приложение не привязано ни к одному заведению — обратитесь к администратору заведения.';
+        } else {
+          AppScope.enterTenant(tenantId);
+        }
+      }
+
+      if (startupError == null) {
+        await KolibriAuthService().ensureGuest();
+        ready = true;
+        // Настройки ИИ подтягиваются в фоне — без них приложение просто
+        // работает без ИИ-консьержа.
+        unawaited(AiSettingsStore.instance.init());
+        // Профиль заведения нужен не только для часов работы: из него
+        // берётся флаг cloudFunctionsEnabled, по которому приложение решает,
+        // показывать локальные уведомления самому или ждать push с сервера.
+        VenueService.instance.watch();
+      }
     } catch (e) {
       startupError = e.toString();
     }
   }
 
   runApp(KolibriApp(ready: ready, startupError: startupError));
+}
+
+/// Слаг заведения (kSaasPresetSlug) резолвится в tenantId ОДИН раз и
+/// сохраняется на диск — при следующих запусках гость открывает меню даже
+/// без сети, а не упирается в экран ошибки только потому, что перед этим
+/// не успел подключиться интернет. Сам tenantId для конкретной сборки
+/// никогда не меняется (это не блуждающий планшет POS, который можно
+/// переподключить к другому заведению), поэтому кэш не протухает.
+Future<String?> _resolveSaasTenantId() async {
+  const cacheKey = 'saas_kolibri_tenant_id_v1';
+  final prefs = await SharedPreferences.getInstance();
+  final cached = prefs.getString(cacheKey);
+  if (cached != null && cached.isNotEmpty) return cached;
+
+  if (kSaasPresetSlug.isEmpty) {
+    // Универсальная сборка без привязки к заведению (например, собранная
+    // для теста без createBuildJob) — у гостевого приложения, в отличие от
+    // POS, нет экрана "ввести код заведения вручную": оно всегда личное.
+    return null;
+  }
+  try {
+    final tenantId = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug);
+    await prefs.setString(cacheKey, tenantId);
+    return tenantId;
+  } catch (_) {
+    return null;
+  }
 }
 
 class KolibriApp extends StatelessWidget {
