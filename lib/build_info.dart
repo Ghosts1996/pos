@@ -25,7 +25,7 @@ const String kBuildNumber = String.fromEnvironment(
 const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
 
 /// URL шлюза первичной записи персональных данных гостей (имя/телефон) —
-/// см. `yandex-pii-gateway/README.md`. Задаётся в CI:
+/// см. `pii-gateway/README.md`. Задаётся в CI:
 /// `--dart-define=PII_GATEWAY_URL=https://...`.
 ///
 /// Пусто по умолчанию — [PiiGatewayService] в этом случае явно бросает

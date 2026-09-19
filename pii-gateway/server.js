@@ -1,5 +1,6 @@
 "use strict";
 
+const http = require("http");
 const { Pool } = require("pg");
 const admin = require("firebase-admin");
 
@@ -7,11 +8,12 @@ const admin = require("firebase-admin");
  * Первичная запись персональных данных гостя (имя, телефон) — точка входа
  * для гостевого приложения Kolibri Lounge (см.
  * lib/services/pii_gateway_service.dart и lib/services/guest_link_service.dart
- * → registerGuestProfile). Пишет СНАЧАЛА в Managed PostgreSQL (физически в
- * РФ) и только потом, внутри того же запроса, зеркалирует то же самое в
- * Firestore проекта hoocah-pos — касса и весь остальной код приложения
- * продолжают читать гостя из Firestore, как и раньше, ни одно из ~30 других
- * мест, где используется `clients/{uid}`, трогать не пришлось.
+ * → registerGuestProfile). Пишет СНАЧАЛА в PostgreSQL на этом же сервере
+ * (физически в РФ) и только потом, внутри того же запроса, зеркалирует то
+ * же самое в Firestore проекта hoocah-pos — касса и весь остальной код
+ * приложения продолжают читать гостя из Firestore, как и раньше, ни одно
+ * из ~30 других мест, где используется `clients/{uid}`, трогать не
+ * пришлось.
  *
  * Зачем именно так, а не просто ещё одна запись в Firestore: см. раздел 7
  * политики конфиденциальности платформы (saas/console/console.js,
@@ -23,10 +25,16 @@ const admin = require("firebase-admin");
  * кассе, правка телефона во время оплаты, коллекции reservations/
  * discountCards/waitlist со своими независимыми копиями имени/телефона.
  *
- * Переменные окружения (задаются при деплое — см. README.md):
+ * Запускается как обычный процесс (systemd, см. pii-gateway.service) на
+ * своём сервере — не serverless-функция, поэтому обычный http.createServer,
+ * без event/context из облачного рантайма.
+ *
+ * Переменные окружения (см. README.md и .env.example):
+ *   PORT — порт, на котором слушает сервис (по умолчанию 8080; наружу
+ *     смотрит nginx на 443, см. README.md).
  *   PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD — подключение к
- *     Yandex Managed Service for PostgreSQL.
- *   PGSSLROOTCERT_B64 — корневой сертификат Managed PostgreSQL, base64.
+ *     PostgreSQL (локальный, на этом же сервере — PGHOST=127.0.0.1, ssl не
+ *     нужен для локального подключения).
  *   FIREBASE_SERVICE_ACCOUNT_B64 — сервисный аккаунт ИМЕННО проекта
  *     hoocah-pos (не saas-3bdc8!) в base64 — им проверяется ID-токен
  *     гостя и делается запись в Firestore через Admin SDK.
@@ -35,18 +43,16 @@ const admin = require("firebase-admin");
 let pool;
 function getPool() {
   if (pool) return pool;
-  const caB64 = process.env.PGSSLROOTCERT_B64;
-  const ssl = caB64
-    ? { ca: Buffer.from(caB64, "base64").toString("utf8"), rejectUnauthorized: true }
-    : { rejectUnauthorized: false };
   pool = new Pool({
-    host: process.env.PGHOST,
-    port: Number(process.env.PGPORT || 6432),
+    host: process.env.PGHOST || "127.0.0.1",
+    port: Number(process.env.PGPORT || 5432),
     database: process.env.PGDATABASE,
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
-    ssl,
-    max: 3,
+    // Локальное подключение (тот же сервер) — TLS не нужен, трафик не
+    // выходит за пределы localhost.
+    ssl: false,
+    max: 5,
   });
   return pool;
 }
@@ -60,62 +66,73 @@ function getFirebaseApp() {
   return firebaseApp;
 }
 
-function json(statusCode, obj) {
-  return {
-    statusCode,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      // Гостевой мобильный клиент CORS не спрашивает, но держим на случай
-      // веб-сборки — лишним заголовком ничего не ломаем.
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-    },
-    body: JSON.stringify(obj),
-  };
+function sendJson(res, statusCode, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+    // Гостевой мобильный клиент CORS не спрашивает, но держим на случай
+    // веб-сборки — лишним заголовком ничего не ломаем.
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  });
+  res.end(body);
 }
 
-exports.handler = async function handler(event) {
-  const method = (event.httpMethod || "POST").toUpperCase();
-  if (method === "OPTIONS") return json(200, { ok: true });
-  if (method !== "POST") return json(405, { error: "method not allowed" });
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+      // Тело заведомо крошечное (имя+телефон) — обрубаем на 64KB, чтобы
+      // кто-то по ошибке (или специально) не залил гигабайты в открытый
+      // публичный эндпоинт.
+      if (data.length > 65536) {
+        reject(new Error("body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
 
+async function handleRegisterGuestProfile(req, res) {
   let body;
   try {
-    const raw = event.isBase64Encoded
-      ? Buffer.from(event.body || "", "base64").toString("utf8")
-      : event.body || "{}";
-    body = JSON.parse(raw);
+    const raw = await readBody(req);
+    body = JSON.parse(raw || "{}");
   } catch (e) {
-    return json(400, { error: "invalid JSON body" });
+    return sendJson(res, 400, { error: "invalid JSON body" });
   }
 
   const { tenantId, uid, name, phone } = body;
   if (!uid || typeof uid !== "string") {
-    return json(400, { error: "uid обязателен" });
+    return sendJson(res, 400, { error: "uid обязателен" });
   }
   if (name === undefined && phone === undefined) {
-    return json(400, { error: "нужно передать хотя бы name или phone" });
+    return sendJson(res, 400, { error: "нужно передать хотя бы name или phone" });
   }
 
   // Авторизация — тот же принцип, что у Firestore Security Rules для
   // clients/{uid} (allow write: if isSelf(uid)): гость может писать
   // ТОЛЬКО свой собственный профиль. Проверяем это здесь сами, потому что
   // запись теперь идёт мимо самих Firestore Rules.
-  const authHeader = event.headers?.Authorization || event.headers?.authorization || "";
+  const authHeader = req.headers["authorization"] || "";
   const idToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!idToken) {
-    return json(401, { error: "нет токена авторизации" });
+    return sendJson(res, 401, { error: "нет токена авторизации" });
   }
 
   let decoded;
   try {
     decoded = await getFirebaseApp().auth().verifyIdToken(idToken);
   } catch (e) {
-    return json(401, { error: "невалидный токен: " + e.message });
+    return sendJson(res, 401, { error: "невалидный токен: " + e.message });
   }
   if (decoded.uid !== uid) {
-    return json(403, { error: "нельзя писать чужой профиль" });
+    return sendJson(res, 403, { error: "нельзя писать чужой профиль" });
   }
 
   const tenant = typeof tenantId === "string" ? tenantId : "";
@@ -144,7 +161,7 @@ exports.handler = async function handler(event) {
       await pgClient.query("ROLLBACK");
     } catch (_) {}
     pgClient.release();
-    return json(500, { error: "не удалось сохранить в первичной базе: " + e.message });
+    return sendJson(res, 500, { error: "не удалось сохранить в первичной базе: " + e.message });
   }
   pgClient.release();
 
@@ -160,8 +177,27 @@ exports.handler = async function handler(event) {
     // Первичная запись уже сохранена — гость не потеряет данные, но кассе
     // придётся подождать следующего изменения профиля, чтобы увидеть их.
     // Это не 500: с точки зрения 152-ФЗ цель уже достигнута.
-    return json(200, { ok: true, firestoreMirrorFailed: String(e.message || e) });
+    return sendJson(res, 200, { ok: true, firestoreMirrorFailed: String(e.message || e) });
   }
 
-  return json(200, { ok: true });
-};
+  return sendJson(res, 200, { ok: true });
+}
+
+const server = http.createServer((req, res) => {
+  if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
+  if (req.method === "GET" && req.url === "/health") return sendJson(res, 200, { ok: true });
+  if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
+
+  handleRegisterGuestProfile(req, res).catch((e) => {
+    sendJson(res, 500, { error: "internal error: " + (e?.message || e) });
+  });
+});
+
+const port = Number(process.env.PORT || 8080);
+server.listen(port, "127.0.0.1", () => {
+  // Слушаем только localhost — снаружи сервис виден через nginx (443,
+  // с настоящим TLS-сертификатом), см. README.md.
+  console.log(`pii-gateway listening on 127.0.0.1:${port}`);
+});
+
+module.exports = server;

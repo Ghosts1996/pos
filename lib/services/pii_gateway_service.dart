@@ -6,7 +6,7 @@ import 'app_scope.dart';
 
 /// Первичная запись персональных данных гостя (имя, телефон) — не в
 /// Firestore (Google Cloud, без региона в РФ), а в собственный сервис на
-/// инфраструктуре в России, см. `yandex-pii-gateway/`.
+/// инфраструктуре в России, см. `pii-gateway/`.
 ///
 /// ПОЧЕМУ это отдельный сервис, а не просто ещё один Firestore-вызов.
 /// По ст. 18 ч.5 152-ФЗ запись, накопление и хранение персональных данных
@@ -62,7 +62,7 @@ class PiiGatewayService {
       throw PiiGatewayException(
         'PII_GATEWAY_URL не задан в сборке — данные гостя не могут быть '
         'сохранены первично на инфраструктуре в РФ. Соберите приложение с '
-        '--dart-define=PII_GATEWAY_URL=... (см. yandex-pii-gateway/README.md).',
+        '--dart-define=PII_GATEWAY_URL=... (см. pii-gateway/README.md).',
       );
     }
     final user = FirebaseAuth.instance.currentUser;
@@ -78,11 +78,9 @@ class PiiGatewayService {
     try {
       resp = await _http
           .post(
-            // baseUrl — это уже полный адрес вызова функции целиком (см.
-            // PII_GATEWAY_URL и yandex-pii-gateway/README.md): у Yandex
-            // Cloud Functions нет отдельного роутинга по пути внутри одной
-            // функции, поэтому лишний путь тут не добавляем — база данных
-            // в Phase 1 обслуживает ровно одну операцию.
+            // baseUrl — это уже полный адрес сервиса целиком (см.
+            // PII_GATEWAY_URL и pii-gateway/README.md) — сервис в Phase 1
+            // обслуживает ровно одну операцию, лишний путь не добавляем.
             Uri.parse(baseUrl),
             headers: {
               'Content-Type': 'application/json',

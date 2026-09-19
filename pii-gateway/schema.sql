@@ -1,6 +1,6 @@
 -- Первичное хранилище персональных данных гостей (имя, телефон) — физически
--- в РФ (Yandex Managed Service for PostgreSQL). См. README.md рядом и
--- раздел 7 политики конфиденциальности платформы (saas/console/console.js,
+-- в РФ (PostgreSQL на собственном сервере, см. README.md/setup.sh рядом).
+-- См. также раздел 7 политики конфиденциальности платформы (saas/console/console.js,
 -- screenLegalPrivacy) о том, зачем это отдельная база, а не ещё одна
 -- коллекция в Firestore.
 --
