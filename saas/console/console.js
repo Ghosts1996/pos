@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.8';
+const CONSOLE_BUILD = '2026-09-19.9';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -341,6 +341,12 @@ const SUB_STATUS_LABELS = {
 };
 const BUILD_STATUS_LABELS = {
   queued: 'в очереди', success: 'готова', failed: 'ошибка',
+};
+// Одно нажатие «Собрать APK» создаёт сразу 2 buildJobs-документа с разным
+// type (см. handleCreateBuildJob в saas-gateway/server.js) — подпись, чтобы
+// в списке было видно, какая запись про что, а не только "готова"/"в очереди".
+const BUILD_TYPE_LABELS = {
+  pos: 'Касса', guest: 'Гостевое приложение',
 };
 // См. purpose в handleBillingWebhook (saas/functions/index.js) —
 // 'subscription' (первая оплата) и 'renewal' (автопродление).
@@ -1609,9 +1615,12 @@ function watchDashboardData(tenantId) {
 
       <h2>Сборка APK</h2>
       <div class="card">
-        <p class="small muted">Универсальный APK кассы для этой платформы —
-        после установки на планшет он сам предложит присоединиться по коду
-        заведения и коду приглашения устройства выше.</p>
+        <p class="small muted">Одна кнопка — два личных приложения этого
+        заведения: касса (для планшета, сам присоединится по коду
+        заведения и коду приглашения устройства выше, без ручного ввода) и
+        гостевое приложение «Colibri Lounge» (для телефонов гостей — меню,
+        заказ из-за стола, вызов персонала, бонусы; название и логотип —
+        из раздела «Брендинг»).</p>
         ${canManage ? (() => {
           // Пока есть незавершённая сборка (см. проверку в handleCreateBuildJob
           // на сервере) — кнопка неактивна, чтобы не плодить дубли повторными
@@ -1623,7 +1632,7 @@ function watchDashboardData(tenantId) {
         ${(buildJobs || []).length ? buildJobs.map((j) => `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
             <div class="grow small muted">
-              ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
+              ${esc(BUILD_TYPE_LABELS[j.type] || j.type || 'Сборка')} · ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
               ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
             </div>
             ${j.status === 'success' ? `
@@ -2676,6 +2685,7 @@ function watchAllBuildJobs() {
       <div class="row" style="justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border)">
         <div class="small grow" style="min-width:0">
           <b>${esc(j.tenantName || j.tenantId)}</b> ·
+          ${esc(BUILD_TYPE_LABELS[j.type] || j.type || '')} ·
           <span style="${j.status === 'failed' ? 'color:var(--danger)' : ''}">${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</span>
           ${j.status === 'failed' && j.errorMessage ? `<div class="muted">${esc(j.errorMessage)}</div>` : ''}
         </div>

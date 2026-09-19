@@ -401,10 +401,12 @@ Actions → New repository secret):
 
 | Секрет | Что это | Откуда взять |
 |---|---|---|
-| `GOOGLE_SERVICES_JSON_SAAS` | конфиг Android-приложения `com.hookahpossaas` | Firebase Console (ваш SaaS-проект) → Project settings → Your apps → Add app → Android, package name РОВНО `com.hookahpossaas` → скачать `google-services.json`, вставить содержимое файла целиком |
-| `SAAS_FIREBASE_API_KEY` | ключ API | Firebase Console → Project settings → General → ваше Android/Web-приложение, поле `apiKey` (или прямо из `google-services.json` выше) |
-| `SAAS_FIREBASE_APP_ID` | id приложения | Там же, `appId` / `mobilesdk_app_id` |
-| `SAAS_FIREBASE_MESSAGING_SENDER_ID` | sender id | Там же, `project_number` / `messagingSenderId` |
+| `GOOGLE_SERVICES_JSON_SAAS` | конфиг Android-приложения `com.hookahpossaas` (касса) | Firebase Console (ваш SaaS-проект) → Project settings → Your apps → Add app → Android, package name РОВНО `com.hookahpossaas` → скачать `google-services.json`, вставить содержимое файла целиком |
+| `GOOGLE_SERVICES_JSON_SAAS_KOLIBRI` | конфиг ВТОРОГО Android-приложения `com.kolibriloungesaas` (гостевое «Colibri Lounge») | Там же, ещё раз Add app → Android, package name РОВНО `com.kolibriloungesaas` — это ДРУГОЕ приложение в ТОМ ЖЕ Firebase-проекте (один applicationId нельзя переиспользовать для двух приложений, см. `.github/workflows/saas-on-demand-build.yml`) |
+| `SAAS_FIREBASE_API_KEY` | ключ API (общий для обоих приложений — один проект) | Firebase Console → Project settings → General → любое из двух приложений, поле `apiKey` (или из `google-services.json` выше) |
+| `SAAS_FIREBASE_APP_ID` | id приложения кассы | Из `google-services.json` кассы, `appId` / `mobilesdk_app_id` |
+| `SAAS_FIREBASE_APP_ID_KOLIBRI` | id ВТОРОГО приложения (гостевого) | Из `google-services.json` гостевого приложения — ЭТО ДРУГОЕ значение, не путать с `SAAS_FIREBASE_APP_ID` |
+| `SAAS_FIREBASE_MESSAGING_SENDER_ID` | sender id (общий) | Там же, `project_number` / `messagingSenderId` |
 | `SAAS_FIREBASE_PROJECT_ID` | id проекта | id вашего SaaS-проекта (тот же, что в `saas/.firebaserc`) |
 | `SAAS_FIREBASE_STORAGE_BUCKET` | бакет Storage (используется только для `--dart-define` в самом приложении, НЕ для доставки APK — см. ниже) | Firebase Console → Project settings → General → Storage bucket |
 | `SAAS_COMPLETE_BUILD_JOB_URL` | `https://pii.hookahpos.su/saas/completeBuildJob` | `saas-gateway/server.js` (не Cloud Function — Blaze недоступен), см. `saas-gateway/README.md` |
@@ -551,21 +553,51 @@ Firebase Storage (тот же Blaze-блокер) — он доставляет�
 этот же сервер и раздаётся владельцу заведения через сам `saas-gateway`
 (`GET /downloadBuild`, с проверкой Firebase Auth + роли owner/admin).
 
+Одно нажатие «Собрать APK» в консоли запускает ОДИН workflow, но собирает
+ДВА приложения (матрица в `saas-on-demand-build.yml`, тот же приём, что и
+в продовом `build-apk.yml`): кассу (`com.hookahpossaas`) и гостевое
+приложение «Colibri Lounge» для гостей заведения (`com.kolibriloungesaas`)
+— в консоли появляются сразу 2 записи «в очереди», каждая получает свою
+ссылку «Скачать» по готовности. Это два РАЗНЫХ Android-приложения внутри
+ОДНОГО и того же SaaS Firebase-проекта — оба нужно зарегистрировать
+заранее (шаг 2 ниже), иначе сборка гостевого приложения будет падать с
+ошибкой «Секрет GOOGLE_SERVICES_JSON_SAAS_KOLIBRI не задан», а сборка
+кассы при этом продолжит работать как обычно (это два независимых job'а,
+падение одного не останавливает второй).
+
+Гостевое приложение по умолчанию работает анонимно (меню, заказ из-за
+стола, вызов персонала, бонусы — Anonymous sign-in уже включён в Auth, см.
+раздел 6 выше про POS) — вход по SMS-коду там тоже есть в коде
+(`KolibriAuthService`), но потребует ОТДЕЛЬНО включить провайдер Phone в
+Firebase Console → Authentication → Sign-in method для SaaS-проекта, если
+он ещё не включён: без этого шага кнопка «Войти по телефону» в гостевом
+приложении не заработает, а всё остальное — заработает и без него.
+
 1. `saas-gateway` уже настроен по `saas-gateway/README.md` — GitHub PAT и
    `BUILD_CALLBACK_SECRET` живут в `/etc/saas-gateway.env` на сервере, а не
    в Secret Manager Firebase (это не Cloud Function).
-2. В GitHub-репозитории (Settings → Secrets and variables → Actions → New
+2. В Firebase Console (ваш SaaS-проект) → Project settings → Your apps →
+   Add app → Android зарегистрируйте ДВА приложения, если их ещё нет:
+   package name РОВНО `com.hookahpossaas` (касса) и ОТДЕЛЬНО ещё раз Add
+   app → Android с package name РОВНО `com.kolibriloungesaas` (гостевое).
+   Для каждого скачайте свой `google-services.json`.
+3. В GitHub-репозитории (Settings → Secrets and variables → Actions → New
    repository secret) заведите:
-   - `GOOGLE_SERVICES_JSON_SAAS` — конфиг Android-приложения
-     `com.hookahpossaas`, зарегистрированного в консоли ВАШЕГО SaaS
-     Firebase-проекта (Project settings → Your apps → Add app → Android,
-     package name ровно `com.hookahpossaas`), содержимое `google-services.json`.
-   - `SAAS_FIREBASE_API_KEY`, `SAAS_FIREBASE_APP_ID`,
-     `SAAS_FIREBASE_MESSAGING_SENDER_ID`, `SAAS_FIREBASE_PROJECT_ID`,
-     `SAAS_FIREBASE_STORAGE_BUCKET` — те же значения, что в
-     `google-services.json` выше/в консоли Firebase (Project settings →
-     General): именно они попадают в приложение через `--dart-define` (см.
-     `lib/firebase_options.dart`).
+   - `GOOGLE_SERVICES_JSON_SAAS` — содержимое `google-services.json` кассы
+     целиком.
+   - `GOOGLE_SERVICES_JSON_SAAS_KOLIBRI` — содержимое `google-services.json`
+     гостевого приложения целиком (ДРУГОЙ файл, не тот же самый).
+   - `SAAS_FIREBASE_API_KEY`, `SAAS_FIREBASE_MESSAGING_SENDER_ID`,
+     `SAAS_FIREBASE_PROJECT_ID`, `SAAS_FIREBASE_STORAGE_BUCKET` — общие для
+     обоих приложений (один и тот же Firebase-проект), берутся из любого
+     `google-services.json` выше или из консоли Firebase (Project settings
+     → General): именно они попадают в приложение через `--dart-define`
+     (см. `lib/firebase_options.dart`).
+   - `SAAS_FIREBASE_APP_ID` — `appId` из `google-services.json` КАССЫ.
+   - `SAAS_FIREBASE_APP_ID_KOLIBRI` — `appId` из `google-services.json`
+     ГОСТЕВОГО приложения (другое значение — перепутать эти два секрета
+     местами значит получить на телефоне гостя APK, который не может
+     достучаться до Firebase).
    - `SAAS_COMPLETE_BUILD_JOB_URL` — `https://pii.hookahpos.su/saas/completeBuildJob`
      (см. `saas-gateway/README.md`, раздел «Секреты репозитория»).
    - `BUILD_CALLBACK_SECRET` — то же значение, что в `/etc/saas-gateway.env`
@@ -573,20 +605,23 @@ Firebase Storage (тот же Blaze-блокер) — он доставляет�
    - `DEPLOY_SSH_KEY_TENANT`, `DEPLOY_SSH_HOST` — доставка личных сборок на
      сервер, см. настройку в конце этого раздела. Отдельный ключ от
      `DEPLOY_SSH_KEY` публичного APK (см. 8b) — у каждого свой forced
-     command, значит и свой ограниченный доступ.
+     command, значит и свой ограниченный доступ. Один и тот же ключ
+     обслуживает ОБА приложения матрицы (файлы различаются по job_id, а не
+     по ключу — см. deploy-tenant-apk.sh ниже).
    - `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
      `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` — если уже настроены для
      `build-apk.yml`, переиспользуются как есть (тот же издатель, тот же
-     постоянный ключ подписи).
-3. `saas-gateway/server.js` запускает сборку через `workflow_dispatch` с
+     постоянный ключ подписи для обоих приложений).
+4. `saas-gateway/server.js` запускает сборку через `workflow_dispatch` с
    `ref: GITHUB_REF` (переменная окружения, по умолчанию
    `claude/pos-continued` — именно там сейчас живёт весь код SaaS-платформы,
    `main` трогать нельзя, см. историю разработки). Когда ветку в итоге
    смержат в `main`, достаточно прописать `GITHUB_REF=main` в
    `/etc/saas-gateway.env` на сервере и перезапустить сервис
    (`systemctl restart saas-gateway`) — код трогать не придётся.
-4. Проверьте: в консоли откройте заведение → «Сборка APK» → «Собрать APK».
-   Через 5–10 минут в списке должна появиться запись «готова» со ссылкой
+5. Проверьте: в консоли откройте заведение → «Сборка APK» → «Собрать APK».
+   Через 5–10 минут в списке должны появиться ДВЕ записи «готова» — одна
+   для кассы, вторая для гостевого приложения — каждая со своей ссылкой
    «Скачать».
 
 **Настройка доставки личных сборок на сервер (один раз):**

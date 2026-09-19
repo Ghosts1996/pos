@@ -4,16 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       tenant_id:
-        description: 'ID заведения (tenants/{tenantId}) — куда положить готовый APK в Storage SaaS-проекта'
+        description: 'ID заведения (tenants/{tenantId}) — под каким заведением искать готовый APK на сервере'
         required: true
-      job_id:
-        description: 'ID документа buildJobs/{jobId} (Firestore SaaS-проекта), который нужно обновить по завершении'
+      job_id_pos:
+        description: 'ID документа buildJobs/{jobId} для сборки кассы (matrix.app == pos)'
+        required: true
+      job_id_kolibri:
+        description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения «Colibri Lounge» (matrix.app == kolibri)'
         required: true
       app_label:
-        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения; пусто = дефолт "Hookah POS (SaaS)"'
+        description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения, общий для обоих приложений матрицы (гостевое получает суффикс, см. matrix.label_suffix); пусто = дефолт своего приложения (matrix.default_label)'
         required: false
       logo_url:
-        description: 'URL логотипа заведения (branding.logoUrl) — если задан, иконка приложения генерируется из него; пусто = общая иконка POS'
+        description: 'URL логотипа заведения (branding.logoUrl) — если задан, иконка ОБОИХ приложений матрицы генерируется из него; пусто = своя общая иконка каждого приложения (matrix.default_icon)'
         required: false
       tenant_slug:
         description: 'Код заведения (tenants.slug) — если задан вместе с invite_code, собранный APK сам присоединится к этому заведению при первом запуске, без ручного ввода кодов'
@@ -32,10 +35,11 @@ on:
     branches: [claude/pos-continued]
     paths: ['.github/workflows/saas-on-demand-build.yml']
 
-# Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
-# GitHub REST API "workflow_dispatch") — не по push и не вручную с обычными
-# правами: personal access token с правом Actions: write хранится в Secret
-# Manager SaaS-проекта, не здесь.
+# Запускается ТОЛЬКО createBuildJob в saas-gateway/server.js (Node-сервис на
+# собственном сервере, не Cloud Function — Blaze для неё недоступен, см. её
+# же docstring) через GitHub REST API "workflow_dispatch" — не по push и не
+# вручную с обычными правами: personal access token с правом Actions: write
+# хранится в /etc/saas-gateway.env на сервере, не здесь.
 #
 # Технически один и тот же универсальный код для ВСЕХ арендаторов платформы
 # (SAAS_MODE=true, ключи SaaS-проекта Firebase, SaasDevicePairingScreen —
@@ -45,25 +49,65 @@ on:
 # запекаются как SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE — с ними экран
 # присоединения сам подключается к заведению владельца при первом запуске,
 # без ручного ввода кодов (см. saas_device_pairing_screen.dart). Доступ к
-# самому файлу в Storage тоже ограничен per-tenant (tenants/{tenantId}/builds/,
-# см. saas/storage.rules) — скачать чужую сборку тоже нельзя.
+# самому файлу тоже ограничен per-tenant — см. handleDownloadBuild в
+# saas-gateway/server.js.
+#
+# ОДИН запуск — ДВА приложения (матрица ниже, по образцу build-apk.yml):
+# касса (lib/main.dart, com.hookahpossaas) и гостевое приложение «Colibri
+# Lounge» для гостей заведения (lib/client/kolibri_main.dart,
+# com.kolibriloungesaas) — тот же принцип "одна сборка — два приложения",
+# что и в продовом build-apk.yml, только оба здесь ещё и подключаются к
+# КОНКРЕТНОМУ заведению через SAAS_PRESET_SLUG (см. docstring в
+# lib/client/kolibri_main.dart: гостю, в отличие от кассы, вводить код
+# заведения негде и незачем — эта сборка личная). У каждого приложения
+# СВОЙ Firebase Android app внутри одного SaaS-проекта (разные applicationId
+# нельзя зарегистрировать под одним app id) — см. saas/README.md, раздел
+# «APK-конвейер», про секреты *_KOLIBRI.
 #
 # ЭТОТ ФАЙЛ НАМЕРЕННО ОТДЕЛЬНЫЙ от build-apk.yml, а не объединён с ним через
-# матрицу или общий composite action, и часть Android-шагов ниже дублирует
-# его. build-apk.yml собирает боевые одно-арендные APK текущего живого
-# заведения — трогать его ради SaaS-варианта, который ему не нужен, значило
-# бы рисковать реальной, годами обкатанной сборкой ради фичи, которая с ней
-# не связана. Если здесь найдётся баг того же рода, что уже пойман и
-# прокомментирован в build-apk.yml (ML Kit, R8, desugaring, App Links и
-# т.д.), правьте оба файла — они специально не разделяют код.
+# общий composite action, и часть Android-шагов ниже дублирует его (сама
+# структура матрицы — намеренное заимствование оттуда, а не копипаста
+# случайно разошедшегося кода). build-apk.yml собирает боевые одно-арендные
+# APK текущего живого заведения — трогать его ради SaaS-варианта, который
+# ему не нужен, значило бы рисковать реальной, годами обкатанной сборкой
+# ради фичи, которая с ней не связана. Если здесь найдётся баг того же
+# рода, что уже пойман и прокомментирован в build-apk.yml (ML Kit, R8,
+# desugaring, App Links и т.д.), правьте оба файла — они специально не
+# разделяют код.
 jobs:
   build:
     # push-триггер выше — только чтобы GitHub зарегистрировал workflow (см.
-    # комментарий там же). Реальная сборка требует tenant_id/job_id, которых
-    # push-событие не передаёт — поэтому push-запуски просто пропускаются.
+    # комментарий там же). Реальная сборка требует tenant_id/job_id_*,
+    # которых push-событие не передаёт — поэтому push-запуски пропускаются.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    name: Build SaaS APK
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: pos
+            entrypoint: lib/main.dart
+            project_name: hookahpossaas          # applicationId = com.hookahpossaas
+            application_id: com.hookahpossaas
+            gservices_secret: GOOGLE_SERVICES_JSON_SAAS
+            appid_secret: SAAS_FIREBASE_APP_ID
+            default_icon: assets/icon/icon.png
+            default_adaptive_icon: assets/icon/icon_foreground.png
+            default_label: 'Hookah POS (SaaS)'
+            label_suffix: ''
+            artifact_prefix: hookah-pos-saas
+          - app: kolibri
+            entrypoint: lib/client/kolibri_main.dart
+            project_name: kolibriloungesaas       # applicationId = com.kolibriloungesaas
+            application_id: com.kolibriloungesaas
+            gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
+            appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
+            default_icon: assets/icon/kolibri.png
+            default_adaptive_icon: assets/icon/kolibri_foreground.png
+            default_label: 'Colibri Lounge'
+            label_suffix: ' — гостям'
+            artifact_prefix: colibri-lounge-saas
+    name: Build ${{ matrix.app }}
 
     steps:
       - name: Checkout
@@ -87,18 +131,22 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-saas-${{ hashFiles('pubspec.yaml') }}
+          key: ${{ runner.os }}-gradle-saas-${{ matrix.app }}-${{ hashFiles('pubspec.yaml') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
       - name: Generate missing Android platform files
         run: |
-          # com.hookahpossaas — ОТДЕЛЬНЫЙ, не com.hookahpos: это другой
-          # Firebase-проект (SaaS-платформа, не hoocah-pos), и держать для
-          # него отдельный applicationId проще и безопаснее, чем пытаться
-          # развести один и тот же id между двумя проектами Firebase.
-          flutter create . --platforms=android --org com --project-name hookahpossaas
+          # --project-name разный для каждого приложения матрицы: одинаковый
+          # applicationId у двух приложений в одном Firebase-проекте
+          # невозможен (см. шапку файла) — ни в консоли, ни физически на
+          # одном устройстве (второй APK затёр бы первый при установке).
+          flutter create . --platforms=android --org com --project-name ${{ matrix.project_name }}
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
+
+          # flutter create кладёт в test/ свой шаблонный widget_test.dart,
+          # который импортирует несуществующий здесь package:${{ matrix.project_name }}/main.dart —
+          # валит шаг тестов. Файл в репозитории не хранится.
           rm -f test/widget_test.dart
 
       - name: Bump compileSdk for CameraX / mobile_scanner compatibility
@@ -111,18 +159,22 @@ jobs:
 
       - name: Add google-services.json (SaaS Firebase project)
         env:
-          GSERVICES: ${{ secrets.GOOGLE_SERVICES_JSON_SAAS }}
+          GSERVICES: ${{ secrets[matrix.gservices_secret] }}
         run: |
-          # Приложение com.hookahpossaas должно быть зарегистрировано в
+          # Приложение matrix.application_id должно быть зарегистрировано в
           # ВАШЕМ SaaS Firebase-проекте (Project settings → Your apps) —
           # НЕ в hoocah-pos. См. saas/README.md, раздел «APK-конвейер».
+          # Секрет свой на каждое приложение матрицы (GOOGLE_SERVICES_JSON_SAAS
+          # / GOOGLE_SERVICES_JSON_SAAS_KOLIBRI) — это два РАЗНЫХ
+          # зарегистрированных Android-приложения внутри одного и того же
+          # Firebase-проекта, у каждого свой google-services.json.
           if [ -z "$GSERVICES" ]; then
-            echo "::error::Секрет GOOGLE_SERVICES_JSON_SAAS не задан (Settings → Secrets and variables → Actions)."
+            echo "::error::Секрет ${{ matrix.gservices_secret }} не задан (Settings → Secrets and variables → Actions)."
             exit 1
           fi
           printf '%s' "$GSERVICES" > android/app/google-services.json
-          grep -q "com.hookahpossaas" android/app/google-services.json \
-            || (echo "::error::В GOOGLE_SERVICES_JSON_SAAS нет приложения com.hookahpossaas" && exit 1)
+          grep -q "${{ matrix.application_id }}" android/app/google-services.json \
+            || (echo "::error::В ${{ matrix.gservices_secret }} нет приложения ${{ matrix.application_id }}" && exit 1)
 
       - name: Apply Google Services Gradle plugin
         run: |
@@ -152,6 +204,8 @@ jobs:
       - name: Ensure required permissions and manifest entries
         env:
           APP_LABEL: ${{ inputs.app_label }}
+          DEFAULT_LABEL: ${{ matrix.default_label }}
+          LABEL_SUFFIX: ${{ matrix.label_suffix }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           add_permission() {
@@ -217,16 +271,23 @@ jobs:
               open(path, 'w', encoding='utf-8').write(xml)
 
           # Лейбл под иконкой на телефоне владельца — из branding заведения
-          # (createBuildJob подставляет его сюда, см. saas/functions/index.js),
+          # (createBuildJob подставляет его сюда, см. saas-gateway/server.js),
           # не заведённый хардкод: разные арендаторы платформы получают
           # разные подписанные приложения с разными именами. Санитизация тут,
           # а не только на сервере, — потому что workflow_dispatch technically
           # можно дёрнуть и не через createBuildJob, а значений оттуда доверять
           # нельзя вслепую (это идёт прямо в XML-атрибут манифеста).
+          #
+          # LABEL_SUFFIX (у гостевого приложения — " — гостям") отличает два
+          # приложения ОДНОГО заведения друг от друга на экране — иначе оба
+          # показывали бы один и тот же branding.shortName, и было бы не
+          # понять, какое из них касса, а какое — для гостей.
           label = (os.environ.get('APP_LABEL') or '').strip()
           label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
           if not label:
-              label = 'Hookah POS (SaaS)'
+              label = os.environ.get('DEFAULT_LABEL') or 'Hookah POS (SaaS)'
+          else:
+              label = (label + (os.environ.get('LABEL_SUFFIX') or ''))[:40]
           label = (label.replace('&', '&amp;').replace('<', '&lt;')
                         .replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;'))
           xml = open(path, encoding='utf-8').read()
@@ -410,10 +471,12 @@ jobs:
       - name: Generate app launcher icon
         env:
           LOGO_URL: ${{ inputs.logo_url }}
+          DEFAULT_ICON: ${{ matrix.default_icon }}
+          DEFAULT_ADAPTIVE_ICON: ${{ matrix.default_adaptive_icon }}
         run: |
           use_default_icon() {
-            sed -i -E 's|image_path: ".*"|image_path: "assets/icon/icon.png"|' pubspec.yaml
-            sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "assets/icon/icon_foreground.png"|' pubspec.yaml
+            sed -i -E "s|image_path: \".*\"|image_path: \"$DEFAULT_ICON\"|" pubspec.yaml
+            sed -i -E "s|adaptive_icon_foreground: \".*\"|adaptive_icon_foreground: \"$DEFAULT_ADAPTIVE_ICON\"|" pubspec.yaml
             dart run flutter_launcher_icons
           }
           # Логотип заведения (branding.logoUrl, загружается владельцем в
@@ -440,7 +503,7 @@ jobs:
       - name: Build APK (release, SaaS mode)
         env:
           SAAS_FIREBASE_API_KEY: ${{ secrets.SAAS_FIREBASE_API_KEY }}
-          SAAS_FIREBASE_APP_ID: ${{ secrets.SAAS_FIREBASE_APP_ID }}
+          SAAS_FIREBASE_APP_ID: ${{ secrets[matrix.appid_secret] }}
           SAAS_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.SAAS_FIREBASE_MESSAGING_SENDER_ID }}
           SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
@@ -457,8 +520,17 @@ jobs:
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
             exit 1
           fi
+          if [ -z "$SAAS_FIREBASE_APP_ID" ]; then
+            echo "::error::Секрет ${{ matrix.appid_secret }} не задан — см. saas/README.md, раздел «APK-конвейер»."
+            exit 1
+          fi
+          # INVITE_CODE прокидывается и в сборку гостевого приложения тоже —
+          # там она просто не используется (см. lib/client/kolibri_main.dart:
+          # гостю, в отличие от кассы, код приглашения не нужен вообще), так
+          # что проще передавать одинаково в обе, чем городить matrix-условие
+          # только ради одной лишней переменной окружения без эффекта.
           flutter build apk --release \
-            -t lib/main.dart \
+            -t ${{ matrix.entrypoint }} \
             --dart-define=SAAS_MODE=true \
             --dart-define=BUILD_NUMBER=${{ github.run_number }} \
             --dart-define=SAAS_FIREBASE_API_KEY="$SAAS_FIREBASE_API_KEY" \
@@ -471,21 +543,36 @@ jobs:
             --dart-define=SAAS_PRESET_SLUG="$TENANT_SLUG" \
             --dart-define=SAAS_PRESET_INVITE_CODE="$INVITE_CODE"
 
+      - name: Resolve job id for this matrix leg
+        id: jobid
+        # always() — этот шаг должен отработать даже если что-то раньше
+        # (сборка, тесты) уже упало: "Report failure to buildJobs" ниже
+        # тоже использует steps.jobid.outputs.value, и без always() при
+        # сбое ДО этого шага он остался бы пустым — отчёт о провале ушёл бы
+        # с пустым jobId и не долетел бы ни до одного buildJobs-документа,
+        # оставив запись в консоли вечно висеть "в очереди".
+        if: always()
+        run: |
+          if [ "${{ matrix.app }}" = "pos" ]; then
+            echo "value=${{ inputs.job_id_pos }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.job_id_kolibri }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Rename APK
         id: rename
         run: |
-          # Имя файла — {job_id}.apk: google-github-actions/upload-cloud-storage
-          # с parent:false кладёт объект в Storage как "destination/<basename>",
-          # так что итоговый путь получается ровно tenants/{tenantId}/builds/{job_id}.apk,
-          # который и проверяют saas/storage.rules и ждёт консоль.
-          OUT="build/app/outputs/flutter-apk/${{ inputs.job_id }}.apk"
+          # Имя файла — {job_id}.apk, свой на каждое приложение матрицы
+          # (см. предыдущий шаг) — handleDownloadBuild в saas-gateway/server.js
+          # ищет файл именно по jobId соответствующего buildJobs-документа.
+          OUT="build/app/outputs/flutter-apk/${{ steps.jobid.outputs.value }}.apk"
           mv build/app/outputs/flutter-apk/app-release.apk "$OUT"
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact (GitHub Actions run log)
         uses: actions/upload-artifact@v4
         with:
-          name: hookah-pos-saas-${{ inputs.job_id }}
+          name: ${{ matrix.artifact_prefix }}-${{ steps.jobid.outputs.value }}
           path: ${{ steps.rename.outputs.path }}
 
       # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
@@ -515,7 +602,7 @@ jobs:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
           SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           TENANT_ID: ${{ inputs.tenant_id }}
-          JOB_ID: ${{ inputs.job_id }}
+          JOB_ID: ${{ steps.jobid.outputs.value }}
           APK_PATH: ${{ steps.rename.outputs.path }}
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
@@ -542,7 +629,7 @@ jobs:
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ steps.jobid.outputs.value }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
       - name: Report failure to buildJobs
         if: failure()
@@ -550,4 +637,4 @@ jobs:
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ inputs.job_id }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска.\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска (${{ matrix.app }}).\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"

@@ -338,10 +338,13 @@ async function handleCreateTenant(req, res) {
 
 // ----------------------------------------------------- createBuildJob
 
-async function githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantSlug, inviteCode }) {
+async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, appLabel, logoUrl, tenantSlug, inviteCode }) {
   const token = process.env.GITHUB_PAT;
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
-  const inputs = { tenant_id: tenantId, job_id: jobId, app_label: appLabel };
+  // Один запуск workflow, но два job_id — saas-on-demand-build.yml собирает
+  // ОБА приложения матрицей (см. её же комментарий), каждое отчитывается о
+  // своём результате в свой buildJobs-документ.
+  const inputs = { tenant_id: tenantId, job_id_pos: jobIdPos, job_id_kolibri: jobIdKolibri, app_label: appLabel };
   if (logoUrl) inputs.logo_url = logoUrl;
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
   if (inviteCode) inputs.invite_code = inviteCode;
@@ -366,7 +369,7 @@ async function githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantS
 async function handleCreateBuildJob(req, res) {
   const decoded = await verifyAuth(req);
   const body = await parseJsonBody(req);
-  const { tenantId, type } = body;
+  const { tenantId } = body;
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
 
@@ -392,19 +395,32 @@ async function handleCreateBuildJob(req, res) {
     throw new HttpError(409, "Сборка уже запущена — дождитесь её завершения, прежде чем запускать новую");
   }
 
-  const jobRef = firestore.collection("buildJobs").doc();
-  const jobId = jobRef.id;
-  await jobRef.set({
+  // Одно нажатие «Собрать APK» — два приложения (см. build-apk.yml, откуда
+  // и пришла сама идея матрицы): касса для владельца и гостевое приложение
+  // «Colibri Lounge» для его гостей (брендинг заведения общий для обоих —
+  // логотип и название берутся из тех же tenants/{tenantId}/branding).
+  // Каждое — свой buildJobs-документ, поэтому в консоли сразу видно 2
+  // записи «в очереди», и каждая получает свою ссылку «Скачать» по
+  // готовности независимо от второй.
+  const firestoreNow = admin.firestore.FieldValue.serverTimestamp();
+  const jobRefPos = firestore.collection("buildJobs").doc();
+  const jobRefKolibri = firestore.collection("buildJobs").doc();
+  const jobIdPos = jobRefPos.id;
+  const jobIdKolibri = jobRefKolibri.id;
+  const baseJob = {
     tenantId,
-    type: type || "apk",
     status: "queued",
     requestedBy: decoded.uid,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: firestoreNow,
     completedAt: null,
     downloadPath: null,
     runUrl: null,
     errorMessage: null,
-  });
+  };
+  const createBatch = firestore.batch();
+  createBatch.set(jobRefPos, { ...baseJob, type: "pos" });
+  createBatch.set(jobRefKolibri, { ...baseJob, type: "guest" });
+  await createBatch.commit();
 
   let appLabel = "Hookah POS (SaaS)";
   let logoUrl = "";
@@ -439,18 +455,24 @@ async function handleCreateBuildJob(req, res) {
   }
 
   try {
-    await githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantSlug, inviteCode });
+    await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, appLabel, logoUrl, tenantSlug, inviteCode });
   } catch (e) {
-    await jobRef.update({
+    const failUpdate = {
       status: "failed",
       errorMessage: String(e),
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. запись в buildJobs");
+    };
+    await Promise.all([jobRefPos.update(failUpdate), jobRefKolibri.update(failUpdate)]);
+    throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. записи в buildJobs");
   }
 
-  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "buildJobRequested", metadata: { jobId } });
-  sendJson(res, 200, { jobId });
+  await writeAuditLog({
+    tenantId,
+    actorId: decoded.uid,
+    action: "buildJobRequested",
+    metadata: { jobIdPos, jobIdKolibri },
+  });
+  sendJson(res, 200, { jobIdPos, jobIdKolibri });
 }
 
 // -------------------------------------------- cancelSubscription/resume
