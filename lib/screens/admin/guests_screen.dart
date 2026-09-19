@@ -103,7 +103,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
       ),
     );
     if (newPhone == null || newPhone.isEmpty || newPhone == profile.phone) return;
-    await _link.updateProfile(profile.uid, {'phone': newPhone});
+    await _link.registerGuestProfile(profile.uid, phone: newPhone);
     if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Номер обновлён: $newPhone')));

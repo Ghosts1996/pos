@@ -23,3 +23,15 @@ const String kBuildNumber = String.fromEnvironment(
 /// build-apk.yml этот флаг не выставляет, поэтому уже собранные и
 /// собираемые сейчас APK ведут себя ровно как до появления SaaS-режима.
 const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
+
+/// URL шлюза первичной записи персональных данных гостей (имя/телефон) —
+/// см. `yandex-pii-gateway/README.md`. Задаётся в CI:
+/// `--dart-define=PII_GATEWAY_URL=https://...`.
+///
+/// Пусто по умолчанию — [PiiGatewayService] в этом случае явно бросает
+/// исключение при попытке вызова, а не тихо шлёт данные мимо шлюза: молча
+/// продолжать работу без него означало бы, что имя и телефон гостя опять
+/// пишутся напрямую в Firestore в обход требования о локализации, ради
+/// которого шлюз и существует (см. ст. 18 ч.5 152-ФЗ и раздел 7 политики
+/// конфиденциальности на сайте платформы).
+const String kPiiGatewayUrl = String.fromEnvironment('PII_GATEWAY_URL');
