@@ -78,30 +78,41 @@ class TenantConfigService {
   /// нескольких заведений, если пользователь состоит в более чем одном).
   /// Обновляет и in-memory состояние, и локальный кэш.
   Future<TenantConfig?> refresh(String uid, {String? preferredTenantId}) async {
-    Query<Map<String, dynamic>> membersQuery = _db
-        .collection('tenantMembers')
-        .where('userId', isEqualTo: uid)
-        .where('status', isEqualTo: 'active');
-    final membersSnap = await membersQuery.get();
-    if (membersSnap.docs.isEmpty) return null;
-
-    // Раньше здесь стоял membersSnap.docs.firstWhere(..., orElse: () =>
-    // membersSnap.docs.first) — на реальном устройстве это падало с
-    // "type '() => QueryDocumentSnapshot<Map<String, dynamic>>' is not a
-    // subtype of type '(() => _JsonQueryDocumentSnapshot)?' of 'orElse'":
-    // cloud_firestore на Android возвращает документы конкретным приватным
-    // подклассом, и closure с явно объявленным (для читаемости) типом
-    // возврата QueryDocumentSnapshot<Map<String, dynamic>> в orElse не
-    // проходит проверку типов в рантайме. Обычный цикл этой проблемы не
-    // имеет, тип элемента нигде явно не указывается.
-    var memberDoc = membersSnap.docs.first;
-    if (preferredTenantId != null) {
-      for (final d in membersSnap.docs) {
-        if (d.data()['tenantId'] == preferredTenantId) {
-          memberDoc = d;
-          break;
-        }
+    // tenantMembers/{id} — id всегда предсказуем: "<tenantId>_<uid>" (см.
+    // saas/firestore.rules). Если tenantId уже известен (явно передан сюда,
+    // как сразу после присоединения/демо — см. saas_device_pairing_screen)
+    // или остался в кэше с прошлого раза — читаем ОДИН конкретный документ
+    // по id, а не запросом по коллекции.
+    //
+    // ВАЖНО: это не оптимизация, а обход реального бага. Правило чтения
+    // tenantMembers — "resource.data.userId == request.auth.uid ИЛИ
+    // isMember(resource.data.tenantId)" — рассчитано на то, что Firestore
+    // проверит его для каждого документа результата и увидит первую же
+    // ветку истинной. На практике ЗАПРОС (list) по .where('userId', ...)
+    // с этим правилом на реальном устройстве падает с
+    // [cloud_firestore/permission-denied], хотя одиночный get() по
+    // конкретному id той же самой проверкой проходит нормально (это
+    // подтверждено вручную, не теория). Поэтому list оставлен только как
+    // резерв на случай, когда tenantId заранее неизвестен вообще (самый
+    // первый запуск до присоединения) — и там же, где он используется
+    // (main.dart), сбой уже обёрнут в try/catch с откатом на кэш.
+    final knownTenantId = preferredTenantId ?? _current?.tenant.id;
+    DocumentSnapshot<Map<String, dynamic>>? memberDoc;
+    if (knownTenantId != null) {
+      final doc = await _db.collection('tenantMembers').doc('${knownTenantId}_$uid').get();
+      if (doc.exists && doc.data()?['status'] == 'active') {
+        memberDoc = doc;
       }
+    }
+
+    if (memberDoc == null) {
+      final membersSnap = await _db
+          .collection('tenantMembers')
+          .where('userId', isEqualTo: uid)
+          .where('status', isEqualTo: 'active')
+          .get();
+      if (membersSnap.docs.isEmpty) return null;
+      memberDoc = membersSnap.docs.first;
     }
     final member = TenantMember.fromDoc(memberDoc);
 
