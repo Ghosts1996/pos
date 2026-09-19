@@ -42,3 +42,17 @@ const String kPiiGatewayUrl = String.fromEnvironment('PII_GATEWAY_URL');
 /// `saas-3bdc8` эти операции не могут идти через Cloud Functions.
 /// Задаётся в CI: `--dart-define=SAAS_GATEWAY_URL=https://...`.
 const String kSaasGatewayUrl = String.fromEnvironment('SAAS_GATEWAY_URL');
+
+/// Код заведения и код приглашения устройства, запечённые в конкретную
+/// сборку APK владельца (см. saas-on-demand-build.yml, шаги createBuildJob →
+/// GitHub workflow_dispatch → `--dart-define=SAAS_PRESET_SLUG=...`/
+/// `SAAS_PRESET_INVITE_CODE=...`).
+///
+/// Пусто у УНИВЕРСАЛЬНОЙ сборки (собранной без конкретного заведения,
+/// например для публичной кнопки «Скачать» на сайте) — там
+/// [SaasDevicePairingScreen] по-прежнему показывает форму ручного ввода.
+/// Непусто у сборки, заказанной конкретным владельцем через «Собрать APK» в
+/// личном кабинете, — экран присоединения тогда сразу и без участия
+/// пользователя подключает устройство к ЕГО заведению.
+const String kSaasPresetSlug = String.fromEnvironment('SAAS_PRESET_SLUG');
+const String kSaasPresetInviteCode = String.fromEnvironment('SAAS_PRESET_INVITE_CODE');

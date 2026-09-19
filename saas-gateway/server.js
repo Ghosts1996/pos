@@ -316,9 +316,13 @@ async function handleCreateTenant(req, res) {
 
 // ----------------------------------------------------- createBuildJob
 
-async function githubDispatchBuild({ tenantId, jobId, appLabel }) {
+async function githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantSlug, inviteCode }) {
   const token = process.env.GITHUB_PAT;
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
+  const inputs = { tenant_id: tenantId, job_id: jobId, app_label: appLabel };
+  if (logoUrl) inputs.logo_url = logoUrl;
+  if (tenantSlug) inputs.tenant_slug = tenantSlug;
+  if (inviteCode) inputs.invite_code = inviteCode;
   const res = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_SAAS_WORKFLOW}/dispatches`,
     {
@@ -328,7 +332,7 @@ async function githubDispatchBuild({ tenantId, jobId, appLabel }) {
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ref: "main", inputs: { tenant_id: tenantId, job_id: jobId, app_label: appLabel } }),
+      body: JSON.stringify({ ref: "main", inputs }),
     }
   );
   if (!res.ok) {
@@ -365,15 +369,39 @@ async function handleCreateBuildJob(req, res) {
   });
 
   let appLabel = "Hookah POS (SaaS)";
+  let logoUrl = "";
   try {
     const branding = await firestore.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
-    if (branding.exists) appLabel = branding.data().shortName || branding.data().appName || appLabel;
+    if (branding.exists) {
+      appLabel = branding.data().shortName || branding.data().appName || appLabel;
+      logoUrl = branding.data().logoUrl || "";
+    }
   } catch (_) {
-    // Не критично — сборка всё равно пойдёт с дефолтным лейблом.
+    // Не критично — сборка всё равно пойдёт с дефолтным лейблом/иконкой.
+  }
+
+  // Слаг заведения и код приглашения устройства — чтобы собранный APK сразу
+  // "знал", к какому заведению он относится (см. docstring в
+  // saas-on-demand-build.yml, шаг "Прописать пресет привязки устройства"):
+  // владелец получает APK, который на первом экране сам присоединяется к
+  // ЕГО заведению, а не показывает форму "код заведения / код приглашения"
+  // как для универсальной сборки. Необязательно — если что-то не читается,
+  // сборка просто пойдёт без автопривязки, ничего не ломая.
+  let tenantSlug = "";
+  let inviteCode = "";
+  try {
+    const [tenantDoc, inviteDoc] = await Promise.all([
+      firestore.collection("tenants").doc(tenantId).get(),
+      firestore.collection("tenants").doc(tenantId).collection("settings").doc("deviceInvite").get(),
+    ]);
+    tenantSlug = tenantDoc.data()?.slug || "";
+    inviteCode = inviteDoc.data()?.code || "";
+  } catch (_) {
+    // Не критично — сборка пойдёт без автопривязки устройства.
   }
 
   try {
-    await githubDispatchBuild({ tenantId, jobId, appLabel });
+    await githubDispatchBuild({ tenantId, jobId, appLabel, logoUrl, tenantSlug, inviteCode });
   } catch (e) {
     await jobRef.update({
       status: "failed",
