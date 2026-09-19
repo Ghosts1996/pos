@@ -415,6 +415,40 @@ async function handleCreateBuildJob(req, res) {
   sendJson(res, 200, { jobId });
 }
 
+// -------------------------------------------- cancelSubscription/resume
+
+/**
+ * Самостоятельная отмена автопродления — владелец решает, что не будет
+ * платить за следующий период, и сам это включает/выключает, не дожидаясь
+ * поддержки. НЕ отключает доступ немедленно — chargeRecurringSubscriptions
+ * и enforceGracePeriod (см. saas/functions/index.js) уже умеют учитывать
+ * cancelAtPeriodEnd: просто не будет попытки списания в конце периода,
+ * заведение доработает до currentPeriodEnd как обычно.
+ *
+ * Firestore-правила запрещают клиенту писать в subscriptions напрямую
+ * (allow write: if isSuperAdmin()) — этот сервис, как и createTenant выше,
+ * делает то же самое через Admin SDK, но только для СВОЕГО заведения и
+ * только это одно поле.
+ */
+async function handleSetSubscriptionCancel(req, res, cancel) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const { tenantId } = body;
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+
+  const subRef = db().collection("subscriptions").doc(tenantId);
+  const subDoc = await subRef.get();
+  if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
+  await subRef.update({ cancelAtPeriodEnd: cancel });
+  await writeAuditLog({
+    tenantId,
+    actorId: decoded.uid,
+    action: cancel ? "subscriptionCancelRequested" : "subscriptionCancelWithdrawn",
+  });
+  sendJson(res, 200, { ok: true });
+}
+
 // --------------------------------------------------- completeBuildJob
 
 /**
@@ -663,6 +697,8 @@ const ROUTES = {
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
   "/createDemoTenant": handleCreateDemoTenant,
+  "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
+  "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
 };
 
 const server = http.createServer((req, res) => {

@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.4';
+const CONSOLE_BUILD = '2026-09-19.5';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -81,6 +81,7 @@ const state = {
   isSuperAdmin: false,
   accountSubs: [],     // подписки уровня аккаунта (список заведений)
   screenSubs: [],       // подписки текущего экрана (данные одного заведения)
+  authLinkError: null,  // см. boot() — ссылка входа устарела/уже использована
 };
 
 const $ = (id) => document.getElementById(id);
@@ -341,6 +342,11 @@ const SUB_STATUS_LABELS = {
 const BUILD_STATUS_LABELS = {
   queued: 'в очереди', success: 'готова', failed: 'ошибка',
 };
+// См. purpose в handleBillingWebhook (saas/functions/index.js) —
+// 'subscription' (первая оплата) и 'renewal' (автопродление).
+const BILLING_PURPOSE_LABELS = {
+  subscription: 'оплата тарифа', renewal: 'автопродление',
+};
 const AUDIT_ACTION_LABELS = {
   tenantCreated: 'Заведение создано',
   tenantSuspended: 'Заведение заблокировано',
@@ -424,9 +430,11 @@ async function boot() {
           });
         }
       } catch (_) {
-        // Ссылка одноразовая/просрочена — ниже просто покажется лендинг
-        // или обычный вход, ошибку тут показывать некому (мы могли даже не
-        // понять, какой email вводили).
+        // Ссылка одноразовая/просрочена (или email введён не тот) —
+        // раньше здесь просто молча показывался лендинг без объяснений,
+        // почему вход не сработал. state.authLinkError подхватывает и
+        // показывает screenLanding()/screenAuth() при первом рендере.
+        state.authLinkError = 'Ссылка для входа устарела или уже была использована — запросите новую.';
       }
     }
     // Убираем oobCode/apiKey и т.п. из адресной строки — иначе повторное
@@ -755,6 +763,14 @@ function screenLanding() {
       <button class="btn btn-primary" id="f-landing-sticky-btn">Попробовать бесплатно →</button>
     </div>
   `;
+
+  // Ссылка входа была просрочена/уже использована (см. boot()) — показываем
+  // один раз прямо на лендинге, а не молчим о том, почему вход не сработал.
+  if (state.authLinkError) {
+    const el = $('f-landing-error');
+    if (el) el.textContent = state.authLinkError;
+    state.authLinkError = null;
+  }
 
   const submit = async () => {
     const email = $('f-landing-email').value.trim();
@@ -1346,13 +1362,16 @@ function screenOnboarding() {
       }
       // "Купить сразу" — уводим на оплату ДО того, как отрисуется дашборд
       // (иначе владелец на долю секунды увидел бы личный кабинет пробного
-      // периода, которым не собирался пользоваться). Если оплата почему-то
-      // не запустится (сеть, ЮKassa недоступна), startCheckout сама
-      // проглотит ошибку молча (на этом экране нет f-checkout-error) — в
-      // таком случае просто прорисуется обычный дашборд по watchMemberships
-      // ниже, владелец сможет оплатить оттуда как обычно.
+      // периода, которым не собирался пользоваться). startCheckout теперь
+      // возвращает true/false — если оплата не запустилась (сеть, ЮKassa
+      // недоступна), явно говорим об этом здесь, а не тихо проваливаемся в
+      // обычный дашборд без единого слова: заведение уже создано, просто
+      // предлагаем оплатить из личного кабинета как обычно.
       if (skipTrial && chosenPlanId) {
-        await startCheckout(tenantId, chosenPlanId, 'monthly');
+        const paid = await startCheckout(tenantId, chosenPlanId, 'monthly');
+        if (!paid) {
+          toast('Не удалось перейти к оплате — заведение создано, оплатите его во вкладке «Тарифы»');
+        }
         return;
       }
       // Новый tenantMembers придёт сам через watchMemberships — она уже
@@ -1469,6 +1488,7 @@ function watchDashboardData(tenantId) {
   let plans = null;
   let buildJobs = null;
   let generalSettings = null;
+  let paymentHistory = null;
   // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
   // перерисовки (см. ниже), сбрасывается после успешного сохранения.
   let pendingLogoUrl = null;
@@ -1606,7 +1626,30 @@ function watchDashboardData(tenantId) {
         <div class="small muted">Статус: ${esc(SUB_STATUS_LABELS[subscription?.status] || subscription?.status || '—')}</div>
         ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
         ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
+        ${subscription?.cancelAtPeriodEnd ? `
+          <div class="small" style="color:var(--warning);margin-top:6px">Автопродление отключено — доступ работает до конца оплаченного периода, дальше без действий с вашей стороны спишется не будет.</div>
+        ` : ''}
         ${canManage ? `<button class="btn btn-primary f-dash-tab" data-tab="plans" style="margin-top:14px">Перейти к тарифам</button>` : ''}
+        ${canManage && subscription?.status === 'active' ? `
+          <button class="btn btn-ghost" id="f-toggle-autorenew" style="margin-top:10px">
+            ${subscription?.cancelAtPeriodEnd ? 'Возобновить автопродление' : 'Отключить автопродление'}
+          </button>
+          <div id="f-toggle-autorenew-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+        ` : ''}
+      </div>
+
+      <h2>История платежей</h2>
+      <div class="card">
+        ${(paymentHistory || []).length ? `
+          ${paymentHistory.map((e) => `
+            <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+              <div class="grow small muted">
+                ${fmtDateTime(e.receivedAt)} · ${esc(BILLING_PURPOSE_LABELS[e.purpose] || e.purpose || 'оплата')}
+              </div>
+              <div class="small" style="font-weight:600">${Number(e.amount || 0).toLocaleString('ru-RU')} ₽</div>
+            </div>
+          `).join('')}
+        ` : '<p class="small muted">Платежей пока не было.</p>'}
       </div>
     `;
 
@@ -1871,6 +1914,10 @@ function watchDashboardData(tenantId) {
       };
     }
 
+    if ($('f-toggle-autorenew')) {
+      $('f-toggle-autorenew').onclick = () => toggleAutorenew(tenantId, !subscription?.cancelAtPeriodEnd);
+    }
+
     updateBrandPreview();
     if (canManage) {
       BRANDING_COLOR_FIELD_IDS.forEach((id) => {
@@ -2008,13 +2055,39 @@ function watchDashboardData(tenantId) {
     members = [];
     draw();
   }));
+  // id -> последний известный статус сборки — чтобы поймать именно ПЕРЕХОД
+  // queued -> success/failed и показать тост один раз, а не при каждом
+  // снимке (и не при первой же загрузке экрана, если сборка уже была
+  // готова до того, как владелец открыл кабинет).
+  const knownBuildStatuses = new Map();
   sub(onSnapshot(
     query(collection(state.db, 'buildJobs'), where('tenantId', '==', tenantId), orderBy('createdAt', 'desc'), limit(10)),
     (snap) => {
-      buildJobs = snap.docs.map((d) => d.data());
+      buildJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      buildJobs.forEach((j) => {
+        const prevStatus = knownBuildStatuses.get(j.id);
+        if (prevStatus === 'queued' && j.status === 'success') {
+          toast('Сборка APK готова — скачайте её во вкладке «Устройства»');
+        } else if (prevStatus === 'queued' && j.status === 'failed') {
+          toast('Сборка APK не удалась — подробности во вкладке «Устройства»');
+        }
+        knownBuildStatuses.set(j.id, j.status);
+      });
       draw();
     },
     () => { buildJobs = []; draw(); },
+  ));
+  // Своя история платежей — раньше эти события (billingEvents) видел
+  // только супер-админ платформы; владельцу заведения приходилось писать
+  // в поддержку за квитанцией. saas/firestore.rules теперь пускает сюда и
+  // owner/admin СВОЕГО заведения (см. комментарий там же).
+  sub(onSnapshot(
+    query(collection(state.db, 'billingEvents'), where('tenantId', '==', tenantId), orderBy('receivedAt', 'desc'), limit(50)),
+    (snap) => {
+      paymentHistory = snap.docs.map((d) => d.data());
+      draw();
+    },
+    () => { paymentHistory = []; draw(); },
   ));
 }
 
@@ -2028,6 +2101,27 @@ async function rotateInviteCode(tenantId) {
     toast('Код обновлён');
   } catch (e) {
     toast(`Не удалось обновить код: ${e?.message || e}`);
+  }
+}
+
+async function toggleAutorenew(tenantId, cancel) {
+  const msg = cancel
+    ? 'Отключить автопродление? Заведение продолжит работать до конца уже оплаченного периода, дальше касса будет заблокирована, если не оплатить вручную.'
+    : 'Возобновить автопродление? В конце периода спишется оплата сохранённым способом.';
+  if (!confirm(msg)) return;
+  const btn = $('f-toggle-autorenew');
+  const errEl = $('f-toggle-autorenew-error');
+  if (errEl) errEl.textContent = '';
+  if (btn) btn.disabled = true;
+  try {
+    // cancelSubscription/resumeSubscription — свой сервис (см. server.js в
+    // saas-gateway), не Cloud Function: Firestore-правила не пускают
+    // клиента писать в subscriptions напрямую даже для своего заведения.
+    await callSaasGateway(cancel ? 'cancelSubscription' : 'resumeSubscription', { tenantId });
+    toast(cancel ? 'Автопродление отключено' : 'Автопродление возобновлено');
+  } catch (e) {
+    if (errEl) errEl.textContent = `Не удалось изменить автопродление: ${e?.message || e}`;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2884,6 +2978,10 @@ async function revokeSuperAdmin(uid) {
 
 // ---------- ПОДПИСКА (ЮKASSA) И СБОРКА APK ----------
 
+// Возвращает true/false — раньше вызывающие места об исходе не узнавали
+// вообще (ошибка тихо оседала в f-checkout-error, которого на некоторых
+// экранах, например онбординге, попросту нет — там "оплата не началась"
+// выглядела бы как ничего не произошло, без единого объяснения).
 async function startCheckout(tenantId, planId, billingPeriod) {
   const errEl = $('f-checkout-error');
   if (errEl) errEl.textContent = '';
@@ -2900,11 +2998,12 @@ async function startCheckout(tenantId, planId, billingPeriod) {
     });
     if (res.data?.confirmationUrl) {
       location.href = res.data.confirmationUrl;
-    } else {
-      throw new Error('ЮKassa не вернула ссылку на оплату');
+      return true;
     }
+    throw new Error('ЮKassa не вернула ссылку на оплату');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось начать оплату: ${e?.message || e}`;
+    return false;
   }
 }
 

@@ -648,6 +648,15 @@ exports.chargeRecurringSubscriptions = onSchedule(
     for (const subDoc of subs.docs) {
       const sub = subDoc.data();
       const tenantId = subDoc.id;
+      // Владелец сам отменил автопродление (см. cancelSubscription в
+      // saas-gateway/server.js) — раньше это поле только записывалось и
+      // никогда не читалось нигде в биллинге, то есть отмена была
+      // декоративной: клиента бы всё равно списали в следующем цикле. Не
+      // пытаемся продлить — доступ доработает до currentPeriodEnd как
+      // обычно, дальше enforceGracePeriod сам переведёт в past_due, раз
+      // renewalAttemptedAt не выставлялся (та же логика, что и для "нечем
+      // продлить" ниже).
+      if (sub.cancelAtPeriodEnd) continue;
       if (!sub.paymentMethodId) continue; // нечем продлить автоматически — сгорит в past_due само по окончании периода (см. TenantConfig.operationsAllowed на клиенте)
 
       // Не пытаться продлевать чаще раза в сутки: без этой защёлки при

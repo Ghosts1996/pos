@@ -487,10 +487,14 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // ---- Идемпотентность webhook'ов биллинга (handleBillingWebhook) —
-    //      только для отладки супер-админом, клиенту не нужна и не видна ----
+    // ---- Идемпотентность webhook'ов биллинга (handleBillingWebhook) — а
+    //      заодно и история платежей для самого владельца (см. вкладку
+    //      "Оплата" в консоли): владелец видит только события СВОЕГО
+    //      заведения, супер-админ — все, писать сюда может только
+    //      handleBillingWebhook (Admin SDK, вне этих правил) ----
     match /billingEvents/{paymentId} {
-      allow read: if isSuperAdmin();
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.tenantId != null && hasRole(resource.data.tenantId, ['owner', 'admin']));
       allow write: if false;
     }
 
