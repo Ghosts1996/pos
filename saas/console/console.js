@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.2';
+const CONSOLE_BUILD = '2026-09-19.3';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1504,11 +1504,16 @@ function watchDashboardData(tenantId) {
       <h2>Код приглашения устройства</h2>
       <div class="card">
         <p class="small muted">Введите его на планшете вместе с кодом заведения
-        (<code>${esc(tenant.slug || '')}</code>), чтобы привязать устройство к этому заведению.</p>
+        (<code>${esc(tenant.slug || '')}</code>), чтобы привязать устройство к этому заведению.
+        Это секрет — если он попадёт в чужие руки, к вашему заведению сможет
+        подключиться посторонний планшет, поэтому по умолчанию код скрыт.</p>
         <div class="row" style="justify-content:space-between;align-items:center">
-          <div style="font-size:26px;font-weight:700;letter-spacing:.08em">${esc(invite?.code || '—')}</div>
+          <div id="f-invite-code" class="invite-code-hidden" data-code="${esc(invite?.code || '—')}"
+            style="font-size:26px;font-weight:700;letter-spacing:.08em;cursor:pointer;filter:blur(7px);user-select:none;transition:filter .15s"
+            title="Нажмите, чтобы показать">${esc(invite?.code || '—')}</div>
           <button class="btn-link" id="f-copy-code">Скопировать</button>
         </div>
+        <p class="small muted" id="f-invite-code-hint" style="margin-top:4px">Код скрыт — нажмите на него, чтобы показать</p>
         ${canManage ? `<button class="btn btn-ghost" id="f-rotate-code" style="margin-top:12px">Обновить код</button>` : ''}
       </div>
 
@@ -1789,6 +1794,22 @@ function watchDashboardData(tenantId) {
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
+    // Код приглашения — секрет устройства (см. подсказку выше), поэтому он
+    // замазан blur'ом, пока по нему не кликнут — обычный текст в DOM всё
+    // равно доступен через "показать код страницы", но так хотя бы никто
+    // не подсмотрит его через плечо на весь экран открытым текстом.
+    const inviteCodeEl = $('f-invite-code');
+    if (inviteCodeEl) {
+      inviteCodeEl.onclick = () => {
+        const revealed = inviteCodeEl.style.filter === 'none';
+        inviteCodeEl.style.filter = revealed ? 'blur(7px)' : 'none';
+        inviteCodeEl.title = revealed ? 'Нажмите, чтобы показать' : 'Нажмите, чтобы скрыть';
+        const hint = $('f-invite-code-hint');
+        if (hint) hint.textContent = revealed
+          ? 'Код скрыт — нажмите на него, чтобы показать'
+          : 'Код виден — нажмите на него, чтобы снова скрыть';
+      };
+    }
 
     updateBrandPreview();
     if (canManage) {

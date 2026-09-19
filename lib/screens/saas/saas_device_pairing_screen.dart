@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../build_info.dart';
 import '../../services/app_bootstrap.dart';
 import '../../services/app_scope.dart';
 import '../../services/saas_device_join_service.dart';
@@ -29,6 +30,24 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
 
   bool _busy = false;
   String? _error;
+
+  /// true, пока идёт (или ещё не провалилась) автопривязка по значениям,
+  /// запечённым в эту сборку (см. kSaasPresetSlug/kSaasPresetInviteCode) —
+  /// в это время экран показывает просто загрузку, а не форму ручного
+  /// ввода, чтобы владелец, скачавший СВОЙ APK из личного кабинета, вообще
+  /// не видел эти поля в обычном случае.
+  bool _autoJoining = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty) {
+      _autoJoining = true;
+      _slug.text = kSaasPresetSlug;
+      _code.text = kSaasPresetInviteCode;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _join());
+    }
+  }
 
   @override
   void dispose() {
@@ -62,6 +81,11 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
+        // Автопривязка не удалась (например, код приглашения успели
+        // обновить в кабинете после сборки APK) — показываем обычную форму
+        // с уже подставленными значениями, а не держим владельца на вечной
+        // загрузке без объяснений.
+        _autoJoining = false;
         _error = 'Не удалось присоединиться: $e';
       });
     }
@@ -131,6 +155,25 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_autoJoining) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF1B1B1F),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.white70),
+              SizedBox(height: 16),
+              Text(
+                'Подключаем ваше заведение…',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF1B1B1F),
       body: SafeArea(

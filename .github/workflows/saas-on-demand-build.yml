@@ -12,19 +12,31 @@ on:
       app_label:
         description: 'Лейбл приложения под иконкой на телефоне — берётся из branding.shortName/appName заведения; пусто = дефолт "Hookah POS (SaaS)"'
         required: false
+      logo_url:
+        description: 'URL логотипа заведения (branding.logoUrl) — если задан, иконка приложения генерируется из него; пусто = общая иконка POS'
+        required: false
+      tenant_slug:
+        description: 'Код заведения (tenants.slug) — если задан вместе с invite_code, собранный APK сам присоединится к этому заведению при первом запуске, без ручного ввода кодов'
+        required: false
+      invite_code:
+        description: 'Код приглашения устройства (settings/deviceInvite.code) заведения — см. tenant_slug'
+        required: false
 
 # Запускается ТОЛЬКО Cloud Function createBuildJob (saas/functions/index.js,
 # GitHub REST API "workflow_dispatch") — не по push и не вручную с обычными
 # правами: personal access token с правом Actions: write хранится в Secret
 # Manager SaaS-проекта, не здесь.
 #
-# Один и тот же универсальный APK для ВСЕХ арендаторов платформы. Заведение
-# выбирается не на этапе сборки, а во время первого запуска планшета
-# (SaasDevicePairingScreen — код заведения + код приглашения устройства, см.
-# lib/main.dart и saas/README.md): здесь --dart-define=SAAS_MODE=true и
-# ключи SaaS-проекта Firebase, а какое конкретно заведение получит эту
-# копию — вопрос доступа к файлу в Storage (tenants/{tenantId}/builds/,
-# правила уже есть в saas/storage.rules), а не содержимого APK.
+# Технически один и тот же универсальный код для ВСЕХ арендаторов платформы
+# (SAAS_MODE=true, ключи SaaS-проекта Firebase, SaasDevicePairingScreen —
+# код заведения + код приглашения устройства, см. lib/main.dart и
+# saas/README.md) — но КАЖДАЯ сборка личная: logo_url подставляет иконку
+# заведения (см. шаг "Generate app launcher icon"), а tenant_slug+invite_code
+# запекаются как SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE — с ними экран
+# присоединения сам подключается к заведению владельца при первом запуске,
+# без ручного ввода кодов (см. saas_device_pairing_screen.dart). Доступ к
+# самому файлу в Storage тоже ограничен per-tenant (tenants/{tenantId}/builds/,
+# см. saas/storage.rules) — скачать чужую сборку тоже нельзя.
 #
 # ЭТОТ ФАЙЛ НАМЕРЕННО ОТДЕЛЬНЫЙ от build-apk.yml, а не объединён с ним через
 # матрицу или общий composite action, и часть Android-шагов ниже дублирует
@@ -382,13 +394,31 @@ jobs:
         run: flutter pub get
 
       - name: Generate app launcher icon
+        env:
+          LOGO_URL: ${{ inputs.logo_url }}
         run: |
-          # Своей иконки у SaaS-варианта пока нет — берём общую иконку POS
-          # (белый ярлык под конкретное заведение — отдельная задача,
-          # см. saas/README.md, «Полный визуальный брендинг»).
-          sed -i -E 's|image_path: ".*"|image_path: "assets/icon/icon.png"|' pubspec.yaml
-          sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "assets/icon/icon_foreground.png"|' pubspec.yaml
-          dart run flutter_launcher_icons
+          use_default_icon() {
+            sed -i -E 's|image_path: ".*"|image_path: "assets/icon/icon.png"|' pubspec.yaml
+            sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "assets/icon/icon_foreground.png"|' pubspec.yaml
+            dart run flutter_launcher_icons
+          }
+          # Логотип заведения (branding.logoUrl, загружается владельцем в
+          # консоли) — если задан и реально скачивается, иконка приложения
+          # генерируется из него, чтобы на телефоне владельца была именно
+          # его иконка, а не общая иконка POS. Любая неудача (нет логотипа,
+          # битый файл, сеть) откатывается на общую иконку — сборка не
+          # должна падать из-за проблемы с картинкой, которую владелец
+          # когда-то неудачно загрузил.
+          if [ -n "$LOGO_URL" ] && curl -fsSL --max-time 20 "$LOGO_URL" -o /tmp/tenant_logo.png && [ -s /tmp/tenant_logo.png ]; then
+            sed -i -E 's|image_path: ".*"|image_path: "/tmp/tenant_logo.png"|' pubspec.yaml
+            sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "/tmp/tenant_logo.png"|' pubspec.yaml
+            if ! dart run flutter_launcher_icons; then
+              echo "::warning::Не удалось собрать иконку из логотипа заведения — используется общая иконка POS"
+              use_default_icon
+            fi
+          else
+            use_default_icon
+          fi
 
       - name: Unit tests
         run: flutter test
@@ -402,6 +432,12 @@ jobs:
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
           PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
           SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
+          # env:, не прямая интерполяция ${{ }} в run: — inputs.* приходят от
+          # вызывающего (обычно saas-gateway, но workflow_dispatch technically
+          # можно дёрнуть и напрямую), доверять им как части shell-команды
+          # нельзя, только как значению переменной окружения.
+          TENANT_SLUG: ${{ inputs.tenant_slug }}
+          INVITE_CODE: ${{ inputs.invite_code }}
         run: |
           if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
@@ -417,7 +453,9 @@ jobs:
             --dart-define=SAAS_FIREBASE_PROJECT_ID="$SAAS_FIREBASE_PROJECT_ID" \
             --dart-define=SAAS_FIREBASE_STORAGE_BUCKET="$SAAS_FIREBASE_STORAGE_BUCKET" \
             --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
-            --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL"
+            --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL" \
+            --dart-define=SAAS_PRESET_SLUG="$TENANT_SLUG" \
+            --dart-define=SAAS_PRESET_INVITE_CODE="$INVITE_CODE"
 
       - name: Rename APK
         id: rename
