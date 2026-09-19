@@ -376,6 +376,22 @@ async function handleCreateBuildJob(req, res) {
     throw new HttpError(412, "Подписка неактивна — сборка APK недоступна");
   }
 
+  // Без этой проверки повторные нажатия «Собрать APK» (например, пока первая
+  // сборка ещё идёт 5–10 минут) плодят параллельные запуски одного и того же
+  // workflow — GitHub Actions это не запрещает, а буквально захламляет
+  // список сборок в консоли и впустую тратит минуты Actions. Один
+  // незавершённый job на заведение — этого достаточно, чтобы кнопка не
+  // превращалась в очередь дублей.
+  const pending = await firestore
+    .collection("buildJobs")
+    .where("tenantId", "==", tenantId)
+    .where("status", "==", "queued")
+    .limit(1)
+    .get();
+  if (!pending.empty) {
+    throw new HttpError(409, "Сборка уже запущена — дождитесь её завершения, прежде чем запускать новую");
+  }
+
   const jobRef = firestore.collection("buildJobs").doc();
   const jobId = jobRef.id;
   await jobRef.set({
