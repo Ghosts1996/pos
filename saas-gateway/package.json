@@ -1,0 +1,17 @@
+{
+  "name": "saas-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Онбординг SaaS-платформы Hookah POS (createTenant/createBuildJob/resolveTenantBySlug/completeBuildJob/createDemoTenant) без Cloud Functions/Blaze",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}

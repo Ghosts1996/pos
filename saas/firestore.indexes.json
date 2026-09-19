@@ -32,6 +32,10 @@
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
     ]},
+    { "collectionGroup": "tenants", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "demo", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "ASCENDING" }
+    ]},
     { "collectionGroup": "buildJobs", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "tenantId", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
