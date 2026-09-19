@@ -35,3 +35,10 @@ const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
 /// которого шлюз и существует (см. ст. 18 ч.5 152-ФЗ и раздел 7 политики
 /// конфиденциальности на сайте платформы).
 const String kPiiGatewayUrl = String.fromEnvironment('PII_GATEWAY_URL');
+
+/// Адрес сервиса, который берёт на себя createTenant/createBuildJob/
+/// resolveTenantBySlug/createDemoTenant — см. `saas-gateway/README.md`.
+/// Нужен только в SaaS-режиме ([kSaasMode]): без Blaze у проекта
+/// `saas-3bdc8` эти операции не могут идти через Cloud Functions.
+/// Задаётся в CI: `--dart-define=SAAS_GATEWAY_URL=https://...`.
+const String kSaasGatewayUrl = String.fromEnvironment('SAAS_GATEWAY_URL');

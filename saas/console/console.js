@@ -26,12 +26,45 @@ import {
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
 const FUNCTIONS_REGION = 'europe-west1';
 
+// Адрес saas-gateway (см. saas-gateway/README.md) — берёт на себя
+// createTenant/createBuildJob, которые не могут задеплоиться как Cloud
+// Functions без тарифа Blaze у этого проекта. Пусто по умолчанию: до того,
+// как сервис реально развёрнут, кнопки должны показывать понятную ошибку,
+// а не тихо падать на пустом URL.
+const SAAS_GATEWAY_URL = '';
+
+/** Вызывает saas-gateway тем же способом, каким httpsCallable вызывал бы
+ *  Cloud Function — с ID-токеном текущего пользователя в заголовке и JSON
+ *  телом. Бросает Error с понятным сообщением (существующие вызывающие
+ *  места уже показывают e.message пользователю). */
+async function callSaasGateway(path, data) {
+  if (!SAAS_GATEWAY_URL) {
+    throw new Error(
+      'SAAS_GATEWAY_URL не задан в console.js — заведите свой сервис (см. saas-gateway/README.md) и пропишите его адрес.'
+    );
+  }
+  const idToken = await state.auth.currentUser?.getIdToken();
+  const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+    },
+    body: JSON.stringify(data || {}),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+  }
+  return { data: json };
+}
+
 // Метка версии консоли — меняется при каждой заметной правке этого файла.
 // Показывается мелко внизу экрана входа и панели платформы: единственный
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-18.7';
+const CONSOLE_BUILD = '2026-09-19.1';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1226,12 +1259,16 @@ function screenOnboarding() {
     }
     $('f-submit').disabled = true;
     try {
-      const createTenant = httpsCallable(state.functions, 'createTenant');
       // Если владелец пришёл с лендинга, выбрав конкретный тариф — заводим
       // заведение сразу на нём (пробный период всё равно бесплатный 14
       // дней, planId лишь определяет, какие лимиты/тариф ждут ПОСЛЕ триала).
       const chosenPlanId = window.localStorage.getItem('selectedPlanId');
-      const res = await createTenant(chosenPlanId ? { name, slug, planId: chosenPlanId } : { name, slug });
+      // createTenant — не Cloud Function (Blaze для неё сейчас недоступен),
+      // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
+      const res = await callSaasGateway(
+        'createTenant',
+        chosenPlanId ? { name, slug, planId: chosenPlanId } : { name, slug }
+      );
       window.localStorage.removeItem('selectedPlanId');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
@@ -2796,8 +2833,9 @@ async function requestBuild(tenantId) {
   const btn = $('f-request-build');
   if (btn) btn.disabled = true;
   try {
-    const createBuildJob = httpsCallable(state.functions, 'createBuildJob');
-    await createBuildJob({ tenantId });
+    // createBuildJob — не Cloud Function (Blaze для неё сейчас недоступен),
+    // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
+    await callSaasGateway('createBuildJob', { tenantId });
     toast('Сборка запущена — обычно занимает 5–10 минут');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось запустить сборку: ${e?.message || e}`;

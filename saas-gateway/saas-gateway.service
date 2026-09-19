@@ -1,0 +1,18 @@
+[Unit]
+Description=Hookah POS SaaS onboarding gateway (createTenant/createBuildJob without Blaze)
+After=network.target
+
+[Service]
+Type=simple
+User=saas-gateway
+WorkingDirectory=/opt/saas-gateway
+EnvironmentFile=/etc/saas-gateway.env
+ExecStart=/usr/bin/node /opt/saas-gateway/server.js
+Restart=on-failure
+RestartSec=3
+# Слушает только 127.0.0.1 (см. server.js) — наружу торчит только nginx.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

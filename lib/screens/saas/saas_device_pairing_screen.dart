@@ -57,28 +57,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     });
     try {
       final tenantId = await _service.resolveTenantIdBySlug(slug);
-      await _service.joinAsDevice(
-        tenantId: tenantId,
-        inviteCode: code,
-        uid: uid,
-        deviceName: _label.text.trim(),
-      );
-
-      // Присоединение прошло — забираем полную конфигурацию заведения
-      // (брендинг, длительность кальяна и т.п.) и запускаем фоновые службы,
-      // которые при обычном (не-SaaS) запуске стартуют сразу в main().
-      final config = await TenantConfigService().refresh(uid, preferredTenantId: tenantId);
-      if (config == null) {
-        throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
-      }
-      AppScope.enterTenant(tenantId, branding: config.branding);
-      SubscriptionGate.watch(tenantId, config);
-      startBackgroundServices();
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ImagePreloadScreen()),
-      );
+      await _completeJoin(tenantId: tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -86,6 +65,68 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
         _error = 'Не удалось присоединиться: $e';
       });
     }
+  }
+
+  /// Кнопка «Демо» — не спрашивает ни код заведения, ни код приглашения:
+  /// саму пару tenantId+inviteCode выдаёт createDemoTenant (создаёт
+  /// одноразовое тестовое заведение с заготовленными столами/меню, см.
+  /// saas-gateway/README.md), присоединение дальше идёт тем же путём, что
+  /// и обычное устройство.
+  Future<void> _tryDemo() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      setState(() => _error = 'Нет входа в Firebase — перезапустите приложение');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final demo = await _service.createDemoTenant();
+      await _completeJoin(
+        tenantId: demo.tenantId,
+        inviteCode: demo.inviteCode,
+        uid: uid,
+        deviceName: 'Демо',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Не удалось запустить демо: $e';
+      });
+    }
+  }
+
+  /// Общий хвост и для обычного присоединения, и для демо: записать
+  /// устройство в заведение, забрать конфигурацию (брендинг, длительность
+  /// кальяна и т.п.), запустить фоновые службы и перейти в приложение.
+  Future<void> _completeJoin({
+    required String tenantId,
+    required String inviteCode,
+    required String uid,
+    required String deviceName,
+  }) async {
+    await _service.joinAsDevice(
+      tenantId: tenantId,
+      inviteCode: inviteCode,
+      uid: uid,
+      deviceName: deviceName,
+    );
+
+    final config = await TenantConfigService().refresh(uid, preferredTenantId: tenantId);
+    if (config == null) {
+      throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
+    }
+    AppScope.enterTenant(tenantId, branding: config.branding);
+    SubscriptionGate.watch(tenantId, config);
+    startBackgroundServices();
+
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const ImagePreloadScreen()),
+    );
   }
 
   @override
@@ -160,6 +201,30 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                               width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('Присоединить'),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Row(children: [
+                    Expanded(child: Divider(color: Colors.white24)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text('или', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                    ),
+                    Expanded(child: Divider(color: Colors.white24)),
+                  ]),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 50,
+                    child: OutlinedButton(
+                      onPressed: _busy ? null : _tryDemo,
+                      child: const Text('Попробовать демо'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Одноразовое тестовое заведение с примерами столов и меню — '
+                    'без регистрации, ничего не сохраняется.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
                 ],
               ),
