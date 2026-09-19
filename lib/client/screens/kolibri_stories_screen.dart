@@ -118,7 +118,7 @@ class KolibriStoriesScreen extends StatelessWidget {
                   if (s.actionLabel.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(s.actionLabel,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: KolibriColors.primary, fontWeight: FontWeight.w600)),
                   ],
                 ],

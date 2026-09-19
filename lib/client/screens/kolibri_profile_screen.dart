@@ -360,7 +360,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),

@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-19.9';
+const CONSOLE_BUILD = '2026-09-20.1';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -2521,10 +2521,16 @@ function watchAllTenants() {
               ` : '';
             })()}
           </div>
-          <button class="btn-ghost f-tenant-toggle" data-id="${esc(t.id)}"
-            data-suspended="${t.status === 'suspended' ? '1' : '0'}" style="width:auto">
-            ${t.status === 'suspended' ? 'Разблокировать' : 'Заблокировать'}
-          </button>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+            <button class="btn-ghost f-tenant-toggle" data-id="${esc(t.id)}"
+              data-suspended="${t.status === 'suspended' ? '1' : '0'}" style="width:auto">
+              ${t.status === 'suspended' ? 'Разблокировать' : 'Заблокировать'}
+            </button>
+            ${t.demo ? `
+              <button class="btn-ghost f-tenant-delete-demo" data-id="${esc(t.id)}"
+                style="width:auto;color:var(--danger)">Удалить</button>
+            ` : ''}
+          </div>
         </div>
         ${plans.length ? `
           <div class="row" style="margin-top:10px;align-items:center">
@@ -2543,6 +2549,9 @@ function watchAllTenants() {
 
     document.querySelectorAll('.f-tenant-toggle').forEach((el) => {
       el.onclick = () => toggleTenantSuspension(el.dataset.id, el.dataset.suspended === '1');
+    });
+    document.querySelectorAll('.f-tenant-delete-demo').forEach((el) => {
+      el.onclick = () => deleteDemoTenant(el.dataset.id);
     });
     document.querySelectorAll('.f-tenant-plan').forEach((el) => {
       el.onchange = () => changeTenantPlan(el.dataset.id, el.value);
@@ -2909,10 +2918,15 @@ async function exportPaymentsCsv() {
   }
 }
 
+// enableTenant/disableTenant/changeTenantPlan/deleteDemoTenant — не Cloud
+// Functions (Blaze недоступен, см. docstring в saas-gateway/server.js), а
+// свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше — раньше эти три
+// кнопки звали httpsCallable на функции, которых физически не существует
+// (не задеплоены), и молча проваливались.
 async function toggleTenantSuspension(tenantId, isSuspended) {
   try {
-    const fn = httpsCallable(state.functions, isSuspended ? 'enableTenant' : 'disableTenant');
-    await fn(isSuspended ? { tenantId } : { tenantId, reason: 'Заблокировано вручную из консоли платформы' });
+    await callSaasGateway(isSuspended ? 'enableTenant' : 'disableTenant',
+      isSuspended ? { tenantId } : { tenantId, reason: 'Заблокировано вручную из консоли платформы' });
     toast(isSuspended ? 'Заведение разблокировано' : 'Заведение заблокировано');
   } catch (e) {
     toast(`Не удалось изменить статус: ${e?.message || e}`);
@@ -2921,11 +2935,20 @@ async function toggleTenantSuspension(tenantId, isSuspended) {
 
 async function changeTenantPlan(tenantId, planId) {
   try {
-    const fn = httpsCallable(state.functions, 'changeTenantPlan');
-    await fn({ tenantId, planId });
+    await callSaasGateway('changeTenantPlan', { tenantId, planId });
     toast('Тариф изменён');
   } catch (e) {
     toast(`Не удалось изменить тариф: ${e?.message || e}`);
+  }
+}
+
+async function deleteDemoTenant(tenantId) {
+  if (!confirm('Удалить это демо-заведение безвозвратно вместе со всеми данными?')) return;
+  try {
+    await callSaasGateway('deleteDemoTenant', { tenantId });
+    toast('Демо-заведение удалено');
+  } catch (e) {
+    toast(`Не удалось удалить: ${e?.message || e}`);
   }
 }
 

@@ -24,11 +24,15 @@ const admin = require("firebase-admin");
  * ЧТО ЭТИМ НЕ ЗАКРЫТО (сознательно, см. обсуждение с владельцем платформы):
  * приём оплаты через ЮKassa (`createCheckoutSession`, `handleBillingWebhook`,
  * `chargeRecurringSubscriptions`), приглашение сотрудников по email
- * (`inviteTenantMember`), включение/отключение заведения и смена тарифа
- * супер-админом (`enableTenant`/`disableTenant`/`changeTenantPlan`) —
- * остаются на Cloud Functions/Blaze как есть. На момент внедрения платформа
- * ещё не принимает реальные платежи (только тестовые/демо-заведения), так
- * что это не блокирует текущий этап.
+ * (`inviteTenantMember`) — остаются на Cloud Functions/Blaze как есть. На
+ * момент внедрения платформа ещё не принимает реальные платежи (только
+ * тестовые/демо-заведения), так что это не блокирует текущий этап.
+ *
+ * `enableTenant`/`disableTenant`/`changeTenantPlan` (модерация из панели
+ * супер-админа) и `deleteDemoTenant` (ручное удаление демо-заведения) —
+ * ТОЖЕ здесь, не Cloud Functions: кнопки в консоли раньше звали их через
+ * httpsCallable на несуществующие (никогда не задеплоенные) функции и
+ * молча проваливались — см. handleDisableTenant и соседей ниже.
  *
  * ВАЖНО про изоляцию данных: этот сервис использует сервисный ключ
  * ИМЕННО проекта `saas-3bdc8` — совершенно отдельного от `hoocah-pos`
@@ -211,6 +215,13 @@ async function verifyAuth(req) {
   } catch (e) {
     throw new HttpError(401, "невалидный токен: " + e.message);
   }
+}
+
+/** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
+async function requireSuperAdmin(uid) {
+  if (!uid) throw new HttpError(401, "Нужен вход");
+  const doc = await db().collection("superAdmins").doc(uid).get();
+  if (!doc.exists) throw new HttpError(403, "Только для супер-администратора платформы");
 }
 
 /** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
@@ -422,12 +433,19 @@ async function handleCreateBuildJob(req, res) {
   createBatch.set(jobRefKolibri, { ...baseJob, type: "guest" });
   await createBatch.commit();
 
-  let appLabel = "Hookah POS (SaaS)";
+  // Название и лого заведения — это бренд ТОЛЬКО гостевого приложения
+  // (saas-on-demand-build.yml игнорирует app_label/logo_url для matrix.app
+  // == pos: касса всегда "Hookah POS", бренд платформы, не арендатора).
+  // appName предпочтительнее shortName: shortName — снимок имени на момент
+  // создания заведения (обрезка до 12 символов), который не обновляется,
+  // если владелец потом переименует заведение в «Брендинге» — appName как
+  // раз то самое, живое поле «Имя приложения».
+  let appLabel = "Colibri Lounge";
   let logoUrl = "";
   try {
     const branding = await firestore.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
     if (branding.exists) {
-      appLabel = branding.data().shortName || branding.data().appName || appLabel;
+      appLabel = branding.data().appName || branding.data().shortName || appLabel;
       logoUrl = branding.data().logoUrl || "";
     }
   } catch (_) {
@@ -760,6 +778,90 @@ async function purgeDemoTenant(tenantId) {
   await firestore.collection("subscriptions").doc(tenantId).delete().catch(() => {});
 }
 
+// ----------------------------------------- super-admin: enable/disable/plan
+
+/**
+ * enableTenant/disableTenant/changeTenantPlan — раньше были Cloud Functions
+ * (saas/functions/index.js), не задеплоены по той же причине, что и
+ * createTenant/createBuildJob выше (Blaze недоступен у saas-3bdc8). Кнопки
+ * «Заблокировать»/смена тарифа в панели платформы раньше звали их через
+ * httpsCallable и молча проваливались (функция никогда не существовала —
+ * не 403, а просто нет такого HTTP-эндпоинта вообще).
+ */
+async function handleDisableTenant(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  const { tenantId, reason } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  await db().collection("tenants").doc(tenantId).update({
+    status: "suspended",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({
+    tenantId, actorId: decoded.uid, action: "tenantSuspended", metadata: { reason: reason || null },
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleEnableTenant(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  const { tenantId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  await db().collection("tenants").doc(tenantId).update({
+    status: "active",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "tenantEnabled" });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleChangeTenantPlan(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  const { tenantId, planId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  if (typeof planId !== "string" || !planId) throw new HttpError(400, "Не указан тариф");
+
+  const planDoc = await db().collection("plans").doc(planId).get();
+  if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
+
+  await db().collection("tenants").doc(tenantId).update({
+    planId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({
+    tenantId, actorId: decoded.uid, action: "planChangedBySuperAdmin", metadata: { planId },
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Удаление демо-заведения вручную из панели платформы — та же логика,
+ * что и у автоматической ночной очистки (scheduleDemoCleanup ниже), но по
+ * запросу супер-админа, не дожидаясь DEMO_TTL_MS. Намеренно ограничено
+ * ТОЛЬКО демо-заведениями (tenant.demo === true) — это необратимое
+ * рекурсивное удаление всех данных, давать его на произвольный (платящий)
+ * tenantId из этой же кнопки было бы слишком лёгким способом снести чужие
+ * реальные данные одним случайным кликом.
+ */
+async function handleDeleteDemoTenant(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  const { tenantId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+
+  const tenantDoc = await db().collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  if (tenantDoc.data().demo !== true) {
+    throw new HttpError(400, "Удалить вручную можно только демо-заведение");
+  }
+
+  await purgeDemoTenant(tenantId);
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "demoTenantDeletedBySuperAdmin" });
+  sendJson(res, 200, { ok: true });
+}
+
 /**
  * Раз в DEMO_CLEANUP_INTERVAL_MS стирает демо-заведения старше DEMO_TTL_MS
  * — замена Cloud Scheduler (тоже требует Blaze) обычным setInterval внутри
@@ -799,6 +901,10 @@ const ROUTES = {
   "/createDemoTenant": handleCreateDemoTenant,
   "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
   "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
+  "/disableTenant": handleDisableTenant,
+  "/enableTenant": handleEnableTenant,
+  "/changeTenantPlan": handleChangeTenantPlan,
+  "/deleteDemoTenant": handleDeleteDemoTenant,
 };
 
 function runHandler(handler, req, res) {

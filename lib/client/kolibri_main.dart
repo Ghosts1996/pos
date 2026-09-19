@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../build_info.dart';
 import '../firebase_options.dart';
+import '../models/tenant_models.dart';
 import '../services/ai/ai_settings.dart';
 import '../services/app_scope.dart';
 import '../services/saas_device_join_service.dart';
@@ -37,6 +38,7 @@ void main() async {
 
   String? startupError;
   var ready = false;
+  var appTitle = 'Colibri Lounge';
 
   if (DefaultFirebaseOptions.isConfigured) {
     try {
@@ -53,6 +55,19 @@ void main() async {
 
       if (startupError == null) {
         await KolibriAuthService().ensureGuest();
+        // Бренд заведения (имя, лого, цвета — раздел «Брендинг» в личном
+        // кабинете) применяется ДО первого runApp(), чтобы первый же кадр
+        // уже был в цветах заведения, а не мигал дефолтной палитрой
+        // "Colibri Lounge". Требует ensureGuest() до себя: правило
+        // isTenantGuest() в saas/firestore.rules пускает гостя к
+        // branding/config только когда его профиль в clients/{tenantId}/{uid}
+        // уже существует (см. её же комментарий там).
+        if (kSaasMode) {
+          final branding = await _applyTenantBranding();
+          if (branding != null && branding.appName.isNotEmpty) {
+            appTitle = branding.appName;
+          }
+        }
         ready = true;
         // Настройки ИИ подтягиваются в фоне — без них приложение просто
         // работает без ИИ-консьержа.
@@ -67,7 +82,7 @@ void main() async {
     }
   }
 
-  runApp(KolibriApp(ready: ready, startupError: startupError));
+  runApp(KolibriApp(ready: ready, startupError: startupError, title: appTitle));
 }
 
 /// Слаг заведения (kSaasPresetSlug) резолвится в tenantId ОДИН раз и
@@ -97,16 +112,38 @@ Future<String?> _resolveSaasTenantId() async {
   }
 }
 
+/// Подтягивает branding/config текущего заведения (см. AppScope.enterTenant
+/// выше) и накладывает его на [KolibriColors] — см. её же docstring и
+/// [KolibriColors.applyBranding]. Нет сети/документа — гость просто видит
+/// дефолтную палитру "Colibri Lounge", а не ошибку (возвращает null):
+/// свежий брендинг подтянется при следующем удачном запуске.
+Future<BrandingConfig?> _applyTenantBranding() async {
+  try {
+    final doc = await AppScope.col('branding').doc('config').get();
+    final branding = BrandingConfig.fromMap(doc.data());
+    KolibriColors.applyBranding(branding);
+    return branding;
+  } catch (_) {
+    return null;
+  }
+}
+
 class KolibriApp extends StatelessWidget {
   final bool ready;
   final String? startupError;
+  final String title;
 
-  const KolibriApp({super.key, required this.ready, this.startupError});
+  const KolibriApp({
+    super.key,
+    required this.ready,
+    this.startupError,
+    this.title = 'Colibri Lounge',
+  });
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Colibri Lounge',
+      title: title,
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

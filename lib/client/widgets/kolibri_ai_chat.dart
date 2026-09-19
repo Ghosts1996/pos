@@ -159,7 +159,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
     final ready = AiSettingsStore.instance.current.isReady;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: KolibriColors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -169,7 +169,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
             padding: const EdgeInsets.fromLTRB(20, 18, 8, 12),
             child: Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 18,
                   backgroundColor: KolibriColors.primary,
                   child: Icon(Icons.auto_awesome, color: Colors.white, size: 20),
@@ -265,7 +265,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
               separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (_, i) => ActionChip(
                 backgroundColor: KolibriColors.surfaceElevated,
-                side: const BorderSide(color: KolibriColors.border),
+                side: BorderSide(color: KolibriColors.border),
                 label: Text(_quick[i], style: const TextStyle(fontSize: 12)),
                 onPressed: _busy ? null : () => _send(_quick[i]),
               ),

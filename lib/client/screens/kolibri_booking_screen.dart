@@ -235,7 +235,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               'Работаем ${_venue!.workingHours[_day.weekday]?.isNotEmpty == true ? _venue!.workingHours[_day.weekday]! : 'в этот день — выходной'}',
-              style: const TextStyle(color: KolibriColors.gold, fontSize: 13),
+              style: TextStyle(color: KolibriColors.gold, fontSize: 13),
             ),
           ),
         const SizedBox(height: 20),
@@ -298,7 +298,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                     },
                     backgroundColor: KolibriColors.surface,
                     selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
-                    side: const BorderSide(color: KolibriColors.border),
+                    side: BorderSide(color: KolibriColors.border),
                   ))
               .toList(),
         ),
@@ -319,7 +319,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                     },
                     backgroundColor: KolibriColors.surface,
                     selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
-                    side: const BorderSide(color: KolibriColors.border),
+                    side: BorderSide(color: KolibriColors.border),
                   ))
               .toList(),
         ),
@@ -359,7 +359,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                       },
                       backgroundColor: KolibriColors.surface,
                       selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
-                      side: const BorderSide(color: KolibriColors.border),
+                      side: BorderSide(color: KolibriColors.border),
                     ))
                 .toList(),
           ),
@@ -658,7 +658,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   Widget _label(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Text(text,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 15, fontWeight: FontWeight.w600, color: KolibriColors.textPrimary)),
       );
 
