@@ -236,10 +236,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         height: 56,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
+                            Image.asset('assets/icon/icon.png', width: 56, height: 56),
                       ),
                     )
-                  : const Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
+                  : Image.asset('assets/icon/icon.png', width: 56, height: 56),
               const SizedBox(height: 12),
               Text(appName,
                   style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
