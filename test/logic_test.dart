@@ -8,8 +8,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/client_models.dart';
+import 'package:hookah_pos/models/employee.dart';
 import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/marking_code.dart';
+import 'package:hookah_pos/models/staff_shift_model.dart';
 import 'package:hookah_pos/services/ai/ai_agents.dart' show cleanAiText;
 import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
@@ -18,6 +20,7 @@ import 'package:hookah_pos/models/fiscal_receipt.dart';
 import 'package:hookah_pos/models/tenant_models.dart';
 import 'package:hookah_pos/services/app_scope.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
+import 'package:hookah_pos/services/payroll_calculator.dart';
 import 'package:hookah_pos/services/subscription_gate.dart' show computeBlocked;
 import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/theme/app_theme.dart';
@@ -897,6 +900,154 @@ void main() {
       final theme = AppTheme.branded(branding);
       expect(theme.scaffoldBackgroundColor, AppColors.background);
       expect(theme.textTheme.bodyMedium?.color, AppColors.textPrimary);
+    });
+  });
+
+  group('Расчёт зарплаты (PayrollCalculator)', () {
+    Employee employee({
+      bool hourlyRateEnabled = false,
+      double hourlyRate = 0,
+      bool overtimeEnabled = false,
+      double overtimeThresholdHours = 8,
+      double overtimeMultiplier = 1.5,
+      bool salesPercentEnabled = false,
+      double salesPercentRate = 0,
+    }) {
+      return Employee(
+        id: 'e1',
+        name: 'Тест',
+        pinCode: '1234',
+        role: 'employee',
+        hourlyRateEnabled: hourlyRateEnabled,
+        hourlyRate: hourlyRate,
+        overtimeEnabled: overtimeEnabled,
+        overtimeThresholdHours: overtimeThresholdHours,
+        overtimeMultiplier: overtimeMultiplier,
+        salesPercentEnabled: salesPercentEnabled,
+        salesPercentRate: salesPercentRate,
+      );
+    }
+
+    StaffShiftModel shift(DateTime start, DateTime end) {
+      return StaffShiftModel(
+        id: 's',
+        employeeId: 'e1',
+        employeeName: 'Тест',
+        startedAt: start,
+        endedAt: end,
+        status: 'closed',
+      );
+    }
+
+    test('оклад без переработки: часы считаются точно, без округления', () {
+      final emp = employee(hourlyRateEnabled: true, hourlyRate: 200);
+      final s = shift(DateTime(2026, 1, 1, 10, 0), DateTime(2026, 1, 1, 15, 30));
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.normalHours, 5.5);
+      expect(r.overtimeHours, 0);
+      expect(r.hourlyPay, 1100); // 5.5 * 200
+      expect(r.total, 1100);
+    });
+
+    test('смена ровно через полночь считается корректно, а не как отдельные сутки', () {
+      final emp = employee(hourlyRateEnabled: true, hourlyRate: 100);
+      // Началась в 23:00, закончилась в 03:00 следующего дня — 4 часа.
+      final s = shift(DateTime(2026, 1, 1, 23, 0), DateTime(2026, 1, 2, 3, 0));
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.normalHours, 4);
+      expect(r.hourlyPay, 400);
+    });
+
+    test('переработка начисляется только сверх порога, за ЭТУ смену', () {
+      final emp = employee(
+        hourlyRateEnabled: true,
+        hourlyRate: 200,
+        overtimeEnabled: true,
+        overtimeThresholdHours: 8,
+        overtimeMultiplier: 1.5,
+      );
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 19, 0)); // 10 часов
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.normalHours, 8);
+      expect(r.overtimeHours, 2);
+      expect(r.hourlyPay, 1600); // 8 * 200
+      expect(r.overtimePay, 600); // 2 * 200 * 1.5
+      expect(r.total, 2200);
+    });
+
+    test('ровно на пороге переработки — переработки ещё нет', () {
+      final emp = employee(
+        hourlyRateEnabled: true,
+        hourlyRate: 100,
+        overtimeEnabled: true,
+        overtimeThresholdHours: 8,
+      );
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0)); // ровно 8 часов
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.normalHours, 8);
+      expect(r.overtimeHours, 0);
+    });
+
+    test('переработка считается по каждой смене отдельно, не суммарно за день', () {
+      final emp = employee(
+        hourlyRateEnabled: true,
+        hourlyRate: 100,
+        overtimeEnabled: true,
+        overtimeThresholdHours: 8,
+        overtimeMultiplier: 2,
+      );
+      // Две смены по 6 часов в один календарный день — итого 12 часов, но
+      // каждая ПО ОТДЕЛЬНОСТИ меньше порога в 8, поэтому переработки нет.
+      final s1 = shift(DateTime(2026, 1, 1, 8, 0), DateTime(2026, 1, 1, 14, 0));
+      final s2 = shift(DateTime(2026, 1, 1, 16, 0), DateTime(2026, 1, 1, 22, 0));
+      final r =
+          PayrollCalculator.calculate(employee: emp, closedShifts: [s1, s2], salesRevenue: 0);
+      expect(r.normalHours, 12);
+      expect(r.overtimeHours, 0);
+    });
+
+    test('выключенная переработка не даёт надбавку, даже если порог превышен', () {
+      final emp = employee(hourlyRateEnabled: true, hourlyRate: 150, overtimeEnabled: false);
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 21, 0)); // 12 часов
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.normalHours, 12);
+      expect(r.overtimeHours, 0);
+      expect(r.hourlyPay, 1800);
+    });
+
+    test('открытая смена (без endedAt) не участвует в расчёте', () {
+      final emp = employee(hourlyRateEnabled: true, hourlyRate: 100);
+      final open = StaffShiftModel(
+        id: 'o',
+        employeeId: 'e1',
+        employeeName: 'Тест',
+        startedAt: DateTime(2026, 1, 1, 9, 0),
+        status: 'open',
+      );
+      final r =
+          PayrollCalculator.calculate(employee: emp, closedShifts: [open], salesRevenue: 0);
+      expect(r.normalHours, 0);
+      expect(r.total, 0);
+    });
+
+    test('процент с продаж считается от переданной выручки независимо от часов', () {
+      final emp = employee(salesPercentEnabled: true, salesPercentRate: 5);
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [], salesRevenue: 40000);
+      expect(r.salesPercentPay, 2000); // 5% от 40000
+      expect(r.hourlyPay, 0);
+      expect(r.total, 2000);
+    });
+
+    test('оклад выключен — часы не оплачиваются, даже если смены были', () {
+      final emp = employee(
+          hourlyRateEnabled: false, salesPercentEnabled: true, salesPercentRate: 10);
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0));
+      final r =
+          PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 1000);
+      expect(r.hourlyPay, 0);
+      expect(r.overtimePay, 0);
+      expect(r.salesPercentPay, 100);
+      expect(r.total, 100);
     });
   });
 }

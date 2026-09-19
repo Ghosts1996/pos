@@ -5,6 +5,8 @@ import 'floor_plan_editor_screen.dart';
 import 'menu_editor_screen.dart';
 import 'discount_cards_screen.dart';
 import 'employees_screen.dart';
+import 'staff_shifts_screen.dart';
+import 'payroll_screen.dart';
 import 'reports_screen.dart';
 import 'inventory_screen.dart';
 import 'integrations_settings_screen.dart';
@@ -36,6 +38,8 @@ class AdminHomeScreen extends StatelessWidget {
         _AdminTile('Склад', Icons.inventory_2_outlined,
             (ctx) => InventoryScreen(employee: employee)),
         _AdminTile('Сотрудники', Icons.people, (ctx) => const EmployeesScreen()),
+        _AdminTile('Смены сотрудников', Icons.timer_outlined, (ctx) => const StaffShiftsScreen()),
+        _AdminTile('Зарплата', Icons.payments_outlined, (ctx) => const PayrollScreen()),
       ],
       'Гости и лояльность': [
         _AdminTile('Гости', Icons.people_alt, (ctx) => const GuestsScreen()),
