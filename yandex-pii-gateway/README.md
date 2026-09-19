@@ -109,15 +109,18 @@ yc serverless function get hookah-pii-gateway
 
 ## 4. Прописать URL в сборку приложения
 
-`PII_GATEWAY_URL` — тот же `http_invoke_url` из шага 3. В CI (`.github/
-workflows/build-apk.yml`, аналогично уже существующим `--dart-define`)
-добавьте:
+`PII_GATEWAY_URL` — тот же `http_invoke_url` из шага 3. Оба workflow
+(`.github/workflows/build-apk.yml` и `saas-on-demand-build.yml`) уже
+подключают `--dart-define=PII_GATEWAY_URL=...` из секрета репозитория —
+осталось только его завести:
 
-```
---dart-define=PII_GATEWAY_URL=https://functions.yandexcloud.net/<function-id>
-```
+GitHub → репозиторий → Settings → Secrets and variables → Actions →
+New repository secret → имя `PII_GATEWAY_URL`, значение — `http_invoke_url`
+из шага 3. Больше ничего менять не нужно — обе сборки подхватят его
+автоматически при следующем запуске.
 
-Для локальной сборки/отладки — тот же флаг у `flutter run`/`flutter build`.
+Для локальной сборки/отладки — тот же флаг напрямую у `flutter run`/
+`flutter build`: `--dart-define=PII_GATEWAY_URL=https://...`.
 
 ## Проверка перед боевым использованием
 
