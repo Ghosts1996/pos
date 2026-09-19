@@ -137,9 +137,15 @@ function sendJson(res, statusCode, obj) {
     // Консоль (saas/console/console.js) — отдельный сайт (Firebase
     // Hosting), обращается сюда с другого origin, поэтому CORS обязателен;
     // Flutter-приложению он не мешает.
+    //
+    // GET — ради downloadBuild: браузер шлёт CORS preflight (OPTIONS) на
+    // любой запрос с заголовком Authorization, включая GET, и ждёт от него
+    // именно этот список методов — раньше тут было только "POST, OPTIONS",
+    // из-за чего preflight на GET /downloadBuild проходил, а сам GET браузер
+    // молча блокировал (не ошибка сервера — он её даже не видел).
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   });
   res.end(body);
 }
