@@ -6,6 +6,7 @@ import '../models/menu_models.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
 import '../utils/phone_utils.dart';
+import 'pii_gateway_service.dart';
 import 'push_service.dart';
 
 /// Мост между POS и клиентским приложением «Colibri Lounge»:
@@ -14,6 +15,10 @@ import 'push_service.dart';
 /// поэтому любое изменение прилетает второй стороне мгновенно.
 class GuestLinkService {
   final _db = FirebaseFirestore.instance;
+  final PiiGatewayService _piiGateway;
+
+  GuestLinkService({PiiGatewayService? piiGateway})
+      : _piiGateway = piiGateway ?? PiiGatewayService();
 
   CollectionReference<Map<String, dynamic>> get _clients => AppScope.col('clients');
   CollectionReference<Map<String, dynamic>> get _calls => AppScope.col('waiterCalls');
@@ -48,6 +53,51 @@ class GuestLinkService {
     await _clients.doc(uid).set(patch, SetOptions(merge: true));
   }
 
+  /// Первичная запись имени/телефона гостя — используется ТОЛЬКО в момент,
+  /// когда гость реально сообщает эти данные первый раз или правит их сам
+  /// (подтверждение SMS-кода, сохранение профиля, форма брони): именно
+  /// здесь по 152-ФЗ важно, чтобы первой их записала база в РФ, а не
+  /// Firestore (см. docstring [PiiGatewayService]).
+  ///
+  /// НЕ используйте этот метод там, где gость может быть офлайн (касса в
+  /// разгар смены, правка телефона во время оплаты) — там по-прежнему
+  /// нужен обычный [updateProfile], который Firestore SDK сам поставит в
+  /// очередь при обрыве связи.
+  ///
+  /// Возвращает свежий профиль, перечитанный из Firestore: шлюз сам
+  /// синхронизирует туда данные ДО того, как ответит успехом, поэтому
+  /// перечитывание сразу после видит уже актуальные значения.
+  ///
+  /// `null` — не трогать поле, `''` — явно очистить (см. docstring
+  /// [PiiGatewayService.registerGuestProfile]).
+  Future<ClientProfile> registerGuestProfile(
+    String uid, {
+    String? name,
+    String? phone,
+  }) async {
+    final normalizedPhone = phone != null && phone.isNotEmpty ? normalizePhone(phone) : phone;
+
+    // Прежний номер нужно захватить ДО вызова шлюза: он сам обновит
+    // Firestore, и повторное чтение после уже увидело бы новый номер
+    // вместо старого — см. docstring _syncPhoneIndex(prevOverride:).
+    String? prevPhone;
+    if (normalizedPhone != null && normalizedPhone.isNotEmpty) {
+      prevPhone = (await _clients.doc(uid).get()).data()?['phone'] as String?;
+    }
+
+    await _piiGateway.registerGuestProfile(uid: uid, name: name, phone: normalizedPhone);
+
+    if (normalizedPhone != null && normalizedPhone.isNotEmpty) {
+      await _syncPhoneIndex(uid, normalizedPhone, prevOverride: prevPhone ?? '');
+    }
+
+    final doc = await _clients.doc(uid).get();
+    if (!doc.exists) {
+      throw StateError('Шлюз подтвердил сохранение, но профиль не найден — сообщите в поддержку.');
+    }
+    return ClientProfile.fromDoc(doc);
+  }
+
   /// Обезличенный указатель «номер → uid», по которому можно узнать, занят
   /// ли телефон, не читая чужой профиль.
   ///
@@ -73,9 +123,16 @@ class GuestLinkService {
 
   /// Закрепляет номер за гостем и освобождает его прежний номер.
   /// Ошибки не пробрасывает: указатель вторичен, сам профиль важнее.
-  Future<void> _syncPhoneIndex(String uid, String normalized) async {
+  ///
+  /// [prevOverride] — использовать этот номер как «прежний» вместо чтения
+  /// текущего значения из Firestore. Нужен вызывающим, которые сами уже
+  /// записали НОВЫЙ номер в профиль до вызова этого метода (см.
+  /// [registerGuestProfile]) — обычное чтение в этом случае увидело бы уже
+  /// новый номер и решило бы, что менять нечего, а прежний указатель так и
+  /// остался бы висеть на этом госте.
+  Future<void> _syncPhoneIndex(String uid, String normalized, {String? prevOverride}) async {
     try {
-      final prev = (await _clients.doc(uid).get()).data()?['phone'] as String?;
+      final prev = prevOverride ?? (await _clients.doc(uid).get()).data()?['phone'] as String?;
       if (prev != null && prev.isNotEmpty && prev != normalized) {
         // Освободить прежний номер может только касса — у гостя номер и так
         // меняется лишь через администратора.

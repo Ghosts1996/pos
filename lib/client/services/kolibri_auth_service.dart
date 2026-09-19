@@ -97,12 +97,10 @@ class KolibriAuthService {
     );
     await _linkOrSignIn(credential, phone);
 
-    final profile = await _link.ensureProfile(uid, name: name, phone: phone);
-    await _link.updateProfile(uid, {
-      'phone': phone,
-      if (name.isNotEmpty) 'name': name,
-    });
-    return profile;
+    // Первый раз, когда гость реально называет свой телефон — первичная
+    // запись идёт через registerGuestProfile (см. PiiGatewayService), а не
+    // напрямую в Firestore.
+    return _link.registerGuestProfile(uid, name: name, phone: phone);
   }
 
   /// Если гость уже ходил анонимно (есть брони, избранное) — привязываем
