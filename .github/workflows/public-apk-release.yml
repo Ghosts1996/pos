@@ -13,22 +13,18 @@ on:
 
 # Собирает УНИВЕРСАЛЬНУЮ SaaS-сборку — SAAS_MODE=true, но без привязки к
 # конкретному заведению (SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE нарочно
-# не задаются, см. lib/build_info.dart) — и заливает её в Firebase Storage
-# SaaS-проекта, на путь public/pos-latest.apk (тем же сервисным аккаунтом,
-# что и saas-on-demand-build.yml). Кнопка «Скачать приложение кассы» на
-# лендинге (saas/console/console.js, downloadPublicApk()) читает файл
-# ровно оттуда через getDownloadURL — ссылка не меняется, обновлять код не
-# нужно, просто перезапустите workflow.
+# не задаются, см. lib/build_info.dart) — и публикует её как GitHub Release,
+# а не в Firebase Storage. Кнопка «Скачать приложение кассы» на публичном
+# лендинге (saas/console/console.js, downloadPublicApk()) ссылается прямо
+# на файл в этом релизе постоянным адресом:
 #
-# НЕ GitHub Release: первая версия так и делала, но скачивание зависало у
-# реальных пользователей в России — судя по всему, из-за самого CDN GitHub
-# release-файлов (objects.githubusercontent.com, за которым Amazon S3):
-# домены такого типа периодически режутся/тормозятся у российских
-# операторов связи. Firebase Storage (firebasestorage.googleapis.com) —
-# тот же домен, который уже используется во всей консоли (логотипы,
-# скачивание сборок по заведениям) без единой жалобы за всю разработку,
-# поэтому именно он, а не GitHub, остаётся точкой раздачи файла конечным
-# пользователям.
+#   https://github.com/<owner>/<repo>/releases/download/public-apk/hookah-pos-public.apk
+#
+# Обновлять ссылку в коде не нужно — просто запустите этот workflow заново
+# (вкладка Actions → «Публичный APK» → Run workflow), он перезапишет файл в
+# том же релизе (--clobber), и кнопка на сайте сразу начнёт отдавать новую
+# версию. Раньше это делалось вручную через `gcloud storage cp`/загрузку в
+# Firebase Console — см. историю saas/README.md, раздел 8b.
 #
 # Собранное этим приложение — то же самое, что скачивают через «Скачать» в
 # консоли по прямой ссылке на конкретное заведение, только без запечённого
@@ -42,6 +38,8 @@ on:
 # владельца / общая демо-сборка для сайта), и правка одного не должна нести
 # риск для двух других. Если здесь всплывёт баг того же рода, что уже пойман
 # в build-apk.yml (ML Kit, R8, desugaring и т.д.) — правьте все три файла.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -408,24 +406,21 @@ jobs:
             # это и есть "универсальная" сборка, см. lib/build_info.dart.
 
       - name: Rename APK
-        id: rename
         run: |
-          # Имя файла — pos-latest.apk: ровно тот путь, что уже читает
-          # downloadPublicApk() в консоли (getDownloadURL по public/pos-latest.apk)
-          # и на который у него единственное публичное правило чтения в
-          # saas/storage.rules (match /public/{fileName}).
-          OUT=build/app/outputs/flutter-apk/pos-latest.apk
-          mv build/app/outputs/flutter-apk/app-release.apk "$OUT"
-          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/hookah-pos-public.apk
 
-      - name: Authenticate to Google Cloud (SaaS project storage)
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.SAAS_STORAGE_SERVICE_ACCOUNT }}
-
-      - name: Upload APK to Firebase Storage (public path)
-        uses: google-github-actions/upload-cloud-storage@v2
-        with:
-          path: ${{ steps.rename.outputs.path }}
-          destination: '${{ secrets.SAAS_STORAGE_BUCKET }}/public'
-          parent: false
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=public-apk
+          FILE=build/app/outputs/flutter-apk/hookah-pos-public.apk
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" "$FILE" \
+              --repo "${{ github.repository }}" \
+              --title "Hookah POS — публичная демо-сборка" \
+              --notes "Универсальный APK кассы без привязки к заведению — при первом запуске выберите «Демо» или введите код приглашения своего заведения. Файл обновляется автоматически при перезапуске workflow «Публичный APK» (не по версиям, а на месте — старый файл в этом релизе перезаписывается)."
+          fi
