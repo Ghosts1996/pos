@@ -176,10 +176,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         }
       }
 
-      await _link.updateProfile(_auth.uid, {
-        'name': _name.text.trim(),
-        if (!_phoneLocked && phone.isNotEmpty) 'phone': phone,
-      });
+      await _link.registerGuestProfile(
+        _auth.uid,
+        name: _name.text.trim(),
+        phone: (!_phoneLocked && phone.isNotEmpty) ? phone : null,
+      );
       _snack('Сохранено');
     } catch (e) {
       _snack('Не удалось сохранить: проверьте интернет и попробуйте снова');

@@ -581,15 +581,16 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     setState(() => _sending = true);
 
     try {
-      final profile = await _link.ensureProfile(_auth.uid);
-      await _link.updateProfile(_auth.uid, {
-        'name': _nameCtrl.text.trim(),
+      final profile = await _link.registerGuestProfile(
+        _auth.uid,
+        name: _nameCtrl.text.trim(),
         // Номер отправляем, только если он ещё не привязан: попытка
         // изменить привязанный отклоняется правилами базы и уронила бы
         // всю отправку брони — она идёт следующим шагом.
-        if (!_phoneLocked && _phoneCtrl.text.trim().isNotEmpty)
-          'phone': normalizePhone(_phoneCtrl.text.trim()),
-      });
+        phone: (!_phoneLocked && _phoneCtrl.text.trim().isNotEmpty)
+            ? normalizePhone(_phoneCtrl.text.trim())
+            : null,
+      );
 
       await _service.create(ReservationModel(
         id: '',
