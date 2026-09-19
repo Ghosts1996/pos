@@ -3036,24 +3036,17 @@ async function requestBuild(tenantId) {
 
 // Универсальная сборка кассы для кнопки "Скачать" на лендинге — не привязана
 // ни к одному заведению (кто угодно, даже не зарегистрированный, должен
-// суметь её скачать), поэтому лежит по фиксированному публичному пути, а не
-// в tenants/{tenantId}/builds/ (см. saas/storage.rules, match /public/{file}).
-// Собирает и заливает сюда .github/workflows/public-apk-release.yml —
-// автоматически, вручную ничего заливать не нужно, достаточно перезапустить
-// workflow. НЕ GitHub Release: пробовали, но скачивание зависало у
-// пользователей в России (CDN release-файлов GitHub, objects.githubusercontent.com/
-// Amazon S3, — то, что периодически режут/тормозят локальные операторы связи).
-// Firebase Storage — тот же домен, что и весь остальной сайт, проблем с ним
-// не было. См. saas/README.md, раздел «Публичный APK».
-const PUBLIC_APK_PATH = 'public/pos-latest.apk';
+// суметь её скачать). Лежит в GitHub Release этого репозитория, а не в
+// Firebase Storage: .github/workflows/public-apk-release.yml собирает APK и
+// заливает его в релиз с тегом public-apk под этим же именем файла — ссылка
+// постоянна, при новой сборке файл в релизе просто перезаписывается
+// (--clobber), в коде ничего менять не нужно. См. saas/README.md, раздел
+// «Публичный APK».
+const PUBLIC_APK_URL =
+  'https://github.com/Ghosts1996/pos/releases/download/public-apk/hookah-pos-public.apk';
 
-async function downloadPublicApk() {
-  try {
-    const url = await getDownloadURL(ref(state.storage, PUBLIC_APK_PATH));
-    window.open(url, '_blank', 'noopener');
-  } catch (e) {
-    toast('Файл пока не опубликован — попробуйте чуть позже или напишите в поддержку');
-  }
+function downloadPublicApk() {
+  window.open(PUBLIC_APK_URL, '_blank', 'noopener');
 }
 
 async function downloadBuild(storagePath) {
