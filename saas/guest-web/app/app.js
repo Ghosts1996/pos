@@ -212,6 +212,21 @@ async function applyBranding() {
       }
     }
     if (b.appName) document.title = b.appName;
+
+    // В кэш — index.html применяет его СРАЗУ при следующем заходе, ещё до
+    // сети (см. комментарий там же), чтобы страница не мелькала дефолтной
+    // палитрой каждый раз, пока идут resolveTenantBySlug/firebaseConfig/
+    // чтение branding.
+    try {
+      const slug = (location.hostname.split('.')[0] || '').trim();
+      if (slug) {
+        localStorage.setItem('brand:' + slug, JSON.stringify({
+          primaryColor: b.primaryColor, secondaryColor: b.secondaryColor,
+          accentColor: b.accentColor, backgroundColor: bg, textColor: text,
+          appName: b.appName,
+        }));
+      }
+    } catch (_) {}
   } catch (e) {
     // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
     // причину теперь видно в консоли браузера (F12 → Console) — раньше
@@ -223,9 +238,26 @@ async function applyBranding() {
 }
 
 async function boot() {
+  // resolveTenant() и firebaseConfig НЕ зависят друг от друга (конфиг
+  // общий для всей платформы, не завязан на конкретное заведение) —
+  // запускаем сразу оба, а не один за другим: одна сетевая "волна" вместо
+  // двух подряд, короче время до первого раскрашенного в реальный бренд
+  // кадра (тот же приём и в saas/guest-web/table.html).
+  const tenantPromise = resolveTenant();
+  // НЕ hookahpos.su/__/firebase/init.json: тот путь — приём Firebase
+  // Hosting для страниц, размещённых НА НЁМ САМОМ (см. как его читает
+  // saas/console/console.js — релятивным путём, тот же origin). Эта
+  // раздача живёт на поддомене {slug}.hookahpos.su — ЧУЖОЙ origin для
+  // hookahpos.su, а тот путь не отдаёт CORS для чужого origin: живьём
+  // подтверждено, что fetch падает с "Failed to fetch" ещё до какого-либо
+  // ответа сервера. Вместо этого — тот же saas-gateway, что и
+  // resolveTenant() выше (уже проверенно работает с этого origin).
+  const configPromise = fetch(`${GATEWAY}/firebaseConfig`)
+    .then((res) => res.json().then((json) => ({ ok: res.ok, json })));
+
   let tenantId;
   try {
-    tenantId = await resolveTenant();
+    tenantId = await tenantPromise;
   } catch (e) {
     screenEl().innerHTML = `
       <h1>Заведение не найдено</h1>
@@ -237,17 +269,11 @@ async function boot() {
 
   let config;
   try {
-    // НЕ hookahpos.su/__/firebase/init.json: тот путь — приём Firebase
-    // Hosting для страниц, размещённых НА НЁМ САМОМ (см. как его читает
-    // saas/console/console.js — релятивным путём, тот же origin). Эта
-    // раздача живёт на поддомене {slug}.hookahpos.su — ЧУЖОЙ origin для
-    // hookahpos.su, а тот путь не отдаёт CORS для чужого origin: живьём
-    // подтверждено, что fetch падает с "Failed to fetch" ещё до какого-либо
-    // ответа сервера. Вместо этого — тот же saas-gateway, что и
-    // resolveTenant() выше (уже проверенно работает с этого origin).
-    const res = await fetch(`${GATEWAY}/firebaseConfig`);
-    config = await res.json();
-    if (!res.ok || !config || !config.projectId) throw new Error('пусто');
+    const configResult = await configPromise;
+    if (!configResult.ok || !configResult.json || !configResult.json.projectId) {
+      throw new Error('пусто');
+    }
+    config = configResult.json;
   } catch (_) {
     screenEl().innerHTML = `
       <h1>Нет связи с сервером</h1>
