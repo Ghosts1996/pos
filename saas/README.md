@@ -911,6 +911,15 @@ server {
 
     root /opt/saas-guest-web;
 
+    # Без этого мобильные браузеры кэшируют html/js подолгу эвристически
+    # (nginx по умолчанию не шлёт Cache-Control вообще) — правки на сервере
+    # переставали быть видны гостю, пока он не чистил кэш/не открывал
+    # приватную вкладку. То же самое уже сделано для одноарендной версии в
+    # saas/firebase.json.
+    location ~* \.(html|js)$ {
+        add_header Cache-Control "no-cache";
+    }
+
     location /table/ {
         try_files /table.html =404;
     }
