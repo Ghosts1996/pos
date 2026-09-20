@@ -177,25 +177,51 @@ service cloud.firestore {
     }
 
     // ---- Настройки заведения ----
+    // ВАЖНО про Firestore Security Rules: несколько match-блоков на один и
+    // тот же путь объединяются через ИЛИ (доступ есть, если разрешает ХОТЯ
+    // БЫ ОДИН применимый блок) — более специфичный путь не "переопределяет"
+    // более общий, а лишь ДОБАВЛЯЕТ разрешения. Поэтому исключение для
+    // settings/deviceInvite ниже нельзя вынести отдельным match'ем со своим,
+    // более строгим write — общий settings/{doc} всё равно продолжил бы его
+    // разрешать. Условие приходится держать внутри одного правила.
+    //
+    // settings/deviceInvite — секретный код приглашения устройства
+    // (tenants/{tenantId}/devices выше сверяет его при первом join) —
+    // единственный документ в этой коллекции, который МЕНЯТЬ должен только
+    // owner/admin: рядовое устройство/сотрудник не должен уметь перевыпустить
+    // код (иначе можно самому себе наприглашать сколько угодно устройств в
+    // обход владельца).
+    //
+    // Остальные settings/* (например settings/integrations — редактируется
+    // прямо с кассы, lib/screens/admin/integrations_settings_screen.dart) —
+    // пишет любой сотрудник заведения, а не только owner/admin: устройство
+    // кассы, присоединившееся по коду приглашения, ВСЕГДА получает роль
+    // employee в tenantMembers (см. saas_device_join_service.dart —
+    // owner/admin там взяться неоткуда, эта роль различается только внутри
+    // самого приложения по PIN, а не на уровне Firestore) — то есть
+    // hasRole(['owner','admin']) тут был бы физически невыполним ни с одного
+    // планшета и такие настройки не сохранялись бы никогда. В одноарендной
+    // версии (firestore.rules в корне) все эти данные точно так же пишет
+    // любой isStaff() без разделения на роли — здесь то же самое поведение.
     match /tenants/{tenantId}/settings/{doc} {
-      // Супер-админ тоже читает (например deviceInvite.code) — нужно для
-      // поддержки клиента из панели платформы без захода в его кабинет;
-      // писать сюда супер-админ мог и раньше через hasRole().
+      // Супер-админ тоже читает — нужно для поддержки клиента из панели
+      // платформы без захода в его кабинет.
       allow read: if isMember(tenantId) || isSuperAdmin();
-      allow write: if hasRole(tenantId, ['owner', 'admin']);
+      allow write: if doc == 'deviceInvite'
+        ? hasRole(tenantId, ['owner', 'admin'])
+        : isStaff(tenantId);
     }
     // Пороги/кешбек программы лояльности (settings/loyalty,
     // lib/screens/admin/loyalty_settings_screen.dart) — читает ещё и
     // ГОСТЬ: это его собственный уровень и процент в профиле (см.
     // ClientProfile.tiers), а isMember() выше про гостя ничего не знает
     // (та проверка — про tenantMembers, вход в консоль/устройство кассы,
-    // а не про профиль гостя). Отдельное, более специфичное правило — а
-    // не расширение settings/{doc} выше — потому что там же лежит
-    // settings/deviceInvite (секретный код приглашения устройства),
-    // который гостю показывать нельзя ни в каком виде.
+    // а не про профиль гостя). Пишет — как и остальные settings/* выше —
+    // любой сотрудник заведения (та же причина: с кассы это всегда роль
+    // employee на уровне Firestore).
     match /tenants/{tenantId}/settings/loyalty {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
-      allow write: if hasRole(tenantId, ['owner', 'admin']);
+      allow write: if isStaff(tenantId);
     }
 
     // ---- Внутренние заметки супер-админа о заведении (CRM-заметки для
@@ -233,9 +259,17 @@ service cloud.firestore {
     }
 
     // ---- Сотрудники (PIN-вход внутри заведения, как раньше) ----
+    // Пишет любой isStaff(), а не только owner/admin — та же причина, что и
+    // у settings/* выше: устройство кассы всегда состоит в tenantMembers с
+    // ролью employee (см. saas_device_join_service.dart), поэтому
+    // hasRole(['owner','admin']) с планшета невыполним никогда, а именно с
+    // планшета и открывают «Сотрудники» → зарплату, чтобы её настроить —
+    // с hasRole() сохранение молча падало бы permission-denied на каждом
+    // заведении платформы. В одноарендной версии этот экран пишет любой
+    // isStaff() без разделения ролей — здесь то же самое.
     match /tenants/{tenantId}/employees/{employeeId} {
       allow read: if isStaff(tenantId);
-      allow write: if hasRole(tenantId, ['owner', 'admin']);
+      allow write: if isStaff(tenantId);
     }
 
     // ---- Столы и чеки ----
