@@ -11,7 +11,13 @@ ExecStart=/usr/bin/node /opt/saas-gateway/server.js
 Restart=on-failure
 RestartSec=3
 # Слушает только 127.0.0.1 (см. server.js) — наружу торчит только nginx.
-NoNewPrivileges=true
+#
+# NoNewPrivileges НЕ включаем (хотя обычно стоило бы): provisionTenantDomain
+# в server.js зовёт `sudo provision-tenant-domain.sh` для автовыпуска
+# сертификата поддомена нового заведения — NoNewPrivileges блокирует ЛЮБОЙ
+# setuid-переход, включая sudo, даже с настроенным sudoers-правилом. Цена
+# компенсируется узостью самого правила (см. saas/README.md — sudo разрешён
+# ТОЛЬКО на этот один скрипт, не на произвольные команды).
 PrivateTmp=true
 
 [Install]
