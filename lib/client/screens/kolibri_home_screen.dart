@@ -37,7 +37,7 @@ class KolibriHomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Colibri Lounge',
+                  Text(KolibriColors.appName,
                       style: TextStyle(
                           fontSize: 13,
                           letterSpacing: 2,

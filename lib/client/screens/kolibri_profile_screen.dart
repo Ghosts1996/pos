@@ -497,8 +497,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         const SizedBox(height: 8),
         // Номер сборки: приложение ставится файлом, и без него нельзя
         // понять, свежая ли версия стоит на конкретном телефоне.
-        const Text(
-          'Colibri Lounge · приложение гостя · сборка $kBuildNumber',
+        Text(
+          '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber',
           textAlign: TextAlign.center,
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),
