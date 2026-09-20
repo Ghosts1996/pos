@@ -40,6 +40,10 @@
       { "fieldPath": "tenantId", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
     ]},
+    { "collectionGroup": "auditLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "tenantId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ]},
     { "collectionGroup": "billingEvents", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "tenantId", "order": "ASCENDING" },
       { "fieldPath": "receivedAt", "order": "DESCENDING" }
