@@ -377,15 +377,6 @@
 в одном месте. Подробности по каждому — в шагах 7 и 8 ниже; это —
 краткая сверка, ничего не забыть.
 
-**Секреты Firebase (Secret Manager вашего SaaS-проекта)** — командой
-`firebase functions:secrets:set <ИМЯ> --project <ваш-saas-project-id>`,
-значение вводится в интерактивном приглашении, никогда не в командной строке:
-
-| Секрет | Что это | Откуда взять |
-|---|---|---|
-| `YOOKASSA_SHOP_ID` | id магазина ЮKassa | Личный кабинет ЮKassa → Настройки → API-ключи |
-| `YOOKASSA_SECRET_KEY` | секретный ключ магазина | Там же |
-
 **Секреты `saas-gateway`** (файл `/etc/saas-gateway.env` на сервере, НЕ
 Firebase Secret Manager — эти операции больше не Cloud Functions, см.
 `saas-gateway/README.md`):
@@ -395,6 +386,8 @@ Firebase Secret Manager — эти операции больше не Cloud Func
 | `GITHUB_PAT` | токен для запуска сборки APK | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained → доступ ТОЛЬКО к репозиторию `Ghosts1996/pos`, права ТОЛЬКО `Actions: Read and write` |
 | `BUILD_CALLBACK_SECRET` | общий секрет для обратного вызова от GitHub Actions | Придумайте сами (`openssl rand -hex 32`) — это же значение пойдёт и в секреты GitHub ниже |
 | `GITHUB_REF` (необязательно) | ветка, из которой запускать сборку | По умолчанию `claude/pos-continued`, менять не нужно, пока код там же |
+| `YOOKASSA_SHOP_ID` | id магазина ЮKassa | Личный кабинет ЮKassa → Настройки → API-ключи и HTTP-уведомления |
+| `YOOKASSA_SECRET_KEY` | секретный ключ магазина | Там же |
 
 **Секреты репозитория GitHub** (Settings → Secrets and variables →
 Actions → New repository secret):
@@ -520,26 +513,31 @@ cd .. && npx firebase-tools emulators:exec --project hookah-saas-rules-test \
 
 ### 7. Настроить биллинг (ЮKassa)
 
+**Обновлено:** `createCheckoutSession`/`handleBillingWebhook`/
+`chargeRecurringSubscriptions`/`enforceGracePeriod` — уже НЕ Cloud
+Functions (Blaze недоступен, тот же блокер, что и у APK-конвейера в
+разделе 8 ниже), а часть `saas-gateway/server.js` на собственном сервере
+владельца платформы — см. `saas-gateway/README.md`, раздел «Биллинг».
+`saas/functions/index.js` эту логику по-прежнему тоже содержит (эталонная
+копия на случай, если Blaze когда-нибудь появится), но реально сейчас
+работает только версия в `saas-gateway`.
+
 1. Заведите магазин на [yookassa.ru](https://yookassa.ru/) (если ещё нет) —
    получите `shopId` и секретный ключ (Личный кабинет → Настройки →
    API-ключи).
-2. Секреты — в Secret Manager ВАШЕГО SaaS-проекта, не в `.env` и не в git:
-   ```bash
-   firebase functions:secrets:set YOOKASSA_SHOP_ID --project <ваш-saas-project-id>
-   firebase functions:secrets:set YOOKASSA_SECRET_KEY --project <ваш-saas-project-id>
-   ```
-3. Разверните функции (`firebase deploy --only functions --project ...`) —
-   после деплоя скопируйте боевой URL функции `handleBillingWebhook` (в
-   выводе `firebase deploy` или `firebase functions:list`; для 2-го
-   поколения функций это отдельный `*.a.run.app`-адрес, не
-   `<region>-<project>.cloudfunctions.net/...`).
+2. Секреты — переменные окружения `saas-gateway` (`/etc/saas-gateway.env`
+   на сервере), не Secret Manager Firebase и не git — см.
+   `saas-gateway/README.md`, раздел «Установка», пункт 5.
+3. URL для HTTP-уведомлений — `https://<ваш-домен>/saas/billingWebhook`
+   (тот же сервис, что отдаёт остальные ручки `saas-gateway`, не
+   `*.a.run.app`-адрес Cloud Function).
 4. В личном кабинете ЮKassa: Настройки → HTTP-уведомления — впишите туда
    этот URL и включите события `payment.succeeded` и `payment.canceled`.
 5. **Автоплатежи** (списание сохранённой карты для продления без участия
    владельца) — отдельный продукт ЮKassa, включается по заявке в их
    поддержку ПОСЛЕ подключения магазина. Без него первый платёж по тарифу
-   всё равно проходит, а `chargeRecurringSubscriptions` не сможет продлить
-   автоматически, пока продукт не одобрен.
+   всё равно проходит, а автопродление не сможет списать автоматически,
+   пока продукт не одобрен.
 6. Проверьте: в консоли откройте заведение → «Подписка» → «Оформить» —
    должно перекинуть на настоящую форму оплаты ЮKassa (в тестовом режиме
    магазина — тестовыми картами из документации ЮKassa).

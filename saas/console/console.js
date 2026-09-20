@@ -3346,8 +3346,10 @@ async function startCheckout(tenantId, planId, billingPeriod) {
   const errEl = $('f-checkout-error');
   if (errEl) errEl.textContent = '';
   try {
-    const createCheckoutSession = httpsCallable(state.functions, 'createCheckoutSession');
-    const res = await createCheckoutSession({
+    // Раньше — httpsCallable Cloud Function, которая не может задеплоиться
+    // без тарифа Blaze (см. docstring в начале saas-gateway/server.js) —
+    // теперь тот же самый эндпойнт, но на своём сервере.
+    const res = await callSaasGateway('createCheckoutSession', {
       tenantId, planId, billingPeriod: billingPeriod === 'yearly' ? 'yearly' : 'monthly',
       // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
       // подписки обновится сам по snapshot-подписке, как только придёт
