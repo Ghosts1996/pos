@@ -654,10 +654,15 @@ async function handleDownloadBuild(req, res) {
     throw new HttpError(404, "файл сборки не найден на сервере — попробуйте собрать заново");
   }
 
+  // Имя файла — по типу сборки, а не всегда "hookah-pos-...": иначе кассу и
+  // гостевое приложение (два независимых job'а от одного нажатия «Собрать
+  // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
+  // друга без переименования вручную.
+  const fileNamePrefix = job.type === "guest" ? "colibri-lounge" : "hookah-pos";
   res.writeHead(200, {
     "Content-Type": "application/vnd.android.package-archive",
     "Content-Length": stat.size,
-    "Content-Disposition": `attachment; filename="hookah-pos-${jobId}.apk"`,
+    "Content-Disposition": `attachment; filename="${fileNamePrefix}-${jobId}.apk"`,
     "Access-Control-Allow-Origin": "*",
   });
   fs.createReadStream(filePath).pipe(res);
