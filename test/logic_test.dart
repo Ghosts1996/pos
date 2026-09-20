@@ -25,6 +25,7 @@ import 'package:hookah_pos/services/subscription_gate.dart' show computeBlocked;
 import 'package:hookah_pos/services/tenant_config_service.dart';
 import 'package:hookah_pos/theme/app_theme.dart';
 import 'package:hookah_pos/theme/app_colors.dart';
+import 'package:hookah_pos/utils/constants.dart';
 import 'package:hookah_pos/utils/linkify_utils.dart';
 import 'package:hookah_pos/utils/phone_utils.dart';
 import 'package:hookah_pos/widgets/timer_display.dart';
@@ -1089,6 +1090,41 @@ void main() {
       expect(r.overtimePay, 0);
       expect(r.salesPercentPay, 100);
       expect(r.total, 100);
+    });
+  });
+
+  group('Настраиваемая длительность сеанса (AppConstants.sessionMinutes)', () {
+    tearDown(AppConstants.resetSessionMinutes);
+
+    test('formatSessionDuration — целые и дробные часы, минуты, "без ограничений"', () {
+      expect(AppConstants.formatSessionDuration(45), '45 мин');
+      expect(AppConstants.formatSessionDuration(60), '1 час');
+      expect(AppConstants.formatSessionDuration(90), '1.5 часа');
+      expect(AppConstants.formatSessionDuration(120), '2 часа');
+      expect(AppConstants.formatSessionDuration(300), '5 часов');
+      expect(AppConstants.formatSessionDuration(AppConstants.unlimitedSessionMinutes),
+          'без ограничений');
+    });
+
+    test('isUnlimitedMinutes/sessionUnlimited — по сентинелю, а не по случайно большому числу',
+        () {
+      expect(AppConstants.isUnlimitedMinutes(360), isFalse); // максимум обычного сеанса
+      expect(AppConstants.isUnlimitedMinutes(AppConstants.unlimitedSessionMinutes), isTrue);
+      AppConstants.sessionMinutes = AppConstants.unlimitedSessionMinutes;
+      expect(AppConstants.sessionUnlimited, isTrue);
+    });
+
+    test('isUnlimitedRemaining — реальный остаток (даже многократно продлённый) не путается с "без ограничений"',
+        () {
+      expect(AppConstants.isUnlimitedRemaining(const Duration(days: 5)), isFalse);
+      expect(AppConstants.isUnlimitedRemaining(const Duration(days: 30)), isFalse);
+      expect(AppConstants.isUnlimitedRemaining(const Duration(days: 3650)), isTrue);
+    });
+
+    test('resetSessionMinutes возвращает дефолт (1.5 часа)', () {
+      AppConstants.sessionMinutes = 120;
+      AppConstants.resetSessionMinutes();
+      expect(AppConstants.sessionMinutes, AppConstants.defaultSessionMinutes);
     });
   });
 }
