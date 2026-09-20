@@ -864,29 +864,38 @@ const DEMO_TABLES = [
   { name: "Стол 6", x: 0.75, y: 0.6, seats: 8, shape: "rect" },
 ];
 
+// Фото — стабильные ссылки на Wikimedia Commons (Special:FilePath — это
+// официально предназначенный для внешнего хотлинка редирект на текущий
+// файл, а не догадка о прямом пути на upload.wikimedia.org, который может
+// смениться при переименовании). Свободные лицензии, править/показывать
+// можно. Если конкретное фото когда-нибудь всё же пропадёт — не критично:
+// _MenuImage в приложении молча откатывается на нейтральную иконку вместо
+// сломанной картинки (см. menu_selection_screen.dart), а не ломает экран.
+const WIKI_FILE = (name) => `https://commons.wikimedia.org/wiki/Special:FilePath/${name}`;
+
 const DEMO_MENU = [
   {
     category: "Кальяны",
     items: [
-      { name: "Классический кальян", price: 1200 },
-      { name: "Кальян на молоке", price: 1500 },
-      { name: "Премиум-микс", price: 1800 },
+      { name: "Классический кальян", price: 1200, image: WIKI_FILE("Hookah_2.jpg") },
+      { name: "Кальян на молоке", price: 1500, image: WIKI_FILE("Hookah_0890.jpg") },
+      { name: "Премиум-микс", price: 1800, image: WIKI_FILE("Shisha_hookah.jpg") },
     ],
   },
   {
     category: "Напитки",
     items: [
-      { name: "Чай чёрный", price: 350 },
-      { name: "Лимонад", price: 400 },
-      { name: "Морс", price: 350 },
+      { name: "Чай чёрный", price: 350, image: WIKI_FILE("Cup_of_black_tea.JPG") },
+      { name: "Лимонад", price: 400, image: WIKI_FILE("Mug_of_Lemonade.jpg") },
+      { name: "Морс", price: 350, image: WIKI_FILE("Glass_of_Mango_Juice.jpg") },
     ],
   },
   {
     category: "Снэки",
     items: [
-      { name: "Орешки", price: 300 },
-      { name: "Фруктовая тарелка", price: 700 },
-      { name: "Чипсы", price: 250 },
+      { name: "Орешки", price: 300, image: WIKI_FILE("Mixed_nuts_small_white2.jpg") },
+      { name: "Фруктовая тарелка", price: 700, image: WIKI_FILE("Fruit_plate_with_fresh_fruits.jpg") },
+      { name: "Чипсы", price: 250, image: WIKI_FILE("Potato_Chips.jpg") },
     ],
   },
 ];
@@ -960,7 +969,7 @@ function seedDemoData(tenantRef, batch, nowMs) {
         name: item.name,
         price: item.price,
         available: true,
-        imageUrl: "",
+        imageUrl: item.image || "",
         weight: 0,
         weightUnit: "",
         inventoryItemId: "",
