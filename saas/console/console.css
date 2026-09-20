@@ -236,8 +236,23 @@ a:hover { filter: brightness(1.2); }
   .nav-drawer { transform: none; box-shadow: none; }
   .wrap.has-tabbar { max-width: none; margin: 0; padding: 32px 44px 40px 300px; }
   .wrap.has-tabbar > *:not(.nav-drawer):not(.nav-backdrop) { max-width: 760px; margin-left: auto; margin-right: auto; }
-  .wrap.wide { max-width: 1040px; }
 }
+
+/* Панель платформы (screenSuperAdmin) переиспользует тот же .has-tabbar
+   drawer/топ-бар, что и личный кабинет владельца, но контент там гораздо
+   плотнее (списки заведений, аналитика, журнал) — id вместо класса, чтобы
+   переопределить 760px из правила выше без лишних !important. На
+   мобильном (где то правило вообще не действует) 1040px ничего не ломает —
+   это лишь верхняя граница, реальная ширина всё равно ограничена экраном. */
+#admin-root { max-width: 1040px; }
+
+/* Вкладки панели платформы — переключение чистым CSS (показать/скрыть),
+   без пересоздания DOM: все watchXxx()-подписки (аналитика, заведения,
+   сборки и т.д.) остаются живыми и работающими вне зависимости от того,
+   какая вкладка сейчас видна, лишние сеть-запросы на переключение вкладки
+   не нужны. */
+.admin-tab-panel { display: none; }
+.admin-tab-panel.active { display: block; }
 
 .dash-greeting { font-size: 19px; font-weight: 700; margin-bottom: 14px; }
 
