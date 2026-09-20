@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.8-logo-upload-stall-guard';
+const CONSOLE_BUILD = '2026-09-20.9-overview-subscription-line';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1743,6 +1743,29 @@ function watchDashboardData(tenantId) {
       attentionItems.push({ tab: 'devices', text: 'Последняя сборка APK не удалась — попробуйте собрать снова или напишите в поддержку' });
     }
 
+    // Что видит владелец на "Обзоре" про саму подписку — название тарифа
+    // (а не только статус, который и так был виден строкой выше) и сколько
+    // дней осталось до следующего события (конец триала/списания/уже
+    // просрочено), одной строкой, без похода во вкладку "Оплата".
+    const subscriptionLine = (() => {
+      const plan = planName(plans, subscription?.planId);
+      const planText = plan ? `Тариф «${plan}»` : 'Тариф не выбран';
+      if (!subscription?.status) return planText;
+      if (subscription.status === 'trial') {
+        return `${planText} · пробный период${trialDaysLeft !== null
+          ? (trialDaysLeft > 0 ? `, осталось ${trialDaysLeft} ${pluralDays(trialDaysLeft)}` : ', заканчивается сегодня')
+          : ''}`;
+      }
+      if (subscription.status === 'active' && subscription.currentPeriodEnd) {
+        const periodDaysLeft = Math.ceil((subscription.currentPeriodEnd.toMillis() - Date.now()) / 86400000);
+        const verb = subscription.cancelAtPeriodEnd ? 'закончится' : 'продлится';
+        return `${planText} · активна, ${verb} через ${periodDaysLeft > 0 ? `${periodDaysLeft} ${pluralDays(periodDaysLeft)}` : 'меньше дня'} (${fmtDate(subscription.currentPeriodEnd)})`;
+      }
+      if (subscription.status === 'past_due') return `${planText} · оплата просрочена`;
+      if (subscription.status === 'cancelled') return `${planText} · отменена`;
+      return `${planText} · ${SUB_STATUS_LABELS[subscription.status] || subscription.status}`;
+    })();
+
     const overviewHtml = () => `
       <div class="dash-greeting">${esc(greetingLine())} 👋</div>
       <div class="card">
@@ -1752,6 +1775,10 @@ function watchDashboardData(tenantId) {
           Код: <code>${esc(tenant.slug || '')}</code> ·
           статус: ${esc(TENANT_STATUS_LABELS[tenant.status] || tenant.status || '—')} ·
           роль: ${esc(ROLE_LABELS[role] || role)}
+        </div>
+        <div class="small muted" style="margin-top:6px">
+          ${esc(subscriptionLine)} ·
+          <button class="btn-link f-dash-tab" data-tab="billing" style="width:auto">Подробнее</button>
         </div>
       </div>
       <div class="live-stats-grid">
