@@ -4,6 +4,7 @@ import 'app_scope.dart';
 import '../models/client_models.dart';
 import '../models/reservation_model.dart';
 import '../models/session_model.dart';
+import '../utils/constants.dart';
 import 'notification_service.dart';
 import 'staff_session_store.dart';
 
@@ -53,6 +54,12 @@ class SessionAlertsService {
   String _shiftEmployeeId = '';
   String _shiftEmployeeName = '';
   StreamSubscription? _shift;
+
+  /// Специализация вошедшего на ЭТОМ устройстве (см. AppConstants.position*
+  /// и Employee.position) — читается один раз при [start] вместе с
+  /// [_myEmployeeId]. Универсал (значение по умолчанию, пока владелец
+  /// никого не специализировал) видит все вызовы, ровно как было раньше.
+  String _myPosition = AppConstants.positionUniversal;
 
   /// Показывать ли уведомления на этом устройстве.
   ///
@@ -104,6 +111,15 @@ class SessionAlertsService {
     // вошедшего сотрудника в памяти процесса.
     _myEmployeeId = await StaffSessionStore.instance.savedEmployeeId();
     _deviceShiftOwnerId = await StaffSessionStore.instance.savedShiftOwnerId();
+    if (_myEmployeeId.isNotEmpty) {
+      try {
+        final doc = await AppScope.col('employees').doc(_myEmployeeId).get();
+        _myPosition = (doc.data()?['position'] as String?) ?? AppConstants.positionUniversal;
+      } catch (_) {
+        // Не удалось прочитать специализацию — считаем универсалом:
+        // безопасный дефолт, при котором ничего не потеряется.
+      }
+    }
     _watchShift();
 
     _watchSessions();
@@ -300,6 +316,13 @@ class SessionAlertsService {
 
         final c = WaiterCall.fromDoc(change.doc);
         if (!_mine) continue; // на смене другой сотрудник — это его вызов
+        // Специализация не совпадает — не моя часть вызовов (например,
+        // официант не должен получать вызов кальянщика на угли, если он
+        // явно назначен официантом, а не универсалом). Универсал видит всё.
+        if (_myPosition != AppConstants.positionUniversal &&
+            c.type.targetPosition != _myPosition) {
+          continue;
+        }
 
         unawaited(_notify.show(
           id: NotificationService.idFor('call_${c.id}'),

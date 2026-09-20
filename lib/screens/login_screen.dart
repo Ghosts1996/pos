@@ -5,6 +5,7 @@ import '../models/employee.dart';
 import '../services/app_scope.dart';
 import '../services/firestore_service.dart';
 import '../services/guest_link_service.dart';
+import '../services/push_service.dart';
 import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
 import '../services/staff_session_store.dart';
@@ -157,6 +158,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _enter(Employee employee) async {
     if (!mounted) return;
+    // Переподписка на топики специализации ПОСЛЕ входа — до этого момента
+    // приложение не знает, кто именно работает на этом планшете. Сюда же
+    // приходит и восстановленный вход, поэтому общий планшет, на котором
+    // сотрудники сменяют друг друга по PIN, всегда переподписан на того,
+    // кто сейчас вошёл (см. PushService.updateStaffPositionSubscription).
+    unawaited(PushService.instance.updateStaffPositionSubscription(employee));
     // Если открытой смены нет — спрашиваем, кто выходит в зал, и открываем
     // её на него. Спрашиваем именно здесь, а не после ввода PIN: сюда
     // приходит и восстановленный вход (PIN сохраняется на планшете), а

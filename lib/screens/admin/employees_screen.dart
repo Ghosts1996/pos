@@ -56,6 +56,11 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                         padding: EdgeInsets.only(left: 4),
                         child: Icon(Icons.payments_outlined, size: 14, color: Colors.green),
                       ),
+                    if (e.position != AppConstants.positionUniversal)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text('· ${AppConstants.positionLabel(e.position)}'),
+                      ),
                   ],
                 ),
                 trailing: IconButton(
@@ -99,6 +104,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     final nameCtrl = TextEditingController(text: emp?.name ?? '');
     final pinCtrl = TextEditingController(text: emp?.pinCode ?? '');
     String role = emp?.role ?? AppConstants.roleEmployee;
+    String position = emp?.position ?? AppConstants.positionUniversal;
 
     bool hourlyRateEnabled = emp?.hourlyRateEnabled ?? false;
     final hourlyRateCtrl = TextEditingController(text: _numStr(emp?.hourlyRate ?? 0));
@@ -158,6 +164,24 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                         }),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: position,
+                    decoration: const InputDecoration(labelText: 'Специализация'),
+                    items: AppConstants.employeePositions
+                        .map((p) => DropdownMenuItem(
+                              value: p,
+                              child: Text(AppConstants.positionLabel(p)),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setSt(() => position = v ?? AppConstants.positionUniversal),
+                  ),
+                  const Text(
+                    'Определяет, какие вызовы гостя из-за стола придут этому '
+                    'сотруднику (например, официант не будет получать вызов '
+                    'кальянщика на угли). Универсал получает все вызовы.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const Divider(height: 24),
                   Text('Зарплата', style: Theme.of(ctx).textTheme.titleSmall),
@@ -285,6 +309,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
       name: nameCtrl.text.trim(),
       pinCode: pin,
       role: role,
+      position: position,
       hourlyRateEnabled: hourlyRateEnabled,
       hourlyRate: hourlyRate,
       overtimeEnabled: overtimeEnabled,
