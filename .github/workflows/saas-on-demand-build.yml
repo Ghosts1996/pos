@@ -108,8 +108,15 @@ jobs:
             application_id: com.kolibriloungesaas
             gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
             appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
-            default_icon: assets/icon/kolibri.png
-            default_adaptive_icon: assets/icon/kolibri_foreground.png
+            # По умолчанию (владелец не загрузил свой логотип в «Брендинге»)
+            # гостевое приложение берёт ту же иконку, что и касса, а не
+            # отдельный колибри — так гость сразу видит фирменный знак
+            # платформы, а не логотип, который выглядит как чей-то чужой
+            # бренд, а не "ещё не настроено". Свой логотип владельца, если
+            # загружен (branding.logoUrl), по-прежнему полностью заменяет её
+            # — см. шаг "Generate app launcher icon" ниже.
+            default_icon: assets/icon/icon.png
+            default_adaptive_icon: assets/icon/icon_foreground.png
             default_label: 'Colibri Lounge'
             artifact_prefix: colibri-lounge-saas
     name: Build ${{ matrix.app }}

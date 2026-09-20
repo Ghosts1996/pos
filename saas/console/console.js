@@ -1529,6 +1529,12 @@ function watchDashboardData(tenantId) {
   // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
   // перерисовки (см. ниже), сбрасывается после успешного сохранения.
   let pendingLogoUrl = null;
+  // Пока идёт uploadBytes()/getDownloadURL() (см. обработчик f-logo-file
+  // ниже) — раньше «Сохранить брендинг» можно было нажать до того, как
+  // pendingLogoUrl вообще появился: имя/цвета сохранялись, тост говорил
+  // «Брендинг сохранён», а logoUrl в payload просто не попадал — выглядело
+  // как «загрузил лого, а оно не применилось», без единой ошибки на экране.
+  let logoUploading = false;
 
   const draw = () => {
     // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
@@ -2058,6 +2064,12 @@ function watchDashboardData(tenantId) {
             errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
             return;
           }
+          // Пока файл грузится в Storage, «Сохранить брендинг» заблокирована
+          // (см. ниже) — иначе клик по ней раньше, чем отработает
+          // uploadBytes()/getDownloadURL(), сохранял бы имя/цвета без ещё не
+          // готового pendingLogoUrl, и логотип молча не попадал бы в базу.
+          logoUploading = true;
+          if ($('f-save-branding')) $('f-save-branding').disabled = true;
           try {
             const fileName = `logo.${(file.type.split('/')[1] || 'png')}`;
             const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
@@ -2066,6 +2078,10 @@ function watchDashboardData(tenantId) {
             $('f-logo-preview').src = pendingLogoUrl;
           } catch (err) {
             errEl.textContent = `Не удалось загрузить: ${err?.message || err}`;
+            toast(`Логотип не загружен: ${err?.message || err}`);
+          } finally {
+            logoUploading = false;
+            if ($('f-save-branding')) $('f-save-branding').disabled = false;
           }
         };
       }
@@ -2073,6 +2089,10 @@ function watchDashboardData(tenantId) {
         $('f-save-branding').onclick = async () => {
           const errEl = $('f-branding-error');
           errEl.textContent = '';
+          if (logoUploading) {
+            errEl.textContent = 'Подождите, логотип ещё загружается…';
+            return;
+          }
           const btn = $('f-save-branding');
           btn.disabled = true;
           try {
