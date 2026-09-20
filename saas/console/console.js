@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.7-logo-upload-progress';
+const CONSOLE_BUILD = '2026-09-20.8-logo-upload-stall-guard';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1932,7 +1932,10 @@ function watchDashboardData(tenantId) {
               <input type="file" id="f-logo-file" accept="image/png,image/jpeg,image/webp">
               <div id="f-logo-progress-wrap" style="display:none;margin-top:6px">
                 <div class="upload-progress"><div class="upload-progress-bar" id="f-logo-progress-bar"></div></div>
-                <div class="small muted" id="f-logo-progress-text" style="margin-top:3px">Подготовка…</div>
+                <div class="row" style="margin-top:3px;justify-content:space-between">
+                  <div class="small muted" id="f-logo-progress-text">Подготовка…</div>
+                  <button class="btn-link" id="f-logo-cancel" type="button" style="width:auto">Отменить</button>
+                </div>
               </div>
               <div id="f-logo-error" class="small" style="color:var(--danger)"></div>
             </div>
@@ -2277,13 +2280,26 @@ function watchDashboardData(tenantId) {
           if (progressWrap) progressWrap.style.display = 'block';
           if (progressBar) progressBar.style.width = '0%';
           if (progressText) progressText.textContent = 'Подготовка…';
+          const cancelBtn = $('f-logo-cancel');
+          let stallTimer = null;
           try {
             const uploadFile = await resizeImageForUpload(file);
             const fileName = `logo.${uploadFile.type.split('/')[1] || 'png'}`;
             const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
             const task = uploadBytesResumable(fileRef, uploadFile, { contentType: uploadFile.type });
+            if (cancelBtn) cancelBtn.onclick = () => task.cancel();
+            // Если за 20 секунд не прилетело ни одного обновления прогресса —
+            // соединение, скорее всего, не просто медленное, а разорвано:
+            // uploadBytesResumable сам по себе НЕ отменяется по таймауту и
+            // молча висит сколько угодно, оставляя кнопку "Сохранить"
+            // заблокированной навсегда без единой подсказки, что происходит.
+            let lastProgressAt = Date.now();
+            stallTimer = setInterval(() => {
+              if (Date.now() - lastProgressAt > 20000) task.cancel();
+            }, 5000);
             await new Promise((resolve, reject) => {
               task.on('state_changed', (snap) => {
+                lastProgressAt = Date.now();
                 const pct = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
                 if (progressBar) progressBar.style.width = `${pct}%`;
                 if (progressText) progressText.textContent = `Загружается… ${pct}%`;
@@ -2292,9 +2308,14 @@ function watchDashboardData(tenantId) {
             pendingLogoUrl = await getDownloadURL(fileRef);
             if ($('f-logo-preview')) $('f-logo-preview').src = pendingLogoUrl;
           } catch (err) {
-            errEl.textContent = `Не удалось загрузить: ${err?.message || err}`;
-            toast(`Логотип не загружен: ${err?.message || err}`);
+            const canceled = err?.code === 'storage/canceled';
+            errEl.textContent = canceled
+              ? 'Загрузка прервана — слишком медленное или нестабильное соединение. Проверьте интернет и попробуйте снова.'
+              : `Не удалось загрузить: ${err?.message || err}`;
+            if (!canceled) toast(`Логотип не загружен: ${err?.message || err}`);
           } finally {
+            if (stallTimer) clearInterval(stallTimer);
+            if (cancelBtn) cancelBtn.onclick = null;
             URL.revokeObjectURL(localPreviewUrl);
             logoUploading = false;
             if (progressWrap) progressWrap.style.display = 'none';
