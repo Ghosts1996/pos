@@ -80,6 +80,16 @@ async function main() {
     check("POST /resumeSubscription без токена -> 401", r.status === 401);
   }
   {
+    const r = await request("POST", "/createCheckoutSession", { body: { tenantId: "x", planId: "start" } });
+    check("POST /createCheckoutSession без токена -> 401", r.status === 401);
+  }
+  {
+    // Проверка paymentId отваливается ДО обращения к ЮKassa/Firestore —
+    // тот же приём, что и у остальных тестов этого файла.
+    const r = await request("POST", "/billingWebhook", { body: { object: {} } });
+    check("POST /billingWebhook без object.id -> 400", r.status === 400);
+  }
+  {
     const r = await request("POST", "/completeBuildJob", {
       headers: { "x-callback-secret": "wrong-secret" },
       body: { jobId: "x", status: "success" },

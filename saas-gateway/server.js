@@ -22,12 +22,21 @@ const { execFile } = require("child_process");
  * только из Cloud Functions — значит, эти четыре операции можно перенести
  * на свой сервер, где они уже НЕ требуют Blaze вообще.
  *
+ * Приём оплаты через ЮKassa (`createCheckoutSession`, `handleBillingWebhook`,
+ * `chargeRecurringSubscriptions`, `enforceGracePeriod`) — тоже здесь, той же
+ * причине: платформа сначала не принимала реальные платежи (только
+ * тестовые/демо-заведения), поэтому перенос был отложен, но остаётся ровно
+ * тем же самым fetch-к-API-плюс-Admin-SDK кодом, что и остальное — см.
+ * секцию "billing (ЮKassa)" ниже. saas/functions/index.js эту логику
+ * по-прежнему тоже содержит (не удалялась) — как и в случае с
+ * createTenant/createBuildJob, это эталонная копия на случай, если Blaze
+ * когда-нибудь появится, но реально работает только версия здесь.
+ *
  * ЧТО ЭТИМ НЕ ЗАКРЫТО (сознательно, см. обсуждение с владельцем платформы):
- * приём оплаты через ЮKassa (`createCheckoutSession`, `handleBillingWebhook`,
- * `chargeRecurringSubscriptions`), приглашение сотрудников по email
- * (`inviteTenantMember`) — остаются на Cloud Functions/Blaze как есть. На
- * момент внедрения платформа ещё не принимает реальные платежи (только
- * тестовые/демо-заведения), так что это не блокирует текущий этап.
+ * приглашение сотрудников по email (`inviteTenantMember`) — остаётся на
+ * Cloud Functions/Blaze как есть (нужен Admin SDK auth().getUserByEmail —
+ * привилегированная операция, но сам по себе email-инвайт не блокирует
+ * приём платежей, поэтому его перенос отложен отдельно).
  *
  * `enableTenant`/`disableTenant`/`changeTenantPlan` (модерация из панели
  * супер-админа) и `deleteDemoTenant` (ручное удаление демо-заведения) —
@@ -65,6 +74,12 @@ const { execFile } = require("child_process");
  *     содержимым на main просто нет. Когда ветку в итоге смержат в main,
  *     достаточно прописать GITHUB_REF=main в /etc/saas-gateway.env и
  *     перезапустить сервис — код трогать не придётся.
+ *   YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY — реквизиты магазина ЮKassa (тот
+ *     же кабинет, что раньше настраивался под Secret Manager Cloud
+ *     Functions — теперь просто переменные окружения этого сервиса). После
+ *     переноса нужно один раз поменять URL webhook'а в личном кабинете
+ *     ЮKassa на https://<ваш-домен>/saas/billingWebhook — см. README.md,
+ *     раздел «Биллинг».
  */
 
 const GITHUB_OWNER = "Ghosts1996";
@@ -685,6 +700,347 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
   sendJson(res, 200, { ok: true });
 }
 
+// ------------------------------------------------------------ billing (ЮKassa)
+
+/**
+ * Перенесено из saas/functions/index.js — та же логика (createCheckoutSession,
+ * handleBillingWebhook, chargeRecurringSubscriptions, enforceGracePeriod) и
+ * та же причина, что и у createTenant/createBuildJob выше: весь этот код —
+ * REST-запросы к ЮKassa (обычный fetch) плюс запись в Firestore через Admin
+ * SDK, ни то ни другое не привязано к рантайму Cloud Functions и не требует
+ * Blaze. saas/functions/index.js НЕ трогаем и не удаляем оттуда — тот файл
+ * остаётся эталонной, готовой к деплою копией на случай, если Blaze
+ * когда-нибудь появится (тот же принцип, что уже применён к createTenant и
+ * остальным перенесённым операциям); реально с этого момента работает
+ * только копия здесь.
+ *
+ * Секреты — переменные окружения (см. README.md/setup.sh), а не Secret
+ * Manager, как раньше: YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY.
+ */
+
+const BILLING_PERIOD_DAYS = { monthly: 30, yearly: 365 };
+const GRACE_PERIOD_DAYS = 10;
+
+/** Цена тарифа за billingPeriod ('monthly'|'yearly'); yearly без заданного
+ *  priceRubYearly считается недоступным. */
+function planPriceForPeriod(plan, billingPeriod) {
+  if (billingPeriod === "yearly") return Number(plan.priceRubYearly) || 0;
+  return Number(plan.priceRub) || 0;
+}
+
+async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = {}) {
+  const shopId = process.env.YOOKASSA_SHOP_ID;
+  const secretKey = process.env.YOOKASSA_SECRET_KEY;
+  if (!shopId || !secretKey) {
+    throw new Error("YOOKASSA_SHOP_ID/YOOKASSA_SECRET_KEY не настроены на сервере");
+  }
+  const auth = Buffer.from(`${shopId}:${secretKey}`).toString("base64");
+  const headers = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
+  if (idempotenceKey) headers["Idempotence-Key"] = idempotenceKey;
+  const res = await fetch(`https://api.yookassa.ru/v3/${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`YooKassa ${method} ${path} -> ${res.status}: ${JSON.stringify(json)}`);
+  return json;
+}
+
+/**
+ * Создаёт платёж ЮKassa на оплату тарифа и возвращает ссылку на форму
+ * оплаты — консоль делает location.href на неё. Статус подписки/заведения
+ * НЕ меняется здесь (платёж ещё не оплачен, только создан) — единственное
+ * место, где статус становится "active", это handleBillingWebhook, после
+ * того как ЮKassa подтвердит оплату.
+ */
+async function handleCreateCheckoutSession(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, planId, returnUrl, billingPeriod: rawBillingPeriod } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  if (typeof planId !== "string" || !planId) throw new HttpError(400, "Не указан тариф");
+  if (typeof returnUrl !== "string" || !returnUrl) {
+    throw new HttpError(400, "Не передан адрес возврата после оплаты");
+  }
+  const billingPeriod = rawBillingPeriod === "yearly" ? "yearly" : "monthly";
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+
+  const planDoc = await db().collection("plans").doc(planId).get();
+  if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
+  const plan = planDoc.data();
+  const price = planPriceForPeriod(plan, billingPeriod);
+  if (price <= 0) {
+    throw new HttpError(412, billingPeriod === "yearly"
+      ? "Для этого тарифа не задана годовая цена — оформите помесячную оплату или обратитесь в поддержку"
+      : "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
+  }
+
+  const payment = await yookassaRequest("payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: { value: price.toFixed(2), currency: "RUB" },
+      capture: true,
+      save_payment_method: true,
+      confirmation: { type: "redirect", return_url: returnUrl },
+      description: `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+      metadata: { tenantId, planId, billingPeriod, purpose: "subscription" },
+    },
+  });
+
+  sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id });
+}
+
+/**
+ * Webhook ЮKassa — БЕЗ Firebase Auth, платёжная система не умеет посылать
+ * ID-токен. Подлинность — не по факту самого POST'а, а перепроверкой
+ * платежа напрямую в API ЮKassa своим секретным ключом (см. развёрнутый
+ * докстринг у handleBillingWebhook в saas/functions/index.js — тот же
+ * приём, ЮKassa официально не подписывает уведомления секретом, поэтому
+ * доверять телу запроса нельзя, только тому, что вернул сам API по id
+ * платежа). Идемпотентно через billingEvents/{paymentId} — повторная
+ * доставка того же уведомления не применяет оплату дважды.
+ */
+async function handleBillingWebhook(req, res) {
+  const body = await parseJsonBody(req);
+  const paymentId = body?.object?.id;
+  if (typeof paymentId !== "string" || !paymentId) throw new HttpError(400, "bad request");
+
+  let payment;
+  try {
+    payment = await yookassaRequest(`payments/${paymentId}`);
+  } catch (e) {
+    console.error("saas-gateway: не удалось перепроверить платёж в ЮKassa", e.message || e);
+    throw new HttpError(502, "upstream error");
+  }
+
+  const tenantId = payment.metadata?.tenantId;
+  const planId = payment.metadata?.planId;
+  // Старые платежи (до появления годовой оплаты) не несут этого поля —
+  // трактуем как помесячные, это было единственным вариантом на тот момент.
+  const billingPeriod = payment.metadata?.billingPeriod === "yearly" ? "yearly" : "monthly";
+  if (!tenantId || !planId) {
+    // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
+    // прислала его на наш webhook, отвечаем 200, чтобы не получать
+    // бесконечные повторы того, что мы всё равно никогда не обработаем.
+    sendJson(res, 200, { ok: true, ignored: true });
+    return;
+  }
+
+  const firestore = db();
+  const eventRef = firestore.collection("billingEvents").doc(paymentId);
+  const alreadyProcessed = await firestore.runTransaction(async (tx) => {
+    const seen = await tx.get(eventRef);
+    if (seen.exists) return true;
+    tx.set(eventRef, {
+      tenantId, planId, billingPeriod, status: payment.status,
+      // Сумма — для аналитики платформы (панель Super Admin, выручка): без
+      // неё пришлось бы на каждый показ дохода дёргать API ЮKassa отдельно
+      // по каждому платежу, вместо одного чтения Firestore.
+      amount: Number(payment.amount?.value) || 0,
+      purpose: payment.metadata?.purpose || "subscription",
+      receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return false;
+  });
+  if (alreadyProcessed) {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (payment.status === "succeeded") {
+    const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
+    const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + periodDays * 86400000);
+    const update = {
+      tenantId, planId, billingPeriod,
+      status: "active",
+      provider: "yookassa",
+      externalSubscriptionId: paymentId,
+      currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
+      currentPeriodEnd: periodEnd,
+      cancelAtPeriodEnd: false,
+    };
+    // save_payment_method делает способ оплаты сохранённым только с согласия
+    // платёжной системы — сохраняем payment_method_id, только когда ЮKassa
+    // это подтвердила.
+    if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
+
+    // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa будет
+    // бесконечно ретраить), если документ заведения почему-то ещё не
+    // существует — webhook обязан быть maximally resilient.
+    await firestore.collection("subscriptions").doc(tenantId).set(update, { merge: true });
+    await firestore.collection("tenants").doc(tenantId).set({
+      status: "active",
+      planId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId } });
+  } else if (payment.status === "canceled") {
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId } });
+  }
+
+  sendJson(res, 200, { ok: true });
+}
+
+/** Переводит и подписку, и само заведение в past_due синхронно и
+ *  фиксирует момент начала льготного периода — см. одноимённую функцию в
+ *  saas/functions/index.js, та же логика. Не трогает pastDueSince, если он
+ *  уже стоит — иначе повторный вызов отодвигал бы дедлайн удаления. */
+async function markPastDue(tenantId, subRef) {
+  const sub = (await subRef.get()).data();
+  const update = { status: "past_due" };
+  if (!sub?.pastDueSince) update.pastDueSince = admin.firestore.FieldValue.serverTimestamp();
+  await subRef.set(update, { merge: true });
+  await db().collection("tenants").doc(tenantId).set({
+    status: "past_due",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+/** Реально стирает операционные данные заведения после истечения льготного
+ *  периода — см. purgeTenantData в saas/functions/index.js, та же логика.
+ *  В отличие от purgeDemoTenant выше, здесь НАМЕРЕННО остаются сам
+ *  tenant-документ (статус "deleted") и подписка (статус "cancelled") —
+ *  история для поддержки/бухгалтерии, а не бесследное удаление, как у
+ *  демо-заведений. */
+async function purgeTenantData(tenantId) {
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+
+  for (const name of TENANT_SUBCOLLECTIONS) {
+    await firestore.recursiveDelete(tenantRef.collection(name));
+  }
+
+  const members = await firestore.collection("tenantMembers").where("tenantId", "==", tenantId).get();
+  if (!members.empty) {
+    const batch = firestore.batch();
+    members.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  await tenantRef.set({ status: "deleted", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await firestore.collection("subscriptions").doc(tenantId).set({ status: "cancelled" }, { merge: true });
+  await writeAuditLog({
+    tenantId, actorId: null, action: "tenantDataPurged",
+    metadata: { reason: "grace_period_expired", graceDays: GRACE_PERIOD_DAYS },
+  });
+}
+
+/** Раз в сутки продлевает подписки, у которых скоро закончится оплаченный
+ *  период — см. chargeRecurringSubscriptions в saas/functions/index.js,
+ *  та же логика (включая идемпотентность продления и 20-часовую защёлку
+ *  от повторных попыток в один и тот же день). */
+async function runChargeRecurringSubscriptions() {
+  const firestore = db();
+  const withinADay = admin.firestore.Timestamp.fromMillis(Date.now() + 86400000);
+  const subs = await firestore.collection("subscriptions")
+    .where("status", "==", "active")
+    .where("provider", "==", "yookassa")
+    .where("currentPeriodEnd", "<=", withinADay)
+    .get();
+
+  for (const subDoc of subs.docs) {
+    const sub = subDoc.data();
+    const tenantId = subDoc.id;
+    if (sub.cancelAtPeriodEnd) continue;
+    if (!sub.paymentMethodId) continue; // нечем продлить автоматически — сгорит в past_due само (см. runEnforceGracePeriod)
+
+    const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
+    if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
+
+    const planDoc = await firestore.collection("plans").doc(sub.planId).get();
+    const billingPeriod = sub.billingPeriod === "yearly" ? "yearly" : "monthly";
+    const price = planPriceForPeriod(planDoc.data() || {}, billingPeriod);
+    if (price <= 0) continue;
+
+    await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
+    try {
+      await yookassaRequest("payments", {
+        method: "POST",
+        // Ключ детерминирован от даты окончания периода — повторный прогон
+        // в тот же день не создаёт второй платёж, даже если что-то упало
+        // между первой попыткой и следующим тиком.
+        idempotenceKey: `renewal_${tenantId}_${sub.currentPeriodEnd.toMillis()}`,
+        body: {
+          amount: { value: price.toFixed(2), currency: "RUB" },
+          capture: true,
+          payment_method_id: sub.paymentMethodId,
+          description: `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+          metadata: { tenantId, planId: sub.planId, billingPeriod, purpose: "renewal" },
+        },
+      });
+    } catch (e) {
+      console.error(`saas-gateway: не удалось продлить ${tenantId}`, e.message || e);
+      await markPastDue(tenantId, subDoc.ref);
+      await writeAuditLog({ tenantId, actorId: null, action: "subscriptionRenewalFailed", metadata: { error: String(e) } });
+    }
+  }
+}
+
+/** Раз в сутки продвигает жизненный цикл подписки там, где
+ *  runChargeRecurringSubscriptions не справляется сама (просроченные
+ *  триалы, зависшие "active" без продления, реальное удаление данных
+ *  после GRACE_PERIOD_DAYS) — см. enforceGracePeriod в
+ *  saas/functions/index.js, та же логика в тех же трёх шагах. */
+async function runEnforceGracePeriod() {
+  const firestore = db();
+  const now = Date.now();
+  const nowTs = admin.firestore.Timestamp.fromMillis(now);
+
+  const expiredTrials = await firestore.collection("subscriptions")
+    .where("status", "==", "trial")
+    .where("trialEndsAt", "<=", nowTs)
+    .get();
+  for (const subDoc of expiredTrials.docs) {
+    await markPastDue(subDoc.id, subDoc.ref);
+    await writeAuditLog({ tenantId: subDoc.id, actorId: null, action: "trialExpired" });
+  }
+
+  const staleActive = await firestore.collection("subscriptions")
+    .where("status", "==", "active")
+    .where("currentPeriodEnd", "<=", nowTs)
+    .get();
+  for (const subDoc of staleActive.docs) {
+    const sub = subDoc.data();
+    // Списание могло быть запущено только сегодня — даём webhook'у сутки
+    // дойти, прежде чем считать подписку просроченной.
+    const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
+    if (now - lastAttemptMs < 24 * 3600000) continue;
+    await markPastDue(subDoc.id, subDoc.ref);
+  }
+
+  const deadline = admin.firestore.Timestamp.fromMillis(now - GRACE_PERIOD_DAYS * 86400000);
+  const overdue = await firestore.collection("subscriptions")
+    .where("status", "==", "past_due")
+    .where("pastDueSince", "<=", deadline)
+    .get();
+  for (const subDoc of overdue.docs) {
+    await purgeTenantData(subDoc.id);
+    console.log(`saas-gateway: данные заведения ${subDoc.id} стёрты по истечении льготного периода`);
+  }
+}
+
+// Раз в сутки — тот же интервал по смыслу, что и у двух отдельных Cloud
+// Functions на "every 24 hours" в saas/functions/index.js; здесь это один
+// таймер на оба шага, а не гарантия конкретного порядка/времени суток —
+// как и в оригинале, шаги независимы и защищены собственными проверками
+// (renewalAttemptedAt) от повторного срабатывания в тот же день.
+const BILLING_CRON_INTERVAL_MS = 24 * 3600 * 1000;
+function scheduleBillingCron() {
+  setInterval(async () => {
+    try {
+      await runChargeRecurringSubscriptions();
+    } catch (e) {
+      console.error("saas-gateway: ошибка автопродления подписок:", e.message || e);
+    }
+    try {
+      await runEnforceGracePeriod();
+    } catch (e) {
+      console.error("saas-gateway: ошибка проверки льготного периода:", e.message || e);
+    }
+  }, BILLING_CRON_INTERVAL_MS);
+}
+
 // --------------------------------------------------- completeBuildJob
 
 /**
@@ -1279,6 +1635,11 @@ const ROUTES = {
   "/changeTenantPlan": handleChangeTenantPlan,
   "/deleteDemoTenant": handleDeleteDemoTenant,
   "/getDownloadUrl": handleGetDownloadUrl,
+  "/createCheckoutSession": handleCreateCheckoutSession,
+  // Публичный (без Auth) адрес — его нужно прописать в личном кабинете
+  // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
+  // внутри самого handleBillingWebhook, не на уровне роутинга.
+  "/billingWebhook": handleBillingWebhook,
 };
 
 function runHandler(handler, req, res) {
@@ -1310,6 +1671,7 @@ const server = http.createServer((req, res) => {
 });
 
 scheduleDemoCleanup();
+scheduleBillingCron();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {

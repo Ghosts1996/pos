@@ -30,10 +30,21 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 Cloud Functions, просто ещё не задеплоенными — кнопки в консоли звали их
 и молча проваливались, пока платформой реально не начали пользоваться).
 
+Плюс биллинг ЮKassa — `createCheckoutSession` (создание платежа),
+`billingWebhook` (подтверждение оплаты — публичный адрес, его нужно
+прописать в личном кабинете ЮKassa, см. раздел «Биллинг» ниже),
+автопродление подписок и перевод в `past_due`/удаление данных по
+истечении льготного периода (два фоновых таймера раз в сутки, без
+`onSchedule` — та же идея, что и у `createDemoTenant`'а очистки). Тоже
+раньше было Cloud Functions (`createCheckoutSession`/`handleBillingWebhook`/
+`chargeRecurringSubscriptions`/`enforceGracePeriod` в `saas/functions/
+index.js`) — перенесено сюда по той же причине (Blaze недоступен), тот файл
+не менялся и остаётся эталонной копией на случай, если Blaze всё же
+появится.
+
 **Что НЕ переехало** (сознательно, см. обсуждение с владельцем платформы):
-приём оплаты через ЮKassa, приглашение сотрудников по email — остаются на
-Cloud Functions/Blaze. На момент внедрения платформа ещё не принимает
-реальные платежи, так что это не блокирует текущий этап.
+приглашение сотрудников по email (`inviteTenantMember`) — остаётся на
+Cloud Functions/Blaze, само по себе не блокирует приём платежей.
 
 **Изоляция данных**: этот сервис использует сервисный ключ ИМЕННО проекта
 `saas-3bdc8` — отдельного от `hoocah-pos` (личное заведение владельца
@@ -76,15 +87,39 @@ cd saas-gateway
    в одну строку. Нужен, чтобы `saas/guest-web/` на поддоменах
    `{slug}.hookahpos.su` мог инициализировать Firebase — см. `firebaseConfig`
    выше и докстринг `handleFirebaseWebConfig` в `server.js`.
+5. **Реквизиты магазина ЮKassa** (`YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`)
+   — тот же кабинет ЮKassa, что уже используется (или будет использоваться)
+   для приёма платежей. Личный кабинет ЮKassa → Настройки → API-ключи и
+   HTTP-уведомления → shopId и секретный ключ (или тестовые значения на
+   время проверки). См. раздел «Биллинг» ниже про webhook.
 
 **Если сервис уже установлен раньше** (обновляете существующий, а не
 ставите с нуля) — `setup.sh` повторно не запускать, просто добавить
-строку в уже существующий `/etc/saas-gateway.env`:
+строки в уже существующий `/etc/saas-gateway.env`:
 
 ```bash
 echo 'FIREBASE_WEB_CONFIG_JSON={"apiKey":"...","authDomain":"...",...}' >> /etc/saas-gateway.env
+echo 'YOOKASSA_SHOP_ID=...' >> /etc/saas-gateway.env
+echo 'YOOKASSA_SECRET_KEY=...' >> /etc/saas-gateway.env
 systemctl restart saas-gateway
 ```
+
+## Биллинг (ЮKassa) — что сделать один раз после переноса
+
+1. Добавить `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`
+   (см. выше) и перезапустить сервис.
+2. В личном кабинете ЮKassa → Настройки → API-ключи и HTTP-уведомления →
+   указать адрес webhook'а: `https://pii.hookahpos.su/saas/billingWebhook`
+   (замените домен, если у вас другой — тот же, что и у остальных ручек
+   этого сервиса, см. `SAAS_GATEWAY_URL` в `console.js`). Раньше это был
+   адрес Cloud Function `handleBillingWebhook` — если он там уже стоял,
+   просто замените на новый.
+3. Проверить: `curl -X POST https://pii.hookahpos.su/saas/billingWebhook`
+   без тела должен вернуть `{"error":"bad request"}` (400) — значит,
+   маршрут поднят и роутится правильно, а не 404.
+4. В `saas/console/console.js` ничего дополнительно менять не нужно —
+   `startCheckout()` уже обращается на `callSaasGateway('createCheckoutSession', ...)`,
+   то есть на этот сервис, а не на Cloud Function.
 
 ## nginx — добавить маршрут `/saas/` к уже настроенному домену
 
