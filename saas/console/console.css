@@ -4,19 +4,22 @@
    таббара и гостевых экранов: здесь только вход, создание заведения и
    личный кабинет. */
 :root {
-  /* Премиальная гамма самой платформы (не путать с брендингом заведений —
-     тот у каждого клиента свой, см. PREMIUM_PALETTES в console.js):
-     чёрный/серый/белый + тёмно-красный/бордовый — фирменный вид Hookah POS,
-     уместный именно для кальянного бизнеса. */
-  --bg: #0A0909;
-  --surface: #161313;
-  --surface-2: #201C1C;
-  --border: #362F2F;
-  --text: #F5F1EF;
-  --muted: #A89D9A;
-  --primary: #C23B4E;
-  --danger: #E5484D;
-  --warning: #E8A317;
+  /* Премиальная гамма самой платформы — тёмно-синяя, в одном семействе с
+     публичным лендингом (см. .landing ниже), чтобы личный кабинет ощущался
+     продолжением того же продукта, а не отдельным устаревшим экраном.
+     Поверхности чуть светлее, чем на лендинге: здесь персонал реально
+     работает весь день с плотными формами и списками карточек, а не
+     разглядывает один экран пару минут. */
+  --bg: #070B14;
+  --surface: #101827;
+  --surface-2: #17223A;
+  --border: #26324A;
+  --text: #F3F6FC;
+  --muted: #8DA0C7;
+  --primary: #2F6FED;
+  --primary-2: #59A6FF;
+  --danger: #FF5C6C;
+  --warning: #E7B24E;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; padding: 0; }
@@ -53,6 +56,7 @@ code {
   border-radius: 16px;
   padding: 16px;
   margin-bottom: 14px;
+  box-shadow: 0 12px 28px -18px rgba(0,0,0,.6);
 }
 .card.danger {
   border-color: var(--danger);
@@ -72,18 +76,25 @@ button, .btn {
   justify-content: center;
   gap: 8px;
   text-decoration: none;
+  transition: filter .15s ease, transform .15s ease, background-color .15s ease, border-color .15s ease;
 }
-.btn-primary { background: var(--primary); color: var(--text); }
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: #fff;
+  box-shadow: 0 10px 24px -8px rgba(47, 111, 237, .5);
+}
 .btn-ghost {
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
 }
+button:not(:disabled):hover, .btn:not(:disabled):hover { filter: brightness(1.1); }
 button:disabled { opacity: .5; cursor: default; }
 .btn-link {
   background: none; border: none; color: var(--primary);
   width: auto; padding: 4px 0; font-weight: 600;
 }
+.btn-link:hover { filter: brightness(1.25); }
 
 input, select, textarea {
   font: inherit;
@@ -94,11 +105,16 @@ input, select, textarea {
   border-radius: 12px;
   padding: 13px 14px;
   margin-bottom: 10px;
+  transition: border-color .15s ease;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--primary);
 }
 label.field { display: block; margin-bottom: 12px; }
 label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 
 a { color: var(--primary); }
+a:hover { filter: brightness(1.2); }
 
 .row { display: flex; align-items: center; gap: 10px; }
 .grow { flex: 1; min-width: 0; }
@@ -153,14 +169,32 @@ a { color: var(--primary); }
 .palette-swatch-colors span { flex: 1; }
 .palette-swatch-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
 
-/* Навигация личного кабинета владельца — на телефоне выдвижное меню по
-   кнопке ☰ (drawer поверх контента, с тёмной подложкой), на широком экране
-   тот же список превращается в постоянную боковую панель — один и тот же
-   HTML, разное поведение только через media query ниже. */
+/* Навигация личного кабинета владельца — на телефоне гамбургер живёт в
+   ЗАФИКСИРОВАННОЙ верхней панели (.dash-topbar), а не в потоке контента
+   вкладки: раньше кнопка ☰ была обычным блочным элементом внутри
+   dash-body и на телефоне уезжала туда, где HTML-строка с ней оказывалась
+   после конкатенации (в конец, под всеми плитками «Быстрого доступа») —
+   теперь она всегда на своём месте независимо от длины контента вкладки.
+   На широком экране .dash-topbar скрыт, а drawer превращается в
+   постоянную боковую панель — один и тот же HTML, разное поведение через
+   media query ниже. */
+.dash-topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.dash-topbar-title { min-width: 0; flex: 1; }
+.dash-topbar-tenant {
+  font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-topbar-tab { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrap.has-tabbar { padding-top: 78px; }
+
 .hamburger-btn {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   width: 42px; height: 42px; padding: 0; border-radius: 12px; font-size: 19px;
-  flex: none; margin-bottom: 18px;
+  flex: none;
 }
 .nav-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 25;
@@ -172,31 +206,56 @@ a { color: var(--primary); }
   background: var(--surface); border-right: 1px solid var(--border);
   padding: 20px 14px; z-index: 30; overflow-y: auto;
   transform: translateX(-100%); transition: transform .22s ease;
+  box-shadow: 20px 0 50px rgba(0,0,0,.35);
 }
 .nav-drawer.open { transform: translateX(0); }
-.nav-drawer-brand { color: var(--primary); letter-spacing: .12em; text-transform: uppercase; font-weight: 700; font-size: 13px; margin-bottom: 18px; padding: 0 8px; }
+.nav-drawer-brand { color: var(--primary); letter-spacing: .12em; text-transform: uppercase; font-weight: 700; font-size: 13px; margin-bottom: 4px; padding: 0 8px; }
+.nav-drawer-tenant {
+  color: var(--muted); font-size: 12.5px; margin: 0 0 16px; padding: 0 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nav-drawer .field { padding: 0 8px; margin-bottom: 16px; }
 .nav-item {
   display: flex; align-items: center; gap: 11px; width: 100%;
   background: none; border: none; color: var(--muted); text-align: left;
-  font: inherit; font-size: 14px; font-weight: 600; padding: 11px 10px;
+  font: inherit; font-size: 14px; font-weight: 600; padding: 9px 10px;
   border-radius: 10px; cursor: pointer; position: relative;
 }
+.nav-item:hover { color: var(--text); background: var(--surface-2); }
 .nav-item.active { color: var(--text); background: var(--surface-2); }
-.nav-item .nav-icon { font-size: 17px; width: 22px; text-align: center; flex: none; }
+.nav-item .nav-icon {
+  font-size: 15px; width: 30px; height: 30px; border-radius: 9px; flex: none;
+  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+}
+.nav-item.active .nav-icon { background: var(--primary); }
 .nav-item .nav-dot { position: absolute; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .nav-divider { height: 1px; background: var(--border); margin: 10px 4px; }
 
 @media (min-width: 860px) {
-  .hamburger-btn, .nav-backdrop { display: none; }
+  .dash-topbar, .nav-backdrop { display: none; }
   .nav-drawer { transform: none; box-shadow: none; }
-  .wrap.has-tabbar { max-width: none; margin: 0; padding: 32px 40px 40px 300px; }
-  .wrap.has-tabbar > *:not(.nav-drawer):not(.nav-backdrop) { max-width: 640px; }
+  .wrap.has-tabbar { max-width: none; margin: 0; padding: 32px 44px 40px 300px; }
+  .wrap.has-tabbar > *:not(.nav-drawer):not(.nav-backdrop) { max-width: 760px; margin-left: auto; margin-right: auto; }
+  .wrap.wide { max-width: 1040px; }
 }
 
 .quick-actions {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
 }
 .quick-actions .btn { flex-direction: row; justify-content: flex-start; padding: 14px; }
+/* Иконка вынесена в отдельный span (а не просто "эмодзи + пробел + текст"
+   одной строкой) — иначе на некоторых экранах эмодзи-глиф и подпись кнопки
+   визуально слипаются в одно пятно без ритма между ними. */
+.btn-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1; flex: none;
+}
+
+/* Плитки статистики в панели платформы — 2 колонки на телефоне, до 6 в ряд
+   на широком экране вместо вечных 2 колонок с кучей пустого места сбоку. */
+.admin-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (min-width: 640px) { .admin-stat-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 860px) { .admin-stat-grid { grid-template-columns: repeat(6, 1fr); } }
 
 /* Лендинг: сетка карточек возможностей вместо плоского списка строк —
    ощущается как продукт, а не как техническая справка. */

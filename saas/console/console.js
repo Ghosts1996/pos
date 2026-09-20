@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.3-debug';
+const CONSOLE_BUILD = '2026-09-20.4-premium-console';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -186,6 +186,10 @@ function clearScreen() {
   // сама) — без явного снятия здесь она осталась бы висеть на #screen и
   // после ухода на любой другой экран (вход, кабинет и т.д.).
   screenEl().classList.remove('landing');
+  // Расширенный контейнер панели платформы (screenSuperAdmin() включает
+  // сам) — таблицы/аналитика там плотнее обычного личного кабинета и
+  // выигрывают от более широкой колонки на десктопе.
+  screenEl().classList.remove('wide');
 }
 function sub(off) { state.screenSubs.push(off); }
 
@@ -1521,25 +1525,10 @@ const FAQ_ITEMS = [
 
 function screenDashboard() {
   screenEl().classList.add('has-tabbar');
-  screenEl().innerHTML = `
-    ${state.tenants.length > 1 ? `
-      <label class="field"><span>Заведение</span>
-        <select id="f-tenant-pick">
-          ${state.tenants.map((t) => `
-            <option value="${esc(t.id)}" ${t.id === state.activeTenantId ? 'selected' : ''}>${esc(t.name || t.id)}</option>
-          `).join('')}
-        </select>
-      </label>` : ''}
-    <div id="dash-body"><div class="spinner"></div></div>
-  `;
-
-  if (state.tenants.length > 1) {
-    $('f-tenant-pick').onchange = (e) => {
-      state.activeTenantId = e.target.value;
-      route();
-    };
-  }
-
+  // Переключатель заведения (для владельцев с несколькими точками) живёт
+  // внутри drawer (см. dashboardNavHtml) — доступен с любой вкладки, а не
+  // только пока открыт "Обзор", и не толкает контент вниз на телефоне.
+  screenEl().innerHTML = `<div id="dash-body"><div class="spinner"></div></div>`;
   watchDashboardData(state.activeTenantId);
 }
 
@@ -1556,12 +1545,28 @@ const DASHBOARD_NAV = [
   { id: 'support', icon: '💬', label: 'Поддержка' },
 ];
 
-function dashboardNavHtml(activeTab, showBillingDot) {
+function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
+  const activeMeta = DASHBOARD_NAV.find((t) => t.id === activeTab);
   return `
-    <button class="hamburger-btn" id="f-nav-open">☰</button>
+    <div class="dash-topbar">
+      <button class="hamburger-btn" id="f-nav-open">☰</button>
+      <div class="dash-topbar-title">
+        <div class="dash-topbar-tenant">${esc(tenantName || 'Hookah POS')}</div>
+        <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
+      </div>
+    </div>
     <div class="nav-backdrop" id="nav-backdrop"></div>
     <div class="nav-drawer" id="nav-drawer">
       <div class="nav-drawer-brand">Hookah POS</div>
+      ${state.tenants.length > 1 ? `
+        <label class="field"><span>Заведение</span>
+          <select id="f-nav-tenant-pick">
+            ${state.tenants.map((t) => `
+              <option value="${esc(t.id)}" ${t.id === state.activeTenantId ? 'selected' : ''}>${esc(t.name || t.id)}</option>
+            `).join('')}
+          </select>
+        </label>
+      ` : `<div class="nav-drawer-tenant">${esc(tenantName || '')}</div>`}
       ${DASHBOARD_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
           <span class="nav-icon">${t.icon}</span>
@@ -1691,12 +1696,12 @@ function watchDashboardData(tenantId) {
       ` : ''}
       <div class="small muted" style="margin-bottom:8px">Быстрый доступ</div>
       <div class="quick-actions">
-        <button class="btn btn-ghost f-dash-tab" data-tab="devices">📲 Устройства</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="billing">💳 Оплата</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="branding">🎨 Брендинг</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="team">👥 Команда</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="faq">❓ FAQ</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="support">💬 Поддержка</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="devices"><span class="btn-icon">📲</span> Устройства</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="billing"><span class="btn-icon">💳</span> Оплата</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="branding"><span class="btn-icon">🎨</span> Брендинг</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="team"><span class="btn-icon">👥</span> Команда</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="faq"><span class="btn-icon">❓</span> FAQ</button>
+        <button class="btn btn-ghost f-dash-tab" data-tab="support"><span class="btn-icon">💬</span> Поддержка</button>
       </div>
     `;
 
@@ -2046,7 +2051,7 @@ function watchDashboardData(tenantId) {
       branding: brandingHtml, team: teamHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml,
     };
-    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null);
+    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name);
 
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
       el.onclick = (e) => {
@@ -2067,6 +2072,12 @@ function watchDashboardData(tenantId) {
     if (navBackdrop) navBackdrop.onclick = closeNav;
     document.querySelectorAll('.f-dash-tab').forEach((el) => { el.addEventListener('click', closeNav); });
     if ($('f-nav-signout')) $('f-nav-signout').onclick = () => signOut(state.auth);
+    if ($('f-nav-tenant-pick')) {
+      $('f-nav-tenant-pick').onchange = (e) => {
+        state.activeTenantId = e.target.value;
+        route();
+      };
+    }
     if ($('f-profile-signout')) $('f-profile-signout').onclick = () => signOut(state.auth);
 
     document.querySelectorAll('.faq-item').forEach((el) => {
@@ -2554,6 +2565,7 @@ function screenSuperAdmin() {
   const backLink = state.tenants.length
     ? '<a href="#/" class="btn-link">← В консоль</a>'
     : '<a href="#/onboarding" class="btn-link">Своё заведение</a>';
+  screenEl().classList.add('wide');
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div class="brand">Hookah POS · платформа</div>
@@ -2566,15 +2578,15 @@ function screenSuperAdmin() {
 
     <h2>Аналитика</h2>
     <div id="admin-analytics"><div class="spinner"></div></div>
-    <button class="btn btn-ghost" id="f-export-payments-csv" style="margin:10px 0 14px">Экспорт последних платежей в CSV</button>
+    <button class="btn btn-ghost" id="f-export-payments-csv" style="width:auto;margin:10px 0 14px">Экспорт последних платежей в CSV</button>
 
     <h2>Тарифы</h2>
     <div id="admin-plans"><div class="spinner"></div></div>
-    <button class="btn btn-ghost" id="f-new-plan" style="margin-bottom:14px">Добавить тариф</button>
+    <button class="btn btn-ghost" id="f-new-plan" style="width:auto;margin-bottom:14px">Добавить тариф</button>
 
     <h2>Все заведения</h2>
-    <div class="row" style="margin-bottom:14px">
-      <input id="f-tenant-search" class="grow" placeholder="Название, код или email владельца">
+    <div class="row" style="margin-bottom:14px;flex-wrap:wrap">
+      <input id="f-tenant-search" class="grow" placeholder="Название, код или email владельца" style="min-width:220px">
       <select id="f-tenant-status-filter" style="width:auto">
         <option value="">Все статусы</option>
         <option value="trial">Пробный период</option>
@@ -2583,8 +2595,8 @@ function screenSuperAdmin() {
         <option value="suspended">Приостановлено</option>
         <option value="cancelled">Отменено</option>
       </select>
+      <button class="btn btn-ghost" id="f-export-tenants-csv" style="width:auto">Экспорт в CSV</button>
     </div>
-    <button class="btn btn-ghost" id="f-export-tenants-csv" style="margin-bottom:14px">Экспорт заведений в CSV</button>
     <div id="admin-body"><div class="spinner"></div></div>
 
     <h2>Сотрудники платформы</h2>
@@ -3167,7 +3179,7 @@ function watchAnalytics() {
       </div>
     `;
     body.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="admin-stat-grid">
         ${tile('Всего заведений', tenants.length)}
         ${tile('Активных подписок', activeCount)}
         ${tile('MRR (оценка)', `${mrr.toLocaleString('ru-RU')} ₽`)}
