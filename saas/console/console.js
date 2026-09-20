@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.11-no-colibri-lounge-text';
+const CONSOLE_BUILD = '2026-09-21.1-admin-nav-redesign';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -220,10 +220,6 @@ function clearScreen() {
   // сама) — без явного снятия здесь она осталась бы висеть на #screen и
   // после ухода на любой другой экран (вход, кабинет и т.д.).
   screenEl().classList.remove('landing');
-  // Расширенный контейнер панели платформы (screenSuperAdmin() включает
-  // сам) — таблицы/аналитика там плотнее обычного личного кабинета и
-  // выигрывают от более широкой колонки на десктопе.
-  screenEl().classList.remove('wide');
 }
 function sub(off) { state.screenSubs.push(off); }
 
@@ -2802,69 +2798,167 @@ function updateBrandPreview() {
 
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ (СУПЕР-АДМИН) ----------
 
-function screenSuperAdmin() {
+const ADMIN_NAV = [
+  { id: 'overview', icon: '🏠', label: 'Обзор' },
+  { id: 'tenants', icon: '🏢', label: 'Заведения' },
+  { id: 'plans', icon: '💎', label: 'Тарифы' },
+  { id: 'builds', icon: '📲', label: 'Сборки APK' },
+  { id: 'broadcasts', icon: '📣', label: 'Объявления' },
+  { id: 'support', icon: '💬', label: 'Поддержка' },
+  { id: 'staff', icon: '🛠️', label: 'Сотрудники платформы' },
+  { id: 'audit', icon: '📜', label: 'Журнал' },
+  { id: 'security', icon: '🔒', label: 'Безопасность' },
+];
+
+function adminNavHtml(activeTab) {
+  const activeMeta = ADMIN_NAV.find((t) => t.id === activeTab);
   // Супер-админ без своего заведения по умолчанию и так уже здесь (см.
-  // route()) — "← В консоль" вёл бы его в никуда (обратно на эту же
-  // панель). Ему нужна не ссылка назад, а явный путь завести СВОЁ
-  // заведение, если он вообще этого хочет.
-  const backLink = state.tenants.length
-    ? '<a href="#/" class="btn-link">← В консоль</a>'
-    : '<a href="#/onboarding" class="btn-link">Своё заведение</a>';
-  screenEl().classList.add('wide');
-  screenEl().innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hookah POS · платформа</div>
-      ${backLink}
+  // route()) — "В консоль" вёл бы его в никуда (обратно на эту же панель).
+  // Ему нужен не переход назад, а явный путь завести СВОЁ заведение, если
+  // он вообще этого хочет.
+  const consoleLink = state.tenants.length
+    ? '<a href="#/" class="nav-item" style="text-decoration:none"><span class="nav-icon">↩</span><span>В консоль</span></a>'
+    : '<a href="#/onboarding" class="nav-item" style="text-decoration:none"><span class="nav-icon">➕</span><span>Своё заведение</span></a>';
+  return `
+    <div class="dash-topbar">
+      <button class="hamburger-btn" id="f-admin-nav-open">☰</button>
+      <div class="dash-topbar-title">
+        <div class="dash-topbar-tenant">Hookah POS · платформа</div>
+        <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
+      </div>
     </div>
-    <h1>Панель платформы</h1>
-
-    <h2>Требует внимания</h2>
-    <div id="admin-attention"><div class="spinner"></div></div>
-
-    <h2>Аналитика</h2>
-    <div id="admin-analytics"><div class="spinner"></div></div>
-    <button class="btn btn-ghost" id="f-export-payments-csv" style="width:auto;margin:10px 0 14px">Экспорт последних платежей в CSV</button>
-
-    <h2>Тарифы</h2>
-    <div id="admin-plans"><div class="spinner"></div></div>
-    <button class="btn btn-ghost" id="f-new-plan" style="width:auto;margin-bottom:14px">Добавить тариф</button>
-
-    <h2>Все заведения</h2>
-    <div class="row" style="margin-bottom:14px;flex-wrap:wrap">
-      <input id="f-tenant-search" class="grow" placeholder="Название, код или email владельца" style="min-width:220px">
-      <select id="f-tenant-status-filter" style="width:auto">
-        <option value="">Все статусы</option>
-        <option value="trial">Пробный период</option>
-        <option value="active">Активно</option>
-        <option value="pastDue">Просрочена оплата</option>
-        <option value="suspended">Приостановлено</option>
-        <option value="cancelled">Отменено</option>
-      </select>
-      <button class="btn btn-ghost" id="f-export-tenants-csv" style="width:auto">Экспорт в CSV</button>
+    <div class="nav-backdrop" id="admin-nav-backdrop"></div>
+    <div class="nav-drawer" id="admin-nav-drawer">
+      <div class="nav-drawer-brand">Hookah POS</div>
+      <div class="nav-drawer-tenant">Панель платформы</div>
+      ${ADMIN_NAV.map((t) => `
+        <button class="nav-item${t.id === activeTab ? ' active' : ''} f-admin-tab" data-tab="${t.id}">
+          <span class="nav-icon">${t.icon}</span>
+          <span>${esc(t.label)}</span>
+        </button>
+      `).join('')}
+      <div class="nav-divider"></div>
+      ${consoleLink}
+      <div class="nav-divider"></div>
+      <button class="nav-item" id="f-admin-signout">
+        <span class="nav-icon">↪</span><span>Выйти</span>
+      </button>
     </div>
-    <div id="admin-body"><div class="spinner"></div></div>
-
-    <h2>Сотрудники платформы</h2>
-    <p class="small muted">Есть полный доступ к панели платформы — назначайте
-    только тем, кому лично доверяете. Кандидат должен СНАЧАЛА сам
-    зарегистрироваться в этой консоли (email + пароль) и подтвердить почту —
-    только тогда его можно найти по email и назначить.</p>
-    <div id="admin-super-admins"><div class="spinner"></div></div>
-    <div class="card">
-      <label class="field"><span>Назначить супер-админом по email</span>
-        <input id="f-super-admin-email" type="email" placeholder="coworker@example.com">
-      </label>
-      <button class="btn btn-ghost" id="f-super-admin-grant">Назначить</button>
-      <div id="f-super-admin-error" class="small" style="color:var(--danger);margin-top:8px"></div>
-    </div>
-
-    <h2>Сборки APK</h2>
-    <div id="admin-builds"><div class="spinner"></div></div>
-
-    <h2>Журнал платформы</h2>
-    <div id="admin-audit"><div class="spinner"></div></div>
-    ${versionFooterHtml()}
   `;
+}
+
+function screenSuperAdmin() {
+  screenEl().classList.add('has-tabbar');
+  screenEl().innerHTML = `
+    <div id="admin-root">
+      ${adminNavHtml('overview')}
+
+      <div class="admin-tab-panel active" data-panel="overview">
+        <h1>Обзор</h1>
+        <h2>Требует внимания</h2>
+        <div id="admin-attention"><div class="spinner"></div></div>
+
+        <h2>Инфраструктура</h2>
+        <div id="admin-infra"><p class="small muted">Раздел в разработке.</p></div>
+
+        <h2>Аналитика</h2>
+        <div id="admin-analytics"><div class="spinner"></div></div>
+        <button class="btn btn-ghost" id="f-export-payments-csv" style="width:auto;margin:10px 0 14px">Экспорт последних платежей в CSV</button>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="tenants">
+        <h1>Заведения</h1>
+        <div class="row" style="margin-bottom:14px;flex-wrap:wrap">
+          <input id="f-tenant-search" class="grow" placeholder="Название, код или email владельца" style="min-width:220px">
+          <select id="f-tenant-status-filter" style="width:auto">
+            <option value="">Все статусы</option>
+            <option value="trial">Пробный период</option>
+            <option value="active">Активно</option>
+            <option value="pastDue">Просрочена оплата</option>
+            <option value="suspended">Приостановлено</option>
+            <option value="cancelled">Отменено</option>
+          </select>
+          <button class="btn btn-ghost" id="f-export-tenants-csv" style="width:auto">Экспорт в CSV</button>
+        </div>
+        <div id="admin-body"><div class="spinner"></div></div>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="plans">
+        <h1>Тарифы</h1>
+        <div id="admin-plans"><div class="spinner"></div></div>
+        <button class="btn btn-ghost" id="f-new-plan" style="width:auto;margin-bottom:14px">Добавить тариф</button>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="builds">
+        <h1>Сборки APK</h1>
+        <div id="admin-builds"><div class="spinner"></div></div>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="broadcasts">
+        <h1>Объявления</h1>
+        <p class="small muted">Раздел в разработке.</p>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="support">
+        <h1>Поддержка</h1>
+        <p class="small muted">Раздел в разработке.</p>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="staff">
+        <h1>Сотрудники платформы</h1>
+        <p class="small muted">Есть полный доступ к панели платформы — назначайте
+        только тем, кому лично доверяете. Кандидат должен СНАЧАЛА сам
+        зарегистрироваться в этой консоли (email + пароль) и подтвердить почту —
+        только тогда его можно найти по email и назначить.</p>
+        <div id="admin-super-admins"><div class="spinner"></div></div>
+        <div class="card">
+          <label class="field"><span>Назначить супер-админом по email</span>
+            <input id="f-super-admin-email" type="email" placeholder="coworker@example.com">
+          </label>
+          <button class="btn btn-ghost" id="f-super-admin-grant">Назначить</button>
+          <div id="f-super-admin-error" class="small" style="color:var(--danger);margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="audit">
+        <h1>Журнал платформы</h1>
+        <div id="admin-audit"><div class="spinner"></div></div>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="security">
+        <h1>Безопасность</h1>
+        <p class="small muted">Раздел в разработке.</p>
+      </div>
+
+      ${versionFooterHtml()}
+    </div>
+  `;
+
+  document.querySelectorAll('.f-admin-tab').forEach((el) => {
+    el.onclick = () => {
+      const tab = el.dataset.tab;
+      document.querySelectorAll('.f-admin-tab').forEach((b) => b.classList.toggle('active', b === el));
+      document.querySelectorAll('.admin-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.panel === tab));
+      const topbarTab = document.querySelector('.dash-topbar-tab');
+      if (topbarTab) topbarTab.textContent = ADMIN_NAV.find((t) => t.id === tab)?.label || '';
+      closeAdminNav();
+    };
+  });
+  const adminNavDrawer = $('admin-nav-drawer');
+  const adminNavBackdrop = $('admin-nav-backdrop');
+  function closeAdminNav() {
+    adminNavDrawer?.classList.remove('open');
+    adminNavBackdrop?.classList.remove('open');
+  }
+  if ($('f-admin-nav-open')) {
+    $('f-admin-nav-open').onclick = () => {
+      adminNavDrawer?.classList.add('open');
+      adminNavBackdrop?.classList.add('open');
+    };
+  }
+  if (adminNavBackdrop) adminNavBackdrop.onclick = closeAdminNav;
+  if ($('f-admin-signout')) $('f-admin-signout').onclick = () => signOut(state.auth);
+
   watchAllTenants();
   watchAuditLog();
   watchPlans();
