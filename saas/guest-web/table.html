@@ -126,6 +126,7 @@
       На iPhone приложение не ставится — там работает версия в браузере,
       кнопка выше. Умеет то же самое.
     </p>
+    <p class="hint" id="brand-debug" style="opacity:.5"></p>
   </div>
 
 </div>
@@ -234,34 +235,52 @@
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
+  // ВРЕМЕННО: короткая метка на самом экране (не только в консоли браузера) —
+  // с телефона у гостя/владельца обычно нет под рукой DevTools, а по одному
+  // "не поменялось" не видно, на каком именно шаге сломалось. Снять после
+  // того, как брендинг подтверждённо заработает на реальном поддомене.
+  function dbg(text) {
+    var el = document.getElementById('brand-debug');
+    if (el) el.textContent = text;
+  }
+
   (async function () {
     var GATEWAY = 'https://pii.hookahpos.su/saas';
     var slug = window.__tableSlug;
-    if (!slug) return;
+    if (!slug) { dbg('DEBUG: нет slug из адреса'); return; }
     try {
+      dbg('DEBUG: resolveTenantBySlug(' + slug + ')…');
       var resolveResp = await fetch(GATEWAY + '/resolveTenantBySlug', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug: slug }),
       });
-      var resolveJson = await resolveResp.json();
-      if (!resolveJson || !resolveJson.tenantId) return;
+      var resolveJson = await resolveResp.json().catch(() => null);
+      if (!resolveResp.ok || !resolveJson || !resolveJson.tenantId) {
+        dbg('DEBUG: resolveTenantBySlug HTTP ' + resolveResp.status + ' ' + JSON.stringify(resolveJson));
+        return;
+      }
 
       // Тот же путь получения конфига, что и в app.js: у этого поддомена
       // нет своего Firebase Hosting, поэтому магического
       // /__/firebase/init.json здесь нет — берём с домена консоли (отдаёт
       // его с открытым CORS, это публичные, некопаемые ключи веб-приложения).
+      dbg('DEBUG: tenantId=' + resolveJson.tenantId + ', беру firebase config…');
       var configResp = await fetch('https://hookahpos.su/__/firebase/init.json');
-      var config = await configResp.json();
-      if (!config || !config.projectId) return;
+      var config = await configResp.json().catch(() => null);
+      if (!configResp.ok || !config || !config.projectId) {
+        dbg('DEBUG: init.json HTTP ' + configResp.status + ' ' + JSON.stringify(config));
+        return;
+      }
 
       var app = initializeApp(config);
       var db = getFirestore(app);
       // branding/config читается совсем без входа (saas/firestore.rules:
       // "allow read: if true" — см. её же комментарий, почему), поэтому
       // без анонимного входа и без лишнего аккаунта на каждый заход сюда.
+      dbg('DEBUG: читаю branding/config…');
       var snap = await getDoc(doc(db, 'tenants', resolveJson.tenantId, 'branding', 'config'));
-      if (!snap.exists()) return;
+      if (!snap.exists()) { dbg('DEBUG: branding/config не существует'); return; }
       var b = snap.data();
       var root = document.documentElement.style;
       if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
@@ -273,9 +292,11 @@
         document.getElementById('brand-opening').textContent = b.appName;
         document.getElementById('brand-install').textContent = b.appName;
       }
+      dbg('DEBUG: применено, primary=' + (b.primaryColor || '—'));
     } catch (e) {
       // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
-      // причину теперь видно в консоли браузера (F12 → Console).
+      // причину теперь видно прямо на экране и в консоли браузера.
+      dbg('DEBUG error: ' + (e && e.message || e));
       console.error('Брендинг стола не применился:', e);
     }
   })();
