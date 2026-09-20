@@ -20,11 +20,15 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 `downloadBuild` (выдача готового личного APK владельцу), `publicGuestApk`
 (скачивание гостевого APK по QR со стола — БЕЗ Firebase Auth: гость,
 наведший камеру, не входил ни в один SaaS-аккаунт; отдаёт только
-`type: "guest"`, кассу так получить нельзя ни при каком slug) и модерация
-из панели супер-админа — `enableTenant`/`disableTenant`/`changeTenantPlan`/
-`deleteDemoTenant` (эти четыре тоже раньше числились Cloud Functions,
-просто ещё не задеплоенными — кнопки в консоли звали их и молча
-проваливались, пока платформой реально не начали пользоваться).
+`type: "guest"`, кассу так получить нельзя ни при каком slug),
+`firebaseConfig` (публичный веб-конфиг Firebase проекта — НЕ секрет, нужен
+`saas/guest-web/` на поддоменах `{slug}.hookahpos.su`, потому что
+`hookahpos.su/__/firebase/init.json` не отдаёт CORS для чужого origin —
+подробнее в докстринге `handleFirebaseWebConfig` в `server.js`) и
+модерация из панели супер-админа — `enableTenant`/`disableTenant`/
+`changeTenantPlan`/`deleteDemoTenant` (эти четыре тоже раньше числились
+Cloud Functions, просто ещё не задеплоенными — кнопки в консоли звали их
+и молча проваливались, пока платформой реально не начали пользоваться).
 
 **Что НЕ переехало** (сознательно, см. обсуждение с владельцем платформы):
 приём оплаты через ЮKassa, приглашение сотрудников по email — остаются на
@@ -64,6 +68,23 @@ cd saas-gateway
    случайную строку (`openssl rand -hex 24`) и запомните: то же самое
    значение нужно прописать в GitHub как секрет репозитория с тем же
    именем (см. ниже).
+4. **Публичный веб-конфиг Firebase** (`FIREBASE_WEB_CONFIG_JSON`) — НЕ
+   секрет (те же ключи видны в исходнике любой веб-страницы с Firebase).
+   Получить: Firebase Console → `saas-3bdc8` → Project settings → General
+   → Your apps → веб-приложение (значок `</>`) → «SDK setup and
+   configuration» → переключатель «Config» → скопировать объект целиком
+   в одну строку. Нужен, чтобы `saas/guest-web/` на поддоменах
+   `{slug}.hookahpos.su` мог инициализировать Firebase — см. `firebaseConfig`
+   выше и докстринг `handleFirebaseWebConfig` в `server.js`.
+
+**Если сервис уже установлен раньше** (обновляете существующий, а не
+ставите с нуля) — `setup.sh` повторно не запускать, просто добавить
+строку в уже существующий `/etc/saas-gateway.env`:
+
+```bash
+echo 'FIREBASE_WEB_CONFIG_JSON={"apiKey":"...","authDomain":"...",...}' >> /etc/saas-gateway.env
+systemctl restart saas-gateway
+```
 
 ## nginx — добавить маршрут `/saas/` к уже настроенному домену
 

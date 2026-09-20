@@ -269,16 +269,18 @@
         return;
       }
 
-      // Тот же путь получения конфига, что и в app.js: у этого поддомена
-      // нет своего Firebase Hosting, поэтому магического
-      // /__/firebase/init.json здесь нет — берём с домена консоли (отдаёт
-      // его с открытым CORS, это публичные, некопаемые ключи веб-приложения).
-      step = 'firebase/init.json с hookahpos.su, tenantId=' + resolveJson.tenantId;
+      // НЕ hookahpos.su/__/firebase/init.json: живьём подтверждено, что
+      // этот путь падает с "Failed to fetch" для поддомена {slug}.hookahpos.su
+      // (чужой origin для hookahpos.su, Firebase Hosting не отдаёт для него
+      // CORS) — тот путь работает только для страниц НА hookahpos.su, как
+      // saas/console/console.js, читающий его релятивным путём. Вместо
+      // этого — тот же saas-gateway, что и resolveTenantBySlug выше.
+      step = 'firebaseConfig через gateway, tenantId=' + resolveJson.tenantId;
       dbg('DEBUG: ' + step + '…');
-      var configResp = await fetch('https://hookahpos.su/__/firebase/init.json');
+      var configResp = await fetch(GATEWAY + '/firebaseConfig');
       var config = await configResp.json().catch(() => null);
       if (!configResp.ok || !config || !config.projectId) {
-        dbg('DEBUG: init.json HTTP ' + configResp.status + ' ' + JSON.stringify(config));
+        dbg('DEBUG: firebaseConfig HTTP ' + configResp.status + ' ' + JSON.stringify(config));
         return;
       }
 

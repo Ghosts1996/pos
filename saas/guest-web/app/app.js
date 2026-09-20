@@ -237,13 +237,17 @@ async function boot() {
 
   let config;
   try {
-    // Эта раздача — обычный nginx на своём сервере, не Firebase Hosting,
-    // поэтому магического /__/firebase/init.json на ЭТОМ домене нет — берём
-    // его с домена консоли (Firebase Hosting сам отдаёт его с открытым CORS,
-    // это публичные, некопаемые ключи веб-приложения).
-    const res = await fetch('https://hookahpos.su/__/firebase/init.json');
+    // НЕ hookahpos.su/__/firebase/init.json: тот путь — приём Firebase
+    // Hosting для страниц, размещённых НА НЁМ САМОМ (см. как его читает
+    // saas/console/console.js — релятивным путём, тот же origin). Эта
+    // раздача живёт на поддомене {slug}.hookahpos.su — ЧУЖОЙ origin для
+    // hookahpos.su, а тот путь не отдаёт CORS для чужого origin: живьём
+    // подтверждено, что fetch падает с "Failed to fetch" ещё до какого-либо
+    // ответа сервера. Вместо этого — тот же saas-gateway, что и
+    // resolveTenant() выше (уже проверенно работает с этого origin).
+    const res = await fetch(`${GATEWAY}/firebaseConfig`);
     config = await res.json();
-    if (!config || !config.projectId) throw new Error('пусто');
+    if (!res.ok || !config || !config.projectId) throw new Error('пусто');
   } catch (_) {
     screenEl().innerHTML = `
       <h1>Нет связи с сервером</h1>
