@@ -1,10 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/constants.dart';
 
 class Employee {
   final String id;
   final String name;
   final String pinCode; // 4-значный пин для входа
   final String role;    // 'admin' | 'employee'
+
+  /// Специализация — официант/кальянщик/бармен/универсал (см.
+  /// AppConstants.position* и её же комментарий). Определяет, какие
+  /// вызовы гостя из-за стола этому сотруднику показывать/присылать —
+  /// НЕ то же самое, что [role] (та про доступ, эта про адресацию).
+  final String position;
 
   // ---- Зарплата: три независимо включаемых способа расчёта ----
   // Оклад — почасовая ставка.
@@ -24,6 +31,7 @@ class Employee {
     required this.name,
     required this.pinCode,
     required this.role,
+    this.position = AppConstants.positionUniversal,
     this.hourlyRateEnabled = false,
     this.hourlyRate = 0,
     this.overtimeEnabled = false,
@@ -44,6 +52,7 @@ class Employee {
       name: data['name'] ?? '',
       pinCode: data['pinCode'] ?? '',
       role: data['role'] ?? 'employee',
+      position: data['position'] ?? AppConstants.positionUniversal,
       hourlyRateEnabled: data['hourlyRateEnabled'] ?? false,
       hourlyRate: (data['hourlyRate'] ?? 0).toDouble(),
       overtimeEnabled: data['overtimeEnabled'] ?? false,
@@ -58,6 +67,7 @@ class Employee {
         'name': name,
         'pinCode': pinCode,
         'role': role,
+        'position': position,
         'hourlyRateEnabled': hourlyRateEnabled,
         'hourlyRate': hourlyRate,
         'overtimeEnabled': overtimeEnabled,
@@ -71,6 +81,7 @@ class Employee {
     String? name,
     String? pinCode,
     String? role,
+    String? position,
     bool? hourlyRateEnabled,
     double? hourlyRate,
     bool? overtimeEnabled,
@@ -84,6 +95,7 @@ class Employee {
       name: name ?? this.name,
       pinCode: pinCode ?? this.pinCode,
       role: role ?? this.role,
+      position: position ?? this.position,
       hourlyRateEnabled: hourlyRateEnabled ?? this.hourlyRateEnabled,
       hourlyRate: hourlyRate ?? this.hourlyRate,
       overtimeEnabled: overtimeEnabled ?? this.overtimeEnabled,

@@ -92,7 +92,10 @@ exports.onReservationCreated = onDocumentCreated(
     if (!r || r.source !== "kolibri") return;
     const t = r.startTime?.toDate?.() ?? new Date();
     await db.collection("pushQueue").add({
-      topic: "staff",
+      // "all" — не зависит от специализации (см. onWaiterCall выше и
+      // PushService.initStaff): новая бронь одинаково касается и
+      // официантов, и кальянщиков, а не какой-то одной специализации.
+      topic: "staff-default-all",
       title: "Новая бронь",
       // ВАЖНО: getHours() у Node в Cloud Functions считает по UTC, поэтому
       // смене прилетала бронь «на 13:00» вместо 16:00. Форматируем явно в
@@ -137,7 +140,23 @@ exports.onReservationUpdated = onDocumentUpdated(
   }
 );
 
-/** Вызов кальянщика гостем → уведомление смене. */
+/**
+ * Вызов персонала гостем → уведомление НУЖНОЙ специализации, а не всей
+ * смене разом (см. lib/models/client_models.dart, GuestCallTypeX.
+ * targetPosition — та же самая раскладка типов по специализациям, здесь
+ * продублирована на JS, потому что Cloud Function не может импортировать
+ * Dart-код). Топик — не голый "staff": устройство персонала подписывается
+ * на конкретную специализацию (или на все, если сотрудник — универсал или
+ * админ, см. PushService.updateStaffPositionSubscription), поэтому вызов
+ * кальянщика больше не будит официанта на соседнем планшете.
+ */
+const CALL_TARGET_POSITION = {
+  waiter: "hookah_master", // исторически "waiter" в коде = вызов кальянщика
+  coal: "hookah_master",
+  refill: "hookah_master",
+  bill: "waiter",
+  callWaiter: "waiter",
+};
 exports.onWaiterCall = onDocumentCreated(
   { region: REGION, document: "waiterCalls/{id}" },
   async (event) => {
@@ -148,9 +167,11 @@ exports.onWaiterCall = onDocumentCreated(
       coal: "Просят поменять угли",
       bill: "Просят счёт",
       refill: "Просят перезабивку",
+      callWaiter: "Зовут официанта",
     };
+    const position = CALL_TARGET_POSITION[c.type] || "waiter";
     await db.collection("pushQueue").add({
-      topic: "staff",
+      topic: `staff-default-${position}`,
       title: labels[c.type] || "Обращение гостя",
       body: `${c.tableName || "Стол"}${c.comment ? ` — ${c.comment}` : ""}`,
       data: { type: "call", tableId: c.tableId || "" },

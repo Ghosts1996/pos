@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/constants.dart';
 import 'session_model.dart';
 import 'table_model.dart';
 
@@ -267,7 +268,15 @@ class GuestVisitItem {
 }
 
 /// Тип обращения гостя из-за стола.
-enum GuestCallType { waiter, coal, bill, refill }
+///
+/// [waiter] исторически означает вызов КАЛЬЯНЩИКА (см. label) — так было с
+/// самого начала, менять код/данные в уже созданных документах waiterCalls
+/// ради переименования смысла не стали. [callWaiter] — новый, отдельный тип
+/// для настоящего вызова ОФИЦИАНТА, добавлен позже, когда в заведении стало
+/// много персонала разных специализаций и один пункт "Позвать" перестал
+/// различать, кого именно нужно (см. AppConstants.position* и
+/// [targetPosition] ниже — по нему фильтруется адресат вызова).
+enum GuestCallType { waiter, coal, bill, refill, callWaiter }
 
 extension GuestCallTypeX on GuestCallType {
   String get code => name;
@@ -282,6 +291,24 @@ extension GuestCallTypeX on GuestCallType {
         return 'Счёт, пожалуйста';
       case GuestCallType.refill:
         return 'Перезабивка';
+      case GuestCallType.callWaiter:
+        return 'Позвать официанта';
+    }
+  }
+
+  /// Кому из персонала адресован этот вызов — см. AppConstants.position*.
+  /// Сотрудник с [AppConstants.positionUniversal] (по умолчанию у всех, пока
+  /// владелец не назначил специализацию — см. Employee.position) видит и
+  /// получает ЛЮБОЙ вызов независимо от этого поля.
+  String get targetPosition {
+    switch (this) {
+      case GuestCallType.coal:
+      case GuestCallType.refill:
+      case GuestCallType.waiter:
+        return AppConstants.positionHookahMaster;
+      case GuestCallType.bill:
+      case GuestCallType.callWaiter:
+        return AppConstants.positionWaiter;
     }
   }
 
