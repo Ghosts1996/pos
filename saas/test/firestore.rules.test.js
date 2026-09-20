@@ -269,10 +269,28 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(setDoc(doc(db, "tenants/tenantA/settings/deviceInvite"), { code: "HACKED00" }));
   });
 
-  it("employee не может изменить список сотрудников (только owner/admin)", async () => {
-    const db = ctxFor("empA");
+  it("employee может настраивать зарплату сотрудников с кассы, чужому заведению и гостю нельзя", async () => {
+    // Регрессия: раньше запись требовала hasRole(['owner','admin']), а
+    // устройство кассы, присоединившееся по коду приглашения, ВСЕГДА
+    // получает роль employee в tenantMembers (joinAsDevice в
+    // saas_device_join_service.dart owner/admin не назначает никогда) —
+    // то есть сохранение зарплаты в lib/screens/admin/employees_screen.dart
+    // падало permission-denied с любого планшета на любом заведении
+    // платформы. См. lib/screens/admin/employees_screen.dart.
+    const empDb = ctxFor("empA");
+    await assertSucceeds(
+      setDoc(doc(empDb, "tenants/tenantA/employees/newHire"),
+        { name: "Кто-то", pinCode: "0000", role: "employee", hourlyRateEnabled: true, hourlyRate: 300 })
+    );
+
+    const guestDb = ctxFor("guestA");
     await assertFails(
-      setDoc(doc(db, "tenants/tenantA/employees/newHire"), { name: "Кто-то", pinCode: "0000", role: "admin" })
+      setDoc(doc(guestDb, "tenants/tenantA/employees/hack"), { name: "Гость", pinCode: "1111", role: "admin" })
+    );
+
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(
+      setDoc(doc(ownerBDb, "tenants/tenantA/employees/hack"), { name: "Чужой", pinCode: "2222", role: "admin" })
     );
   });
 
@@ -305,14 +323,20 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/staffShifts/shift1")));
   });
 
-  it("настройки программы лояльности (settings/loyalty) видны и персоналу, и гостю СВОЕГО заведения, пишет только owner/admin", async () => {
-    // Регрессия: общее правило settings/{doc} проверяет isMember() —
+  it("настройки программы лояльности (settings/loyalty) видны и персоналу, и гостю СВОЕГО заведения, пишет любой сотрудник", async () => {
+    // Регрессия #1: общее правило settings/{doc} проверяет isMember() —
     // а гость (isTenantGuest) в это понятие не входит вообще (isMember
     // про tenantMembers — консоль/устройство кассы, а не профиль гостя),
     // поэтому расширение settings/{doc} до isTenantGuest было бы дырой:
     // там же лежит settings/deviceInvite (секретный код приглашения
     // устройства). Нужно отдельное, более специфичное правило именно на
     // settings/loyalty.
+    //
+    // Регрессия #2: запись раньше требовала hasRole(['owner','admin']),
+    // но lib/screens/admin/loyalty_settings_screen.dart открывается прямо
+    // с кассы, а устройство кассы всегда состоит в tenantMembers с ролью
+    // employee (см. saas_device_join_service.dart) — owner/admin оттуда
+    // невыполним никогда, и сохранение падало бы permission-denied.
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("tenants/tenantA/settings/loyalty"), {
         tiers: [{ name: "Бронза", from: 0, cashback: 3 }],
@@ -320,18 +344,40 @@ describe("Ролевая модель внутри одного заведени
     });
     const empDb = ctxFor("empA");
     await assertSucceeds(getDoc(doc(empDb, "tenants/tenantA/settings/loyalty")));
-    await assertFails(setDoc(doc(empDb, "tenants/tenantA/settings/loyalty"), { tiers: [] }));
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/settings/loyalty"), {
+      tiers: [{ name: "Бронза", from: 0, cashback: 5 }],
+    }));
 
     const guestDb = ctxFor("guestA");
     await assertSucceeds(getDoc(doc(guestDb, "tenants/tenantA/settings/loyalty")));
+    await assertFails(setDoc(doc(guestDb, "tenants/tenantA/settings/loyalty"), { tiers: [] }));
 
     const ownerBDb = ctxFor("ownerB");
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/loyalty")));
+    await assertFails(setDoc(doc(ownerBDb, "tenants/tenantA/settings/loyalty"), { tiers: [] }));
 
     const ownerADb = ctxFor("ownerA");
     await assertSucceeds(setDoc(doc(ownerADb, "tenants/tenantA/settings/loyalty"), {
       tiers: [{ name: "Бронза", from: 0, cashback: 4 }],
     }));
+  });
+
+  it("остальные settings/* (например settings/integrations) пишет любой сотрудник, но не гость и не чужое заведение", async () => {
+    // Регрессия: lib/screens/admin/integrations_settings_screen.dart тоже
+    // открывается с кассы и падал бы по той же причине, что и employees/
+    // settings/loyalty выше — см. их комментарии.
+    const empDb = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/settings/integrations"), { egaisEnabled: true }));
+
+    const guestDb = ctxFor("guestA");
+    await assertFails(setDoc(doc(guestDb, "tenants/tenantA/settings/integrations"), { egaisEnabled: false }));
+
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(setDoc(doc(ownerBDb, "tenants/tenantA/settings/integrations"), { egaisEnabled: false }));
+
+    // settings/deviceInvite остаётся исключением — им по-прежнему может
+    // писать только owner/admin (см. отдельное правило и тест выше).
+    await assertFails(setDoc(doc(empDb, "tenants/tenantA/settings/deviceInvite"), { code: "HACKED00" }));
   });
 
   it("неактивное членство (status != active) не даёт доступа", async () => {

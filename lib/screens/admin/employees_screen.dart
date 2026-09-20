@@ -115,8 +115,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         TextEditingController(text: _numStr(emp?.overtimeMultiplier ?? 1.5));
     bool salesPercentEnabled = emp?.salesPercentEnabled ?? false;
     final salesPercentCtrl = TextEditingController(text: _numStr(emp?.salesPercentRate ?? 0));
+    String? error;
+    bool saving = false;
 
-    final ok = await showDialog<bool>(
+    final newEmp = await showDialog<Employee>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
         return AlertDialog(
@@ -128,6 +130,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (error != null) ...[
+                    Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    const SizedBox(height: 8),
+                  ],
                   TextField(
                       controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя')),
                   TextField(
@@ -246,82 +252,107 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сохранить')),
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              // Раньше валидация (PIN, ставка > 0 и т.п.) шла ПОСЛЕ того, как
+              // диалог уже закрывался по нажатию "Сохранить" — при ошибке
+              // диалог был уже закрыт, показывался только SnackBar с причиной,
+              // а весь ввод (в т.ч. настроенная зарплата) терялся. Выглядело
+              // как "нажал сохранить — ничего не сохранилось". Теперь и
+              // валидация, и сам PIN-запрос идут ДО закрытия диалога: при
+              // ошибке диалог остаётся открытым с сообщением внутри, ввод не
+              // пропадает.
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final name = nameCtrl.text.trim();
+                      if (name.isEmpty) {
+                        setSt(() => error = 'Введите имя сотрудника');
+                        return;
+                      }
+                      final pin = pinCtrl.text.trim();
+                      final requiredLength = AppConstants.pinLengthForRole(role);
+                      if (pin.length != requiredLength || int.tryParse(pin) == null) {
+                        setSt(() => error = role == AppConstants.roleAdmin
+                            ? 'PIN администратора должен состоять ровно из $requiredLength цифр'
+                            : 'PIN сотрудника должен состоять ровно из $requiredLength цифр');
+                        return;
+                      }
+                      final hourlyRate = _parseNum(hourlyRateCtrl.text, 0);
+                      final overtimeThreshold = _parseNum(overtimeThresholdCtrl.text, 8);
+                      final overtimeMultiplier = _parseNum(overtimeMultiplierCtrl.text, 1.5);
+                      final salesPercentRate = _parseNum(salesPercentCtrl.text, 0);
+                      if (hourlyRateEnabled && hourlyRate <= 0) {
+                        setSt(() => error = 'Укажите ставку больше нуля или выключите оклад');
+                        return;
+                      }
+                      if (hourlyRateEnabled && overtimeEnabled && overtimeThreshold <= 0) {
+                        setSt(() => error = 'Порог переработки должен быть больше нуля часов');
+                        return;
+                      }
+                      if (salesPercentEnabled && salesPercentRate <= 0) {
+                        setSt(() => error = 'Укажите процент больше нуля или выключите его');
+                        return;
+                      }
+                      setSt(() {
+                        saving = true;
+                        error = null;
+                      });
+                      final taken = await fs.isPinTaken(pin, excludeId: emp?.id);
+                      if (taken) {
+                        setSt(() {
+                          saving = false;
+                          error = 'Этот PIN-код уже занят другим сотрудником';
+                        });
+                        return;
+                      }
+                      if (ctx.mounted) {
+                        Navigator.pop(
+                          ctx,
+                          Employee(
+                            id: emp?.id ?? '',
+                            name: name,
+                            pinCode: pin,
+                            role: role,
+                            position: position,
+                            hourlyRateEnabled: hourlyRateEnabled,
+                            hourlyRate: hourlyRate,
+                            overtimeEnabled: overtimeEnabled,
+                            overtimeThresholdHours: overtimeThreshold,
+                            overtimeMultiplier: overtimeMultiplier,
+                            salesPercentEnabled: salesPercentEnabled,
+                            salesPercentRate: salesPercentRate,
+                          ),
+                        );
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Сохранить'),
+            ),
           ],
         );
       }),
     );
-    if (ok != true || nameCtrl.text.trim().isEmpty) return;
-    final pin = pinCtrl.text.trim();
-    final requiredLength = AppConstants.pinLengthForRole(role);
-    if (pin.length != requiredLength || int.tryParse(pin) == null) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            role == AppConstants.roleAdmin
-                ? 'PIN администратора должен состоять ровно из $requiredLength цифр'
-                : 'PIN сотрудника должен состоять ровно из $requiredLength цифр',
-          ),
-        ));
+    if (newEmp == null) return;
+    try {
+      if (emp == null) {
+        await fs.addEmployee(newEmp);
+      } else {
+        await fs.updateEmployee(newEmp);
       }
-      return;
-    }
-
-    final taken = await fs.isPinTaken(pin, excludeId: emp?.id);
-    if (taken) {
+    } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Этот PIN-код уже занят другим сотрудником')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось сохранить сотрудника: $e')));
       }
-      return;
-    }
-
-    final hourlyRate = _parseNum(hourlyRateCtrl.text, 0);
-    final overtimeThreshold = _parseNum(overtimeThresholdCtrl.text, 8);
-    final overtimeMultiplier = _parseNum(overtimeMultiplierCtrl.text, 1.5);
-    final salesPercentRate = _parseNum(salesPercentCtrl.text, 0);
-
-    if (hourlyRateEnabled && hourlyRate <= 0) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Укажите ставку больше нуля или выключите оклад')));
-      }
-      return;
-    }
-    if (hourlyRateEnabled && overtimeEnabled && overtimeThreshold <= 0) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Порог переработки должен быть больше нуля часов')));
-      }
-      return;
-    }
-    if (salesPercentEnabled && salesPercentRate <= 0) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Укажите процент больше нуля или выключите его')));
-      }
-      return;
-    }
-
-    final newEmp = Employee(
-      id: emp?.id ?? '',
-      name: nameCtrl.text.trim(),
-      pinCode: pin,
-      role: role,
-      position: position,
-      hourlyRateEnabled: hourlyRateEnabled,
-      hourlyRate: hourlyRate,
-      overtimeEnabled: overtimeEnabled,
-      overtimeThresholdHours: overtimeThreshold,
-      overtimeMultiplier: overtimeMultiplier,
-      salesPercentEnabled: salesPercentEnabled,
-      salesPercentRate: salesPercentRate,
-    );
-    if (emp == null) {
-      await fs.addEmployee(newEmp);
-    } else {
-      await fs.updateEmployee(newEmp);
     }
   }
 }
