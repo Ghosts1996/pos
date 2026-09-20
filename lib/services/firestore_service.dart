@@ -11,6 +11,7 @@ import '../models/staff_shift_model.dart';
 import '../models/inventory_models.dart';
 import '../models/egais_models.dart';
 import '../utils/constants.dart';
+import 'venue_service.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -801,12 +802,32 @@ class FirestoreService {
   // запроса, поэтому проверить и зафиксировать "смена уже открыта" атомарно
   // можно только через такой документ-указатель.
 
+  /// Не даёт личной смене начаться раньше официального времени открытия
+  /// заведения сегодня (VenueProfile.workingHours, см. venue_service.dart) —
+  /// если сотрудник пришёл заранее и открыл смену/кассу до открытия,
+  /// рабочее время для зарплаты считается от времени открытия, а не от
+  /// фактического нажатия кнопки. Часы работы не заданы на сегодня, пустая
+  /// строка (выходной) или не распарсились — время не трогаем: это не
+  /// обязательная настройка, и без неё поведение должно остаться прежним.
+  DateTime _clampToVenueOpening(DateTime now) {
+    final hours = VenueService.instance.cached.workingHours[now.weekday];
+    if (hours == null || hours.isEmpty) return now;
+    final openPart = hours.split('-').first.trim();
+    final parts = openPart.split(':');
+    if (parts.length != 2) return now;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return now;
+    final openingToday = DateTime(now.year, now.month, now.day, h, m);
+    return now.isBefore(openingToday) ? openingToday : now;
+  }
+
   /// Начинает личную смену сотрудника, если у него сейчас нет открытой.
   /// Если она уже открыта — просто возвращает её id, не создавая вторую.
   Future<String> clockIn(Employee employee) async {
     final stateRef = AppScope.col('meta').doc('staffShiftState');
     final shiftRef = AppScope.col('staffShifts').doc();
-    final now = DateTime.now();
+    final startedAt = _clampToVenueOpening(DateTime.now());
 
     return _db.runTransaction<String>((tx) async {
       final stateDoc = await tx.get(stateRef);
@@ -829,7 +850,7 @@ class FirestoreService {
         id: shiftRef.id,
         employeeId: employee.id,
         employeeName: employee.name,
-        startedAt: now,
+        startedAt: startedAt,
         status: 'open',
       );
       tx.set(shiftRef, shift.toMap());
