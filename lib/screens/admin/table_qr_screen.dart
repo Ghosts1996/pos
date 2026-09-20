@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/table_model.dart';
+import '../../services/app_scope.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -26,10 +27,29 @@ class TableQrScreen extends StatelessWidget {
   /// проекта hoocah-pos (Firebase → Hosting → Add another site), а не сайт
   /// проекта по умолчанию: адрес должен читаться гостю как название
   /// заведения. Привязан в `firebase.json` → hosting.site.
+  ///
+  /// Используется ТОЛЬКО в одно-арендном режиме (AppScope.isSaasMode ==
+  /// false) — эта сборка одна на всех, менять её нельзя: заведение уже
+  /// подключено и печатает коды с этим доменом.
   static const hostingDomain = 'https://colibri-lounge.web.app';
 
-  /// Ссылка для НОВЫХ наклеек — через страницу-прослойку.
-  static String linkFor(String tableId) => '$hostingDomain/table/$tableId';
+  /// Домен платформы для SaaS: у каждого заведения свой поддомен
+  /// `{slug}.hookahpos.su` (wildcard DNS + wildcard SSL на сервере, см.
+  /// saas/README.md) — отдаёт SaaS-версию страницы-прослойки и веб-гостя с
+  /// брендингом именно этого заведения (раздел «Брендинг» в личном
+  /// кабинете), а не общий "Colibri Lounge".
+  static const saasDomain = 'hookahpos.su';
+
+  /// Ссылка для НОВЫХ наклеек — через страницу-прослойку. В SaaS-режиме
+  /// без AppScope.slug (например демо-заведение без человекочитаемого кода)
+  /// откатываемся на tenantId — работает как адрес, просто менее красиво.
+  static String linkFor(String tableId) {
+    if (AppScope.isSaasMode) {
+      final host = (AppScope.slug?.isNotEmpty ?? false) ? AppScope.slug! : AppScope.tenantId!;
+      return 'https://$host.$saasDomain/table/$tableId';
+    }
+    return '$hostingDomain/table/$tableId';
+  }
 
   /// Ссылка в старом формате — то, что зашито в уже напечатанные коды.
   /// Приложение принимает оба варианта.
@@ -110,8 +130,11 @@ class TableQrScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('Colibri Lounge',
-                style: TextStyle(
+            Text(
+                AppScope.isSaasMode
+                    ? (AppScope.branding?.appName ?? 'Colibri Lounge')
+                    : 'Colibri Lounge',
+                style: const TextStyle(
                     color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13)),
             const SizedBox(height: 8),
             Expanded(

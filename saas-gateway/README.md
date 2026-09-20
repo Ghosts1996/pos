@@ -11,8 +11,11 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 `cancelSubscription`/`resumeSubscription` (самостоятельная отмена/возврат
 автопродления — Firestore-правила не пускают владельца писать в
 `subscriptions` напрямую даже для своего заведения, см. `saas/firestore.rules`),
-`downloadBuild` (выдача готового личного APK владельцу) и модерация из
-панели супер-админа — `enableTenant`/`disableTenant`/`changeTenantPlan`/
+`downloadBuild` (выдача готового личного APK владельцу), `publicGuestApk`
+(скачивание гостевого APK по QR со стола — БЕЗ Firebase Auth: гость,
+наведший камеру, не входил ни в один SaaS-аккаунт; отдаёт только
+`type: "guest"`, кассу так получить нельзя ни при каком slug) и модерация
+из панели супер-админа — `enableTenant`/`disableTenant`/`changeTenantPlan`/
 `deleteDemoTenant` (эти четыре тоже раньше числились Cloud Functions,
 просто ещё не задеплоенными — кнопки в консоли звали их и молча
 проваливались, пока платформой реально не начали пользоваться).

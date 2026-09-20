@@ -1,0 +1,238 @@
+/* Веб-версия «Colibri Lounge» — та же палитра, что в приложении. */
+:root {
+  --bg: #0E1512;
+  --surface: #16211D;
+  --surface-2: #1D2A25;
+  --border: #24332D;
+  --text: #EAF3EF;
+  --muted: #8FA39B;
+  --primary: #12B886;
+  --accent: #F06595;
+  --gold: #D9B45B;
+  --danger: #E03131;
+  --warning: #E8A317;
+  --tabbar: 68px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  overscroll-behavior-y: contain;
+}
+/* iPhone: status-bar-style="black-translucent" (нужен, чтобы при запуске с
+   «Домой» не было чёрной полосы вместо строки состояния) означает, что
+   страница рисуется ПОД строкой состояния и «островом» камеры — safe-area
+   сверху сама по себе не резервируется. Без этого отступа верхние кнопки
+   («Это не мой стол» и т.п.) оказывались под вырезом и не нажимались —
+   ровно то, что видно на скриншотах с iPhone. В обычном Safari (не
+   установлено на «Домой») env(safe-area-inset-top) равен 0, и здесь просто
+   остаётся исходный отступ 20px. */
+.wrap { max-width: 560px; margin: 0 auto; padding: calc(20px + env(safe-area-inset-top)) 16px 24px; }
+h1 { font-size: 24px; font-weight: 700; margin: 4px 0 8px; }
+h2 { font-size: 16px; font-weight: 600; margin: 24px 0 12px; }
+p { margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.center { text-align: center; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card.warn { border-color: var(--warning); }
+.card.bad { border-color: var(--danger); }
+.card a { color: var(--primary); }
+
+button, .btn {
+  font: inherit;
+  border: none;
+  border-radius: 14px;
+  padding: 14px 16px;
+  width: 100%;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.btn-primary { background: var(--primary); color: #04140E; }
+.btn-ghost {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+button:disabled { opacity: .5; }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn-link {
+  background: none; border: none; color: var(--primary);
+  width: auto; padding: 4px 0; font-weight: 600;
+}
+
+input, select, textarea {
+  font: inherit;
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  margin-bottom: 10px;
+}
+label.field { display: block; margin-bottom: 12px; }
+label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+
+.timer { text-align: center; padding: 22px 16px; }
+.timer .value { font-size: 44px; font-weight: 700; line-height: 1.1; }
+.timer.ok .value { color: var(--primary); }
+.timer.soon .value { color: var(--warning); }
+.timer.over .value { color: var(--danger); }
+.timer.ok { border-color: var(--border); }
+.timer.soon { border-color: var(--warning); }
+.timer.over { border-color: var(--danger); }
+
+.row { display: flex; align-items: center; gap: 10px; }
+.row + .row { margin-top: 8px; }
+.grow { flex: 1; min-width: 0; }
+
+/* Кнопки по умолчанию во всю ширину — так они и задуманы отдельными
+   действиями. Но внутри строки такая кнопка съедала всё место: поле ввода
+   рядом схлопывалось в полоску, а ряд одинаковых кнопок («2 чел.»,
+   «4 чел.», «6 чел.») рассыпался по одной на строку. В строке кнопка
+   занимает ровно свою надпись. */
+.row > button, .row > .btn { width: auto; flex: 0 0 auto; }
+
+/* Поля внутри строки не тащат за собой нижний отступ — иначе они стоят
+   выше кнопки рядом, и строка выглядит съехавшей. */
+.row > input, .row > select, .row > textarea { margin-bottom: 0; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bill-line { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; }
+.bill-total { display: flex; justify-content: space-between; font-size: 18px; font-weight: 700;
+  border-top: 1px solid var(--border); margin-top: 8px; padding-top: 12px; }
+
+.tier {
+  background: linear-gradient(135deg, rgba(217,180,91,.16), var(--surface));
+  border: 1px solid rgba(217,180,91,.45);
+}
+.tier .bonus { font-size: 30px; font-weight: 700; color: var(--gold); }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 10px 0 6px; }
+.bar > i { display: block; height: 100%; background: var(--gold); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 8px 14px; margin: 0 8px 8px 0;
+  font-size: 14px; cursor: pointer;
+}
+.chip.on { background: var(--primary); color: #04140E; border-color: var(--primary); }
+
+.item { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.item:last-child { border-bottom: none; }
+.item img { width: 54px; height: 54px; border-radius: 12px; object-fit: cover; flex: none; background: var(--surface-2); }
+.qty { display: flex; align-items: center; gap: 10px; }
+.qty button { width: 32px; height: 32px; padding: 0; border-radius: 10px; background: var(--surface-2); color: var(--text); }
+
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: flex; background: rgba(14,21,18,.96);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+  backdrop-filter: blur(8px);
+}
+.tabbar a {
+  flex: 1; text-align: center; padding: 10px 2px 8px;
+  color: var(--muted); text-decoration: none; font-size: 11px;
+}
+.tabbar a.on { color: var(--primary); }
+.tabbar .ico { display: block; font-size: 19px; line-height: 1.3; }
+
+.toast {
+  position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar) + 16px + env(safe-area-inset-bottom));
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 14px 16px; z-index: 20;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  opacity: 0; transform: translateY(12px); transition: .22s; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: none; }
+
+.spinner {
+  width: 26px; height: 26px; margin: 40px auto;
+  border: 3px solid var(--border); border-top-color: var(--primary);
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.rule { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
+.rule i { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); margin-top: 8px; flex: none; }
+
+/* Карта зала: столы стоят по координатам 0..1, как на кассе.
+   Размер плитки зависит от ширины экрана, а координата раскладывается в
+   диапазон «от края до края минус плитка» — так стол с координатой 0 или 1
+   прижимается к краю целиком, а не наполовину уезжает за него. Именно так
+   карта считается и на кассе. */
+.hall {
+  --tile-w: clamp(58px, 20vw, 96px);
+  --tile-h: calc(var(--tile-w) * 0.82);
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  max-height: 62vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  overflow: hidden;
+}
+.table-dot {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 4px;
+  font-size: clamp(10px, 3vw, 13px);
+  font-weight: 700; line-height: 1.15;
+  border: 1px solid transparent;
+  overflow: hidden;
+  word-break: break-word;
+}
+.table-dot small {
+  display: block; font-weight: 400;
+  font-size: clamp(9px, 2.6vw, 11px);
+  opacity: .85; margin-top: 2px;
+}
+.table-dot.free { background: #3F9D5B; color: #04140E; }
+.table-dot.busy { background: #C24A4A; color: #fff; }
+.table-dot.risky { background: #D9A441; color: #241A05; }
+.table-dot.small { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
+.table-dot.pick { cursor: pointer; }
+.table-dot.chosen { outline: 3px solid var(--gold); outline-offset: -3px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; margin-top: 12px; }
+.legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+
+/* Выбор дня в брони — те же плитки, что в приложении. */
+.daychip {
+  flex: none;
+  width: 62px; height: 62px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700;
+  padding: 0;
+}
+.daychip small { font-size: 11px; font-weight: 400; color: var(--muted); margin-bottom: 2px; }
+.daychip.on { background: var(--primary); color: #04140E; border-color: var(--primary); }
+.daychip.on small { color: rgba(4,20,14,.7); }

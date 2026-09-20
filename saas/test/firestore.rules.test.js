@@ -344,6 +344,40 @@ describe("Список сборок APK и подписки видны толь�
   });
 });
 
+describe("branding: читает кто угодно без входа (QR-страница стола), пишет только owner/admin", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/branding/config"), {
+        appName: "Test Lounge", primaryColor: "#123456",
+      });
+    });
+  });
+
+  it("гость, ещё не открывший приложение (совсем без входа), читает брендинг", async () => {
+    await assertSucceeds(
+      getDoc(doc(testEnv.unauthenticatedContext().firestore(), "tenants/tenantA/branding/config")),
+    );
+  });
+
+  it("employee не может изменить брендинг своего заведения", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+    await assertFails(
+      setDoc(doc(ctxFor("empA"), "tenants/tenantA/branding/config"), { appName: "Hacked" }, { merge: true }),
+    );
+  });
+
+  it("owner может изменить брендинг своего заведения", async () => {
+    await assertSucceeds(
+      setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/branding/config"), { appName: "New Name" }, { merge: true }),
+    );
+  });
+});
+
 describe("Usage-счётчики: видны владельцу/админу своего заведения и супер-админу", () => {
   beforeEach(async () => {
     await seedTwoTenants();

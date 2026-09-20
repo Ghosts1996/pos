@@ -28,6 +28,7 @@ class AppScope {
 
   static String? _tenantId;
   static BrandingConfig? _branding;
+  static String? _slug;
 
   /// null — одно-арендный режим (как было исторически). Непустая строка —
   /// SaaS-режим, все обращения к данным вложены под этого арендатора.
@@ -42,17 +43,26 @@ class AppScope {
   /// режиме — экраны в этом случае показывают свои прежние значения.
   static BrandingConfig? get branding => _branding;
 
+  /// Код заведения (tenants/{id}.slug, тот же, что владелец видит в личном
+  /// кабинете) — задаётся вместе с [enterTenant]. Нужен там, где адрес
+  /// должен быть человекочитаемым, а не голым tenantId: например, QR-код
+  /// стола в SaaS-режиме ведёт на поддомен `{slug}.hookahpos.su`, а не на
+  /// `{tenantId}.hookahpos.su` (см. TableQrScreen). null в одно-арендном
+  /// режиме.
+  static String? get slug => _slug;
+
   /// Включает SaaS-режим для текущего процесса приложения — вызывается
   /// один раз, когда TenantConfigService успешно определил заведение
   /// пользователя (или устройство подтвердило код приглашения). Что именно
   /// вызывает это на старте — решает main.dart/kolibri_main.dart, сам
   /// AppScope ничего не знает про Auth/логины.
-  static void enterTenant(String tenantId, {BrandingConfig? branding}) {
+  static void enterTenant(String tenantId, {BrandingConfig? branding, String? slug}) {
     if (tenantId.trim().isEmpty) {
       throw ArgumentError('tenantId не может быть пустым');
     }
     _tenantId = tenantId;
     _branding = branding;
+    _slug = slug;
   }
 
   /// Возврат в одно-арендный режим (например, выход из SaaS-аккаунта или
@@ -60,6 +70,7 @@ class AppScope {
   static void reset() {
     _tenantId = null;
     _branding = null;
+    _slug = null;
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому
