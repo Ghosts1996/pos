@@ -214,54 +214,71 @@
     timer = setTimeout(showInstall, 2500);
   }
 
-  // Брендинг — асинхронно и НЕ блокируя попытку открыть приложение выше:
-  // гость не должен ждать сеть ради оформления, если приложение и так
-  // сейчас откроется само. Если гость всё же увидит install-экран, к этому
-  // моменту цвета и название заведения, скорее всего, уже подтянутся.
-  if (slug) {
-    fetch(GATEWAY + '/resolveTenantBySlug', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: slug }),
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j || !j.tenantId) return;
-        // branding/config читается совсем без входа (saas/firestore.rules:
-        // "allow read: if true" — см. её же комментарий, почему), поэтому
-        // это обычный fetch без анонимного входа и без лишнего аккаунта на
-        // каждый заход на эту страницу.
-        return fetch('https://hookahpos.su/__/firebase/init.json')
-          .then(function (r) { return r.json(); })
-          .then(function (config) {
-            return fetch(
-              'https://firestore.googleapis.com/v1/projects/' + config.projectId +
-              '/databases/(default)/documents/tenants/' + j.tenantId + '/branding/config'
-            );
-          })
-          .then(function (r) { return r.ok ? r.json() : null; })
-          .then(function (doc) {
-            if (!doc || !doc.fields) return;
-            var f = doc.fields;
-            var val = function (name) { return f[name] && f[name].stringValue; };
-            var root = document.documentElement.style;
-            if (val('primaryColor')) root.setProperty('--primary', val('primaryColor'));
-            if (val('secondaryColor')) root.setProperty('--gold', val('secondaryColor'));
-            if (val('backgroundColor')) root.setProperty('--bg', val('backgroundColor'));
-            if (val('textColor')) root.setProperty('--text', val('textColor'));
-            var name = val('appName');
-            if (name) {
-              document.title = name;
-              document.getElementById('brand-opening').textContent = name;
-              document.getElementById('brand-install').textContent = name;
-            }
-          });
-      })
-      .catch(function () {
-        // Не подтянулось — гость видит дефолтную палитру, не ошибку.
-      });
-  }
+  window.__tableSlug = slug;
 })();
+</script>
+
+<!--
+  Брендинг — ОТДЕЛЬНЫМ модулем и асинхронно, НЕ блокируя попытку открыть
+  приложение выше: гость не должен ждать сеть ради оформления, если
+  приложение и так сейчас откроется само.
+
+  Читаем через Firebase SDK (getDoc), а не «сырым» fetch к
+  firestore.googleapis.com напрямую: та же самая связка уже проверенно
+  работает в app.js (state.root/applyBranding), а поведение публичного
+  REST-эндпоинта Firestore для анонимных кросс-доменных запросов (CORS)
+  отдельно не проверялось — незачем держать в проде путь, в успехе
+  которого нет уверенности, когда есть уже подтверждённо рабочий.
+-->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  (async function () {
+    var GATEWAY = 'https://pii.hookahpos.su/saas';
+    var slug = window.__tableSlug;
+    if (!slug) return;
+    try {
+      var resolveResp = await fetch(GATEWAY + '/resolveTenantBySlug', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: slug }),
+      });
+      var resolveJson = await resolveResp.json();
+      if (!resolveJson || !resolveJson.tenantId) return;
+
+      // Тот же путь получения конфига, что и в app.js: у этого поддомена
+      // нет своего Firebase Hosting, поэтому магического
+      // /__/firebase/init.json здесь нет — берём с домена консоли (отдаёт
+      // его с открытым CORS, это публичные, некопаемые ключи веб-приложения).
+      var configResp = await fetch('https://hookahpos.su/__/firebase/init.json');
+      var config = await configResp.json();
+      if (!config || !config.projectId) return;
+
+      var app = initializeApp(config);
+      var db = getFirestore(app);
+      // branding/config читается совсем без входа (saas/firestore.rules:
+      // "allow read: if true" — см. её же комментарий, почему), поэтому
+      // без анонимного входа и без лишнего аккаунта на каждый заход сюда.
+      var snap = await getDoc(doc(db, 'tenants', resolveJson.tenantId, 'branding', 'config'));
+      if (!snap.exists()) return;
+      var b = snap.data();
+      var root = document.documentElement.style;
+      if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
+      if (b.secondaryColor) root.setProperty('--gold', b.secondaryColor);
+      if (b.backgroundColor) root.setProperty('--bg', b.backgroundColor);
+      if (b.textColor) root.setProperty('--text', b.textColor);
+      if (b.appName) {
+        document.title = b.appName;
+        document.getElementById('brand-opening').textContent = b.appName;
+        document.getElementById('brand-install').textContent = b.appName;
+      }
+    } catch (e) {
+      // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
+      // причину теперь видно в консоли браузера (F12 → Console).
+      console.error('Брендинг стола не применился:', e);
+    }
+  })();
 </script>
 </body>
 </html>
