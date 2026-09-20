@@ -563,6 +563,70 @@ describe("Тарифы (plans): управляет только супер-ад�
   });
 });
 
+describe("supportTickets: обращения в поддержку — видит своё заведение и супер-админ", () => {
+  beforeEach(seedTwoTenants);
+
+  it("владелец может создать тикет по своему заведению от своего имени", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
+      tenantId: "tenantA", subject: "Не открывается смена", status: "open", createdBy: "ownerA",
+    }));
+  });
+
+  it("владелец не может создать тикет от имени другого пользователя", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
+      tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerB",
+    }));
+  });
+
+  it("владелец не может создать тикет сразу закрытым", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
+      tenantId: "tenantA", subject: "x", status: "closed", createdBy: "ownerA",
+    }));
+  });
+
+  it("владелец чужого заведения не видит тикет tenantA", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "supportTickets/t1")));
+  });
+
+  it("супер-админ видит и может закрыть любой тикет", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "supportTickets/t1")));
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1"), { status: "closed" }, { merge: true }));
+  });
+
+  it("владелец может писать сообщения в свой тикет от своего имени", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m1"), {
+      text: "Помогите", authorUid: "ownerA",
+    }));
+  });
+
+  it("владелец чужого заведения не может писать сообщения в тикет tenantA", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "supportTickets/t1/messages/m1"), {
+      text: "Помогите", authorUid: "ownerB",
+    }));
+  });
+
+  it("супер-админ может отвечать в любом тикете", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1/messages/m2"), {
+      text: "Смотрим", authorUid: "root",
+    }));
+  });
+});
+
 describe("broadcasts: объявления платформы — пишет только супер-админ, читает кто угодно вошедший", () => {
   beforeEach(seedTwoTenants);
 

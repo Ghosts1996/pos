@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.5-bonus-period';
+const CONSOLE_BUILD = '2026-09-21.6-support-tickets';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1697,6 +1697,20 @@ function watchDashboardData(tenantId) {
   // устройствами одного владельца, а заводить для этого отдельный
   // Firestore-документ на пользователя — лишняя сложность ради баннера.
   let broadcasts = null;
+  // Обращения в поддержку (супер-админ #3) — список тикетов ЭТОГО заведения
+  // плюс сообщения открытого сейчас тикета. Сообщения грузятся отдельной
+  // подпиской (unsubTicketMessages) только для выбранного тикета —
+  // тянуть переписку по всем сразу незачем, а список тикетов и так лёгкий
+  // (без вложенных сообщений).
+  let supportTickets = null;
+  let selectedTicketId = null;
+  let ticketMessages = null;
+  let unsubTicketMessages = null;
+  // Не через sub(onSnapshot(...)) как остальные подписки этого экрана —
+  // эта включается/выключается по выбору тикета (см. selectTicket ниже),
+  // а не живёт одну на весь экран. sub() здесь только чтобы её тоже
+  // закрыло при уходе с "Обзора" целиком (иначе слушатель бы утёк).
+  sub(() => { if (unsubTicketMessages) unsubTicketMessages(); });
   // "Живые" цифры на "Обзоре" (см. подписки ниже) — null, пока не пришёл
   // первый снапшот, чтобы отличить "ещё грузится" от настоящего нуля.
   let liveOpenSessions = null;
@@ -1721,6 +1735,22 @@ function watchDashboardData(tenantId) {
   // «Брендинг сохранён», а logoUrl в payload просто не попадал — выглядело
   // как «загрузил лого, а оно не применилось», без единой ошибки на экране.
   let logoUploading = false;
+
+  const selectTicket = (ticketId) => {
+    if (unsubTicketMessages) { unsubTicketMessages(); unsubTicketMessages = null; }
+    selectedTicketId = ticketId;
+    ticketMessages = null;
+    if (ticketId) {
+      unsubTicketMessages = onSnapshot(
+        query(collection(state.db, 'supportTickets', ticketId, 'messages'), orderBy('createdAt', 'asc')),
+        (snap) => {
+          ticketMessages = snap.docs.map((d) => d.data());
+          draw();
+        }
+      );
+    }
+    draw();
+  };
 
   const draw = () => {
     // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
@@ -2244,16 +2274,55 @@ function watchDashboardData(tenantId) {
       <p class="small center muted">Не нашли ответ? <a href="#" class="f-dash-tab" data-tab="support">Напишите в поддержку</a></p>
     `;
 
-    const supportHtml = () => `
+    const selectedTicket = (supportTickets || []).find((t) => t.id === selectedTicketId) || null;
+
+    const ticketThreadHtml = () => `
+      <button class="btn-link f-ticket-back" style="width:auto;margin-bottom:10px">← Все обращения</button>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="font-weight:700">${esc(selectedTicket.subject || '')}</div>
+          <div class="small muted">${selectedTicket.status === 'closed' ? 'Решено' : 'Открыто'}</div>
+        </div>
+        <div style="margin-top:10px">
+          ${ticketMessages === null ? '<div class="spinner"></div>' : (ticketMessages.length ? ticketMessages.map((m) => `
+            <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
+              <div class="small muted">${esc(m.authorRole === 'super_admin' ? 'Платформа' : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
+              <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
+            </div>
+          `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
+        </div>
+        <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ..." style="width:100%;resize:vertical;margin-top:10px"></textarea>
+        <button class="btn btn-primary" id="f-ticket-reply-send" style="margin-top:8px">Отправить</button>
+        <button class="btn-link f-ticket-toggle-status" data-status="${esc(selectedTicket.status)}" style="width:auto;margin-top:8px">
+          ${selectedTicket.status === 'closed' ? 'Переоткрыть обращение' : 'Обращение решено'}
+        </button>
+      </div>
+    `;
+
+    const ticketListHtml = () => `
       <h2>Поддержка</h2>
       <div class="card">
-        <p class="small muted">Чат поддержки прямо в приложении скоро появится здесь.</p>
-        <p class="small">Пока что свяжитесь с администратором платформы напрямую — укажите код заведения
-        (<code>${esc(tenant.slug || '')}</code>) и опишите, что случилось, так ответят быстрее.</p>
+        <label class="field"><span>Тема</span>
+          <input id="f-ticket-subject" placeholder="Например: не собирается APK">
+        </label>
+        <label class="field"><span>Сообщение</span>
+          <textarea id="f-ticket-message" rows="3" placeholder="Опишите, что случилось"></textarea>
+        </label>
+        <button class="btn btn-primary" id="f-ticket-create">Создать обращение</button>
       </div>
-      <p class="small center muted"><a href="#" class="f-dash-tab" data-tab="faq">← Сначала загляните в FAQ</a></p>
+      ${(supportTickets || []).length ? `<div class="card">${supportTickets.map((t) => `
+        <div class="row f-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <div class="small grow" style="min-width:0">
+            <b>${esc(t.subject || '')}</b>
+            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
+          </div>
+          <div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>
+        </div>
+      `).join('')}</div>` : '<p class="small muted">Обращений пока не было.</p>'}
       <p class="small center muted">Что-то не открывается вообще? Сначала проверьте <a href="#/status">статус системы</a>.</p>
     `;
+
+    const supportHtml = () => selectedTicket ? ticketThreadHtml() : ticketListHtml();
 
     const TAB_RENDERERS = {
       overview: overviewHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
@@ -2275,6 +2344,78 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    document.querySelectorAll('.f-ticket-open').forEach((el) => {
+      el.onclick = () => selectTicket(el.dataset.id);
+    });
+    if ($('f-ticket-back')) $('f-ticket-back').onclick = () => selectTicket(null);
+    if ($('f-ticket-create')) {
+      $('f-ticket-create').onclick = async () => {
+        const subjectEl = $('f-ticket-subject');
+        const messageEl = $('f-ticket-message');
+        const subject = subjectEl.value.trim();
+        const text = messageEl.value.trim();
+        if (!subject || !text) {
+          toast('Заполните тему и сообщение');
+          return;
+        }
+        const btn = $('f-ticket-create');
+        btn.disabled = true;
+        try {
+          const now = Timestamp.fromDate(new Date());
+          const ticketRef = await addDoc(collection(state.db, 'supportTickets'), {
+            tenantId, subject, status: 'open', createdBy: state.uid, createdAt: now, updatedAt: now,
+          });
+          await addDoc(collection(state.db, 'supportTickets', ticketRef.id, 'messages'), {
+            text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
+          });
+          subjectEl.value = '';
+          messageEl.value = '';
+          toast('Обращение создано');
+          selectTicket(ticketRef.id);
+        } catch (e) {
+          toast(`Не удалось создать обращение: ${e?.message || e}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
+    if ($('f-ticket-reply-send')) {
+      $('f-ticket-reply-send').onclick = async () => {
+        const replyEl = $('f-ticket-reply');
+        const text = replyEl.value.trim();
+        if (!text || !selectedTicket) return;
+        const btn = $('f-ticket-reply-send');
+        btn.disabled = true;
+        try {
+          const now = Timestamp.fromDate(new Date());
+          await addDoc(collection(state.db, 'supportTickets', selectedTicket.id, 'messages'), {
+            text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
+          });
+          await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
+            updatedAt: now,
+            status: selectedTicket.status === 'closed' ? 'open' : selectedTicket.status,
+          }, { merge: true });
+          replyEl.value = '';
+        } catch (e) {
+          toast(`Не удалось отправить: ${e?.message || e}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
+    if ($('f-ticket-toggle-status')) {
+      $('f-ticket-toggle-status').onclick = async () => {
+        if (!selectedTicket) return;
+        try {
+          await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
+            status: selectedTicket.status === 'closed' ? 'open' : 'closed',
+            updatedAt: Timestamp.fromDate(new Date()),
+          }, { merge: true });
+        } catch (e) {
+          toast(`Не удалось изменить статус: ${e?.message || e}`);
+        }
+      };
+    }
 
     // Гамбургер-меню: на телефоне это выдвижная панель поверх контента, на
     // широком экране (см. media query в console.css) она уже показана
@@ -2621,6 +2762,13 @@ function watchDashboardData(tenantId) {
     draw();
   }, () => {
     broadcasts = [];
+    draw();
+  }));
+  sub(onSnapshot(query(collection(state.db, 'supportTickets'), where('tenantId', '==', tenantId), orderBy('updatedAt', 'desc'), limit(50)), (snap) => {
+    supportTickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  }, () => {
+    supportTickets = [];
     draw();
   }));
   sub(onSnapshot(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId)), (snap) => {
@@ -2989,7 +3137,7 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="support">
         <h1>Поддержка</h1>
-        <p class="small muted">Раздел в разработке.</p>
+        <div id="admin-support"><div class="spinner"></div></div>
       </div>
 
       <div class="admin-tab-panel" data-panel="staff">
@@ -3055,6 +3203,126 @@ function screenSuperAdmin() {
   watchAllBuildJobs();
   watchAdminInfra();
   watchAdminBroadcasts();
+  watchAdminSupportTickets();
+}
+
+/** Обращения в поддержку — вкладка "Поддержка" панели платформы (супер-админ
+ *  #3). Тот же приём "раскрыть карточку -> подгрузить сообщения отдельной
+ *  подпиской", что и selectTicket() в личном кабинете владельца (см.
+ *  watchDashboardData) — только здесь список тикетов один на всю
+ *  платформу (без where по tenantId, супер-админ читает всё правилами). */
+function watchAdminSupportTickets() {
+  const body = $('admin-support');
+  let tickets = [];
+  let tenantNames = new Map();
+  let expandedId = null;
+  let messages = null;
+  let unsubMessages = null;
+
+  const selectTicket = (ticketId) => {
+    if (unsubMessages) { unsubMessages(); unsubMessages = null; }
+    expandedId = expandedId === ticketId ? null : ticketId;
+    messages = null;
+    if (expandedId) {
+      unsubMessages = onSnapshot(
+        query(collection(state.db, 'supportTickets', expandedId, 'messages'), orderBy('createdAt', 'asc')),
+        (snap) => { messages = snap.docs.map((d) => d.data()); draw(); }
+      );
+    }
+    draw();
+  };
+  sub(() => { if (unsubMessages) unsubMessages(); });
+
+  const draw = () => {
+    if (!tickets.length) {
+      body.innerHTML = '<p class="small muted">Обращений пока не было.</p>';
+      return;
+    }
+    // Открытые — наверх, внутри групп новые сверху (тот же порядок, что и
+    // источник запроса, orderBy('updatedAt','desc') ниже).
+    const sorted = tickets.slice().sort((a, b) => {
+      const rank = (t) => (t.status === 'closed' ? 1 : 0);
+      return rank(a) - rank(b);
+    });
+    body.innerHTML = `<div class="card">${sorted.map((t) => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="row f-admin-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;cursor:pointer">
+          <div class="small grow" style="min-width:0">
+            <b>${esc(t.subject || '')}</b> · ${esc(tenantNames.get(t.tenantId) || t.tenantId)}
+            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
+          </div>
+          <div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>
+        </div>
+        ${expandedId === t.id ? `
+          <div style="margin-top:10px">
+            ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
+              <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
+                <div class="small muted">${esc(m.authorRole === 'super_admin' ? 'Платформа' : 'Владелец')} · ${fmtDateTime(m.createdAt)}</div>
+                <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
+              </div>
+            `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
+            <textarea class="f-admin-ticket-reply" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу..." style="width:100%;resize:vertical;margin-top:6px"></textarea>
+            <button class="btn btn-primary f-admin-ticket-send" data-id="${esc(t.id)}" style="margin-top:6px">Отправить</button>
+            <button class="btn-link f-admin-ticket-toggle" data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="width:auto;margin-top:6px">
+              ${t.status === 'closed' ? 'Переоткрыть' : 'Отметить решённым'}
+            </button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('')}</div>`;
+
+    document.querySelectorAll('.f-admin-ticket-open').forEach((el) => {
+      el.onclick = () => selectTicket(el.dataset.id);
+    });
+    document.querySelectorAll('.f-admin-ticket-send').forEach((el) => {
+      el.onclick = async () => {
+        const ticketId = el.dataset.id;
+        const textEl = document.querySelector(`.f-admin-ticket-reply[data-id="${ticketId}"]`);
+        const text = textEl.value.trim();
+        if (!text) return;
+        el.disabled = true;
+        try {
+          const now = Timestamp.fromDate(new Date());
+          await addDoc(collection(state.db, 'supportTickets', ticketId, 'messages'), {
+            text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now,
+          });
+          await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now }, { merge: true });
+          textEl.value = '';
+        } catch (e) {
+          toast(`Не удалось отправить: ${e?.message || e}`);
+        } finally {
+          el.disabled = false;
+        }
+      };
+    });
+    document.querySelectorAll('.f-admin-ticket-toggle').forEach((el) => {
+      el.onclick = async () => {
+        try {
+          await setDoc(doc(state.db, 'supportTickets', el.dataset.id), {
+            status: el.dataset.status === 'closed' ? 'open' : 'closed',
+            updatedAt: Timestamp.fromDate(new Date()),
+          }, { merge: true });
+        } catch (e) {
+          toast(`Не удалось изменить статус: ${e?.message || e}`);
+        }
+      };
+    });
+  };
+
+  sub(onSnapshot(query(collection(state.db, 'supportTickets'), orderBy('updatedAt', 'desc'), limit(100)), async (snap) => {
+    tickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    await Promise.all([...new Set(tickets.map((t) => t.tenantId))].filter((id) => !tenantNames.has(id)).map(async (id) => {
+      try {
+        const tSnap = await getDoc(doc(state.db, 'tenants', id));
+        tenantNames.set(id, tSnap.exists() ? tSnap.data().name : id);
+      } catch (_) {
+        tenantNames.set(id, id);
+      }
+    }));
+    draw();
+  }, () => {
+    body.innerHTML = '<p class="small muted">Обращения недоступны.</p>';
+  }));
 }
 
 /** Объявления платформы (панель супер-админа, вкладка "Объявления") — прямая

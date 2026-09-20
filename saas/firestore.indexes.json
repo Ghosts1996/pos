@@ -48,6 +48,10 @@
       { "fieldPath": "active", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
     ]},
+    { "collectionGroup": "supportTickets", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "tenantId", "order": "ASCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ]},
     { "collectionGroup": "billingEvents", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "tenantId", "order": "ASCENDING" },
       { "fieldPath": "receivedAt", "order": "DESCENDING" }
