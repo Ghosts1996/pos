@@ -563,6 +563,39 @@ describe("Тарифы (plans): управляет только супер-ад�
   });
 });
 
+describe("broadcasts: объявления платформы — пишет только супер-админ, читает кто угодно вошедший", () => {
+  beforeEach(seedTwoTenants);
+
+  it("супер-админ может опубликовать объявление", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "broadcasts/b1"), { title: "Обновление", body: "Текст", active: true }));
+  });
+
+  it("владелец заведения читает опубликованные объявления", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("broadcasts/b1"), { title: "Обновление", body: "Текст", active: true });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "broadcasts/b1")));
+  });
+
+  it("неавторизованный посетитель не может читать объявления", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("broadcasts/b1"), { title: "Обновление", body: "Текст", active: true });
+    });
+    await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "broadcasts/b1")));
+  });
+
+  it("владелец заведения не может опубликовать объявление сам", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "broadcasts/fake"), { title: "Скидка", body: "...", active: true }));
+  });
+
+  it("владелец заведения не может деактивировать чужое объявление", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("broadcasts/b1"), { title: "Обновление", body: "Текст", active: true });
+    });
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "broadcasts/b1"), { active: false }, { merge: true }));
+  });
+});
+
 describe("superAdmins: только существующий супер-админ может назначать/снимать других", () => {
   beforeEach(seedTwoTenants);
 

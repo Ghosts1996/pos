@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.2-admin-infra-history-retry';
+const CONSOLE_BUILD = '2026-09-21.3-broadcasts';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -208,6 +208,25 @@ function toast(msg) {
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+/** Какие объявления платформы владелец уже закрыл на ЭТОМ браузере — простой
+ *  localStorage, без синхронизации между устройствами (см. комментарий у
+ *  `let broadcasts` в watchDashboardData). Обёрнуто в try/catch: приватный
+ *  режим браузера или отключённое хранилище не должны ронять весь "Обзор". */
+function dismissedBroadcastIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('dismissedBroadcasts') || '[]'));
+  } catch (_) {
+    return new Set();
+  }
+}
+function dismissBroadcast(id) {
+  try {
+    const ids = dismissedBroadcastIds();
+    ids.add(id);
+    localStorage.setItem('dismissedBroadcasts', JSON.stringify([...ids]));
+  } catch (_) { /* см. docstring выше — не критично, просто не запомнится */ }
 }
 
 function clearScreen() {
@@ -1668,6 +1687,13 @@ function watchDashboardData(tenantId) {
   let buildJobs = null;
   let generalSettings = null;
   let paymentHistory = null;
+  // Активные объявления платформы (см. watchAdminBroadcasts в панели
+  // супер-админа) — баннер на "Обзоре", скрытие конкретного объявления
+  // запоминается в localStorage браузера (см. dismissedBroadcastIds ниже):
+  // не критично для этой функции хранить "прочитано" синхронно между
+  // устройствами одного владельца, а заводить для этого отдельный
+  // Firestore-документ на пользователя — лишняя сложность ради баннера.
+  let broadcasts = null;
   // "Живые" цифры на "Обзоре" (см. подписки ниже) — null, пока не пришёл
   // первый снапшот, чтобы отличить "ещё грузится" от настоящего нуля.
   let liveOpenSessions = null;
@@ -1795,7 +1821,21 @@ function watchDashboardData(tenantId) {
       return `${planText} · ${SUB_STATUS_LABELS[subscription.status] || subscription.status}`;
     })();
 
+    const visibleBroadcasts = (broadcasts || []).filter((b) => !dismissedBroadcastIds().has(b.id));
+    const broadcastsHtml = visibleBroadcasts.length ? visibleBroadcasts.map((b) => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div class="grow" style="min-width:0">
+            <div style="font-weight:700">📣 ${esc(b.title || '')}</div>
+            <div class="small muted" style="margin-top:4px">${esc(b.body || '')}</div>
+          </div>
+          <button class="btn-link f-broadcast-dismiss" data-id="${esc(b.id)}" style="width:auto;flex-shrink:0">✕</button>
+        </div>
+      </div>
+    `).join('') : '';
+
     const overviewHtml = () => `
+      ${broadcastsHtml}
       <div class="dash-greeting">${esc(greetingLine())} 👋</div>
       <div class="card">
         <div class="muted small">Заведение</div>
@@ -2226,6 +2266,12 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    document.querySelectorAll('.f-broadcast-dismiss').forEach((el) => {
+      el.onclick = () => {
+        dismissBroadcast(el.dataset.id);
+        draw();
+      };
+    });
 
     // Гамбургер-меню: на телефоне это выдвижная панель поверх контента, на
     // широком экране (см. media query в console.css) она уже показана
@@ -2567,6 +2613,13 @@ function watchDashboardData(tenantId) {
     subscription = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
+  sub(onSnapshot(query(collection(state.db, 'broadcasts'), where('active', '==', true), orderBy('createdAt', 'desc'), limit(5)), (snap) => {
+    broadcasts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  }, () => {
+    broadcasts = [];
+    draw();
+  }));
   sub(onSnapshot(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId)), (snap) => {
     members = snap.docs.map((d) => d.data());
     draw();
@@ -2906,7 +2959,17 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="broadcasts">
         <h1>Объявления</h1>
-        <p class="small muted">Раздел в разработке.</p>
+        <p class="small muted">Показываются баннером на "Обзоре" личного кабинета всем владельцам, пока объявление активно.</p>
+        <div class="card">
+          <label class="field"><span>Заголовок</span>
+            <input id="f-broadcast-title" placeholder="Например: Новая функция — учёт переработки">
+          </label>
+          <label class="field"><span>Текст</span>
+            <textarea id="f-broadcast-body" rows="3" placeholder="Коротко, что изменилось и что нужно сделать"></textarea>
+          </label>
+          <button class="btn btn-primary" id="f-broadcast-publish">Опубликовать</button>
+        </div>
+        <div id="admin-broadcasts"><div class="spinner"></div></div>
       </div>
 
       <div class="admin-tab-panel" data-panel="support">
@@ -2976,6 +3039,71 @@ function screenSuperAdmin() {
   watchSuperAdmins();
   watchAllBuildJobs();
   watchAdminInfra();
+  watchAdminBroadcasts();
+}
+
+/** Объявления платформы (панель супер-админа, вкладка "Объявления") — прямая
+ *  запись в Firestore под isSuperAdmin(), тот же приём, что у watchPlans()/
+ *  savePlan() (без похода в saas-gateway, там нечего проверять сверх того,
+ *  что уже проверяют правила). */
+function watchAdminBroadcasts() {
+  const body = $('admin-broadcasts');
+  sub(onSnapshot(query(collection(state.db, 'broadcasts'), orderBy('createdAt', 'desc'), limit(30)), (snap) => {
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    body.innerHTML = items.length ? `<div class="card">${items.map((b) => `
+      <div class="row" style="justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="small grow" style="min-width:0">
+          <b>${esc(b.title || '')}</b>${b.active ? '' : ' <span class="muted">(снято)</span>'}
+          <div class="muted">${esc(b.body || '')}</div>
+          <div class="muted">${fmtDateTime(b.createdAt)}</div>
+        </div>
+        <button class="btn-link f-broadcast-toggle" data-id="${esc(b.id)}" data-active="${b.active ? '1' : '0'}" style="width:auto;flex-shrink:0">
+          ${b.active ? 'Снять' : 'Вернуть'}
+        </button>
+      </div>
+    `).join('')}</div>` : '<p class="small muted">Объявлений пока не было.</p>';
+
+    document.querySelectorAll('.f-broadcast-toggle').forEach((el) => {
+      el.onclick = async () => {
+        el.disabled = true;
+        try {
+          await setDoc(doc(state.db, 'broadcasts', el.dataset.id), { active: el.dataset.active !== '1' }, { merge: true });
+        } catch (e) {
+          toast(`Не удалось изменить объявление: ${e?.message || e}`);
+          el.disabled = false;
+        }
+      };
+    });
+  }, () => {
+    body.innerHTML = '<p class="small muted">Объявления недоступны.</p>';
+  }));
+
+  if ($('f-broadcast-publish')) {
+    $('f-broadcast-publish').onclick = async () => {
+      const titleEl = $('f-broadcast-title');
+      const bodyEl = $('f-broadcast-body');
+      const title = titleEl.value.trim();
+      const text = bodyEl.value.trim();
+      if (!title || !text) {
+        toast('Заполните заголовок и текст');
+        return;
+      }
+      const btn = $('f-broadcast-publish');
+      btn.disabled = true;
+      try {
+        await addDoc(collection(state.db, 'broadcasts'), {
+          title, body: text, active: true, createdAt: Timestamp.fromDate(new Date()), createdBy: state.uid,
+        });
+        titleEl.value = '';
+        bodyEl.value = '';
+        toast('Объявление опубликовано');
+      } catch (e) {
+        toast(`Не удалось опубликовать: ${e?.message || e}`);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
 }
 
 // Порог, после которого сборка в очереди считается зависшей (воркер на
