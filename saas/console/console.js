@@ -13,7 +13,7 @@ import {
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
+  getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
@@ -1508,6 +1508,14 @@ function watchDashboardData(tenantId) {
   let buildJobs = null;
   let generalSettings = null;
   let paymentHistory = null;
+  // Сотрудники с PIN-входом в кассу (tenants/{id}/employees) — отдельно от
+  // members выше: то доступ к ЭТОЙ веб-панели (email+пароль), это доступ к
+  // самой кассе на планшете (имя+PIN), см. teamHtml().
+  let employees = null;
+  // id редактируемого сейчас сотрудника, или null — форма добавления
+  // нового. Переживает промежуточные перерисовки, как pendingLogoUrl ниже.
+  let editingEmployeeId = null;
+  const revealedEmpPins = new Set();
   // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
   // перерисовки (см. ниже), сбрасывается после успешного сохранения.
   let pendingLogoUrl = null;
@@ -1790,6 +1798,60 @@ function watchDashboardData(tenantId) {
           </div>
         ` : ''}
       </div>
+
+      <h2>Сотрудники кассы (вход по PIN)</h2>
+      <div class="card">
+        <p class="small muted">Отдельно от доступа к ЭТОЙ веб-панели выше:
+        эти сотрудники входят прямо в кассу на планшете по имени и
+        PIN-коду — им не нужен email и эта страница вообще. У «Сотрудника»
+        PIN из 4 цифр, у «Администратора» — из 6.</p>
+        ${employees === null ? '<div class="small muted">Загрузка…</div>' : (employees.length === 0
+          ? '<div class="small muted">Пока нет ни одного сотрудника с PIN-входом</div>'
+          : employees.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((e) => {
+            const pinLen = e.role === 'admin' ? 6 : 4;
+            const revealed = revealedEmpPins.has(e.id);
+            return `
+          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div class="grow" style="min-width:0">
+              <div class="ellipsis">${esc(e.name || '')}</div>
+              <div class="small muted">
+                ${e.role === 'admin' ? 'Администратор' : 'Сотрудник'} · PIN
+                <span class="f-emp-pin" data-id="${esc(e.id)}" style="cursor:pointer" title="Нажмите, чтобы ${revealed ? 'скрыть' : 'показать'}">${revealed ? esc(e.pinCode || '') : '•'.repeat(pinLen)}</span>
+              </div>
+            </div>
+            ${canManage ? `
+              <button class="btn-link f-emp-edit" data-id="${esc(e.id)}" style="width:auto">Изменить</button>
+              <button class="btn-link f-emp-delete" data-id="${esc(e.id)}" data-name="${esc(e.name || '')}" style="width:auto;color:var(--danger)">Удалить</button>
+            ` : ''}
+          </div>
+        `;
+          }).join(''))}
+
+        ${canManage ? `
+          <div style="margin-top:14px">
+            <div class="small muted" style="margin-bottom:6px">${editingEmployeeId ? 'Редактирование сотрудника' : 'Новый сотрудник'}</div>
+            <label class="field"><span>Имя</span>
+              <input id="f-emp-name" placeholder="Имя сотрудника">
+            </label>
+            <div class="row">
+              <select id="f-emp-role" class="grow">
+                <option value="employee">Сотрудник (PIN — 4 цифры)</option>
+                <option value="admin">Администратор (PIN — 6 цифр)</option>
+              </select>
+            </div>
+            <label class="field"><span>PIN-код</span>
+              <input id="f-emp-pin" type="text" inputmode="numeric" placeholder="0000" maxlength="6">
+            </label>
+            <div class="row">
+              <button class="btn btn-ghost" id="f-emp-submit" style="width:auto">Сохранить</button>
+              ${editingEmployeeId ? `<button class="btn-link" id="f-emp-cancel" style="width:auto">Отменить</button>` : ''}
+            </div>
+            <p class="small muted" style="margin-top:6px">После сохранения сообщите сотруднику
+            имя и PIN-код лично — по ним он войдёт в кассу на планшете.</p>
+            <div id="f-emp-error" class="small" style="color:var(--danger)"></div>
+          </div>
+        ` : ''}
+      </div>
     `;
 
     const memberSince = (() => {
@@ -2037,6 +2099,96 @@ function watchDashboardData(tenantId) {
         }
       };
     }
+
+    document.querySelectorAll('.f-emp-pin').forEach((el) => {
+      el.onclick = () => {
+        revealedEmpPins.has(el.dataset.id) ? revealedEmpPins.delete(el.dataset.id) : revealedEmpPins.add(el.dataset.id);
+        draw();
+      };
+    });
+    document.querySelectorAll('.f-emp-edit').forEach((el) => {
+      el.onclick = () => {
+        const emp = (employees || []).find((x) => x.id === el.dataset.id);
+        if (!emp) return;
+        editingEmployeeId = emp.id;
+        // Проставляем значения ПРЯМО в ещё-старые (до перерисовки) поля —
+        // draw() читает их именно оттуда (см. комментарий про existingName
+        // у формы брендинга выше): иначе форма осталась бы пустой, а не
+        // заполнилась данными выбранного сотрудника.
+        if ($('f-emp-name')) $('f-emp-name').value = emp.name || '';
+        if ($('f-emp-role')) $('f-emp-role').value = emp.role || 'employee';
+        if ($('f-emp-pin')) $('f-emp-pin').value = emp.pinCode || '';
+        draw();
+      };
+    });
+    if ($('f-emp-cancel')) {
+      $('f-emp-cancel').onclick = () => {
+        editingEmployeeId = null;
+        if ($('f-emp-name')) $('f-emp-name').value = '';
+        if ($('f-emp-role')) $('f-emp-role').value = 'employee';
+        if ($('f-emp-pin')) $('f-emp-pin').value = '';
+        draw();
+      };
+    }
+    document.querySelectorAll('.f-emp-delete').forEach((el) => {
+      el.onclick = async () => {
+        if (!confirm(`Удалить сотрудника «${el.dataset.name}»? Он больше не сможет войти по своему PIN-коду.`)) return;
+        try {
+          await deleteDoc(doc(state.db, 'tenants', tenantId, 'employees', el.dataset.id));
+          if (editingEmployeeId === el.dataset.id) editingEmployeeId = null;
+          toast('Сотрудник удалён');
+        } catch (e) {
+          toast(`Не удалось удалить: ${e?.message || e}`);
+        }
+      };
+    });
+    if ($('f-emp-submit')) {
+      $('f-emp-submit').onclick = async () => {
+        const errEl = $('f-emp-error');
+        errEl.textContent = '';
+        const name = $('f-emp-name').value.trim();
+        const role = $('f-emp-role').value === 'admin' ? 'admin' : 'employee';
+        const pin = $('f-emp-pin').value.trim();
+        // Та же длина PIN по роли, что и в кассе (lib/utils/constants.dart,
+        // AppConstants.pinLengthForRole) — иначе владелец задал бы PIN,
+        // который сама касса потом не примет ни при каком вводе.
+        const requiredLen = role === 'admin' ? 6 : 4;
+        if (!name) { errEl.textContent = 'Введите имя'; return; }
+        if (!/^\d+$/.test(pin) || pin.length !== requiredLen) {
+          errEl.textContent = `PIN-код должен состоять ровно из ${requiredLen} цифр`;
+          return;
+        }
+        const taken = (employees || []).some((e) => e.pinCode === pin && e.id !== editingEmployeeId);
+        if (taken) { errEl.textContent = 'Этот PIN-код уже занят другим сотрудником'; return; }
+        $('f-emp-submit').disabled = true;
+        try {
+          if (editingEmployeeId) {
+            await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), { name, role, pinCode: pin });
+            toast('Сотрудник обновлён');
+          } else {
+            // Остальные поля — те же дефолты, что и у Employee() в
+            // lib/models/employee.dart, чтобы касса читала запись как
+            // сотрудника без настроенной зарплаты, а не падала на
+            // отсутствующих полях.
+            await addDoc(collection(state.db, 'tenants', tenantId, 'employees'), {
+              name, role, pinCode: pin,
+              hourlyRateEnabled: false, hourlyRate: 0,
+              overtimeEnabled: false, overtimeThresholdHours: 8, overtimeMultiplier: 1.5,
+              salesPercentEnabled: false, salesPercentRate: 0,
+            });
+            toast('Сотрудник добавлен — сообщите ему имя и PIN для входа в кассу');
+          }
+          editingEmployeeId = null;
+          $('f-emp-name').value = '';
+          $('f-emp-role').value = 'employee';
+          $('f-emp-pin').value = '';
+        } catch (e) {
+          errEl.textContent = `Не удалось сохранить: ${e?.message || e}`;
+        } finally {
+          if ($('f-emp-submit')) $('f-emp-submit').disabled = false;
+        }
+      };
+    }
     document.querySelectorAll('.f-plan-checkout').forEach((el) => {
       el.onclick = () => {
         const periodSelect = document.querySelector(`.f-plan-period[data-plan="${el.dataset.plan}"]`);
@@ -2081,6 +2233,13 @@ function watchDashboardData(tenantId) {
     draw();
   }, () => {
     members = [];
+    draw();
+  }));
+  sub(onSnapshot(collection(state.db, 'tenants', tenantId, 'employees'), (snap) => {
+    employees = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  }, () => {
+    employees = [];
     draw();
   }));
   // id -> последний известный статус сборки — чтобы поймать именно ПЕРЕХОД
