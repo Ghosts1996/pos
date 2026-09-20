@@ -305,6 +305,35 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/staffShifts/shift1")));
   });
 
+  it("настройки программы лояльности (settings/loyalty) видны и персоналу, и гостю СВОЕГО заведения, пишет только owner/admin", async () => {
+    // Регрессия: общее правило settings/{doc} проверяет isMember() —
+    // а гость (isTenantGuest) в это понятие не входит вообще (isMember
+    // про tenantMembers — консоль/устройство кассы, а не профиль гостя),
+    // поэтому расширение settings/{doc} до isTenantGuest было бы дырой:
+    // там же лежит settings/deviceInvite (секретный код приглашения
+    // устройства). Нужно отдельное, более специфичное правило именно на
+    // settings/loyalty.
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/settings/loyalty"), {
+        tiers: [{ name: "Бронза", from: 0, cashback: 3 }],
+      });
+    });
+    const empDb = ctxFor("empA");
+    await assertSucceeds(getDoc(doc(empDb, "tenants/tenantA/settings/loyalty")));
+    await assertFails(setDoc(doc(empDb, "tenants/tenantA/settings/loyalty"), { tiers: [] }));
+
+    const guestDb = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(guestDb, "tenants/tenantA/settings/loyalty")));
+
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/loyalty")));
+
+    const ownerADb = ctxFor("ownerA");
+    await assertSucceeds(setDoc(doc(ownerADb, "tenants/tenantA/settings/loyalty"), {
+      tiers: [{ name: "Бронза", from: 0, cashback: 4 }],
+    }));
+  });
+
   it("неактивное членство (status != active) не даёт доступа", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("tenantMembers/tenantA_firedA"), {

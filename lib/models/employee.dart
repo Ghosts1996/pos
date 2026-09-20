@@ -52,7 +52,7 @@ class Employee {
       name: data['name'] ?? '',
       pinCode: data['pinCode'] ?? '',
       role: data['role'] ?? 'employee',
-      position: data['position'] ?? AppConstants.positionUniversal,
+      position: AppConstants.normalizePosition(data['position'] as String?),
       hourlyRateEnabled: data['hourlyRateEnabled'] ?? false,
       hourlyRate: (data['hourlyRate'] ?? 0).toDouble(),
       overtimeEnabled: data['overtimeEnabled'] ?? false,
