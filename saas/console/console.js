@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.4-cancel-reason';
+const CONSOLE_BUILD = '2026-09-21.5-bonus-period';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -471,6 +471,7 @@ const AUDIT_ACTION_LABELS = {
   subscriptionCancelWithdrawn: 'Автопродление возобновлено владельцем',
   buildJobRequested: 'Запрошена сборка APK',
   planChangedBySuperAdmin: 'Тариф изменён супер-админом',
+  bonusPeriodGranted: 'Выдан бонусный период',
 };
 
 function authErrorMessage(e) {
@@ -3275,6 +3276,30 @@ function watchAllTenants() {
     }
   };
 
+  const grantBonusPeriod = async (tenantId) => {
+    const input = prompt('На сколько дней продлить доступ этому заведению? (от 1 до 365)');
+    if (input === null) return;
+    const days = Number(input);
+    if (!Number.isFinite(days) || days <= 0 || days > 365) {
+      toast('Введите число дней от 1 до 365');
+      return;
+    }
+    const btn = document.querySelector(`.f-grant-bonus[data-id="${tenantId}"]`);
+    if (btn) btn.disabled = true;
+    try {
+      // Отдельный эндпоинт saas-gateway, а не прямая запись в subscriptions
+      // (как saveSubscriptionOverride выше) — нужен аудит-лог (кто и сколько
+      // дней выдал), а писать в auditLogs с клиента правила не дают ни при
+      // каких условиях (allow write: if false — только Admin SDK).
+      await callSaasGateway('grantBonusPeriod', { tenantId, days });
+      toast(`Выдано ${days} ${pluralDays(days)}`);
+    } catch (e) {
+      toast(`Не удалось выдать бонус: ${e?.message || e}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
   const renderTenantDetail = (t) => {
     const d = detailsCache.get(t.id);
     if (!d) return '<div class="small muted" style="margin-top:10px">Загрузка…</div>';
@@ -3311,6 +3336,10 @@ function watchAllTenants() {
             <input type="date" class="f-sub-trial-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
           </label>
           <button class="btn btn-ghost f-sub-save" data-id="${esc(t.id)}">Сохранить подписку</button>
+        </div>
+
+        <div style="margin-top:14px">
+          <button class="btn-link f-grant-bonus" data-id="${esc(t.id)}" style="width:auto">🎁 Выдать бонусный период</button>
         </div>
 
         <div style="margin-top:14px">
@@ -3459,6 +3488,9 @@ function watchAllTenants() {
     });
     document.querySelectorAll('.f-sub-save').forEach((el) => {
       el.onclick = () => saveSubscriptionOverride(el.dataset.id);
+    });
+    document.querySelectorAll('.f-grant-bonus').forEach((el) => {
+      el.onclick = () => grantBonusPeriod(el.dataset.id);
     });
   };
 
