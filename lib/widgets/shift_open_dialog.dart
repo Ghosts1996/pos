@@ -42,6 +42,14 @@ Future<bool> ensureShiftOpen(BuildContext context, {required Employee me}) async
   if (staff.isEmpty) {
     try {
       await fs.openShiftIfNeeded(me.name, employeeId: me.id);
+      // Открыл смену — значит, уже на месте и работает: отдельно нажимать
+      // "Начать смену" в личном учёте времени не нужно (см. clockIn —
+      // если пришёл раньше открытия заведения, часы для зарплаты всё равно
+      // начнутся не раньше времени открытия, а не с этого нажатия).
+      // Ошибку тут глотаем: касса важнее — смена уже открыта и это главное.
+      try {
+        await fs.clockIn(me);
+      } catch (_) {}
       return true;
     } catch (_) {
       return false;
@@ -67,6 +75,12 @@ Future<bool> ensureShiftOpen(BuildContext context, {required Employee me}) async
 
   try {
     await fs.openShiftIfNeeded(chosen.name, employeeId: chosen.id);
+    // Смена открыта на chosen — значит, личный учёт времени начинается у
+    // НЕГО, а не у того, кто физически нажал кнопку (это мог быть админ,
+    // открывающий смену на кальянщика). Ошибку глотаем: касса важнее.
+    try {
+      await fs.clockIn(chosen);
+    } catch (_) {}
     // Этот планшет стоит в зале — с него и открыли смену. Значит вызовы
     // гостей надо показывать здесь, даже если вошёл в него админ, а смену
     // он открыл на кальянщика.
