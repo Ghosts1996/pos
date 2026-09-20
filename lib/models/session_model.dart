@@ -55,6 +55,14 @@ class SessionModel {
   final String tableName;
   final String employeeName;
 
+  /// Id сотрудника, открывшего стол — как раз ОН, а не employeeName (текст,
+  /// который меняется при переименовании и может совпасть у двух разных
+  /// людей), используется для начисления процента с продаж в "Зарплате"
+  /// (см. PayrollScreen). Пусто у сессий, созданных до этого поля — тогда
+  /// расчёт зарплаты для них по-прежнему падает обратно на сопоставление по
+  /// имени, как раньше.
+  final String employeeId;
+
   /// Подпись чека — кто сидит за столом / чей это счёт (например, имя
   /// гостя или номер компании: "Аня", "Компания у окна"). Задаётся и
   /// меняется сотрудником вручную на экране стола, не привязана к
@@ -90,6 +98,7 @@ class SessionModel {
     required this.tableId,
     required this.tableName,
     required this.employeeName,
+    this.employeeId = '',
     this.guestTag = '',
     required this.startTime,
     required this.plannedEnd,
@@ -122,6 +131,7 @@ class SessionModel {
       tableId: data['tableId'] ?? '',
       tableName: data['tableName'] ?? '',
       employeeName: data['employeeName'] ?? '',
+      employeeId: data['employeeId'] ?? '',
       guestTag: data['guestTag'] ?? '',
       startTime: start is Timestamp ? start.toDate() : now,
       plannedEnd: end is Timestamp ? end.toDate() : now,
@@ -154,6 +164,7 @@ class SessionModel {
       'tableId': tableId,
       'tableName': tableName,
       'employeeName': employeeName,
+      'employeeId': employeeId,
       'guestTag': guestTag,
       'startTime': Timestamp.fromDate(startTime),
       'plannedEnd': Timestamp.fromDate(plannedEnd),

@@ -33,6 +33,20 @@ class StaffShiftModel {
   /// только закрытые смены (см. PayrollCalculator).
   Duration get duration => (endedAt ?? DateTime.now()).difference(startedAt);
 
+  /// Пересекается ли эта ЗАКРЫТАЯ смена по времени с интервалом
+  /// [otherStart, otherEnd) — используется перед ручным добавлением/правкой
+  /// смены (см. staff_shifts_screen.dart), чтобы не завести вторую запись
+  /// поверх уже существующей: без этой проверки часы за пересечение
+  /// задваиваются в расчёте зарплаты, а PayrollCalculator сам по себе
+  /// пересечения не видит — он просто суммирует все переданные ему смены.
+  /// Открытая смена (endedAt == null) не сравнивается — её и так не
+  /// подставить в PayrollCalculator, пока она не закрыта.
+  bool overlapsRange(DateTime otherStart, DateTime otherEnd) {
+    final myEnd = endedAt;
+    if (myEnd == null) return false;
+    return startedAt.isBefore(otherEnd) && otherStart.isBefore(myEnd);
+  }
+
   factory StaffShiftModel.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     return StaffShiftModel(

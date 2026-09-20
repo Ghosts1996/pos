@@ -195,6 +195,7 @@ class FirestoreService {
   Future<String> openSession({
     required TableModel table,
     required String employeeName,
+    String employeeId = '',
     int durationMinutes = AppConstants.defaultSessionMinutes,
     String guestTag = '',
   }) async {
@@ -219,6 +220,7 @@ class FirestoreService {
         tableId: table.id,
         tableName: table.name,
         employeeName: employeeName,
+        employeeId: employeeId,
         startTime: now,
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
         guestTag: guestTag,
@@ -919,6 +921,19 @@ class FirestoreService {
         .where('endedAt', isLessThan: Timestamp.fromDate(end))
         .orderBy('endedAt', descending: true)
         .get();
+    return snap.docs.map((d) => StaffShiftModel.fromDoc(d)).toList();
+  }
+
+  /// Все личные смены ОДНОГО сотрудника, без ограничения по периоду —
+  /// нужно перед ручным добавлением/правкой смены, чтобы проверить, не
+  /// пересекается ли она по времени с уже существующей записью (см.
+  /// StaffShiftModel.overlapsRange и staff_shifts_screen.dart). У реального
+  /// сотрудника таких записей от силы сотни за всё время работы, поэтому
+  /// вытащить их все и сравнить на клиенте дешевле, чем городить составной
+  /// индекс под диапазонный запрос по двум полям сразу.
+  Future<List<StaffShiftModel>> allStaffShiftsForEmployee(String employeeId) async {
+    final snap =
+        await AppScope.col('staffShifts').where('employeeId', isEqualTo: employeeId).get();
     return snap.docs.map((d) => StaffShiftModel.fromDoc(d)).toList();
   }
 
