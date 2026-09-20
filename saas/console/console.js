@@ -20,7 +20,7 @@ import {
   getFunctions, httpsCallable,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 import {
-  getStorage, ref, uploadBytes, getDownloadURL,
+  getStorage, ref, uploadBytesResumable, getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.6-logo-upload-feedback';
+const CONSOLE_BUILD = '2026-09-20.7-logo-upload-progress';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -295,6 +295,32 @@ function planLimitWarnings(t, plans) {
     if (limitValue > 0 && used > limitValue) warnings.push(`${label} ${used} из ${limitValue}`);
   });
   return warnings;
+}
+
+// Логотип показывается максимум в паре десятков-сотен пикселей (окошко
+// предпросмотра, иконка приложения — см. flutter_launcher_icons в
+// saas-on-demand-build.yml, которому и 1024px за глаза) — а телефонная
+// камера легко даёт файл на несколько мегабайт и 3000+ px по стороне,
+// который на медленном мобильном интернете грузится минуты. Уменьшаем на
+// клиенте перед отправкой в Storage; если canvas почему-то недоступен —
+// просто шлём файл как есть, не блокируя загрузку логотипа вовсе.
+async function resizeImageForUpload(file, maxDim = 1024) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1) return file; // уже достаточно маленький — не трогаем
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    // Всегда PNG, а не формат исходника — у логотипов часто прозрачный фон
+    // (JPEG её не умеет), а на таком небольшом размере разница в весе с
+    // JPEG уже не критична.
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, '.png'), { type: 'image/png' }) : file;
+  } catch (_) {
+    return file;
+  }
 }
 
 async function copyToClipboard(text) {
@@ -1904,7 +1930,10 @@ function watchDashboardData(tenantId) {
           ${canManage ? `
             <div class="grow">
               <input type="file" id="f-logo-file" accept="image/png,image/jpeg,image/webp">
-              <div id="f-logo-uploading" class="small muted" style="display:none;margin-top:4px">Загружается…</div>
+              <div id="f-logo-progress-wrap" style="display:none;margin-top:6px">
+                <div class="upload-progress"><div class="upload-progress-bar" id="f-logo-progress-bar"></div></div>
+                <div class="small muted" id="f-logo-progress-text" style="margin-top:3px">Подготовка…</div>
+              </div>
               <div id="f-logo-error" class="small" style="color:var(--danger)"></div>
             </div>
           ` : '<div class="grow small muted">Логотип не задан</div>'}
@@ -2225,7 +2254,9 @@ function watchDashboardData(tenantId) {
           const file = e.target.files?.[0];
           if (!file) return;
           const errEl = $('f-logo-error');
-          const uploadingEl = $('f-logo-uploading');
+          const progressWrap = $('f-logo-progress-wrap');
+          const progressBar = $('f-logo-progress-bar');
+          const progressText = $('f-logo-progress-text');
           errEl.textContent = '';
           if (file.size > 5 * 1024 * 1024) {
             errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
@@ -2237,17 +2268,27 @@ function watchDashboardData(tenantId) {
           // URL из Storage подменит его ниже, после getDownloadURL().
           const localPreviewUrl = URL.createObjectURL(file);
           $('f-logo-preview').src = localPreviewUrl;
-          if (uploadingEl) uploadingEl.style.display = 'block';
           // Пока файл грузится в Storage, «Сохранить брендинг» заблокирована
-          // (см. ниже) — иначе клик по ней раньше, чем отработает
-          // uploadBytes()/getDownloadURL(), сохранял бы имя/цвета без ещё не
-          // готового pendingLogoUrl, и логотип молча не попадал бы в базу.
+          // (см. ниже) — иначе клик по ней раньше, чем отработает загрузка,
+          // сохранял бы имя/цвета без ещё не готового pendingLogoUrl, и
+          // логотип молча не попадал бы в базу.
           logoUploading = true;
           if ($('f-save-branding')) $('f-save-branding').disabled = true;
+          if (progressWrap) progressWrap.style.display = 'block';
+          if (progressBar) progressBar.style.width = '0%';
+          if (progressText) progressText.textContent = 'Подготовка…';
           try {
-            const fileName = `logo.${(file.type.split('/')[1] || 'png')}`;
+            const uploadFile = await resizeImageForUpload(file);
+            const fileName = `logo.${uploadFile.type.split('/')[1] || 'png'}`;
             const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
-            await uploadBytes(fileRef, file, { contentType: file.type });
+            const task = uploadBytesResumable(fileRef, uploadFile, { contentType: uploadFile.type });
+            await new Promise((resolve, reject) => {
+              task.on('state_changed', (snap) => {
+                const pct = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
+                if (progressBar) progressBar.style.width = `${pct}%`;
+                if (progressText) progressText.textContent = `Загружается… ${pct}%`;
+              }, reject, resolve);
+            });
             pendingLogoUrl = await getDownloadURL(fileRef);
             if ($('f-logo-preview')) $('f-logo-preview').src = pendingLogoUrl;
           } catch (err) {
@@ -2256,7 +2297,7 @@ function watchDashboardData(tenantId) {
           } finally {
             URL.revokeObjectURL(localPreviewUrl);
             logoUploading = false;
-            if (uploadingEl) uploadingEl.style.display = 'none';
+            if (progressWrap) progressWrap.style.display = 'none';
             if ($('f-save-branding')) $('f-save-branding').disabled = false;
           }
         };
