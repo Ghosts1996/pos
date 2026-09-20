@@ -479,11 +479,25 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // ---- Подписки: владелец видит статус своей, менять может только
-    //      биллинговая Cloud Function/супер-админ ----
+    // ---- Подписки: читает любой активный сотрудник заведения (не только
+    //      владелец/админ), менять может только биллинговая Cloud
+    //      Function/супер-админ ----
+    //
+    // ВАЖНО: было hasRole(..., ['owner', 'admin']) — из-за этого сотрудник,
+    // присоединившийся по коду приглашения (см. SaasDeviceJoinService.
+    // joinAsDevice, роль всегда 'employee'), успешно регистрировался
+    // (devices/{uid} и tenantMembers оба создавались), но тут же падал с
+    // permission-denied в TenantConfigService.refresh() — она читает
+    // subscriptions/{tenantId} в общем Future.wait со всем остальным
+    // конфигом, и вся пачка падает из-за одного запрещённого чтения.
+    // Экран присоединения при этом показывал "не удалось присоединиться",
+    // хотя устройство УЖЕ было зарегистрировано — отсюда несколько
+    // задвоенных employee-регистраций от одного и того же теста. Здесь нет
+    // ничего чувствительнее planId/status/дат (см. SubscriptionInfo) — это
+    // ровно то, что SubscriptionGate обязан проверять на КАЖДОМ устройстве,
+    // включая рядовых сотрудников, а не только владельца.
     match /subscriptions/{subscriptionId} {
-      allow read: if isSuperAdmin() ||
-        (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
+      allow read: if isSuperAdmin() || isMember(resource.data.tenantId);
       allow write: if isSuperAdmin();
     }
 
