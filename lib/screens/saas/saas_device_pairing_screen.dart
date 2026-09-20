@@ -1,5 +1,4 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import '../../build_info.dart';
@@ -201,16 +200,6 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     'владельца, раздел «Устройства».',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 14),
-                  ),
-                  const SizedBox(height: 12),
-                  // ВРЕМЕННО: диагностика — к какому Firebase-проекту реально
-                  // подключилось это приложение. Снять после диагностики.
-                  Text(
-                    'DEBUG projectId: ${Firebase.app().options.projectId}\n'
-                    'DEBUG uid: ${FirebaseAuth.instance.currentUser?.uid}\n'
-                    'DEBUG kSaasMode: $kSaasMode',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.amber, fontSize: 11),
                   ),
                   const SizedBox(height: 24),
                   TextField(
