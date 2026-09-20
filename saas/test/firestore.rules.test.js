@@ -320,6 +320,24 @@ describe("Список сборок APK и подписки видны толь�
     await assertFails(getDoc(doc(db, "subscriptions/tenantA")));
   });
 
+  it("employee своего заведения тоже видит подписку (нужно SubscriptionGate на каждом устройстве)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("empA"), "subscriptions/tenantA")));
+  });
+
+  it("employee чужого заведения не видит подписку tenantA", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenantMembers/tenantB_empB"), {
+        tenantId: "tenantB", userId: "empB", role: "employee", status: "active",
+      });
+    });
+    await assertFails(getDoc(doc(ctxFor("empB"), "subscriptions/tenantA")));
+  });
+
   it("клиент не может создать себе buildJob напрямую в обход Cloud Function", async () => {
     const db = ctxFor("ownerA");
     await assertFails(setDoc(doc(db, "buildJobs/freeJob"), { tenantId: "tenantA", status: "queued" }));
