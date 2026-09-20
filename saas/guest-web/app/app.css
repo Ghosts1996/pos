@@ -9,6 +9,7 @@
   --primary: #12B886;
   --accent: #F06595;
   --gold: #D9B45B;
+  --gold-rgb: 217, 180, 91;
   --danger: #E03131;
   --warning: #E8A317;
   --tabbar: 68px;
@@ -120,8 +121,12 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
   border-top: 1px solid var(--border); margin-top: 8px; padding-top: 12px; }
 
 .tier {
-  background: linear-gradient(135deg, rgba(217,180,91,.16), var(--surface));
-  border: 1px solid rgba(217,180,91,.45);
+  /* rgba(var(--gold-rgb), …), а не var(--gold) напрямую — CSS не умеет
+     подмешивать alpha к цвету из custom property без color-mix() (плохая
+     поддержка в старых WebView), поэтому JS (applyBranding в app.js) кладёт
+     готовую r,g,b-тройку в --gold-rgb рядом с --gold. */
+  background: linear-gradient(135deg, rgba(var(--gold-rgb), .16), var(--surface));
+  border: 1px solid rgba(var(--gold-rgb), .45);
 }
 .tier .bonus { font-size: 30px; font-weight: 700; color: var(--gold); }
 .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 10px 0 6px; }
