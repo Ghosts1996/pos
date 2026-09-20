@@ -1785,6 +1785,9 @@ function watchDashboardData(tenantId) {
               <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
                 ${m.status === 'active' ? 'Отключить' : 'Включить'}
               </button>
+              <button class="btn-link f-member-delete" data-uid="${esc(m.userId)}" data-device="${m.email ? '0' : '1'}" data-label="${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}" style="color:var(--danger)">
+                Удалить
+              </button>
             ` : ''}
           </div>
         `).join('') || '<div class="small muted">Пока только вы</div>'}
@@ -2099,6 +2102,9 @@ function watchDashboardData(tenantId) {
     document.querySelectorAll('.f-member-toggle').forEach((el) => {
       el.onclick = () => toggleMemberStatus(tenantId, el.dataset.uid, el.dataset.active === '1');
     });
+    document.querySelectorAll('.f-member-delete').forEach((el) => {
+      el.onclick = () => deleteMember(tenantId, el.dataset.uid, el.dataset.device === '1', el.dataset.label);
+    });
     if ($('f-invite-submit')) {
       $('f-invite-submit').onclick = async () => {
         const email = $('f-invite-email').value.trim();
@@ -2356,6 +2362,28 @@ async function toggleMemberStatus(tenantId, memberUid, isActive) {
     toast(isActive ? 'Доступ отключён' : 'Доступ включён');
   } catch (e) {
     toast(`Не удалось изменить доступ: ${e?.message || e}`);
+  }
+}
+
+// «Отключить» выше просто ставит status: 'inactive' — запись остаётся в
+// списке навсегда, и он захламляется, если через заведение прошло много
+// планшетов (замена сломанных, старые точки продаж и т.д.). «Удалить»
+// стирает саму запись насовсем.
+async function deleteMember(tenantId, memberUid, isDevice, label) {
+  if (!confirm(`Удалить «${label}» из команды безвозвратно? Отменить нельзя — для устройства понадобится заново присоединяться по коду приглашения.`)) return;
+  try {
+    await deleteDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`));
+    if (isDevice) {
+      // Обязательно удалить и сам devices/{uid} — иначе устройство само
+      // восстановит себе tenantMembers с ролью employee при следующем
+      // запуске приложения: правила разрешают самоприсоединение, пока
+      // существует его собственный devices/{uid} (см. saas/firestore.rules,
+      // tenantMembers.create, третья ветка).
+      await deleteDoc(doc(state.db, 'tenants', tenantId, 'devices', memberUid));
+    }
+    toast('Удалено');
+  } catch (e) {
+    toast(`Не удалось удалить: ${e?.message || e}`);
   }
 }
 
