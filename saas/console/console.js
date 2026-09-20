@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.1';
+const CONSOLE_BUILD = '2026-09-20.2';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -3093,33 +3093,21 @@ function downloadPublicApk() {
 
 // Личная сборка заведения (в отличие от универсальной PUBLIC_APK_URL выше)
 // лежит на том же собственном сервере, но НЕ статикой через nginx — она
-// привязана к конкретному заведению (лого/название), поэтому раздаётся
-// через сам saas-gateway с проверкой Firebase Auth и роли owner/admin в
-// заведении (см. GET /downloadBuild в saas-gateway/server.js), а не через
-// Firebase Storage (у saas-3bdc8 недоступен без Blaze — та же причина, что
-// и у публичного APK, см. комментарий выше). window.open() тут не
-// подходит: он не может передать заголовок Authorization — поэтому файл
-// сначала скачивается через fetch, а затем сохраняется через blob-URL.
+// привязана к конкретному заведению (лого/название), поэтому просто так
+// её не отдать. Раньше это делалось через fetch()+заголовок Authorization,
+// но на реальном телефоне пользователя браузер (по всей видимости) молча
+// блокировал такой запрос — кнопка визуально ничего не делала, без единой
+// ошибки в интерфейсе. Разбираться в этом дальше без доступа к консоли
+// разработчика на его телефоне бессмысленно, поэтому сам механизм
+// скачивания упрощён до ТОГО ЖЕ window.open(), что и у публичного APK
+// (downloadPublicApk выше) — разница только в том, что ссылка одноразовая
+// и живёт 60 секунд (см. handleGetDownloadUrl/DOWNLOAD_TOKEN_TTL_MS в
+// saas-gateway/server.js): её ещё нужно СНАЧАЛА получить обычным POST с
+// Firebase Auth, так что чужую сборку по угаданному jobId не скачать.
 async function downloadBuild(jobId) {
   try {
-    const idToken = await state.auth.currentUser?.getIdToken();
-    if (!idToken) throw new Error('нет активной сессии — войдите заново');
-    const res = await fetch(`${SAAS_GATEWAY_URL}/downloadBuild?jobId=${encodeURIComponent(jobId)}`, {
-      headers: { Authorization: `Bearer ${idToken}` },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${res.status}`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `hookah-pos-${jobId}.apk`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    const { data } = await callSaasGateway('getDownloadUrl', { jobId });
+    window.open(`${SAAS_GATEWAY_URL}${data.url}`, '_blank', 'noopener');
   } catch (e) {
     toast(`Не удалось получить файл: ${e?.message || e}`);
   }
