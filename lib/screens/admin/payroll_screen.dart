@@ -21,6 +21,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   late DateTime _rangeStart;
   late DateTime _rangeEnd;
   bool _loading = true;
+  String? _error;
   List<PayrollResult> _results = [];
   List<Employee> _unconfigured = [];
 
@@ -34,41 +35,55 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final employees = await _fs.employeesStream().first;
-    final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
-    final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
-
-    // Та же выручка, что в "Отчётах": возвраты и чеки, закрытые без оплаты,
-    // в неё не входят (иначе процент с продаж начислялся бы на деньги,
-    // которых заведение фактически не получило).
-    final revenueByName = <String, double>{};
-    for (final s in sessions) {
-      if (s.refunded || s.closedWithoutPayment) continue;
-      final name = s.employeeName.isEmpty ? 'Без имени' : s.employeeName;
-      revenueByName[name] = (revenueByName[name] ?? 0) + s.totalWithDiscount;
-    }
-
-    final results = <PayrollResult>[];
-    final unconfigured = <Employee>[];
-    for (final emp in employees) {
-      if (!emp.payrollConfigured) {
-        unconfigured.add(emp);
-        continue;
-      }
-      final empShifts = shifts.where((s) => s.employeeId == emp.id).toList();
-      final revenue = revenueByName[emp.name] ?? 0;
-      results.add(PayrollCalculator.calculate(
-          employee: emp, closedShifts: empShifts, salesRevenue: revenue));
-    }
-    results.sort((a, b) => b.total.compareTo(a.total));
-
-    if (!mounted) return;
     setState(() {
-      _results = results;
-      _unconfigured = unconfigured;
-      _loading = false;
+      _loading = true;
+      _error = null;
     });
+    try {
+      final employees = await _fs.employeesStream().first;
+      final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
+      final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
+
+      // Та же выручка, что в "Отчётах": возвраты и чеки, закрытые без оплаты,
+      // в неё не входят (иначе процент с продаж начислялся бы на деньги,
+      // которых заведение фактически не получило).
+      final revenueByName = <String, double>{};
+      for (final s in sessions) {
+        if (s.refunded || s.closedWithoutPayment) continue;
+        final name = s.employeeName.isEmpty ? 'Без имени' : s.employeeName;
+        revenueByName[name] = (revenueByName[name] ?? 0) + s.totalWithDiscount;
+      }
+
+      final results = <PayrollResult>[];
+      final unconfigured = <Employee>[];
+      for (final emp in employees) {
+        if (!emp.payrollConfigured) {
+          unconfigured.add(emp);
+          continue;
+        }
+        final empShifts = shifts.where((s) => s.employeeId == emp.id).toList();
+        final revenue = revenueByName[emp.name] ?? 0;
+        results.add(PayrollCalculator.calculate(
+            employee: emp, closedShifts: empShifts, salesRevenue: revenue));
+      }
+      results.sort((a, b) => b.total.compareTo(a.total));
+
+      if (!mounted) return;
+      setState(() {
+        _results = results;
+        _unconfigured = unconfigured;
+        _loading = false;
+      });
+    } catch (e) {
+      // Раньше необработанная ошибка (например permission-denied) оставляла
+      // спиннер крутиться вечно — сотрудник видел "загрузку", которая
+      // никогда не заканчивается, без единого объяснения.
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не удалось загрузить: $e';
+        _loading = false;
+      });
+    }
   }
 
   void _setThisMonth() {
@@ -173,7 +188,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _results.isEmpty
+                : _error != null
+                    ? Center(child: Text(_error!, textAlign: TextAlign.center))
+                    : _results.isEmpty
                     ? Center(
                         child: Text(_unconfigured.isEmpty
                             ? 'Нет сотрудников'

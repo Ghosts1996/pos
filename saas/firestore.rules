@@ -567,6 +567,28 @@ service cloud.firestore {
     match /tenants/{tenantId}/shifts/{doc} {
       allow read, write: if isStaff(tenantId);
     }
+    // Личные смены сотрудников (учёт часов/зарплата, см. StaffShiftModel и
+    // lib/screens/admin/{payroll_screen,staff_shifts_screen}.dart) — своя
+    // коллекция, ОТДЕЛЬНАЯ от кассовых shifts выше. Забыли завести правило
+    // при переносе этой фичи в SaaS — из-за этого openShiftIfNeeded/clockIn
+    // падали permission-denied, а "Зарплата"/"Смены сотрудников" вечно
+    // крутили спиннер (экраны не оборачивают загрузку в try/catch — см.
+    // отдельный фикс там же).
+    match /tenants/{tenantId}/staffShifts/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    // Служебные указатели текущей открытой смены — та же транзакция
+    // openShiftIfNeeded/clockIn читает и пишет их АТОМАРНО вместе с
+    // shifts/staffShifts выше: Firestore разрешает транзакцию, только
+    // когда правила проходят ВСЕ операции внутри неё, поэтому без этих
+    // двух документов транзакция целиком отклонялась, даже когда сама
+    // запись в shifts/staffShifts была разрешена.
+    match /tenants/{tenantId}/meta/shiftState {
+      allow read, write: if isStaff(tenantId);
+    }
+    match /tenants/{tenantId}/meta/staffShiftState {
+      allow read, write: if isStaff(tenantId);
+    }
     match /tenants/{tenantId}/marking_codes_sold/{doc} {
       allow read, write: if isStaff(tenantId);
     }

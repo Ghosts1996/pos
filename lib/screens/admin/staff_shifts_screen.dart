@@ -25,6 +25,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
   List<Employee> _employees = [];
   List<StaffShiftModel> _shifts = [];
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -36,15 +37,28 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final employees = await _fs.employeesStream().first;
-    final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
-    if (!mounted) return;
     setState(() {
-      _employees = employees;
-      _shifts = shifts;
-      _loading = false;
+      _loading = true;
+      _error = null;
     });
+    try {
+      final employees = await _fs.employeesStream().first;
+      final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
+      if (!mounted) return;
+      setState(() {
+        _employees = employees;
+        _shifts = shifts;
+        _loading = false;
+      });
+    } catch (e) {
+      // Раньше необработанная ошибка (например permission-denied) оставляла
+      // спиннер крутиться вечно без единого объяснения.
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не удалось загрузить: $e';
+        _loading = false;
+      });
+    }
   }
 
   void _setToday() {
@@ -311,7 +325,13 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
               ),
             ),
           const Divider(height: 1),
-          Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : _buildList()),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(child: Text(_error!, textAlign: TextAlign.center))
+                    : _buildList(),
+          ),
         ],
       ),
     );
