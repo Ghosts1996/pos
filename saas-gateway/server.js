@@ -569,18 +569,48 @@ async function handleCompleteBuildJob(req, res) {
 // ----------------------------------------------------- downloadBuild
 
 /**
- * Отдаёт владельцу/админу заведения готовый личный APK — единственный GET
- * с проверкой прав в этом файле (остальные операции — POST с JSON-телом,
- * см. ROUTES/server ниже). GET осознанно: консоль скачивает файл через
- * fetch()+blob (см. downloadBuild в saas/console/console.js), а не через
- * window.open() — тому нельзя передать заголовок Authorization, а
- * скачивание должно быть закрыто именно им (файл не публичный).
+ * Секрет для подписи одноразовых ссылок на скачивание — генерируется
+ * заново при каждом старте процесса, хранить между рестартами не нужно:
+ * сама ссылка живёт всего DOWNLOAD_TOKEN_TTL_MS, случайный рестарт сервера
+ * ровно в это окно — цена ещё одного клика «Скачать», не более того.
+ *
+ * ПОЧЕМУ так, а не проверка заголовка Authorization на самом GET (как было
+ * раньше): консоль скачивала через fetch()+blob с заголовком Authorization,
+ * а обычный window.open() так не может — пришлось бы либо держать сложный
+ * JS-путь (fetch → blob → синтетическая ссылка), либо звать этот GET
+ * напрямую без заголовка. Первый способ на практике не сработал у
+ * реального пользователя (браузер молча блокировал запрос) — а разбираться
+ * дальше вслепую, без доступа к консоли разработчика на его телефоне,
+ * бессмысленно. Подписанная одноразовая ссылка работает как у публичного
+ * APK — просто window.open() — но всё равно требует СНАЧАЛА получить её
+ * через getDownloadUrl (POST, с Firebase Auth), так что чужую сборку по
+ * прямому URL не скачать: угадать jobId мало, нужен ещё и свежий токен.
  */
-async function handleDownloadBuild(req, res) {
+const DOWNLOAD_TOKEN_SECRET = crypto.randomBytes(32).toString("hex");
+const DOWNLOAD_TOKEN_TTL_MS = 60000;
+
+function signDownloadToken(jobId, expiresAt) {
+  return crypto.createHmac("sha256", DOWNLOAD_TOKEN_SECRET).update(`${jobId}.${expiresAt}`).digest("hex");
+}
+
+function verifyDownloadToken(jobId, token) {
+  const [expiresAtStr, sig] = String(token || "").split(".");
+  const expiresAt = Number(expiresAtStr);
+  if (!expiresAt || !sig || Date.now() > expiresAt) return false;
+  const expected = signDownloadToken(jobId, expiresAt);
+  const a = Buffer.from(sig, "hex");
+  const b = Buffer.from(expected, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * POST, с обычной проверкой Firebase Auth + роли — выдаёт саму ссылку для
+ * скачивания (см. docstring выше). Консоль сразу открывает её window.open().
+ */
+async function handleGetDownloadUrl(req, res) {
   const decoded = await verifyAuth(req);
-  const requestUrl = new URL(req.url, "http://localhost");
-  const jobId = requestUrl.searchParams.get("jobId") || "";
-  if (!/^[A-Za-z0-9]+$/.test(jobId)) throw new HttpError(400, "некорректный jobId");
+  const { jobId } = await parseJsonBody(req);
+  if (typeof jobId !== "string" || !/^[A-Za-z0-9]+$/.test(jobId)) throw new HttpError(400, "некорректный jobId");
 
   const jobDoc = await db().collection("buildJobs").doc(jobId).get();
   if (!jobDoc.exists) throw new HttpError(404, "сборка не найдена");
@@ -588,6 +618,33 @@ async function handleDownloadBuild(req, res) {
   if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
 
   await requireTenantRole(job.tenantId, decoded.uid, ["owner", "admin"]);
+
+  const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
+  const token = signDownloadToken(jobId, expiresAt);
+  sendJson(res, 200, {
+    url: `/downloadBuild?jobId=${encodeURIComponent(jobId)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`,
+  });
+}
+
+/**
+ * Сам файл — единственный GET в этом файле (остальные операции — POST с
+ * JSON-телом, см. ROUTES ниже). Доступ проверяется токеном из
+ * handleGetDownloadUrl выше, не заголовком Authorization — см. её же
+ * docstring, почему.
+ */
+async function handleDownloadBuild(req, res) {
+  const requestUrl = new URL(req.url, "http://localhost");
+  const jobId = requestUrl.searchParams.get("jobId") || "";
+  const token = requestUrl.searchParams.get("token") || "";
+  if (!/^[A-Za-z0-9]+$/.test(jobId)) throw new HttpError(400, "некорректный jobId");
+  if (!verifyDownloadToken(jobId, token)) {
+    throw new HttpError(403, "Ссылка устарела — вернитесь в консоль и нажмите «Скачать» заново");
+  }
+
+  const jobDoc = await db().collection("buildJobs").doc(jobId).get();
+  if (!jobDoc.exists) throw new HttpError(404, "сборка не найдена");
+  const job = jobDoc.data();
+  if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
 
   const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
   let stat;
@@ -911,6 +968,7 @@ const ROUTES = {
   "/enableTenant": handleEnableTenant,
   "/changeTenantPlan": handleChangeTenantPlan,
   "/deleteDemoTenant": handleDeleteDemoTenant,
+  "/getDownloadUrl": handleGetDownloadUrl,
 };
 
 function runHandler(handler, req, res) {
