@@ -52,6 +52,11 @@ const state = {
   uid: '',
   profile: null,
   venue: null,
+  /// Имя приложения из раздела «Брендинг» (branding.appName) — заполняется
+  /// в applyBranding(). Пусто, пока не пришёл ответ или владелец его не
+  /// задавал — тогда экраны ниже сами откатываются на имя заведения, а не
+  /// на дефолтный демо-бренд "Colibri Lounge" из app.css.
+  brandAppName: '',
   /// Отписки от «живых» запросов текущего экрана. При каждом переходе
   /// снимаются все: иначе экраны копят подписки, телефон греется, а
   /// трафик уходит впустую.
@@ -184,6 +189,14 @@ function contrastRatio(hexA, hexB) {
   return la > lb ? la / lb : lb / la;
 }
 
+/// Имя, которое видит гость там, где раньше был жёстко зашитый демо-бренд
+/// "Colibri Lounge" — своё название заведения (branding.appName), а если
+/// владелец его не задавал, имя из профиля заведения, и только если совсем
+/// ничего не настроено — нейтральное имя платформы, а не чужой бренд.
+function brandDisplayName() {
+  return state.brandAppName || (state.venue && state.venue.name) || 'Hookah POS';
+}
+
 async function applyBranding() {
   try {
     const snap = await getDoc(doc(state.root, 'branding', 'config'));
@@ -211,7 +224,10 @@ async function applyBranding() {
         // Битый HEX — оставляем дефолтные surface/border из app.css.
       }
     }
-    if (b.appName) document.title = b.appName;
+    if (b.appName) {
+      document.title = b.appName;
+      state.brandAppName = b.appName;
+    }
 
     // В кэш — index.html применяет его СРАЗУ при следующем заходе, ещё до
     // сети (см. комментарий там же), чтобы страница не мелькала дефолтной
@@ -495,7 +511,7 @@ function screenHome() {
 
   screenEl().innerHTML = `
     <div class="small" style="color:var(--primary);letter-spacing:.14em;text-transform:uppercase;font-weight:600">
-      Colibri Lounge
+      ${esc(brandDisplayName())}
     </div>
     <h1>${esc(hello)}${name ? ', ' + esc(name) : ''}</h1>
 
@@ -1868,7 +1884,7 @@ function screenProfile() {
     <div id="bonusOps"><div class="spinner"></div></div>
 
     <p class="small muted center" style="margin-top:28px">
-      Colibri Lounge · веб-версия</p>`;
+      ${esc(brandDisplayName())} · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
   if ((state.profile || {}).phone) {
