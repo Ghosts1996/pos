@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<!--
+  Один и тот же файл раздаётся ВСЕМ заведениям платформы (браузер узнаёт
+  чьё именно — по поддомену, см. resolveTenant() в app.js) — поэтому имя
+  здесь placeholder, а не бренд конкретного заведения. document.title
+  переписывается на реальное (branding.appName) сразу после applyBranding()
+  в app.js; apple-mobile-web-app-title ниже — статический HTML-атрибут,
+  его на лету не заменить, поэтому там нейтральная подпись, а не чужой бренд.
+-->
+<title>Личный кабинет гостя</title>
+<meta name="theme-color" content="#0E1512">
+<meta name="description" content="Свой стол, счёт, заказ и бонусы — прямо с телефона">
+
+<!-- Чтобы с «Домой» на iPhone открывалось как приложение, без адресной строки. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Личный кабинет гостя">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div class="wrap" id="screen">
+  <div class="spinner"></div>
+</div>
+
+<nav class="tabbar" id="tabbar" hidden>
+  <a href="#/" data-tab="home"><span class="ico">🏠</span>Главная</a>
+  <a href="#/menu" data-tab="menu"><span class="ico">🍽</span>Меню</a>
+  <a href="#/booking" data-tab="booking"><span class="ico">📅</span>Бронь</a>
+  <a href="#/table" data-tab="table"><span class="ico">🔥</span>Мой стол</a>
+  <a href="#/profile" data-tab="profile"><span class="ico">👤</span>Профиль</a>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

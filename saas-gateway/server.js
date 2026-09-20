@@ -269,6 +269,63 @@ async function handleResolveTenantBySlug(req, res) {
   sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status });
 }
 
+// -------------------------------------------------- publicGuestApk
+
+/**
+ * Скачивание гостевого APK по QR со стола (см. SaaS-версию public/table.html
+ * и TableQrScreen.linkFor) — единственная точка входа в весь build-конвейер,
+ * которая НЕ требует Firebase Auth вообще: гость, наведший камеру на стол,
+ * не вошёл ни в один SaaS-аккаунт и не может им войти.
+ *
+ * ВАЖНО, почему это безопасно, хотя выдаёт файл без авторизации:
+ *  - отдаёт только job.type === "guest" — сборку кассы (владельческий
+ *    доступ ко всем данным заведения) публично получить так нельзя ни при
+ *    каком slug;
+ *  - slug у заведения и так публичный (он же в адресе поддомена/QR);
+ *  - сам файл — обычный гостевой APK, без секретов внутри (в отличие от
+ *    кассы, которая содержит код приглашения устройства).
+ * Токен на скачивание — тот же одноразовый механизм, что и у владельца
+ * (signDownloadToken/handleDownloadBuild), поэтому раздача самих байт
+ * ничем не отличается от уже проверенного пути.
+ */
+async function handlePublicGuestApk(req, res) {
+  const requestUrl = new URL(req.url, "http://localhost");
+  const slug = normalizeSlug(requestUrl.searchParams.get("slug") || "");
+  if (!slug) throw new HttpError(400, "не указан код заведения");
+
+  const firestore = db();
+  const tenantSnap = await firestore.collection("tenants").where("slug", "==", slug).limit(1).get();
+  if (tenantSnap.empty) throw new HttpError(404, "Заведение с таким кодом не найдено");
+  const tenantDoc = tenantSnap.docs[0];
+  if (tenantDoc.data().status === "deleted") {
+    throw new HttpError(404, "Заведение с таким кодом не найдено");
+  }
+
+  // Последние 20 сборок (не только гостевые — индекс buildJobs уже есть
+  // только на tenantId+createdAt, отдельный композитный под type/status
+  // заводить незачем) — среди них ищем самую свежую успешную гостевую.
+  const jobsSnap = await firestore
+    .collection("buildJobs")
+    .where("tenantId", "==", tenantDoc.id)
+    .orderBy("createdAt", "desc")
+    .limit(20)
+    .get();
+  const guestJob = jobsSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .find((j) => j.type === "guest" && j.status === "success");
+  if (!guestJob) {
+    throw new HttpError(404, "Гостевое приложение для этого заведения ещё не собрано");
+  }
+
+  const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
+  const token = signDownloadToken(guestJob.id, expiresAt);
+  const url = `/downloadBuild?jobId=${encodeURIComponent(guestJob.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
+  // Обычная навигация браузера (window.location.href), не fetch/XHR — CORS
+  // тут ни при чём, редирект следует сам, как за обычной ссылкой.
+  res.writeHead(302, { Location: url });
+  res.end();
+}
+
 // ------------------------------------------------------- createTenant
 
 async function handleCreateTenant(req, res) {
@@ -1003,6 +1060,9 @@ const server = http.createServer((req, res) => {
   // Единственный GET с полезной нагрузкой — скачивание готового APK (см.
   // handleDownloadBuild) — остальные операции ниже намеренно только POST.
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
+  // Без Firebase Auth — гость сканирует QR стола, не входя ни в один
+  // SaaS-аккаунт (см. docstring handlePublicGuestApk).
+  if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
 
   const handler = ROUTES[urlPath];

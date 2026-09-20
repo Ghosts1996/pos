@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Стол</title>
+<!--
+  SaaS-версия public/table.html (та остаётся одно-арендной, для своего
+  заведения владельца платформы, и НЕ меняется этим файлом).
+
+  Раздаётся ОДНА копия на всех: заведение узнаётся по поддомену
+  {slug}.hookahpos.su (wildcard DNS+SSL, см. saas/README.md), а не по
+  отдельному деплою на каждое. Логика точь-в-точь как в одно-арендной
+  версии (см. её же комментарий) — отличия только в двух местах:
+    1. Ссылки на скачивание APK/веб-версию строятся от поддомена, а не от
+       одного фиксированного адреса.
+    2. Цвета и название заведения подтягиваются асинхронно из
+       tenants/{id}/branding/config и накладываются НЕ блокируя саму
+       попытку открыть приложение — гость не должен ждать сеть ради
+       decoration, если приложение и так сейчас откроется.
+
+  ВАЖНО про общий applicationId: все гостевые APK платформы собраны под
+  одним пакетом (com.kolibriloungesaas, см. saas-on-demand-build.yml) —
+  Android допускает только одну установку с таким именем пакета
+  одновременно. Если у гостя уже стоит гостевое приложение ДРУГОГО
+  заведения этой же платформы, deep-link ниже откроет именно его, а не
+  предложит поставить приложение этого заведения — известное ограничение
+  общей архитектуры сборки, не баг этой страницы.
+-->
+<style>
+  :root {
+    --bg: #0E1512;
+    --surface: #16211D;
+    --border: #24332D;
+    --text: #EAF3EF;
+    --muted: #8FA39B;
+    --primary: #12B886;
+    --gold: #D9B45B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  }
+  .card { width: 100%; max-width: 420px; text-align: center; }
+  .brand {
+    color: var(--primary);
+    font-size: 13px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  h1 { font-size: 24px; margin: 10px 0 12px; }
+  p { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+  .table-name { color: var(--gold); font-weight: 600; }
+  .links { margin-top: 26px; display: grid; gap: 12px; }
+  a.btn {
+    display: block;
+    padding: 16px 18px;
+    border-radius: 14px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  a.primary { background: var(--primary); color: #04140E; }
+  a.ghost {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .hint {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  #opening { display: block; }
+  #install { display: none; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 18px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div id="opening">
+    <div class="spinner"></div>
+    <div class="brand" id="brand-opening">Заведение</div>
+    <h1>Открываем ваш стол…</h1>
+    <p>Секунду — запускаем приложение.</p>
+  </div>
+
+  <div id="install">
+    <div class="brand" id="brand-install">Заведение</div>
+    <h1>Приложение не установлено</h1>
+    <p>
+      Чтобы открыть <span class="table-name">свой стол</span>, видеть счёт,
+      заказывать не вставая и копить бонусы — установите приложение.
+      Занимает меньше минуты.
+    </p>
+
+    <div class="links">
+      <a class="btn primary" id="apk" href="#">Скачать приложение заведения</a>
+      <a class="btn ghost" id="web" href="/app/">Открыть в браузере (для iPhone)</a>
+      <a class="btn ghost" id="retry" href="#">Приложение уже есть — открыть стол</a>
+    </div>
+
+    <p class="hint">
+      После установки Android спросит разрешение на установку из этого
+      источника — это нормально для приложений не из Play Маркета.
+      Установили? Отсканируйте код на столе ещё раз.
+      <br><br>
+      На iPhone приложение не ставится — там работает версия в браузере,
+      кнопка выше. Умеет то же самое.
+    </p>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  var GATEWAY = 'https://pii.hookahpos.su/saas';
+  var slug = (location.hostname.split('.')[0] || '').trim();
+
+  // Id стола берём из адреса: /table/{id}
+  var parts = location.pathname.split('/').filter(Boolean);
+  var tableId = parts.length ? parts[parts.length - 1] : '';
+  var query = location.search || '';
+
+  var opening = document.getElementById('opening');
+  var install = document.getElementById('install');
+  var shown = false;
+  var timer = null;
+
+  function showInstall() {
+    if (shown) return;
+    shown = true;
+    if (timer) { clearTimeout(timer); timer = null; }
+    opening.style.display = 'none';
+    install.style.display = 'block';
+  }
+
+  var isAndroid = /android/i.test(navigator.userAgent || '');
+
+  // Ссылка для приложения — тот же формат, что и у одно-арендной версии
+  // (см. её же комментарий про intent:// и почему не голый kolibri://).
+  var appLink = tableId
+    ? 'kolibri://table/' + encodeURIComponent(tableId)
+    : 'kolibri://';
+
+  var fallback = location.origin + location.pathname + '?noapp=1';
+  var intentLink = 'intent://table/' + encodeURIComponent(tableId) +
+    '#Intent;scheme=kolibri;package=com.kolibriloungesaas;' +
+    'S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
+
+  function openApp(useIntent) {
+    try {
+      if (useIntent && isAndroid && tableId) {
+        window.location.replace(intentLink);
+      } else {
+        window.location.href = appLink;
+      }
+    } catch (e) {
+      showInstall();
+    }
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) shown = true;
+  });
+  window.addEventListener('pagehide', function () { shown = true; });
+
+  var apkBtn = document.getElementById('apk');
+  if (apkBtn && slug) {
+    apkBtn.href = GATEWAY + '/publicGuestApk?slug=' + encodeURIComponent(slug);
+  }
+
+  var webBtn = document.getElementById('web');
+  if (webBtn && tableId) {
+    webBtn.href = '/app/#/t/' + encodeURIComponent(tableId);
+  }
+
+  document.getElementById('retry').addEventListener('click', function (e) {
+    e.preventDefault();
+    shown = false;
+    opening.style.display = 'block';
+    install.style.display = 'none';
+    openApp(true);
+    timer = setTimeout(showInstall, 2000);
+  });
+
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (isIOS && tableId) {
+    window.location.replace('/app/#/t/' + encodeURIComponent(tableId));
+  } else if (query.indexOf('noapp=1') !== -1 || !tableId) {
+    showInstall();
+  } else {
+    openApp(true);
+    timer = setTimeout(showInstall, 2500);
+  }
+
+  // Брендинг — асинхронно и НЕ блокируя попытку открыть приложение выше:
+  // гость не должен ждать сеть ради оформления, если приложение и так
+  // сейчас откроется само. Если гость всё же увидит install-экран, к этому
+  // моменту цвета и название заведения, скорее всего, уже подтянутся.
+  if (slug) {
+    fetch(GATEWAY + '/resolveTenantBySlug', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: slug }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.tenantId) return;
+        // branding/config читается совсем без входа (saas/firestore.rules:
+        // "allow read: if true" — см. её же комментарий, почему), поэтому
+        // это обычный fetch без анонимного входа и без лишнего аккаунта на
+        // каждый заход на эту страницу.
+        return fetch('https://hookahpos.su/__/firebase/init.json')
+          .then(function (r) { return r.json(); })
+          .then(function (config) {
+            return fetch(
+              'https://firestore.googleapis.com/v1/projects/' + config.projectId +
+              '/databases/(default)/documents/tenants/' + j.tenantId + '/branding/config'
+            );
+          })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (doc) {
+            if (!doc || !doc.fields) return;
+            var f = doc.fields;
+            var val = function (name) { return f[name] && f[name].stringValue; };
+            var root = document.documentElement.style;
+            if (val('primaryColor')) root.setProperty('--primary', val('primaryColor'));
+            if (val('secondaryColor')) root.setProperty('--gold', val('secondaryColor'));
+            if (val('backgroundColor')) root.setProperty('--bg', val('backgroundColor'));
+            if (val('textColor')) root.setProperty('--text', val('textColor'));
+            var name = val('appName');
+            if (name) {
+              document.title = name;
+              document.getElementById('brand-opening').textContent = name;
+              document.getElementById('brand-install').textContent = name;
+            }
+          });
+      })
+      .catch(function () {
+        // Не подтянулось — гость видит дефолтную палитру, не ошибку.
+      });
+  }
+})();
+</script>
+</body>
+</html>
