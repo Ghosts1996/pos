@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.3-broadcasts';
+const CONSOLE_BUILD = '2026-09-21.4-cancel-reason';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -467,6 +467,8 @@ const AUDIT_ACTION_LABELS = {
   subscriptionPaid: 'Подписка оплачена',
   subscriptionPaymentCanceled: 'Платёж отменён',
   subscriptionRenewalFailed: 'Продление не прошло',
+  subscriptionCancelRequested: 'Автопродление отключено владельцем',
+  subscriptionCancelWithdrawn: 'Автопродление возобновлено владельцем',
   buildJobRequested: 'Запрошена сборка APK',
   planChangedBySuperAdmin: 'Тариф изменён супер-админом',
 };
@@ -2724,10 +2726,22 @@ async function rotateInviteCode(tenantId) {
 }
 
 async function toggleAutorenew(tenantId, cancel) {
-  const msg = cancel
-    ? 'Отключить автопродление? Заведение продолжит работать до конца уже оплаченного периода, дальше касса будет заблокирована, если не оплатить вручную.'
-    : 'Возобновить автопродление? В конце периода спишется оплата сохранённым способом.';
-  if (!confirm(msg)) return;
+  // Отмену подтверждаем через prompt(), а не confirm() (как для возврата
+  // ниже) — заодно спрашиваем причину: null означает "нажали Отмена",
+  // пустая строка — "нажали ОК, но причину не написали" (оба варианта
+  // существующий формат super-админа читает как есть, см. renderTenantDetail).
+  let reason = '';
+  if (cancel) {
+    const input = prompt(
+      'Отключить автопродление? Заведение продолжит работать до конца уже оплаченного периода, ' +
+      'дальше касса будет заблокирована, если не оплатить вручную.\n\n' +
+      'Подскажите, пожалуйста, почему уходите (необязательно) — это поможет нам стать лучше:'
+    );
+    if (input === null) return;
+    reason = input.trim();
+  } else if (!confirm('Возобновить автопродление? В конце периода спишется оплата сохранённым способом.')) {
+    return;
+  }
   const btn = $('f-toggle-autorenew');
   const errEl = $('f-toggle-autorenew-error');
   if (errEl) errEl.textContent = '';
@@ -2736,7 +2750,7 @@ async function toggleAutorenew(tenantId, cancel) {
     // cancelSubscription/resumeSubscription — свой сервис (см. server.js в
     // saas-gateway), не Cloud Function: Firestore-правила не пускают
     // клиента писать в subscriptions напрямую даже для своего заведения.
-    await callSaasGateway(cancel ? 'cancelSubscription' : 'resumeSubscription', { tenantId });
+    await callSaasGateway(cancel ? 'cancelSubscription' : 'resumeSubscription', cancel ? { tenantId, reason } : { tenantId });
     toast(cancel ? 'Автопродление отключено' : 'Автопродление возобновлено');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось изменить автопродление: ${e?.message || e}`;
@@ -3373,7 +3387,11 @@ function watchAllTenants() {
               подписка: ${esc(SUB_STATUS_LABELS[t.subscription?.status] || t.subscription?.status || '—')}
               ${t.subscription?.status === 'trial' && t.subscription?.trialEndsAt ? ` · триал до ${fmtDate(t.subscription.trialEndsAt)}` : ''}
               ${t.subscription?.status === 'active' && t.subscription?.currentPeriodEnd ? ` · оплачено до ${fmtDate(t.subscription.currentPeriodEnd)}` : ''}
+              ${t.subscription?.cancelAtPeriodEnd ? ' · автопродление отключено владельцем' : ''}
             </div>
+            ${t.subscription?.cancelAtPeriodEnd && t.subscription?.cancelReason ? `
+              <div class="small muted">Причина отмены: «${esc(t.subscription.cancelReason)}»</div>
+            ` : ''}
             ${t.daysLeft !== null && t.daysLeft !== undefined ? `
               <div class="small" style="color:var(--danger);margin-top:4px">
                 ⚠ Данные будут удалены ${t.daysLeft > 0 ? `через ${t.daysLeft} ${pluralDays(t.daysLeft)}` : 'при ближайшей проверке'}

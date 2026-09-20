@@ -712,18 +712,25 @@ async function handleCreateBuildJob(req, res) {
 async function handleSetSubscriptionCancel(req, res, cancel) {
   const decoded = await verifyAuth(req);
   const body = await parseJsonBody(req);
-  const { tenantId } = body;
+  const { tenantId, reason } = body;
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
 
   const subRef = db().collection("subscriptions").doc(tenantId);
   const subDoc = await subRef.get();
   if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
-  await subRef.update({ cancelAtPeriodEnd: cancel });
+  // Причина отмены (супер-админ #6) — видна в панели платформы в карточке
+  // заведения, помогает понять, почему уходят, не дозваниваясь владельцу.
+  // Необязательна (пустая строка — "нажал ОК, но не написал"), обрезается
+  // на случай, если кто-то вставит целое эссе. При возврате автопродления
+  // очищается — старая причина не должна висеть как будто актуальная.
+  const cancelReason = cancel ? String(reason || "").slice(0, 500) : null;
+  await subRef.update({ cancelAtPeriodEnd: cancel, cancelReason });
   await writeAuditLog({
     tenantId,
     actorId: decoded.uid,
     action: cancel ? "subscriptionCancelRequested" : "subscriptionCancelWithdrawn",
+    metadata: cancel ? { reason: cancelReason } : {},
   });
   sendJson(res, 200, { ok: true });
 }
