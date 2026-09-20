@@ -248,8 +248,16 @@
     var GATEWAY = 'https://pii.hookahpos.su/saas';
     var slug = window.__tableSlug;
     if (!slug) { dbg('DEBUG: нет slug из адреса'); return; }
+    // Название текущего шага — кладём в само сообщение об ошибке (не
+    // полагаемся на то, что предыдущий dbg() успеет отрисоваться на экране:
+    // если запрос падает мгновенно (DNS/блокировка/обрыв — ещё до какого-
+    // либо ответа сервера), браузер вполне может ни разу не перерисовать
+    // экран между "начал шаг" и "поймал ошибку", и тогда видно только
+    // последнее сообщение, а не то, на чём именно сломалось).
+    var step = 'старт';
     try {
-      dbg('DEBUG: resolveTenantBySlug(' + slug + ')…');
+      step = 'resolveTenantBySlug(' + slug + ') — POST на ' + GATEWAY;
+      dbg('DEBUG: ' + step + '…');
       var resolveResp = await fetch(GATEWAY + '/resolveTenantBySlug', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -265,7 +273,8 @@
       // нет своего Firebase Hosting, поэтому магического
       // /__/firebase/init.json здесь нет — берём с домена консоли (отдаёт
       // его с открытым CORS, это публичные, некопаемые ключи веб-приложения).
-      dbg('DEBUG: tenantId=' + resolveJson.tenantId + ', беру firebase config…');
+      step = 'firebase/init.json с hookahpos.su, tenantId=' + resolveJson.tenantId;
+      dbg('DEBUG: ' + step + '…');
       var configResp = await fetch('https://hookahpos.su/__/firebase/init.json');
       var config = await configResp.json().catch(() => null);
       if (!configResp.ok || !config || !config.projectId) {
@@ -278,7 +287,8 @@
       // branding/config читается совсем без входа (saas/firestore.rules:
       // "allow read: if true" — см. её же комментарий, почему), поэтому
       // без анонимного входа и без лишнего аккаунта на каждый заход сюда.
-      dbg('DEBUG: читаю branding/config…');
+      step = 'getDoc branding/config, projectId=' + config.projectId;
+      dbg('DEBUG: ' + step + '…');
       var snap = await getDoc(doc(db, 'tenants', resolveJson.tenantId, 'branding', 'config'));
       if (!snap.exists()) { dbg('DEBUG: branding/config не существует'); return; }
       var b = snap.data();
@@ -295,9 +305,10 @@
       dbg('DEBUG: применено, primary=' + (b.primaryColor || '—'));
     } catch (e) {
       // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
-      // причину теперь видно прямо на экране и в консоли браузера.
-      dbg('DEBUG error: ' + (e && e.message || e));
-      console.error('Брендинг стола не применился:', e);
+      // причину теперь видно прямо на экране и в консоли браузера — вместе
+      // с шагом, на котором это случилось.
+      dbg('DEBUG error [' + step + ']: ' + (e && e.message || e));
+      console.error('Брендинг стола не применился (шаг: ' + step + '):', e);
     }
   })();
 </script>
