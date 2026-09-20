@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.4-premium-console';
+const CONSOLE_BUILD = '2026-09-20.5-live-overview';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -256,6 +256,19 @@ function daysUntilTrialEnd(subscription) {
   const end = subscription.trialEndsAt?.toDate?.();
   if (!end) return null;
   return Math.ceil((end.getTime() - Date.now()) / 86400000);
+}
+
+// Персональное приветствие вверху "Обзора" — по времени суток БРАУЗЕРА
+// владельца (тот же принцип, что и у "живых" цифр за сегодня) + имя,
+// приближённо взятое из локальной части его email (отдельного поля "как
+// вас зовут" в форме регистрации нет, а обращаться по email целиком типа
+// "Добрый вечер, ivan.petrov1988@!" не звучит по-человечески).
+function greetingLine() {
+  const h = new Date().getHours();
+  const greeting = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
+  const local = (state.auth.currentUser?.email || '').split('@')[0] || '';
+  const name = local.split(/[.+_0-9]/)[0];
+  return name ? `${greeting}, ${name.charAt(0).toUpperCase()}${name.slice(1)}` : greeting;
 }
 
 function planName(plans, planId) {
@@ -1600,6 +1613,13 @@ function watchDashboardData(tenantId) {
   let buildJobs = null;
   let generalSettings = null;
   let paymentHistory = null;
+  // "Живые" цифры на "Обзоре" (см. подписки ниже) — null, пока не пришёл
+  // первый снапшот, чтобы отличить "ещё грузится" от настоящего нуля.
+  let liveOpenSessions = null;
+  let liveOnShift = null;
+  let todayRevenue = null;
+  let todayChecksCount = null;
+  let devicesCount = null;
   // Сотрудники с PIN-входом в кассу (tenants/{id}/employees) — отдельно от
   // members выше: то доступ к ЭТОЙ веб-панели (email+пароль), это доступ к
   // самой кассе на планшете (имя+PIN), см. teamHtml().
@@ -1671,7 +1691,34 @@ function watchDashboardData(tenantId) {
     ];
     const allStepsDone = checklistSteps.every((s) => s.done);
 
+    // "Требует внимания" — в отличие от чек-листа выше (разовый онбординг,
+    // прячется навсегда после первого прохождения), эти пункты появляются и
+    // исчезают по ситуации на протяжении всей жизни заведения.
+    const attentionItems = [];
+    const trialDaysLeft = daysUntilTrialEnd(subscription);
+    if (trialDaysLeft !== null && trialDaysLeft <= 3) {
+      attentionItems.push({
+        tab: 'plans',
+        text: trialDaysLeft > 0
+          ? `Пробный период заканчивается через ${trialDaysLeft} ${pluralDays(trialDaysLeft)} — выберите тариф`
+          : 'Пробный период заканчивается сегодня — выберите тариф',
+      });
+    }
+    if (subscription?.cancelAtPeriodEnd && subscription?.currentPeriodEnd) {
+      const periodDaysLeft = Math.ceil((subscription.currentPeriodEnd.toMillis() - Date.now()) / 86400000);
+      if (periodDaysLeft <= 7) {
+        attentionItems.push({ tab: 'billing', text: `Автопродление выключено — доступ закончится ${fmtDate(subscription.currentPeriodEnd)}` });
+      }
+    }
+    if (devicesCount === 0 && (buildJobs || []).some((j) => j.status === 'success')) {
+      attentionItems.push({ tab: 'devices', text: 'APK собран, но ни одно устройство ещё не присоединилось — установите его на планшет и введите код заведения' });
+    }
+    if ((buildJobs || [])[0]?.status === 'failed') {
+      attentionItems.push({ tab: 'devices', text: 'Последняя сборка APK не удалась — попробуйте собрать снова или напишите в поддержку' });
+    }
+
     const overviewHtml = () => `
+      <div class="dash-greeting">${esc(greetingLine())} 👋</div>
       <div class="card">
         <div class="muted small">Заведение</div>
         <div style="font-size:20px;font-weight:700;margin:4px 0">${esc(tenant.name || '')}</div>
@@ -1681,7 +1728,37 @@ function watchDashboardData(tenantId) {
           роль: ${esc(ROLE_LABELS[role] || role)}
         </div>
       </div>
+      <div class="live-stats-grid">
+        <div class="card live-stat">
+          <div class="live-stat-value">${liveOpenSessions === null ? '—' : liveOpenSessions}</div>
+          <div class="live-stat-label">Открытых столов сейчас</div>
+        </div>
+        <div class="card live-stat">
+          <div class="live-stat-value">${liveOnShift === null ? '—' : liveOnShift}</div>
+          <div class="live-stat-label">Сотрудников на смене</div>
+        </div>
+        <div class="card live-stat">
+          <div class="live-stat-value">${todayRevenue === null ? '—' : `${Number(todayRevenue).toLocaleString('ru-RU')} ₽`}</div>
+          <div class="live-stat-label">Выручка сегодня</div>
+        </div>
+        <div class="card live-stat">
+          <div class="live-stat-value">${todayChecksCount === null ? '—' : todayChecksCount}</div>
+          <div class="live-stat-label">Чеков закрыто сегодня</div>
+        </div>
+      </div>
       ${dangerBannerHtml}
+      ${attentionItems.length ? `
+        <h2>Требует внимания</h2>
+        <div class="card">
+          ${attentionItems.map((it) => `
+            <div class="checklist-item">
+              <div class="checklist-check" style="border-color:var(--warning);color:var(--warning)">!</div>
+              <div class="checklist-label">${esc(it.text)}</div>
+              <button class="btn-link f-dash-tab" data-tab="${it.tab}" style="width:auto">Перейти</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
       ${!allStepsDone ? `
         <h2>Настройка заведения</h2>
         <div class="card">
@@ -2414,6 +2491,46 @@ function watchDashboardData(tenantId) {
     },
     () => { paymentHistory = []; draw(); },
   ));
+
+  // "Живые" цифры на "Обзоре" — открытые столы и сотрудники на смене прямо
+  // сейчас, выручка и число чеков за сегодня. Границу "сегодня" берём по
+  // времени БРАУЗЕРА владельца (он и смотрит "Обзор" в своём часовом
+  // поясе) — не бухгалтерская точность, а ориентир на один взгляд.
+  sub(onSnapshot(
+    query(collection(state.db, 'tenants', tenantId, 'sessions'), where('status', '==', 'active')),
+    (snap) => { liveOpenSessions = snap.size; draw(); },
+    () => { liveOpenSessions = 0; draw(); },
+  ));
+  sub(onSnapshot(
+    query(collection(state.db, 'tenants', tenantId, 'staffShifts'), where('status', '==', 'open')),
+    (snap) => { liveOnShift = snap.size; draw(); },
+    () => { liveOnShift = 0; draw(); },
+  ));
+  sub(onSnapshot(collection(state.db, 'tenants', tenantId, 'devices'), (snap) => {
+    devicesCount = snap.size;
+    draw();
+  }, () => { devicesCount = 0; draw(); }));
+  {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    sub(onSnapshot(
+      query(
+        collection(state.db, 'tenants', tenantId, 'sessions'),
+        where('status', '==', 'closed'),
+        where('closedAt', '>=', Timestamp.fromDate(startOfToday)),
+      ),
+      (snap) => {
+        todayChecksCount = snap.size;
+        todayRevenue = snap.docs.reduce((sum, d) => {
+          const s = d.data();
+          return sum + (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
+            (Number(s.paymentTerminal) || 0) + (Number(s.paymentComp) || 0);
+        }, 0);
+        draw();
+      },
+      () => { todayChecksCount = 0; todayRevenue = 0; draw(); },
+    ));
+  }
 }
 
 async function rotateInviteCode(tenantId) {
