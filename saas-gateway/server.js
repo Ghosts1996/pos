@@ -1726,6 +1726,51 @@ async function handleChangeTenantPlan(req, res) {
 }
 
 /**
+ * Бонусный период (супер-админ #7) — продлить доступ заведению вручную, не
+ * трогая дату руками через "Ручное управление подпиской" (та форма в
+ * консоли остаётся для точных исправлений, эта кнопка — для быстрого "дать
+ * ещё N дней", например в благодарность за отзыв или при жалобе на баг).
+ * Для триала продлевает trialEndsAt, иначе — currentPeriodEnd и сразу
+ * возвращает status в "active" (снимая pastDueSince) — бонус должен снять
+ * блокировку, а не тихо продлить дату у уже заблокированного заведения.
+ * Отсчитывается от MAX(текущая дата окончания, сейчас) — иначе бонус,
+ * выданный уже просроченному заведению, "сгорал" бы в прошлом.
+ */
+async function handleGrantBonusPeriod(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  const { tenantId, days } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  const daysNum = Number(days);
+  if (!Number.isFinite(daysNum) || daysNum <= 0 || daysNum > 365) {
+    throw new HttpError(400, "Число дней должно быть от 1 до 365");
+  }
+
+  const subRef = db().collection("subscriptions").doc(tenantId);
+  const subDoc = await subRef.get();
+  if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
+  const sub = subDoc.data();
+  const bonusMs = daysNum * 86400000;
+  const now = Date.now();
+
+  const update = {};
+  if (sub.status === "trial") {
+    const base = Math.max(sub.trialEndsAt ? sub.trialEndsAt.toMillis() : now, now);
+    update.trialEndsAt = admin.firestore.Timestamp.fromMillis(base + bonusMs);
+  } else {
+    const base = Math.max(sub.currentPeriodEnd ? sub.currentPeriodEnd.toMillis() : now, now);
+    update.currentPeriodEnd = admin.firestore.Timestamp.fromMillis(base + bonusMs);
+    update.status = "active";
+    update.pastDueSince = null;
+  }
+  await subRef.update(update);
+  await writeAuditLog({
+    tenantId, actorId: decoded.uid, action: "bonusPeriodGranted", metadata: { days: daysNum },
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
  * Удаление демо-заведения вручную из панели платформы — та же логика,
  * что и у автоматической ночной очистки (scheduleDemoCleanup ниже), но по
  * запросу супер-админа, не дожидаясь DEMO_TTL_MS. Намеренно ограничено
@@ -1793,6 +1838,7 @@ const ROUTES = {
   "/disableTenant": handleDisableTenant,
   "/enableTenant": handleEnableTenant,
   "/changeTenantPlan": handleChangeTenantPlan,
+  "/grantBonusPeriod": handleGrantBonusPeriod,
   "/deleteDemoTenant": handleDeleteDemoTenant,
   "/getDownloadUrl": handleGetDownloadUrl,
   "/createCheckoutSession": handleCreateCheckoutSession,

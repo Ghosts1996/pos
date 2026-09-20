@@ -92,6 +92,10 @@ async function main() {
     check("POST /recalculateUsage без токена -> 401", r.status === 401);
   }
   {
+    const r = await request("POST", "/grantBonusPeriod", { body: { tenantId: "x", days: 7 } });
+    check("POST /grantBonusPeriod без токена -> 401", r.status === 401);
+  }
+  {
     // Проверка paymentId отваливается ДО обращения к ЮKassa/Firestore —
     // тот же приём, что и у остальных тестов этого файла.
     const r = await request("POST", "/billingWebhook", { body: { object: {} } });
