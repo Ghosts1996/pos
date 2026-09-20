@@ -28,6 +28,7 @@ class KolibriColors {
   static const _defaultGold = Color(0xFFE0B354);
   static const _defaultAccent = Color(0xFFE0559B);
   static const _defaultTextPrimary = Color(0xFFF2F7F4);
+  static const _defaultAppName = 'Colibri Lounge';
 
   static Color background = _defaultBackground;
   static Color surface = _lighten(_defaultBackground, 0.06);
@@ -49,6 +50,14 @@ class KolibriColors {
   static Color textPrimary = _defaultTextPrimary;
   static const textMuted = Color(0xFF8FA79C);
 
+  /// Название заведения из брендинга (раздел «Брендинг», поле «Имя
+  /// приложения») — как и цвета выше, это НЕ то же самое, что заголовок окна
+  /// (MaterialApp.title в kolibri_main.dart): тот виден только в диспетчере
+  /// задач Android, а этот текст читают прямо на главном экране и в профиле
+  /// (см. applyBranding). Без него после ребрендинга шапка экрана продолжала
+  /// бы показывать "Colibri Lounge", даже когда заголовок окна уже сменился.
+  static String appName = _defaultAppName;
+
   /// Накладывает фирменную палитру заведения (см. saas/console/console.js,
   /// раздел «Брендинг») поверх дефолтной — вызывается ОДИН раз при старте
   /// (см. kolibri_main.dart), до runApp(). Та же защита от нечитаемой пары
@@ -57,6 +66,13 @@ class KolibriColors {
   /// откатываемся на дефолтную пару целиком, а не показываем нечитаемый
   /// экран гостю.
   static void applyBranding(BrandingConfig branding) {
+    // branding.appName по умолчанию (когда документ пуст/не найден) — общий
+    // для всего приложения дефолт BrandingConfig ("Hookah POS", бренд
+    // кассы) — гостю его показывать нельзя, поэтому здесь свой дефолт, а не
+    // прямое присваивание.
+    final name = branding.appName.trim();
+    appName = name.isEmpty ? _defaultAppName : name;
+
     primary = _parseHexColor(branding.primaryColor) ?? _defaultPrimary;
     primaryPressed = Color.lerp(primary, Colors.black, 0.18) ?? _defaultPrimaryPressed;
     gold = _parseHexColor(branding.secondaryColor) ?? _defaultGold;

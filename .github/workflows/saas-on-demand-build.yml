@@ -213,7 +213,16 @@ jobs:
           # брендом платформы (Hookah POS), не арендатора, поэтому для
           # matrix.app == pos ниже APP_LABEL принудительно очищается, а не
           # приходит из inputs.app_label вообще.
-          APP_LABEL: ${{ matrix.app == 'pos' && '' || inputs.app_label }}
+          #
+          # ВАЖНО: сравнение с 'kolibri' (а не 'pos') и порядок операндов —
+          # не косметика. `matrix.app == 'pos' && '' || inputs.app_label`
+          # выглядит как тернарник, но им не является: в GitHub Actions (как
+          # и в JS) '' — falsy, поэтому при true `true && ''` даёт '', а
+          # `'' || inputs.app_label` СОСКАЛЬЗЫВАЕТ на inputs.app_label — касса
+          # получала бренд гостя вместо пустой строки. Когда пустая строка —
+          # это ветка ПО УМОЛЧАНИЮ (после ||), а не результат && — падение
+          # безопасно (пусто и есть то, что нужно).
+          APP_LABEL: ${{ matrix.app == 'kolibri' && inputs.app_label || '' }}
           DEFAULT_LABEL: ${{ matrix.default_label }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
@@ -478,7 +487,9 @@ jobs:
           # (matrix.app == kolibri); касса всегда со своей иконкой платформы
           # (assets/icon/icon.png), поэтому для pos LOGO_URL принудительно
           # пустой независимо от того, что было в inputs.logo_url.
-          LOGO_URL: ${{ matrix.app == 'pos' && '' || inputs.logo_url }}
+          # См. комментарий у APP_LABEL выше — та же ловушка `cond && '' ||
+          # X` была и здесь: касса тоже могла получить чужой логотип.
+          LOGO_URL: ${{ matrix.app == 'kolibri' && inputs.logo_url || '' }}
           DEFAULT_ICON: ${{ matrix.default_icon }}
           DEFAULT_ADAPTIVE_ICON: ${{ matrix.default_adaptive_icon }}
         run: |
