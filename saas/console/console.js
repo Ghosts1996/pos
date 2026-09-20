@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.10-logo-off-firebase-storage';
+const CONSOLE_BUILD = '2026-09-20.11-no-colibri-lounge-text';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1890,7 +1890,7 @@ function watchDashboardData(tenantId) {
         <p class="small muted">Одна кнопка — два личных приложения этого
         заведения: касса (для планшета, сам присоединится по коду
         заведения и коду приглашения устройства выше, без ручного ввода) и
-        гостевое приложение «Colibri Lounge» (для телефонов гостей — меню,
+        гостевое приложение (для телефонов гостей — меню,
         заказ из-за стола, вызов персонала, бонусы; название и логотип —
         из раздела «Брендинг»).</p>
         ${canManage ? (() => {
