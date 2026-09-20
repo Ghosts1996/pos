@@ -42,9 +42,22 @@ index.js`) — перенесено сюда по той же причине (Bl
 не менялся и остаётся эталонной копией на случай, если Blaze всё же
 появится.
 
+Плюс `uploadBrandingLogo` — загрузка логотипа заведения (раздел «Брендинг»
+в консоли). Раньше шла напрямую в Firebase Storage из браузера — но у
+`saas-3bdc8` Storage требует платный тариф Blaze, и бакет физически не
+существует (та же история, что и с публичным APK на лендинге, см.
+`saas/README.md`, раздел 8b). Файл кладётся на диск этого сервера
+(`branding-uploads/{tenantId}/logo.{png,jpg,webp}`) и раздаётся публично
+напрямую статикой самим nginx (см. раздел «nginx» ниже), без токена на
+чтение — логотип и раньше был публичным (`allow read: if true` в старых
+Storage-правилах), закрыта только запись.
+
 **Что НЕ переехало** (сознательно, см. обсуждение с владельцем платформы):
 приглашение сотрудников по email (`inviteTenantMember`) — остаётся на
-Cloud Functions/Blaze, само по себе не блокирует приём платежей.
+Cloud Functions/Blaze, само по себе не блокирует приём платежей. Фото
+позиций меню (`tenants/{tenantId}/menu/...` в `saas/storage.rules`) —
+тоже упирается в тот же недоступный Storage, но пока не переносилось:
+логотип нужен был раньше и требуется реже редактируется, чем меню.
 
 **Изоляция данных**: этот сервис использует сервисный ключ ИМЕННО проекта
 `saas-3bdc8` — отдельного от `hoocah-pos` (личное заведение владельца
@@ -104,6 +117,25 @@ echo 'YOOKASSA_SECRET_KEY=...' >> /etc/saas-gateway.env
 systemctl restart saas-gateway
 ```
 
+**Обновление КОДА самого сервиса** (`server.js` и т.п. поменялся, а не
+только переменные окружения) — `/opt/saas-gateway` не git-репозиторий сам
+по себе (`setup.sh` копирует файлы туда один раз), поэтому `git pull`
+внутри него ничего не даст. Обновляйте через уже склонированный где-то
+репозиторий (например `/root/pos-deploy`, если делали это раньше для
+консоли — см. `saas/README.md`):
+
+```bash
+cd /root/pos-deploy && git pull origin claude/pos-continued
+rsync -a --exclude node_modules /root/pos-deploy/saas-gateway/ /opt/saas-gateway/
+cd /opt/saas-gateway && npm install --omit=dev
+chown -R saas-gateway:saas-gateway /opt/saas-gateway
+systemctl restart saas-gateway
+```
+
+`rsync -a` без `--delete` — существующие `tenant-builds/`/
+`branding-uploads/` (реальные файлы сборок и логотипов на диске) при этом
+не трогаются, обновляется только код.
+
 ## Биллинг (ЮKassa) — что сделать один раз после переноса
 
 1. Добавить `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`
@@ -147,6 +179,35 @@ location /saas/ {
 nginx`. Как только certbot выпустит сертификат для `pii.hookahpos.su`
 (см. `pii-gateway/README.md`), он автоматически применится и к этому
 `location` — отдельно ничего настраивать не нужно.
+
+### Логотипы заведений — статика, отдельным `location`
+
+Сама ЗАГРУЗКА логотипа (`POST /saas/uploadBrandingLogo`) идёт через
+`location /saas/` выше как обычно — этот `location` нужен только для
+ЧТЕНИЯ уже загруженных файлов, публично и без прокси до Node (та же идея,
+что и у `/downloads/` для публичного APK, см. `saas/README.md`, раздел
+8b). Добавьте в тот же `server { ... }` блок:
+
+```nginx
+location /branding/ {
+    alias /opt/saas-gateway/branding-uploads/;
+    add_header Cache-Control "no-cache";
+}
+```
+
+`no-cache` — не «не кешировать вообще», а «перед показом закешированной
+копии спросить сервер, не изменилась ли она» (обычный `ETag`/`If-None-Match`
+у nginx работает из коробки) — логотип можно перезалить в любой момент, и
+старая версия не должна залипать в браузере/CDN гостя. Файлы после
+загрузки принадлежат пользователю `saas-gateway` (см. `setup.sh`) — чтобы
+nginx (свой системный пользователь) мог до них дойти, родительские папки
+должны быть проходимы, один раз:
+```bash
+chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
+```
+(вторая папка появится сама при первой же загрузке логотипа — если ещё не
+существует, `chmod` на неё можно пропустить до этого момента).
+После правки конфига: `nginx -t && systemctl reload nginx`.
 
 ## Секреты репозитория GitHub, которые нужно завести/поменять
 

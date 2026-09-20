@@ -98,6 +98,18 @@ const GITHUB_REF = process.env.GITHUB_REF || "claude/pos-continued";
 // предназначена для публичной раздачи, в отличие от универсальной.
 const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
 
+// Логотип заведения (branding.logoUrl, см. handleUploadBrandingLogo) — та
+// же история, что и у TENANT_BUILDS_DIR выше: Firebase Storage у
+// saas-3bdc8 требует Blaze, бакета физически не существует. В отличие от
+// личных сборок APK, логотип должен быть ПУБЛИЧНО читаемым без токена
+// (гостевое приложение, иконка сборки, старый Storage-правило было
+// `allow read: if true`) — поэтому раздаёт его напрямую статикой сам
+// nginx (location /branding/, см. README.md), без X-Accel-Redirect и
+// проверки токена на чтение: только на запись (см. сам хендлер).
+const BRANDING_UPLOADS_DIR = path.join(__dirname, "branding-uploads");
+const BRANDING_MAX_BYTES = 5 * 1024 * 1024;
+const BRANDING_CONTENT_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
 // Тот же список, что и RESERVED_SLUGS в saas/functions/index.js, плюс
 // "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса.
 const RESERVED_SLUGS = new Set([
@@ -1188,6 +1200,68 @@ async function handleDownloadBuild(req, res) {
   res.end();
 }
 
+// ---------------------------------------------------- uploadBrandingLogo
+
+function readRawBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new HttpError(413, "файл слишком большой"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Загрузка логотипа заведения (branding.logoUrl, раздел "Брендинг" в
+ * консоли) — раньше шла напрямую в Firebase Storage из браузера, но
+ * Storage у saas-3bdc8 требует платный тариф Blaze (бакета физически не
+ * существует — ровно та же история, что и с публичным APK, см.
+ * saas/README.md раздел 8b и BRANDING_UPLOADS_DIR выше). Тело запроса —
+ * СЫРЫЕ байты картинки (Content-Type: image/png|jpeg|webp), не JSON и не
+ * multipart — так проще и на клиенте (XMLHttpRequest с прогрессом), и
+ * здесь: не нужен парсер multipart ради одного файла без доп. полей.
+ */
+async function handleUploadBrandingLogo(req, res) {
+  const decoded = await verifyAuth(req);
+  const requestUrl = new URL(req.url, "http://localhost");
+  const tenantId = requestUrl.searchParams.get("tenantId") || "";
+  if (!tenantId) throw new HttpError(400, "не указан tenantId");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+
+  const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  const ext = BRANDING_CONTENT_TYPES[contentType];
+  if (!ext) throw new HttpError(400, "поддерживаются только PNG, JPEG и WebP");
+
+  const buffer = await readRawBody(req, BRANDING_MAX_BYTES);
+  if (!buffer.length) throw new HttpError(400, "пустой файл");
+
+  const dir = path.join(BRANDING_UPLOADS_DIR, tenantId);
+  await fs.promises.mkdir(dir, { recursive: true });
+  // У заведения один логотип, а не история версий — если раньше грузили
+  // другой формат, старый файл остался бы висеть рядом с новым и (в теории)
+  // мог бы отдаться по прямой ссылке, если кто-то её угадает/сохранил.
+  await Promise.all(
+    Object.values(BRANDING_CONTENT_TYPES)
+      .filter((oldExt) => oldExt !== ext)
+      .map((oldExt) => fs.promises.unlink(path.join(dir, `logo.${oldExt}`)).catch(() => {}))
+  );
+  await fs.promises.writeFile(path.join(dir, `logo.${ext}`), buffer);
+
+  // Домен сюда сознательно не зашиваем (см. отсутствие PUBLIC_BASE_URL во
+  // всём этом файле) — консоль и так уже знает свой SAAS_GATEWAY_URL и
+  // достраивает из него origin сама (см. uploadBrandingLogo в console.js).
+  sendJson(res, 200, { path: `/branding/${tenantId}/logo.${ext}` });
+}
+
 // ---------------------------------------------------- createDemoTenant
 
 const demoRateLimiter = new Map(); // ip -> { count, resetAt }
@@ -1636,6 +1710,7 @@ const ROUTES = {
   "/deleteDemoTenant": handleDeleteDemoTenant,
   "/getDownloadUrl": handleGetDownloadUrl,
   "/createCheckoutSession": handleCreateCheckoutSession,
+  "/uploadBrandingLogo": handleUploadBrandingLogo,
   // Публичный (без Auth) адрес — его нужно прописать в личном кабинете
   // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
   // внутри самого handleBillingWebhook, не на уровне роутинга.

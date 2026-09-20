@@ -19,9 +19,12 @@ import {
 import {
   getFunctions, httpsCallable,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
-import {
-  getStorage, ref, uploadBytesResumable, getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+// Firebase Storage больше не используется — единственное, для чего он был
+// нужен (логотип заведения, см. handleUploadBrandingLogo в
+// saas-gateway/server.js), требует у saas-3bdc8 платный тариф Blaze, а
+// бакета физически не существует (та же история, что и с публичным APK —
+// см. saas/README.md, раздел 8b). Загрузка логотипа перенесена на сам
+// saas-gateway, см. uploadBrandingLogoToGateway() ниже.
 
 // Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
 const FUNCTIONS_REGION = 'europe-west1';
@@ -59,12 +62,43 @@ async function callSaasGateway(path, data) {
   return { data: json };
 }
 
+/** Загружает логотип заведения в saas-gateway (см. handleUploadBrandingLogo
+ *  в server.js) — XMLHttpRequest, а не fetch, потому что только у него
+ *  есть реальный процент ОТПРАВКИ тела запроса (fetch отслеживает лишь
+ *  скачивание ответа). Возвращает { xhr, promise }: xhr — чтобы вызывающий
+ *  код мог отменить загрузку (xhr.abort()) или засечь зависание по
+ *  отсутствию прогресса, promise разрешается относительным путём файла на
+ *  сервере (без домена — см. docstring самого хендлера). */
+function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open('POST', `${SAAS_GATEWAY_URL}/uploadBrandingLogo?tenantId=${encodeURIComponent(tenantId)}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100));
+    };
+    xhr.onload = () => {
+      let json = null;
+      try { json = JSON.parse(xhr.responseText); } catch (_) { /* см. ниже — пустой ответ трактуется как ошибка */ }
+      if (xhr.status >= 200 && xhr.status < 300 && json?.path) resolve(json.path);
+      else reject(new Error(json?.error || `Сервис ответил ошибкой (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Не удалось связаться с сервером'));
+    xhr.onabort = () => reject(Object.assign(new Error('Загрузка отменена'), { code: 'upload/canceled' }));
+    state.auth.currentUser.getIdToken().then((idToken) => {
+      xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.send(file);
+    }, reject);
+  });
+  return { xhr, promise };
+}
+
 // Метка версии консоли — меняется при каждой заметной правке этого файла.
 // Показывается мелко внизу экрана входа и панели платформы: единственный
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.9-overview-subscription-line';
+const CONSOLE_BUILD = '2026-09-20.10-logo-off-firebase-storage';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -462,7 +496,6 @@ async function boot() {
   state.auth = getAuth(app);
   state.db = getFirestore(app);
   state.functions = getFunctions(app, FUNCTIONS_REGION);
-  state.storage = getStorage(app);
 
   // Возврат по ссылке из письма (см. sendLoginLink на лендинге) — сама
   // ссылка не требует пароля вообще: клик по ней уже доказывает владение
@@ -1657,7 +1690,7 @@ function watchDashboardData(tenantId) {
   // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
   // перерисовки (см. ниже), сбрасывается после успешного сохранения.
   let pendingLogoUrl = null;
-  // Пока идёт uploadBytes()/getDownloadURL() (см. обработчик f-logo-file
+  // Пока идёт uploadBrandingLogoToGateway() (см. обработчик f-logo-file
   // ниже) — раньше «Сохранить брендинг» можно было нажать до того, как
   // pendingLogoUrl вообще появился: имя/цвета сохранялись, тост говорил
   // «Брендинг сохранён», а logoUrl в payload просто не попадал — выглядело
@@ -2292,14 +2325,14 @@ function watchDashboardData(tenantId) {
             errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
             return;
           }
-          // Локальный превью сразу же, не дожидаясь загрузки в Storage —
-          // иначе на медленной сети окошко логотипа несколько секунд стоит
-          // пустым/белым, и не отличить "грузится" от "сломалось". Реальный
-          // URL из Storage подменит его ниже, после getDownloadURL().
+          // Локальный превью сразу же, не дожидаясь загрузки — иначе на
+          // медленной сети окошко логотипа несколько секунд стоит пустым/
+          // белым, и не отличить "грузится" от "сломалось". Реальный URL
+          // подменит его ниже, после ответа сервера.
           const localPreviewUrl = URL.createObjectURL(file);
           $('f-logo-preview').src = localPreviewUrl;
-          // Пока файл грузится в Storage, «Сохранить брендинг» заблокирована
-          // (см. ниже) — иначе клик по ней раньше, чем отработает загрузка,
+          // Пока файл грузится, «Сохранить брендинг» заблокирована (см.
+          // ниже) — иначе клик по ней раньше, чем отработает загрузка,
           // сохранял бы имя/цвета без ещё не готового pendingLogoUrl, и
           // логотип молча не попадал бы в базу.
           logoUploading = true;
@@ -2311,31 +2344,26 @@ function watchDashboardData(tenantId) {
           let stallTimer = null;
           try {
             const uploadFile = await resizeImageForUpload(file);
-            const fileName = `logo.${uploadFile.type.split('/')[1] || 'png'}`;
-            const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
-            const task = uploadBytesResumable(fileRef, uploadFile, { contentType: uploadFile.type });
-            if (cancelBtn) cancelBtn.onclick = () => task.cancel();
+            let lastProgressAt = Date.now();
+            const { xhr, promise } = uploadBrandingLogoToGateway(tenantId, uploadFile, (pct) => {
+              lastProgressAt = Date.now();
+              if (progressBar) progressBar.style.width = `${pct}%`;
+              if (progressText) progressText.textContent = `Загружается… ${pct}%`;
+            });
+            if (cancelBtn) cancelBtn.onclick = () => xhr.abort();
             // Если за 20 секунд не прилетело ни одного обновления прогресса —
             // соединение, скорее всего, не просто медленное, а разорвано:
-            // uploadBytesResumable сам по себе НЕ отменяется по таймауту и
-            // молча висит сколько угодно, оставляя кнопку "Сохранить"
-            // заблокированной навсегда без единой подсказки, что происходит.
-            let lastProgressAt = Date.now();
+            // XHR сам по себе не отменяется по таймауту и молча висит сколько
+            // угодно, оставляя кнопку "Сохранить" заблокированной навсегда
+            // без единой подсказки, что происходит.
             stallTimer = setInterval(() => {
-              if (Date.now() - lastProgressAt > 20000) task.cancel();
+              if (Date.now() - lastProgressAt > 20000) xhr.abort();
             }, 5000);
-            await new Promise((resolve, reject) => {
-              task.on('state_changed', (snap) => {
-                lastProgressAt = Date.now();
-                const pct = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
-                if (progressBar) progressBar.style.width = `${pct}%`;
-                if (progressText) progressText.textContent = `Загружается… ${pct}%`;
-              }, reject, resolve);
-            });
-            pendingLogoUrl = await getDownloadURL(fileRef);
+            const relPath = await promise;
+            pendingLogoUrl = `${new URL(SAAS_GATEWAY_URL).origin}${relPath}?v=${Date.now()}`;
             if ($('f-logo-preview')) $('f-logo-preview').src = pendingLogoUrl;
           } catch (err) {
-            const canceled = err?.code === 'storage/canceled';
+            const canceled = err?.code === 'upload/canceled';
             errEl.textContent = canceled
               ? 'Загрузка прервана — слишком медленное или нестабильное соединение. Проверьте интернет и попробуйте снова.'
               : `Не удалось загрузить: ${err?.message || err}`;
