@@ -1091,6 +1091,96 @@ void main() {
       expect(r.salesPercentPay, 100);
       expect(r.total, 100);
     });
+
+    // Границы значений теперь проверяются при сохранении сотрудника
+    // (employees_screen.dart), но у сотрудника, заведённого ДО этой
+    // проверки, в базе могло остаться некорректное число — расчёт
+    // подстраховывается от него ещё раз, см. комментарий в calculate().
+    test('отрицательный множитель переработки не уходит в минус — считается как 1', () {
+      final emp = employee(
+        hourlyRateEnabled: true,
+        hourlyRate: 100,
+        overtimeEnabled: true,
+        overtimeThresholdHours: 8,
+        overtimeMultiplier: -2, // испорченное значение из старых данных
+      );
+      final s = shift(DateTime(2026, 1, 1, 8, 0), DateTime(2026, 1, 1, 19, 0)); // 11 часов
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.overtimeHours, 3);
+      expect(r.overtimePay, 300); // 3 * 100 * 1 (множитель зажат снизу единицей), а не -600
+      expect(r.total, greaterThan(0));
+    });
+
+    test('отрицательная ставка не уходит в минус — считается как 0', () {
+      final emp = employee(hourlyRateEnabled: true, hourlyRate: -500);
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0));
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      expect(r.hourlyPay, 0);
+      expect(r.total, 0);
+    });
+
+    test('процент с продаж свыше 100 зажимается до 100', () {
+      final emp = employee(salesPercentEnabled: true, salesPercentRate: 500);
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [], salesRevenue: 1000);
+      expect(r.salesPercentPay, 1000); // 100% от 1000, а не 5000
+    });
+
+    test('отрицательный порог переработки не уходит в минус — считается как 0', () {
+      final emp = employee(
+        hourlyRateEnabled: true,
+        hourlyRate: 100,
+        overtimeEnabled: true,
+        overtimeThresholdHours: -5, // испорченное значение
+        overtimeMultiplier: 1.5,
+      );
+      final s = shift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 13, 0)); // 4 часа
+      final r = PayrollCalculator.calculate(employee: emp, closedShifts: [s], salesRevenue: 0);
+      // Порог — 0, значит все 4 часа переработка, обычных часов нет.
+      expect(r.normalHours, 0);
+      expect(r.overtimeHours, 4);
+    });
+  });
+
+  group('StaffShiftModel.overlapsRange — пересечение смен по времени', () {
+    StaffShiftModel closedShift(DateTime start, DateTime end) => StaffShiftModel(
+          id: 's',
+          employeeId: 'e1',
+          employeeName: 'Тест',
+          startedAt: start,
+          endedAt: end,
+          status: 'closed',
+        );
+
+    test('полностью внутри другой смены — пересекается', () {
+      final a = closedShift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0));
+      expect(a.overlapsRange(DateTime(2026, 1, 1, 10, 0), DateTime(2026, 1, 1, 11, 0)), isTrue);
+    });
+
+    test('частично пересекается по началу', () {
+      final a = closedShift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0));
+      expect(a.overlapsRange(DateTime(2026, 1, 1, 16, 0), DateTime(2026, 1, 1, 20, 0)), isTrue);
+    });
+
+    test('смежные смены (конец одной = начало другой) — НЕ пересекаются', () {
+      final a = closedShift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 17, 0));
+      expect(a.overlapsRange(DateTime(2026, 1, 1, 17, 0), DateTime(2026, 1, 1, 20, 0)), isFalse);
+    });
+
+    test('полностью разные интервалы — не пересекаются', () {
+      final a = closedShift(DateTime(2026, 1, 1, 9, 0), DateTime(2026, 1, 1, 12, 0));
+      expect(a.overlapsRange(DateTime(2026, 1, 1, 13, 0), DateTime(2026, 1, 1, 15, 0)), isFalse);
+    });
+
+    test('открытая смена (без endedAt) никогда не считается пересекающейся', () {
+      final open = StaffShiftModel(
+        id: 'o',
+        employeeId: 'e1',
+        employeeName: 'Тест',
+        startedAt: DateTime(2026, 1, 1, 9, 0),
+        status: 'open',
+      );
+      expect(open.overlapsRange(DateTime(2026, 1, 1, 9, 30), DateTime(2026, 1, 1, 23, 0)), isFalse);
+    });
   });
 
   group('Настраиваемая длительность сеанса (AppConstants.sessionMinutes)', () {

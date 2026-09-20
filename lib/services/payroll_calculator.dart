@@ -47,6 +47,20 @@ class PayrollCalculator {
     required List<StaffShiftModel> closedShifts,
     required double salesRevenue,
   }) {
+    // Границы значений (множитель переработки не меньше 1, процент с продаж
+    // 0..100, ставка и порог переработки не отрицательные) проверяются при
+    // сохранении сотрудника (employees_screen.dart) — но ЗДЕСЬ, в самом
+    // расчёте, подстраховываемся ещё раз теми же границами: у сотрудника,
+    // заведённого до появления этой проверки, в базе мог остаться, например,
+    // отрицательный множитель переработки, и без этой подстраховки его
+    // зарплата продолжила бы считаться неверно (в том числе в минус) до тех
+    // пор, пока кто-то не откроет и не пересохранит его карточку вручную.
+    final overtimeThreshold =
+        employee.overtimeThresholdHours < 0 ? 0.0 : employee.overtimeThresholdHours;
+    final hourlyRate = employee.hourlyRate < 0 ? 0.0 : employee.hourlyRate;
+    final overtimeMultiplier = employee.overtimeMultiplier < 1 ? 1.0 : employee.overtimeMultiplier;
+    final salesPercentRate = employee.salesPercentRate.clamp(0.0, 100.0);
+
     double normalHours = 0;
     double overtimeHours = 0;
 
@@ -56,20 +70,20 @@ class PayrollCalculator {
       final hours = endedAt.difference(shift.startedAt).inSeconds / 3600.0;
       if (hours <= 0) continue; // защита от испорченной ручной записи (конец раньше начала)
 
-      if (employee.overtimeEnabled && hours > employee.overtimeThresholdHours) {
-        normalHours += employee.overtimeThresholdHours;
-        overtimeHours += hours - employee.overtimeThresholdHours;
+      if (employee.overtimeEnabled && hours > overtimeThreshold) {
+        normalHours += overtimeThreshold;
+        overtimeHours += hours - overtimeThreshold;
       } else {
         normalHours += hours;
       }
     }
 
-    final hourlyPay = employee.hourlyRateEnabled ? normalHours * employee.hourlyRate : 0.0;
+    final hourlyPay = employee.hourlyRateEnabled ? normalHours * hourlyRate : 0.0;
     final overtimePay = employee.hourlyRateEnabled && employee.overtimeEnabled
-        ? overtimeHours * employee.hourlyRate * employee.overtimeMultiplier
+        ? overtimeHours * hourlyRate * overtimeMultiplier
         : 0.0;
     final salesPercentPay =
-        employee.salesPercentEnabled ? salesRevenue * employee.salesPercentRate / 100.0 : 0.0;
+        employee.salesPercentEnabled ? salesRevenue * salesPercentRate / 100.0 : 0.0;
 
     return PayrollResult(
       employee: employee,

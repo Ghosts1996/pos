@@ -285,6 +285,23 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                       final overtimeThreshold = _parseNum(overtimeThresholdCtrl.text, 8);
                       final overtimeMultiplier = _parseNum(overtimeMultiplierCtrl.text, 1.5);
                       final salesPercentRate = _parseNum(salesPercentCtrl.text, 0);
+                      // Эти три проверки — НЕЗАВИСИМО от состояния тумблера:
+                      // иначе некорректное число может тихо сохраниться,
+                      // пока опция выключена, а потом "ожить", когда её
+                      // включат обратно, не трогая само поле.
+                      if (hourlyRate < 0) {
+                        setSt(() => error = 'Ставка не может быть отрицательной');
+                        return;
+                      }
+                      if (overtimeMultiplier < 1) {
+                        setSt(() => error =
+                            'Множитель переработки должен быть не меньше 1 — иначе час переработки будет стоить дешевле обычного');
+                        return;
+                      }
+                      if (salesPercentRate < 0 || salesPercentRate > 100) {
+                        setSt(() => error = 'Процент с продаж — число от 0 до 100');
+                        return;
+                      }
                       if (hourlyRateEnabled && hourlyRate <= 0) {
                         setSt(() => error = 'Укажите ставку больше нуля или выключите оклад');
                         return;

@@ -55,6 +55,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
       final id = await _fs.openSession(
         table: widget.table,
         employeeName: widget.employee.name,
+        employeeId: widget.employee.id,
         guestTag: guestTag,
         durationMinutes: AppConstants.sessionMinutes,
       );

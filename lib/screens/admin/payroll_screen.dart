@@ -47,11 +47,26 @@ class _PayrollScreenState extends State<PayrollScreen> {
       // Та же выручка, что в "Отчётах": возвраты и чеки, закрытые без оплаты,
       // в неё не входят (иначе процент с продаж начислялся бы на деньги,
       // которых заведение фактически не получило).
-      final revenueByName = <String, double>{};
+      //
+      // Группируем по employeeId, а не по имени: имя — изменяемый текст,
+      // и по нему легко ошибиться — переименовали сотрудника, и вся его
+      // прошлая выручка "потерялась" (перестала совпадать с новым именем),
+      // а если завести двух сотрудников с одинаковым именем, оба получили
+      // бы процент с ИХ СУММАРНОЙ выручки. У сессий, созданных до того, как
+      // в них стали писать employeeId (см. SessionModel), поля нет — для
+      // них, и только для них, откатываемся на сопоставление по имени, как
+      // раньше, иначе вся история продаж до обновления исчезла бы из отчёта.
+      final revenueByEmployeeId = <String, double>{};
+      final revenueByNameFallback = <String, double>{};
       for (final s in sessions) {
         if (s.refunded || s.closedWithoutPayment) continue;
-        final name = s.employeeName.isEmpty ? 'Без имени' : s.employeeName;
-        revenueByName[name] = (revenueByName[name] ?? 0) + s.totalWithDiscount;
+        if (s.employeeId.isNotEmpty) {
+          revenueByEmployeeId[s.employeeId] =
+              (revenueByEmployeeId[s.employeeId] ?? 0) + s.totalWithDiscount;
+        } else {
+          final name = s.employeeName.isEmpty ? 'Без имени' : s.employeeName;
+          revenueByNameFallback[name] = (revenueByNameFallback[name] ?? 0) + s.totalWithDiscount;
+        }
       }
 
       final results = <PayrollResult>[];
@@ -62,7 +77,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
           continue;
         }
         final empShifts = shifts.where((s) => s.employeeId == emp.id).toList();
-        final revenue = revenueByName[emp.name] ?? 0;
+        final revenue =
+            (revenueByEmployeeId[emp.id] ?? 0) + (revenueByNameFallback[emp.name] ?? 0);
         results.add(PayrollCalculator.calculate(
             employee: emp, closedShifts: empShifts, salesRevenue: revenue));
       }
@@ -170,7 +186,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
           StreamBuilder<List<StaffShiftModel>>(
             stream: _fs.openStaffShiftsStream(),
             builder: (context, snap) {
-              final open = snap.data ?? [];
+              // Только смены, начавшиеся до конца ВЫБРАННОГО периода — иначе
+              // баннер пугал бы "не закрыто смен" из-за открытой смены,
+              // которая к этому отчёту вообще не относится (например, смена
+              // началась сегодня, а отчёт строится за прошлый месяц).
+              final open = (snap.data ?? [])
+                  .where((s) => s.startedAt.isBefore(_rangeEnd))
+                  .toList();
               if (open.isEmpty) return const SizedBox.shrink();
               return Container(
                 width: double.infinity,

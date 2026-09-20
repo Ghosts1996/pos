@@ -200,6 +200,30 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       return;
     }
 
+    // Не даём завести вторую запись поверх уже существующей смены того же
+    // сотрудника — иначе пересечение по времени задвоится в часах и в
+    // зарплате (PayrollCalculator сам по себе пересечения не видит, он
+    // просто суммирует все переданные ему смены). Саму редактируемую смену
+    // из проверки исключаем — иначе она бы "пересекалась сама с собой".
+    final existing = await _fs.allStaffShiftsForEmployee(selected.id);
+    final overlapping = existing.where((s) => s.id != shift?.id && s.overlapsRange(start, end));
+    if (overlapping.isNotEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+            'Пересекается с уже существующей сменой ${selected.name} '
+            '(${_fmtDateTime(overlapping.first.startedAt)} – ${_fmtDateTime(overlapping.first.endedAt!)})')));
+      }
+      return;
+    }
+
+    // Правка исходной (не ручной) смены без изменения времени — например,
+    // просто чтобы поменять сотрудника при опечатке — не должна навсегда
+    // помечать её "исправленной вручную": manual важен как признак того,
+    // что часы РЕАЛЬНО подправили, а не просто пересохранили как есть.
+    final manual = shift == null
+        ? true
+        : (shift.manual || start != shift.startedAt || end != shift.endedAt);
+
     final result = StaffShiftModel(
       id: shift?.id ?? '',
       employeeId: selected.id,
@@ -207,7 +231,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       startedAt: start,
       endedAt: end,
       status: 'closed',
-      manual: true,
+      manual: manual,
     );
     if (shift == null) {
       await _fs.addStaffShift(result);
@@ -277,7 +301,11 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
           StreamBuilder<List<StaffShiftModel>>(
             stream: _fs.openStaffShiftsStream(),
             builder: (context, snap) {
-              final open = snap.data ?? [];
+              // Только смены, начавшиеся до конца выбранного периода —
+              // иначе баннер пугал бы "не закрыто смен" из-за открытой
+              // смены, которая к этому периоду вообще не относится.
+              final open =
+                  (snap.data ?? []).where((s) => s.startedAt.isBefore(_rangeEnd)).toList();
               if (open.isEmpty) return const SizedBox.shrink();
               return Container(
                 width: double.infinity,
