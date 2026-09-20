@@ -23,6 +23,34 @@
 <link rel="icon" href="icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="app.css">
+<script>
+// Кэш последнего применённого бренда (см. app.js: applyBranding()/boot()) —
+// применяется СРАЗУ, до какой-либо сети, чтобы при повторном заходе (тот же
+// гость открывает "Мой стол" ещё раз с того же телефона) страница
+// красилась в фирменные цвета с первого кадра, а не мелькала дефолтной
+// зелёной палитрой пару секунд, пока идут resolveTenantBySlug/
+// firebaseConfig/чтение branding — эти запросы всё равно выполнятся следом
+// и обновят кэш, если владелец успел что-то сменить. На АБСОЛЮТНО первом
+// заходе с этого телефона кэша ещё нет — дефолт на секунду виден, тут без
+// сервер-рендера никак, но это уже не "мелькание", а обычная загрузка.
+(function () {
+  try {
+    var slug = (location.hostname.split('.')[0] || '').trim();
+    var raw = slug && localStorage.getItem('brand:' + slug);
+    if (!raw) return;
+    var b = JSON.parse(raw);
+    var css = document.documentElement.style;
+    if (b.primaryColor) css.setProperty('--primary', b.primaryColor);
+    if (b.secondaryColor) css.setProperty('--gold', b.secondaryColor);
+    if (b.accentColor) css.setProperty('--accent', b.accentColor);
+    if (b.backgroundColor) css.setProperty('--bg', b.backgroundColor);
+    if (b.textColor) css.setProperty('--text', b.textColor);
+    if (b.appName) document.title = b.appName;
+  } catch (_) {
+    // Битый кэш — просто игнорируем, дальше подтянется свежий брендинг.
+  }
+})();
+</script>
 </head>
 <body>
 
