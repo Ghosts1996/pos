@@ -270,6 +270,40 @@ async function handleResolveTenantBySlug(req, res) {
   sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status });
 }
 
+// ------------------------------------------------------ firebaseConfig
+
+let cachedWebConfig;
+function getFirebaseWebConfig() {
+  if (cachedWebConfig !== undefined) return cachedWebConfig;
+  const raw = process.env.FIREBASE_WEB_CONFIG_JSON;
+  cachedWebConfig = raw ? JSON.parse(raw) : null;
+  return cachedWebConfig;
+}
+
+/**
+ * Публичный веб-конфиг Firebase проекта saas-3bdc8 (apiKey/authDomain/
+ * projectId и т.д.) — НЕ секрет, то же самое видно в исходном коде любой
+ * веб-страницы, использующей Firebase, или в собранном APK.
+ *
+ * Раздаём его отсюда, а не с hookahpos.su/__/firebase/init.json (тот
+ * путь — приём Firebase Hosting для страниц, которые САМИ размещены на
+ * этом хостинге: saas/console/console.js читает его РЕЛЯТИВНЫМ путём,
+ * т.е. тем же origin, и получает его без проблем. А saas/guest-web/
+ * (app.js, table.html) размещены на nginx-поддоменах {slug}.hookahpos.su
+ * — ЧУЖОЙ origin для hookahpos.su, и тот путь не отдаёт CORS для чужого
+ * origin: fetch с гостевого поддомена падал с "Failed to fetch" ещё до
+ * какого-либо ответа сервера). Здесь тот же sendJson с уже проверенным
+ * "Access-Control-Allow-Origin: *" (см. resolveTenantBySlug — оттуда же
+ * гостевой веб этот сервис уже успешно зовёт).
+ */
+async function handleFirebaseWebConfig(req, res) {
+  const config = getFirebaseWebConfig();
+  if (!config) {
+    throw new HttpError(500, "FIREBASE_WEB_CONFIG_JSON не настроен на сервере — см. README.md");
+  }
+  sendJson(res, 200, config);
+}
+
 // -------------------------------------------------- publicGuestApk
 
 /**
@@ -1124,6 +1158,9 @@ const server = http.createServer((req, res) => {
   // Без Firebase Auth — гость сканирует QR стола, не входя ни в один
   // SaaS-аккаунт (см. docstring handlePublicGuestApk).
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
+  // Публичный веб-конфиг Firebase — см. docstring handleFirebaseWebConfig,
+  // почему НЕ hookahpos.su/__/firebase/init.json.
+  if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
 
   const handler = ROUTES[urlPath];

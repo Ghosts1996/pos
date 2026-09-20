@@ -46,11 +46,25 @@ echo "как секрет репозитория BUILD_CALLBACK_SECRET."
 read -rsp "BUILD_CALLBACK_SECRET=" BUILD_CALLBACK_SECRET
 echo
 
+echo
+echo "Публичный веб-конфиг Firebase проекта saas-3bdc8 (НЕ секрет — те же"
+echo "ключи видны в исходнике любой веб-страницы с Firebase) — нужен, чтобы"
+echo "веб-версия гостя (saas/guest-web/) на поддоменах {slug}.hookahpos.su"
+echo "могла инициализировать Firebase: hookahpos.su/__/firebase/init.json"
+echo "для чужого поддомена не отдаёт CORS, поэтому раздаём его сами отсюда."
+echo "Получить: Firebase Console -> saas-3bdc8 -> Project settings -> General"
+echo "-> Your apps -> веб-приложение (</>) -> SDK setup and configuration ->"
+echo "переключатель 'Config' -> скопировать объект целиком в ОДНУ строку,"
+echo "например: {\"apiKey\":\"...\",\"authDomain\":\"...\",\"projectId\":\"saas-3bdc8\",...}"
+read -rp "FIREBASE_WEB_CONFIG_JSON=" FIREBASE_WEB_CONFIG_JSON
+echo
+
 cat > /etc/saas-gateway.env <<ENV
 PORT=8081
 FIREBASE_SERVICE_ACCOUNT_B64=${FIREBASE_B64}
 GITHUB_PAT=${GITHUB_PAT}
 BUILD_CALLBACK_SECRET=${BUILD_CALLBACK_SECRET}
+FIREBASE_WEB_CONFIG_JSON=${FIREBASE_WEB_CONFIG_JSON}
 ENV
 chmod 600 /etc/saas-gateway.env
 
