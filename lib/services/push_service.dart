@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'venue_service.dart';
+import '../models/employee.dart';
+import '../utils/constants.dart';
 
 /// Push-уведомления через Firebase Cloud Messaging.
 ///
@@ -10,18 +12,64 @@ import 'venue_service.dart';
 /// очередь: приложение пишет документ в `pushQueue`, Cloud Function
 /// `sendQueuedPush` его забирает и рассылает (см. functions/index.js).
 ///
-/// Сотрудники подписаны на топик `staff` — им прилетают вызовы гостей и
-/// новые брони. Гостю шлём адресно по его FCM-токену из clients/{uid}.
+/// Топики персонала — НЕ один голый `staff` (так было раньше — в SaaS это
+/// вдобавок значило бы, что все заведения платформы сидят на одном топике,
+/// а вызов гостя из одного заведения будил бы персонал другого). Схема:
+///   `staff-{scope}-all` — общий канал (новая бронь и т.п., касается всех
+///   независимо от специализации);
+///   `staff-{scope}-{position}` — конкретная специализация
+///   (waiter/hookah_master/bartender, см. AppConstants.position*) — на них
+///   рассылаются вызовы гостя из-за стола (см. GuestCallTypeX.targetPosition
+///   и onWaiterCall в functions/index.js).
+/// `scope` — tenantId в SaaS-режиме (изоляция между заведениями платформы),
+/// либо `default` в одно-арендном режиме.
+///
+/// Устройство подписывается на "all" сразу при старте ([initStaff]) — общий
+/// канал не зависит от того, кто именно вошёл. На топики специализации
+/// подписывает [updateStaffPositionSubscription] — вызывается ПОСЛЕ
+/// PIN-входа, когда уже известно, кто на этом устройстве работает: до
+/// входа неизвестно, кому какие вызовы показывать.
 class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
   final _fcm = FirebaseMessaging.instance;
 
-  /// POS: подписка планшета на уведомления зала.
+  static const _allPositions = [
+    AppConstants.positionWaiter,
+    AppConstants.positionHookahMaster,
+    AppConstants.positionBartender,
+  ];
+
+  String get _scope => AppScope.tenantId ?? 'default';
+  String _positionTopic(String position) => 'staff-$_scope-$position';
+  String get _allStaffTopic => 'staff-$_scope-all';
+
+  /// POS: подписка планшета на общий канал (брони и т.п., не зависящие от
+  /// специализации). Специализацию конкретного сотрудника подключает
+  /// [updateStaffPositionSubscription] отдельно, после PIN-входа.
   Future<void> initStaff() async {
     await _requestPermission();
-    await _fcm.subscribeToTopic('staff');
+    await _fcm.subscribeToTopic(_allStaffTopic);
+  }
+
+  /// Переподписывает устройство на топики специализации ПОСЛЕ успешного
+  /// PIN-входа сотрудника. Сначала отписывается от ВСЕХ — на общем
+  /// планшете смена сотрудника ("Сменить сотрудника" в EmployeeDrawer) не
+  /// должна оставлять вызовы прошлого сотрудника прилетать следующему.
+  /// Универсал (значение по умолчанию, см. Employee.position) и админ
+  /// получают вызовы всех специализаций — ровно как было устроено раньше,
+  /// пока владелец никого не специализировал явно.
+  Future<void> updateStaffPositionSubscription(Employee employee) async {
+    for (final p in _allPositions) {
+      await _fcm.unsubscribeFromTopic(_positionTopic(p));
+    }
+    final isUniversal = employee.position == AppConstants.positionUniversal ||
+        employee.role == AppConstants.roleAdmin;
+    final positions = isUniversal ? _allPositions : [employee.position];
+    for (final p in positions) {
+      await _fcm.subscribeToTopic(_positionTopic(p));
+    }
   }
 
   /// Клиентское приложение: сохраняем токен гостя, чтобы слать адресно.
@@ -45,13 +93,23 @@ class PushService {
     }
   }
 
-  /// Уведомление всей смене (топик staff).
+  /// Уведомление всей смене независимо от специализации (общий топик).
   Future<void> notifyStaff({
     required String title,
     required String body,
     Map<String, String> data = const {},
   }) =>
-      enqueue(topic: 'staff', title: title, body: body, data: data);
+      enqueue(topic: _allStaffTopic, title: title, body: body, data: data);
+
+  /// Уведомление персоналу конкретной специализации (см.
+  /// GuestCallTypeX.targetPosition) — а не всей смене разом.
+  Future<void> notifyStaffPosition({
+    required String position,
+    required String title,
+    required String body,
+    Map<String, String> data = const {},
+  }) =>
+      enqueue(topic: _positionTopic(position), title: title, body: body, data: data);
 
   /// Уведомление конкретному гостю.
   Future<void> notifyGuest({

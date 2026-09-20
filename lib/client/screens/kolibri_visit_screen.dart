@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
 import '../../models/venue_models.dart';
+import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/venue_service.dart';
 import '../../widgets/clock_ticker.dart';
@@ -192,6 +193,14 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             Expanded(child: _callButton(s, GuestCallType.waiter, Icons.pan_tool_alt)),
             const SizedBox(width: 10),
             Expanded(child: _callButton(s, GuestCallType.bill, Icons.payments)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(child: _callButton(s, GuestCallType.callWaiter, Icons.room_service)),
+            const SizedBox(width: 10),
+            const Expanded(child: SizedBox()),
           ],
         ),
 
@@ -544,9 +553,16 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                 guestName: widget.profile?.name ?? '',
               );
               setState(() => _pendingCalls.add(type));
+              // Кому именно передали — зависит от типа вызова (см.
+              // GuestCallTypeX.targetPosition): раньше тут было зашито
+              // "кальянщику" для всех типов, включая счёт и (после этой
+              // правки) вызов официанта — что было бы просто неверно.
+              final toWhom = type.targetPosition == AppConstants.positionWaiter
+                  ? 'официанту'
+                  : 'кальянщику';
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${type.label} — передали кальянщику'),
+                  content: Text('${type.label} — передали $toWhom'),
                   duration: const Duration(seconds: 2),
                 ),
               );

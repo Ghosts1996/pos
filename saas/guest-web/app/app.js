@@ -856,6 +856,8 @@ function drawTable(s) {
       <button class="btn-ghost" data-call="waiter">🙋 Позвать кальянщика</button>
       <button class="btn-ghost" data-call="bill">💸 Счёт, пожалуйста</button>
     </div>
+    <div style="height:10px"></div>
+    <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>
     <div id="calls"></div>
 
     <h2>Ваш счёт</h2>
@@ -906,6 +908,7 @@ const CALL_LABELS = {
   refill: 'Перезабивка',
   waiter: 'Позвать кальянщика',
   bill: 'Счёт, пожалуйста',
+  callWaiter: 'Позвать официанта',
 };
 
 async function callStaff(type, s, btn) {

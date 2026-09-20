@@ -335,6 +335,16 @@ const TENANT_STATUS_LABELS = {
 };
 const ROLE_LABELS = { owner: 'владелец', admin: 'администратор', manager: 'менеджер', employee: 'сотрудник' };
 const ROLE_ORDER = { owner: 0, admin: 1, manager: 2, employee: 3 };
+// Специализация сотрудника кассы (см. AppConstants.position* в
+// lib/utils/constants.dart — та же раскладка, тот же смысл значений)
+// — определяет, какие вызовы гостя из-за стола ему адресованы.
+// 'universal' (значение по умолчанию) получает вообще все вызовы.
+const POSITION_LABELS = {
+  universal: 'Универсал (видит все вызовы)',
+  waiter: 'Официант',
+  hookah_master: 'Кальянщик',
+  bartender: 'Бармен',
+};
 const SUB_STATUS_LABELS = {
   trial: 'пробный период', active: 'активна', past_due: 'просрочена',
   cancelled: 'отменена', incomplete: 'не оформлена',
@@ -1817,6 +1827,7 @@ function watchDashboardData(tenantId) {
               <div class="small muted">
                 ${e.role === 'admin' ? 'Администратор' : 'Сотрудник'} · PIN
                 <span class="f-emp-pin" data-id="${esc(e.id)}" style="cursor:pointer" title="Нажмите, чтобы ${revealed ? 'скрыть' : 'показать'}">${revealed ? esc(e.pinCode || '') : '•'.repeat(pinLen)}</span>
+                ${e.position && e.position !== 'universal' ? ` · ${esc(POSITION_LABELS[e.position] || e.position)}` : ''}
               </div>
             </div>
             ${canManage ? `
@@ -1842,6 +1853,15 @@ function watchDashboardData(tenantId) {
             <label class="field"><span>PIN-код</span>
               <input id="f-emp-pin" type="text" inputmode="numeric" placeholder="0000" maxlength="6">
             </label>
+            <label class="field"><span>Специализация</span>
+              <select id="f-emp-position">
+                ${Object.entries(POSITION_LABELS).map(([v, label]) =>
+                  `<option value="${esc(v)}">${esc(label)}</option>`).join('')}
+              </select>
+            </label>
+            <p class="small muted" style="margin-top:-4px">Определяет, какие вызовы гостя
+            из-за стола придут этому сотруднику (см. кнопки «Позвать» в клиентском
+            приложении) — например, официант не будет получать вызов кальянщика на угли.</p>
             <div class="row">
               <button class="btn btn-ghost" id="f-emp-submit" style="width:auto">Сохранить</button>
               ${editingEmployeeId ? `<button class="btn-link" id="f-emp-cancel" style="width:auto">Отменить</button>` : ''}
@@ -2118,6 +2138,7 @@ function watchDashboardData(tenantId) {
         if ($('f-emp-name')) $('f-emp-name').value = emp.name || '';
         if ($('f-emp-role')) $('f-emp-role').value = emp.role || 'employee';
         if ($('f-emp-pin')) $('f-emp-pin').value = emp.pinCode || '';
+        if ($('f-emp-position')) $('f-emp-position').value = emp.position || 'universal';
         draw();
       };
     });
@@ -2127,6 +2148,7 @@ function watchDashboardData(tenantId) {
         if ($('f-emp-name')) $('f-emp-name').value = '';
         if ($('f-emp-role')) $('f-emp-role').value = 'employee';
         if ($('f-emp-pin')) $('f-emp-pin').value = '';
+        if ($('f-emp-position')) $('f-emp-position').value = 'universal';
         draw();
       };
     }
@@ -2149,6 +2171,7 @@ function watchDashboardData(tenantId) {
         const name = $('f-emp-name').value.trim();
         const role = $('f-emp-role').value === 'admin' ? 'admin' : 'employee';
         const pin = $('f-emp-pin').value.trim();
+        const position = $('f-emp-position') ? $('f-emp-position').value : 'universal';
         // Та же длина PIN по роли, что и в кассе (lib/utils/constants.dart,
         // AppConstants.pinLengthForRole) — иначе владелец задал бы PIN,
         // который сама касса потом не примет ни при каком вводе.
@@ -2163,7 +2186,7 @@ function watchDashboardData(tenantId) {
         $('f-emp-submit').disabled = true;
         try {
           if (editingEmployeeId) {
-            await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), { name, role, pinCode: pin });
+            await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), { name, role, pinCode: pin, position });
             toast('Сотрудник обновлён');
           } else {
             // Остальные поля — те же дефолты, что и у Employee() в
@@ -2171,7 +2194,7 @@ function watchDashboardData(tenantId) {
             // сотрудника без настроенной зарплаты, а не падала на
             // отсутствующих полях.
             await addDoc(collection(state.db, 'tenants', tenantId, 'employees'), {
-              name, role, pinCode: pin,
+              name, role, pinCode: pin, position,
               hourlyRateEnabled: false, hourlyRate: 0,
               overtimeEnabled: false, overtimeThresholdHours: 8, overtimeMultiplier: 1.5,
               salesPercentEnabled: false, salesPercentRate: 0,
@@ -2182,6 +2205,7 @@ function watchDashboardData(tenantId) {
           $('f-emp-name').value = '';
           $('f-emp-role').value = 'employee';
           $('f-emp-pin').value = '';
+          if ($('f-emp-position')) $('f-emp-position').value = 'universal';
         } catch (e) {
           errEl.textContent = `Не удалось сохранить: ${e?.message || e}`;
         } finally {

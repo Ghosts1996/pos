@@ -282,6 +282,8 @@ class GuestRequestsBanner extends StatelessWidget {
         return Icons.refresh;
       case GuestCallType.waiter:
         return Icons.pan_tool_alt;
+      case GuestCallType.callWaiter:
+        return Icons.room_service;
     }
   }
 }
