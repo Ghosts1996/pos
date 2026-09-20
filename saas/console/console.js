@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.5-live-overview';
+const CONSOLE_BUILD = '2026-09-20.6-logo-upload-feedback';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1904,6 +1904,7 @@ function watchDashboardData(tenantId) {
           ${canManage ? `
             <div class="grow">
               <input type="file" id="f-logo-file" accept="image/png,image/jpeg,image/webp">
+              <div id="f-logo-uploading" class="small muted" style="display:none;margin-top:4px">Загружается…</div>
               <div id="f-logo-error" class="small" style="color:var(--danger)"></div>
             </div>
           ` : '<div class="grow small muted">Логотип не задан</div>'}
@@ -2224,11 +2225,19 @@ function watchDashboardData(tenantId) {
           const file = e.target.files?.[0];
           if (!file) return;
           const errEl = $('f-logo-error');
+          const uploadingEl = $('f-logo-uploading');
           errEl.textContent = '';
           if (file.size > 5 * 1024 * 1024) {
             errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
             return;
           }
+          // Локальный превью сразу же, не дожидаясь загрузки в Storage —
+          // иначе на медленной сети окошко логотипа несколько секунд стоит
+          // пустым/белым, и не отличить "грузится" от "сломалось". Реальный
+          // URL из Storage подменит его ниже, после getDownloadURL().
+          const localPreviewUrl = URL.createObjectURL(file);
+          $('f-logo-preview').src = localPreviewUrl;
+          if (uploadingEl) uploadingEl.style.display = 'block';
           // Пока файл грузится в Storage, «Сохранить брендинг» заблокирована
           // (см. ниже) — иначе клик по ней раньше, чем отработает
           // uploadBytes()/getDownloadURL(), сохранял бы имя/цвета без ещё не
@@ -2240,12 +2249,14 @@ function watchDashboardData(tenantId) {
             const fileRef = ref(state.storage, `tenants/${tenantId}/branding/${fileName}`);
             await uploadBytes(fileRef, file, { contentType: file.type });
             pendingLogoUrl = await getDownloadURL(fileRef);
-            $('f-logo-preview').src = pendingLogoUrl;
+            if ($('f-logo-preview')) $('f-logo-preview').src = pendingLogoUrl;
           } catch (err) {
             errEl.textContent = `Не удалось загрузить: ${err?.message || err}`;
             toast(`Логотип не загружен: ${err?.message || err}`);
           } finally {
+            URL.revokeObjectURL(localPreviewUrl);
             logoUploading = false;
+            if (uploadingEl) uploadingEl.style.display = 'none';
             if ($('f-save-branding')) $('f-save-branding').disabled = false;
           }
         };
