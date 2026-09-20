@@ -320,7 +320,15 @@ async function handlePublicGuestApk(req, res) {
 
   const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
   const token = signDownloadToken(guestJob.id, expiresAt);
-  const url = `/downloadBuild?jobId=${encodeURIComponent(guestJob.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
+  // ВАЖНО: с префиксом /saas/, а не голый /downloadBuild — в отличие от
+  // handleGetDownloadUrl (её JSON-ответ подставляет префикс САМ вызывающий
+  // код, знающий SAAS_GATEWAY_URL, см. console.js/downloadBuild), здесь
+  // редирект шлёт сам сервер: браузер разрешает Location с ведущим `/`
+  // от КОРНЯ ДОМЕНА pii.hookahpos.su, а не от точки, куда nginx примонтировал
+  // этот шлюз (`location /saas/` с обрезкой префикса перед проксированием
+  // в Node) — без него запрос уходил на /downloadBuild мимо nginx-маршрута
+  // шлюза вообще.
+  const url = `/saas/downloadBuild?jobId=${encodeURIComponent(guestJob.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
   // Обычная навигация браузера (window.location.href), не fetch/XHR — CORS
   // тут ни при чём, редирект следует сам, как за обычной ссылкой.
   res.writeHead(302, { Location: url });
