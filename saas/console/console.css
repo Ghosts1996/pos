@@ -241,6 +241,19 @@ a:hover { filter: brightness(1.2); }
 
 .dash-greeting { font-size: 19px; font-weight: 700; margin-bottom: 14px; }
 
+/* Полоса прогресса загрузки логотипа (см. uploadBytesResumable в console.js) —
+   на медленной мобильной сети файл в несколько МБ грузится не мгновенно,
+   и без видимого процента непонятно, работает это или зависло. */
+.upload-progress {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.upload-progress-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  transition: width .2s ease;
+}
+
 /* "Живые" цифры на "Обзоре" (открытые столы, сотрудники на смене, выручка
    и чеки за сегодня) — 2 колонки на телефоне, все 4 в ряд начиная с
    планшета, той же плотности, что и plans/quick-actions рядом. */
