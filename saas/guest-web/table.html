@@ -92,6 +92,37 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
+<script>
+// Раньше цвета/название заведения применялись ТОЛЬКО после трёх сетевых
+// запросов подряд (resolveTenantBySlug → firebaseConfig → чтение
+// branding/config) — гость на пару секунд видел дефолтную зелёную палитру
+// "ЗАВЕДЕНИЕ", а потом она резко перекрашивалась в фирменную — визуально
+// криво, особенно при повторных заходах на тот же стол. Здесь — кэш
+// последнего применённого бренда в localStorage (per-поддомен): при
+// повторном заходе (тот же гость сканирует QR ещё раз, тот же телефон)
+// цвета/название применяются СРАЗУ, ДО какой-либо сети, — страница красится
+// в фирменные цвета с первого кадра. Ничего не меняет для АБСОЛЮТНО первого
+// захода с этого телефона — там кэша ещё нет, и дефолт на секунду всё равно
+// виден (тут без сервер-рендера никак), но это уже не проблема визуальной
+// "смены на лету", а обычная загрузка.
+(function () {
+  try {
+    var slug = (location.hostname.split('.')[0] || '').trim();
+    var raw = slug && localStorage.getItem('brand:' + slug);
+    if (!raw) return;
+    var b = JSON.parse(raw);
+    window.__cachedBrand = b;
+    var root = document.documentElement.style;
+    if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
+    if (b.secondaryColor) root.setProperty('--gold', b.secondaryColor);
+    if (b.backgroundColor) root.setProperty('--bg', b.backgroundColor);
+    if (b.textColor) root.setProperty('--text', b.textColor);
+    if (b.appName) document.title = b.appName;
+  } catch (_) {
+    // Битый кэш — просто игнорируем, дальше подтянется свежий брендинг.
+  }
+})();
+</script>
 </head>
 <body>
 <div class="card">
@@ -126,7 +157,6 @@
       На iPhone приложение не ставится — там работает версия в браузере,
       кнопка выше. Умеет то же самое.
     </p>
-    <p class="hint" id="brand-debug" style="opacity:.5"></p>
   </div>
 
 </div>
@@ -145,6 +175,15 @@
   var install = document.getElementById('install');
   var shown = false;
   var timer = null;
+
+  // Название заведения из кэша (см. скрипт в <head>) — тоже сразу, без
+  // ожидания сети, той же логикой, что и цвета выше.
+  if (window.__cachedBrand && window.__cachedBrand.appName) {
+    var brandOpeningEl = document.getElementById('brand-opening');
+    var brandInstallEl = document.getElementById('brand-install');
+    if (brandOpeningEl) brandOpeningEl.textContent = window.__cachedBrand.appName;
+    if (brandInstallEl) brandInstallEl.textContent = window.__cachedBrand.appName;
+  }
 
   function showInstall() {
     if (shown) return;
@@ -222,7 +261,9 @@
 <!--
   Брендинг — ОТДЕЛЬНЫМ модулем и асинхронно, НЕ блокируя попытку открыть
   приложение выше: гость не должен ждать сеть ради оформления, если
-  приложение и так сейчас откроется само.
+  приложение и так сейчас откроется само. Кэш из <head> уже применил
+  прошлый удачный результат мгновенно (см. комментарий там) — здесь просто
+  подтягиваем актуальный на случай, если владелец успел его сменить.
 
   Читаем через Firebase SDK (getDoc), а не «сырым» fetch к
   firestore.googleapis.com напрямую: та же самая связка уже проверенно
@@ -235,64 +276,39 @@
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
   import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-  // ВРЕМЕННО: короткая метка на самом экране (не только в консоли браузера) —
-  // с телефона у гостя/владельца обычно нет под рукой DevTools, а по одному
-  // "не поменялось" не видно, на каком именно шаге сломалось. Снять после
-  // того, как брендинг подтверждённо заработает на реальном поддомене.
-  function dbg(text) {
-    var el = document.getElementById('brand-debug');
-    if (el) el.textContent = text;
-  }
-
   (async function () {
     var GATEWAY = 'https://pii.hookahpos.su/saas';
     var slug = window.__tableSlug;
-    if (!slug) { dbg('DEBUG: нет slug из адреса'); return; }
-    // Название текущего шага — кладём в само сообщение об ошибке (не
-    // полагаемся на то, что предыдущий dbg() успеет отрисоваться на экране:
-    // если запрос падает мгновенно (DNS/блокировка/обрыв — ещё до какого-
-    // либо ответа сервера), браузер вполне может ни разу не перерисовать
-    // экран между "начал шаг" и "поймал ошибку", и тогда видно только
-    // последнее сообщение, а не то, на чём именно сломалось).
-    var step = 'старт';
+    if (!slug) return;
     try {
-      step = 'resolveTenantBySlug(' + slug + ') — POST на ' + GATEWAY;
-      dbg('DEBUG: ' + step + '…');
-      var resolveResp = await fetch(GATEWAY + '/resolveTenantBySlug', {
+      // resolveTenantBySlug и firebaseConfig НЕ зависят друг от друга
+      // (firebaseConfig — общий для всей платформы, не завязан на
+      // конкретное заведение) — запускаем оба сразу, а не один за другим:
+      // это одна сетевая "волна" вместо двух подряд, короче время до
+      // применения реального бренда на первом же заходе (см. комментарий
+      // в <head> про то, почему мгновенно только на ПОВТОРНОМ заходе).
+      var resolvePromise = fetch(GATEWAY + '/resolveTenantBySlug', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug: slug }),
-      });
-      var resolveJson = await resolveResp.json().catch(() => null);
-      if (!resolveResp.ok || !resolveJson || !resolveJson.tenantId) {
-        dbg('DEBUG: resolveTenantBySlug HTTP ' + resolveResp.status + ' ' + JSON.stringify(resolveJson));
-        return;
-      }
+      }).then((r) => r.json().then((j) => ({ ok: r.ok, json: j })));
+      var configPromise = fetch(GATEWAY + '/firebaseConfig')
+        .then((r) => r.json().then((j) => ({ ok: r.ok, json: j })));
 
-      // НЕ hookahpos.su/__/firebase/init.json: живьём подтверждено, что
-      // этот путь падает с "Failed to fetch" для поддомена {slug}.hookahpos.su
-      // (чужой origin для hookahpos.su, Firebase Hosting не отдаёт для него
-      // CORS) — тот путь работает только для страниц НА hookahpos.su, как
-      // saas/console/console.js, читающий его релятивным путём. Вместо
-      // этого — тот же saas-gateway, что и resolveTenantBySlug выше.
-      step = 'firebaseConfig через gateway, tenantId=' + resolveJson.tenantId;
-      dbg('DEBUG: ' + step + '…');
-      var configResp = await fetch(GATEWAY + '/firebaseConfig');
-      var config = await configResp.json().catch(() => null);
-      if (!configResp.ok || !config || !config.projectId) {
-        dbg('DEBUG: firebaseConfig HTTP ' + configResp.status + ' ' + JSON.stringify(config));
-        return;
-      }
+      var resolveResult = await resolvePromise;
+      if (!resolveResult.ok || !resolveResult.json || !resolveResult.json.tenantId) return;
+      var tenantId = resolveResult.json.tenantId;
 
-      var app = initializeApp(config);
+      var configResult = await configPromise;
+      if (!configResult.ok || !configResult.json || !configResult.json.projectId) return;
+
+      var app = initializeApp(configResult.json);
       var db = getFirestore(app);
       // branding/config читается совсем без входа (saas/firestore.rules:
       // "allow read: if true" — см. её же комментарий, почему), поэтому
       // без анонимного входа и без лишнего аккаунта на каждый заход сюда.
-      step = 'getDoc branding/config, projectId=' + config.projectId;
-      dbg('DEBUG: ' + step + '…');
-      var snap = await getDoc(doc(db, 'tenants', resolveJson.tenantId, 'branding', 'config'));
-      if (!snap.exists()) { dbg('DEBUG: branding/config не существует'); return; }
+      var snap = await getDoc(doc(db, 'tenants', tenantId, 'branding', 'config'));
+      if (!snap.exists()) return;
       var b = snap.data();
       var root = document.documentElement.style;
       if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
@@ -304,13 +320,19 @@
         document.getElementById('brand-opening').textContent = b.appName;
         document.getElementById('brand-install').textContent = b.appName;
       }
-      dbg('DEBUG: применено, primary=' + (b.primaryColor || '—'));
+      // В кэш — чтобы СЛЕДУЮЩИЙ заход на этот же стол (тот же телефон)
+      // применил эти же цвета мгновенно, без мелькания дефолта (см. <head>).
+      try {
+        localStorage.setItem('brand:' + slug, JSON.stringify({
+          primaryColor: b.primaryColor, secondaryColor: b.secondaryColor,
+          backgroundColor: b.backgroundColor, textColor: b.textColor,
+          appName: b.appName,
+        }));
+      } catch (_) {}
     } catch (e) {
-      // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
-      // причину теперь видно прямо на экране и в консоли браузера — вместе
-      // с шагом, на котором это случилось.
-      dbg('DEBUG error [' + step + ']: ' + (e && e.message || e));
-      console.error('Брендинг стола не применился (шаг: ' + step + '):', e);
+      // Гость по-прежнему видит дефолтную (или прошлую кэшированную)
+      // палитру, а не сломанный экран.
+      console.error('Брендинг стола не применился:', e);
     }
   })();
 </script>
