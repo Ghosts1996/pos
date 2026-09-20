@@ -648,9 +648,7 @@ Firebase Console → Authentication → Sign-in method для SaaS-проект�
 
 Тот же принцип, что и у публичного APK (см. 8b) — отдельный ограниченный
 SSH-ключ и forced-command скрипт, но с СВОИМ путём: личные сборки
-раскладываются по заведениям (`tenant-builds/{tenantId}/{jobId}.apk`) и не
-раздаются статикой через nginx — их видит только сам `saas-gateway`
-(`/opt/saas-gateway/tenant-builds/`), который и решает, кому можно скачать.
+раскладываются по заведениям (`tenant-builds/{tenantId}/{jobId}.apk`).
 
 ```bash
 cat > /usr/local/bin/deploy-tenant-apk.sh << 'SCRIPT'
@@ -671,7 +669,13 @@ TMP=$(mktemp "$DIR/.upload.XXXXXX")
 cat > "$TMP"
 mv "$TMP" "$DIR/$JOB_ID.apk"
 chown -R saas-gateway:saas-gateway "$DIR"
-chmod 640 "$DIR/$JOB_ID.apk"
+# 644, не 640: файл теперь читает не сам процесс saas-gateway (см. ниже,
+# почему), а nginx под своим системным пользователем — 640 оставил бы его
+# без доступа. Сервер по-прежнему единственный, кто может отдать ссылку
+# на файл (см. handleGetDownloadUrl) — открытые права на чтение самого
+# файла на диске не делают его доступным снаружи без этой ссылки.
+chmod 644 "$DIR/$JOB_ID.apk"
+chmod 755 "$DIR"
 SCRIPT
 chmod +x /usr/local/bin/deploy-tenant-apk.sh
 
@@ -681,12 +685,43 @@ echo -n 'command="/usr/local/bin/deploy-tenant-apk.sh",restrict ' \
 cat /root/.ssh/github_deploy_tenant_key   # скопировать в секрет DEPLOY_SSH_KEY_TENANT
 ```
 
-`chown` — файл кладёт root (владелец SSH-ключа в `authorized_keys`), а
-читает его потом процесс `saas-gateway` от имени системного пользователя
-`saas-gateway` (см. `saas-gateway/setup.sh`) — без `chown` GET
-`/downloadBuild` не смог бы открыть файл. `DEPLOY_SSH_HOST` — тот же
-секрет, что уже заведён для публичного APK (`pii.hookahpos.su`), заново
-создавать не нужно.
+`DEPLOY_SSH_HOST` — тот же секрет, что уже заведён для публичного APK
+(`pii.hookahpos.su`), заново создавать не нужно.
+
+**Раздача файла — через nginx (`X-Accel-Redirect`), не напрямую из Node.**
+Сначала пробовали отдавать файл прямо из `saas-gateway`
+(`fs.createReadStream(...).pipe(res)`) — на реальном телефоне загрузка
+зависала ровно на 100% (все байты доходили, но браузер так и не считал
+файл готовым). Публичный APK (см. 8b) отдаёт статикой сам nginx и ни разу
+не зависал за всю сборку и тестирование — поэтому личные сборки теперь
+идут тем же путём: `saas-gateway` только решает, МОЖНО ли этому запросу
+получить файл (проверяет одноразовый токен, см. `handleGetDownloadUrl`/
+`handleDownloadBuild` в `saas-gateway/server.js`), а сами байты через Node
+больше не идут — сервер отвечает заголовком `X-Accel-Redirect`, и nginx
+сам подставляет вместо тела ответа файл с диска.
+
+Добавьте в тот же файл nginx, что и `location /saas/`/`location
+/downloads/` (`/etc/nginx/conf.d/pii-gateway.conf`), ещё один `location`
+внутри того же `server { ... }`:
+
+```nginx
+location /internal-tenant-builds/ {
+    internal;
+    alias /opt/saas-gateway/tenant-builds/;
+}
+```
+
+`internal` — снаружи по HTTP этот путь не открыть вообще (nginx ответит
+404 на прямой запрос), сюда можно попасть только через `X-Accel-Redirect`
+от `saas-gateway`, то есть только после проверки токена. После правки:
+`nginx -t && systemctl reload nginx`.
+
+Чтобы nginx (свой системный пользователь, не `saas-gateway`) вообще мог
+дойти до файлов — родительские папки должны быть проходимы (`+x`) для
+всех, один раз:
+```bash
+chmod 755 /opt/saas-gateway /opt/saas-gateway/tenant-builds
+```
 
 ### 8b. Публичный APK для лендинга (кнопка «Скачать»)
 

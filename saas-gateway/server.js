@@ -647,9 +647,8 @@ async function handleDownloadBuild(req, res) {
   if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
 
   const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
-  let stat;
   try {
-    stat = await fs.promises.stat(filePath);
+    await fs.promises.access(filePath, fs.constants.R_OK);
   } catch (_) {
     throw new HttpError(404, "файл сборки не найден на сервере — попробуйте собрать заново");
   }
@@ -659,13 +658,26 @@ async function handleDownloadBuild(req, res) {
   // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
   // друга без переименования вручную.
   const fileNamePrefix = job.type === "guest" ? "colibri-lounge" : "hookah-pos";
+
+  // X-Accel-Redirect, не fs.createReadStream(...).pipe(res): раньше файл
+  // отдавал сам Node-процесс — на реальном телефоне загрузка зависала
+  // ровно на 100% (все байты приходили, но браузер/загрузчик так и не
+  // считал файл завершённым — судя по всему, что-то в связке Node ⇄ nginx
+  // ⇄ клиент не закрывало соединение как положено). Публичный APK
+  // (downloadPublicApk) отдаёт статикой сам nginx и НИ РАЗУ не зависал за
+  // всю сессию — поэтому личные сборки теперь отдаёт тоже он: этот
+  // заголовок говорит nginx подменить тело ответа на файл по внутреннему
+  // пути (см. location /internal-tenant-builds/ в конфиге nginx,
+  // saas/README.md), а Node только решает, МОЖНО ли этому запросу вообще
+  // получить файл (проверка токена выше) — байты через Node больше не
+  // идут вообще.
   res.writeHead(200, {
     "Content-Type": "application/vnd.android.package-archive",
-    "Content-Length": stat.size,
     "Content-Disposition": `attachment; filename="${fileNamePrefix}-${jobId}.apk"`,
     "Access-Control-Allow-Origin": "*",
+    "X-Accel-Redirect": `/internal-tenant-builds/${job.tenantId}/${jobId}.apk`,
   });
-  fs.createReadStream(filePath).pipe(res);
+  res.end();
 }
 
 // ---------------------------------------------------- createDemoTenant
