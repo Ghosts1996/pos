@@ -277,3 +277,141 @@ a { color: var(--primary); }
 .checklist-item.done .checklist-check { background: var(--primary); border-color: var(--primary); color: var(--text); }
 .checklist-label { flex: 1; font-size: 13.5px; }
 .checklist-item.done .checklist-label { color: var(--muted); text-decoration: line-through; }
+
+/* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ — премиальная тёмно-синяя схема ==================
+   Личный кабинет (класс .wrap.has-tabbar и все экраны выше) намеренно
+   остаётся на бордово-чёрной гамме из :root — это рабочий инструмент
+   персонала действующей кальянной, её не трогаем. У лендинга — своя
+   аудитория (человек, который ещё не клиент и решает, платить ли за
+   подписку) и своя задача (выглядеть как отдельный премиальный
+   маркетинговый сайт, по образцу корпоративных сайтов POS-систем вроде
+   r_keeper — а не как экран внутри личного кабинета).
+   Хитрость в том, что почти весь остальной CSS в этом файле (.card,
+   .btn-primary, инпуты, .hero-badge, .step-num, .plan-badge, .faq-*,
+   .compare-card и т.д. — включая даже инлайн style="...var(--border)..."
+   прямо в HTML из console.js) уже написан через переменные --bg/--surface/
+   --primary/... . CSS-переменные наследуются по DOM, поэтому достаточно
+   ПЕРЕОПРЕДЕЛИТЬ те же самые имена на классе .landing (он вешается на
+   #screen в screenLanding(), см. console.js) — и ВСЁ перечисленное само
+   перекрасится в новую гамму, без переписывания каждого места по
+   отдельности и без риска что-то пропустить. */
+.landing {
+  --bg: #02060E;
+  --surface: #0B1220;
+  --surface-2: #101B30;
+  --border: #1E2C48;
+  --text: #F3F6FF;
+  --muted: #8DA0C7;
+  --primary: #0356C5;
+  --danger: #FF5C6C;
+  --warning: #E7B24E;
+}
+.wrap.landing { max-width: none; margin: 0; padding: 0; background: var(--bg); }
+.landing .btn-primary {
+  background: linear-gradient(135deg, #0356C5 0%, #3D8CFF 100%);
+  box-shadow: 0 10px 26px rgba(3, 86, 197, .38);
+}
+
+/* ---- Секции на всю ширину, контент — по центру в разумной ширине ---- */
+.landing-section { padding: 48px 20px; position: relative; }
+.landing-section-alt { background: var(--surface); }
+.landing-inner { max-width: 1180px; margin: 0 auto; }
+@media (min-width: 860px) {
+  .landing-section { padding: 88px 48px; }
+}
+
+/* ---- Верхняя навигация (её в личном кабинете нет вообще — там drawer) ---- */
+.landing-nav {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(2, 6, 14, .78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+.landing-nav-inner { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; gap: 10px; }
+.landing-logo { font-weight: 800; font-size: 15px; color: var(--text); white-space: nowrap; flex: none; }
+.landing-nav-links { display: none; gap: 28px; }
+.landing-nav-links button {
+  background: none; border: none; color: var(--muted); font: inherit; font-weight: 600;
+  font-size: 14px; cursor: pointer; padding: 0; width: auto;
+}
+.landing-nav-links button:hover { color: var(--text); }
+.landing-nav-actions { display: flex; align-items: center; gap: 14px; flex: none; }
+/* На узком экране "Войти" убираем — это дублирует ссылку внизу страницы
+   ("Уже есть аккаунт? Войти по паролю"), а тут иначе не хватает места и
+   кнопка "Попробовать бесплатно" обрезается по правому краю экрана. */
+.landing-nav-login { display: none; font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.landing-nav-actions .btn { width: auto; padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+@media (min-width: 480px) {
+  .landing-nav-actions .btn { padding: 10px 18px; font-size: 13.5px; }
+}
+@media (min-width: 640px) {
+  .landing-nav-login { display: inline; }
+}
+@media (min-width: 860px) {
+  .landing-nav-inner { padding: 14px 20px; gap: 16px; }
+  .landing-logo { font-size: 16px; }
+  .landing-nav-links { display: flex; }
+}
+
+/* ---- Герой ---- */
+.landing-hero-section { padding-top: 56px; overflow: hidden; }
+.landing-hero-glow {
+  position: absolute; inset: -10% -10% auto -10%; height: 560px;
+  background: radial-gradient(60% 60% at 50% 0%, rgba(3, 86, 197, .35), rgba(3, 86, 197, 0) 70%);
+  pointer-events: none; z-index: 0;
+}
+.landing-hero-grid { position: relative; z-index: 1; }
+.landing h1 { font-size: 28px; line-height: 1.16; letter-spacing: -.01em; margin: 10px 0 14px; }
+.landing-hero-lede { font-size: 15.5px; line-height: 1.6; max-width: 640px; }
+.landing-hero-card { box-shadow: 0 30px 60px -20px rgba(0,0,0,.6); }
+.landing-pill {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 12px; color: var(--muted);
+}
+@media (min-width: 960px) {
+  .landing-hero-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: start; }
+  .landing h1 { font-size: 44px; }
+  .landing-hero-lede { font-size: 17px; }
+}
+
+.landing-h2 { font-size: 21px; font-weight: 800; margin: 0 0 20px; letter-spacing: -.01em; }
+.landing-h2-sub { color: var(--muted); font-size: 14px; margin: -12px 0 20px; max-width: 600px; }
+@media (min-width: 860px) {
+  .landing-h2 { font-size: 28px; }
+}
+
+/* Фичи/шаги — на широком экране просторнее, чем дефолтные 3 колонки
+   (.feature-grid используется и в других местах консоли — переопределяем
+   плотность только внутри .landing, не трогая базовое правило). */
+@media (min-width: 860px) {
+  .landing .feature-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
+}
+.landing .feature-card { transition: transform .18s ease, border-color .18s ease; }
+.landing .feature-card:hover { transform: translateY(-3px); border-color: var(--primary); }
+
+@media (min-width: 860px) {
+  .landing-steps { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .landing-steps .step-item { flex-direction: column; border-bottom: none; border-right: 1px solid var(--border); padding: 4px 24px; }
+  .landing-steps .step-item:last-child { border-right: none; }
+}
+
+/* ---- Тарифы: карточки в ряд на широком экране вместо списка строк ---- */
+.landing-plans-grid { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: stretch; }
+.landing-plans-grid .card { display: flex; flex-direction: column; height: 100%; }
+.landing-plans-grid .card .btn { margin-top: auto; }
+@media (min-width: 700px) {
+  .landing-plans-grid { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+}
+
+/* ---- Финальный CTA-баннер — заметная цветная полоса на всю ширину ---- */
+.landing-cta-band { background: linear-gradient(120deg, #021C4D 0%, #0356C5 55%, #3D8CFF 100%); }
+.landing-cta-inner { text-align: center; }
+.landing-cta-inner h3 { font-size: 23px; margin: 0 0 8px; color: #fff; }
+.landing-cta-inner p { color: rgba(255,255,255,.82); margin-bottom: 18px; }
+.landing-cta-inner .btn { width: auto; padding: 15px 32px; background: #fff; color: #052B6B; box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+@media (min-width: 860px) {
+  .landing-cta-inner h3 { font-size: 30px; }
+}
+
+.landing-footer { padding-top: 36px; padding-bottom: 60px; }

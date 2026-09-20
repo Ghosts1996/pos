@@ -182,6 +182,10 @@ function clearScreen() {
   // Нижняя навигация — только у личного кабинета владельца (screenDashboard
   // включает его сама); любой другой экран должен начинать без него.
   screenEl().classList.remove('has-tabbar');
+  // Премиальная тёмно-синяя схема лендинга (screenLanding() включает её
+  // сама) — без явного снятия здесь она осталась бы висеть на #screen и
+  // после ухода на любой другой экран (вход, кабинет и т.д.).
+  screenEl().classList.remove('landing');
 }
 function sub(off) { state.screenSubs.push(off); }
 
@@ -643,6 +647,12 @@ function landingPlanCardHtml(p, selected, popular) {
 
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
+  // Премиальная тёмно-синяя схема — только для этого публичного экрана
+  // продажи подписки (см. :root в console.css и класс .landing там же).
+  // Личный кабинет намеренно остаётся на своей бордовой схеме — это два
+  // разных класса задач (продать подписку вообще незнакомому человеку vs
+  // рабочий инструмент персонала кальянной), это не забыли поменять.
+  screenEl().classList.add('landing');
 
   const HOW_IT_WORKS = [
     { title: 'Оставляете email', desc: 'Придёт ссылка для входа — без пароля и без банковской карты. Сразу открывается бесплатный тестовый период (срок — в карточке тарифа ниже).' },
@@ -652,136 +662,198 @@ function screenLanding() {
   const LANDING_FAQ_PREVIEW = [FAQ_ITEMS[0], FAQ_ITEMS[4], FAQ_ITEMS[5], FAQ_ITEMS[3]];
 
   screenEl().innerHTML = `
-    <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
-    <div class="brand">Hookah POS</div>
-    <h1>Полная система управления кальянной — от зала до кассы</h1>
-    <p class="muted">Карта зала, чеки и оплата, склад, брони и лист ожидания,
-    программа лояльности, гостевое приложение и ИИ-помощники персоналу —
-    всё в одной системе. Работает на обычном Android-планшете, разворачивается
-    за 10–15 минут, без затрат на оборудование или IT-специалиста.</p>
+    <nav class="landing-nav">
+      <div class="landing-inner landing-nav-inner">
+        <div class="landing-logo">🔥 Hookah POS</div>
+        <div class="landing-nav-links">
+          <button type="button" data-scroll="landing-features">Возможности</button>
+          <button type="button" data-scroll="landing-pricing">Тарифы</button>
+          <button type="button" data-scroll="landing-faq">Вопросы</button>
+        </div>
+        <div class="landing-nav-actions">
+          <a class="landing-nav-login" href="#/login">Войти</a>
+          <button class="btn btn-primary" id="f-landing-nav-cta">Попробовать бесплатно</button>
+        </div>
+      </div>
+    </nav>
 
-    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:18px">
-      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">⚡ Запуск за 10–15 минут</span>
-      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">🔒 Данные каждого заведения изолированы</span>
-      <span class="small" style="background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px">💳 Без карты — только email для теста</span>
-    </div>
+    <section class="landing-section landing-hero-section">
+      <div class="landing-hero-glow"></div>
+      <div class="landing-inner landing-hero-grid">
+        <div class="landing-hero-copy">
+          <div class="hero-badge">SaaS-платформа для кальянных и лаунжей</div>
+          <h1>Полная система управления кальянной — от зала до кассы</h1>
+          <p class="muted landing-hero-lede">Карта зала, чеки и оплата, склад, брони и лист ожидания,
+          программа лояльности, гостевое приложение и ИИ-помощники персоналу —
+          всё в одной системе. Работает на обычном Android-планшете, разворачивается
+          за 10–15 минут, без затрат на оборудование или IT-специалиста.</p>
 
-    <div class="card" style="margin-top:6px">
-      <p id="f-landing-skip-trial-note" class="small" style="display:none;color:var(--primary);margin-bottom:10px">
-        Выбрана оплата сразу, без пробного периода — после регистрации откроется страница оплаты.
-      </p>
-      <label class="field"><span>Email</span>
-        <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
-      </label>
-      <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
-        <input type="checkbox" id="f-landing-agree">
-        <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
-      </label>
-      <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
-      <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
-      <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
-    </div>
-
-    <div class="row" style="justify-content:center;margin-top:14px">
-      <button class="btn-link" id="f-landing-download-apk">⬇ Скачать приложение кассы (APK)</button>
-    </div>
-    <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
-    попросит код заведения и код приглашения устройства из личного кабинета (или можно нажать «Демо» прямо в приложении).</p>
-
-    <h2 style="margin-top:26px">Как это работает</h2>
-    <div class="card">
-      ${HOW_IT_WORKS.map((s, i) => `
-        <div class="step-item">
-          <div class="step-num">${i + 1}</div>
-          <div class="grow">
-            <div style="font-weight:600">${esc(s.title)}</div>
-            <div class="small muted">${esc(s.desc)}</div>
+          <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">
+            <span class="small landing-pill">⚡ Запуск за 10–15 минут</span>
+            <span class="small landing-pill">🔒 Данные каждого заведения изолированы</span>
+            <span class="small landing-pill">💳 Без карты — только email для теста</span>
           </div>
         </div>
-      `).join('')}
-    </div>
 
-    <h2>Что умеет система</h2>
-    <div class="feature-grid">
-      ${LANDING_FEATURES.map((f) => `
-        <div class="feature-card">
-          <div class="feature-icon">${f.icon}</div>
-          <div class="feature-title">${esc(f.title)}</div>
-          <div class="feature-desc">${esc(f.desc)}</div>
+        <div class="landing-hero-form-wrap">
+          <div class="card landing-hero-card">
+            <p id="f-landing-skip-trial-note" class="small" style="display:none;color:var(--primary);margin-bottom:10px">
+              Выбрана оплата сразу, без пробного периода — после регистрации откроется страница оплаты.
+            </p>
+            <label class="field"><span>Email</span>
+              <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
+            </label>
+            <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
+              <input type="checkbox" id="f-landing-agree">
+              <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
+            </label>
+            <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
+            <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
+            <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
+          </div>
+
+          <div class="row" style="justify-content:center;margin-top:14px">
+            <button class="btn-link" id="f-landing-download-apk">⬇ Скачать приложение кассы (APK)</button>
+          </div>
+          <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
+          попросит код заведения и код приглашения устройства из личного кабинета (или можно нажать «Демо» прямо в приложении).</p>
         </div>
-      `).join('')}
-    </div>
-
-    <h2>Почему не тетрадь и Excel</h2>
-    <div class="compare-grid">
-      <div class="card compare-card bad">
-        <div style="font-weight:700;margin-bottom:10px">❌ Как обычно бывает</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Чек и скидка считаются на калькуляторе — время и ошибки</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Остатки склада — в отдельной таблице, обновляется, когда вспомнят</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони — в блокноте или переписке, иногда теряются</div>
-        <div class="small" style="padding:6px 0">Отчёт по смене — вручную, полчаса и дольше</div>
       </div>
-      <div class="card compare-card good">
-        <div style="font-weight:700;margin-bottom:10px">✅ С Hookah POS</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Касса сама считает чек, скидки и бонусы применяются автоматически</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Склад обновляется при каждой продаже, инвентаризация — с историей расхождений</div>
-        <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони из гостевого приложения сразу попадают в общий календарь зала</div>
-        <div class="small" style="padding:6px 0">X-отчёт по смене — один клик, без ручного подсчёта</div>
-      </div>
-    </div>
+    </section>
 
-    <h2>Тарифы</h2>
-    <div id="landing-plans"><div class="spinner"></div></div>
-
-    <h2>Калькулятор окупаемости</h2>
-    <div class="card">
-      <label class="field"><span>Средняя выручка заведения в месяц, ₽</span>
-        <input id="f-calc-revenue" type="number" inputmode="numeric" min="0" placeholder="500000">
-      </label>
-      <label class="field"><span>Тариф</span>
-        <select id="f-calc-plan"><option value="">Загрузка тарифов…</option></select>
-      </label>
-      <label class="field"><span>Ваша оценка потерь от ручного учёта, пересортицы и ошибок на кассе, %</span>
-        <input id="f-calc-loss" type="number" value="3" min="0" max="30" step="0.5">
-      </label>
-      <div class="small muted">Считаем строго по цифрам, которые вы укажете сами, — без наших предположений о «типичной» экономии.</div>
-      <div id="f-calc-output" style="margin-top:14px"></div>
-    </div>
-
-    <h2>Безопасность и соответствие</h2>
-    <div class="card">
-      <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🔒 У каждого заведения отдельная изолированная база данных — доступ к чужим данным технически невозможен</div>
-      <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🧾 Фискализация чеков (54-ФЗ) — не «из коробки»: нужна своя онлайн-касса с договорами провайдера кассы и ОФД, регистрация ККТ в ФНС; эквайринг — отдельный договор с банком-эквайером. Приложение поддерживает подключение готовых протоколов, но не заменяет эти договоры</div>
-      <div class="small" style="padding:7px 0">☁️ Инфраструктура — Google Firebase, статус в реальном времени — на <a href="#/status">странице статуса</a></div>
-    </div>
-
-    <h2>Частые вопросы</h2>
-    <div class="card">
-      ${LANDING_FAQ_PREVIEW.map((item, i) => `
-        <div class="faq-item" data-faq="preview-${i}">
-          <div class="faq-question"><span>${esc(item.q)}</span><span class="faq-toggle">+</span></div>
-          <div class="faq-answer">${esc(item.a)}</div>
+    <section class="landing-section" id="landing-how">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Как это работает</h2>
+        <div class="card landing-steps">
+          ${HOW_IT_WORKS.map((s, i) => `
+            <div class="step-item">
+              <div class="step-num">${i + 1}</div>
+              <div class="grow">
+                <div style="font-weight:600">${esc(s.title)}</div>
+                <div class="small muted">${esc(s.desc)}</div>
+              </div>
+            </div>
+          `).join('')}
         </div>
-      `).join('')}
-    </div>
-    <p class="small center muted"><a href="#/faq">Смотреть все вопросы →</a></p>
+      </div>
+    </section>
 
-    <div class="card" style="text-align:center;margin-top:22px">
-      <div style="font-weight:700;font-size:16px;margin-bottom:6px">Готовы попробовать?</div>
-      <p class="small muted" style="margin-bottom:14px">Бесплатный доступ по email, без карты — уже сегодня.</p>
-      <button class="btn btn-primary" id="f-landing-cta-bottom">Оставить заявку</button>
-    </div>
+    <section class="landing-section landing-section-alt" id="landing-features">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Что умеет система</h2>
+        <div class="feature-grid">
+          ${LANDING_FEATURES.map((f) => `
+            <div class="feature-card">
+              <div class="feature-icon">${f.icon}</div>
+              <div class="feature-title">${esc(f.title)}</div>
+              <div class="feature-desc">${esc(f.desc)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </section>
 
-    <p class="small center muted" style="margin-top:20px">
-      Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
-    </p>
-    ${publicFooterLinksHtml()}
-    ${versionFooterHtml()}
+    <section class="landing-section">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Почему не тетрадь и Excel</h2>
+        <div class="compare-grid">
+          <div class="card compare-card bad">
+            <div style="font-weight:700;margin-bottom:10px">❌ Как обычно бывает</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Чек и скидка считаются на калькуляторе — время и ошибки</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Остатки склада — в отдельной таблице, обновляется, когда вспомнят</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони — в блокноте или переписке, иногда теряются</div>
+            <div class="small" style="padding:6px 0">Отчёт по смене — вручную, полчаса и дольше</div>
+          </div>
+          <div class="card compare-card good">
+            <div style="font-weight:700;margin-bottom:10px">✅ С Hookah POS</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Касса сама считает чек, скидки и бонусы применяются автоматически</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Склад обновляется при каждой продаже, инвентаризация — с историей расхождений</div>
+            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони из гостевого приложения сразу попадают в общий календарь зала</div>
+            <div class="small" style="padding:6px 0">X-отчёт по смене — один клик, без ручного подсчёта</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-section-alt" id="landing-pricing">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Тарифы</h2>
+        <p class="landing-h2-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.</p>
+        <div id="landing-plans" class="landing-plans-grid"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+    <section class="landing-section" id="landing-calc">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Калькулятор окупаемости</h2>
+        <div class="card">
+          <label class="field"><span>Средняя выручка заведения в месяц, ₽</span>
+            <input id="f-calc-revenue" type="number" inputmode="numeric" min="0" placeholder="500000">
+          </label>
+          <label class="field"><span>Тариф</span>
+            <select id="f-calc-plan"><option value="">Загрузка тарифов…</option></select>
+          </label>
+          <label class="field"><span>Ваша оценка потерь от ручного учёта, пересортицы и ошибок на кассе, %</span>
+            <input id="f-calc-loss" type="number" value="3" min="0" max="30" step="0.5">
+          </label>
+          <div class="small muted">Считаем строго по цифрам, которые вы укажете сами, — без наших предположений о «типичной» экономии.</div>
+          <div id="f-calc-output" style="margin-top:14px"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-section-alt">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Безопасность и соответствие</h2>
+        <div class="card">
+          <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🔒 У каждого заведения отдельная изолированная база данных — доступ к чужим данным технически невозможен</div>
+          <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🧾 Фискализация чеков (54-ФЗ) — не «из коробки»: нужна своя онлайн-касса с договорами провайдера кассы и ОФД, регистрация ККТ в ФНС; эквайринг — отдельный договор с банком-эквайером. Приложение поддерживает подключение готовых протоколов, но не заменяет эти договоры</div>
+          <div class="small" style="padding:7px 0">☁️ Инфраструктура — Google Firebase, статус в реальном времени — на <a href="#/status">странице статуса</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section" id="landing-faq">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Частые вопросы</h2>
+        <div class="card">
+          ${LANDING_FAQ_PREVIEW.map((item, i) => `
+            <div class="faq-item" data-faq="preview-${i}">
+              <div class="faq-question"><span>${esc(item.q)}</span><span class="faq-toggle">+</span></div>
+              <div class="faq-answer">${esc(item.a)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <p class="small center muted"><a href="#/faq">Смотреть все вопросы →</a></p>
+      </div>
+    </section>
+
+    <section class="landing-section landing-cta-band">
+      <div class="landing-inner landing-cta-inner">
+        <h3>Готовы попробовать?</h3>
+        <p>Бесплатный доступ по email, без карты — уже сегодня.</p>
+        <button class="btn" id="f-landing-cta-bottom">Оставить заявку</button>
+      </div>
+    </section>
+
+    <footer class="landing-section landing-footer">
+      <div class="landing-inner">
+        <p class="small center muted">
+          Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
+        </p>
+        ${publicFooterLinksHtml()}
+        ${versionFooterHtml()}
+      </div>
+    </footer>
 
     <div class="sticky-cta" id="landing-sticky">
       <button class="btn btn-primary" id="f-landing-sticky-btn">Попробовать бесплатно →</button>
     </div>
   `;
+
+  document.querySelectorAll('.landing-nav-links [data-scroll]').forEach((el) => {
+    el.onclick = () => document.getElementById(el.dataset.scroll)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   // Ссылка входа была просрочена/уже использована (см. boot()) — показываем
   // один раз прямо на лендинге, а не молчим о том, почему вход не сработал.
@@ -832,6 +904,7 @@ function screenLanding() {
   };
   if ($('f-landing-cta-bottom')) $('f-landing-cta-bottom').onclick = scrollToEmail;
   if ($('f-landing-sticky-btn')) $('f-landing-sticky-btn').onclick = scrollToEmail;
+  if ($('f-landing-nav-cta')) $('f-landing-nav-cta').onclick = scrollToEmail;
 
   document.querySelectorAll('.faq-item').forEach((el) => {
     el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
