@@ -64,7 +64,7 @@ async function callSaasGateway(path, data) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-20.2';
+const CONSOLE_BUILD = '2026-09-20.3-debug';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -79,6 +79,7 @@ const state = {
   tenantsLoaded: false,
   activeTenantId: null,
   isSuperAdmin: false,
+  superAdminDebug: 'не проверялось', // ВРЕМЕННО: см. handleAuthChange и screenOnboarding — снять после диагностики
   accountSubs: [],     // подписки уровня аккаунта (список заведений)
   screenSubs: [],       // подписки текущего экрана (данные одного заведения)
   authLinkError: null,  // см. boot() — ссылка входа устарела/уже использована
@@ -474,8 +475,13 @@ function handleAuthChange(user) {
   // поэтому отдельная лёгкая подписка, а не часть watchMemberships().
   state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), (d) => {
     state.isSuperAdmin = d.exists();
+    state.superAdminDebug = `ok, exists=${d.exists()}, uid=${state.uid}`;
     route();
-  }, () => { state.isSuperAdmin = false; }));
+  }, (err) => {
+    state.isSuperAdmin = false;
+    state.superAdminDebug = `ERROR: ${err.code || ''} ${err.message || err}`;
+    route();
+  }));
 }
 
 function watchMemberships() {
@@ -1251,6 +1257,7 @@ function screenOnboarding() {
       <div class="brand">Hookah POS</div>
       ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
     </div>
+    <div class="small muted" style="word-break:break-all">DEBUG superAdmin: ${esc(state.superAdminDebug)}</div>
     <h1>Новое заведение</h1>
     <p class="muted">Код заведения используется в ссылках и как основа
     имени Android-приложения — только латиница, цифры и дефис.</p>
