@@ -191,12 +191,7 @@ async function applyBranding() {
     const b = snap.data();
     const css = document.documentElement.style;
     if (b.primaryColor) css.setProperty('--primary', b.primaryColor);
-    if (b.secondaryColor) {
-      css.setProperty('--gold', b.secondaryColor);
-      // --gold-rgb для rgba(var(--gold-rgb), alpha) в .tier (app.css) —
-      // CSS не подмешивает alpha к var()-цвету без color-mix().
-      try { css.setProperty('--gold-rgb', hexToRgb(b.secondaryColor).join(', ')); } catch (_) {}
-    }
+    if (b.secondaryColor) css.setProperty('--gold', b.secondaryColor);
     if (b.accentColor) css.setProperty('--accent', b.accentColor);
 
     let bg = b.backgroundColor;
