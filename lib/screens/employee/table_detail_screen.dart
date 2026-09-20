@@ -56,6 +56,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         table: widget.table,
         employeeName: widget.employee.name,
         guestTag: guestTag,
+        durationMinutes: AppConstants.sessionMinutes,
       );
       if (mounted) setState(() => _sessionId = id);
     } on TableFullException catch (e) {
@@ -107,7 +108,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Перезабивка'),
-        content: const Text('Сбросить таймер и начать новые 1.5 часа?'),
+        content: Text(
+            'Сбросить таймер и начать новые ${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Перезабить')),
@@ -116,7 +118,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (confirm == true) {
       try {
-        await _fs.refillSession(sessionId, tableId: tableId);
+        await _fs.refillSession(sessionId, tableId: tableId, durationMinutes: AppConstants.sessionMinutes);
       } catch (e) {
         _showError('Не удалось обновить таймер — проверьте интернет');
       }
@@ -325,7 +327,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   : ElevatedButton.icon(
                       onPressed: _startSession,
                       icon: const Icon(Icons.play_arrow),
-                      label: const Text('Начать сеанс (1.5 часа)'),
+                      label: Text(
+                          'Начать сеанс (${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)})'),
                     ),
             );
           }

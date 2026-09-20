@@ -37,6 +37,22 @@ class TimerDisplay extends StatelessWidget {
     return TickerBuilder(
       builder: (context, now) {
         final remaining = plannedEnd.difference(now);
+        // "Без ограничений" (см. AppConstants.unlimitedSessionMinutes) —
+        // сеанс на 10 лет вперёд вместо nullable plannedEnd, поэтому здесь
+        // просто показываем текст вместо отсчёта, а не "-3650:00:00". На
+        // маленькой плитке зала (fontSize: 13) полная фраза не влезает —
+        // там компактный "∞", полный текст только на крупном экране стола.
+        if (AppConstants.isUnlimitedRemaining(remaining)) {
+          final compact = fontSize <= 20;
+          return Text(
+            compact ? '∞' : 'Без ограничений',
+            style: TextStyle(
+              fontSize: compact ? fontSize : fontSize * 0.5,
+              fontWeight: FontWeight.bold,
+              color: Colors.green,
+            ),
+          );
+        }
         return Text(
           formatRemaining(remaining),
           style: TextStyle(

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/client_models.dart';
+import '../utils/constants.dart';
 import 'hall_watch_service.dart';
 import 'printer_service.dart';
 import 'kassa_service.dart';
@@ -36,6 +37,10 @@ void startBackgroundServices() {
   // lib/screens/admin/loyalty_settings_screen.dart) — без них касса
   // начисляет бонусы по дефолтным цифрам ClientProfile.tiers.
   unawaited(loadLoyaltyTierSettings());
+  // Длительность сеанса (см. settings/sessionDuration и
+  // lib/screens/admin/session_settings_screen.dart) — без неё касса
+  // продолжает открывать сеансы на дефолтные 1.5 часа.
+  unawaited(loadSessionDurationSettings());
 
   // Локальные уведомления зала: новые брони, вызовы гостей, угли через
   // 35 минут и предупреждение за 10 минут до конца сеанса. Работают без
