@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../build_info.dart';
 import '../firebase_options.dart';
+import '../models/client_models.dart';
 import '../models/tenant_models.dart';
 import '../services/ai/ai_settings.dart';
 import '../services/app_scope.dart';
@@ -72,6 +73,10 @@ void main() async {
         // Настройки ИИ подтягиваются в фоне — без них приложение просто
         // работает без ИИ-консьержа.
         unawaited(AiSettingsStore.instance.init());
+        // Пороги/кешбек программы лояльности — тоже в фоне: до загрузки
+        // профиль и прогресс-бар гостя работают по дефолтным цифрам (см.
+        // ClientProfile.tiers), а не показывают пустой экран ради этого.
+        unawaited(loadLoyaltyTierSettings());
         // Профиль заведения нужен не только для часов работы: из него
         // берётся флаг cloudFunctionsEnabled, по которому приложение решает,
         // показывать локальные уведомления самому или ждать push с сервера.

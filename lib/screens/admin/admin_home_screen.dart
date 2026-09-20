@@ -19,6 +19,7 @@ import 'table_qr_screen.dart';
 import 'venue_profile_screen.dart';
 import 'gift_cards_screen.dart';
 import 'guests_screen.dart';
+import 'loyalty_settings_screen.dart';
 import '../login_screen.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
@@ -43,6 +44,7 @@ class AdminHomeScreen extends StatelessWidget {
       ],
       'Гости и лояльность': [
         _AdminTile('Гости', Icons.people_alt, (ctx) => const GuestsScreen()),
+        _AdminTile('Программа лояльности', Icons.loyalty, (ctx) => const LoyaltySettingsScreen()),
         _AdminTile('Скидочные карты', Icons.credit_card, (ctx) => const DiscountCardsScreen()),
         _AdminTile('Сертификаты', Icons.card_giftcard,
             (ctx) => GiftCardsScreen(employee: employee)),

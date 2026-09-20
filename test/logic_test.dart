@@ -230,6 +230,47 @@ void main() {
       expect(guest(17500).tierProgress, closeTo(0.5, 0.001));
       expect(guest(10000).tierProgress, 0);
     });
+
+    group('applyTiers — настройка порогов/кешбека владельцем (settings/loyalty)', () {
+      // Любой тест здесь мутирует общее static-поле ClientProfile.tiers —
+      // обязательно возвращаем дефолт после каждого, иначе тесты выше по
+      // файлу (написанные в предположении дефолтных порогов) начнут падать
+      // в зависимости от порядка запуска.
+      tearDown(ClientProfile.resetTiers);
+
+      test('корректные данные подменяют пороги и сортируют по возрастанию from', () {
+        ClientProfile.applyTiers([
+          {'name': 'Золото', 'from': 5000, 'cashback': 20},
+          {'name': 'Бронза', 'from': 0, 'cashback': 1},
+        ]);
+        expect(guest(0).tier, 'Бронза');
+        expect(guest(0).cashbackPercent, 1);
+        expect(guest(5000).tier, 'Золото');
+        expect(guest(5000).cashbackPercent, 20);
+      });
+
+      test('пустой список не трогает уже действующие пороги', () {
+        ClientProfile.applyTiers([]);
+        expect(guest(0).tier, 'Бронза');
+        expect(guest(0).cashbackPercent, 3);
+      });
+
+      test('записи без имени отбрасываются, остальные применяются', () {
+        ClientProfile.applyTiers([
+          {'name': '', 'from': 999, 'cashback': 99},
+          {'name': 'Бронза', 'from': 0, 'cashback': 2},
+        ]);
+        expect(guest(0).tier, 'Бронза');
+        expect(guest(0).cashbackPercent, 2);
+      });
+
+      test('resetTiers возвращает дефолтные пороги', () {
+        ClientProfile.applyTiers([{'name': 'Бронза', 'from': 0, 'cashback': 50}]);
+        expect(guest(0).cashbackPercent, 50);
+        ClientProfile.resetTiers();
+        expect(guest(0).cashbackPercent, 3);
+      });
+    });
   });
 
   group('Очистка текста от ИИ', () {

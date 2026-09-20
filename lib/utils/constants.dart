@@ -47,6 +47,16 @@ class AppConstants {
     positionHookahMaster,
     positionBartender,
   ];
+  /// Приводит "сырое" значение позиции (из Firestore, где угодно битое —
+  /// пустая строка, опечатка, поле от версии до этой фичи) к одному из
+  /// известных значений. Неизвестное значение — это НЕ "своя, никому не
+  /// известная специализация", а сотрудник, которого молча лишили бы всех
+  /// вызовов (см. session_alerts_service.dart/push_service.dart — там
+  /// сравнение точное, "!= известное" не значит "== universal"). Поэтому
+  /// откат к универсалу, а не к "как есть".
+  static String normalizePosition(String? raw) =>
+      employeePositions.contains(raw) ? raw! : positionUniversal;
+
   static String positionLabel(String position) {
     switch (position) {
       case positionWaiter:

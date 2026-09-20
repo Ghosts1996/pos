@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/client_models.dart';
 import 'hall_watch_service.dart';
 import 'printer_service.dart';
 import 'kassa_service.dart';
@@ -31,6 +32,10 @@ void startBackgroundServices() {
   unawaited(loadSavedChestnyZnakSettings());
   unawaited(AiSettingsStore.instance.init());
   unawaited(PushService.instance.initStaff());
+  // Пороги/кешбек программы лояльности (см. settings/loyalty и
+  // lib/screens/admin/loyalty_settings_screen.dart) — без них касса
+  // начисляет бонусы по дефолтным цифрам ClientProfile.tiers.
+  unawaited(loadLoyaltyTierSettings());
 
   // Локальные уведомления зала: новые брони, вызовы гостей, угли через
   // 35 минут и предупреждение за 10 минут до конца сеанса. Работают без

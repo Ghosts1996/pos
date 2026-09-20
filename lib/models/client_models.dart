@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/app_scope.dart';
 import '../utils/constants.dart';
 import 'session_model.dart';
 import 'table_model.dart';
@@ -71,13 +72,51 @@ class ClientProfile {
   /// Пороги уровней лояльности по сумме всех закрытых чеков гостя.
   /// Одно место, из которого берут данные и сам уровень, и прогресс-бар в
   /// профиле, — чтобы пороги нельзя было развести по разным экранам.
-  static const tiers = <({String name, double from, double cashback})>[
+  ///
+  /// НЕ `const` — изменяемое static-поле (тот же приём, что и
+  /// KolibriColors.gold/primary для брендинга): по умолчанию [_defaultTiers],
+  /// но владелец может настроить свои пороги/кешбек в админке (см.
+  /// lib/screens/admin/loyalty_settings_screen.dart) — тогда [applyTiers]
+  /// подменяет их при старте приложения (см. loadLoyaltyTierSettings ниже).
+  /// Заведение без кастомных настроек продолжает работать по этим же
+  /// цифрам, что и раньше, — апдейт ничего не ломает сам по себе.
+  static const _defaultTiers = <({String name, double from, double cashback})>[
     (name: 'Бронза', from: 0, cashback: 3),
     (name: 'Серебро', from: 10000, cashback: 5),
     (name: 'Золото', from: 25000, cashback: 7),
     (name: 'Платина', from: 50000, cashback: 10),
     (name: 'Алмаз', from: 100000, cashback: 15),
   ];
+  static List<({String name, double from, double cashback})> tiers = _defaultTiers;
+
+  /// Подменяет [tiers] данными из settings/loyalty. Сортирует по [from] —
+  /// [_currentTier]/[nextTier] ниже написаны в предположении, что список
+  /// идёт по возрастанию порога, а порядок полей в самой Firestore-записи
+  /// не гарантирован (владелец мог сохранить их в любом порядке). Битые
+  /// или пустые данные — не трогаем то, что уже было (дефолт или прошлая
+  /// успешная загрузка), а не откатываемся на пустой список.
+  static void applyTiers(List<dynamic> raw) {
+    try {
+      final parsed = raw
+          .cast<Map<String, dynamic>>()
+          .map((m) => (
+                name: (m['name'] as String?)?.trim() ?? '',
+                from: (m['from'] as num?)?.toDouble() ?? 0,
+                cashback: (m['cashback'] as num?)?.toDouble() ?? 0,
+              ))
+          .where((t) => t.name.isNotEmpty)
+          .toList()
+        ..sort((a, b) => a.from.compareTo(b.from));
+      if (parsed.isEmpty) return;
+      tiers = parsed;
+    } catch (_) {
+      // Оставляем то, что уже было.
+    }
+  }
+
+  /// Возврат к дефолтным порогам — используется тестами и на случай, если
+  /// понадобится откатить кастомные настройки без перезапуска процесса.
+  static void resetTiers() => tiers = _defaultTiers;
 
   /// Уровень лояльности — считается от суммы закрытых чеков.
   String get tier => _currentTier.name;
@@ -534,4 +573,22 @@ class GuestReview {
         'aiSummary': aiSummary,
         'createdAt': Timestamp.fromDate(createdAt),
       };
+}
+
+/// Подтягивает пороги/кешбек программы лояльности из settings/loyalty (см.
+/// lib/screens/admin/loyalty_settings_screen.dart), если владелец их
+/// настроил — и подменяет [ClientProfile.tiers]. Вызывается один раз при
+/// старте и кассы (lib/main.dart), и гостевого приложения (kolibri_main.dart):
+/// именно в этих двух местах читаются/начисляются бонусы гостю, поэтому
+/// обоим процессам нужны одни и те же цифры. Не блокирует старт — работает
+/// в фоне, приложение продолжает жить по дефолтным порогам, пока не
+/// подгрузится (доли секунды), а не показывает экран загрузки ради этого.
+Future<void> loadLoyaltyTierSettings() async {
+  try {
+    final doc = await AppScope.col('settings').doc('loyalty').get();
+    final raw = doc.data()?['tiers'];
+    if (raw is List) ClientProfile.applyTiers(raw);
+  } catch (_) {
+    // Нет сети/документа/прав — работаем с дефолтными порогами.
+  }
 }

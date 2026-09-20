@@ -292,6 +292,10 @@ async function boot() {
     // что и в kolibri_main.dart для Flutter-версии).
     await ensureProfile();
     await applyBranding();
+    // Не await: пороги лояльности не блокируют открытие приложения — если
+    // gость откроет "Мой стол"/"Профиль" на долю секунды раньше, чем это
+    // подгрузится, tierOf() просто отработает по дефолтным цифрам один раз.
+    applyLoyaltyTiers();
     watchProfile();
     watchVenue();
     $('tabbar').hidden = false;
@@ -372,15 +376,42 @@ function watchVenue() {
 }
 
 // ---------- УРОВНИ ЛОЯЛЬНОСТИ ----------
-// Те же пороги, что в приложении на Android (ClientProfile.tiers).
+// Дефолт — те же пороги, что и ClientProfile.tiers в Dart-приложении
+// (lib/models/client_models.dart). НЕ const: applyLoyaltyTiers() ниже
+// подменяет их значениями из tenants/{id}/settings/loyalty, если владелец
+// настроил свои в админке (lib/screens/admin/loyalty_settings_screen.dart)
+// — иначе гость на вебе видел бы чужие цифры, а получал бы (касса считает
+// по тем же настройкам) другие.
 
-const TIERS = [
+let TIERS = [
   { name: 'Бронза', from: 0, cashback: 3 },
   { name: 'Серебро', from: 10000, cashback: 5 },
   { name: 'Золото', from: 25000, cashback: 7 },
   { name: 'Платина', from: 50000, cashback: 10 },
   { name: 'Алмаз', from: 100000, cashback: 15 },
 ];
+
+/// Подтягивает settings/loyalty поверх дефолта — тот же приём, что и
+/// applyBranding() выше. Битые/пустые данные — не трогаем то, что уже есть.
+async function applyLoyaltyTiers() {
+  try {
+    const snap = await getDoc(doc(state.root, 'settings', 'loyalty'));
+    if (!snap.exists()) return;
+    const raw = snap.data().tiers;
+    if (!Array.isArray(raw) || raw.length === 0) return;
+    const parsed = raw
+      .map((t) => ({
+        name: String(t.name || '').trim(),
+        from: Number(t.from) || 0,
+        cashback: Number(t.cashback) || 0,
+      }))
+      .filter((t) => t.name)
+      .sort((a, b) => a.from - b.from);
+    if (parsed.length) TIERS = parsed;
+  } catch (_) {
+    // Нет сети/прав/документа — работаем с дефолтными порогами.
+  }
+}
 
 function tierOf(spent) {
   let t = TIERS[0];

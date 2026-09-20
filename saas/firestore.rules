@@ -184,6 +184,19 @@ service cloud.firestore {
       allow read: if isMember(tenantId) || isSuperAdmin();
       allow write: if hasRole(tenantId, ['owner', 'admin']);
     }
+    // Пороги/кешбек программы лояльности (settings/loyalty,
+    // lib/screens/admin/loyalty_settings_screen.dart) — читает ещё и
+    // ГОСТЬ: это его собственный уровень и процент в профиле (см.
+    // ClientProfile.tiers), а isMember() выше про гостя ничего не знает
+    // (та проверка — про tenantMembers, вход в консоль/устройство кассы,
+    // а не про профиль гостя). Отдельное, более специфичное правило — а
+    // не расширение settings/{doc} выше — потому что там же лежит
+    // settings/deviceInvite (секретный код приглашения устройства),
+    // который гостю показывать нельзя ни в каком виде.
+    match /tenants/{tenantId}/settings/loyalty {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
 
     // ---- Внутренние заметки супер-админа о заведении (CRM-заметки для
     //      поддержки — кто оплатил вручную, о чём договорились и т.д.) ----

@@ -253,6 +253,45 @@ exports.reservationWatchdog = onSchedule(
 
 // ------------------------------------------------- бонусы и отзывы
 
+// Те же дефолтные пороги, что и ClientProfile.tiers в
+// lib/models/client_models.dart — используются, пока владелец не настроил
+// свои в settings/loyalty (см. lib/screens/admin/loyalty_settings_screen.dart).
+const DEFAULT_LOYALTY_TIERS = [
+  { from: 0, cashback: 3 },
+  { from: 10000, cashback: 5 },
+  { from: 25000, cashback: 7 },
+  { from: 50000, cashback: 10 },
+  { from: 100000, cashback: 15 },
+];
+
+/**
+ * Читает settings/loyalty, если владелец его настроил, иначе дефолт.
+ * Читается ОДИН раз до транзакции ниже: настройки меняются редко, лишний
+ * повтор чтения при retry транзакции ни к чему.
+ */
+async function loadLoyaltyTiers() {
+  try {
+    const doc = await db.collection("settings").doc("loyalty").get();
+    const raw = doc.data()?.tiers;
+    if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_LOYALTY_TIERS;
+    const parsed = raw
+      .map((t) => ({ from: Number(t.from) || 0, cashback: Number(t.cashback) || 0 }))
+      .sort((a, b) => a.from - b.from);
+    return parsed.length ? parsed : DEFAULT_LOYALTY_TIERS;
+  } catch (_) {
+    return DEFAULT_LOYALTY_TIERS;
+  }
+}
+
+/** Тот же алгоритм, что и ClientProfile._currentTier в client_models.dart. */
+function percentForSpent(tiers, spent) {
+  let result = tiers[0];
+  for (const t of tiers) {
+    if (spent >= t.from) result = t;
+  }
+  return result.cashback;
+}
+
 /** Закрытие чека: кешбэк гостю и просьба оценить визит. */
 exports.onSessionClosed = onDocumentUpdated(
   { region: REGION, document: "sessions/{id}" },
@@ -287,6 +326,7 @@ exports.onSessionClosed = onDocumentUpdated(
     if (clients.empty) return;
 
     const ref = clients.docs[0].ref;
+    const loyaltyTiers = await loadLoyaltyTiers();
 
     // Бонус начисляет ещё и касса на планшете (accrueBonuses в
     // guest_link_service.dart) — причём ровно в тот же момент, сразу после
@@ -302,14 +342,11 @@ exports.onSessionClosed = onDocumentUpdated(
       if (c.bonusAccruedFor === event.params.id) return null;
 
       const spent = (c.totalSpent || 0) + spentDelta;
-      // Пороги и проценты должны совпадать с ClientProfile.cashbackPercent
-      // в приложении — иначе гость видит в профиле один процент, а
-      // получает другой. Алмаз (15% от 100 000) здесь раньше отсутствовал.
-      const percent =
-        spent >= 100000 ? 15 :
-        spent >= 50000 ? 10 :
-        spent >= 25000 ? 7 :
-        spent >= 10000 ? 5 : 3;
+      // Пороги и проценты — из settings/loyalty (см. loadLoyaltyTiers
+      // выше), должны совпадать с ClientProfile.cashbackPercent в
+      // приложении — иначе гость видит в профиле один процент, а получает
+      // другой.
+      const percent = percentForSpent(loyaltyTiers, spent);
       const bonus = Math.round((paid * percent) / 100);
 
       tx.update(ref, {

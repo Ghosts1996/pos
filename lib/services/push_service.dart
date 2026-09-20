@@ -64,9 +64,10 @@ class PushService {
     for (final p in _allPositions) {
       await _fcm.unsubscribeFromTopic(_positionTopic(p));
     }
-    final isUniversal = employee.position == AppConstants.positionUniversal ||
-        employee.role == AppConstants.roleAdmin;
-    final positions = isUniversal ? _allPositions : [employee.position];
+    final position = AppConstants.normalizePosition(employee.position);
+    final isUniversal =
+        position == AppConstants.positionUniversal || employee.role == AppConstants.roleAdmin;
+    final positions = isUniversal ? _allPositions : [position];
     for (final p in positions) {
       await _fcm.subscribeToTopic(_positionTopic(p));
     }

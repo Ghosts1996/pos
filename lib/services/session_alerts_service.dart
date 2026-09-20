@@ -114,7 +114,7 @@ class SessionAlertsService {
     if (_myEmployeeId.isNotEmpty) {
       try {
         final doc = await AppScope.col('employees').doc(_myEmployeeId).get();
-        _myPosition = (doc.data()?['position'] as String?) ?? AppConstants.positionUniversal;
+        _myPosition = AppConstants.normalizePosition(doc.data()?['position'] as String?);
       } catch (_) {
         // Не удалось прочитать специализацию — считаем универсалом:
         // безопасный дефолт, при котором ничего не потеряется.
