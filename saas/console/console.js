@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.1-admin-nav-redesign';
+const CONSOLE_BUILD = '2026-09-21.2-admin-infra-history-retry';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -2859,7 +2859,17 @@ function screenSuperAdmin() {
         <div id="admin-attention"><div class="spinner"></div></div>
 
         <h2>Инфраструктура</h2>
-        <div id="admin-infra"><p class="small muted">Раздел в разработке.</p></div>
+        <div class="admin-stat-grid">
+          <div class="card" style="text-align:center;padding:14px 8px">
+            <div id="admin-infra-gateway-status" style="font-size:16px;font-weight:700">…</div>
+            <div class="small muted">saas-gateway</div>
+          </div>
+          <div class="card" style="text-align:center;padding:14px 8px">
+            <div id="admin-infra-stuck-count" style="font-size:22px;font-weight:700">—</div>
+            <div class="small muted">Зависших сборок</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost" id="f-recalculate-usage" style="width:auto;margin:6px 0 14px">Пересчитать лимиты сейчас</button>
 
         <h2>Аналитика</h2>
         <div id="admin-analytics"><div class="spinner"></div></div>
@@ -2965,6 +2975,68 @@ function screenSuperAdmin() {
   watchAnalytics();
   watchSuperAdmins();
   watchAllBuildJobs();
+  watchAdminInfra();
+}
+
+// Порог, после которого сборка в очереди считается зависшей (воркер на
+// сервере обычно забирает задачу за секунды) — тот же смысл, что и
+// GRACE_PERIOD_DAYS для подписок: не точная диагностика, а сигнал
+// «сюда стоит заглянуть».
+const STUCK_BUILD_MINUTES = 30;
+
+/** Инфраструктура на "Обзоре": жив ли saas-gateway (публичный /health, без
+ *  токена) и кнопка ручного пересчёта usage/current — до этой правки
+ *  calculateUsage вообще не запускался нигде (Cloud Function, которую
+ *  забыли перенести при уходе с Blaze), т.е. лимиты тарифов никогда не
+ *  обновлялись сами. Счётчик зависших сборок считается отдельным
+ *  снапшотом (не переиспользует watchAllBuildJobs — тому нужен только
+ *  последний экран из 50 записей, а здесь важны именно все status=queued
+ *  независимо от возраста остальных). */
+function watchAdminInfra() {
+  const statusEl = $('admin-infra-gateway-status');
+  fetch(`${SAAS_GATEWAY_URL}/health`)
+    .then((r) => {
+      if (!statusEl) return;
+      statusEl.innerHTML = r.ok
+        ? '<span style="color:var(--primary)">● жив</span>'
+        : `<span style="color:var(--danger)">● ошибка ${r.status}</span>`;
+    })
+    .catch(() => {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">● недоступен</span>';
+    });
+
+  const stuckEl = $('admin-infra-stuck-count');
+  sub(onSnapshot(query(collection(state.db, 'buildJobs'), where('status', '==', 'queued')), (snap) => {
+    if (!stuckEl) return;
+    const threshold = Date.now() - STUCK_BUILD_MINUTES * 60 * 1000;
+    const stuck = snap.docs.filter((d) => {
+      const createdAt = d.data().createdAt;
+      const ms = createdAt && typeof createdAt.toDate === 'function' ? createdAt.toDate().getTime() : 0;
+      return ms && ms < threshold;
+    }).length;
+    stuckEl.textContent = String(stuck);
+    stuckEl.style.color = stuck > 0 ? 'var(--danger)' : '';
+  }, () => {
+    if (stuckEl) stuckEl.textContent = '—';
+  }));
+
+  if ($('f-recalculate-usage')) {
+    $('f-recalculate-usage').onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = 'Пересчитываем…';
+      try {
+        await callSaasGateway('recalculateUsage', {});
+        toast('Лимиты пересчитаны');
+      } catch (err) {
+        toast(err.message || 'Не удалось пересчитать');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    };
+  }
 }
 
 function watchAllTenants() {
@@ -2988,18 +3060,20 @@ function watchAllTenants() {
 
   const ensureDetailsLoaded = async (tenantId) => {
     try {
-      const [membersSnap, inviteSnap, notesSnap] = await Promise.all([
+      const [membersSnap, inviteSnap, notesSnap, historySnap] = await Promise.all([
         getDocs(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId))),
         getDoc(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite')),
         getDoc(doc(state.db, 'tenants', tenantId, 'internal', 'adminNotes')),
+        getDocs(query(collection(state.db, 'auditLogs'), where('tenantId', '==', tenantId), orderBy('createdAt', 'desc'), limit(20))),
       ]);
       detailsCache.set(tenantId, {
         members: membersSnap.docs.map((d) => d.data()),
         invite: inviteSnap.exists() ? inviteSnap.data() : null,
         notes: notesSnap.exists() ? (notesSnap.data().text || '') : '',
+        history: historySnap.docs.map((d) => d.data()),
       });
     } catch (_) {
-      detailsCache.set(tenantId, { members: [], invite: null, notes: '' });
+      detailsCache.set(tenantId, { members: [], invite: null, notes: '', history: [] });
     }
     draw();
   };
@@ -3095,6 +3169,13 @@ function watchAllTenants() {
             <input type="date" class="f-sub-trial-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
           </label>
           <button class="btn btn-ghost f-sub-save" data-id="${esc(t.id)}">Сохранить подписку</button>
+        </div>
+
+        <div style="margin-top:14px">
+          <div class="small muted" style="margin-bottom:6px">История тарифа и статуса (последние 20 записей)</div>
+          ${(d.history || []).length ? (d.history || []).map((e) => `
+            <div class="small" style="padding:2px 0">${fmtDateTime(e.createdAt)} — ${esc(AUDIT_ACTION_LABELS[e.action] || e.action)}</div>
+          `).join('') : '<div class="small muted">Событий пока нет</div>'}
         </div>
       </div>
     `;
@@ -3360,9 +3441,27 @@ function watchAllBuildJobs() {
           <span style="${j.status === 'failed' ? 'color:var(--danger)' : ''}">${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</span>
           ${j.status === 'failed' && j.errorMessage ? `<div class="muted">${esc(j.errorMessage)}</div>` : ''}
         </div>
-        <div class="small muted">${fmtDateTime(j.createdAt)}</div>
+        <div class="small" style="text-align:right;flex-shrink:0">
+          <div class="muted">${fmtDateTime(j.createdAt)}</div>
+          ${j.status === 'failed' ? `<button class="btn-link f-retry-build" data-tenant="${esc(j.tenantId)}" style="width:auto;padding:2px 0">Пересобрать</button>` : ''}
+        </div>
       </div>
     `).join('')}</div>` : '<p class="small muted">Сборок пока не было.</p>';
+
+    document.querySelectorAll('.f-retry-build').forEach((el) => {
+      el.onclick = async () => {
+        el.disabled = true;
+        el.textContent = 'Запускаем…';
+        try {
+          await callSaasGateway('createBuildJob', { tenantId: el.dataset.tenant });
+          toast('Пересборка запущена');
+        } catch (err) {
+          toast(err.message || 'Не удалось запустить пересборку');
+          el.disabled = false;
+          el.textContent = 'Пересобрать';
+        }
+      };
+    });
   }, () => {
     body.innerHTML = '<p class="small muted">Сборки недоступны.</p>';
   }));

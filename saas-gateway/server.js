@@ -258,6 +258,16 @@ async function requireSuperAdmin(uid) {
   if (!doc.exists) throw new HttpError(403, "Только для супер-администратора платформы");
 }
 
+/** Не бросает — булев вариант requireSuperAdmin для точек, где супер-админ
+ *  ДОПОЛНИТЕЛЬНО к обычным владельцам может выполнить действие (например,
+ *  запросить сборку APK чужого заведения из панели поддержки), а не
+ *  единственный, кому оно разрешено вообще. */
+async function isSuperAdminUid(uid) {
+  if (!uid) return false;
+  const doc = await db().collection("superAdmins").doc(uid).get();
+  return doc.exists;
+}
+
 /** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
 async function requireTenantRole(tenantId, uid, allowedRoles) {
   const memberDoc = await db().collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
@@ -567,7 +577,13 @@ async function handleCreateBuildJob(req, res) {
   const body = await parseJsonBody(req);
   const { tenantId } = body;
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
-  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  // Супер-админ платформы может пересобрать APK ЛЮБОГО заведения (например
+  // из панели платформы, кнопка "Пересобрать" у неудачной сборки в общем
+  // мониторе) — в дополнение к обычному владельцу/админу самого заведения,
+  // не вместо него.
+  if (!(await isSuperAdminUid(decoded.uid))) {
+    await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  }
 
   const firestore = db();
   const sub = await firestore.collection("subscriptions").doc(tenantId).get();
@@ -1051,6 +1067,69 @@ function scheduleBillingCron() {
       console.error("saas-gateway: ошибка проверки льготного периода:", e.message || e);
     }
   }, BILLING_CRON_INTERVAL_MS);
+}
+
+// ------------------------------------------------------- calculateUsage
+
+/**
+ * Раз в сутки пересчитывает usage каждого активного заведения
+ * (tenants/{id}/usage/current) — то же самое, что было Cloud Function
+ * calculateUsage в saas/functions/index.js (перенесено сюда по той же
+ * причине, что и весь остальной этот файл — Blaze недоступен). Без неё
+ * этот документ никогда не появляется, и "Требует внимания"/карточка
+ * заведения в панели платформы (planLimitWarnings в console.js, уже читает
+ * ровно этот путь) молча никогда не показывает превышение лимита тарифа —
+ * не потому что лимиты не превышены, а потому что их физически некому
+ * посчитать.
+ *
+ * Считает только количества (count()), не читает содержимое документов —
+ * дёшево по чтениям даже при большом числе заведений.
+ */
+async function runCalculateUsage() {
+  const firestore = db();
+  const tenants = await firestore
+    .collection("tenants")
+    .where("status", "in", ["trial", "active", "past_due"])
+    .get();
+  for (const tenantDoc of tenants.docs) {
+    const ref = tenantDoc.ref;
+    const [employees, devices, tables, clients] = await Promise.all([
+      ref.collection("employees").count().get(),
+      ref.collection("devices").count().get(),
+      ref.collection("tables").count().get(),
+      ref.collection("clients").count().get(),
+    ]);
+    await ref.collection("usage").doc("current").set({
+      employees: employees.data().count,
+      devices: devices.data().count,
+      tables: tables.data().count,
+      guests: clients.data().count,
+      calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+}
+
+const USAGE_CRON_INTERVAL_MS = 24 * 3600 * 1000;
+function scheduleUsageCron() {
+  setInterval(async () => {
+    try {
+      await runCalculateUsage();
+    } catch (e) {
+      console.error("saas-gateway: ошибка подсчёта usage заведений:", e.message || e);
+    }
+  }, USAGE_CRON_INTERVAL_MS);
+}
+
+/** Ручной запуск того же самого расчёта — кнопка "Пересчитать сейчас" в
+ *  разделе "Инфраструктура" панели платформы: суточный таймер задумывался
+ *  для тихой фоновой работы, но после первого деплоя этой фичи (или после
+ *  перезапуска сервиса) ждать до суток, чтобы просто ПРОВЕРИТЬ, что она
+ *  вообще считает, неудобно. */
+async function handleRecalculateUsage(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded.uid);
+  await runCalculateUsage();
+  sendJson(res, 200, { ok: true });
 }
 
 // --------------------------------------------------- completeBuildJob
@@ -1711,6 +1790,7 @@ const ROUTES = {
   "/getDownloadUrl": handleGetDownloadUrl,
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
+  "/recalculateUsage": handleRecalculateUsage,
   // Публичный (без Auth) адрес — его нужно прописать в личном кабинете
   // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
   // внутри самого handleBillingWebhook, не на уровне роутинга.
@@ -1747,6 +1827,7 @@ const server = http.createServer((req, res) => {
 
 scheduleDemoCleanup();
 scheduleBillingCron();
+scheduleUsageCron();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
