@@ -716,7 +716,11 @@ function screenLanding() {
             <button class="btn-link" id="f-landing-download-apk">⬇ Скачать приложение кассы (APK)</button>
           </div>
           <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
-          попросит код заведения и код приглашения устройства из личного кабинета (или можно нажать «Демо» прямо в приложении).</p>
+          попросит код заведения и код приглашения устройства из личного кабинета — или нажмите «Демо» прямо в
+          приложении, и оно само создаст тестовое заведение с заполненным меню, столами и уже пробитыми чеками.</p>
+          <p class="small muted landing-demo-pins" style="text-align:center;margin-top:8px">
+            Вход в демо: сотрудник — PIN <code>1111</code>, администратор — PIN <code>111111</code>
+          </p>
         </div>
       </div>
     </section>

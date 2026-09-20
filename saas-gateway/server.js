@@ -891,21 +891,66 @@ const DEMO_MENU = [
   },
 ];
 
-function seedDemoData(tenantRef, batch) {
+// Готовые "чеки" для двух столов из истории (закрыты, оплачены) — чтобы
+// в демо-заведении сразу было что показать в отчётах/истории смены, а не
+// только пустой зал. minutesAgoStart/End — когда чек был открыт/закрыт
+// относительно момента создания демо (см. seedDemoData ниже).
+const DEMO_CLOSED_RECEIPTS = [
+  {
+    tableName: "Стол 1",
+    minutesAgoStart: 150,
+    minutesAgoEnd: 100,
+    items: [
+      { name: "Классический кальян", price: 1200, qty: 1 },
+      { name: "Орешки", price: 300, qty: 1 },
+    ],
+    paymentMethod: "cash",
+  },
+  {
+    tableName: "Стол 3",
+    minutesAgoStart: 260,
+    minutesAgoEnd: 190,
+    items: [
+      { name: "Кальян на молоке", price: 1500, qty: 2 },
+      { name: "Морс", price: 350, qty: 2 },
+      { name: "Чипсы", price: 250, qty: 1 },
+    ],
+    paymentMethod: "card",
+  },
+];
+
+// Столы, занятые ПРЯМО СЕЙЧАС (активный, ещё не закрытый чек) — чтобы зал
+// в демо выглядел живым, а не как только что созданное пустое заведение.
+const DEMO_ACTIVE_SESSIONS = [
+  {
+    tableName: "Стол 2",
+    guestTag: "Аня",
+    minutesAgoStart: 25,
+    durationMinutes: 90,
+    items: [
+      { name: "Кальян на молоке", price: 1500, qty: 1 },
+      { name: "Лимонад", price: 400, qty: 2 },
+    ],
+  },
+  {
+    tableName: "Стол 5",
+    guestTag: "Компания у окна",
+    minutesAgoStart: 10,
+    durationMinutes: 90,
+    items: [
+      { name: "Премиум-микс", price: 1800, qty: 1 },
+      { name: "Фруктовая тарелка", price: 700, qty: 1 },
+      { name: "Чай чёрный", price: 350, qty: 3 },
+    ],
+  },
+];
+
+function seedDemoData(tenantRef, batch, nowMs) {
+  const tableRefsByName = {};
   DEMO_TABLES.forEach((t) => {
-    batch.set(tenantRef.collection("tables").doc(), {
-      name: t.name,
-      x: t.x,
-      y: t.y,
-      seats: t.seats,
-      shape: t.shape,
-      status: "free",
-      activeSessionIds: [],
-      maxOpenSessions: 2,
-      busyUntil: null,
-      openChecks: [],
-    });
+    tableRefsByName[t.name] = { ref: tenantRef.collection("tables").doc(), config: t };
   });
+
   DEMO_MENU.forEach((cat, ci) => {
     const catRef = tenantRef.collection("menuCategories").doc();
     batch.set(catRef, { name: cat.category, order: ci, imageUrl: "" });
@@ -923,10 +968,97 @@ function seedDemoData(tenantRef, batch) {
       });
     });
   });
-  // PIN-коды нарочно простые — заведение живёт несколько часов и стирается
-  // само (см. purgeDemoTenant), это не боевые учётные данные.
-  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-админ", pinCode: "1111", role: "admin" });
-  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-сотрудник", pinCode: "2222", role: "employee" });
+
+  // PIN-коды нарочно простые и совпадают с тем, что написано на лендинге
+  // рядом с кнопкой скачивания демо-APK (см. screenLanding() в console.js)
+  // — заведение живёт несколько часов и стирается само (purgeDemoTenant),
+  // это не боевые учётные данные. Длина PIN соответствует роли (см.
+  // AppConstants.pinLengthForRole) — иначе экран входа с этим кодом просто
+  // не пустит: у сотрудника 4 цифры, у администратора 6.
+  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-сотрудник", pinCode: "1111", role: "employee" });
+  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-админ", pinCode: "111111", role: "admin" });
+
+  const orderItemsOf = (items) => items.map((i) => ({ menuItemId: "", name: i.name, price: i.price, qty: i.qty }));
+  const ts = (minutesAgo) => admin.firestore.Timestamp.fromMillis(nowMs - minutesAgo * 60000);
+
+  // Активные чеки — стол переходит в "занят" (status/activeSessionIds/
+  // busyUntil/openChecks) ровно так же, как это делает openSession() в
+  // самом приложении (см. FirestoreService.openSession), просто одним
+  // батчем при создании, а не через реальное "Начать сеанс".
+  DEMO_ACTIVE_SESSIONS.forEach((s) => {
+    const table = tableRefsByName[s.tableName];
+    const sessionRef = tenantRef.collection("sessions").doc();
+    const startTime = ts(s.minutesAgoStart);
+    const plannedEnd = admin.firestore.Timestamp.fromMillis(
+      nowMs - s.minutesAgoStart * 60000 + s.durationMinutes * 60000
+    );
+    batch.set(sessionRef, {
+      tableId: table.ref.id,
+      tableName: s.tableName,
+      employeeName: "Демо-сотрудник",
+      guestTag: s.guestTag,
+      startTime,
+      plannedEnd,
+      refillCount: 0,
+      refillHistory: [],
+      discountCardId: null,
+      discountPercent: 0,
+      orderItems: orderItemsOf(s.items),
+      status: "active",
+      closedAt: null,
+      paymentCash: 0, paymentCard: 0, paymentTerminal: 0, paymentComp: 0,
+      guestContact: "", closedWithoutPayment: false, receiptPrinted: false, fiscalReceiptPrinted: false,
+      refunded: false, refundedAt: null,
+    });
+    table.occupied = { sessionId: sessionRef.id, plannedEnd, startTime, guestTag: s.guestTag };
+  });
+
+  // Закрытые чеки из истории — просто документ sessions со status: 'closed'
+  // и заполненной оплатой; на занятость стола не влияют (стол уже свободен,
+  // как и было бы в жизни после реального закрытия чека).
+  DEMO_CLOSED_RECEIPTS.forEach((r) => {
+    const table = tableRefsByName[r.tableName];
+    const sessionRef = tenantRef.collection("sessions").doc();
+    const orderItems = orderItemsOf(r.items);
+    const total = orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
+    batch.set(sessionRef, {
+      tableId: table.ref.id,
+      tableName: r.tableName,
+      employeeName: "Демо-сотрудник",
+      guestTag: "",
+      startTime: ts(r.minutesAgoStart),
+      plannedEnd: ts(r.minutesAgoStart - 90 < 0 ? 0 : r.minutesAgoStart - 90),
+      refillCount: 0,
+      refillHistory: [],
+      discountCardId: null,
+      discountPercent: 0,
+      orderItems,
+      status: "closed",
+      closedAt: ts(r.minutesAgoEnd),
+      paymentCash: r.paymentMethod === "cash" ? total : 0,
+      paymentCard: r.paymentMethod === "card" ? total : 0,
+      paymentTerminal: 0, paymentComp: 0,
+      guestContact: "", closedWithoutPayment: false, receiptPrinted: true, fiscalReceiptPrinted: false,
+      refunded: false, refundedAt: null,
+    });
+  });
+
+  Object.values(tableRefsByName).forEach(({ ref, config: t, occupied }) => {
+    batch.set(ref, {
+      name: t.name,
+      x: t.x,
+      y: t.y,
+      seats: t.seats,
+      shape: t.shape,
+      status: occupied ? "occupied" : "free",
+      activeSessionIds: occupied ? [occupied.sessionId] : [],
+      maxOpenSessions: 2,
+      busyUntil: occupied ? occupied.plannedEnd : null,
+      openChecks: occupied
+        ? [{ id: occupied.sessionId, label: occupied.guestTag, openedAt: occupied.startTime }]
+        : [],
+    });
+  });
 }
 
 /**
@@ -992,7 +1124,7 @@ async function handleCreateDemoTenant(req, res) {
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
   });
-  seedDemoData(tenantRef, batch);
+  seedDemoData(tenantRef, batch, Date.now());
   await batch.commit();
 
   sendJson(res, 200, { tenantId, slug, inviteCode });
