@@ -287,6 +287,24 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/inventory/item1")));
   });
 
+  it("личные смены сотрудников (staffShifts) и служебные указатели открытой смены доступны персоналу, но не гостю или чужому заведению", async () => {
+    // Регрессия: правил для staffShifts/meta.shiftState/meta.staffShiftState
+    // не было вообще — openShiftIfNeeded/clockIn (см. firestore_service.dart)
+    // падали permission-denied, а "Зарплата"/"Смены сотрудников" вечно
+    // крутили спиннер.
+    const empDb = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/staffShifts/shift1"),
+      { employeeId: "e1", employeeName: "Иван", status: "open" }));
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/meta/shiftState"), { openShiftId: "s1" }));
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/meta/staffShiftState"), { openCount: 1 }));
+
+    const guestDb = ctxFor("guestA");
+    await assertFails(getDoc(doc(guestDb, "tenants/tenantA/staffShifts/shift1")));
+
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/staffShifts/shift1")));
+  });
+
   it("неактивное членство (status != active) не даёт доступа", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("tenantMembers/tenantA_firedA"), {
