@@ -807,6 +807,173 @@ cat /root/.ssh/github_deploy_key   # скопировать в секрет DEPL
 заведения + код приглашения устройства, либо можно нажать «Попробовать
 демо» прямо в приложении.
 
+### 8c. Веб-версия гостя и QR стола на поддомене заведения
+
+У каждого заведения, кроме APK кассы и гостя, есть ещё веб-версия гостя —
+на своём поддомене `{slug}.hookahpos.su`, в тех же цветах и с тем же
+названием, что в разделе «Брендинг» (см. `saas/guest-web/` — форк
+`public/app/`+`public/table.html`, той же логике, что у одноарендной
+версии, только `state.db` заменён на `state.root` и заведение резолвится
+по поддомену, см. докстринг в начале `saas/guest-web/app/app.js`).
+
+QR-код стола в кассе (`TableQrScreen`) в SaaS-режиме уже сам строит адрес
+`https://{slug}.hookahpos.su/table/{id}` — ничего вручную указывать не
+нужно, но ЭТУ часть нужно один раз настроить на сервере.
+
+**Почему НЕ единый wildcard-сертификат.** Обычный способ для
+`*.hookahpos.su` — DNS-01 challenge (TXT-запись), а он требует API вашего
+DNS-провайдера, поддерживаемого certbot (Cloudflare и т.п.). Если DNS
+хостится у регистратора без такого API (как сейчас) — DNS-01 пришлось бы
+продлевать вручную каждые ~60 дней. Вместо этого — обычный HTTP-01 (не
+требует вообще никакого DNS API, только чтобы поддомен резолвился на этот
+сервер — а он и так резолвится, DNS-запись `*.hookahpos.su → IP сервера`
+заведена один раз и навсегда, см. ниже) на КАЖДЫЙ поддомен заведения
+отдельно — зато полностью автоматически и на выпуск, и на будущее
+продление (тот же таймер certbot, что уже продлевает pii.hookahpos.su).
+
+**1. DNS (один раз, у вашего регистратора):**
+
+```
+*.hookahpos.su.   A   <IP этого сервера>
+```
+
+**2. Разложить статику веб-гостя:**
+
+```bash
+mkdir -p /opt/saas-guest-web /var/www/certbot
+cp -r /root/pos-full/saas/guest-web/* /opt/saas-guest-web/
+chown -R www-data:www-data /opt/saas-guest-web
+```
+
+**3. Общий HTTP(80)-блок nginx** — обслуживает ACME-проверку (HTTP-01) и
+редирект на https для ЛЮБОГО поддомена, включая ещё не имеющие своего
+сертификата:
+
+```bash
+cat > /etc/nginx/conf.d/saas-guest-wildcard-http.conf << 'NGINXEOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ~^(?<tenant_slug>.+)\.hookahpos\.su$;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+NGINXEOF
+nginx -t && systemctl reload nginx
+```
+
+**4. Скрипт автовыпуска сертификата + отдельного 443-блока на заведение**
+(вызывается сервисом автоматически при создании каждого нового заведения —
+см. `provisionTenantDomain` в `saas-gateway/server.js` — и один раз вручную
+для уже существующих):
+
+```bash
+cat > /usr/local/bin/provision-tenant-domain.sh << 'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+SLUG="${1:-}"
+[[ "$SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || { echo "bad slug: $SLUG" >&2; exit 1; }
+
+DOMAIN="$SLUG.hookahpos.su"
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+CONF="/etc/nginx/conf.d/tenant-$SLUG.conf"
+
+if [[ -d "$CERT_DIR" && -f "$CONF" ]]; then
+  echo "already provisioned: $DOMAIN"
+  exit 0
+fi
+
+mkdir -p /var/www/certbot
+
+if [[ ! -d "$CERT_DIR" ]]; then
+  certbot certonly --webroot -w /var/www/certbot \
+    -d "$DOMAIN" \
+    --non-interactive --agree-tos \
+    -m admin@hookahpos.su \
+    --keep-until-expiring
+fi
+
+cat > "$CONF" << CONFEOF
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $DOMAIN;
+
+    ssl_certificate     $CERT_DIR/fullchain.pem;
+    ssl_certificate_key $CERT_DIR/privkey.pem;
+
+    root /opt/saas-guest-web;
+
+    location /table/ {
+        try_files /table.html =404;
+    }
+
+    location /app/ {
+        try_files \$uri \$uri/ /app/index.html;
+    }
+
+    location = / {
+        return 404;
+    }
+}
+CONFEOF
+
+nginx -t
+systemctl reload nginx
+echo "provisioned: $DOMAIN"
+SCRIPT
+chmod +x /usr/local/bin/provision-tenant-domain.sh
+```
+
+**5. Разрешить `saas-gateway` запускать ИМЕННО этот скрипт от root** (сам
+сервис работает под непривилегированным пользователем, см.
+`saas-gateway.service`):
+
+```bash
+visudo -cf <(echo 'saas-gateway ALL=(root) NOPASSWD: /usr/local/bin/provision-tenant-domain.sh') \
+  && echo 'saas-gateway ALL=(root) NOPASSWD: /usr/local/bin/provision-tenant-domain.sh' \
+     > /etc/sudoers.d/saas-gateway-certbot
+chmod 440 /etc/sudoers.d/saas-gateway-certbot
+```
+
+Обновите и сам юнит `saas-gateway.service` (в нём снят `NoNewPrivileges` —
+эта настройка блокирует ЛЮБОЙ переход через `sudo`, даже с настроенным
+правилом выше):
+
+```bash
+cp /root/pos-full/saas-gateway/saas-gateway.service /etc/systemd/system/saas-gateway.service
+systemctl daemon-reload
+systemctl restart saas-gateway
+```
+
+**6. Заведения, созданные ДО этой настройки** — им поддомен не
+провизионился автоматически (сервис ещё не умел). Провизионируйте руками
+по одному разу для каждого (список code/slug — в панели супер-админа):
+
+```bash
+/usr/local/bin/provision-tenant-domain.sh bhggf
+```
+
+**Проверка:** `https://<slug>.hookahpos.su/table/anything` должна открыть
+страницу-прослойку (на устройстве без приложения — сразу экран «Приложение
+не установлено» со скачиванием/веб-версией), `https://<slug>.hookahpos.su/app/`
+— саму веб-версию гостя.
+
+**Известное ограничение общей архитектуры сборки** (не баг этой страницы):
+все гостевые APK платформы собраны под ОДНИМ `applicationId`
+(`com.kolibriloungesaas`, см. п. 8). Android допускает только одну
+установку с таким именем пакета одновременно — если у гостя уже стоит
+гостевое приложение ДРУГОГО заведения этой же платформы, deep-link со
+страницы-прослойки откроет именно его, а не предложит поставить
+приложение текущего заведения.
+
 ### 9. Перенос вашего текущего заведения (когда будете готовы)
 
 **Не раньше, чем Phase 1–3 обкатаны на тестовых заведениях.** Тогда:

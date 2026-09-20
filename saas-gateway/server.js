@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const admin = require("firebase-admin");
+const { execFile } = require("child_process");
 
 /**
  * Онбординг SaaS-платформы Hookah POS БЕЗ Cloud Functions.
@@ -407,7 +408,59 @@ async function handleCreateTenant(req, res) {
   await batch.commit();
   await writeAuditLog({ tenantId, actorId: uid, action: "tenantCreated", metadata: { slug } });
 
+  // Не await: выпуск сертификата занимает несколько секунд (обращение к
+  // Let's Encrypt) — владелец не должен ждать это внутри ответа на
+  // создание заведения. Ошибка (если Let's Encrypt недоступен, лимит
+  // запросов и т.п.) не должна ронять само создание заведения — только
+  // логируется, см. docstring provisionTenantDomain.
+  provisionTenantDomain(slug).catch((e) => {
+    console.error(`provisionTenantDomain(${slug}) не удался:`, e.message || e);
+  });
+
   sendJson(res, 200, { tenantId, slug });
+}
+
+// ------------------------------------------- provisionTenantDomain
+
+/**
+ * Автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
+ * поддомена нового заведения ({slug}.hookahpos.su, см. saas/guest-web/ —
+ * веб-версия гостя и страница-прослойка QR стола).
+ *
+ * ПОЧЕМУ не единый wildcard-сертификат на *.hookahpos.su: DNS хостится у
+ * регистратора без API, поддерживаемого certbot, — wildcard требует
+ * DNS-01 challenge (TXT-запись), а его без API пришлось бы продлевать
+ * руками каждые ~60 дней. Вместо этого — обычный HTTP-01 (никакого API
+ * DNS не требует, только чтобы поддомен резолвился на этот сервер — а он
+ * уже резолвится, DNS-запись `*.hookahpos.su` заведена один раз и
+ * навсегда) на КАЖДЫЙ поддомен отдельно, зато полностью автоматически:
+ * этот вызов — и на выпуск, и на будущее продление (стандартный таймер
+ * certbot, тот же, что уже продлевает pii.hookahpos.su, ничего
+ * дополнительно настраивать не нужно — просто больше файлов сертификатов
+ * под тем же механизмом).
+ *
+ * Требует на сервере: certbot, скрипт /usr/local/bin/provision-tenant-
+ * domain.sh (создаёт webroot-сертификат + отдельный server-блок nginx по
+ * шаблону и перезагружает nginx) и точечное sudo-правило, разрешающее
+ * пользователю saas-gateway запускать ИМЕННО этот скрипт без пароля — см.
+ * saas/README.md, раздел «Веб-версия гостя и QR стола».
+ */
+async function provisionTenantDomain(slug) {
+  await new Promise((resolve, reject) => {
+    execFile(
+      "/usr/bin/sudo",
+      ["/usr/local/bin/provision-tenant-domain.sh", slug],
+      { timeout: 60000 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || stdout || error.message));
+        } else {
+          console.log(`provisionTenantDomain(${slug}): ${stdout.trim()}`);
+          resolve();
+        }
+      },
+    );
+  });
 }
 
 // ----------------------------------------------------- createBuildJob

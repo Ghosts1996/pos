@@ -11,6 +11,12 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 `cancelSubscription`/`resumeSubscription` (самостоятельная отмена/возврат
 автопродления — Firestore-правила не пускают владельца писать в
 `subscriptions` напрямую даже для своего заведения, см. `saas/firestore.rules`),
+`createTenant` (после создания заведения асинхронно, не блокируя ответ,
+автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
+`{slug}.hookahpos.su` через `sudo provision-tenant-domain.sh` — см.
+`saas/README.md`, раздел 8c, включая ОБЯЗАТЕЛЬНУЮ настройку sudoers и
+`saas-gateway.service` без `NoNewPrivileges`, иначе создание заведения
+продолжит работать, а автовыпуск сертификата будет тихо падать в лог),
 `downloadBuild` (выдача готового личного APK владельцу), `publicGuestApk`
 (скачивание гостевого APK по QR со стола — БЕЗ Firebase Auth: гость,
 наведший камеру, не входил ни в один SaaS-аккаунт; отдаёт только
