@@ -941,14 +941,57 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
  * Manager, как раньше: YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY.
  */
 
-const BILLING_PERIOD_DAYS = { monthly: 30, yearly: 365 };
+const BILLING_PERIOD_DAYS = { monthly: 30, semiannual: 182, yearly: 365 };
 const GRACE_PERIOD_DAYS = 10;
 
-/** Цена тарифа за billingPeriod ('monthly'|'yearly'); yearly без заданного
- *  priceRubYearly считается недоступным. */
+/** Единая нормализация периода оплаты — везде, где он приходит снаружи
+ *  (checkout/webhook/автопродление), а не только в одном месте: раньше
+ *  "любое не yearly" молча схлопывалось в monthly, из-за чего добавление
+ *  нового периода потребовало бы искать все места по отдельности. */
+function normalizeBillingPeriod(raw) {
+  if (raw === "yearly") return "yearly";
+  if (raw === "semiannual") return "semiannual";
+  return "monthly";
+}
+
+/** Цена тарифа за billingPeriod ('monthly'|'semiannual'|'yearly'); период
+ *  без заданной цены (priceRubSemiannual/priceRubYearly) считается
+ *  недоступным (0 — вызывающий код сам решает, что это значит). */
 function planPriceForPeriod(plan, billingPeriod) {
   if (billingPeriod === "yearly") return Number(plan.priceRubYearly) || 0;
+  if (billingPeriod === "semiannual") return Number(plan.priceRubSemiannual) || 0;
   return Number(plan.priceRub) || 0;
+}
+
+/**
+ * Цена ОДНОЙ дополнительной точки сети за billingPeriod — отдельная,
+ * обычно более низкая цена (решение владельца платформы: "за доп.
+ * заведения цены меньше"), задаётся полями priceRubAdditional/
+ * priceRubAdditionalSemiannual/priceRubAdditionalYearly. Если тариф явно
+ * не задал отдельную цену для доп. точки (поле отсутствует / пустая
+ * строка / null — именно так выглядит НЕ настроенное поле в Firestore,
+ * 0 же означает осознанный выбор "доп. точки бесплатно"), доп. точка
+ * стоит столько же, сколько первая — это же поведение было ДО того, как
+ * появилась сама возможность настроить разницу.
+ */
+function additionalLocationPriceForPeriod(plan, billingPeriod) {
+  const field = billingPeriod === "yearly" ? "priceRubAdditionalYearly"
+    : billingPeriod === "semiannual" ? "priceRubAdditionalSemiannual"
+    : "priceRubAdditional";
+  const raw = plan[field];
+  if (raw === undefined || raw === null || raw === "") return planPriceForPeriod(plan, billingPeriod);
+  return Number(raw) || 0;
+}
+
+/** Полная цена подписки сети за billingPeriod: первая точка по обычной
+ *  цене тарифа + каждая следующая — по (обычно более низкой) цене доп.
+ *  точки, а не flat price × locationCount, как было до появления
+ *  раздельного ценообразования (см. её докстринг выше). */
+function chainPriceForPeriod(plan, billingPeriod, locationCount) {
+  const first = planPriceForPeriod(plan, billingPeriod);
+  const additional = additionalLocationPriceForPeriod(plan, billingPeriod);
+  const extra = Math.max(0, locationCount - 1);
+  return first + additional * extra;
 }
 
 async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = {}) {
@@ -1001,7 +1044,7 @@ async function handleCreateCheckoutSession(req, res) {
   if (typeof returnUrl !== "string" || !returnUrl) {
     throw new HttpError(400, "Не передан адрес возврата после оплаты");
   }
-  const billingPeriod = rawBillingPeriod === "yearly" ? "yearly" : "monthly";
+  const billingPeriod = normalizeBillingPeriod(rawBillingPeriod);
   if (isChain) {
     await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
   } else {
@@ -1011,14 +1054,14 @@ async function handleCreateCheckoutSession(req, res) {
   const planDoc = await db().collection("plans").doc(planId).get();
   if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
   const plan = planDoc.data();
-  const basePrice = planPriceForPeriod(plan, billingPeriod);
-  if (basePrice <= 0) {
-    throw new HttpError(412, billingPeriod === "yearly"
-      ? "Для этого тарифа не задана годовая цена — оформите помесячную оплату или обратитесь в поддержку"
-      : "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
+  if (planPriceForPeriod(plan, billingPeriod) <= 0) {
+    throw new HttpError(412, billingPeriod === "monthly"
+      ? "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы"
+      : "Для этого тарифа не задана цена на выбранный период — оформите помесячную оплату или обратитесь в поддержку");
   }
   const locationCount = isChain ? Math.max(1, await countChainLocations(chainId)) : 1;
-  const price = basePrice * locationCount;
+  const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
+  const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
   const payment = await yookassaRequest("payments", {
     method: "POST",
@@ -1029,8 +1072,8 @@ async function handleCreateCheckoutSession(req, res) {
       save_payment_method: true,
       confirmation: { type: "redirect", return_url: returnUrl },
       description: isChain
-        ? `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), сеть ${chainId} × ${locationCount} точек`
-        : `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+        ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} точек`
+        : `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`,
       metadata: {
         tenantId: isChain ? null : tenantId,
         chainId: isChain ? chainId : null,
@@ -1070,9 +1113,10 @@ async function handleBillingWebhook(req, res) {
   const chainId = payment.metadata?.chainId || null;
   const billingId = chainId || tenantId;
   const planId = payment.metadata?.planId;
-  // Старые платежи (до появления годовой оплаты) не несут этого поля —
-  // трактуем как помесячные, это было единственным вариантом на тот момент.
-  const billingPeriod = payment.metadata?.billingPeriod === "yearly" ? "yearly" : "monthly";
+  // Старые платежи (до появления годовой/полугодовой оплаты) не несут
+  // этого поля — трактуем как помесячные, это было единственным вариантом
+  // на тот момент.
+  const billingPeriod = normalizeBillingPeriod(payment.metadata?.billingPeriod);
   if (!billingId || !planId) {
     // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
     // прислала его на наш webhook, отвечаем 200, чтобы не получать
@@ -1252,13 +1296,16 @@ async function runChargeRecurringSubscriptions() {
     if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
 
     const planDoc = await firestore.collection("plans").doc(sub.planId).get();
-    const billingPeriod = sub.billingPeriod === "yearly" ? "yearly" : "monthly";
-    // За сеть — цена тарифа за число точек НА МОМЕНТ продления (за каждую
-    // точку отдельно), а не то, что было при первой оплате: владелец мог
-    // за прошедший период добавить или закрыть точку.
+    const plan = planDoc.data() || {};
+    const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
+    // За сеть — цена тарифа за число точек НА МОМЕНТ продления (первая
+    // точка + доп. точки по своей, обычно более низкой цене — см.
+    // chainPriceForPeriod), а не то, что было при первой оплате: владелец
+    // мог за прошедший период добавить или закрыть точку.
     const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
-    const price = planPriceForPeriod(planDoc.data() || {}, billingPeriod) * locationCount;
+    const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
     if (price <= 0) continue;
+    const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
     try {
@@ -1273,8 +1320,8 @@ async function runChargeRecurringSubscriptions() {
           capture: true,
           payment_method_id: sub.paymentMethodId,
           description: isChain
-            ? `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), сеть ${targetId} × ${locationCount} точек`
-            : `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${targetId}`,
+            ? `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} точек`
+            : `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
           metadata: {
             tenantId: isChain ? null : targetId,
             chainId: isChain ? targetId : null,
