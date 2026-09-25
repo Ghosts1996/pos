@@ -494,6 +494,29 @@ a:hover { filter: brightness(1.2); }
   .landing-h2 { font-size: 28px; }
 }
 
+/* Тарифы: переключатель "Одно заведение"/"Сеть заведений" — не показываем
+   вовсе, если тарифов сети ни одного нет (см. screenLanding в console.js),
+   так что оформление рассчитано ровно на два пункта. */
+.landing-pricing-toggle {
+  display: flex; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px; gap: 4px; max-width: 460px; margin-bottom: 24px;
+}
+.landing-pricing-toggle-btn {
+  flex: 1; border: none; background: none; color: var(--muted);
+  font: inherit; font-weight: 600; font-size: 13.5px; padding: 10px 14px;
+  border-radius: 999px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: color .15s ease, background-color .15s ease;
+}
+.landing-pricing-toggle-btn:hover { color: var(--text); }
+.landing-pricing-toggle-btn.active {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: #fff; box-shadow: 0 8px 20px -8px rgba(47, 111, 237, .6);
+}
+@media (min-width: 860px) {
+  .landing-pricing-toggle-btn { font-size: 14.5px; padding: 11px 20px; }
+}
+
 /* Фичи/шаги — на широком экране просторнее, чем дефолтные 3 колонки
    (.feature-grid используется и в других местах консоли — переопределяем
    плотность только внутри .landing, не трогая базовое правило). */

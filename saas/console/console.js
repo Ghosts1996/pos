@@ -989,16 +989,13 @@ function screenLanding() {
     <section class="landing-section landing-section-alt" id="landing-pricing">
       <div class="landing-inner">
         <h2 class="landing-h2">Тарифы</h2>
-        <p class="landing-h2-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.</p>
+        <p class="landing-h2-sub" id="landing-pricing-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.</p>
+        <div id="landing-pricing-toggle" class="landing-pricing-toggle" style="display:none">
+          <button type="button" class="landing-pricing-toggle-btn active" data-mode="single">🏠 Одно заведение</button>
+          <button type="button" class="landing-pricing-toggle-btn" data-mode="chain">🏢 Сеть заведений</button>
+        </div>
         <div id="landing-plans" class="landing-plans-grid"><div class="spinner"></div></div>
-      </div>
-    </section>
-
-    <section class="landing-section" id="landing-chain-pricing" style="display:none">
-      <div class="landing-inner">
-        <h2 class="landing-h2">Тарифы для сети заведений</h2>
-        <p class="landing-h2-sub">Несколько точек одного владельца — общий биллинг, общая программа лояльности и бонусы, гость выбирает точку сети прямо в приложении.</p>
-        <div id="landing-chain-plans" class="landing-plans-grid"></div>
+        <div id="landing-chain-plans" class="landing-plans-grid" style="display:none"></div>
       </div>
     </section>
 
@@ -1163,10 +1160,33 @@ function screenLanding() {
     body.innerHTML = plans.length
       ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId, p.id === popularId)).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
-    const chainSection = document.getElementById('landing-chain-pricing');
-    if (chainSection) chainSection.style.display = chainPlans.length ? '' : 'none';
     const chainBody = $('landing-chain-plans');
     if (chainBody) chainBody.innerHTML = chainPlans.map((p) => landingChainPlanCardHtml(p, p.id === selectedPlanId)).join('');
+    // Переключатель "Одно заведение" / "Сеть заведений" — только если есть
+    // хотя бы один тариф сети, иначе это был бы выбор без выбора (вторая
+    // вкладка вела бы в пустоту), см. пустое состояние ниже.
+    const toggle = $('landing-pricing-toggle');
+    const subEl = $('landing-pricing-sub');
+    const SINGLE_SUB = 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.';
+    const CHAIN_SUB = 'Несколько точек одного владельца — общий биллинг, общая программа лояльности и бонусы, гость выбирает точку сети прямо в приложении.';
+    if (toggle) {
+      toggle.style.display = chainPlans.length ? '' : 'none';
+      const setMode = (mode) => {
+        toggle.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.mode === mode);
+        });
+        body.style.display = mode === 'single' ? '' : 'none';
+        chainBody.style.display = mode === 'chain' ? '' : 'none';
+        if (subEl) subEl.textContent = mode === 'chain' ? CHAIN_SUB : SINGLE_SUB;
+      };
+      toggle.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
+        btn.onclick = () => setMode(btn.dataset.mode);
+      });
+      // Если посетитель уже когда-то выбирал тариф сети (см. presetIsChain),
+      // при повторном визите сразу открываем нужную вкладку, а не заставляем
+      // искать её заново.
+      setMode(window.localStorage.getItem('presetIsChain') === '1' ? 'chain' : 'single');
+    }
     const updateSkipTrialNote = () => {
       const note = $('f-landing-skip-trial-note');
       if (note) note.style.display = window.localStorage.getItem('skipTrial') === '1' ? 'block' : 'none';
