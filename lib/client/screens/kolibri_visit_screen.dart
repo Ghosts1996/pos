@@ -389,8 +389,8 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                   children: [
                     Icon(Icons.info_outline,
                         size: 18, color: KolibriColors.gold),
-                    SizedBox(width: 8),
-                    Text('Правила заведения',
+                    const SizedBox(width: 8),
+                    const Text('Правила заведения',
                         style: TextStyle(
                             fontSize: 15, fontWeight: FontWeight.w600)),
                   ],
@@ -403,7 +403,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Padding(
-                          padding: EdgeInsets.only(top: 7, right: 10),
+                          padding: const EdgeInsets.only(top: 7, right: 10),
                           child: SizedBox(
                             width: 5,
                             height: 5,

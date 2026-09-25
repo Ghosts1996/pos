@@ -59,7 +59,7 @@ void main() async {
       // большее из двух, а не их сумму.
       await Future.wait([
         AuthService().ensureSignedIn(),
-        Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
+        Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
       ]);
 
       if (kSaasMode) {

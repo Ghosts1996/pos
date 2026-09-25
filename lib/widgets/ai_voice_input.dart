@@ -75,8 +75,11 @@ class _AiVoiceInputState extends State<AiVoiceInput> {
     _buffer = '';
     setState(() => _listening = true);
     await _speech.listen(
-      localeId: widget.localeId,
-      listenOptions: SpeechListenOptions(partialResults: true, cancelOnError: true),
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        cancelOnError: true,
+        localeId: widget.localeId,
+      ),
       onResult: (r) {
         _buffer = r.recognizedWords;
         widget.onPartial?.call(_buffer);
