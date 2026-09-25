@@ -100,7 +100,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-22.1-layout-fix-password-flows';
+const CONSOLE_BUILD = '2026-09-22.2-password-in-settings';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -2306,6 +2306,11 @@ function watchDashboardData(tenantId) {
       <div class="card">
         <div class="small muted">Всего в команде: ${sortedMembers.length} ${pluralPeople(sortedMembers.length)}</div>
       </div>
+      <p class="small center muted">Сменить пароль можно на вкладке <a href="#" class="f-dash-tab" data-tab="settings">«Настройки»</a>.</p>
+      <button class="btn btn-ghost" id="f-profile-signout">Выйти из аккаунта</button>
+    `;
+
+    const settingsHtml = () => `
       <h2>Пароль</h2>
       <div class="card">
         <label class="field"><span>Текущий пароль</span>
@@ -2318,10 +2323,7 @@ function watchDashboardData(tenantId) {
         <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
         <p class="small muted" style="margin-top:10px">Не помните текущий пароль? Выйдите из аккаунта и на экране входа нажмите «Забыли пароль?» — придёт ссылка на почту.</p>
       </div>
-      <button class="btn btn-ghost" id="f-profile-signout">Выйти из аккаунта</button>
-    `;
 
-    const settingsHtml = () => `
       <h2>Настройки заведения</h2>
       <div class="card">
         <label class="field"><span>Часовой пояс</span>
