@@ -131,13 +131,19 @@ class TenantConfigService {
     final tenant = Tenant.fromDoc(tenantDoc);
     final subscriptionId = tenant.chainId ?? member.tenantId;
 
+    // chainDoc не зависит ни от одного из трёх чтений ниже (chainId уже
+    // известен из tenant, прочитанного выше) — запускаем его тем же
+    // Future.wait, а не отдельным await после: раньше он ждал своей
+    // очереди уже ПОСЛЕ того, как остальные три успеют выполниться
+    // параллельно, добавляя лишний последовательный сетевой круг заведению
+    // сети при каждом refresh() (запуск POS/гостя, обновление конфигурации).
     final results = await Future.wait([
       tenantRef.collection('settings').doc('session').get(),
       tenantRef.collection('branding').doc('config').get(),
       _db.collection('subscriptions').doc(subscriptionId).get(),
+      if (tenant.chainId != null) _db.collection('chains').doc(tenant.chainId).get(),
     ]);
-    final chainDoc =
-        tenant.chainId != null ? await _db.collection('chains').doc(tenant.chainId).get() : null;
+    final chainDoc = tenant.chainId != null ? results[3] : null;
 
     final config = TenantConfig(
       tenant: tenant,
