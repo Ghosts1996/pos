@@ -628,7 +628,18 @@ async function handleCreateChain(req, res) {
   const chainRef = firestore.collection("chains").doc();
   const chainId = chainRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const resolvedPlanId = planId || "chain";
+  // planId с клиента доверяем, только если это ДЕЙСТВИТЕЛЬНО тариф для сети
+  // (isChainPlan) — иначе, например, владелец, выбравший обычный per-venue
+  // тариф на публичном лендинге (localStorage.selectedPlanId) и уже в
+  // онбординге отдельно отметивший чекбокс "Это сеть", завёл бы сеть на
+  // тарифе без per-location цены за доп. точку (см. chainPriceForPeriod
+  // ниже) — ровно тот же класс бага, что и isChainPlan-фильтрация в
+  // plansHtml()/screenLanding() консоли, только с другой стороны запроса.
+  let resolvedPlanId = "chain";
+  if (typeof planId === "string" && planId.trim()) {
+    const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
+    if (requestedSnap.exists && requestedSnap.data().isChainPlan) resolvedPlanId = planId.trim();
+  }
   const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
   const trialDays = Number(planSnap.data()?.trialDays) || 7;
 
@@ -1482,20 +1493,53 @@ function scheduleUsageCron() {
  */
 async function runCalculatePlatformMetrics() {
   const firestore = db();
-  const [tenantsSnap, plansSnap] = await Promise.all([
+  const [tenantsSnap, chainsSnap, plansSnap] = await Promise.all([
     firestore.collection("tenants").get(),
+    firestore.collection("chains").get(),
     firestore.collection("plans").get(),
   ]);
+  const plansById = new Map();
+  plansSnap.docs.forEach((d) => plansById.set(d.id, d.data()));
   const priceByPlanId = new Map();
-  plansSnap.docs.forEach((d) => priceByPlanId.set(d.id, Number(d.data().priceRub) || 0));
+  plansById.forEach((p, id) => priceByPlanId.set(id, Number(p.priceRub) || 0));
 
   let activeCount = 0;
   let mrr = 0;
+  // Точка сети (t.chainId задан) не считаем здесь по своим status/planId —
+  // оба поля у неё не отражают реальный биллинг (он общий на сеть, см.
+  // handleCreateChain/handleBillingWebhook): status у точки сети всегда
+  // "active" уже с момента создания (даже пока СЕТЬ ещё на пробном периоде
+  // или просрочена), а planId — просто дефолт "start", который никогда не
+  // синхронизируется с реальным тарифом сети. Без этого исключения MRR
+  // считал бы за каждую точку сети цену случайного одиночного тарифа
+  // "start" вместо настоящей per-location цены сети — см. цикл по chains
+  // ниже.
+  const locationCountByChain = new Map();
   tenantsSnap.docs.forEach((d) => {
     const t = d.data();
+    if (t.chainId) {
+      // "deleted", а не (status !== "active") — та же граница, что и в
+      // countChainLocations выше: тариф на сеть считается за каждую НЕ
+      // удалённую точку, приостановленные ("suspended") в их число тоже
+      // входят (владелец продолжает платить за них, пока не удалит).
+      if (t.status !== "deleted") locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
+      return;
+    }
     if (t.status !== "active") return;
     activeCount += 1;
     mrr += priceByPlanId.get(t.planId) || 0;
+  });
+  chainsSnap.docs.forEach((d) => {
+    const c = d.data();
+    if (c.status !== "active") return;
+    const plan = plansById.get(c.planId);
+    if (!plan) return;
+    const locationCount = Math.max(1, locationCountByChain.get(d.id) || 0);
+    activeCount += locationCount;
+    // "monthly" — та же огрубление, что и для одиночных заведений выше
+    // (priceRub, без учёта того, что заведение может платить за 6/12
+    // месяцев сразу) — MRR здесь везде нормируется к месячной цене тарифа.
+    mrr += chainPriceForPeriod(plan, "monthly", locationCount);
   });
 
   const dateId = new Date().toISOString().slice(0, 10);
@@ -2134,6 +2178,12 @@ async function handleChangeTenantPlan(req, res) {
  * блокировку, а не тихо продлить дату у уже заблокированного заведения.
  * Отсчитывается от MAX(текущая дата окончания, сейчас) — иначе бонус,
  * выданный уже просроченному заведению, "сгорал" бы в прошлом.
+ *
+ * Точка сети (tenant.chainId задан) не имеет своей subscriptions/{tenantId}
+ * — биллинг общий, на subscriptions/{chainId} (см. handleCreateChain) — без
+ * этого resolve'а запрос всегда падал бы 404 для любой точки сети. Бонус
+ * в этом случае продлевает подписку ВСЕЙ сети, а не одной точки — это и
+ * есть верное поведение при общем биллинге.
  */
 async function handleGrantBonusPeriod(req, res) {
   const decoded = await verifyAuth(req);
@@ -2145,7 +2195,12 @@ async function handleGrantBonusPeriod(req, res) {
     throw new HttpError(400, "Число дней должно быть от 1 до 365");
   }
 
-  const subRef = db().collection("subscriptions").doc(tenantId);
+  const tenantDoc = await db().collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenantDoc.data().chainId || null;
+  const billingId = chainId || tenantId;
+
+  const subRef = db().collection("subscriptions").doc(billingId);
   const subDoc = await subRef.get();
   if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
   const sub = subDoc.data();
@@ -2164,9 +2219,9 @@ async function handleGrantBonusPeriod(req, res) {
   }
   await subRef.update(update);
   await writeAuditLog({
-    tenantId, actorId: decoded.uid, action: "bonusPeriodGranted", metadata: { days: daysNum },
+    tenantId, actorId: decoded.uid, action: "bonusPeriodGranted", metadata: { days: daysNum, chainId },
   });
-  sendJson(res, 200, { ok: true });
+  sendJson(res, 200, { ok: true, chainId });
 }
 
 /**
