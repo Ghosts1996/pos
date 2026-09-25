@@ -231,6 +231,11 @@ a:hover { filter: brightness(1.2); }
 .nav-item .nav-icon {
   font-size: 15px; width: 30px; height: 30px; border-radius: 9px; flex: none;
   background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+  /* Иконки — эмодзи, у каждого своя "родная" палитра (жёлтый домик, разноцветная
+     палитра художника, красный вопрос и т.д.) — рядом друг с другом в одинаковых
+     плашках это выглядело разнобойно, не единым набором. Оттенки серого убирают
+     родной цвет эмодзи, оставляя только форму — ровный монохромный набор. */
+  filter: grayscale(1) brightness(1.7) contrast(0.9);
 }
 .nav-item.active .nav-icon { background: var(--primary); }
 .nav-item .nav-dot { position: absolute; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
