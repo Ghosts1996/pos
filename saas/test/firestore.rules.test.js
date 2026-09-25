@@ -761,3 +761,158 @@ describe("Поддержка клиента из панели платформы
     await assertFails(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/internal/adminNotes"), { text: "x" }));
   });
 });
+
+/**
+ * Сеть заведений (chains) — общий биллинг и общая лояльность на несколько
+ * точек одного владельца, каждая точка сохраняет свою кассу как прежде.
+ * См. docstring "Сети заведений (chains)" в saas/firestore.rules.
+ */
+async function seedChain() {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    // Сеть "chainX" из двух точек (tenantX1, tenantX2) владельца chainOwner,
+    // плюс контрольное одиночное заведение tenantSolo (без chainId вообще) —
+    // чтобы доказать, что для него поведение не изменилось ни на йоту.
+    await setDoc(doc(db, "chains/chainX"), { name: "Сеть X", status: "active" });
+    await setDoc(doc(db, "tenants/tenantX1"), { name: "Точка 1", slug: "x1", status: "active", chainId: "chainX" });
+    await setDoc(doc(db, "tenants/tenantX2"), { name: "Точка 2", slug: "x2", status: "active", chainId: "chainX" });
+    await setDoc(doc(db, "tenants/tenantSolo"), { name: "Одиночное", slug: "solo", status: "active" });
+
+    await setDoc(doc(db, "chainMembers/chainX_chainOwner"), {
+      chainId: "chainX", userId: "chainOwner", role: "owner", status: "active",
+    });
+    await setDoc(doc(db, "tenantMembers/tenantX1_chainOwner"), {
+      tenantId: "tenantX1", userId: "chainOwner", role: "owner", status: "active",
+    });
+    await setDoc(doc(db, "tenantMembers/tenantX2_chainOwner"), {
+      tenantId: "tenantX2", userId: "chainOwner", role: "owner", status: "active",
+    });
+    // empX1 — сотрудник ТОЛЬКО точки 1, но с зеркальным chainMembers (как
+    // должно быть после joinAsDevice на точке сети, см. saas_device_join_
+    // service.dart/console.js syncChainMembership) — обязан видеть общую
+    // лояльность сети, а не только свою точку.
+    await setDoc(doc(db, "tenantMembers/tenantX1_empX1"), {
+      tenantId: "tenantX1", userId: "empX1", role: "employee", status: "active",
+    });
+    await setDoc(doc(db, "chainMembers/chainX_empX1"), {
+      chainId: "chainX", userId: "empX1", role: "employee", status: "active",
+    });
+    // staleEmp — уволенный когда-то сотрудник другого одиночного заведения:
+    // состоит в tenantMembers чужого tenantSolo, но НИКОГДА не состоял ни в
+    // одной точке сети chainX — контрольная группа "просто авторизован,
+    // но чужой сети".
+    await setDoc(doc(db, "tenantMembers/tenantSolo_staleEmp"), {
+      tenantId: "tenantSolo", userId: "staleEmp", role: "employee", status: "active",
+    });
+
+    await setDoc(doc(db, "tenants/tenantX1/tables/t1"), { name: "Стол 1" });
+    await setDoc(doc(db, "tenants/tenantX2/tables/t1"), { name: "Стол 1" });
+    await setDoc(doc(db, "tenants/tenantSolo/tables/t1"), { name: "Стол 1" });
+
+    // Гость сети: профиль лежит в chains/chainX/clients, а НЕ в
+    // tenants/tenantX1/clients или tenants/tenantX2/clients — в этом и
+    // состоит вся разница с одиночным заведением.
+    await setDoc(doc(db, "chains/chainX/clients/chainGuest"), {
+      name: "Гость сети", activeSessionId: "", bonusBalance: 100,
+    });
+    // Гость одиночного заведения — профиль на старом месте, как и всегда.
+    await setDoc(doc(db, "tenants/tenantSolo/clients/soloGuest"), {
+      name: "Гость соло", activeSessionId: "",
+    });
+
+    await setDoc(doc(db, "subscriptions/chainX"), { chainId: "chainX", planId: "chain", status: "active" });
+    await setDoc(doc(db, "subscriptions/tenantSolo"), { tenantId: "tenantSolo", planId: "start", status: "active" });
+  });
+}
+
+describe("Сеть заведений (chains) — общая лояльность", () => {
+  beforeEach(seedChain);
+
+  it("одиночное заведение продолжает работать по-старому (chainId отсутствует)", async () => {
+    const db = ctxFor("staleEmp");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantSolo/tables/t1")));
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantSolo/clients/soloGuest")));
+  });
+
+  it("гость сети (профиль в chains/chainX/clients) видит зал ОБЕИХ точек своей сети", async () => {
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantX1/tables/t1")));
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantX2/tables/t1")));
+  });
+
+  it("гость сети НЕ видит зал чужого одиночного заведения вне его сети", async () => {
+    const db = ctxFor("chainGuest");
+    await assertFails(getDoc(doc(db, "tenants/tenantSolo/tables/t1")));
+  });
+
+  it("сотрудник ТОЛЬКО точки 1 (с зеркальным chainMembers) читает общий профиль гостя сети", async () => {
+    const db = ctxFor("empX1");
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+  });
+
+  it("сотрудник чужого одиночного заведения НЕ читает лояльность сети chainX", async () => {
+    const db = ctxFor("staleEmp");
+    await assertFails(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+  });
+
+  it("сам гость сети читает свой профиль, но не может сам себе начислить бонусы", async () => {
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+    await assertFails(updateDoc(doc(db, "chains/chainX/clients/chainGuest"), { bonusBalance: 999999 }));
+  });
+
+  it("владелец сети читает общую подписку сети (subscriptions/chainX)", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("chainOwner"), "subscriptions/chainX")));
+  });
+
+  it("чужой владелец (staleEmp) не читает подписку сети chainX", async () => {
+    await assertFails(getDoc(doc(ctxFor("staleEmp"), "subscriptions/chainX")));
+  });
+
+  it("гость сети без sessionClaims не может подставить себе чужой activeSessionId", async () => {
+    const db = ctxFor("chainGuest");
+    await assertFails(
+      updateDoc(doc(db, "chains/chainX/clients/chainGuest"), {
+        activeSessionId: "someoneElsesSession",
+        activeTenantId: "tenantX1",
+      })
+    );
+  });
+
+  it("гость сети, реально занявший чек через sessionClaims точки 1, может проставить activeSessionId", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantX1/sessionClaims/sessReal"), { uid: "chainGuest" });
+    });
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(
+      updateDoc(doc(db, "chains/chainX/clients/chainGuest"), {
+        activeSessionId: "sessReal",
+        activeTenantId: "tenantX1",
+      })
+    );
+  });
+
+  it("после привязки к чеку точки 1 гость сети читает именно этот чек через sessions/{doc}", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const adminDb = ctx.firestore();
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessionClaims/sessReal"), { uid: "chainGuest" });
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessions/sessReal"), { status: "active" });
+      await setDoc(doc(adminDb, "chains/chainX/clients/chainGuest"), {
+        name: "Гость сети", activeSessionId: "sessReal", activeTenantId: "tenantX1", bonusBalance: 100,
+      });
+    });
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantX1/sessions/sessReal")));
+    // Тот же sessionId физически не существует в tenants/tenantX2/sessions —
+    // но даже если бы существовал, activeTenantId в профиле гостя привязывает
+    // его именно к точке 1, поэтому точка 2 такой чек читать не даёт.
+    await assertFails(getDoc(doc(db, "tenants/tenantX2/sessions/sessReal")));
+  });
+
+  it("супер-админ читает сеть, подписку сети и общую лояльность", async () => {
+    const db = ctxFor("root");
+    await assertSucceeds(getDoc(doc(db, "chains/chainX")));
+    await assertSucceeds(getDoc(doc(db, "subscriptions/chainX")));
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+  });
+});
