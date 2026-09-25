@@ -86,10 +86,12 @@ on:
 # разделяют код.
 jobs:
   build:
-    # push-триггер выше — только чтобы GitHub зарегистрировал workflow (см.
-    # комментарий там же). Реальная сборка требует tenant_id/job_id_*,
-    # которых push-событие не передаёт — поэтому push-запуски пропускаются.
-    if: github.event_name == 'workflow_dispatch'
+    # ВРЕМЕННО отключено (if: false) — этот job тестируется только на
+    # временной ветке claude/windows-build-ci-verify, чтобы проверить ИМЕННО
+    # build-windows ниже, не тратя минуты раннера на уже рабочую Android-сборку
+    # и не трогая продовый сервер/секреты лишний раз. Удалить эту ветку целиком
+    # после проверки — в claude/dazzling-babbage-n65p6l эта правка не идёт.
+    if: false
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -787,7 +789,7 @@ jobs:
       # того ответа, а не расширение на диске) — трогать сам скрипт ради
       # Windows не нужно.
       - name: Deploy Windows build to own server (pii.hookahpos.su)
-        if: success()
+        if: false # ВРЕМЕННО — см. комментарий у job build выше, тест не должен трогать прод-сервер
         shell: bash
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
@@ -808,7 +810,7 @@ jobs:
             < "$ZIP_PATH"
 
       - name: Report success to buildJobs
-        if: success()
+        if: false # ВРЕМЕННО — тестовый jobId не существует в Firestore, коллбек не нужен
         shell: bash
         run: |
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
@@ -817,7 +819,7 @@ jobs:
             -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id_pos_windows }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
       - name: Report failure to buildJobs
-        if: failure()
+        if: false # ВРЕМЕННО — тестовый jobId не существует в Firestore, коллбек не нужен
         shell: bash
         run: |
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
