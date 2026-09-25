@@ -542,6 +542,16 @@ service cloud.firestore {
       }
     }
 
+    // ---- Дневные снимки метрик платформы (супер-админ #5 — тренд
+    //      регистраций/MRR) — пишет только Admin SDK (см.
+    //      runCalculatePlatformMetrics в saas-gateway/server.js), видит
+    //      только супер-админ: это финансовые данные всей платформы, а не
+    //      конкретного заведения. ----
+    match /platformMetrics/{dateId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
     // ---- Тарифы (платформенные, читает кто угодно авторизованный —
     //      цену и лимиты нужно показать до создания заведения) ----
     match /plans/{planId} {
