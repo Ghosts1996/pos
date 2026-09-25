@@ -161,7 +161,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
     return Container(
       decoration: BoxDecoration(
         color: KolibriColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         children: [
@@ -172,7 +172,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                 CircleAvatar(
                   radius: 18,
                   backgroundColor: KolibriColors.primary,
-                  child: Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
