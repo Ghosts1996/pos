@@ -100,7 +100,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-22.3-mono-nav-icons';
+const CONSOLE_BUILD = '2026-09-22.4-colored-svg-icons-aligned';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -1702,17 +1702,51 @@ function screenDashboard() {
   watchDashboardData(state.activeTenantId);
 }
 
+// Свой набор SVG вместо голых эмодзи (🏠💳💎🎨 и т.д.) — у каждого эмодзи
+// своя "родная" цветовая палитра, из-за чего ряд иконок выглядел случайным
+// набором, а не единым стилем (отзыв "иконки в разнобой"). Один viewBox
+// 24×24 на все — гарантированно одинаковый размер и центровка; цвет теперь
+// свой параметр (background чипа), а не то, что нарисовано внутри самого
+// эмодзи-глифа. См. также .nav-item { justify-content: flex-start } в
+// console.css — это была вторая, более серьёзная причина того же отзыва
+// (браузер по умолчанию центрирует содержимое <button>, из-за чего иконка
+// у коротких подписей стояла ближе к центру плашки, чем у длинных).
+const NAV_ICON_PATHS = {
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
+  device: '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>',
+  gem: '<path d="M12 2 21 9l-9 13L3 9Z"/><path d="M3 9h18M8 2l2 7M16 2l-2 7"/>',
+  palette: '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="16" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="13.5" cy="15" r="1.3" fill="currentColor" stroke="none"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6.2 6-6.2s6 2.7 6 6.2"/><circle cx="17.5" cy="9" r="2.4"/><path d="M15.2 13.8c2.4.3 4.3 2.5 4.3 5.2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5"/>',
+  gear: '<circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><line x1="19" y1="12" x2="16.5" y2="12"/><line x1="5" y1="12" x2="7.5" y2="12"/><line x1="12" y1="5" x2="12" y2="7.5"/><line x1="12" y1="19" x2="12" y2="16.5"/><line x1="16.95" y1="7.05" x2="15.18" y2="8.82"/><line x1="7.05" y1="16.95" x2="8.82" y2="15.18"/><line x1="16.95" y1="16.95" x2="15.18" y2="15.18"/><line x1="7.05" y1="7.05" x2="8.82" y2="8.82"/>',
+  question: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 1 1 3.9 2.4c-.9.5-1.2 1-1.2 2"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
+  chat: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4.5 3.5V16H5.5A1.5 1.5 0 0 1 4 14.5Z"/>',
+  logout: '<path d="M9 4H5.5A1.5 1.5 0 0 0 4 5.5v13A1.5 1.5 0 0 0 5.5 20H9"/><path d="M13 12h7m0 0-3-3m3 3-3 3"/>',
+  badge: '<circle cx="12" cy="12" r="9"/><path d="M8.3 12.3l2.4 2.4 4.6-5"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="1.5"/><rect x="10" y="14" width="4" height="7" rx="0.5"/>',
+  bell: '<path d="M18 8.5a6 6 0 1 0-12 0c0 6.5-2.5 8.5-2.5 8.5h17S18 15 18 8.5Z"/><path d="M13.7 20.5a2 2 0 0 1-3.4 0"/>',
+  list: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  back: '<path d="M11 5 4 12l7 7"/><line x1="4" y1="12" x2="20" y2="12"/>',
+};
+
+function navIconHtml(name, color) {
+  return `<span class="nav-icon" style="--icon-bg:${esc(color)}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON_PATHS[name] || ''}</svg></span>`;
+}
+
 const DASHBOARD_NAV = [
-  { id: 'overview', icon: '🏠', label: 'Обзор' },
-  { id: 'devices', icon: '📲', label: 'Устройства' },
-  { id: 'billing', icon: '💳', label: 'Оплата' },
-  { id: 'plans', icon: '💎', label: 'Тарифы' },
-  { id: 'branding', icon: '🎨', label: 'Брендинг' },
-  { id: 'team', icon: '👥', label: 'Команда' },
-  { id: 'profile', icon: '👤', label: 'Профиль' },
-  { id: 'settings', icon: '⚙️', label: 'Настройки' },
-  { id: 'faq', icon: '❓', label: 'FAQ' },
-  { id: 'support', icon: '💬', label: 'Поддержка' },
+  { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
+  { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
+  { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
+  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
+  { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
+  { id: 'team', icon: 'users', color: '#10B981', label: 'Команда' },
+  { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль' },
+  { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки' },
+  { id: 'faq', icon: 'question', color: '#EF4444', label: 'FAQ' },
+  { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
 ];
 
 function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
@@ -1739,7 +1773,7 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
       ` : `<div class="nav-drawer-tenant">${esc(tenantName || '')}</div>`}
       ${DASHBOARD_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
-          <span class="nav-icon">${t.icon}</span>
+          ${navIconHtml(t.icon, t.color)}
           <span>${esc(t.label)}</span>
           ${t.id === 'billing' && showBillingDot ? '<span class="nav-dot"></span>' : ''}
         </button>
@@ -1747,12 +1781,12 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
       ${state.isSuperAdmin ? `
         <div class="nav-divider"></div>
         <a href="#/admin" class="nav-item" style="text-decoration:none">
-          <span class="nav-icon">🛠️</span><span>Платформа</span>
+          ${navIconHtml('badge', '#F97316')}<span>Платформа</span>
         </a>
       ` : ''}
       <div class="nav-divider"></div>
       <button class="nav-item" id="f-nav-signout">
-        <span class="nav-icon">↪</span><span>Выйти</span>
+        ${navIconHtml('logout', '#475569')}<span>Выйти</span>
       </button>
     </div>
   `;
@@ -3150,15 +3184,15 @@ function updateBrandPreview() {
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ (СУПЕР-АДМИН) ----------
 
 const ADMIN_NAV = [
-  { id: 'overview', icon: '🏠', label: 'Обзор' },
-  { id: 'tenants', icon: '🏢', label: 'Заведения' },
-  { id: 'plans', icon: '💎', label: 'Тарифы' },
-  { id: 'builds', icon: '📲', label: 'Сборки APK' },
-  { id: 'broadcasts', icon: '📣', label: 'Объявления' },
-  { id: 'support', icon: '💬', label: 'Поддержка' },
-  { id: 'staff', icon: '🛠️', label: 'Сотрудники платформы' },
-  { id: 'audit', icon: '📜', label: 'Журнал' },
-  { id: 'security', icon: '🔒', label: 'Безопасность' },
+  { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
+  { id: 'tenants', icon: 'building', color: '#6366F1', label: 'Заведения' },
+  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
+  { id: 'builds', icon: 'device', color: '#0EA5E9', label: 'Сборки APK' },
+  { id: 'broadcasts', icon: 'bell', color: '#FB923C', label: 'Объявления' },
+  { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
+  { id: 'staff', icon: 'badge', color: '#F97316', label: 'Сотрудники платформы' },
+  { id: 'audit', icon: 'list', color: '#94A3B8', label: 'Журнал' },
+  { id: 'security', icon: 'lock', color: '#DC2626', label: 'Безопасность' },
 ];
 
 function adminNavHtml(activeTab) {
@@ -3168,8 +3202,8 @@ function adminNavHtml(activeTab) {
   // Ему нужен не переход назад, а явный путь завести СВОЁ заведение, если
   // он вообще этого хочет.
   const consoleLink = state.tenants.length
-    ? '<a href="#/" class="nav-item" style="text-decoration:none"><span class="nav-icon">↩</span><span>В консоль</span></a>'
-    : '<a href="#/onboarding" class="nav-item" style="text-decoration:none"><span class="nav-icon">➕</span><span>Своё заведение</span></a>';
+    ? `<a href="#/" class="nav-item" style="text-decoration:none">${navIconHtml('back', '#64748B')}<span>В консоль</span></a>`
+    : `<a href="#/onboarding" class="nav-item" style="text-decoration:none">${navIconHtml('plus', '#22C55E')}<span>Своё заведение</span></a>`;
   return `
     <div class="dash-topbar">
       <button class="hamburger-btn" id="f-admin-nav-open">☰</button>
@@ -3184,7 +3218,7 @@ function adminNavHtml(activeTab) {
       <div class="nav-drawer-tenant">Панель платформы</div>
       ${ADMIN_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-admin-tab" data-tab="${t.id}">
-          <span class="nav-icon">${t.icon}</span>
+          ${navIconHtml(t.icon, t.color)}
           <span>${esc(t.label)}</span>
         </button>
       `).join('')}
@@ -3192,7 +3226,7 @@ function adminNavHtml(activeTab) {
       ${consoleLink}
       <div class="nav-divider"></div>
       <button class="nav-item" id="f-admin-signout">
-        <span class="nav-icon">↪</span><span>Выйти</span>
+        ${navIconHtml('logout', '#475569')}<span>Выйти</span>
       </button>
     </div>
   `;
