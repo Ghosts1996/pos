@@ -100,7 +100,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-22.2-password-in-settings';
+const CONSOLE_BUILD = '2026-09-22.3-mono-nav-icons';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
