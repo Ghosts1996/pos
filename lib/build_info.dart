@@ -56,3 +56,26 @@ const String kSaasGatewayUrl = String.fromEnvironment('SAAS_GATEWAY_URL');
 /// пользователя подключает устройство к ЕГО заведению.
 const String kSaasPresetSlug = String.fromEnvironment('SAAS_PRESET_SLUG');
 const String kSaasPresetInviteCode = String.fromEnvironment('SAAS_PRESET_INVITE_CODE');
+
+/// Код СЕТИ заведений (chains/{chainId}, см. её docstring в
+/// saas/firestore.rules), запечённый в гостевую сборку Kolibri для сети —
+/// заказывается владельцем сети как ОДНО приложение сразу на все точки, а
+/// не отдельная сборка на каждую (см. kolibri_main.dart, экран выбора
+/// заведения). Не имеет отношения к POS-сборке — у кассы каждая точка
+/// сети остаётся отдельным устройством/APK со своим kSaasPresetSlug, как
+/// и у одиночного заведения: сеть влияет только на то, КАК гость выбирает
+/// точку и куда смотрит его лояльность, а не на кассу.
+///
+/// Ровно один из двух непуст в конкретной гостевой сборке: одиночное
+/// заведение печёт [kSaasPresetSlug] своей единственной точки, сеть —
+/// этот код вместо него.
+const String kSaasPresetChainSlug = String.fromEnvironment('SAAS_PRESET_CHAIN_SLUG');
+
+/// Ключи SharedPreferences, под которыми гостевая сборка для сети хранит
+/// выбранную гостем точку (см. kolibri_main.dart, _KolibriChainBootstrap) —
+/// вынесены сюда (а не private-константы в kolibri_main.dart), потому что
+/// экран профиля (KolibriProfileScreen, «Сменить заведение сети») должен
+/// уметь их же очистить, не создавая циклический импорт между экраном и
+/// точкой входа приложения.
+const String kChainLocationCacheKey = 'saas_kolibri_chain_location_tenant_id_v1';
+const String kChainIdCacheKey = 'saas_kolibri_chain_id_v1';

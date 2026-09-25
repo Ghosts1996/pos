@@ -4,6 +4,7 @@ import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/notification_service.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
@@ -83,6 +84,47 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
       ),
     );
     await _checkNotifications();
+  }
+
+  /// Гость пришёл в ДРУГОЕ заведение той же сети — сбрасывает
+  /// кэшированный выбор точки (см. _KolibriChainBootstrap в
+  /// kolibri_main.dart) и просит перезапустить приложение, чтобы снова
+  /// показался экран выбора заведения. Полноценный live-переход без
+  /// перезапуска потребовал бы аккуратно остановить все активные подписки
+  /// текущей точки (VenueService, вызовы персонала и т.д.) и поднять их
+  /// заново на новой — риск незакрытых стримов ощутимо выше пользы одного
+  /// лишнего перезапуска, который и так уже случается у гостя каждый день.
+  Future<void> _switchChainVenue() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KolibriColors.surface,
+        title: const Text('Сменить заведение сети'),
+        content: const Text(
+          'Приложение забудет текущее заведение и после перезапуска снова '
+          'спросит, в каком заведении сети вы находитесь.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сменить')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(kChainLocationCacheKey);
+    await prefs.remove(kChainIdCacheKey);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KolibriColors.surface,
+        title: const Text('Готово'),
+        content: const Text('Закройте и снова откройте приложение, чтобы выбрать заведение.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+      ),
+    );
   }
 
   Future<void> _enableNotifications() async {
@@ -493,6 +535,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             label: const Text('Проверить уведомления'),
           ),
         ),
+
+        // Только в гостевой сборке для сети заведений (см. AppScope.chainId) —
+        // у одиночного заведения точка одна и меняться ей не на что.
+        if (AppScope.chainId != null)
+          Center(
+            child: TextButton.icon(
+              onPressed: _switchChainVenue,
+              icon: const Icon(Icons.storefront_outlined, size: 18),
+              label: const Text('Сменить заведение сети'),
+            ),
+          ),
 
         const SizedBox(height: 8),
         // Номер сборки: приложение ставится файлом, и без него нельзя
