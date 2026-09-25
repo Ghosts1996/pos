@@ -221,21 +221,26 @@ a:hover { filter: brightness(1.2); }
 }
 .nav-drawer .field { padding: 0 8px; margin-bottom: 16px; }
 .nav-item {
-  display: flex; align-items: center; gap: 11px; width: 100%;
+  display: flex; align-items: center; justify-content: flex-start; gap: 11px; width: 100%;
   background: none; border: none; color: var(--muted); text-align: left;
   font: inherit; font-size: 14px; font-weight: 600; padding: 9px 10px;
   border-radius: 10px; cursor: pointer; position: relative;
+  /* justify-content не наследуется сам по себе, но у <button> браузер по
+     умолчанию центрирует содержимое (внутренний UA-стиль, не связанный с
+     этим autoprefix-правилом) — без явного flex-start короткие подписи
+     держали иконку у центра плашки, а длинные ("Сотрудники платформы") —
+     сильно левее: иконки в столбик не совпадали (баг-отчёт "в разнобой"). */
 }
 .nav-item:hover { color: var(--text); background: var(--surface-2); }
 .nav-item.active { color: var(--text); background: var(--surface-2); }
 .nav-item .nav-icon {
-  font-size: 15px; width: 30px; height: 30px; border-radius: 9px; flex: none;
-  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
-  /* Иконки — эмодзи, у каждого своя "родная" палитра (жёлтый домик, разноцветная
-     палитра художника, красный вопрос и т.д.) — рядом друг с другом в одинаковых
-     плашках это выглядело разнобойно, не единым набором. Оттенки серого убирают
-     родной цвет эмодзи, оставляя только форму — ровный монохромный набор. */
-  filter: grayscale(1) brightness(1.7) contrast(0.9);
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  /* --icon-bg приходит инлайном на каждом значке (см. navIconHtml в
+     console.js) — свой цвет у каждого пункта меню; .active ниже всё равно
+     перекрывает его синим, т.к. у него выше specificity, а не потому что
+     позже в файле. */
+  background: var(--icon-bg, var(--surface-2));
+  display: flex; align-items: center; justify-content: center;
 }
 .nav-item.active .nav-icon { background: var(--primary); }
 .nav-item .nav-dot { position: absolute; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
