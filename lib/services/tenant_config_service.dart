@@ -117,23 +117,36 @@ class TenantConfigService {
     final member = TenantMember.fromDoc(memberDoc);
 
     final tenantRef = _db.collection('tenants').doc(member.tenantId);
+    // tenant читается ПЕРВЫМ (не в общем Future.wait с остальным) — id
+    // документа subscriptions зависит от того, состоит ли это заведение в
+    // сети (tenant.chainId): для сети общая подписка лежит на
+    // subscriptions/{chainId}, а не subscriptions/{tenantId}, и это можно
+    // узнать только после чтения самого tenant. Для одиночного заведения
+    // (chainId == null, подавляющее большинство) это стоит один
+    // дополнительный последовательный запрос вместо распараллеленных четырёх
+    // — цена, оправданная тем, что раньше ID подписки для сети было бы
+    // неоткуда взять вообще.
+    final tenantDoc = await tenantRef.get();
+    if (!tenantDoc.exists) return null;
+    final tenant = Tenant.fromDoc(tenantDoc);
+    final subscriptionId = tenant.chainId ?? member.tenantId;
+
     final results = await Future.wait([
-      tenantRef.get(),
       tenantRef.collection('settings').doc('session').get(),
       tenantRef.collection('branding').doc('config').get(),
-      _db.collection('subscriptions').doc(member.tenantId).get(),
+      _db.collection('subscriptions').doc(subscriptionId).get(),
     ]);
-
-    final tenantDoc = results[0];
-    if (!tenantDoc.exists) return null;
+    final chainDoc =
+        tenant.chainId != null ? await _db.collection('chains').doc(tenant.chainId).get() : null;
 
     final config = TenantConfig(
-      tenant: Tenant.fromDoc(tenantDoc),
+      tenant: tenant,
       member: member,
-      branding: BrandingConfig.fromMap(results[2].data()),
-      session: SessionSettings.fromMap(results[1].data()),
+      branding: BrandingConfig.fromMap(results[1].data()),
+      session: SessionSettings.fromMap(results[0].data()),
       features: const FeatureFlags(), // TODO(features): подтянуть plans/{planId}.features, когда появится экран тарифов
-      subscription: SubscriptionInfo.fromMap(results[3].data(), member.tenantId),
+      subscription: SubscriptionInfo.fromMap(results[2].data(), subscriptionId),
+      chain: (chainDoc != null && chainDoc.exists) ? ChainInfo.fromDoc(chainDoc) : null,
     );
 
     _current = config;
@@ -160,7 +173,10 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
         'status': c.tenant.status.id,
         'planId': c.tenant.planId,
         'ownerUserId': c.tenant.ownerUserId,
+        'chainId': c.tenant.chainId,
       },
+      if (c.chain != null)
+        'chain': {'id': c.chain!.id, 'name': c.chain!.name, 'status': c.chain!.status.id},
       'member': {
         'tenantId': c.member.tenantId,
         'userId': c.member.userId,
@@ -211,6 +227,7 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
     final raw = sub?[key] as String?;
     return raw == null ? null : DateTime.tryParse(raw);
   }
+  final chain = m['chain'] as Map<String, dynamic>?;
   return TenantConfig(
     tenant: Tenant(
       id: t['id'] as String,
@@ -219,6 +236,7 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
       status: TenantStatusX.fromId(t['status'] as String?),
       planId: t['planId'] as String,
       ownerUserId: t['ownerUserId'] as String,
+      chainId: t['chainId'] as String?,
     ),
     member: TenantMember(
       tenantId: mem['tenantId'] as String,
@@ -238,5 +256,12 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
       pastDueSince: parseIso('pastDueSince'),
       cancelAtPeriodEnd: sub?['cancelAtPeriodEnd'] as bool? ?? false,
     ),
+    chain: chain != null
+        ? ChainInfo(
+            id: chain['id'] as String,
+            name: chain['name'] as String,
+            status: TenantStatusX.fromId(chain['status'] as String?),
+          )
+        : null,
   );
 }

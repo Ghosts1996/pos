@@ -131,6 +131,12 @@ class Tenant {
   final TenantStatus status;
   final String planId;
   final String ownerUserId;
+  // Сеть заведений (см. docstring "Сети заведений (chains)" в
+  // saas/firestore.rules) — null у подавляющего большинства (одиночных)
+  // заведений: биллинг и лояльность у них остаются полностью per-tenant,
+  // как и раньше. Непустая строка означает, что общий биллинг и лояльность
+  // этого заведения — на уровне chains/{chainId}, а не tenants/{id}.
+  final String? chainId;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -141,6 +147,7 @@ class Tenant {
     required this.status,
     required this.planId,
     required this.ownerUserId,
+    this.chainId,
     this.createdAt,
     this.updatedAt,
   });
@@ -149,6 +156,7 @@ class Tenant {
     final d = doc.data() as Map<String, dynamic>? ?? {};
     final created = d['createdAt'];
     final updated = d['updatedAt'];
+    final chainId = d['chainId'] as String?;
     return Tenant(
       id: doc.id,
       name: d['name'] as String? ?? '',
@@ -156,8 +164,31 @@ class Tenant {
       status: TenantStatusX.fromId(d['status'] as String?),
       planId: d['planId'] as String? ?? 'start',
       ownerUserId: d['ownerUserId'] as String? ?? '',
+      chainId: (chainId != null && chainId.isNotEmpty) ? chainId : null,
       createdAt: created is Timestamp ? created.toDate() : null,
       updatedAt: updated is Timestamp ? updated.toDate() : null,
+    );
+  }
+}
+
+/// Сеть заведений (chains/{chainId}) — минимум, нужный кассе/приложению:
+/// её собственный статус жизненного цикла (тот же смысл, что и у
+/// [TenantStatus] заведения), которым может быть заблокирована ЛЮБАЯ точка
+/// сети сразу, независимо от статуса отдельного tenants/{id} (см.
+/// [TenantConfig.operationsAllowed]).
+class ChainInfo {
+  final String id;
+  final String name;
+  final TenantStatus status;
+
+  const ChainInfo({required this.id, required this.name, required this.status});
+
+  factory ChainInfo.fromDoc(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>? ?? {};
+    return ChainInfo(
+      id: doc.id,
+      name: d['name'] as String? ?? '',
+      status: TenantStatusX.fromId(d['status'] as String?),
     );
   }
 }
@@ -416,6 +447,9 @@ class TenantConfig {
   final SessionSettings session;
   final FeatureFlags features;
   final SubscriptionInfo subscription;
+  // null у одиночного заведения (tenant.chainId == null) — заполняется,
+  // только когда заведение состоит в сети (см. [ChainInfo]).
+  final ChainInfo? chain;
 
   const TenantConfig({
     required this.tenant,
@@ -424,11 +458,16 @@ class TenantConfig {
     required this.session,
     required this.features,
     required this.subscription,
+    this.chain,
   });
 
   /// Обычная операционная работа доступна, если и заведение не
-  /// заблокировано, и подписка не просрочена/не отменена (ТЗ §16) — но НЕ
+  /// заблокировано, и — для точки сети — сама сеть не заблокирована
+  /// (владелец не платит за сеть => блокируются ВСЕ её точки разом, не
+  /// только одна), и подписка не просрочена/не отменена (ТЗ §16) — но НЕ
   /// требует активной сети: см. офлайн-грейс-период в [TenantConfigService].
   bool get operationsAllowed =>
-      tenant.status.allowsOperations && subscription.status != 'cancelled';
+      tenant.status.allowsOperations &&
+      (chain == null || chain!.status.allowsOperations) &&
+      subscription.status != 'cancelled';
 }
