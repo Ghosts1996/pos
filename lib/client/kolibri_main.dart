@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,6 +13,7 @@ import '../services/app_scope.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
 import 'screens/kolibri_shell.dart';
+import 'screens/kolibri_venue_picker_screen.dart';
 import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
 
@@ -34,8 +36,32 @@ import 'theme/kolibri_theme.dart';
 /// остальной код гостя уже ходят в Firestore через AppScope (см. его
 /// docstring) — им не важно, откуда взялся tenantId, поэтому единственное,
 /// что нужно было изменить здесь, — это ГДЕ он определяется.
+///
+/// Сборка для СЕТИ заведений (kSaasPresetChainSlug непуст, см. её docstring
+/// в lib/build_info.dart) резолвится иначе: сети, в отличие от точки,
+/// заранее неизвестно, за каким именно столом сети физически сидит гость —
+/// это первое, что выбирает он сам на экране KolibriVenuePickerScreen,
+/// поэтому тут нужен настоящий (интерактивный) экран ДО runApp, а не
+/// разовый асинхронный резолв слага в фоне. См. _KolibriChainBootstrap
+/// ниже — отдельный путь запуска, полностью в стороне от обычного, чтобы
+/// поведение уже работающих одиночных сборок не изменилось ни на йоту.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (kSaasMode && kSaasPresetChainSlug.isNotEmpty) {
+    if (!DefaultFirebaseOptions.isConfigured) {
+      runApp(const KolibriApp(ready: false, startupError: 'Firebase не настроен для этой сборки.'));
+      return;
+    }
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    } catch (e) {
+      runApp(KolibriApp(ready: false, startupError: e.toString()));
+      return;
+    }
+    runApp(const _KolibriChainBootstrap());
+    return;
+  }
 
   String? startupError;
   var ready = false;
@@ -130,6 +156,146 @@ Future<BrandingConfig?> _applyTenantBranding() async {
     return branding;
   } catch (_) {
     return null;
+  }
+}
+
+/// То же самое, что и [_applyTenantBranding], но для сети целиком
+/// (chains/{chainId}/branding/config, публично читаемо — см.
+/// saas/firestore.rules) — единое приложение сети показывает брендинг
+/// САМОЙ СЕТИ, а не отдельной точки: иначе тема мигала бы при каждом
+/// переключении гостем заведения внутри одной сети (см. её же docstring).
+Future<BrandingConfig?> _applyChainBranding(String chainId) async {
+  try {
+    final doc = await FirebaseFirestore.instance.collection('chains/$chainId/branding').doc('config').get();
+    final branding = BrandingConfig.fromMap(doc.data());
+    KolibriColors.applyBranding(branding);
+    return branding;
+  } catch (_) {
+    return null;
+  }
+}
+
+enum _ChainBootPhase { loading, picking, ready, error }
+
+/// Точка входа гостевой сборки для СЕТИ заведений (kSaasPresetChainSlug) —
+/// см. её докстринг у [main] выше. В отличие от одиночной сборки, здесь
+/// нужен настоящий (интерактивный) UI ДО того, как известен tenantId: гость
+/// сам выбирает, за каким столом какой точки сети он сидит.
+///
+/// Выбор кэшируется на диск (тот же принцип, что и у [_resolveSaasTenantId]
+/// для одиночной сборки) — при следующих запусках приложение сразу
+/// открывает ПОСЛЕДНЮЮ выбранную точку без сети и без повторного вопроса.
+/// Сменить точку (гость пришёл в другое заведение той же сети) можно из
+/// профиля — см. KolibriProfileScreen.
+class _KolibriChainBootstrap extends StatefulWidget {
+  const _KolibriChainBootstrap();
+
+  @override
+  State<_KolibriChainBootstrap> createState() => _KolibriChainBootstrapState();
+}
+
+class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
+  _ChainBootPhase _phase = _ChainBootPhase.loading;
+  String? _error;
+  ChainDirectory? _directory;
+  String _appTitle = 'Colibri Lounge';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedTenantId = prefs.getString(kChainLocationCacheKey);
+      final cachedChainId = prefs.getString(kChainIdCacheKey);
+      if (cachedTenantId != null && cachedTenantId.isNotEmpty && cachedChainId != null && cachedChainId.isNotEmpty) {
+        await _enterLocation(cachedTenantId, cachedChainId);
+        return;
+      }
+      final directory = await SaasDeviceJoinService().resolveChainBySlug(kSaasPresetChainSlug);
+      if (!mounted) return;
+      setState(() {
+        _directory = directory;
+        _phase = _ChainBootPhase.picking;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _phase = _ChainBootPhase.error;
+      });
+    }
+  }
+
+  Future<void> _onVenuePicked(ChainLocation location) async {
+    final directory = _directory!;
+    setState(() => _phase = _ChainBootPhase.loading);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(kChainLocationCacheKey, location.tenantId);
+    await prefs.setString(kChainIdCacheKey, directory.chainId);
+    await _enterLocation(location.tenantId, directory.chainId);
+  }
+
+  Future<void> _enterLocation(String tenantId, String chainId) async {
+    try {
+      AppScope.enterTenant(tenantId, chainId: chainId);
+      await KolibriAuthService().ensureGuest();
+      final branding = await _applyChainBranding(chainId);
+      if (!mounted) return;
+      if (branding != null && branding.appName.isNotEmpty) {
+        _appTitle = branding.appName;
+      }
+      setState(() => _phase = _ChainBootPhase.ready);
+      unawaited(AiSettingsStore.instance.init());
+      unawaited(loadLoyaltyTierSettings());
+      VenueService.instance.watch();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _phase = _ChainBootPhase.error;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget home;
+    switch (_phase) {
+      case _ChainBootPhase.loading:
+        home = Scaffold(
+          backgroundColor: KolibriColors.background,
+          body: Center(child: CircularProgressIndicator(color: KolibriColors.primary)),
+        );
+        break;
+      case _ChainBootPhase.picking:
+        home = KolibriVenuePickerScreen(chain: _directory!, onSelected: _onVenuePicked);
+        break;
+      case _ChainBootPhase.ready:
+        home = const KolibriShell();
+        break;
+      case _ChainBootPhase.error:
+        home = _StartupError(details: _error);
+        break;
+    }
+    return MaterialApp(
+      title: _appTitle,
+      debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ru', 'RU')],
+      locale: const Locale('ru', 'RU'),
+      theme: KolibriTheme.dark,
+      darkTheme: KolibriTheme.dark,
+      themeMode: ThemeMode.dark,
+      home: home,
+    );
   }
 }
 

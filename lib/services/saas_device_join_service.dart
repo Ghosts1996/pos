@@ -41,6 +41,35 @@ class SaasDeviceJoinService {
     return tenantId;
   }
 
+  /// Находит сеть заведений по её человекочитаемому коду и отдаёт список
+  /// живых точек — нужен гостевой сборке Kolibri для сети (см.
+  /// kSaasPresetChainSlug), чтобы построить экран выбора заведения ДО того,
+  /// как известен tenantId конкретной точки. Бросает исключение, если сеть
+  /// не найдена или удалена — сообщение уже на русском и годится для UI.
+  Future<ChainDirectory> resolveChainBySlug(String slug) async {
+    final json = await _callGateway('resolveChainBySlug', {'slug': slug.trim()}, requireAuth: false);
+    final chainId = json['chainId'] as String?;
+    if (chainId == null || chainId.isEmpty) {
+      throw StateError('Сервис не вернул chainId для этой сети');
+    }
+    final rawLocations = (json['locations'] as List?) ?? const [];
+    final locations = rawLocations
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .map((e) => ChainLocation(
+              tenantId: e['tenantId'] as String? ?? '',
+              name: e['name'] as String? ?? '',
+              slug: e['slug'] as String? ?? '',
+              status: e['status'] as String? ?? 'active',
+            ))
+        .where((l) => l.tenantId.isNotEmpty)
+        .toList();
+    return ChainDirectory(
+      chainId: chainId,
+      name: json['name'] as String? ?? '',
+      locations: locations,
+    );
+  }
+
   /// Создаёт одноразовое демо-заведение (без email/пароля, само стирается
   /// через несколько часов) и сразу возвращает всё нужное для
   /// присоединения — см. docstring [handleCreateDemoTenant] на сервере.
@@ -132,4 +161,30 @@ class SaasDeviceJoinService {
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
+}
+
+/// Одна точка сети — то, что нужно показать гостю в списке выбора
+/// заведения (см. [SaasDeviceJoinService.resolveChainBySlug]).
+class ChainLocation {
+  final String tenantId;
+  final String name;
+  final String slug;
+  final String status;
+
+  const ChainLocation({
+    required this.tenantId,
+    required this.name,
+    required this.slug,
+    required this.status,
+  });
+}
+
+/// Сеть заведений с её живыми точками — результат
+/// [SaasDeviceJoinService.resolveChainBySlug].
+class ChainDirectory {
+  final String chainId;
+  final String name;
+  final List<ChainLocation> locations;
+
+  const ChainDirectory({required this.chainId, required this.name, required this.locations});
 }
