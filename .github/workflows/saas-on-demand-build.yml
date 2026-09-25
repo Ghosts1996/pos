@@ -750,6 +750,16 @@ jobs:
           # Затронут только выбор политик для СТОРОННЕГО CMakeLists.txt самого
           # SDK, на нашу Dart/Flutter-часть сборки не влияет.
           CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+          # permission_handler_windows (плагин, устанавливается как зависимость
+          # permission_handler — вызовы разрешений реально нужны только на
+          # Android, но Flutter всё равно собирает Windows-реализацию раз она
+          # заявлена в pubspec) использует устаревший <experimental/coroutine> —
+          # начиная с новых версий MSVC/STL это статический assert-error (STL1011),
+          # а не предупреждение. CL — переменная окружения, которую сам cl.exe
+          # читает и молча добавляет к КАЖДОМУ своему вызову доп. флагами — так
+          # можно заглушить конкретно это макросом-предохранителем из самого
+          # текста ошибки, не патча исходники плагина в pub cache.
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: |
           if [ -z "$SAAS_GATEWAY_URL" ]; then
             echo "::error::Секрет SAAS_GATEWAY_URL не задан — без него Windows-сборка не сможет получить конфигурацию Firebase в рантайме (см. resolveWindowsOptions в lib/firebase_options.dart)."
