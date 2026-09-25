@@ -364,8 +364,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
-                  SizedBox(width: 12),
-                  Expanded(
+                  const SizedBox(width: 12),
+                  const Expanded(
                     child: Text(
                       'Бонусы копятся на этом устройстве и находятся по вашему номеру '
                       'на кассе. Сменили телефон — назовите номер и покажите ID '
@@ -500,7 +500,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         Text(
           '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber',
           textAlign: TextAlign.center,
-          style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+          style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),
       ],
     );
