@@ -810,6 +810,48 @@ function landingPlanCardHtml(p, selected, popular) {
   `;
 }
 
+// Тариф для сети заведений: цена/лимиты — за КАЖДУЮ точку (первая может
+// отличаться от последующих, см. customAdditionalPrice в watchPlans), а не
+// за заведение целиком, как у обычных тарифов выше — поэтому отдельная
+// карточка, а не переиспользование landingPlanCardHtml с другими цифрами.
+function landingChainPlanCardHtml(p, selected) {
+  const priceText = Number(p.priceRub) > 0
+    ? `от ${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
+    : 'По запросу';
+  const additionalPriceRub = p.customAdditionalPrice ? (Number(p.priceRubAdditional) || 0) : (Number(p.priceRub) || 0);
+  const additionalText = Number(p.priceRub) > 0 && additionalPriceRub > 0
+    ? `+ ${additionalPriceRub.toLocaleString('ru-RU')} ₽/мес за каждую следующую точку`
+    : null;
+  const limits = [
+    p.maxEmployees ? `до ${p.maxEmployees} сотрудников на точку` : 'сотрудников без лимита',
+    p.maxTables ? `до ${p.maxTables} столов на точку` : 'столов без лимита',
+    p.maxDevices ? `до ${p.maxDevices} устройств на точку` : 'устройств без лимита',
+  ];
+  const perks = [];
+  if (p.aiEnabled) perks.push('ИИ-помощники');
+  if (p.customBranding) perks.push('свой брендинг');
+  if (p.customDomain) perks.push('свой домен');
+  if (p.features?.advancedReports) perks.push('расширенные отчёты');
+  return `
+    <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
+      <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
+      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}</div>
+      ${additionalText ? `<div class="small muted">${esc(additionalText)}</div>` : ''}
+      <div class="small muted" style="margin-top:4px">${limits.join(' · ')}</div>
+      ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
+      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 7} дней бесплатно на первую точку · общий биллинг и лояльность на всю сеть</div>
+      <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-chain-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
+        ${selected ? 'Тариф выбран ✓' : 'Выбрать тариф сети'}
+      </button>
+      ${Number(p.priceRub) > 0 ? `
+        <button class="btn-link f-landing-chain-plan-buy" data-id="${esc(p.id)}" style="margin-top:6px">
+          Купить сразу, без пробного периода
+        </button>
+      ` : ''}
+    </div>
+  `;
+}
+
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
   // Премиальная тёмно-синяя схема — только для этого публичного экрана
@@ -949,6 +991,14 @@ function screenLanding() {
         <h2 class="landing-h2">Тарифы</h2>
         <p class="landing-h2-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.</p>
         <div id="landing-plans" class="landing-plans-grid"><div class="spinner"></div></div>
+      </div>
+    </section>
+
+    <section class="landing-section" id="landing-chain-pricing" style="display:none">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Тарифы для сети заведений</h2>
+        <p class="landing-h2-sub">Несколько точек одного владельца — общий биллинг, общая программа лояльности и бонусы, гость выбирает точку сети прямо в приложении.</p>
+        <div id="landing-chain-plans" class="landing-plans-grid"></div>
       </div>
     </section>
 
@@ -1092,14 +1142,16 @@ function screenLanding() {
 
   sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
     const allPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
-    // Тарифы для сети (isChainPlan) на публичном лендинге НЕ показываем:
-    // выбор "Выбрать и попробовать" здесь ведёт в обычный онбординг ОДНОГО
-    // заведения (без чекбокса "Это сеть"), и посетитель, выбравший тут
-    // тариф сети, получил бы одиночное заведение с planId сети — рабочее,
-    // но бессмысленное сочетание (лимиты/цена сети без самой сети). Купить
-    // тариф сети можно только там, где он и должен быть выбран осознанно —
-    // на экране "Новое заведение" с явным чекбоксом (см. screenOnboarding).
+    // Тарифы для сети (isChainPlan) показываем ОТДЕЛЬНОЙ секцией ниже
+    // (landing-chain-plans), а не среди обычных: цена/лимиты у них за
+    // точку, а выбор такого тарифа обязан провести посетителя через
+    // онбординг именно сети (чекбокс "Это сеть заведений") — иначе
+    // получилось бы одиночное заведение с ценой/лимитами сети без самой
+    // сети. Кнопки чуть ниже сами включают этот путь через presetIsChain
+    // в localStorage (см. screenOnboarding) — тариф сети по-прежнему
+    // нельзя выбрать и одновременно завести одиночное заведение.
     const plans = allPlans.filter((p) => !p.isChainPlan);
+    const chainPlans = allPlans.filter((p) => !!p.isChainPlan);
     const body = $('landing-plans');
     if (!body) return;
     // "Популярный" — средний по цене из реально продаваемых тарифов (не
@@ -1111,43 +1163,53 @@ function screenLanding() {
     body.innerHTML = plans.length
       ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId, p.id === popularId)).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
+    const chainSection = document.getElementById('landing-chain-pricing');
+    if (chainSection) chainSection.style.display = chainPlans.length ? '' : 'none';
+    const chainBody = $('landing-chain-plans');
+    if (chainBody) chainBody.innerHTML = chainPlans.map((p) => landingChainPlanCardHtml(p, p.id === selectedPlanId)).join('');
     const updateSkipTrialNote = () => {
       const note = $('f-landing-skip-trial-note');
       if (note) note.style.display = window.localStorage.getItem('skipTrial') === '1' ? 'block' : 'none';
     };
+    const refreshPlanButtons = () => {
+      document.querySelectorAll('.f-landing-plan-pick, .f-landing-chain-plan-pick').forEach((btn) => {
+        const isSel = btn.dataset.id === selectedPlanId;
+        const isChainBtn = btn.classList.contains('f-landing-chain-plan-pick');
+        btn.textContent = isSel ? 'Тариф выбран ✓' : (isChainBtn ? 'Выбрать тариф сети' : 'Выбрать и попробовать');
+        btn.classList.toggle('btn-primary', isSel);
+        btn.classList.toggle('btn-ghost', !isSel);
+        btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
+      });
+    };
+    // Общая точка выбора и для обычных тарифов, и для тарифов сети —
+    // presetIsChain дальше решает, придёт ли посетитель в онбординг с уже
+    // отмеченным чекбоксом "Это сеть заведений" (см. screenOnboarding).
+    const selectLandingPlan = (id, { isChain, buyNow }) => {
+      selectedPlanId = id;
+      window.localStorage.setItem('selectedPlanId', selectedPlanId);
+      if (isChain) window.localStorage.setItem('presetIsChain', '1');
+      else window.localStorage.removeItem('presetIsChain');
+      // Обычный путь — через пробный период, а не сразу оплата: если до
+      // этого выбирали "Купить сразу" на другом тарифе, сбрасываем флаг,
+      // иначе после регистрации владельца неожиданно перекинуло бы на
+      // оплату тарифа, который он уже передумал покупать напрямую.
+      if (buyNow) window.localStorage.setItem('skipTrial', '1');
+      else window.localStorage.removeItem('skipTrial');
+      refreshPlanButtons();
+      updateSkipTrialNote();
+      $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
     document.querySelectorAll('.f-landing-plan-pick').forEach((el) => {
-      el.onclick = () => {
-        selectedPlanId = el.dataset.id;
-        window.localStorage.setItem('selectedPlanId', selectedPlanId);
-        // Обычный путь — через пробный период, а не сразу оплата: если до
-        // этого выбирали "Купить сразу" на другом тарифе, сбрасываем флаг,
-        // иначе после регистрации владельца неожиданно перекинуло бы на
-        // оплату тарифа, который он уже передумал покупать напрямую.
-        window.localStorage.removeItem('skipTrial');
-        document.querySelectorAll('.f-landing-plan-pick').forEach((btn) => {
-          const isSel = btn.dataset.id === selectedPlanId;
-          btn.textContent = isSel ? 'Тариф выбран ✓' : 'Выбрать и попробовать';
-          btn.className = `btn ${isSel ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick`;
-          btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
-        });
-        updateSkipTrialNote();
-        $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      };
+      el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: false, buyNow: false });
     });
     document.querySelectorAll('.f-landing-plan-buy').forEach((el) => {
-      el.onclick = () => {
-        selectedPlanId = el.dataset.id;
-        window.localStorage.setItem('selectedPlanId', selectedPlanId);
-        window.localStorage.setItem('skipTrial', '1');
-        document.querySelectorAll('.f-landing-plan-pick').forEach((btn) => {
-          const isSel = btn.dataset.id === selectedPlanId;
-          btn.textContent = isSel ? 'Тариф выбран ✓' : 'Выбрать и попробовать';
-          btn.className = `btn ${isSel ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick`;
-          btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
-        });
-        updateSkipTrialNote();
-        $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      };
+      el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: false, buyNow: true });
+    });
+    document.querySelectorAll('.f-landing-chain-plan-pick').forEach((el) => {
+      el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: true, buyNow: false });
+    });
+    document.querySelectorAll('.f-landing-chain-plan-buy').forEach((el) => {
+      el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: true, buyNow: true });
     });
     updateSkipTrialNote();
 
@@ -1615,13 +1677,22 @@ function screenOnboarding() {
   chainNameEl.addEventListener('input', () => {
     if (!chainSlugTouched) chainSlugEl.value = slugify(chainNameEl.value);
   });
-  $('f-is-chain').addEventListener('change', (e) => {
-    const isChain = e.target.checked;
+  const applyChainToggle = (isChain) => {
     $('f-chain-fields').style.display = isChain ? '' : 'none';
     $('f-name-label').textContent = isChain ? 'Название первой точки' : 'Название заведения';
     $('f-slug-label').textContent = isChain ? 'Код первой точки' : 'Код заведения';
     $('f-submit').textContent = isChain ? 'Создать сеть' : 'Создать заведение';
-  });
+  };
+  $('f-is-chain').addEventListener('change', (e) => applyChainToggle(e.target.checked));
+  // Если владелец пришёл с лендинга, выбрав тариф именно для сети (см.
+  // f-landing-chain-plan-pick/-buy в screenLanding) — сразу отмечаем
+  // чекбокс, иначе он решил бы, что выбранный тариф потерялся. Сам
+  // chosenPlanId ниже читается из того же localStorage независимо от этого
+  // чекбокса — presetIsChain лишь избавляет от лишнего клика.
+  if (window.localStorage.getItem('presetIsChain') === '1') {
+    $('f-is-chain').checked = true;
+    applyChainToggle(true);
+  }
 
   document.querySelectorAll('.palette-swatch').forEach((el) => {
     el.onclick = () => {
@@ -1699,6 +1770,7 @@ function screenOnboarding() {
       );
       window.localStorage.removeItem('selectedPlanId');
       window.localStorage.removeItem('skipTrial');
+      window.localStorage.removeItem('presetIsChain');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
       // createTenant/createChain уже завели дефолтный брендинг ("Полночный
