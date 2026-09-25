@@ -120,6 +120,11 @@ a:hover { filter: brightness(1.2); }
 .grow { flex: 1; min-width: 0; }
 .row > button, .row > .btn { width: auto; flex: 0 0 auto; }
 .row > input, .row > select { margin-bottom: 0; }
+/* Класс использовался в разметке (console.js) без единого правила здесь —
+   длинные email/названия в узком .grow-контейнере не обрезались "...", а
+   переносились по словам/буквам вразнобой (на узком телефоне выглядело как
+   наехавший друг на друга текст). */
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .spinner {
   width: 26px; height: 26px; margin: 60px auto;
