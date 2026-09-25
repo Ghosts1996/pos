@@ -2251,17 +2251,26 @@ function watchDashboardData(tenantId) {
 
     const plansHtml = () => `
       <h2>Тарифы</h2>
+      ${tenant.chainId ? `
+        <p class="small muted" style="margin-top:-4px">Цена ниже — за ПЕРВУЮ точку сети; каждая
+        следующая точка обычно дешевле (её цену видно только в итоговом счёте на оплате).</p>
+      ` : ''}
       <div class="card">
         ${canManage && plans ? `
-          ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => `
+          ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => {
+            const priceParts = [`${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`];
+            if (Number(p.priceRubSemiannual) > 0) priceParts.push(`${Number(p.priceRubSemiannual).toLocaleString('ru-RU')} ₽/6 мес`);
+            if (Number(p.priceRubYearly) > 0) priceParts.push(`${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год`);
+            return `
             <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
               <div class="grow">
                 <div>${esc(p.name || p.id)}</div>
-                <div class="small muted">${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес${Number(p.priceRubYearly) > 0 ? ` · ${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год` : ''}</div>
-                ${Number(p.priceRubYearly) > 0 ? `
+                <div class="small muted">${priceParts.join(' · ')}</div>
+                ${Number(p.priceRubSemiannual) > 0 || Number(p.priceRubYearly) > 0 ? `
                   <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
                     <option value="monthly">Помесячно</option>
-                    <option value="yearly">На год (выгоднее)</option>
+                    ${Number(p.priceRubSemiannual) > 0 ? '<option value="semiannual">На 6 месяцев</option>' : ''}
+                    ${Number(p.priceRubYearly) > 0 ? '<option value="yearly">На год (выгоднее)</option>' : ''}
                   </select>
                 ` : ''}
               </div>
@@ -2270,7 +2279,8 @@ function watchDashboardData(tenantId) {
                 ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
               </button>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
           <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
         ` : '<p class="small muted">Тарифы пока не заданы платформой.</p>'}
       </div>
@@ -4268,12 +4278,31 @@ function watchPlans() {
         <label class="field"><span>Название</span>
           <input class="f-plan-field" data-plan="${esc(p.id)}" data-field="name" value="${esc(p.name || '')}">
         </label>
-        <label class="field"><span>Цена, ₽/мес (0 — не продаётся напрямую, только вручную через смену тарифа заведению)</span>
+        <label class="row" style="width:auto;gap:6px;margin-bottom:12px">
+          <input type="checkbox" class="f-plan-checkbox f-plan-is-chain" data-plan="${esc(p.id)}" data-field="isChainPlan" ${p.isChainPlan ? 'checked' : ''}>
+          Тариф для сети заведений (своя цена за первую точку и за каждую следующую)
+        </label>
+        <label class="field"><span>${p.isChainPlan ? 'Цена за ПЕРВУЮ точку, ₽/мес' : 'Цена, ₽/мес'} (0 — не продаётся напрямую, только вручную через смену тарифа заведению)</span>
           <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRub" value="${Number(p.priceRub) || 0}">
+        </label>
+        <label class="field"><span>Цена, ₽/6 мес (0 — оплата на полгода для этого тарифа недоступна)</span>
+          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubSemiannual" value="${Number(p.priceRubSemiannual) || 0}">
         </label>
         <label class="field"><span>Цена, ₽/год (0 — годовая оплата для этого тарифа недоступна)</span>
           <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubYearly" value="${Number(p.priceRubYearly) || 0}">
         </label>
+        <div class="f-plan-chain-fields" data-plan="${esc(p.id)}" style="${p.isChainPlan ? '' : 'display:none'};border-top:1px solid var(--border);padding-top:12px;margin-bottom:4px">
+          <div class="small muted" style="margin-bottom:8px">Цена за КАЖДУЮ ДОПОЛНИТЕЛЬНУЮ точку сети (пусто/0 — по умолчанию так же, как за первую)</div>
+          <label class="field"><span>Доп. точка, ₽/мес</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditional" value="${Number(p.priceRubAdditional) || 0}">
+          </label>
+          <label class="field"><span>Доп. точка, ₽/6 мес</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalSemiannual" value="${Number(p.priceRubAdditionalSemiannual) || 0}">
+          </label>
+          <label class="field"><span>Доп. точка, ₽/год</span>
+            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalYearly" value="${Number(p.priceRubAdditionalYearly) || 0}">
+          </label>
+        </div>
         <div class="row">
           <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxEmployees" value="${Number(p.maxEmployees) || 0}">
@@ -4317,19 +4346,33 @@ function watchPlans() {
     document.querySelectorAll('.f-plan-delete').forEach((el) => {
       el.onclick = () => deletePlan(el.dataset.plan);
     });
+    document.querySelectorAll('.f-plan-is-chain').forEach((el) => {
+      el.onchange = () => {
+        const fields = document.querySelector(`.f-plan-chain-fields[data-plan="${el.dataset.plan}"]`);
+        if (fields) fields.style.display = el.checked ? '' : 'none';
+      };
+    });
   }, () => {
     body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
   }));
 
   $('f-new-plan').onclick = async () => {
-    const id = prompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip):');
+    const id = prompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip; "chain" — для сети заведений):');
     if (!id || !/^[a-z0-9-]+$/.test(id)) {
       if (id !== null) toast('Код тарифа: только латиница, цифры и дефис');
       return;
     }
+    // Тариф для сети — своя цена за первую и за каждую следующую точку (см.
+    // chainPriceForPeriod в saas-gateway/server.js). Код "chain" — просто
+    // самый ожидаемый вариант (используется как planId по умолчанию в
+    // handleCreateChain), но пометить чекбоксом можно любой тариф.
+    const isChainPlan = id === 'chain' || confirm('Это тариф для сети заведений (своя цена за первую и доп. точки)?');
     try {
       await setDoc(doc(state.db, 'plans', id), {
-        name: id, priceRub: 0, priceRubYearly: 0, maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
+        name: isChainPlan && id === 'chain' ? 'Сеть заведений' : id,
+        priceRub: 0, priceRubSemiannual: 0, priceRubYearly: 0,
+        ...(isChainPlan ? { priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0, isChainPlan: true } : {}),
+        maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
         trialDays: 7, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
       });
@@ -4660,7 +4703,8 @@ async function startCheckout(tenantId, planId, billingPeriod, chainId) {
     // без тарифа Blaze (см. docstring в начале saas-gateway/server.js) —
     // теперь тот же самый эндпойнт, но на своём сервере.
     const res = await callSaasGateway('createCheckoutSession', {
-      tenantId, chainId, planId, billingPeriod: billingPeriod === 'yearly' ? 'yearly' : 'monthly',
+      tenantId, chainId, planId,
+      billingPeriod: billingPeriod === 'yearly' ? 'yearly' : billingPeriod === 'semiannual' ? 'semiannual' : 'monthly',
       // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
       // подписки обновится сам по snapshot-подписке, как только придёт
       // webhook (обычно за секунды, но платёжная форма может быть и
