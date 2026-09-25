@@ -753,11 +753,15 @@ jobs:
           # Android, но Flutter всё равно собирает Windows-реализацию раз она
           # заявлена в pubspec) использует устаревший <experimental/coroutine> —
           # начиная с новых версий MSVC/STL это статический assert-error (STL1011),
-          # а не предупреждение. CL — переменная окружения, которую сам cl.exe
-          # читает и молча добавляет к КАЖДОМУ своему вызову доп. флагами — так
-          # можно заглушить конкретно это макросом-предохранителем из самого
-          # текста ошибки, не патча исходники плагина в pub cache.
-          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+          # а не предупреждение. CXXFLAGS — штатный механизм CMake: значение
+          # подставляется как НАЧАЛЬНОЕ содержимое CMAKE_CXX_FLAGS при первой
+          # генерации build/windows (a не патч исходников плагина в pub cache).
+          # ПОПЫТКА №1 — переменная CL — оказалась хуже: cl.exe и правда её
+          # читает, но CMake использует ту же переменную на этапе ОПРЕДЕЛЕНИЯ
+          # компилятора (CMakeDetermineCXXCompiler), и с задефайненным CL это
+          # определение стало падать вообще ("No CMAKE_CXX_COMPILER could be
+          # found") — CXXFLAGS в эту фазу не вмешивается, только в сам билд.
+          CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: |
           if [ -z "$SAAS_GATEWAY_URL" ]; then
             echo "::error::Секрет SAAS_GATEWAY_URL не задан — без него Windows-сборка не сможет получить конфигурацию Firebase в рантайме (см. resolveWindowsOptions в lib/firebase_options.dart)."
