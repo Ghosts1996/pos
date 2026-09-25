@@ -1127,15 +1127,73 @@ function scheduleUsageCron() {
   }, USAGE_CRON_INTERVAL_MS);
 }
 
+/**
+ * Дневной снимок платформы (супер-админ #5) — тренд регистраций и MRR по
+ * дням в "Аналитике" панели платформы. Регистрации за последние N дней
+ * консоль и так считает на лету из tenants.createdAt (см. watchAnalytics в
+ * console.js) — снимок нужен именно для MRR: это метрика "прямо сейчас"
+ * (активные подписки × цена тарифа), её нельзя посчитать задним числом,
+ * если не сохранять каждый день — в отличие от регистраций, у смены
+ * тарифа/отмены подписки нет истории с датой изменения.
+ *
+ * Один документ в день (id — дата UTC), set() перезаписывает при повторном
+ * запуске в тот же день — идемпотентно, повторный прогон не плодит дубли.
+ */
+async function runCalculatePlatformMetrics() {
+  const firestore = db();
+  const [tenantsSnap, plansSnap] = await Promise.all([
+    firestore.collection("tenants").get(),
+    firestore.collection("plans").get(),
+  ]);
+  const priceByPlanId = new Map();
+  plansSnap.docs.forEach((d) => priceByPlanId.set(d.id, Number(d.data().priceRub) || 0));
+
+  let activeCount = 0;
+  let mrr = 0;
+  tenantsSnap.docs.forEach((d) => {
+    const t = d.data();
+    if (t.status !== "active") return;
+    activeCount += 1;
+    mrr += priceByPlanId.get(t.planId) || 0;
+  });
+
+  const dateId = new Date().toISOString().slice(0, 10);
+  await firestore.collection("platformMetrics").doc(dateId).set({
+    date: dateId,
+    totalTenants: tenantsSnap.size,
+    activeCount,
+    mrr,
+    calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+const PLATFORM_METRICS_CRON_INTERVAL_MS = 24 * 3600 * 1000;
+function schedulePlatformMetricsCron() {
+  // Никакого немедленного прогона при старте (в отличие от идеи "запустить
+  // сразу") — server.js require()'ится и в smoke-тестах без настоящего
+  // Firestore (см. docstring test.smoke.js), а первый снимок и так можно
+  // получить сразу же вручную через ту же кнопку "Пересчитать сейчас", что
+  // и usage (см. handleRecalculateUsage) — не нужен второй способ того же.
+  setInterval(async () => {
+    try {
+      await runCalculatePlatformMetrics();
+    } catch (e) {
+      console.error("saas-gateway: ошибка снимка метрик платформы:", e.message || e);
+    }
+  }, PLATFORM_METRICS_CRON_INTERVAL_MS);
+}
+
 /** Ручной запуск того же самого расчёта — кнопка "Пересчитать сейчас" в
  *  разделе "Инфраструктура" панели платформы: суточный таймер задумывался
  *  для тихой фоновой работы, но после первого деплоя этой фичи (или после
  *  перезапуска сервиса) ждать до суток, чтобы просто ПРОВЕРИТЬ, что она
- *  вообще считает, неудобно. */
+ *  вообще считает, неудобно. Заодно снимает и дневную метрику платформы
+ *  (см. runCalculatePlatformMetrics) — та же кнопка сразу даёт первую точку
+ *  графика на "Аналитике", а не через сутки ожидания фонового таймера. */
 async function handleRecalculateUsage(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded.uid);
-  await runCalculateUsage();
+  await Promise.all([runCalculateUsage(), runCalculatePlatformMetrics()]);
   sendJson(res, 200, { ok: true });
 }
 
@@ -1881,6 +1939,7 @@ const server = http.createServer((req, res) => {
 scheduleDemoCleanup();
 scheduleBillingCron();
 scheduleUsageCron();
+schedulePlatformMetricsCron();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
