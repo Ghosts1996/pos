@@ -277,6 +277,40 @@ async function requireTenantRole(tenantId, uid, allowedRoles) {
   }
 }
 
+/** Тот же принцип, что и requireTenantRole, но на уровне сети заведений
+ *  (chainMembers/{chainId}_{uid}, см. saas/firestore.rules). */
+async function requireChainRole(chainId, uid, allowedRoles) {
+  const memberDoc = await db().collection("chainMembers").doc(`${chainId}_${uid}`).get();
+  const member = memberDoc.data();
+  if (!memberDoc.exists || member.status !== "active" || !allowedRoles.includes(member.role)) {
+    throw new HttpError(403, "Недостаточно прав в этой сети заведений");
+  }
+}
+
+/**
+ * Зеркалит членство в tenantMembers на chainMembers — вызывается везде,
+ * где gateway пишет tenantMembers для точки, у которой задан chainId (см.
+ * docstring chainMembers в saas/firestore.rules): без этого зеркала
+ * сотрудник/устройство одной точки сети не сможет читать/писать общую
+ * лояльность сети (chains/{chainId}/clients и соседние коллекции) —
+ * правила проверяют именно chainMembers, а не tenantMembers напрямую,
+ * потому что путь до тех коллекций не содержит tenantId.
+ * Не бросает исключений — членство в самой точке (tenantMembers) уже
+ * записано к моменту вызова, эта запись вторична и не должна ронять
+ * основную операцию.
+ */
+async function syncChainMembership(chainId, uid, role, status) {
+  if (!chainId) return;
+  try {
+    await db().collection("chainMembers").doc(`${chainId}_${uid}`).set(
+      { chainId, userId: uid, role, status, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+  } catch (e) {
+    console.error(`syncChainMembership(${chainId}, ${uid}) не удался:`, e.message || e);
+  }
+}
+
 async function writeAuditLog({ tenantId, actorId, action, metadata }) {
   await db().collection("auditLogs").add({
     tenantId: tenantId || null,
@@ -305,6 +339,43 @@ async function handleResolveTenantBySlug(req, res) {
     throw new HttpError(404, "Заведение с таким кодом не найдено");
   }
   sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status });
+}
+
+/**
+ * По человекочитаемому коду СЕТИ отдаёт chainId и список её точек — нужен
+ * гостевому веб-приложению/приложению Kolibri в режиме сети (см. docstring
+ * kSaasChainMode в lib/build_info.dart) для экрана "выберите заведение
+ * сети", прежде чем гость вообще выбрал точку и получил её tenantId.
+ * Та же причина, что и у resolveTenantBySlug выше: недоступно по обычным
+ * Firestore-правилам, пока гость ни к чему не привязан.
+ */
+async function handleResolveChainBySlug(req, res) {
+  const body = await parseJsonBody(req);
+  const slug = normalizeSlug(body.slug);
+  const firestore = db();
+  const snap = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
+  if (snap.empty) throw new HttpError(404, "Сеть заведений с таким кодом не найдена");
+  const chain = snap.docs[0];
+  const chainData = chain.data();
+  if (chainData.status === "deleted") {
+    throw new HttpError(404, "Сеть заведений с таким кодом не найдена");
+  }
+
+  const locationsSnap = await firestore.collection("tenants").where("chainId", "==", chain.id).get();
+  const locations = locationsSnap.docs
+    .map((d) => ({ tenantId: d.id, name: d.data().name, slug: d.data().slug, status: d.data().status }))
+    .filter((t) => t.status !== "deleted")
+    .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+
+  const brandingDoc = await firestore.collection("chains").doc(chain.id).collection("branding").doc("config").get();
+
+  sendJson(res, 200, {
+    chainId: chain.id,
+    name: chainData.name,
+    status: chainData.status,
+    branding: brandingDoc.exists ? brandingDoc.data() : null,
+    locations,
+  });
 }
 
 // ------------------------------------------------------ firebaseConfig
@@ -408,6 +479,16 @@ async function handlePublicGuestApk(req, res) {
 
 // ------------------------------------------------------- createTenant
 
+/**
+ * [name, slug] — точка сети создаётся с ЧИСТЫМ chainId (не входит в
+ * batch.set(tenantRef, ...) напрямую): её статус сразу "active" (не
+ * "trial" — пробный период относится к сети целиком, не к отдельной новой
+ * точке в уже платящей сети) и у неё НЕТ собственного subscriptions-
+ * документа — биллинг только один, на chains/{chainId} (см.
+ * handleCreateChain). requireChainRole здесь — та же привилегия, что и
+ * "hasRole(tenantId,['owner','admin'])" для одиночного заведения, просто
+ * на уровне сети.
+ */
 async function handleCreateTenant(req, res) {
   const decoded = await verifyAuth(req);
   if (!decoded.email_verified) {
@@ -415,19 +496,29 @@ async function handleCreateTenant(req, res) {
   }
 
   const body = await parseJsonBody(req);
-  const { name, slug: rawSlug, planId } = body;
+  const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
   if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
     throw new HttpError(400, "Название заведения: от 2 до 80 символов");
   }
   const slug = normalizeSlug(rawSlug || name);
+  const uid = decoded.uid;
 
   const firestore = db();
+  let chainId = null;
+  if (typeof rawChainId === "string" && rawChainId.trim()) {
+    chainId = rawChainId.trim();
+    const chainDoc = await firestore.collection("chains").doc(chainId).get();
+    if (!chainDoc.exists || chainDoc.data().status === "deleted") {
+      throw new HttpError(404, "Сеть заведений не найдена");
+    }
+    await requireChainRole(chainId, uid, ["owner", "admin"]);
+  }
+
   const existing = await firestore.collection("tenants").where("slug", "==", slug).limit(1).get();
   if (!existing.empty) throw new HttpError(409, "Этот код заведения уже занят, выберите другой");
 
   const tenantRef = firestore.collection("tenants").doc();
   const tenantId = tenantRef.id;
-  const uid = decoded.uid;
   const now = admin.firestore.FieldValue.serverTimestamp();
   const resolvedPlanId = planId || "start";
   const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
@@ -437,10 +528,11 @@ async function handleCreateTenant(req, res) {
   batch.set(tenantRef, {
     name: name.trim(),
     slug,
-    status: "trial",
-    subscriptionStatus: "trial",
+    status: chainId ? "active" : "trial",
+    subscriptionStatus: chainId ? "active" : "trial",
     planId: resolvedPlanId,
     ownerUserId: uid,
+    chainId: chainId || null,
     createdAt: now,
     updatedAt: now,
   });
@@ -470,22 +562,27 @@ async function handleCreateTenant(req, res) {
   batch.set(tenantRef.collection("settings").doc("deviceInvite"), {
     code: randomInviteCode(), rotatedAt: now,
   });
-  batch.set(firestore.collection("subscriptions").doc(tenantId), {
-    tenantId,
-    planId: resolvedPlanId,
-    status: "trial",
-    provider: null,
-    externalSubscriptionId: null,
-    startedAt: now,
-    trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
-    currentPeriodStart: now,
-    currentPeriodEnd: null,
-    cancelAtPeriodEnd: false,
-  });
+  // Собственная подписка есть только у одиночного заведения — у точки сети
+  // биллинг общий, на chains/{chainId} (см. handleCreateChain).
+  if (!chainId) {
+    batch.set(firestore.collection("subscriptions").doc(tenantId), {
+      tenantId,
+      planId: resolvedPlanId,
+      status: "trial",
+      provider: null,
+      externalSubscriptionId: null,
+      startedAt: now,
+      trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
+      currentPeriodStart: now,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+    });
+  }
   batch.set(firestore.collection("users").doc(uid), { lastActiveTenantId: tenantId }, { merge: true });
 
   await batch.commit();
-  await writeAuditLog({ tenantId, actorId: uid, action: "tenantCreated", metadata: { slug } });
+  if (chainId) await syncChainMembership(chainId, uid, "owner", "active");
+  await writeAuditLog({ tenantId, actorId: uid, action: "tenantCreated", metadata: { slug, chainId } });
 
   // Не await: выпуск сертификата занимает несколько секунд (обращение к
   // Let's Encrypt) — владелец не должен ждать это внутри ответа на
@@ -496,7 +593,90 @@ async function handleCreateTenant(req, res) {
     console.error(`provisionTenantDomain(${slug}) не удался:`, e.message || e);
   });
 
-  sendJson(res, 200, { tenantId, slug });
+  sendJson(res, 200, { tenantId, slug, chainId });
+}
+
+/**
+ * Создаёт сеть заведений (владелец нескольких точек с общим биллингом и
+ * общей лояльностью, см. docstring "Сети заведений (chains)" в
+ * saas/firestore.rules) — пустую, без единой точки внутри: первую и все
+ * следующие точки владелец добавляет отдельным вызовом handleCreateTenant
+ * с тем же chainId. Тариф на сеть — per-location (за каждую точку
+ * отдельно, см. planPriceForPeriod ниже: цена тарифа умножается на число
+ * точек сети при выставлении счёта), поэтому сама сеть без точек стоит 0 —
+ * пробный период (trialDays тарифа) начинает отсчёт сразу, как и у
+ * одиночного заведения.
+ */
+async function handleCreateChain(req, res) {
+  const decoded = await verifyAuth(req);
+  if (!decoded.email_verified) {
+    throw new HttpError(412, "Подтвердите email, прежде чем создавать сеть заведений");
+  }
+
+  const body = await parseJsonBody(req);
+  const { name, slug: rawSlug, planId } = body;
+  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
+    throw new HttpError(400, "Название сети: от 2 до 80 символов");
+  }
+  const slug = normalizeSlug(rawSlug || name);
+  const uid = decoded.uid;
+
+  const firestore = db();
+  const existing = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
+  if (!existing.empty) throw new HttpError(409, "Этот код сети уже занят, выберите другой");
+
+  const chainRef = firestore.collection("chains").doc();
+  const chainId = chainRef.id;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const resolvedPlanId = planId || "chain";
+  const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
+  const trialDays = Number(planSnap.data()?.trialDays) || 7;
+
+  const batch = firestore.batch();
+  batch.set(chainRef, {
+    name: name.trim(),
+    slug,
+    status: "trial",
+    planId: resolvedPlanId,
+    ownerUserId: uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+  batch.set(firestore.collection("chainMembers").doc(`${chainId}_${uid}`), {
+    chainId, userId: uid, role: "owner", status: "active", createdAt: now,
+  });
+  batch.set(chainRef.collection("branding").doc("config"), {
+    appName: name.trim(),
+    shortName: name.trim().slice(0, 12),
+    primaryColor: "#0B5ED7",
+    secondaryColor: "#162A4A",
+    accentColor: "#0B5ED7",
+    backgroundColor: "#02050B",
+    textColor: "#F8FAFC",
+    buttonColor: "#0B5ED7",
+    darkMode: true,
+  });
+  batch.set(firestore.collection("subscriptions").doc(chainId), {
+    chainId,
+    planId: resolvedPlanId,
+    status: "trial",
+    provider: null,
+    externalSubscriptionId: null,
+    startedAt: now,
+    trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
+    currentPeriodStart: now,
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+  });
+
+  await batch.commit();
+  await writeAuditLog({ tenantId: null, actorId: uid, action: "chainCreated", metadata: { slug, chainId } });
+
+  provisionTenantDomain(slug).catch((e) => {
+    console.error(`provisionTenantDomain(${slug}) не удался (сеть):`, e.message || e);
+  });
+
+  sendJson(res, 200, { chainId, slug });
 }
 
 // ------------------------------------------- provisionTenantDomain
@@ -712,11 +892,19 @@ async function handleCreateBuildJob(req, res) {
 async function handleSetSubscriptionCancel(req, res, cancel) {
   const decoded = await verifyAuth(req);
   const body = await parseJsonBody(req);
-  const { tenantId, reason } = body;
-  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
-  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  const { tenantId, chainId, reason } = body;
+  const isChain = typeof chainId === "string" && !!chainId;
+  if (!isChain && (typeof tenantId !== "string" || !tenantId)) {
+    throw new HttpError(400, "Не указано заведение");
+  }
+  const billingId = isChain ? chainId : tenantId;
+  if (isChain) {
+    await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
+  } else {
+    await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  }
 
-  const subRef = db().collection("subscriptions").doc(tenantId);
+  const subRef = db().collection("subscriptions").doc(billingId);
   const subDoc = await subRef.get();
   if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
   // Причина отмены (супер-админ #6) — видна в панели платформы в карточке
@@ -727,10 +915,10 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
   const cancelReason = cancel ? String(reason || "").slice(0, 500) : null;
   await subRef.update({ cancelAtPeriodEnd: cancel, cancelReason });
   await writeAuditLog({
-    tenantId,
+    tenantId: isChain ? null : tenantId,
     actorId: decoded.uid,
     action: cancel ? "subscriptionCancelRequested" : "subscriptionCancelWithdrawn",
-    metadata: cancel ? { reason: cancelReason } : {},
+    metadata: cancel ? { reason: cancelReason, chainId: isChain ? chainId : null } : { chainId: isChain ? chainId : null },
   });
   sendJson(res, 200, { ok: true });
 }
@@ -782,6 +970,19 @@ async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = 
   return json;
 }
 
+/** Число НЕ удалённых точек сети — тариф на сеть посчитан за каждую точку
+ *  отдельно (решение владельца платформы: "за каждую точку отдельно"), а
+ *  не фиксированной суммой на сеть, поэтому цену пересчитываем каждый раз
+ *  заново (и здесь, при оформлении, и в runChargeRecurringSubscriptions
+ *  при продлении) — владелец платит ровно за то число точек, что у него
+ *  есть на момент списания, без отдельного шага "обновить тариф вручную"
+ *  при добавлении/закрытии точки.
+ */
+async function countChainLocations(chainId) {
+  const snap = await db().collection("tenants").where("chainId", "==", chainId).get();
+  return snap.docs.filter((d) => d.data().status !== "deleted").length;
+}
+
 /**
  * Создаёт платёж ЮKassa на оплату тарифа и возвращает ссылку на форму
  * оплаты — консоль делает location.href на неё. Статус подписки/заведения
@@ -791,24 +992,33 @@ async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = 
  */
 async function handleCreateCheckoutSession(req, res) {
   const decoded = await verifyAuth(req);
-  const { tenantId, planId, returnUrl, billingPeriod: rawBillingPeriod } = await parseJsonBody(req);
-  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  const { tenantId, chainId, planId, returnUrl, billingPeriod: rawBillingPeriod } = await parseJsonBody(req);
+  const isChain = typeof chainId === "string" && !!chainId;
+  if (!isChain && (typeof tenantId !== "string" || !tenantId)) {
+    throw new HttpError(400, "Не указано заведение");
+  }
   if (typeof planId !== "string" || !planId) throw new HttpError(400, "Не указан тариф");
   if (typeof returnUrl !== "string" || !returnUrl) {
     throw new HttpError(400, "Не передан адрес возврата после оплаты");
   }
   const billingPeriod = rawBillingPeriod === "yearly" ? "yearly" : "monthly";
-  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  if (isChain) {
+    await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
+  } else {
+    await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  }
 
   const planDoc = await db().collection("plans").doc(planId).get();
   if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
   const plan = planDoc.data();
-  const price = planPriceForPeriod(plan, billingPeriod);
-  if (price <= 0) {
+  const basePrice = planPriceForPeriod(plan, billingPeriod);
+  if (basePrice <= 0) {
     throw new HttpError(412, billingPeriod === "yearly"
       ? "Для этого тарифа не задана годовая цена — оформите помесячную оплату или обратитесь в поддержку"
       : "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы");
   }
+  const locationCount = isChain ? Math.max(1, await countChainLocations(chainId)) : 1;
+  const price = basePrice * locationCount;
 
   const payment = await yookassaRequest("payments", {
     method: "POST",
@@ -818,8 +1028,15 @@ async function handleCreateCheckoutSession(req, res) {
       capture: true,
       save_payment_method: true,
       confirmation: { type: "redirect", return_url: returnUrl },
-      description: `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
-      metadata: { tenantId, planId, billingPeriod, purpose: "subscription" },
+      description: isChain
+        ? `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), сеть ${chainId} × ${locationCount} точек`
+        : `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+      metadata: {
+        tenantId: isChain ? null : tenantId,
+        chainId: isChain ? chainId : null,
+        planId, billingPeriod, purpose: "subscription",
+        locationCount: isChain ? locationCount : null,
+      },
     },
   });
 
@@ -849,12 +1066,14 @@ async function handleBillingWebhook(req, res) {
     throw new HttpError(502, "upstream error");
   }
 
-  const tenantId = payment.metadata?.tenantId;
+  const tenantId = payment.metadata?.tenantId || null;
+  const chainId = payment.metadata?.chainId || null;
+  const billingId = chainId || tenantId;
   const planId = payment.metadata?.planId;
   // Старые платежи (до появления годовой оплаты) не несут этого поля —
   // трактуем как помесячные, это было единственным вариантом на тот момент.
   const billingPeriod = payment.metadata?.billingPeriod === "yearly" ? "yearly" : "monthly";
-  if (!tenantId || !planId) {
+  if (!billingId || !planId) {
     // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
     // прислала его на наш webhook, отвечаем 200, чтобы не получать
     // бесконечные повторы того, что мы всё равно никогда не обработаем.
@@ -868,7 +1087,7 @@ async function handleBillingWebhook(req, res) {
     const seen = await tx.get(eventRef);
     if (seen.exists) return true;
     tx.set(eventRef, {
-      tenantId, planId, billingPeriod, status: payment.status,
+      tenantId, chainId, planId, billingPeriod, status: payment.status,
       // Сумма — для аналитики платформы (панель Super Admin, выручка): без
       // неё пришлось бы на каждый показ дохода дёргать API ЮKassa отдельно
       // по каждому платежу, вместо одного чтения Firestore.
@@ -887,7 +1106,7 @@ async function handleBillingWebhook(req, res) {
     const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
     const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + periodDays * 86400000);
     const update = {
-      tenantId, planId, billingPeriod,
+      tenantId, chainId, planId, billingPeriod,
       status: "active",
       provider: "yookassa",
       externalSubscriptionId: paymentId,
@@ -901,32 +1120,34 @@ async function handleBillingWebhook(req, res) {
     if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
 
     // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa будет
-    // бесконечно ретраить), если документ заведения почему-то ещё не
+    // бесконечно ретраить), если документ заведения/сети почему-то ещё не
     // существует — webhook обязан быть maximally resilient.
-    await firestore.collection("subscriptions").doc(tenantId).set(update, { merge: true });
-    await firestore.collection("tenants").doc(tenantId).set({
+    await firestore.collection("subscriptions").doc(billingId).set(update, { merge: true });
+    await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).set({
       status: "active",
       planId,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId } });
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId } });
   } else if (payment.status === "canceled") {
-    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId } });
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
   }
 
   sendJson(res, 200, { ok: true });
 }
 
-/** Переводит и подписку, и само заведение в past_due синхронно и
+/** Переводит и подписку, и само заведение/сеть в past_due синхронно и
  *  фиксирует момент начала льготного периода — см. одноимённую функцию в
  *  saas/functions/index.js, та же логика. Не трогает pastDueSince, если он
- *  уже стоит — иначе повторный вызов отодвигал бы дедлайн удаления. */
-async function markPastDue(tenantId, subRef) {
+ *  уже стоит — иначе повторный вызов отодвигал бы дедлайн удаления.
+ *  [isChain] — subscriptions/{id} принадлежит chains/{id}, а не
+ *  tenants/{id} (см. subscriptions.chainId в saas/firestore.rules). */
+async function markPastDue(id, subRef, isChain = false) {
   const sub = (await subRef.get()).data();
   const update = { status: "past_due" };
   if (!sub?.pastDueSince) update.pastDueSince = admin.firestore.FieldValue.serverTimestamp();
   await subRef.set(update, { merge: true });
-  await db().collection("tenants").doc(tenantId).set({
+  await db().collection(isChain ? "chains" : "tenants").doc(id).set({
     status: "past_due",
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -937,8 +1158,14 @@ async function markPastDue(tenantId, subRef) {
  *  В отличие от purgeDemoTenant выше, здесь НАМЕРЕННО остаются сам
  *  tenant-документ (статус "deleted") и подписка (статус "cancelled") —
  *  история для поддержки/бухгалтерии, а не бесследное удаление, как у
- *  демо-заведений. */
-async function purgeTenantData(tenantId) {
+ *  демо-заведений.
+ *  [skipSubscription] — точка сети (tenant.chainId задан) не имеет
+ *  собственного subscriptions-документа (биллинг общий на сеть, см.
+ *  handleCreateTenant) — писать туда "cancelled" в этом случае значило бы
+ *  создать ЛИШНИЙ документ subscriptions/{tenantId}, которого раньше не
+ *  было и который никто не должен читать; вызывается из purgeChainData,
+ *  которая сама отмечает cancelled ОДНУ подписку сети. */
+async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
 
@@ -954,10 +1181,50 @@ async function purgeTenantData(tenantId) {
   }
 
   await tenantRef.set({ status: "deleted", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-  await firestore.collection("subscriptions").doc(tenantId).set({ status: "cancelled" }, { merge: true });
+  if (!skipSubscription) {
+    await firestore.collection("subscriptions").doc(tenantId).set({ status: "cancelled" }, { merge: true });
+  }
   await writeAuditLog({
     tenantId, actorId: null, action: "tenantDataPurged",
     metadata: { reason: "grace_period_expired", graceDays: GRACE_PERIOD_DAYS },
+  });
+}
+
+// Коллекции сети верхнего уровня (chains/{chainId}/...) — аналог
+// TENANT_SUBCOLLECTIONS, но для общей лояльности сети (см. saas/firestore.rules).
+const CHAIN_SUBCOLLECTIONS = ["branding", "clients", "phoneIndex", "referralCodes", "bonusOperations"];
+
+/** Стирает сеть целиком после истечения льготного периода: каждую живую
+ *  точку — тем же purgeTenantData (без собственной подписки, см. выше),
+ *  затем общую лояльность/брендинг сети и членство chainMembers. Как и у
+ *  purgeTenantData, сам документ chains/{chainId} (статус "deleted") и
+ *  подписка (статус "cancelled") НАМЕРЕННО остаются — история для
+ *  поддержки/бухгалтерии. */
+async function purgeChainData(chainId) {
+  const firestore = db();
+  const locations = await firestore.collection("tenants").where("chainId", "==", chainId).get();
+  for (const tenantDoc of locations.docs) {
+    if (tenantDoc.data().status === "deleted") continue;
+    await purgeTenantData(tenantDoc.id, { skipSubscription: true });
+  }
+
+  const chainRef = firestore.collection("chains").doc(chainId);
+  for (const name of CHAIN_SUBCOLLECTIONS) {
+    await firestore.recursiveDelete(chainRef.collection(name));
+  }
+
+  const members = await firestore.collection("chainMembers").where("chainId", "==", chainId).get();
+  if (!members.empty) {
+    const batch = firestore.batch();
+    members.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  await chainRef.set({ status: "deleted", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await firestore.collection("subscriptions").doc(chainId).set({ status: "cancelled" }, { merge: true });
+  await writeAuditLog({
+    tenantId: null, actorId: null, action: "chainDataPurged",
+    metadata: { chainId, reason: "grace_period_expired", graceDays: GRACE_PERIOD_DAYS },
   });
 }
 
@@ -976,7 +1243,8 @@ async function runChargeRecurringSubscriptions() {
 
   for (const subDoc of subs.docs) {
     const sub = subDoc.data();
-    const tenantId = subDoc.id;
+    const targetId = subDoc.id;
+    const isChain = !!sub.chainId;
     if (sub.cancelAtPeriodEnd) continue;
     if (!sub.paymentMethodId) continue; // нечем продлить автоматически — сгорит в past_due само (см. runEnforceGracePeriod)
 
@@ -985,7 +1253,11 @@ async function runChargeRecurringSubscriptions() {
 
     const planDoc = await firestore.collection("plans").doc(sub.planId).get();
     const billingPeriod = sub.billingPeriod === "yearly" ? "yearly" : "monthly";
-    const price = planPriceForPeriod(planDoc.data() || {}, billingPeriod);
+    // За сеть — цена тарифа за число точек НА МОМЕНТ продления (за каждую
+    // точку отдельно), а не то, что было при первой оплате: владелец мог
+    // за прошедший период добавить или закрыть точку.
+    const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
+    const price = planPriceForPeriod(planDoc.data() || {}, billingPeriod) * locationCount;
     if (price <= 0) continue;
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -995,19 +1267,28 @@ async function runChargeRecurringSubscriptions() {
         // Ключ детерминирован от даты окончания периода — повторный прогон
         // в тот же день не создаёт второй платёж, даже если что-то упало
         // между первой попыткой и следующим тиком.
-        idempotenceKey: `renewal_${tenantId}_${sub.currentPeriodEnd.toMillis()}`,
+        idempotenceKey: `renewal_${targetId}_${sub.currentPeriodEnd.toMillis()}`,
         body: {
           amount: { value: price.toFixed(2), currency: "RUB" },
           capture: true,
           payment_method_id: sub.paymentMethodId,
-          description: `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
-          metadata: { tenantId, planId: sub.planId, billingPeriod, purpose: "renewal" },
+          description: isChain
+            ? `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), сеть ${targetId} × ${locationCount} точек`
+            : `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${targetId}`,
+          metadata: {
+            tenantId: isChain ? null : targetId,
+            chainId: isChain ? targetId : null,
+            planId: sub.planId, billingPeriod, purpose: "renewal",
+          },
         },
       });
     } catch (e) {
-      console.error(`saas-gateway: не удалось продлить ${tenantId}`, e.message || e);
-      await markPastDue(tenantId, subDoc.ref);
-      await writeAuditLog({ tenantId, actorId: null, action: "subscriptionRenewalFailed", metadata: { error: String(e) } });
+      console.error(`saas-gateway: не удалось продлить ${targetId}`, e.message || e);
+      await markPastDue(targetId, subDoc.ref, isChain);
+      await writeAuditLog({
+        tenantId: isChain ? null : targetId, actorId: null, action: "subscriptionRenewalFailed",
+        metadata: { error: String(e), chainId: isChain ? targetId : null },
+      });
     }
   }
 }
@@ -1027,8 +1308,12 @@ async function runEnforceGracePeriod() {
     .where("trialEndsAt", "<=", nowTs)
     .get();
   for (const subDoc of expiredTrials.docs) {
-    await markPastDue(subDoc.id, subDoc.ref);
-    await writeAuditLog({ tenantId: subDoc.id, actorId: null, action: "trialExpired" });
+    const isChain = !!subDoc.data().chainId;
+    await markPastDue(subDoc.id, subDoc.ref, isChain);
+    await writeAuditLog({
+      tenantId: isChain ? null : subDoc.id, actorId: null, action: "trialExpired",
+      metadata: { chainId: isChain ? subDoc.id : null },
+    });
   }
 
   const staleActive = await firestore.collection("subscriptions")
@@ -1041,7 +1326,7 @@ async function runEnforceGracePeriod() {
     // дойти, прежде чем считать подписку просроченной.
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     if (now - lastAttemptMs < 24 * 3600000) continue;
-    await markPastDue(subDoc.id, subDoc.ref);
+    await markPastDue(subDoc.id, subDoc.ref, !!sub.chainId);
   }
 
   const deadline = admin.firestore.Timestamp.fromMillis(now - GRACE_PERIOD_DAYS * 86400000);
@@ -1050,8 +1335,13 @@ async function runEnforceGracePeriod() {
     .where("pastDueSince", "<=", deadline)
     .get();
   for (const subDoc of overdue.docs) {
-    await purgeTenantData(subDoc.id);
-    console.log(`saas-gateway: данные заведения ${subDoc.id} стёрты по истечении льготного периода`);
+    if (subDoc.data().chainId) {
+      await purgeChainData(subDoc.id);
+      console.log(`saas-gateway: данные сети ${subDoc.id} стёрты по истечении льготного периода`);
+    } else {
+      await purgeTenantData(subDoc.id);
+      console.log(`saas-gateway: данные заведения ${subDoc.id} стёрты по истечении льготного периода`);
+    }
   }
 }
 
@@ -1887,7 +2177,9 @@ function scheduleDemoCleanup() {
 
 const ROUTES = {
   "/resolveTenantBySlug": handleResolveTenantBySlug,
+  "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
+  "/createChain": handleCreateChain,
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
   "/createDemoTenant": handleCreateDemoTenant,
