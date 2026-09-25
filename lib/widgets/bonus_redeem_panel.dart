@@ -61,7 +61,10 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
   }
 
   Future<void> _findBySession() async {
-    final snap = await AppScope.col('clients')
+    // loyaltyCol, а не col — у сети заведений activeSessionId лежит в общем
+    // на все точки профиле (chains/{chainId}/clients), см. bindToSession в
+    // GuestLinkService.
+    final snap = await AppScope.loyaltyCol('clients')
         .where('activeSessionId', isEqualTo: widget.sessionId)
         .limit(1)
         .get();

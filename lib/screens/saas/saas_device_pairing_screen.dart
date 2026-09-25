@@ -75,8 +75,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       _error = null;
     });
     try {
-      final tenantId = await _service.resolveTenantIdBySlug(slug);
-      await _completeJoin(tenantId: tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
+      final resolved = await _service.resolveTenantIdBySlug(slug);
+      await _completeJoin(tenantId: resolved.tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
     } catch (e) {
       if (!mounted) return;
       setState(() {

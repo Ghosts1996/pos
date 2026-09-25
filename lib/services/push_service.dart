@@ -74,15 +74,18 @@ class PushService {
   }
 
   /// Клиентское приложение: сохраняем токен гостя, чтобы слать адресно.
+  ///
+  /// loyaltyCol, а не col — профиль гостя в сети заведений общий на все
+  /// точки (chains/{chainId}/clients), а не свой на каждой точке.
   Future<void> initGuest(String uid) async {
     await _requestPermission();
     final token = await _fcm.getToken();
     if (token != null && uid.isNotEmpty) {
-      await AppScope.col('clients').doc(uid).set({'pushToken': token}, SetOptions(merge: true));
+      await AppScope.loyaltyCol('clients').doc(uid).set({'pushToken': token}, SetOptions(merge: true));
     }
     _fcm.onTokenRefresh.listen((t) {
       if (uid.isEmpty) return;
-      AppScope.col('clients').doc(uid).set({'pushToken': t}, SetOptions(merge: true));
+      AppScope.loyaltyCol('clients').doc(uid).set({'pushToken': t}, SetOptions(merge: true));
     });
   }
 
@@ -119,7 +122,7 @@ class PushService {
     required String body,
     Map<String, String> data = const {},
   }) async {
-    final doc = await AppScope.col('clients').doc(clientUid).get();
+    final doc = await AppScope.loyaltyCol('clients').doc(clientUid).get();
     final token = doc.data()?['pushToken'] as String?;
     if (token == null || token.isEmpty) return;
     await enqueue(token: token, title: title, body: body, data: data);

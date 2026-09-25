@@ -498,7 +498,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           // попадали, и «история» показывала произвольный срез за все годы.
           // Сортировка на клиенте это не чинила — она сортировала уже не те
           // записи. Составной индекс добавлен в firestore.indexes.json.
-          stream: AppScope.col('bonusOperations')
+          stream: AppScope.loyaltyCol('bonusOperations')
               .where('clientUid', isEqualTo: _auth.uid)
               .orderBy('createdAt', descending: true)
               .limit(50)
