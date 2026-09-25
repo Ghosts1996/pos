@@ -608,9 +608,15 @@ class ReservationService {
     // Привязываем гостя к чеку, чтобы в его приложении сразу появился
     // живой счёт и таймер стола.
     if (reservation.clientUid.isNotEmpty) {
-      await AppScope.col('clients').doc(reservation.clientUid).set({
+      // loyaltyCol, а не col — профиль гостя в сети заведений общий на все
+      // точки (chains/{chainId}/clients), а не свой на каждой; activeTenantId
+      // нужен здесь так же, как и в GuestLinkService.bindToSession — без
+      // него правило chainSessionClaimOk (saas/firestore.rules) не сможет
+      // проверить, что sessionId правда из sessionClaims ИМЕННО этой точки.
+      await AppScope.loyaltyCol('clients').doc(reservation.clientUid).set({
         'activeSessionId': sessionRef.id,
         'activeTableId': reservation.tableId,
+        if (AppScope.chainId != null) 'activeTenantId': AppScope.tenantId,
         'lastVisitAt': Timestamp.fromDate(now),
       }, SetOptions(merge: true));
       // Закрепляем чек за тем, кто бронировал, — иначе его счёт мог бы

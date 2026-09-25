@@ -32,13 +32,20 @@ class SaasDeviceJoinService {
   /// владелец видит в личном кабинете и диктует по телефону/пишет в чат).
   /// Бросает исключение, если заведение не найдено или заблокировано —
   /// сообщение исключения уже на русском и годится для показа в UI.
-  Future<String> resolveTenantIdBySlug(String slug) async {
+  ///
+  /// chainId — заведение может состоять в сети (см. её docstring в
+  /// saas/firestore.rules); без него вызывающий код не смог бы отличить
+  /// точку сети от одиночного заведения и передал бы AppScope.enterTenant
+  /// без chainId — тогда общая лояльность сети (chains/{chainId}/clients и
+  /// соседние коллекции) тихо подменилась бы на пустые tenant-скоуп
+  /// документы этой конкретной точки.
+  Future<({String tenantId, String? chainId})> resolveTenantIdBySlug(String slug) async {
     final json = await _callGateway('resolveTenantBySlug', {'slug': slug.trim()}, requireAuth: false);
     final tenantId = json['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) {
       throw StateError('Сервис не вернул tenantId для этого заведения');
     }
-    return tenantId;
+    return (tenantId: tenantId, chainId: json['chainId'] as String?);
   }
 
   /// Находит сеть заведений по её человекочитаемому коду и отдаёт список

@@ -11,12 +11,16 @@ class BirthdayService {
   BirthdayService._();
   static final BirthdayService instance = BirthdayService._();
 
+  final _db = FirebaseFirestore.instance;
 
   /// Подарок имениннику: бонусы, которые сгорают через неделю.
   static const double giftBonus = 500;
   static const int daysBefore = 3;
 
-  Future<void> setBirthday(String uid, DateTime date) => AppScope.col('clients').doc(uid).set({
+  // loyaltyCol, а не col — профиль гостя в сети заведений общий на все точки
+  // (chains/{chainId}/clients), а не свой на каждой; собственный
+  // (tenant-scoped) документ гостя сети не существует вовсе.
+  Future<void> setBirthday(String uid, DateTime date) => AppScope.loyaltyCol('clients').doc(uid).set({
         // Храним день и месяц отдельно: так поиск именинников — обычный
         // запрос по двум полям, без возни с годами.
         'birthdayDay': date.day,
@@ -26,7 +30,7 @@ class BirthdayService {
   /// Именинники на ближайшие дни. Вызывается планировщиком на POS раз в сутки.
   Future<List<({String uid, String name, String token})>> upcoming() async {
     final target = DateTime.now().add(const Duration(days: daysBefore));
-    final snap = await AppScope.col('clients')
+    final snap = await AppScope.loyaltyCol('clients')
         .where('birthdayMonth', isEqualTo: target.month)
         .where('birthdayDay', isEqualTo: target.day)
         .get();
@@ -42,20 +46,32 @@ class BirthdayService {
         .toList();
   }
 
-  /// Поздравить и начислить подарок. Помечает год, чтобы не поздравить дважды.
+  /// Поздравить и начислить подарок. Помечает год, чтобы не поздравить дважды
+  /// — в транзакции: у сети заведений список именинников общий на все точки
+  /// (loyaltyCol), а у каждой точки свой независимый суточный планшет-
+  /// планировщик, так что без транзакции два планшета разных точек одной
+  /// сети, сработав почти одновременно, оба прошли бы проверку в [upcoming]
+  /// до того, как второй увидит отметку первого, и начислили бы подарок дважды.
   Future<void> greet({
     required String uid,
     required String name,
     required String token,
   }) async {
     final year = DateTime.now().year;
+    final clientRef = AppScope.loyaltyCol('clients').doc(uid);
 
-    await AppScope.col('clients').doc(uid).set({
-      'bonusBalance': FieldValue.increment(giftBonus),
-      'birthdayGreetedYear': year,
-    }, SetOptions(merge: true));
+    final alreadyGreeted = await _db.runTransaction((tx) async {
+      final snap = await tx.get(clientRef);
+      if ((snap.data()?['birthdayGreetedYear'] as num?)?.toInt() == year) return true;
+      tx.set(clientRef, {
+        'bonusBalance': FieldValue.increment(giftBonus),
+        'birthdayGreetedYear': year,
+      }, SetOptions(merge: true));
+      return false;
+    });
+    if (alreadyGreeted) return;
 
-    await AppScope.col('bonusOperations').add({
+    await AppScope.loyaltyCol('bonusOperations').add({
       'clientUid': uid,
       'type': 'accrual',
       'amount': giftBonus,

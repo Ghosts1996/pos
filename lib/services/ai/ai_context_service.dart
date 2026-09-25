@@ -195,7 +195,7 @@ class AiContextService {
   /// Обезличенный портрет гостя для персональных рекомендаций.
   /// Телефон и полное имя в промпт не передаются.
   Future<String> guestSnapshot(String clientUid) async {
-    final doc = await AppScope.col('clients').doc(clientUid).get();
+    final doc = await AppScope.loyaltyCol('clients').doc(clientUid).get();
     if (!doc.exists) return 'Новый гость, истории нет.';
     final p = ClientProfile.fromDoc(doc);
 
