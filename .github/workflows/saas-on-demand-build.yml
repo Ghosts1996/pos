@@ -12,6 +12,9 @@ on:
       job_id_kolibri:
         description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения «Colibri Lounge» (matrix.app == kolibri)'
         required: true
+      job_id_pos_windows:
+        description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
+        required: true
       app_label:
         description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "Hookah POS"; пусто = дефолт "Colibri Lounge"'
         required: false
@@ -663,3 +666,161 @@ jobs:
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска (${{ matrix.app }}).\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+
+  # Касса для Windows-планшета/компьютера в заведении — тот же lib/main.dart,
+  # что и у Android-версии выше (тот же tenant_slug/invite_code — тоже сама
+  # присоединяется к заведению владельца при первом запуске), но ОТДЕЛЬНЫЙ
+  # job, а не третья нога матрицы build: нужен другой раннер (windows-latest,
+  # с предустановленным Visual Studio Build Tools — им собирается нативная
+  # часть flutter build windows) и совсем другой набор шагов (CMake/EXE
+  # вместо Gradle/APK, zip вместо APK-подписи). Гостевое приложение
+  # («Colibri Lounge») на Windows НЕ собирается — оно для телефонов гостей,
+  # а не для терминала заведения (см. её же комментарий в handleCreateBuildJob,
+  # saas-gateway/server.js).
+  #
+  # Firebase на Windows настраивается иначе, чем на Android: там не через
+  # --dart-define с ключами конкретного приложения (SAAS_FIREBASE_*), а
+  # рантайм-запросом к тому же /firebaseConfig, которым уже пользуются
+  # console.js и guest-web — см. подробный докстринг resolveWindowsOptions в
+  # lib/firebase_options.dart. Поэтому здесь НЕТ шагов
+  # "Add google-services.json"/"Apply Google Services Gradle plugin" и
+  # секретов *_APP_ID — они Android-специфичны и Windows-сборке не нужны
+  # вовсе, только SAAS_GATEWAY_URL (уже используется остальными сборками).
+  build-windows:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    name: Build pos (Windows)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows desktop support
+        shell: bash
+        run: flutter config --enable-windows-desktop
+
+      - name: Generate missing Windows platform files
+        shell: bash
+        run: |
+          flutter create . --platforms=windows
+          test -d windows && echo "windows/ готова" || (echo "не удалось создать windows/" && exit 1)
+
+          # Тот же трюк, что и у Android-сборки выше (см. её же комментарий):
+          # flutter create кладёт в test/ свой шаблонный widget_test.dart
+          # поверх уже существующих настоящих тестов проекта — валит шаг
+          # тестов. Файл в репозитории не хранится.
+          rm -f test/widget_test.dart
+
+      - name: Install dependencies
+        shell: bash
+        run: flutter pub get
+
+      - name: Unit tests
+        shell: bash
+        run: flutter test
+
+      - name: Build Windows (release, SaaS mode)
+        shell: bash
+        env:
+          PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
+          SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
+          # env:, не прямая интерполяция ${{ }} в run: — та же причина, что
+          # и у Android-сборки выше: inputs.* нельзя доверять как части
+          # shell-команды (workflow_dispatch technically можно дёрнуть и не
+          # только через createBuildJob).
+          TENANT_SLUG: ${{ inputs.tenant_slug }}
+          INVITE_CODE: ${{ inputs.invite_code }}
+        run: |
+          if [ -z "$SAAS_GATEWAY_URL" ]; then
+            echo "::error::Секрет SAAS_GATEWAY_URL не задан — без него Windows-сборка не сможет получить конфигурацию Firebase в рантайме (см. resolveWindowsOptions в lib/firebase_options.dart)."
+            exit 1
+          fi
+          flutter build windows --release \
+            -t lib/main.dart \
+            --dart-define=SAAS_MODE=true \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
+            --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL" \
+            --dart-define=SAAS_PRESET_SLUG="$TENANT_SLUG" \
+            --dart-define=SAAS_PRESET_INVITE_CODE="$INVITE_CODE"
+
+      - name: Locate Release output folder
+        id: outdir
+        shell: bash
+        run: |
+          # Путь менялся между версиями Flutter (с подпапкой архитектуры
+          # x64/arm64 и без неё) — ищем реально созданную папку Release, а
+          # не полагаемся на один жёстко прописанный путь.
+          DIR=$(find build/windows -type d -iname Release | head -1)
+          if [ -z "$DIR" ]; then
+            echo "::error::Не нашли папку Release после flutter build windows"
+            exit 1
+          fi
+          echo "path=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Zip Release folder
+        id: zip
+        shell: pwsh
+        run: |
+          $out = "${{ steps.outdir.outputs.path }}"
+          $zipPath = "build/windows/${{ inputs.job_id_pos_windows }}.zip"
+          Compress-Archive -Path "$out/*" -DestinationPath $zipPath -Force
+          echo "path=$zipPath" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows build artifact (GitHub Actions run log)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hookah-pos-windows-${{ inputs.job_id_pos_windows }}
+          path: ${{ steps.zip.outputs.path }}
+
+      # Тот же сервер и тот же forced-command скрипт (deploy-tenant-apk.sh),
+      # что и у Android-сборки выше — он всегда пишет файл на диск как
+      # "{jobId}.apk" независимо от того, что реально внутри (см. подробный
+      # комментарий в handleDownloadBuild, saas-gateway/server.js: тип файла
+      # для скачивающего браузера определяет Content-Type/Content-Disposition
+      # того ответа, а не расширение на диске) — трогать сам скрипт ради
+      # Windows не нужно.
+      - name: Deploy Windows build to own server (pii.hookahpos.su)
+        if: success()
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
+          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          JOB_ID: ${{ inputs.job_id_pos_windows }}
+          ZIP_PATH: ${{ steps.zip.outputs.path }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
+            echo "::error::DEPLOY_SSH_KEY_TENANT/DEPLOY_SSH_HOST не заданы — без них личные сборки некуда доставлять. См. saas/README.md, раздел «APK-конвейер»."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_tenant_key
+          chmod 600 ~/.ssh/deploy_tenant_key
+          ssh -i ~/.ssh/deploy_tenant_key -o StrictHostKeyChecking=no root@"$SSH_HOST" \
+            "$TENANT_ID $JOB_ID" \
+            < "$ZIP_PATH"
+
+      - name: Report success to buildJobs
+        if: success()
+        shell: bash
+        run: |
+          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id_pos_windows }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+
+      - name: Report failure to buildJobs
+        if: failure()
+        shell: bash
+        run: |
+          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"failed\",\"errorMessage\":\"Windows-сборка кассы упала — подробности в логе запуска.\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"

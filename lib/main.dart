@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -44,6 +45,14 @@ void main() async {
   // Firebase — сразу покажем понятный экран с инструкцией, а не упадём.
   if (DefaultFirebaseOptions.isConfigured) {
     try {
+      // Windows — единственная платформа, где ключи Firebase не запечены в
+      // сборку через --dart-define, а приходят рантайм-запросом к
+      // saas-gateway (см. docstring resolveWindowsOptions в
+      // firebase_options.dart) — вызывается ДО initializeApp, иначе
+      // currentPlatform ниже бросит StateError.
+      if (kSaasMode && defaultTargetPlatform == TargetPlatform.windows) {
+        await DefaultFirebaseOptions.resolveWindowsOptions();
+      }
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
       // Офлайн-режим кассы: при обрыве интернета зал продолжает работать
