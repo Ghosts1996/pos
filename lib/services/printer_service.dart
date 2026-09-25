@@ -221,7 +221,13 @@ Future<void> loadSavedPrinterSettings() async {
     final data = doc.data();
     if (data == null) return;
     final type = data['printerType'] as String? ?? 'none';
-    if (type == 'bluetooth') {
+    // На Windows print_bluetooth_thermal идёt через BLE (win_ble), а не
+    // classic-SPP, на котором держится подавляющее большинство дешёвых
+    // 58/80-мм принтеров — см. подробный комментарий в
+    // integrations_settings_screen.dart._applyActivePrinter. Настройка
+    // общая на все устройства заведения, поэтому Windows-планшет просто не
+    // применяет её, вместо того чтобы обманчиво "подключаться".
+    if (type == 'bluetooth' && !Platform.isWindows) {
       final mac = data['printerBtMac'] as String? ?? '';
       if (mac.isNotEmpty) activeReceiptPrinter = BluetoothReceiptPrinter(macAddress: mac);
     } else if (type == 'network') {

@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../theme/app_colors.dart';
@@ -148,11 +149,17 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
       appBar: AppBar(
         title: const Text('Меню'),
         actions: [
-          IconButton(
-            tooltip: 'Сканировать камерой',
-            icon: const Icon(Icons.qr_code_scanner),
-            onPressed: _scanWithCamera,
-          ),
+          // На Windows нет камеры для превью сканера (mobile_scanner её не
+          // поддерживает) — кнопка вела бы только к ошибке. HID-сканер
+          // (USB/Bluetooth "пистолет", эмулирующий клавиатуру) продолжает
+          // работать одинаково на всех платформах без этой кнопки — она
+          // только для сканирования именно КАМЕРОЙ устройства.
+          if (!Platform.isWindows)
+            IconButton(
+              tooltip: 'Сканировать камерой',
+              icon: const Icon(Icons.qr_code_scanner),
+              onPressed: _scanWithCamera,
+            ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(56),

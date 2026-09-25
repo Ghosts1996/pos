@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
@@ -52,6 +53,15 @@ class NotificationService {
 
   Future<void> init() async {
     if (_ready) return;
+    // flutter_local_notifications не имеет Windows-реализации вовсе (даже
+    // не заглушки) — любой вызов плагина ушёл бы в MissingPluginException.
+    // Без него на Windows не будет уведомлений зала (угли/брони/вызовы) —
+    // это принятое ограничение первой версии Windows-сборки, а не баг:
+    // кассир видит их прямо на экране (зал/чек), пока приложение открыто.
+    if (Platform.isWindows) {
+      _ready = true;
+      return;
+    }
 
     // ПОРЯДОК ВАЖЕН. Раньше init начинался с настройки часовых поясов, и
     // любая осечка там (неизвестная зона, сбой базы) обрывала init целиком
@@ -157,6 +167,7 @@ class NotificationService {
     bool timer = false,
   }) async {
     await init();
+    if (Platform.isWindows) return;
     await _plugin.show(
       id,
       title,
@@ -290,11 +301,13 @@ class NotificationService {
 
   Future<void> cancel(int id) async {
     await init();
+    if (Platform.isWindows) return;
     await _plugin.cancel(id);
   }
 
   Future<void> cancelAll() async {
     await init();
+    if (Platform.isWindows) return;
     await _plugin.cancelAll();
   }
 

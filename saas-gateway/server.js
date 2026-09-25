@@ -735,13 +735,18 @@ async function provisionTenantDomain(slug) {
 
 // ----------------------------------------------------- createBuildJob
 
-async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, appLabel, logoUrl, tenantSlug, inviteCode }) {
+async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode }) {
   const token = process.env.GITHUB_PAT;
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
-  // Один запуск workflow, но два job_id — saas-on-demand-build.yml собирает
-  // ОБА приложения матрицей (см. её же комментарий), каждое отчитывается о
-  // своём результате в свой buildJobs-документ.
-  const inputs = { tenant_id: tenantId, job_id_pos: jobIdPos, job_id_kolibri: jobIdKolibri, app_label: appLabel };
+  // Один запуск workflow, но три job_id — saas-on-demand-build.yml собирает
+  // кассу и гостевое приложение под Android матрицей (см. её же
+  // комментарий) плюс кассу под Windows отдельным job'ом (другой раннер,
+  // другой набор шагов) — каждое отчитывается о своём результате в свой
+  // buildJobs-документ.
+  const inputs = {
+    tenant_id: tenantId, job_id_pos: jobIdPos, job_id_kolibri: jobIdKolibri,
+    job_id_pos_windows: jobIdPosWindows, app_label: appLabel,
+  };
   if (logoUrl) inputs.logo_url = logoUrl;
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
   if (inviteCode) inputs.invite_code = inviteCode;
@@ -804,18 +809,23 @@ async function handleCreateBuildJob(req, res) {
     throw new HttpError(409, "Сборка уже запущена — дождитесь её завершения, прежде чем запускать новую");
   }
 
-  // Одно нажатие «Собрать APK» — два приложения (см. build-apk.yml, откуда
-  // и пришла сама идея матрицы): касса для владельца и гостевое приложение
-  // «Colibri Lounge» для его гостей (брендинг заведения общий для обоих —
-  // логотип и название берутся из тех же tenants/{tenantId}/branding).
-  // Каждое — свой buildJobs-документ, поэтому в консоли сразу видно 2
+  // Одно нажатие «Собрать APK» — три приложения (см. build-apk.yml, откуда
+  // и пришла сама идея матрицы): касса для Android-планшета владельца,
+  // касса для Windows (тот же lib/main.dart, отдельный job на
+  // windows-latest — см. saas-on-demand-build.yml) и гостевое приложение
+  // «Colibri Lounge» для его гостей (брендинг заведения общий на все —
+  // логотип и название берутся из тех же tenants/{tenantId}/branding, хотя
+  // касса, в отличие от гостевого, его игнорирует и на Windows тоже).
+  // Каждое — свой buildJobs-документ, поэтому в консоли сразу видно 3
   // записи «в очереди», и каждая получает свою ссылку «Скачать» по
-  // готовности независимо от второй.
+  // готовности независимо от остальных.
   const firestoreNow = admin.firestore.FieldValue.serverTimestamp();
   const jobRefPos = firestore.collection("buildJobs").doc();
   const jobRefKolibri = firestore.collection("buildJobs").doc();
+  const jobRefPosWindows = firestore.collection("buildJobs").doc();
   const jobIdPos = jobRefPos.id;
   const jobIdKolibri = jobRefKolibri.id;
+  const jobIdPosWindows = jobRefPosWindows.id;
   const baseJob = {
     tenantId,
     status: "queued",
@@ -827,8 +837,9 @@ async function handleCreateBuildJob(req, res) {
     errorMessage: null,
   };
   const createBatch = firestore.batch();
-  createBatch.set(jobRefPos, { ...baseJob, type: "pos" });
-  createBatch.set(jobRefKolibri, { ...baseJob, type: "guest" });
+  createBatch.set(jobRefPos, { ...baseJob, type: "pos", platform: "android" });
+  createBatch.set(jobRefKolibri, { ...baseJob, type: "guest", platform: "android" });
+  createBatch.set(jobRefPosWindows, { ...baseJob, type: "pos", platform: "windows" });
   await createBatch.commit();
 
   // Название и лого заведения — это бренд ТОЛЬКО гостевого приложения
@@ -871,14 +882,14 @@ async function handleCreateBuildJob(req, res) {
   }
 
   try {
-    await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, appLabel, logoUrl, tenantSlug, inviteCode });
+    await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode });
   } catch (e) {
     const failUpdate = {
       status: "failed",
       errorMessage: String(e),
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    await Promise.all([jobRefPos.update(failUpdate), jobRefKolibri.update(failUpdate)]);
+    await Promise.all([jobRefPos.update(failUpdate), jobRefKolibri.update(failUpdate), jobRefPosWindows.update(failUpdate)]);
     throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. записи в buildJobs");
   }
 
@@ -1701,6 +1712,14 @@ async function handleDownloadBuild(req, res) {
   const job = jobDoc.data();
   if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
 
+  // На диске файл ВСЕГДА лежит как "{jobId}.apk" независимо от платформы —
+  // это фиксированное имя пишет forced-command скрипт deploy-tenant-apk.sh
+  // на сервере (см. saas/README.md), которому нужно поправить один параметр
+  // ("apk"), чтобы что-то поменять, а трогать его ради Windows-сборки не
+  // нужно: то, что фактически внутри архива (APK или zip Windows-сборки),
+  // определяет только это тело ответа — Content-Type и имя файла в
+  // Content-Disposition, а не путь на диске. Браузер сохраняет файл под
+  // именем из Content-Disposition, а не по URL/пути на сервере.
   const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
   try {
     await fs.promises.access(filePath, fs.constants.R_OK);
@@ -1708,11 +1727,14 @@ async function handleDownloadBuild(req, res) {
     throw new HttpError(404, "файл сборки не найден на сервере — попробуйте собрать заново");
   }
 
+  const isWindows = job.platform === "windows";
   // Имя файла — по типу сборки, а не всегда "hookah-pos-...": иначе кассу и
-  // гостевое приложение (два независимых job'а от одного нажатия «Собрать
+  // гостевое приложение (независимые job'ы от одного нажатия «Собрать
   // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
-  // друга без переименования вручную.
-  const fileNamePrefix = job.type === "guest" ? "colibri-lounge" : "hookah-pos";
+  // друга без переименования вручную. Windows-кассу — от Android-кассы.
+  const fileNamePrefix = job.type === "guest" ? "colibri-lounge" : isWindows ? "hookah-pos-windows" : "hookah-pos";
+  const fileExt = isWindows ? "zip" : "apk";
+  const contentType = isWindows ? "application/zip" : "application/vnd.android.package-archive";
 
   // X-Accel-Redirect, не fs.createReadStream(...).pipe(res): раньше файл
   // отдавал сам Node-процесс — на реальном телефоне загрузка зависала
@@ -1725,10 +1747,11 @@ async function handleDownloadBuild(req, res) {
   // пути (см. location /internal-tenant-builds/ в конфиге nginx,
   // saas/README.md), а Node только решает, МОЖНО ли этому запросу вообще
   // получить файл (проверка токена выше) — байты через Node больше не
-  // идут вообще.
+  // идут вообще. Сам внутренний путь всегда "{jobId}.apk" (см. комментарий
+  // выше про filePath) независимо от того, что фактически внутри.
   res.writeHead(200, {
-    "Content-Type": "application/vnd.android.package-archive",
-    "Content-Disposition": `attachment; filename="${fileNamePrefix}-${jobId}.apk"`,
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${fileNamePrefix}-${jobId}.${fileExt}"`,
     "Access-Control-Allow-Origin": "*",
     "X-Accel-Redirect": `/internal-tenant-builds/${job.tenantId}/${jobId}.apk`,
   });
