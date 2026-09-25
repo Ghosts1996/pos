@@ -79,6 +79,53 @@ service cloud.firestore {
       return hasRole(tenantId, ['owner', 'admin', 'manager', 'employee']);
     }
 
+    // ---- Сети заведений (chains) ----
+    //
+    // Сеть — необязательная группировка нескольких tenants одного владельца:
+    // общий биллинг и общая программа лояльности на все точки, при этом
+    // каждая точка сохраняет свою кассу (столы/сотрудники/устройства/чеки)
+    // без изменений. Одиночное заведение НИЧЕГО не знает о сетях: у него
+    // просто нет поля chainId, chainIdOf() для него возвращает '', и
+    // короткое замыкание (||/&&) в isTenantGuest/myActiveSession ниже ни
+    // разу не обращается к коллекциям chains/* — то есть для существующих
+    // одиночных заведений это ровно ноль дополнительных чтений и ровно
+    // прежнее поведение.
+    function chainIdOf(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)).data.get('chainId', '');
+    }
+
+    function chainMemberId(chainId) {
+      return chainId + '_' + request.auth.uid;
+    }
+
+    function isChainMember(chainId) {
+      return chainId != '' && signedIn() &&
+        exists(/databases/$(database)/documents/chainMembers/$(chainMemberId(chainId))) &&
+        get(/databases/$(database)/documents/chainMembers/$(chainMemberId(chainId))).data.status == 'active';
+    }
+
+    function chainMemberRole(chainId) {
+      return get(/databases/$(database)/documents/chainMembers/$(chainMemberId(chainId))).data.role;
+    }
+
+    function hasChainRole(chainId, roles) {
+      return isSuperAdmin() || (isChainMember(chainId) && chainMemberRole(chainId) in roles);
+    }
+
+    // Сотрудник ЛЮБОЙ точки сети — нужен для общего гостевого справочника
+    // (chains/{chainId}/clients и соседние коллекции ниже), который
+    // сотрудник одной точки должен видеть точно так же, как и другой:
+    // баланс/уровень гостя единый на всю сеть, а не только на ту точку,
+    // где гость сейчас сидит.
+    function isChainStaff(chainId) {
+      return hasChainRole(chainId, ['owner', 'admin', 'manager', 'employee']);
+    }
+
+    function isChainGuest(chainId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/chains/$(chainId)/clients/$(request.auth.uid));
+    }
+
     // Гость ЭТОГО заведения — определяется не самим фактом входа в Firebase
     // (в мультитенантном проекте один и тот же анонимный аккаунт гостя
     // валиден для ЛЮБОГО заведения на платформе), а наличием собственного
@@ -92,8 +139,11 @@ service cloud.firestore {
     // читать меню, зал и афишу чужого заведения — прямое нарушение раздела
     // 9 ТЗ ("данные Tenant A никогда не должны быть доступны Tenant B").
     function isTenantGuest(tenantId) {
-      return signedIn() &&
-        exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid));
+      let cId = chainIdOf(tenantId);
+      return signedIn() && (
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid)) ||
+        (cId != '' && exists(/databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid)))
+      );
     }
 
     function isSelf(uid) {
@@ -133,10 +183,13 @@ service cloud.firestore {
       // запрещена, чтобы никто не мог завести себе tenant в обход
       // онбординга/лимитов/биллинга.
       allow create: if false;
-      // Статус/подписку/владельца меняет либо супер-админ, либо Cloud
-      // Function биллинга (тоже вне правил). Обычный owner/admin может
-      // менять только некритичные поля (name) — проверено явно, а не
-      // "всё, кроме…", чтобы новое опасное поле не проскочило по забывчивости.
+      // Статус/подписку/владельца/chainId (см. chains/{chainId} выше)
+      // меняет либо супер-админ, либо Cloud Function биллинга (тоже вне
+      // правил) — включение точки в сеть/выключение из неё намеренно
+      // такая же привилегированная операция, как и создание самого tenant.
+      // Обычный owner/admin может менять только некритичные поля (name) —
+      // проверено явно, а не "всё, кроме…", чтобы новое опасное поле не
+      // проскочило по забывчивости.
       allow update: if isSuperAdmin() ||
         (hasRole(tenantId, ['owner', 'admin']) &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']));
@@ -174,6 +227,120 @@ service cloud.firestore {
          request.resource.data.role in ['manager', 'employee']);
       allow delete: if isSuperAdmin() ||
         hasRole(resource.data.tenantId, ['owner', 'admin']);
+    }
+
+    // ---- chains: сам факт существования сети и её статус (биллинг) ----
+    match /chains/{chainId} {
+      allow read: if isChainMember(chainId) || isSuperAdmin();
+      // Как и tenants выше — создаёт только Cloud Function/шлюз биллинга
+      // (admin SDK, createChain в saas-gateway), не клиент напрямую.
+      allow create: if false;
+      allow update: if isSuperAdmin() ||
+        (hasChainRole(chainId, ['owner', 'admin']) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']));
+      allow delete: if isSuperAdmin();
+    }
+
+    // ---- chainMembers: кто состоит в сети и с какой ролью — тот же формат,
+    //      что и tenantMembers (id = "<chainId>_<uid>"). Пишется зеркально
+    //      при создании/изменении tenantMembers для точки, у которой задан
+    //      chainId (см. syncChainMembership в saas/console/console.js,
+    //      saas-gateway/server.js и saas_device_join_service.dart) — роль
+    //      'owner' сюда, как и в tenantMembers, может положить только
+    //      admin SDK при создании сети/точки. ----
+    match /chainMembers/{id} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() &&
+         (resource.data.userId == request.auth.uid || isChainMember(resource.data.chainId)));
+      allow create: if isSuperAdmin() ||
+        (hasChainRole(request.resource.data.chainId, ['owner', 'admin']) &&
+         request.resource.data.role in ['manager', 'employee']);
+      allow update: if isSuperAdmin() ||
+        (hasChainRole(resource.data.chainId, ['owner', 'admin']) &&
+         resource.data.role in ['manager', 'employee'] &&
+         request.resource.data.role in ['manager', 'employee']);
+      allow delete: if isSuperAdmin() || hasChainRole(resource.data.chainId, ['owner', 'admin']);
+    }
+
+    // ---- Брендинг сети — тот же принцип, что и tenants/{tenantId}/branding
+    //      ниже: публично читаемо (не секрет, нужно ДО входа гостя), пишет
+    //      только владелец/админ сети. Показывается в едином гостевом
+    //      приложении сети вместо брендинга отдельной точки, чтобы тема не
+    //      "мигала" при переключении гостем точки внутри одной сети. ----
+    match /chains/{chainId}/branding/{doc} {
+      allow read: if true;
+      allow write: if hasChainRole(chainId, ['owner', 'admin']);
+    }
+
+    // ---- Общая лояльность сети: профиль/баланс/история визитов гостя один
+    //      на всю сеть, а не на каждую точку — см. docstring chains/{chainId}
+    //      выше. Форма правил намеренно зеркалит tenants/{tenantId}/clients
+    //      и соседние коллекции ниже: та же логика, просто isStaff(tenantId)/
+    //      isTenantGuest(tenantId) заменены на isChainStaff(chainId)/
+    //      isChainGuest(chainId). ----
+    match /chains/{chainId}/clients/{uid} {
+      allow read: if isSelf(uid) || isChainStaff(chainId);
+
+      // В отличие от tenants/{tenantId}/clients, здесь нельзя напрямую
+      // проверить sessionClaims конкретной точки — путь до документа не
+      // содержит tenantId. Вместо этого гость обязан прислать activeTenantId
+      // (в какой именно точке сети он физически сидит, см. GuestLinkService.
+      // bindToSession) — и мы проверяем sessionClaims ИМЕННО этой точки, а
+      // заодно что она правда состоит в этой сети (chainIdOf(tid) == chainId),
+      // чтобы нельзя было подставить чек чужой точки/сети.
+      function chainSessionClaimOk(currentSid) {
+        let sid = request.resource.data.get('activeSessionId', '');
+        let tid = request.resource.data.get('activeTenantId', '');
+        return sid == '' || sid == currentSid ||
+          (chainIdOf(tid) == chainId &&
+           exists(/databases/$(database)/documents/tenants/$(tid)/sessionClaims/$(sid)) &&
+           get(/databases/$(database)/documents/tenants/$(tid)/sessionClaims/$(sid)).data.uid == uid);
+      }
+
+      allow create: if isChainStaff(chainId) || (isSelf(uid) && chainSessionClaimOk(''));
+      allow update: if isChainStaff(chainId) ||
+        (isSelf(uid) &&
+         chainSessionClaimOk(resource.data.get('activeSessionId', '')) &&
+         (!('phone' in request.resource.data) ||
+          resource.data.get('phone', '') == '' ||
+          request.resource.data.phone == resource.data.phone) &&
+         (!('bonusBalance' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('tier' in request.resource.data.diff(resource.data).affectedKeys())) &&
+         (!('totalSpent' in request.resource.data.diff(resource.data).affectedKeys())));
+      allow delete: if isChainStaff(chainId);
+    }
+
+    match /chains/{chainId}/clients/{uid}/visits/{visitId} {
+      allow read: if isSelf(uid) || isChainStaff(chainId);
+      allow write: if isChainStaff(chainId);
+    }
+
+    match /chains/{chainId}/phoneIndex/{phone} {
+      allow read: if isChainStaff(chainId) || isChainGuest(chainId);
+      allow create: if isChainStaff(chainId) ||
+        (isChainGuest(chainId) && request.resource.data.uid == request.auth.uid);
+      allow update: if isChainStaff(chainId) ||
+        (isChainGuest(chainId) &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isChainStaff(chainId);
+    }
+
+    match /chains/{chainId}/referralCodes/{code} {
+      allow read: if isChainStaff(chainId) || isChainGuest(chainId);
+      allow create: if isChainStaff(chainId) ||
+        (isChainGuest(chainId) && request.resource.data.uid == request.auth.uid);
+      allow update: if isChainStaff(chainId) ||
+        (isChainGuest(chainId) &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid);
+      allow delete: if isChainStaff(chainId);
+    }
+
+    match /chains/{chainId}/bonusOperations/{doc} {
+      allow read: if isChainStaff(chainId) ||
+        (isChainGuest(chainId) && resource.data.clientUid == request.auth.uid);
+      allow write: if isChainStaff(chainId);
     }
 
     // ---- Настройки заведения ----
@@ -278,16 +445,25 @@ service cloud.firestore {
       allow write: if isStaff(tenantId);
     }
 
+    // Для гостя сети профиль с activeSessionId лежит в chains/{chainId}/
+    // clients, а не в tenants/{tenantId}/clients — но сама сессия физически
+    // всё равно принадлежит ОДНОЙ конкретной точке (её кассе), поэтому
+    // сверяем ещё и activeTenantId в профиле: гость считается "своим" для
+    // sessions/{doc} только пока сидит именно в этой точке сети (см.
+    // GuestLinkService.bindToSession — пишет activeTenantId вместе с
+    // activeSessionId только в режиме сети).
     function myActiveSession(tenantId) {
-      return get(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid))
-                .data.activeSessionId;
+      let cId = chainIdOf(tenantId);
+      return cId == ''
+        ? get(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid)).data.activeSessionId
+        : (get(/databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid)).data.get('activeTenantId', '') == tenantId
+            ? get(/databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid)).data.activeSessionId
+            : '');
     }
 
     match /tenants/{tenantId}/sessions/{doc} {
       allow read: if isStaff(tenantId) ||
-        (signedIn() &&
-         exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid)) &&
-         myActiveSession(tenantId) == doc);
+        (isTenantGuest(tenantId) && myActiveSession(tenantId) == doc);
       allow update: if isStaff(tenantId) ||
         (signedIn() &&
          exists(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(doc)) &&
@@ -587,8 +763,13 @@ service cloud.firestore {
     // ничего чувствительнее planId/status/дат (см. SubscriptionInfo) — это
     // ровно то, что SubscriptionGate обязан проверять на КАЖДОМ устройстве,
     // включая рядовых сотрудников, а не только владельца.
+    // Для сети подписка одна на всю сеть (id документа == chainId, поле
+    // chainId вместо tenantId — см. handleCreateChain в saas-gateway) —
+    // читает любой активный участник ЛЮБОЙ точки сети (isChainMember).
     match /subscriptions/{subscriptionId} {
-      allow read: if isSuperAdmin() || isMember(resource.data.tenantId);
+      allow read: if isSuperAdmin() ||
+        (resource.data.get('tenantId', null) != null && isMember(resource.data.tenantId)) ||
+        (resource.data.get('chainId', null) != null && isChainMember(resource.data.chainId));
       allow write: if isSuperAdmin();
     }
 
