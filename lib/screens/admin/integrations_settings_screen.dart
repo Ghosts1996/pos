@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
@@ -89,7 +90,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   }
 
   void _applyActivePrinter() {
-    if (_printerType == 'bluetooth' && _btMac.isNotEmpty) {
+    // На Windows print_bluetooth_thermal работает через BLE-скан
+    // (win_ble), а не через classic-SPP, на котором держится подавляющее
+    // большинство дешёвых 58/80-мм принтеров (Xprinter/Gprinter/Rongta) —
+    // "подключение" на Windows либо не находит принтер вовсе, либо
+    // обманчиво "подключается" к чему-то, что не умеет печатать. Настройка
+    // принтера общая на всех устройств заведения (один документ settings),
+    // поэтому если её включили с Android-планшета, здесь просто не
+    // применяем её, а не пытаемся честно воспроизвести — молчаливый
+    // отказ печати хуже, чем никакого принтера. Сеть (LAN) работает
+    // одинаково на всех платформах.
+    if (_printerType == 'bluetooth' && _btMac.isNotEmpty && !Platform.isWindows) {
       activeReceiptPrinter = BluetoothReceiptPrinter(macAddress: _btMac);
     } else if (_printerType == 'network' && _networkIpCtrl.text.trim().isNotEmpty) {
       activeReceiptPrinter = NetworkReceiptPrinter(ip: _networkIpCtrl.text.trim());
@@ -451,27 +462,36 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 // нужную ей ширину, а заголовку с подписью не оставалось почти
                 // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
                 // печатались по одной букве в строку.
-                RadioListTile<String>(
-                  title: const Text('Bluetooth'),
-                  subtitle: Text(
-                    _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                //
+                // На Windows этого варианта нет вовсе (не серая недоступная
+                // плитка, а полностью скрыт) — print_bluetooth_thermal там
+                // работает через BLE, а не classic-SPP, на котором держится
+                // подавляющее большинство дешёвых принтеров: выбор без
+                // объяснений привёл бы к "принтер как будто подключён, но
+                // не печатает". См. _applyActivePrinter/loadSavedPrinterSettings.
+                if (!Platform.isWindows) ...[
+                  RadioListTile<String>(
+                    title: const Text('Bluetooth'),
+                    subtitle: Text(
+                      _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    value: 'bluetooth',
                   ),
-                  value: 'bluetooth',
-                ),
-                if (_printerType == 'bluetooth')
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16, bottom: 8),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        onPressed: _pickBluetoothDevice,
-                        icon: const Icon(Icons.bluetooth_searching, size: 18),
-                        label: const Text('Выбрать устройство'),
+                  if (_printerType == 'bluetooth')
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16, bottom: 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed: _pickBluetoothDevice,
+                          icon: const Icon(Icons.bluetooth_searching, size: 18),
+                          label: const Text('Выбрать устройство'),
+                        ),
                       ),
                     ),
-                  ),
+                ],
                 const RadioListTile<String>(
                   title: Text('Wi-Fi / LAN (порт 9100)'),
                   value: 'network',
@@ -561,11 +581,16 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             decoration: InputDecoration(
               labelText: 'Код для проверки (необязательно)',
               hintText: 'отсканированный DataMatrix целиком',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.camera_alt),
-                tooltip: 'Сканировать камерой',
-                onPressed: _scanTestCode,
-              ),
+              // На Windows нет камеры для сканера — поле по-прежнему
+              // принимает HID-сканер ("пистолет") и ручной ввод, см.
+              // комментарий у _scanTestCode.
+              suffixIcon: Platform.isWindows
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.camera_alt),
+                      tooltip: 'Сканировать камерой',
+                      onPressed: _scanTestCode,
+                    ),
             ),
           ),
           const SizedBox(height: 8),

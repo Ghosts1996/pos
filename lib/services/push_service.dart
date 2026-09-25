@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -48,7 +49,15 @@ class PushService {
   /// POS: подписка планшета на общий канал (брони и т.п., не зависящие от
   /// специализации). Специализацию конкретного сотрудника подключает
   /// [updateStaffPositionSubscription] отдельно, после PIN-входа.
+  ///
+  /// На Windows firebase_messaging не имеет платформенной реализации вовсе
+  /// (в отличие от большинства других Firebase-плагинов) — вызов любого её
+  /// метода уходит в MissingPluginException. Ранний выход, а не try/catch
+  /// вокруг каждого вызова: push для кассы на Windows в любом случае не
+  /// доставится, оповещения зала на этой платформе идут только через
+  /// SessionAlertsService (см. HallWatchService/app_bootstrap.dart).
   Future<void> initStaff() async {
+    if (Platform.isWindows) return;
     await _requestPermission();
     await _fcm.subscribeToTopic(_allStaffTopic);
   }
@@ -61,6 +70,7 @@ class PushService {
   /// получают вызовы всех специализаций — ровно как было устроено раньше,
   /// пока владелец никого не специализировал явно.
   Future<void> updateStaffPositionSubscription(Employee employee) async {
+    if (Platform.isWindows) return;
     for (final p in _allPositions) {
       await _fcm.unsubscribeFromTopic(_positionTopic(p));
     }

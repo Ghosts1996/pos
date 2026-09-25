@@ -486,6 +486,14 @@ const BUILD_STATUS_LABELS = {
 const BUILD_TYPE_LABELS = {
   pos: 'Касса', guest: 'Гостевое приложение',
 };
+// platform: 'windows' — та же касса (type всегда 'pos'), но отдельная
+// desktop-сборка для планшета/компьютера на Windows (см. handleCreateBuildJob
+// в saas-gateway/server.js) — без суффикса две строки в списке ("Касса" и
+// "Касса") были бы неотличимы друг от друга.
+function buildJobLabel(j) {
+  const base = BUILD_TYPE_LABELS[j.type] || j.type || 'Сборка';
+  return j.platform === 'windows' ? `${base} (Windows)` : base;
+}
 // См. purpose в handleBillingWebhook (saas/functions/index.js) —
 // 'subscription' (первая оплата) и 'renewal' (автопродление).
 const BILLING_PURPOSE_LABELS = {
@@ -2194,12 +2202,15 @@ function watchDashboardData(tenantId) {
 
       <h2>Сборка APK</h2>
       <div class="card">
-        <p class="small muted">Одна кнопка — два личных приложения этого
-        заведения: касса (для планшета, сам присоединится по коду
-        заведения и коду приглашения устройства выше, без ручного ввода) и
-        гостевое приложение (для телефонов гостей — меню,
-        заказ из-за стола, вызов персонала, бонусы; название и логотип —
-        из раздела «Брендинг»).</p>
+        <p class="small muted">Одна кнопка — три личных приложения этого
+        заведения: касса для Android-планшета и касса для Windows (обе сами
+        присоединятся по коду заведения и коду приглашения устройства выше,
+        без ручного ввода — Windows-версию нужно просто распаковать и
+        запустить exe из архива), и гостевое приложение (для телефонов
+        гостей — меню, заказ из-за стола, вызов персонала, бонусы; название
+        и логотип — из раздела «Брендинг»). На Windows недоступны: сканер
+        через камеру (работает USB/Bluetooth-сканер-«пистолет» и ручной
+        ввод) и Bluetooth-принтер чека (работает сетевой Wi-Fi/LAN-принтер).</p>
         ${canManage ? (() => {
           // Пока есть незавершённая сборка (см. проверку в handleCreateBuildJob
           // на сервере) — кнопка неактивна, чтобы не плодить дубли повторными
@@ -2211,7 +2222,7 @@ function watchDashboardData(tenantId) {
         ${(buildJobs || []).length ? buildJobs.map((j) => `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
             <div class="grow small muted">
-              ${esc(BUILD_TYPE_LABELS[j.type] || j.type || 'Сборка')} · ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
+              ${esc(buildJobLabel(j))} · ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
               ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
             </div>
             ${j.status === 'success' ? `
@@ -4255,7 +4266,7 @@ function watchAllBuildJobs() {
       <div class="row" style="justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border)">
         <div class="small grow" style="min-width:0">
           <b>${esc(j.tenantName || j.tenantId)}</b> ·
-          ${esc(BUILD_TYPE_LABELS[j.type] || j.type || '')} ·
+          ${esc(buildJobLabel(j))} ·
           <span style="${j.status === 'failed' ? 'color:var(--danger)' : ''}">${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</span>
           ${j.status === 'failed' && j.errorMessage ? `<div class="muted">${esc(j.errorMessage)}</div>` : ''}
         </div>
