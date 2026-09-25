@@ -1083,7 +1083,15 @@ function screenLanding() {
   sub(() => window.removeEventListener('scroll', onLandingScroll));
 
   sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
-    const plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
+    const allPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
+    // Тарифы для сети (isChainPlan) на публичном лендинге НЕ показываем:
+    // выбор "Выбрать и попробовать" здесь ведёт в обычный онбординг ОДНОГО
+    // заведения (без чекбокса "Это сеть"), и посетитель, выбравший тут
+    // тариф сети, получил бы одиночное заведение с planId сети — рабочее,
+    // но бессмысленное сочетание (лимиты/цена сети без самой сети). Купить
+    // тариф сети можно только там, где он и должен быть выбран осознанно —
+    // на экране "Новое заведение" с явным чекбоксом (см. screenOnboarding).
+    const plans = allPlans.filter((p) => !p.isChainPlan);
     const body = $('landing-plans');
     if (!body) return;
     // "Популярный" — средний по цене из реально продаваемых тарифов (не
@@ -2257,7 +2265,7 @@ function watchDashboardData(tenantId) {
       ` : ''}
       <div class="card">
         ${canManage && plans ? `
-          ${plans.filter((p) => Number(p.priceRub) > 0).map((p) => {
+          ${plans.filter((p) => Number(p.priceRub) > 0 && !!p.isChainPlan === !!tenant.chainId).map((p) => {
             const priceParts = [`${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`];
             if (Number(p.priceRubSemiannual) > 0) priceParts.push(`${Number(p.priceRubSemiannual).toLocaleString('ru-RU')} ₽/6 мес`);
             if (Number(p.priceRubYearly) > 0) priceParts.push(`${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год`);
@@ -4292,16 +4300,21 @@ function watchPlans() {
           <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubYearly" value="${Number(p.priceRubYearly) || 0}">
         </label>
         <div class="f-plan-chain-fields" data-plan="${esc(p.id)}" style="${p.isChainPlan ? '' : 'display:none'};border-top:1px solid var(--border);padding-top:12px;margin-bottom:4px">
-          <div class="small muted" style="margin-bottom:8px">Цена за КАЖДУЮ ДОПОЛНИТЕЛЬНУЮ точку сети (пусто/0 — по умолчанию так же, как за первую)</div>
-          <label class="field"><span>Доп. точка, ₽/мес</span>
-            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditional" value="${Number(p.priceRubAdditional) || 0}">
+          <label class="row" style="width:auto;gap:6px;margin-bottom:10px">
+            <input type="checkbox" class="f-plan-checkbox f-plan-custom-additional" data-plan="${esc(p.id)}" data-field="customAdditionalPrice" ${p.customAdditionalPrice ? 'checked' : ''}>
+            Своя цена за КАЖДУЮ ДОПОЛНИТЕЛЬНУЮ точку сети (без галочки — доп. точка стоит как первая)
           </label>
-          <label class="field"><span>Доп. точка, ₽/6 мес</span>
-            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalSemiannual" value="${Number(p.priceRubAdditionalSemiannual) || 0}">
-          </label>
-          <label class="field"><span>Доп. точка, ₽/год</span>
-            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalYearly" value="${Number(p.priceRubAdditionalYearly) || 0}">
-          </label>
+          <div class="f-plan-additional-price-fields" data-plan="${esc(p.id)}" style="${p.customAdditionalPrice ? '' : 'display:none'}">
+            <label class="field"><span>Доп. точка, ₽/мес</span>
+              <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditional" value="${Number(p.priceRubAdditional) || 0}">
+            </label>
+            <label class="field"><span>Доп. точка, ₽/6 мес</span>
+              <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalSemiannual" value="${Number(p.priceRubAdditionalSemiannual) || 0}">
+            </label>
+            <label class="field"><span>Доп. точка, ₽/год</span>
+              <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="priceRubAdditionalYearly" value="${Number(p.priceRubAdditionalYearly) || 0}">
+            </label>
+          </div>
         </div>
         <div class="row">
           <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
@@ -4352,6 +4365,12 @@ function watchPlans() {
         if (fields) fields.style.display = el.checked ? '' : 'none';
       };
     });
+    document.querySelectorAll('.f-plan-custom-additional').forEach((el) => {
+      el.onchange = () => {
+        const fields = document.querySelector(`.f-plan-additional-price-fields[data-plan="${el.dataset.plan}"]`);
+        if (fields) fields.style.display = el.checked ? '' : 'none';
+      };
+    });
   }, () => {
     body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
   }));
@@ -4371,7 +4390,10 @@ function watchPlans() {
       await setDoc(doc(state.db, 'plans', id), {
         name: isChainPlan && id === 'chain' ? 'Сеть заведений' : id,
         priceRub: 0, priceRubSemiannual: 0, priceRubYearly: 0,
-        ...(isChainPlan ? { priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0, isChainPlan: true } : {}),
+        ...(isChainPlan ? {
+          isChainPlan: true, customAdditionalPrice: false,
+          priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0,
+        } : {}),
         maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
         trialDays: 7, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
