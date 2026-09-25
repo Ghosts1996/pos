@@ -106,16 +106,20 @@ class KolibriHallMapScreen extends StatelessWidget {
   Widget _tableTile(BuildContext context, TableModel table) {
     final busy = table.activeSessionIds.isNotEmpty;
     final color = busy ? KolibriColors.accent : KolibriColors.primary;
+    // Круглый/квадратный — как в редакторе зала на кассе (см. TableTile и
+    // TablePickerMap): radius = размер плитки даёт идеальный круг, Flutter
+    // сам ограничивает его половиной стороны.
+    final radius = table.shape == 'circle' ? BorderRadius.circular(92) : BorderRadius.circular(16);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: radius,
       onTap: () => _onTap(context, table, busy),
       child: Container(
         width: 92,
         height: 92,
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: radius,
           border: Border.all(color: color, width: 2),
         ),
         child: Column(
