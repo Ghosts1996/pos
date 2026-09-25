@@ -11,6 +11,7 @@ import {
   getAuth, onAuthStateChanged, signOut, sendEmailVerification,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
+  reauthenticateWithCredential, EmailAuthProvider,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
@@ -98,7 +99,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.7-mrr-signups-trend';
+const CONSOLE_BUILD = '2026-09-21.8-reauth-before-danger';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -227,6 +228,35 @@ function dismissBroadcast(id) {
     ids.add(id);
     localStorage.setItem('dismissedBroadcasts', JSON.stringify([...ids]));
   } catch (_) { /* см. docstring выше — не критично, просто не запомнится */ }
+}
+
+/** Повторный пароль перед опасным действием в панели платформы (супер-админ
+ *  #10) — не полноценная 2FA (та требует Identity Platform, платный тариф,
+ *  привязанный к тому же Blaze, который весь этот сеанс сознательно
+ *  обходили ради экономии), а более лёгкая защита: если чужая сессия каким-
+ *  то образом оказалась открыта в браузере супер-админа (забытый вход на
+ *  чужом устройстве, похищенный токен), у злоумышленника всё равно нет
+ *  пароля — назначить/снять супер-админа или необратимо удалить заведение
+ *  с наскока не выйдет. Пароль есть у КАЖДОГО супер-админа гарантированно —
+ *  сама панель требует регистрации email+паролем ДО назначения (см. текст
+ *  на вкладке "Сотрудники платформы"), пассивная email-ссылка входа
+ *  используется только на публичном лендинге для новых заведений, не для
+ *  назначения супер-админов.
+ *  Возвращает true, если пароль подтверждён, false — если отменили ввод. */
+async function reauthenticate(actionLabel) {
+  const password = prompt(`Подтвердите действие «${actionLabel}» — введите свой пароль от этой панели:`);
+  if (password === null) return false;
+  if (!password) {
+    toast('Пароль не введён — действие отменено');
+    return false;
+  }
+  try {
+    await reauthenticateWithCredential(state.auth.currentUser, EmailAuthProvider.credential(state.auth.currentUser.email, password));
+    return true;
+  } catch (e) {
+    toast(e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential' ? 'Неверный пароль' : `Не удалось подтвердить: ${e?.message || e}`);
+    return false;
+  }
 }
 
 function clearScreen() {
@@ -4213,6 +4243,7 @@ async function changeTenantPlan(tenantId, planId) {
 
 async function deleteDemoTenant(tenantId) {
   if (!confirm('Удалить это демо-заведение безвозвратно вместе со всеми данными?')) return;
+  if (!(await reauthenticate('удалить заведение безвозвратно'))) return;
   try {
     await callSaasGateway('deleteDemoTenant', { tenantId });
     toast('Демо-заведение удалено');
@@ -4249,6 +4280,7 @@ function watchSuperAdmins() {
     const errEl = $('f-super-admin-error');
     errEl.textContent = '';
     if (!email) { errEl.textContent = 'Введите email'; return; }
+    if (!(await reauthenticate(`назначить супер-админом ${email}`))) return;
     $('f-super-admin-grant').disabled = true;
     try {
       await promoteSuperAdmin(email);
@@ -4286,6 +4318,7 @@ async function revokeSuperAdmin(uid) {
     return;
   }
   if (!confirm('Снять права супер-админа платформы у этого пользователя?')) return;
+  if (!(await reauthenticate('снять доступ супер-админа'))) return;
   try {
     await deleteDoc(doc(state.db, 'superAdmins', uid));
     toast('Доступ снят');
