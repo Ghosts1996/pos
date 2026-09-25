@@ -707,6 +707,183 @@ async function handleCreateChain(req, res) {
   sendJson(res, 200, { chainId, slug });
 }
 
+/**
+ * Перевод УЖЕ РАБОТАЮЩЕГО одиночного заведения в новую сеть — владелец
+ * начинает сеть с уже настроенного заведения, а не заводит пустую сеть и
+ * точку в ней заново (тот путь — handleCreateChain + handleCreateTenant с
+ * chainId, он для НОВЫХ точек). Заведение остаётся тем же документом,
+ * просто получает chainId — дальше это первая точка сети, как любая другая.
+ *
+ * Переносит: подписку (статус/даты как есть, без сброса уже идущего
+ * пробного периода или оплаченного периода — просто с новым planId сети),
+ * брендинг (гость не должен увидеть внезапную смену оформления в день
+ * перевода) и всю накопленную лояльность гостей (clients/phoneIndex/
+ * referralCodes/bonusOperations) из tenants/{tenantId}/... в
+ * chains/{chainId}/... — ровно те коллекции, которые AppScope.loyaltyCol
+ * начинает читать оттуда же, как только у tenant появляется chainId (см. её
+ * докстринг в lib/services/app_scope.dart) — клиентскому коду мигрировать
+ * ничего не нужно, он просто продолжит читать по новому пути.
+ */
+async function handleConvertTenantToChain(req, res) {
+  const decoded = await verifyAuth(req);
+  if (!decoded.email_verified) {
+    throw new HttpError(412, "Подтвердите email, прежде чем переводить заведение в сеть");
+  }
+  const uid = decoded.uid;
+  const body = await parseJsonBody(req);
+  const { tenantId, name, slug: rawSlug, planId } = body;
+
+  if (typeof tenantId !== "string" || !tenantId.trim()) {
+    throw new HttpError(400, "tenantId обязателен");
+  }
+  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
+    throw new HttpError(400, "Название сети: от 2 до 80 символов");
+  }
+  // Только владелец — та же операция необратима без ручного вмешательства
+  // поддержки (обратной кнопки "разъединить сеть" нет), решать не может
+  // ни admin, ни manager.
+  await requireTenantRole(tenantId, uid, ["owner"]);
+
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const tenantSnap = await tenantRef.get();
+  if (!tenantSnap.exists) throw new HttpError(404, "Заведение не найдено");
+  const tenant = tenantSnap.data();
+  if (tenant.chainId) throw new HttpError(409, "Заведение уже состоит в сети");
+
+  const slug = normalizeSlug(rawSlug || name);
+  const existingChain = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
+  if (!existingChain.empty) throw new HttpError(409, "Этот код сети уже занят, выберите другой");
+
+  // planId с клиента доверяем, только если это ДЕЙСТВИТЕЛЬНО тариф для сети
+  // — та же защита, что и в handleCreateChain (симметрично).
+  let resolvedPlanId = "chain";
+  if (typeof planId === "string" && planId.trim()) {
+    const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
+    if (requestedSnap.exists && requestedSnap.data().isChainPlan) resolvedPlanId = planId.trim();
+  }
+
+  const [brandingSnap, oldSubSnap, membersSnap] = await Promise.all([
+    tenantRef.collection("branding").doc("config").get(),
+    firestore.collection("subscriptions").doc(tenantId).get(),
+    firestore.collection("tenantMembers").where("tenantId", "==", tenantId).get(),
+  ]);
+  const oldSub = oldSubSnap.exists ? oldSubSnap.data() : null;
+  // trialDays нужен только если у заведения почему-то не оказалось
+  // собственной подписки (не должно происходить в норме, но подписка —
+  // не то, ради чего стоит блокировать весь перевод в сеть).
+  const trialDays = oldSub ? 0 : (Number((await firestore.collection("plans").doc(resolvedPlanId).get()).data()?.trialDays) || 7);
+
+  const branding = brandingSnap.exists ? brandingSnap.data() : {
+    appName: name.trim(), shortName: name.trim().slice(0, 12),
+    primaryColor: "#0B5ED7", secondaryColor: "#162A4A", accentColor: "#0B5ED7",
+    backgroundColor: "#02050B", textColor: "#F8FAFC", buttonColor: "#0B5ED7", darkMode: true,
+  };
+
+  const chainRef = firestore.collection("chains").doc();
+  const chainId = chainRef.id;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  const batch = firestore.batch();
+  batch.set(chainRef, {
+    name: name.trim(), slug, status: tenant.status === "deleted" ? "trial" : (tenant.status || "trial"),
+    planId: resolvedPlanId, ownerUserId: uid, createdAt: now, updatedAt: now,
+  });
+  batch.set(chainRef.collection("branding").doc("config"), branding);
+  batch.set(firestore.collection("chainMembers").doc(`${chainId}_${uid}`), {
+    chainId, userId: uid, role: "owner", status: "active", createdAt: now,
+  });
+  batch.set(firestore.collection("subscriptions").doc(chainId), oldSub ? {
+    chainId,
+    planId: resolvedPlanId,
+    status: oldSub.status || "trial",
+    provider: oldSub.provider || null,
+    externalSubscriptionId: oldSub.externalSubscriptionId || null,
+    startedAt: oldSub.startedAt || now,
+    trialEndsAt: oldSub.trialEndsAt || null,
+    currentPeriodStart: oldSub.currentPeriodStart || now,
+    currentPeriodEnd: oldSub.currentPeriodEnd || null,
+    cancelAtPeriodEnd: !!oldSub.cancelAtPeriodEnd,
+  } : {
+    chainId, planId: resolvedPlanId, status: "trial", provider: null, externalSubscriptionId: null,
+    startedAt: now, trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
+    currentPeriodStart: now, currentPeriodEnd: null, cancelAtPeriodEnd: false,
+  });
+  // Старая подписка одиночного заведения помечается "superseded", а не
+  // удаляется и не перезаписывается в "cancelled" — та же философия, что и
+  // в purgeChainData/purgeTenantData: платёжная история не должна исчезать
+  // бесследно, а "cancelled" звучало бы так, будто владелец отменил
+  // подписку, а не перевёл её на сеть. runCalculatePlatformMetrics эту
+  // подписку больше не читает — как только tenant.chainId задан, тенант
+  // считается по chains-циклу, а не по своему подписочному документу.
+  if (oldSub) {
+    batch.set(firestore.collection("subscriptions").doc(tenantId), {
+      status: "superseded", supersededByChainId: chainId, updatedAt: now,
+    }, { merge: true });
+  }
+  // status/subscriptionStatus/planId — та же тройка значений, что
+  // handleCreateTenant проставляет НОВОЙ точке сети (chainId ветка): для
+  // точки сети они не отражают реальный биллинг (он общий на chains/{chainId},
+  // см. TenantConfigService.refresh — subscriptionId берётся из chainId, а не
+  // tenantId), planId "start" здесь — тот же незначащий дефолт, что и у
+  // новой точки, а не потеря информации о РЕАЛЬНОМ тарифе (он был перенесён
+  // в chains/{chainId}.planId несколькими строками выше).
+  batch.update(tenantRef, {
+    chainId, status: "active", subscriptionStatus: "active", planId: "start", updatedAt: now,
+  });
+  await batch.commit();
+
+  // Зеркалим ВСЕХ действующих участников заведения (не только владельца) в
+  // chainMembers — иначе персонал заведения, кроме владельца, потерял бы
+  // доступ к общей лояльности сети сразу после конвертации (см. docstring
+  // syncChainMembership выше).
+  await Promise.all(membersSnap.docs.map((d) => {
+    const m = d.data();
+    if (m.userId === uid || m.status !== "active") return null;
+    return syncChainMembership(chainId, m.userId, m.role, m.status);
+  }));
+
+  // Перенос уже накопленной лояльности гостей — CHAIN_SUBCOLLECTIONS минус
+  // "branding" (её уже скопировали отдельно выше, одним документом, а не
+  // коллекцией с множеством документов гостей).
+  for (const colName of CHAIN_SUBCOLLECTIONS) {
+    if (colName === "branding") continue;
+    await migrateCollectionDocs(firestore, tenantRef.collection(colName), chainRef.collection(colName));
+  }
+
+  await writeAuditLog({
+    tenantId, actorId: uid, action: "tenantConvertedToChain", metadata: { chainId, slug },
+  });
+
+  provisionTenantDomain(slug).catch((e) => {
+    console.error(`provisionTenantDomain(${slug}) не удался (перевод в сеть):`, e.message || e);
+  });
+
+  sendJson(res, 200, { chainId, slug });
+}
+
+/** Копирует все документы одной коллекции в другую (id сохраняется) и
+ *  удаляет исходные — батчами по BATCH_CHUNK, чтобы не упереться в лимит
+ *  Firestore на 500 операций в одном batch, даже если у заведения, которое
+ *  переводят в сеть, уже накопилось много гостей. */
+async function migrateCollectionDocs(firestore, srcCol, destCol) {
+  const snap = await srcCol.get();
+  if (snap.empty) return;
+  const BATCH_CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += BATCH_CHUNK) {
+    const chunk = snap.docs.slice(i, i + BATCH_CHUNK);
+    const writeBatch = firestore.batch();
+    chunk.forEach((d) => writeBatch.set(destCol.doc(d.id), d.data()));
+    await writeBatch.commit();
+  }
+  for (let i = 0; i < snap.docs.length; i += BATCH_CHUNK) {
+    const chunk = snap.docs.slice(i, i + BATCH_CHUNK);
+    const deleteBatch = firestore.batch();
+    chunk.forEach((d) => deleteBatch.delete(d.ref));
+    await deleteBatch.commit();
+  }
+}
+
 // ------------------------------------------- provisionTenantDomain
 
 /**
@@ -2332,6 +2509,7 @@ const ROUTES = {
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
   "/createChain": handleCreateChain,
+  "/convertTenantToChain": handleConvertTenantToChain,
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
   "/createDemoTenant": handleCreateDemoTenant,
