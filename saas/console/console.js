@@ -651,9 +651,26 @@ function watchMemberships() {
         const tSnap = await getDoc(doc(state.db, 'tenants', t.id));
         t.name = tSnap.exists() ? tSnap.data().name : t.id;
         t.slug = tSnap.exists() ? tSnap.data().slug : '';
+        // Сеть заведений (см. её docstring в saas/firestore.rules) — нужна
+        // здесь, чтобы сгруппировать точки одной сети в переключателе
+        // заведения (см. dashboardNavHtml) и подставить её название.
+        t.chainId = tSnap.exists() ? (tSnap.data().chainId || null) : null;
       } catch (_) {
         t.name = t.id;
         t.slug = '';
+        t.chainId = null;
+      }
+    }));
+    // Название сети — отдельным проходом по УНИКАЛЬНЫМ chainId (обычно
+    // 0-1 сеть на владельца, не по одному чтению на каждую точку).
+    const chainIds = [...new Set(list.map((t) => t.chainId).filter(Boolean))];
+    await Promise.all(chainIds.map(async (chainId) => {
+      try {
+        const cSnap = await getDoc(doc(state.db, 'chains', chainId));
+        const chainName = cSnap.exists() ? cSnap.data().name : chainId;
+        list.filter((t) => t.chainId === chainId).forEach((t) => { t.chainName = chainName; });
+      } catch (_) {
+        list.filter((t) => t.chainId === chainId).forEach((t) => { t.chainName = chainId; });
       }
     }));
     state.tenants = list;
@@ -1519,10 +1536,24 @@ function screenOnboarding() {
     <p class="muted">Код заведения используется в ссылках и как основа
     имени Android-приложения — только латиница, цифры и дефис.</p>
     <div class="card">
-      <label class="field"><span>Название заведения</span>
+      <label class="field-checkbox" style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <input type="checkbox" id="f-is-chain" style="width:auto">
+        <span>Это сеть из нескольких заведений одного владельца (общий биллинг и лояльность на все точки)</span>
+      </label>
+      <div id="f-chain-fields" style="display:none">
+        <label class="field"><span>Название сети</span>
+          <input id="f-chain-name" placeholder="Hookah Lounge">
+        </label>
+        <label class="field"><span>Код сети</span>
+          <input id="f-chain-slug" placeholder="hookah-lounge">
+        </label>
+        <div class="small muted" style="margin:-6px 0 14px">Ниже — первая точка сети. Ещё точки можно
+        добавить позже из личного кабинета кнопкой «Добавить точку сети».</div>
+      </div>
+      <label class="field"><span id="f-name-label">Название заведения</span>
         <input id="f-name" placeholder="Hookah Lounge Riga">
       </label>
-      <label class="field"><span>Код заведения</span>
+      <label class="field"><span id="f-slug-label">Код заведения</span>
         <input id="f-slug" placeholder="hookah-lounge-riga">
       </label>
       <label class="field"><span>Лейбл в приложении (короткое имя под иконкой)</span>
@@ -1561,6 +1592,21 @@ function screenOnboarding() {
     if (!slugTouched) slugEl.value = slugify(nameEl.value);
   });
 
+  const chainNameEl = $('f-chain-name');
+  const chainSlugEl = $('f-chain-slug');
+  let chainSlugTouched = false;
+  chainSlugEl.addEventListener('input', () => { chainSlugTouched = true; });
+  chainNameEl.addEventListener('input', () => {
+    if (!chainSlugTouched) chainSlugEl.value = slugify(chainNameEl.value);
+  });
+  $('f-is-chain').addEventListener('change', (e) => {
+    const isChain = e.target.checked;
+    $('f-chain-fields').style.display = isChain ? '' : 'none';
+    $('f-name-label').textContent = isChain ? 'Название первой точки' : 'Название заведения';
+    $('f-slug-label').textContent = isChain ? 'Код первой точки' : 'Код заведения';
+    $('f-submit').textContent = isChain ? 'Создать сеть' : 'Создать заведение';
+  });
+
   document.querySelectorAll('.palette-swatch').forEach((el) => {
     el.onclick = () => {
       selectedPaletteId = el.dataset.palette;
@@ -1581,17 +1627,28 @@ function screenOnboarding() {
   updateBrandPreview();
 
   $('f-submit').onclick = async () => {
+    const isChain = $('f-is-chain').checked;
     const name = nameEl.value.trim();
     const slug = slugEl.value.trim();
+    const chainName = chainNameEl.value.trim();
+    const chainSlug = chainSlugEl.value.trim();
     const label = $('f-brand-name').value.trim();
     const errEl = $('f-error');
     errEl.textContent = '';
+    if (isChain && chainName.length < 2) {
+      errEl.textContent = 'Введите название сети';
+      return;
+    }
+    if (isChain && !chainSlug) {
+      errEl.textContent = 'Код сети не получился из названия автоматически (например, из-за кириллицы) — впишите его латиницей вручную';
+      return;
+    }
     if (name.length < 2) {
-      errEl.textContent = 'Введите название заведения';
+      errEl.textContent = isChain ? 'Введите название первой точки' : 'Введите название заведения';
       return;
     }
     if (!slug) {
-      errEl.textContent = 'Код заведения не получился из названия автоматически (например, из-за кириллицы) — впишите его латиницей вручную';
+      errEl.textContent = (isChain ? 'Код точки' : 'Код заведения') + ' не получился из названия автоматически (например, из-за кириллицы) — впишите его латиницей вручную';
       return;
     }
     $('f-submit').disabled = true;
@@ -1607,25 +1664,38 @@ function screenOnboarding() {
       // handleBillingWebhook переведёт статус в active — пробный период
       // просто никогда не будет использован).
       const skipTrial = window.localStorage.getItem('skipTrial') === '1';
+
+      // Для сети — сначала пустая сеть (createChain), потом первая точка с
+      // её chainId (createTenant); для одиночного заведения — как раньше.
+      let chainId = null;
+      if (isChain) {
+        const chainRes = await callSaasGateway(
+          'createChain',
+          chosenPlanId ? { name: chainName, slug: chainSlug, planId: chosenPlanId } : { name: chainName, slug: chainSlug }
+        );
+        chainId = chainRes.data.chainId;
+      }
       // createTenant — не Cloud Function (Blaze для неё сейчас недоступен),
       // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
       const res = await callSaasGateway(
         'createTenant',
-        chosenPlanId ? { name, slug, planId: chosenPlanId } : { name, slug }
+        { name, slug, ...(chosenPlanId && !isChain ? { planId: chosenPlanId } : {}), ...(chainId ? { chainId } : {}) }
       );
       window.localStorage.removeItem('selectedPlanId');
       window.localStorage.removeItem('skipTrial');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
-      // createTenant уже завёл дефолтный брендинг ("Полночный синий") —
-      // если владелец выбрал другую гамму или свой лейбл, дописываем это
-      // отдельным клиентским merge-запросом сразу после: к этому моменту
-      // членство владельца в заведении уже закоммичено на сервере (тем же
-      // батчем, что и сам tenant), поэтому правила (hasRole owner/admin)
-      // это разрешают без гонки.
+      // createTenant/createChain уже завели дефолтный брендинг ("Полночный
+      // синий") — если владелец выбрал другую гамму или свой лейбл,
+      // дописываем это отдельным клиентским merge-запросом сразу после: к
+      // этому моменту членство владельца в заведении/сети уже закоммичено
+      // на сервере (тем же батчем), поэтому правила (owner/admin) это
+      // разрешают без гонки. Для сети — пишем в брендинг САМОЙ СЕТИ
+      // (chainId передан третьим аргументом), а не первой точки: гостевые
+      // приложения сети читают именно его (см. writeBrandingConfig).
       // Цвета берём прямо из полей, а не из объекта пресета — так учитываются
       // и ручные правки владельца поверх выбранной гаммы (см. BRANDING_COLOR_FIELD_IDS).
-      const appName = label || name;
+      const appName = label || (isChain ? chainName : name);
       try {
         await writeBrandingConfig(tenantId, {
           appName,
@@ -1635,7 +1705,7 @@ function screenOnboarding() {
           buttonColor: $('f-color-button').value,
           backgroundColor: $('f-color-bg').value,
           textColor: $('f-color-text').value,
-        });
+        }, chainId);
       } catch (_) {
         // Заведение всё равно создано с рабочим брендингом по умолчанию —
         // не блокируем онбординг, если этот необязательный шаг не прошёл.
@@ -1648,7 +1718,7 @@ function screenOnboarding() {
       // обычный дашборд без единого слова: заведение уже создано, просто
       // предлагаем оплатить из личного кабинета как обычно.
       if (skipTrial && chosenPlanId) {
-        const paid = await startCheckout(tenantId, chosenPlanId, 'monthly');
+        const paid = await startCheckout(tenantId, chosenPlanId, 'monthly', chainId);
         if (!paid) {
           toast('Не удалось перейти к оплате — заведение создано, оплатите его во вкладке «Тарифы»');
         }
@@ -1749,7 +1819,27 @@ const DASHBOARD_NAV = [
   { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
 ];
 
-function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
+// Точки одной сети (см. её docstring в saas/firestore.rules) группируются
+// под общим <optgroup> — иначе владелец с сетью из 5+ точек видел бы
+// плоский список неотличимых друг от друга названий без подсказки, что
+// это вообще одна сеть с общим биллингом/лояльностью.
+function tenantSwitcherOptionsHtml() {
+  const option = (t) => `<option value="${esc(t.id)}" ${t.id === state.activeTenantId ? 'selected' : ''}>${esc(t.name || t.id)}</option>`;
+  const standalone = state.tenants.filter((t) => !t.chainId);
+  const chainGroups = new Map();
+  state.tenants.forEach((t) => {
+    if (!t.chainId) return;
+    if (!chainGroups.has(t.chainId)) chainGroups.set(t.chainId, { name: t.chainName || t.chainId, items: [] });
+    chainGroups.get(t.chainId).items.push(t);
+  });
+  let html = standalone.map(option).join('');
+  chainGroups.forEach((group) => {
+    html += `<optgroup label="Сеть «${esc(group.name)}»">${group.items.map(option).join('')}</optgroup>`;
+  });
+  return html;
+}
+
+function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
   const activeMeta = DASHBOARD_NAV.find((t) => t.id === activeTab);
   return `
     <div class="dash-topbar">
@@ -1765,12 +1855,15 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName) {
       ${state.tenants.length > 1 ? `
         <label class="field"><span>Заведение</span>
           <select id="f-nav-tenant-pick">
-            ${state.tenants.map((t) => `
-              <option value="${esc(t.id)}" ${t.id === state.activeTenantId ? 'selected' : ''}>${esc(t.name || t.id)}</option>
-            `).join('')}
+            ${tenantSwitcherOptionsHtml()}
           </select>
         </label>
       ` : `<div class="nav-drawer-tenant">${esc(tenantName || '')}</div>`}
+      ${chainId ? `
+        <button class="nav-item" id="f-nav-add-location">
+          ${navIconHtml('plus', '#22C55E')}<span>Добавить точку сети</span>
+        </button>
+      ` : ''}
       ${DASHBOARD_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
           ${navIconHtml(t.icon, t.color)}
@@ -1981,6 +2074,28 @@ function watchDashboardData(tenantId) {
       </div>
     `).join('') : '';
 
+    // Список точек ТОЙ ЖЕ сети (см. её docstring в saas/firestore.rules) —
+    // владелец видит их, не выходя из "Обзора", и может открыть/добавить
+    // ещё одну прямо отсюда, а не только через выпадающий список в drawer.
+    const chainLocationsHtml = () => {
+      const chainName = (state.tenants.find((t) => t.chainId === tenant.chainId) || {}).chainName || '';
+      const locations = state.tenants.filter((t) => t.chainId === tenant.chainId);
+      return `
+        <div class="card">
+          <div class="muted small">Сеть заведений</div>
+          <div style="font-size:16px;font-weight:700;margin:4px 0">${esc(chainName)}</div>
+          <div class="small muted" style="margin-bottom:8px">Общий биллинг и лояльность на все точки сети.</div>
+          ${locations.map((t) => `
+            <div class="row" style="justify-content:space-between;padding:5px 0">
+              <div class="grow">${esc(t.name || t.id)}${t.id === tenantId ? ' <span class="muted small">(эта)</span>' : ''}</div>
+              ${t.id !== tenantId ? `<button class="btn-link f-chain-location-switch" data-id="${esc(t.id)}" style="width:auto">Открыть</button>` : ''}
+            </div>
+          `).join('')}
+          <button class="btn btn-ghost" id="f-add-chain-location" style="margin-top:8px">+ Добавить точку сети</button>
+        </div>
+      `;
+    };
+
     const overviewHtml = () => `
       ${broadcastsHtml}
       <div class="dash-greeting">${esc(greetingLine())} 👋</div>
@@ -1997,6 +2112,7 @@ function watchDashboardData(tenantId) {
           <button class="btn-link f-dash-tab" data-tab="billing" style="width:auto">Подробнее</button>
         </div>
       </div>
+      ${tenant.chainId ? chainLocationsHtml() : ''}
       <div class="live-stats-grid">
         <div class="card live-stat">
           <div class="live-stat-value">${liveOpenSessions === null ? '—' : liveOpenSessions}</div>
@@ -2162,6 +2278,13 @@ function watchDashboardData(tenantId) {
 
     const brandingHtml = () => `
       <h2>Брендинг</h2>
+      ${tenant.chainId ? `
+        <div class="card" style="border-color:rgba(139,92,246,.45)">
+          <p class="small muted">Это заведение — точка сети. Ниже правится брендинг ВСЕЙ сети
+          (гостевое приложение и веб-версия сети общие на все точки) — изменения увидят гости
+          в любом заведении этой сети, не только здесь.</p>
+        </div>
+      ` : ''}
       <div class="card">
         <label class="field"><span>Имя приложения</span>
           <input id="f-brand-name" value="${esc(brandName)}" ${canManage ? '' : 'disabled'}>
@@ -2457,7 +2580,7 @@ function watchDashboardData(tenantId) {
       branding: brandingHtml, team: teamHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml,
     };
-    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name);
+    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId);
 
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
       el.onclick = (e) => {
@@ -2466,6 +2589,11 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    document.querySelectorAll('.f-chain-location-switch').forEach((el) => {
+      el.onclick = () => { state.activeTenantId = el.dataset.id; route(); };
+    });
+    if ($('f-add-chain-location')) $('f-add-chain-location').onclick = () => addChainLocation(tenant.chainId);
+    if ($('f-nav-add-location')) $('f-nav-add-location').onclick = () => addChainLocation(tenant.chainId);
     document.querySelectorAll('.f-broadcast-dismiss').forEach((el) => {
       el.onclick = () => {
         dismissBroadcast(el.dataset.id);
@@ -2647,7 +2775,7 @@ function watchDashboardData(tenantId) {
     }
 
     if ($('f-toggle-autorenew')) {
-      $('f-toggle-autorenew').onclick = () => toggleAutorenew(tenantId, !subscription?.cancelAtPeriodEnd);
+      $('f-toggle-autorenew').onclick = () => toggleAutorenew(tenantId, !subscription?.cancelAtPeriodEnd, tenant?.chainId || null);
     }
 
     updateBrandPreview();
@@ -2752,7 +2880,7 @@ function watchDashboardData(tenantId) {
               backgroundColor: $('f-color-bg').value,
               textColor: $('f-color-text').value,
               ...(pendingLogoUrl ? { logoUrl: pendingLogoUrl } : {}),
-            });
+            }, tenant.chainId);
             pendingLogoUrl = null;
             toast('Брендинг сохранён');
           } catch (e) {
@@ -2890,7 +3018,7 @@ function watchDashboardData(tenantId) {
     document.querySelectorAll('.f-plan-checkout').forEach((el) => {
       el.onclick = () => {
         const periodSelect = document.querySelector(`.f-plan-period[data-plan="${el.dataset.plan}"]`);
-        startCheckout(tenantId, el.dataset.plan, periodSelect?.value || 'monthly');
+        startCheckout(tenantId, el.dataset.plan, periodSelect?.value || 'monthly', tenant?.chainId || null);
       };
     });
     if ($('f-request-build')) {
@@ -2906,24 +3034,56 @@ function watchDashboardData(tenantId) {
     draw();
   }).catch(() => { plans = []; draw(); });
 
+  // Подписка живёт на subscriptions/{chainId} для точки сети (см. её
+  // docstring в saas/firestore.rules) и на subscriptions/{tenantId} для
+  // одиночного заведения — а chainId заведения узнаём только из его же
+  // документа, поэтому слушатель подписки не заводится сразу с остальными
+  // (как раньше), а (пере)создаётся из колбэка tenant ниже, как только
+  // приходит первый снапшот заведения (или chainId вдруг меняется).
+  let unsubSubscription = null;
+  const watchSubscriptionFor = (chainId) => {
+    if (unsubSubscription) { unsubSubscription(); unsubSubscription = null; }
+    unsubSubscription = onSnapshot(doc(state.db, 'subscriptions', chainId || tenantId), (d) => {
+      subscription = d.exists() ? d.data() : null;
+      draw();
+    }, () => {});
+  };
+  sub(() => { if (unsubSubscription) unsubSubscription(); });
+
+  // Брендинг точки сети (в отличие от подписки) всё равно СУЩЕСТВУЕТ у
+  // каждого tenant — createTenant заводит его как обычно (пригодится, если
+  // точку когда-нибудь выведут из сети) — но гостевые приложения точки
+  // сети читают брендинг САМОЙ СЕТИ (chains/{chainId}/branding), а не его:
+  // без переключения владелец сети правил бы вкладку "Брендинг", которую
+  // никто из гостей никогда не видит, и не понимал бы, почему изменения не
+  // применяются (см. её же docstring в saas/firestore.rules).
+  let unsubBranding = null;
+  const watchBrandingFor = (chainId) => {
+    if (unsubBranding) { unsubBranding(); unsubBranding = null; }
+    const ref = chainId
+      ? doc(state.db, 'chains', chainId, 'branding', 'config')
+      : doc(state.db, 'tenants', tenantId, 'branding', 'config');
+    unsubBranding = onSnapshot(ref, (d) => {
+      branding = d.exists() ? d.data() : null;
+      draw();
+    }, () => {});
+  };
+  sub(() => { if (unsubBranding) unsubBranding(); });
+
   sub(onSnapshot(doc(state.db, 'tenants', tenantId), (d) => {
+    const prevChainId = tenant?.chainId || null;
     tenant = d.exists() ? d.data() : null;
+    const nextChainId = tenant?.chainId || null;
+    if (nextChainId !== prevChainId || !unsubSubscription) watchSubscriptionFor(nextChainId);
+    if (nextChainId !== prevChainId || !unsubBranding) watchBrandingFor(nextChainId);
     draw();
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite'), (d) => {
     invite = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
-  sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'branding', 'config'), (d) => {
-    branding = d.exists() ? d.data() : null;
-    draw();
-  }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'general'), (d) => {
     generalSettings = d.exists() ? d.data() : null;
-    draw();
-  }, () => {}));
-  sub(onSnapshot(doc(state.db, 'subscriptions', tenantId), (d) => {
-    subscription = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
   sub(onSnapshot(query(collection(state.db, 'broadcasts'), where('active', '==', true), orderBy('createdAt', 'desc'), limit(5)), (snap) => {
@@ -3043,7 +3203,7 @@ async function rotateInviteCode(tenantId) {
   }
 }
 
-async function toggleAutorenew(tenantId, cancel) {
+async function toggleAutorenew(tenantId, cancel, chainId) {
   // Отмену подтверждаем через prompt(), а не confirm() (как для возврата
   // ниже) — заодно спрашиваем причину: null означает "нажали Отмена",
   // пустая строка — "нажали ОК, но причину не написали" (оба варианта
@@ -3068,7 +3228,10 @@ async function toggleAutorenew(tenantId, cancel) {
     // cancelSubscription/resumeSubscription — свой сервис (см. server.js в
     // saas-gateway), не Cloud Function: Firestore-правила не пускают
     // клиента писать в subscriptions напрямую даже для своего заведения.
-    await callSaasGateway(cancel ? 'cancelSubscription' : 'resumeSubscription', cancel ? { tenantId, reason } : { tenantId });
+    await callSaasGateway(
+      cancel ? 'cancelSubscription' : 'resumeSubscription',
+      cancel ? { tenantId, chainId, reason } : { tenantId, chainId }
+    );
     toast(cancel ? 'Автопродление отключено' : 'Автопродление возобновлено');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось изменить автопродление: ${e?.message || e}`;
@@ -3121,8 +3284,15 @@ async function deleteMember(tenantId, memberUid, isDevice, label) {
   }
 }
 
-async function writeBrandingConfig(tenantId, payload) {
-  await setDoc(doc(state.db, 'tenants', tenantId, 'branding', 'config'), payload, { merge: true });
+// [chainId] — брендинг точки сети правится на уровне САМОЙ СЕТИ (см.
+// watchBrandingFor/её докстринг в watchDashboardData выше) — гостевые
+// приложения точки сети читают именно chains/{chainId}/branding, а не
+// собственный, никем не читаемый брендинг этой точки.
+async function writeBrandingConfig(tenantId, payload, chainId) {
+  const ref = chainId
+    ? doc(state.db, 'chains', chainId, 'branding', 'config')
+    : doc(state.db, 'tenants', tenantId, 'branding', 'config');
+  await setDoc(ref, payload, { merge: true });
 }
 
 // Обновляет мини-предпросмотр карточки (фон/текст/кнопка) вживую, по мере
@@ -3704,7 +3874,10 @@ function watchAllTenants() {
       // pastDueSince, иначе отсчёт до удаления данных продолжит тикать по
       // старой дате даже после того, как деньги на самом деле пришли.
       if (statusEl.value !== 'past_due') payload.pastDueSince = null;
-      await setDoc(doc(state.db, 'subscriptions', tenantId), payload, { merge: true });
+      // Точка сети правит общую подписку СЕТИ (subscriptions/{chainId}), а
+      // не свою несуществующую — см. её docstring в saas/firestore.rules.
+      const chainId = (allTenants.find((t) => t.id === tenantId) || {}).chainId;
+      await setDoc(doc(state.db, 'subscriptions', chainId || tenantId), payload, { merge: true });
       toast('Подписка обновлена');
     } catch (e) {
       toast(`Не удалось обновить подписку: ${e?.message || e}`);
@@ -3956,7 +4129,10 @@ function watchAllTenants() {
         t.usage = null;
       }
       try {
-        const sSnap = await getDoc(doc(state.db, 'subscriptions', t.id));
+        // Точка сети (t.chainId) не имеет собственной подписки — общая
+        // подписка на всю сеть лежит на subscriptions/{chainId}, см. её
+        // docstring в saas/firestore.rules.
+        const sSnap = await getDoc(doc(state.db, 'subscriptions', t.chainId || t.id));
         const subscription = sSnap.exists() ? sSnap.data() : null;
         t.subscription = subscription;
         t.daysLeft = daysUntilDataPurge(subscription);
@@ -4472,7 +4648,11 @@ async function revokeSuperAdmin(uid) {
 // вообще (ошибка тихо оседала в f-checkout-error, которого на некоторых
 // экранах, например онбординге, попросту нет — там "оплата не началась"
 // выглядела бы как ничего не произошло, без единого объяснения).
-async function startCheckout(tenantId, planId, billingPeriod) {
+// [chainId] — точка сети платит не сама за себя: биллинг общий на всю сеть
+// (subscriptions/{chainId}, см. её docstring в saas/firestore.rules), цена
+// тарифа умножается на число точек сети на сервере (countChainLocations в
+// saas-gateway) — здесь достаточно передать chainId вместо/вместе с tenantId.
+async function startCheckout(tenantId, planId, billingPeriod, chainId) {
   const errEl = $('f-checkout-error');
   if (errEl) errEl.textContent = '';
   try {
@@ -4480,7 +4660,7 @@ async function startCheckout(tenantId, planId, billingPeriod) {
     // без тарифа Blaze (см. docstring в начале saas-gateway/server.js) —
     // теперь тот же самый эндпойнт, но на своём сервере.
     const res = await callSaasGateway('createCheckoutSession', {
-      tenantId, planId, billingPeriod: billingPeriod === 'yearly' ? 'yearly' : 'monthly',
+      tenantId, chainId, planId, billingPeriod: billingPeriod === 'yearly' ? 'yearly' : 'monthly',
       // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
       // подписки обновится сам по snapshot-подписке, как только придёт
       // webhook (обычно за секунды, но платёжная форма может быть и
@@ -4496,6 +4676,28 @@ async function startCheckout(tenantId, planId, billingPeriod) {
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось начать оплату: ${e?.message || e}`;
     return false;
+  }
+}
+
+/// Добавляет ещё одну точку в уже существующую сеть — та же операция, что
+/// и создание одиночного заведения (createTenant в saas-gateway), только с
+/// chainId: новая точка сразу "active" (не "trial"), без своей подписки —
+/// биллинг общий на всю сеть (см. её docstring в saas/firestore.rules).
+async function addChainLocation(chainId) {
+  const name = prompt('Название новой точки сети:');
+  if (!name || !name.trim()) return;
+  const trimmedName = name.trim();
+  let slug = prompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения:', slugify(trimmedName));
+  if (slug === null) return;
+  slug = slug.trim();
+  if (!slug) { toast('Код точки не может быть пустым'); return; }
+  try {
+    const res = await callSaasGateway('createTenant', { name: trimmedName, slug, chainId });
+    toast('Точка сети добавлена');
+    state.activeTenantId = res.data.tenantId;
+    route();
+  } catch (e) {
+    toast(`Не удалось добавить точку сети: ${e?.message || e}`);
   }
 }
 
