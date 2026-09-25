@@ -98,7 +98,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.6-support-tickets';
+const CONSOLE_BUILD = '2026-09-21.7-mrr-signups-trend';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -4037,10 +4037,30 @@ async function deletePlan(planId) {
   }
 }
 
+// Простой бар-чарт без библиотек — несколько div'ов с высотой в процентах
+// от максимума, как и остальные "плитки" этой панели (admin-stat-grid) не
+// тянут отдельную зависимость ради одного графика.
+function barChartHtml(points, formatValue) {
+  const max = Math.max(1, ...points.map((p) => p.value));
+  return `
+    <div style="display:flex;align-items:flex-end;gap:3px;height:90px;margin-top:8px">
+      ${points.map((p) => `
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%" title="${esc(p.label)}: ${esc(formatValue(p.value))}">
+          <div style="width:100%;min-height:2px;height:${Math.round((p.value / max) * 100)}%;background:var(--primary);border-radius:3px 3px 0 0"></div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="row small muted" style="justify-content:space-between;margin-top:4px">
+      <span>${esc(points[0]?.label || '')}</span>
+      <span>${esc(points[points.length - 1]?.label || '')}</span>
+    </div>
+  `;
+}
+
 function watchAnalytics() {
   const body = $('admin-analytics');
 
-  const draw = (tenants, revenueEvents) => {
+  const draw = (tenants, revenueEvents, metrics) => {
     const now = Date.now();
     const day = 86400000;
     const byStatus = {};
@@ -4062,6 +4082,29 @@ function watchAnalytics() {
         <div class="small muted">${esc(label)}</div>
       </div>
     `;
+
+    // Регистрации по дням — считаются на лету из уже загруженных tenants
+    // (createdAt есть у каждого заведения с самого начала, снимок для этого
+    // не нужен). MRR по дням — наоборот, ТОЛЬКО из снимков platformMetrics:
+    // это метрика "на текущий момент" (активные подписки × цена тарифа),
+    // её нельзя восстановить задним числом без сохранённой истории.
+    const REGS_TREND_DAYS = 14;
+    const dayKey = (ms) => new Date(ms).toISOString().slice(5, 10);
+    const regsByDay = new Map();
+    tenants.forEach((t) => {
+      if (!t.createdAt?.toMillis) return;
+      const ageDays = Math.floor((now - t.createdAt.toMillis()) / day);
+      if (ageDays < 0 || ageDays >= REGS_TREND_DAYS) return;
+      const key = dayKey(t.createdAt.toMillis());
+      regsByDay.set(key, (regsByDay.get(key) || 0) + 1);
+    });
+    const regsTrendPoints = Array.from({ length: REGS_TREND_DAYS }, (_, i) => {
+      const ms = now - (REGS_TREND_DAYS - 1 - i) * day;
+      const key = dayKey(ms);
+      return { label: key, value: regsByDay.get(key) || 0 };
+    });
+    const mrrTrendPoints = (metrics || []).map((m) => ({ label: (m.date || '').slice(5), value: Number(m.mrr) || 0 }));
+
     body.innerHTML = `
       <div class="admin-stat-grid">
         ${tile('Всего заведений', tenants.length)}
@@ -4075,12 +4118,23 @@ function watchAnalytics() {
         Разбивка по статусам: ${Object.entries(byStatus).map(([s, n]) => `${esc(TENANT_STATUS_LABELS[s] || s)} — ${n}`).join(', ') || '—'}.
         Выручка — сумма последних ${revenueEvents.length} обработанных платежей ЮKassa, не весь исторический архив.
       </p>
+      <div class="card" style="margin-top:14px">
+        <div class="small muted">Регистрации по дням (последние ${REGS_TREND_DAYS} дней)</div>
+        ${barChartHtml(regsTrendPoints, (v) => String(v))}
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="small muted">MRR по дням</div>
+        ${mrrTrendPoints.length ? barChartHtml(mrrTrendPoints, (v) => `${v.toLocaleString('ru-RU')} ₽`) : `
+          <p class="small muted" style="margin-top:8px">Снимков пока нет — появятся начиная с сегодняшнего дня (суточный таймер saas-gateway) или сразу после нажатия «Пересчитать сейчас» в разделе «Инфраструктура».</p>
+        `}
+      </div>
     `;
   };
 
   let tenants = null;
   let revenueEvents = null;
-  const maybeDraw = () => { if (tenants && revenueEvents) draw(tenants, revenueEvents); };
+  let metrics = null;
+  const maybeDraw = () => { if (tenants && revenueEvents && metrics) draw(tenants, revenueEvents, metrics); };
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
     state.plansById = {};
@@ -4099,6 +4153,14 @@ function watchAnalytics() {
     revenueEvents = snap.docs.map((d) => d.data());
     maybeDraw();
   }, () => { revenueEvents = []; maybeDraw(); }));
+
+  // orderBy('date','desc') + .reverse(), а не сразу 'asc' с limit(30), —
+  // иначе limit(30) в порядке "по возрастанию" взял бы САМЫЕ СТАРЫЕ 30
+  // снимков, а не последние 30 (нужные для графика).
+  sub(onSnapshot(query(collection(state.db, 'platformMetrics'), orderBy('date', 'desc'), limit(30)), (snap) => {
+    metrics = snap.docs.map((d) => d.data()).reverse();
+    maybeDraw();
+  }, () => { metrics = []; maybeDraw(); }));
 
   if ($('f-export-payments-csv')) {
     $('f-export-payments-csv').onclick = () => exportPaymentsCsv();

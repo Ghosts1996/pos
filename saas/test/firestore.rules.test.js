@@ -627,6 +627,28 @@ describe("supportTickets: обращения в поддержку — види�
   });
 });
 
+describe("platformMetrics: дневные снимки — читает только супер-админ, пишет только Admin SDK", () => {
+  beforeEach(seedTwoTenants);
+
+  it("супер-админ читает снимок метрик", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("platformMetrics/2026-09-21"), { mrr: 1000, activeCount: 1 });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "platformMetrics/2026-09-21")));
+  });
+
+  it("владелец заведения не читает снимок метрик платформы", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("platformMetrics/2026-09-21"), { mrr: 1000, activeCount: 1 });
+    });
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "platformMetrics/2026-09-21")));
+  });
+
+  it("даже супер-админ не может писать снимок метрик с клиента (только Admin SDK)", async () => {
+    await assertFails(setDoc(doc(ctxFor("root"), "platformMetrics/2026-09-21"), { mrr: 1000 }));
+  });
+});
+
 describe("broadcasts: объявления платформы — пишет только супер-админ, читает кто угодно вошедший", () => {
   beforeEach(seedTwoTenants);
 
