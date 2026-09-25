@@ -48,6 +48,15 @@ const state = {
   /// остальные пути ниже (см. комментарий в шапке файла).
   root: null,
   tenantId: '',
+  /// Сеть заведений (chains/{chainId}, см. её docstring в
+  /// saas/firestore.rules) — пусто у одиночного заведения. Заполняется в
+  /// boot(), когда поддомен резолвится в сеть, а не в одну точку (см.
+  /// resolveTenant/renderVenuePicker).
+  chainId: '',
+  /// Куда пишется/читается лояльность (clients/phoneIndex/referralCodes/
+  /// bonusOperations) — chains/{chainId} у сети, иначе то же самое, что и
+  /// state.root (см. AppScope.loyaltyCol во Flutter — тот же приём).
+  loyaltyRoot: null,
   auth: null,
   uid: '',
   profile: null,
@@ -139,17 +148,73 @@ function sub(off) { state.screenSubs.push(off); }
 /// как у Flutter-приложения (там на каждое заведение своя APK). Здесь
 /// сборка ОДНА на всех — статика раздаётся один раз, слуг читается уже в
 /// браузере из адресной строки.
+/// Поддомен может принадлежать либо одиночному заведению (обычный
+/// случай), либо СЕТИ заведений целиком (гость сети открывает общий адрес
+/// сети — например, из рекламы или ссылки в мессенджере — а не конкретной
+/// точки, которую выбирает уже здесь). Сначала пробуем как заведение: это
+/// подавляющее большинство поддоменов, и лишний запрос к резолву сети
+/// добавлял бы им одну сетевую "волну" впустую. resolveChainBySlug — тот
+/// же приём, что и resolveTenantBySlug (публичный POST без Auth, см. его
+/// docstring в saas-gateway/server.js).
 async function resolveTenant() {
   const slug = (location.hostname.split('.')[0] || '').trim();
   if (!slug) throw new Error('Не удалось определить заведение по адресу');
-  const resp = await fetch(`${GATEWAY}/resolveTenantBySlug`, {
+
+  const tenantResp = await fetch(`${GATEWAY}/resolveTenantBySlug`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug }),
   });
-  const json = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(json.error || 'Заведение не найдено');
-  return json.tenantId;
+  if (tenantResp.ok) {
+    const json = await tenantResp.json();
+    return { type: 'tenant', tenantId: json.tenantId };
+  }
+
+  const chainResp = await fetch(`${GATEWAY}/resolveChainBySlug`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug }),
+  });
+  const chainJson = await chainResp.json().catch(() => ({}));
+  if (!chainResp.ok) throw new Error(chainJson.error || 'Заведение не найдено');
+  return {
+    type: 'chain',
+    chainId: chainJson.chainId,
+    name: chainJson.name || '',
+    locations: chainJson.locations || [],
+  };
+}
+
+/// Экран выбора точки сети — показывается ТОЛЬКО когда поддомен резолвится
+/// в сеть (см. resolveTenant выше), а не в одну точку. Возвращает Promise,
+/// которая резолвится выбранным tenantId (или null, если у сети сейчас
+/// вообще нет доступных точек).
+function renderVenuePicker(chain) {
+  return new Promise((resolve) => {
+    const locations = (chain.locations || []).filter(
+      (l) => l.status !== 'suspended' && l.status !== 'deleted'
+    );
+    if (!locations.length) {
+      screenEl().innerHTML = `
+        <h1>${esc(chain.name || 'Сеть заведений')}</h1>
+        <p class="muted">В этой сети пока нет доступных заведений.</p>`;
+      resolve(null);
+      return;
+    }
+    screenEl().innerHTML = `
+      <h1>${esc(chain.name || 'Выберите заведение')}</h1>
+      <p class="muted small">В каком заведении сети вы сейчас находитесь?</p>
+      ${locations.map((l) => `
+        <div class="card" data-venue="${esc(l.tenantId)}" style="cursor:pointer">
+          <div class="row">
+            <div class="grow" style="font-weight:600">${esc(l.name || l.slug)}</div>
+            <div class="muted">›</div>
+          </div>
+        </div>`).join('')}`;
+    screenEl().querySelectorAll('[data-venue]').forEach((el) => {
+      el.onclick = () => resolve(el.dataset.venue);
+    });
+  });
 }
 
 /// Брендинг заведения (имя, цвета — раздел «Брендинг» в личном кабинете
@@ -199,7 +264,15 @@ function brandDisplayName() {
 
 async function applyBranding() {
   try {
-    const snap = await getDoc(doc(state.root, 'branding', 'config'));
+    // Для сети — брендинг САМОЙ СЕТИ (chains/{chainId}/branding), а не
+    // отдельной точки: иначе тема мигала бы при каждом переключении гостем
+    // заведения внутри одной сети (см. её же docstring в
+    // saas/firestore.rules и _applyChainBranding в lib/client/kolibri_main.dart —
+    // тот же приём).
+    const snap = await getDoc(
+      state.chainId ? doc(state.db, 'chains', state.chainId, 'branding', 'config')
+                    : doc(state.root, 'branding', 'config')
+    );
     if (!snap.exists()) return;
     const b = snap.data();
     const css = document.documentElement.style;
@@ -271,9 +344,9 @@ async function boot() {
   const configPromise = fetch(`${GATEWAY}/firebaseConfig`)
     .then((res) => res.json().then((json) => ({ ok: res.ok, json })));
 
-  let tenantId;
+  let resolved;
   try {
-    tenantId = await tenantPromise;
+    resolved = await tenantPromise;
   } catch (e) {
     screenEl().innerHTML = `
       <h1>Заведение не найдено</h1>
@@ -281,7 +354,30 @@ async function boot() {
       устарели.</p>`;
     return;
   }
+
+  let tenantId;
+  let chainId = '';
+  if (resolved.type === 'chain') {
+    chainId = resolved.chainId;
+    // Выбор гостя кэшируем по коду сети — при следующем заходе на тот же
+    // поддомен сразу открываем прошлую точку без повторного вопроса (тот
+    // же принцип, что и в приложении Kolibri для сети).
+    const slug = (location.hostname.split('.')[0] || '').trim();
+    const cacheKey = 'chainLocation:' + slug;
+    let cached = null;
+    try { cached = localStorage.getItem(cacheKey); } catch (_) {}
+    if (cached && resolved.locations.some((l) => l.tenantId === cached)) {
+      tenantId = cached;
+    } else {
+      tenantId = await renderVenuePicker(resolved);
+      if (!tenantId) return; // renderVenuePicker уже показал экран «нет точек»
+      try { localStorage.setItem(cacheKey, tenantId); } catch (_) {}
+    }
+  } else {
+    tenantId = resolved.tenantId;
+  }
   state.tenantId = tenantId;
+  state.chainId = chainId;
 
   let config;
   try {
@@ -300,6 +396,7 @@ async function boot() {
   const app = initializeApp(config);
   state.db = getFirestore(app);
   state.root = doc(state.db, 'tenants', tenantId);
+  state.loyaltyRoot = chainId ? doc(state.db, 'chains', chainId) : state.root;
   const auth = getAuth(app);
 
   state.auth = auth;
@@ -373,7 +470,7 @@ function shortDeviceId() {
 /// Профиль гостя заводится один раз и дальше живёт сам: уровень, бонусы и
 /// историю визитов пишет касса при закрытии чека.
 async function ensureProfile() {
-  const ref = doc(state.root, 'clients', state.uid);
+  const ref = doc(state.loyaltyRoot, 'clients', state.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     await setDoc(ref, {
@@ -391,7 +488,7 @@ async function ensureProfile() {
 }
 
 function watchProfile() {
-  state.accountSubs.push(onSnapshot(doc(state.root, 'clients', state.uid), (d) => {
+  state.accountSubs.push(onSnapshot(doc(state.loyaltyRoot, 'clients', state.uid), (d) => {
     state.profile = d.exists() ? { id: d.id, ...d.data() } : null;
     // Экран «Мой стол» и «Главная» зависят от профиля — перерисуем.
     if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
@@ -735,7 +832,7 @@ async function bindToTable(tableId) {
     // получить первый снапшот, и state.profile какое-то время пуст даже у
     // гостя с уже сохранённым номером — свежий getDoc от этой гонки не
     // зависит.
-    const own = await getDoc(doc(state.root, 'clients', state.uid));
+    const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
     if (!(own.exists() && own.data().phone)) {
       screenEl().innerHTML = `
         <h1>Сначала укажите номер</h1>
@@ -835,9 +932,15 @@ async function claimSession(tableId, sessionId) {
     return failBind('Не удалось открыть стол. Проверьте интернет и попробуйте ещё раз.');
   }
   try {
-    await setDoc(doc(state.root, 'clients', state.uid), {
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), {
       activeSessionId: sessionId,
       activeTableId: tableId,
+      // Профиль гостя сети общий на все точки, а чек физически принадлежит
+      // ОДНОЙ конкретной точке — без этого поля правила сети
+      // (chainSessionClaimOk в saas/firestore.rules) не смогли бы
+      // проверить, что sessionId правда из sessionClaims именно этой точки.
+      // Для одиночного заведения (state.chainId пуст) поле не пишем вовсе.
+      ...(state.chainId ? { activeTenantId: state.tenantId } : {}),
       lastVisitAt: Timestamp.fromDate(new Date()),
     }, { merge: true });
   } catch (e) {
@@ -853,7 +956,7 @@ async function claimSession(tableId, sessionId) {
     // Читаем профиль напрямую, а не через state.profile: сразу после
     // перехода по ссылке со стола подписка на профиль ещё может быть не
     // готова, и state.profile — пуст даже у гостя с уже заполненным именем.
-    const own = await getDoc(doc(state.root, 'clients', state.uid));
+    const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
     const name = (own.exists() ? (own.data().name || '') : '').trim();
     if (name) {
       const sessionRef = doc(state.root, 'sessions', sessionId);
@@ -1068,8 +1171,9 @@ async function unbind() {
   // было бы увести). Пустой uid — тоже чужой.
   try { if (sid) await deleteDoc(doc(state.root, 'sessionClaims', sid)); } catch (_) {}
   try {
-    await setDoc(doc(state.root, 'clients', state.uid), {
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), {
       activeSessionId: '', activeTableId: '',
+      ...(state.chainId ? { activeTenantId: '' } : {}),
     }, { merge: true });
   } catch (_) {}
   toast('Стол отвязан');
@@ -1624,11 +1728,11 @@ async function sendBooking() {
       } else {
         patch.phone = phone;
         try {
-          await setDoc(doc(state.root, 'phoneIndex', phone), { uid: state.uid });
+          await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid });
         } catch (_) {}
       }
     }
-    await setDoc(doc(state.root, 'clients', state.uid), patch, { merge: true });
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), patch, { merge: true });
     pickedTable = null;
     bookingDraft.time = '';
     toast('Заявка отправлена — скоро подтвердим');
@@ -1883,10 +1987,28 @@ function screenProfile() {
     <h2>История бонусов</h2>
     <div id="bonusOps"><div class="spinner"></div></div>
 
+    ${state.chainId ? `
+      <p class="center" style="margin-top:20px">
+        <button class="btn-ghost" id="switchVenueBtn">Сменить заведение сети</button>
+      </p>` : ''}
+
     <p class="small muted center" style="margin-top:28px">
       ${esc(brandDisplayName())} · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
+  if (state.chainId) {
+    // Сброс кэша выбранной точки сети (см. boot()) и обычная перезагрузка
+    // страницы — здесь, в отличие от Flutter-приложения, это не риск: нет
+    // фоновых сервисов/долгоживущих подписок, которые надо было бы сначала
+    // аккуратно остановить, boot() просто отработает заново с нуля.
+    $('switchVenueBtn').onclick = () => {
+      try {
+        const slug = (location.hostname.split('.')[0] || '').trim();
+        localStorage.removeItem('chainLocation:' + slug);
+      } catch (_) {}
+      location.reload();
+    };
+  }
   if ((state.profile || {}).phone) {
     $('pPhone').onclick = () => toast('Номер уже привязан. Попросите '
       + 'администратора изменить его на кассе.');
@@ -1914,7 +2036,7 @@ function screenProfile() {
 /// этого запроса уже есть — его использует приложение на Android.
 function watchBonusOps() {
   sub(onSnapshot(
-    query(collection(state.root, 'bonusOperations'),
+    query(collection(state.loyaltyRoot, 'bonusOperations'),
       where('clientUid', '==', state.uid),
       orderBy('createdAt', 'desc'),
       limit(50)),
@@ -1965,7 +2087,7 @@ function bonusReason(reason, accrual) {
 async function phoneTakenByOther(phone) {
   if (!phone) return false;
   try {
-    const idx = await getDoc(doc(state.root, 'phoneIndex', phone));
+    const idx = await getDoc(doc(state.loyaltyRoot, 'phoneIndex', phone));
     const owner = idx.exists() ? (idx.data().uid || '') : '';
     return !!owner && owner !== state.uid;
   } catch (_) {
@@ -2010,9 +2132,9 @@ async function saveProfile() {
       patch.phone = phone;
       // Указатель «номер → гость»: вторичен, поэтому его осечка не должна
       // мешать сохранению самого профиля.
-      try { await setDoc(doc(state.root, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
+      try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
     }
-    await setDoc(doc(state.root, 'clients', state.uid), patch, { merge: true });
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), patch, { merge: true });
     toast('Сохранено');
   } catch (_) {
     toast('Не удалось сохранить: проверьте интернет и попробуйте снова');
@@ -2024,7 +2146,7 @@ async function saveProfile() {
 
 function watchVisits() {
   sub(onSnapshot(
-    query(collection(state.root, 'clients', state.uid, 'visits'), orderBy('date', 'desc'), limit(50)),
+    query(collection(state.loyaltyRoot, 'clients', state.uid, 'visits'), orderBy('date', 'desc'), limit(50)),
     (snap) => {
       const box = $('visits');
       if (!box) return;
@@ -2409,7 +2531,7 @@ async function ensureReferralCode() {
     // правила базы не дадут, и код молча не сохранился бы.
     let code = base;
     for (let i = 0; i < 5; i++) {
-      const d = await getDoc(doc(state.root, 'referralCodes', code));
+      const d = await getDoc(doc(state.loyaltyRoot, 'referralCodes', code));
       const owner = d.exists() ? (d.data().uid || '') : '';
       if (!owner || owner === state.uid) break;
       code = base + (i + 1);
@@ -2417,8 +2539,8 @@ async function ensureReferralCode() {
 
     // Сначала закрепляем код в указателе, потом пишем в профиль: если
     // закрепить не вышло, профиль не получит код, на который нельзя сослаться.
-    await setDoc(doc(state.root, 'referralCodes', code), { uid: state.uid });
-    await setDoc(doc(state.root, 'clients', state.uid), { referralCode: code }, { merge: true });
+    await setDoc(doc(state.loyaltyRoot, 'referralCodes', code), { uid: state.uid });
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), { referralCode: code }, { merge: true });
     if (box) box.textContent = `Ваш код: ${code}`;
   } catch (_) {
     if (box) box.textContent = 'Ваш код появится позже';
@@ -2442,12 +2564,12 @@ async function applyReferralCode() {
 
   say('Проверяем…');
   try {
-    const d = await getDoc(doc(state.root, 'referralCodes', code));
+    const d = await getDoc(doc(state.loyaltyRoot, 'referralCodes', code));
     const inviter = d.exists() ? (d.data().uid || '') : '';
     if (!inviter) return say('Такого кода нет.');
     if (inviter === state.uid) return say('Это ваш собственный код.');
 
-    await setDoc(doc(state.root, 'clients', state.uid),
+    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid),
       { referredBy: inviter, referralCodeUsed: code }, { merge: true });
     say(`Код принят: после первого визита вам начислим ${INVITEE_BONUS} бонусов, `
       + `другу — ${INVITER_BONUS}.`);
