@@ -11,7 +11,8 @@ import {
   getAuth, onAuthStateChanged, signOut, sendEmailVerification,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
-  reauthenticateWithCredential, EmailAuthProvider,
+  reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail,
+  updatePassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
@@ -99,7 +100,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 // способ на глаз отличить "деплой прошёл, но браузер показывает старый
 // кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
 // в терминале заново.
-const CONSOLE_BUILD = '2026-09-21.8-reauth-before-danger';
+const CONSOLE_BUILD = '2026-09-22.1-layout-fix-password-flows';
 function versionFooterHtml() {
   return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
 }
@@ -238,10 +239,11 @@ function dismissBroadcast(id) {
  *  чужом устройстве, похищенный токен), у злоумышленника всё равно нет
  *  пароля — назначить/снять супер-админа или необратимо удалить заведение
  *  с наскока не выйдет. Пароль есть у КАЖДОГО супер-админа гарантированно —
- *  сама панель требует регистрации email+паролем ДО назначения (см. текст
- *  на вкладке "Сотрудники платформы"), пассивная email-ссылка входа
- *  используется только на публичном лендинге для новых заведений, не для
- *  назначения супер-админов.
+ *  сама панель требует регистрации в этой консоли ДО назначения (см. текст
+ *  на вкладке "Сотрудники платформы"); регистрация теперь не спрашивает
+ *  пароль напрямую (см. screenAuth), но всё равно создаёт для аккаунта
+ *  пароль (случайный, задать свой владелец сможет по ссылке из письма) —
+ *  reauthenticateWithCredential работает точно так же в обоих случаях.
  *  Возвращает true, если пароль подтверждён, false — если отменили ввод. */
 async function reauthenticate(actionLabel) {
   const password = prompt(`Подтвердите действие «${actionLabel}» — введите свой пароль от этой панели:`);
@@ -503,6 +505,20 @@ const AUDIT_ACTION_LABELS = {
   planChangedBySuperAdmin: 'Тариф изменён супер-админом',
   bonusPeriodGranted: 'Выдан бонусный период',
 };
+
+/** Случайный пароль для аккаунта, который владелец никогда не увидит и не
+ *  вводит сам (см. регистрацию в screenAuth) — сразу после создания
+ *  аккаунта на почту уходит ссылка sendPasswordResetEmail, ею владелец
+ *  задаёт СВОЙ пароль. crypto.getRandomValues, а не Math.random() — этот
+ *  пароль хоть и временный, но реально даёт полный доступ к аккаунту до
+ *  того, как придёт письмо, поэтому предсказуемым быть не должен.
+ */
+function genSecurePassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const bytes = new Uint32Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
 
 function authErrorMessage(e) {
   const map = {
@@ -1325,11 +1341,16 @@ function screenAuth() {
       <label class="field"><span>Email</span>
         <input id="f-email" type="email" autocomplete="email" placeholder="you@example.com">
       </label>
-      <label class="field"><span>Пароль</span>
-        <input id="f-pass" type="password"
-          autocomplete="${authMode === 'login' ? 'current-password' : 'new-password'}"
-          placeholder="Минимум 6 символов">
-      </label>
+      ${authMode === 'login' ? `
+        <label class="field"><span>Пароль</span>
+          <input id="f-pass" type="password" autocomplete="current-password" placeholder="Минимум 6 символов">
+        </label>
+        <p class="small center muted" style="margin:-6px 0 14px"><a href="#" id="f-forgot">Забыли пароль?</a></p>
+      ` : `
+        <p class="small muted" style="margin-bottom:14px">Пароль придумывать не
+        нужно — сразу после регистрации пришлём на почту ссылку, чтобы задать
+        свой (и вторым письмом — ссылку для подтверждения самого email).</p>
+      `}
       ${authMode === 'signup' ? `
         <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
           <input type="checkbox" id="f-agree">
@@ -1353,13 +1374,35 @@ function screenAuth() {
     screenAuth();
   };
 
+  if ($('f-forgot')) {
+    $('f-forgot').onclick = async (e) => {
+      e.preventDefault();
+      const email = $('f-email').value.trim();
+      const errEl = $('f-error');
+      errEl.style.color = 'var(--danger)';
+      errEl.textContent = '';
+      if (!email) {
+        errEl.textContent = 'Сначала введите свой email выше';
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(state.auth, email);
+        errEl.style.color = 'var(--primary)';
+        errEl.textContent = `Письмо со ссылкой для сброса пароля отправлено на ${email}`;
+      } catch (e2) {
+        errEl.textContent = authErrorMessage(e2);
+      }
+    };
+  }
+
   const submit = async () => {
     const email = $('f-email').value.trim();
-    const pass = $('f-pass').value;
+    const pass = authMode === 'login' ? $('f-pass').value : genSecurePassword();
     const errEl = $('f-error');
+    errEl.style.color = 'var(--danger)';
     errEl.textContent = '';
-    if (!email || !pass) {
-      errEl.textContent = 'Заполните email и пароль';
+    if (!email || (authMode === 'login' && !pass)) {
+      errEl.textContent = authMode === 'login' ? 'Заполните email и пароль' : 'Введите email';
       return;
     }
     if (authMode === 'signup' && !$('f-agree')?.checked) {
@@ -1380,15 +1423,20 @@ function screenAuth() {
         // заведение (см. screenOnboarding и createTenant на сервере), это
         // и есть защита от регистрации на случайный/чужой email.
         try { await sendEmailVerification(cred.user); } catch (_) {}
+        // Пароль сгенерирован выше и нигде не показывается — второе письмо
+        // (та же механика, что и "Забыли пароль?" выше) даёт владельцу
+        // способ задать СВОЙ пароль, которым он потом сможет входить.
+        try { await sendPasswordResetEmail(state.auth, email); } catch (_) {}
       }
-      // Дальше подхватит onAuthStateChanged — свой экран он покажет сам.
+      // Дальше подхватит onAuthStateChanged — свой экран он покажет сам
+      // (screenVerifyEmail расскажет и про письмо для пароля тоже).
     } catch (e) {
       errEl.textContent = authErrorMessage(e);
       $('f-submit').disabled = false;
     }
   };
   $('f-submit').onclick = submit;
-  $('f-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  if ($('f-pass')) $('f-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
 function screenLoading() {
@@ -1404,7 +1452,9 @@ function screenVerifyEmail() {
     <h1>Подтвердите почту</h1>
     <p class="muted">Мы отправили письмо со ссылкой на <b>${esc(email)}</b>.
     Перейдите по ней, потом вернитесь сюда и нажмите «Проверить» —
-    создание заведения открывается только после этого.</p>
+    создание заведения открывается только после этого. Если регистрировались
+    только что — придёт и второе письмо, со ссылкой, чтобы задать пароль для
+    входа (пароль при регистрации не спрашивали специально).</p>
     <div class="card">
       <button class="btn btn-primary" id="f-verify-check">Проверить</button>
       <button class="btn btn-ghost" id="f-verify-resend" style="margin-top:10px">Отправить письмо ещё раз</button>
@@ -2129,22 +2179,22 @@ function watchDashboardData(tenantId) {
       <h2>Команда</h2>
       <div class="card">
         ${members === null ? '<div class="small muted">Загрузка…</div>' : sortedMembers.map((m) => `
-          <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div class="grow" style="min-width:0">
-              <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
-              <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
-            </div>
+          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+            <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
+            <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
             ${canManage && m.userId !== state.uid && ['manager', 'employee'].includes(m.role) ? `
-              <select class="f-member-role" data-uid="${esc(m.userId)}" style="width:auto;margin:0">
-                <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Менеджер</option>
-                <option value="employee" ${m.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
-              </select>
-              <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
-                ${m.status === 'active' ? 'Отключить' : 'Включить'}
-              </button>
-              <button class="btn-link f-member-delete" data-uid="${esc(m.userId)}" data-device="${m.email ? '0' : '1'}" data-label="${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}" style="color:var(--danger)">
-                Удалить
-              </button>
+              <div class="row" style="flex-wrap:wrap;margin-top:6px">
+                <select class="f-member-role" data-uid="${esc(m.userId)}" style="width:auto;margin:0">
+                  <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Менеджер</option>
+                  <option value="employee" ${m.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
+                </select>
+                <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
+                  ${m.status === 'active' ? 'Отключить' : 'Включить'}
+                </button>
+                <button class="btn-link f-member-delete" data-uid="${esc(m.userId)}" data-device="${m.email ? '0' : '1'}" data-label="${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}" style="color:var(--danger)">
+                  Удалить
+                </button>
+              </div>
             ` : ''}
           </div>
         `).join('') || '<div class="small muted">Пока только вы</div>'}
@@ -2162,7 +2212,7 @@ function watchDashboardData(tenantId) {
               <button class="btn btn-ghost" id="f-invite-submit" style="width:auto">Пригласить</button>
             </div>
             <p class="small muted" style="margin-top:6px">Приглашаемый должен
-            сначала сам зарегистрироваться в этой консоли (email + пароль) —
+            сначала сам зарегистрироваться в этой консоли —
             тогда его можно будет найти по email.</p>
             <div id="f-invite-error" class="small" style="color:var(--danger)"></div>
           </div>
@@ -2255,6 +2305,18 @@ function watchDashboardData(tenantId) {
       </div>
       <div class="card">
         <div class="small muted">Всего в команде: ${sortedMembers.length} ${pluralPeople(sortedMembers.length)}</div>
+      </div>
+      <h2>Пароль</h2>
+      <div class="card">
+        <label class="field"><span>Текущий пароль</span>
+          <input id="f-pass-current" type="password" autocomplete="current-password">
+        </label>
+        <label class="field"><span>Новый пароль</span>
+          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 6 символов">
+        </label>
+        <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
+        <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
+        <p class="small muted" style="margin-top:10px">Не помните текущий пароль? Выйдите из аккаунта и на экране входа нажмите «Забыли пароль?» — придёт ссылка на почту.</p>
       </div>
       <button class="btn btn-ghost" id="f-profile-signout">Выйти из аккаунта</button>
     `;
@@ -2465,6 +2527,47 @@ function watchDashboardData(tenantId) {
       };
     }
     if ($('f-profile-signout')) $('f-profile-signout').onclick = () => signOut(state.auth);
+    if ($('f-pass-change')) {
+      $('f-pass-change').onclick = async () => {
+        const currentEl = $('f-pass-current');
+        const newEl = $('f-pass-new');
+        const msgEl = $('f-pass-change-msg');
+        msgEl.style.color = 'var(--danger)';
+        msgEl.textContent = '';
+        if (!currentEl.value || !newEl.value) {
+          msgEl.textContent = 'Заполните оба поля';
+          return;
+        }
+        if (newEl.value.length < 6) {
+          msgEl.textContent = 'Новый пароль — минимум 6 символов';
+          return;
+        }
+        const btn = $('f-pass-change');
+        btn.disabled = true;
+        try {
+          // updatePassword требует "свежий" вход — на смене пароля это
+          // особенно уместно (см. тот же приём в reauthenticate() для
+          // опасных действий супер-админа): подтверждаем ТЕКУЩИЙ пароль
+          // перед тем, как поставить новый, а не полагаемся на то, что
+          // сессия в браузере вообще принадлежит владельцу аккаунта.
+          await reauthenticateWithCredential(
+            state.auth.currentUser,
+            EmailAuthProvider.credential(state.auth.currentUser.email, currentEl.value)
+          );
+          await updatePassword(state.auth.currentUser, newEl.value);
+          currentEl.value = '';
+          newEl.value = '';
+          msgEl.style.color = 'var(--primary)';
+          msgEl.textContent = 'Пароль изменён';
+        } catch (e) {
+          msgEl.textContent = e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential'
+            ? 'Текущий пароль неверен'
+            : authErrorMessage(e);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
 
     document.querySelectorAll('.faq-item').forEach((el) => {
       el.querySelector('.faq-question')?.addEventListener('click', () => {
@@ -3174,7 +3277,7 @@ function screenSuperAdmin() {
         <h1>Сотрудники платформы</h1>
         <p class="small muted">Есть полный доступ к панели платформы — назначайте
         только тем, кому лично доверяете. Кандидат должен СНАЧАЛА сам
-        зарегистрироваться в этой консоли (email + пароль) и подтвердить почту —
+        зарегистрироваться в этой консоли и подтвердить почту —
         только тогда его можно найти по email и назначить.</p>
         <div id="admin-super-admins"><div class="spinner"></div></div>
         <div class="card">
