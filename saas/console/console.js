@@ -3905,7 +3905,16 @@ function watchAllTenants() {
   };
 
   const grantBonusPeriod = async (tenantId) => {
-    const input = prompt('На сколько дней продлить доступ этому заведению? (от 1 до 365)');
+    // Точка сети продлевает общую подписку СЕТИ (subscriptions/{chainId}),
+    // а не свою — см. комментарий у saveSubscriptionOverride выше и
+    // docstring handleGrantBonusPeriod в saas-gateway/server.js. Бонус в
+    // этом случае получают сразу ВСЕ точки сети — предупреждаем заранее,
+    // а не после того как days уже введены.
+    const t = allTenants.find((it) => it.id === tenantId) || {};
+    const promptLabel = t.chainId
+      ? `На сколько дней продлить доступ сети «${t.chainName || t.chainId}» (это затронет ВСЕ её точки)? (от 1 до 365)`
+      : 'На сколько дней продлить доступ этому заведению? (от 1 до 365)';
+    const input = prompt(promptLabel);
     if (input === null) return;
     const days = Number(input);
     if (!Number.isFinite(days) || days <= 0 || days > 365) {
@@ -3920,7 +3929,7 @@ function watchAllTenants() {
       // дней выдал), а писать в auditLogs с клиента правила не дают ни при
       // каких условиях (allow write: if false — только Admin SDK).
       await callSaasGateway('grantBonusPeriod', { tenantId, days });
-      toast(`Выдано ${days} ${pluralDays(days)}`);
+      toast(`Выдано ${days} ${pluralDays(days)}${t.chainId ? ' (всей сети)' : ''}`);
     } catch (e) {
       toast(`Не удалось выдать бонус: ${e?.message || e}`);
     } finally {
@@ -4470,17 +4479,45 @@ function barChartHtml(points, formatValue) {
 function watchAnalytics() {
   const body = $('admin-analytics');
 
-  const draw = (tenants, revenueEvents, metrics) => {
+  const draw = (tenants, revenueEvents, metrics, chains) => {
     const now = Date.now();
     const day = 86400000;
     const byStatus = {};
     tenants.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
-    const activeCount = byStatus.active || 0;
-    const mrr = tenants.reduce((sum, t) => {
+    // Точка сети (t.chainId задан) свои status/planId не считает здесь —
+    // они не отражают реальный биллинг (тот общий на всю сеть, см.
+    // handleCreateChain/handleBillingWebhook в saas-gateway/server.js):
+    // status у точки сети всегда "active" уже с создания (даже пока сеть
+    // ещё на триале), а planId — незначащий дефолт "start". Без этого
+    // исключения (и цикла по chains ниже) каждая точка сети считалась бы
+    // отдельным активным заведением по цене случайного тарифа "start" —
+    // тот же баг, что и в runCalculatePlatformMetrics на сервере (см. её
+    // докстринг), только на клиенте для "MRR (оценка)" здесь и сейчас.
+    const locationCountByChain = new Map();
+    let activeCount = 0;
+    let mrr = tenants.reduce((sum, t) => {
+      if (t.chainId) {
+        // "deleted" — та же граница, что и countChainLocations в
+        // saas-gateway/server.js: приостановленные точки в число
+        // оплачиваемых входят, удалённые — нет.
+        if (t.status !== 'deleted') locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
+        return sum;
+      }
       if (t.status !== 'active') return sum;
+      activeCount += 1;
       const plan = state.plansById?.[t.planId];
       return sum + (Number(plan?.priceRub) || 0);
     }, 0);
+    (chains || []).forEach((c) => {
+      if (c.status !== 'active') return;
+      const plan = state.plansById?.[c.planId];
+      if (!plan) return;
+      const locationCount = Math.max(1, locationCountByChain.get(c.id) || 0);
+      activeCount += locationCount;
+      const first = Number(plan.priceRub) || 0;
+      const additional = plan.customAdditionalPrice ? (Number(plan.priceRubAdditional) || 0) : first;
+      mrr += first + additional * Math.max(0, locationCount - 1);
+    });
     const signups7d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 7 * day).length;
     const signups30d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 30 * day).length;
     const succeeded = revenueEvents.filter((e) => e.status === 'succeeded');
@@ -4544,7 +4581,8 @@ function watchAnalytics() {
   let tenants = null;
   let revenueEvents = null;
   let metrics = null;
-  const maybeDraw = () => { if (tenants && revenueEvents && metrics) draw(tenants, revenueEvents, metrics); };
+  let chains = null;
+  const maybeDraw = () => { if (tenants && revenueEvents && metrics && chains) draw(tenants, revenueEvents, metrics, chains); };
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
     state.plansById = {};
@@ -4555,6 +4593,11 @@ function watchAnalytics() {
     tenants = snap.docs.map((d) => d.data());
     maybeDraw();
   }, () => { tenants = []; maybeDraw(); }));
+
+  sub(onSnapshot(collection(state.db, 'chains'), (snap) => {
+    chains = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    maybeDraw();
+  }, () => { chains = []; maybeDraw(); }));
 
   // Статус фильтруем на клиенте, а не в запросе — экономит один составной
   // индекс ради аналитики, которая и так читает не весь архив, а только
