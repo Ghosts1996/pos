@@ -338,7 +338,7 @@ async function handleResolveTenantBySlug(req, res) {
   if (tenant.data().status === "deleted") {
     throw new HttpError(404, "Заведение с таким кодом не найдено");
   }
-  sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status });
+  sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status, chainId: tenant.data().chainId || null });
 }
 
 /**
@@ -777,7 +777,13 @@ async function handleCreateBuildJob(req, res) {
   }
 
   const firestore = db();
-  const sub = await firestore.collection("subscriptions").doc(tenantId).get();
+  // Точка сети не имеет своей subscriptions/{tenantId} — биллинг общий, на
+  // subscriptions/{chainId} (см. handleCreateChain) — без этого resolve'а
+  // "Собрать APK" всегда падало бы 412 для ЛЮБОЙ точки сети, даже с активной
+  // подпиской: подписки под её собственным tenantId просто не существует.
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  const chainId = tenantDoc.exists ? tenantDoc.data().chainId || null : null;
+  const sub = await firestore.collection("subscriptions").doc(chainId || tenantId).get();
   if (!sub.exists || !["trial", "active"].includes(sub.data().status)) {
     throw new HttpError(412, "Подписка неактивна — сборка APK недоступна");
   }

@@ -72,11 +72,11 @@ void main() async {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
       if (kSaasMode) {
-        final tenantId = await _resolveSaasTenantId();
-        if (tenantId == null) {
+        final resolved = await _resolveSaasTenantId();
+        if (resolved == null) {
           startupError = 'Это приложение не привязано ни к одному заведению — обратитесь к администратору заведения.';
         } else {
-          AppScope.enterTenant(tenantId);
+          AppScope.enterTenant(resolved.tenantId, chainId: resolved.chainId);
         }
       }
 
@@ -122,11 +122,23 @@ void main() async {
 /// не успел подключиться интернет. Сам tenantId для конкретной сборки
 /// никогда не меняется (это не блуждающий планшет POS, который можно
 /// переподключить к другому заведению), поэтому кэш не протухает.
-Future<String?> _resolveSaasTenantId() async {
-  const cacheKey = 'saas_kolibri_tenant_id_v1';
+///
+/// chainId кэшируется тут же и по той же причине (офлайн-запуск): точка
+/// может СТАТЬ частью сети уже после того, как для неё собрали эту личную
+/// APK (сборка "сеть целиком", kSaasPresetChainSlug, — отдельный путь для
+/// новых сетей, а не замена уже выданных персональных APK точкам, которые
+/// в сеть только вступают). Без chainId AppScope.enterTenant решил бы, что
+/// это одиночное заведение, и вся лояльность (бонусы, рефералка, push)
+/// тихо ушла бы в собственные, а не общие на сеть, документы — см. отчёт
+/// аудита chain-фичи, из-за которого это поле здесь появилось.
+Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
+  const tenantCacheKey = 'saas_kolibri_tenant_id_v1';
+  const chainCacheKey = 'saas_kolibri_tenant_chain_id_v1';
   final prefs = await SharedPreferences.getInstance();
-  final cached = prefs.getString(cacheKey);
-  if (cached != null && cached.isNotEmpty) return cached;
+  final cached = prefs.getString(tenantCacheKey);
+  if (cached != null && cached.isNotEmpty) {
+    return (tenantId: cached, chainId: prefs.getString(chainCacheKey));
+  }
 
   if (kSaasPresetSlug.isEmpty) {
     // Универсальная сборка без привязки к заведению (например, собранная
@@ -135,9 +147,12 @@ Future<String?> _resolveSaasTenantId() async {
     return null;
   }
   try {
-    final tenantId = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug);
-    await prefs.setString(cacheKey, tenantId);
-    return tenantId;
+    final resolved = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug);
+    await prefs.setString(tenantCacheKey, resolved.tenantId);
+    if (resolved.chainId != null && resolved.chainId!.isNotEmpty) {
+      await prefs.setString(chainCacheKey, resolved.chainId!);
+    }
+    return resolved;
   } catch (_) {
     return null;
   }
@@ -199,6 +214,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   String? _error;
   ChainDirectory? _directory;
   String _appTitle = 'Colibri Lounge';
+  bool _picking = false;
 
   @override
   void initState() {
@@ -231,6 +247,13 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   }
 
   Future<void> _onVenuePicked(ChainLocation location) async {
+    // _phase меняется на loading только на СЛЕДУЮЩЕМ кадре — до него экран
+    // выбора точки ещё на экране и технически может принять второй тап (по
+    // той же или другой карточке) прежде, чем он с него уйдёт. Явный флаг,
+    // а не просто проверка _phase, — не полагается на то, когда именно
+    // Flutter перерисует кадр.
+    if (_picking) return;
+    _picking = true;
     final directory = _directory!;
     setState(() => _phase = _ChainBootPhase.loading);
     final prefs = await SharedPreferences.getInstance();

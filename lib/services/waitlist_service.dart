@@ -124,7 +124,7 @@ class WaitlistService {
     });
 
     if (entry.clientUid.isNotEmpty) {
-      final client = await AppScope.col('clients').doc(entry.clientUid).get();
+      final client = await AppScope.loyaltyCol('clients').doc(entry.clientUid).get();
       final token = client.data()?['pushToken'] as String?;
       if (token != null && token.isNotEmpty) {
         await PushService.instance.enqueue(

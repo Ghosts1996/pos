@@ -183,7 +183,7 @@ class AiToolRegistry {
       run: (args, ctx) async {
         var id = (args['session_id'] as String?) ?? ctx.sessionId;
         if (ctx.scope == AiToolScope.guest) {
-          final profile = await AppScope.col('clients').doc(ctx.guestUid).get();
+          final profile = await AppScope.loyaltyCol('clients').doc(ctx.guestUid).get();
           id = (profile.data()?['activeSessionId'] as String?) ?? '';
         }
         if (id.isEmpty) return 'Открытого чека нет.';
@@ -252,7 +252,7 @@ class AiToolRegistry {
         var name = args['guest_name']?.toString() ?? '';
         var phone = args['phone']?.toString() ?? '';
         if (ctx.scope == AiToolScope.guest) {
-          final p = await AppScope.col('clients').doc(ctx.guestUid).get();
+          final p = await AppScope.loyaltyCol('clients').doc(ctx.guestUid).get();
           name = (p.data()?['name'] as String?) ?? name;
           phone = (p.data()?['phone'] as String?) ?? phone;
         }
@@ -331,7 +331,7 @@ class AiToolRegistry {
       scopes: {AiToolScope.guest},
       mutating: true,
       run: (args, ctx) async {
-        final profileDoc = await AppScope.col('clients').doc(ctx.guestUid).get();
+        final profileDoc = await AppScope.loyaltyCol('clients').doc(ctx.guestUid).get();
         if (!profileDoc.exists) return 'Профиль не найден.';
         final profile = ClientProfile.fromDoc(profileDoc);
         if (profile.activeTableId.isEmpty) {
@@ -363,7 +363,7 @@ class AiToolRegistry {
       run: (args, ctx) async {
         final uid = ctx.scope == AiToolScope.guest ? ctx.guestUid : '';
         if (uid.isEmpty) return 'Гость не определён.';
-        final ref = AppScope.col('clients').doc(uid);
+        final ref = AppScope.loyaltyCol('clients').doc(uid);
         final snap = await ref.get();
         final old = (snap.data()?['aiProfile'] as String?) ?? '';
         final merged = old.isEmpty ? args['note'].toString() : '$old; ${args['note']}';

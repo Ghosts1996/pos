@@ -162,7 +162,7 @@ class GiftCardService {
   Future<void> _process(GiftCardClaim claim) async {
     final claimRef = _claims.doc(claim.id);
     final cardRef = _col.doc(claim.code);
-    final clientRef = AppScope.col('clients').doc(claim.clientUid);
+    final clientRef = AppScope.loyaltyCol('clients').doc(claim.clientUid);
 
     double granted = 0;
 
@@ -216,7 +216,7 @@ class GiftCardService {
     if (granted <= 0) return;
 
     // Запись в историю бонусов — её гость видит у себя в профиле.
-    await AppScope.col('bonusOperations').add({
+    await AppScope.loyaltyCol('bonusOperations').add({
       'clientUid': claim.clientUid,
       'type': 'accrual',
       'amount': granted,
