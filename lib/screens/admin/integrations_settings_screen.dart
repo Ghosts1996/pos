@@ -436,54 +436,57 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 12),
-          RadioListTile<String>(
-            title: const Text('Не подключён'),
-            value: 'none',
+          RadioGroup<String>(
             groupValue: _printerType,
             onChanged: (v) => setState(() => _printerType = v!),
-          ),
-          // Кнопка выбора устройства стоит ОТДЕЛЬНОЙ строкой, а не в
-          // secondary у самой плитки. В secondary она забирала себе всю
-          // нужную ей ширину, а заголовку с подписью не оставалось почти
-          // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
-          // печатались по одной букве в строку.
-          RadioListTile<String>(
-            title: const Text('Bluetooth'),
-            subtitle: Text(
-              _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            value: 'bluetooth',
-            groupValue: _printerType,
-            onChanged: (v) => setState(() => _printerType = v!),
-          ),
-          if (_printerType == 'bluetooth')
-            Padding(
-              padding: const EdgeInsets.only(left: 16, bottom: 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _pickBluetoothDevice,
-                  icon: const Icon(Icons.bluetooth_searching, size: 18),
-                  label: const Text('Выбрать устройство'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const RadioListTile<String>(
+                  title: Text('Не подключён'),
+                  value: 'none',
                 ),
-              ),
+                // Кнопка выбора устройства стоит ОТДЕЛЬНОЙ строкой, а не в
+                // secondary у самой плитки. В secondary она забирала себе всю
+                // нужную ей ширину, а заголовку с подписью не оставалось почти
+                // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
+                // печатались по одной букве в строку.
+                RadioListTile<String>(
+                  title: const Text('Bluetooth'),
+                  subtitle: Text(
+                    _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  value: 'bluetooth',
+                ),
+                if (_printerType == 'bluetooth')
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, bottom: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: _pickBluetoothDevice,
+                        icon: const Icon(Icons.bluetooth_searching, size: 18),
+                        label: const Text('Выбрать устройство'),
+                      ),
+                    ),
+                  ),
+                const RadioListTile<String>(
+                  title: Text('Wi-Fi / LAN (порт 9100)'),
+                  value: 'network',
+                ),
+                if (_printerType == 'network')
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, bottom: 8),
+                    child: TextField(
+                      controller: _networkIpCtrl,
+                      decoration: const InputDecoration(labelText: 'IP-адрес принтера', hintText: '192.168.1.100'),
+                    ),
+                  ),
+              ],
             ),
-          RadioListTile<String>(
-            title: const Text('Wi-Fi / LAN (порт 9100)'),
-            value: 'network',
-            groupValue: _printerType,
-            onChanged: (v) => setState(() => _printerType = v!),
           ),
-          if (_printerType == 'network')
-            Padding(
-              padding: const EdgeInsets.only(left: 16, bottom: 8),
-              child: TextField(
-                controller: _networkIpCtrl,
-                decoration: const InputDecoration(labelText: 'IP-адрес принтера', hintText: '192.168.1.100'),
-              ),
-            ),
           OutlinedButton.icon(
             onPressed: _testing ? null : _testPrinter,
             icon: const Icon(Icons.print),
@@ -525,19 +528,24 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 8),
-          RadioListTile<String>(
-            title: const Text('Пилот (тестовый контур)'),
-            subtitle: const Text('markirovka.sandbox.crptech.ru — начните с него'),
-            value: 'pilot',
+          RadioGroup<String>(
             groupValue: _czCircuit,
             onChanged: (v) => setState(() => _czCircuit = v!),
-          ),
-          RadioListTile<String>(
-            title: const Text('Боевой (продуктивный контур)'),
-            subtitle: const Text('markirovka.crpt.ru'),
-            value: 'prod',
-            groupValue: _czCircuit,
-            onChanged: (v) => setState(() => _czCircuit = v!),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RadioListTile<String>(
+                  title: Text('Пилот (тестовый контур)'),
+                  subtitle: Text('markirovka.sandbox.crptech.ru — начните с него'),
+                  value: 'pilot',
+                ),
+                RadioListTile<String>(
+                  title: Text('Боевой (продуктивный контур)'),
+                  subtitle: Text('markirovka.crpt.ru'),
+                  value: 'prod',
+                ),
+              ],
+            ),
           ),
           TextField(
             controller: _czTokenCtrl,
@@ -583,129 +591,130 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 8),
-          RadioListTile<String>(
-            title: const Text('Тестовый режим (имитация)'),
-            value: 'mock',
+          RadioGroup<String>(
             groupValue: _kassaType,
             onChanged: (v) => setState(() => _kassaType = v!),
-          ),
-          RadioListTile<String>(
-            title: const Text('Облачная касса — протокол «АТОЛ Онлайн»'),
-            subtitle: const Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
-            value: 'atol_cloud',
-            groupValue: _kassaType,
-            onChanged: (v) => setState(() => _kassaType = v!),
-          ),
-          if (_kassaType == 'atol_cloud') ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _kassaBaseUrlCtrl,
-                    decoration: const InputDecoration(labelText: 'Адрес API провайдера', hintText: 'https://online.atol.ru'),
-                  ),
-                  TextField(
-                    controller: _kassaGroupCodeCtrl,
-                    decoration: const InputDecoration(labelText: 'Group code'),
-                  ),
-                  TextField(
-                    controller: _kassaLoginCtrl,
-                    decoration: const InputDecoration(labelText: 'Логин'),
-                  ),
-                  TextField(
-                    controller: _kassaPasswordCtrl,
-                    decoration: const InputDecoration(labelText: 'Пароль'),
-                    obscureText: true,
-                  ),
-                  TextField(
-                    controller: _kassaEmailCtrl,
-                    decoration: const InputDecoration(labelText: 'E-mail продавца (для чека)'),
-                  ),
-                  TextField(
-                    controller: _kassaPaymentAddressCtrl,
-                    decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-              ),
-            ),
-          ],
-          RadioListTile<String>(
-            title: const Text('Облачная касса — OrangeData'),
-            subtitle: const Text('Отдельный протокол (mTLS + подпись запроса) — пока без поддержки маркированных товаров'),
-            value: 'orange_data',
-            groupValue: _kassaType,
-            onChanged: (v) => setState(() => _kassaType = v!),
-          ),
-          if (_kassaType == 'orange_data') ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _kassaBaseUrlCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Адрес API (необязательно)',
-                      hintText: 'https://apip.orangedata.ru:2443/api/v2',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const RadioListTile<String>(
+                  title: Text('Тестовый режим (имитация)'),
+                  value: 'mock',
+                ),
+                const RadioListTile<String>(
+                  title: Text('Облачная касса — протокол «АТОЛ Онлайн»'),
+                  subtitle: Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
+                  value: 'atol_cloud',
+                ),
+                if (_kassaType == 'atol_cloud') ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _kassaBaseUrlCtrl,
+                          decoration: const InputDecoration(labelText: 'Адрес API провайдера', hintText: 'https://online.atol.ru'),
+                        ),
+                        TextField(
+                          controller: _kassaGroupCodeCtrl,
+                          decoration: const InputDecoration(labelText: 'Group code'),
+                        ),
+                        TextField(
+                          controller: _kassaLoginCtrl,
+                          decoration: const InputDecoration(labelText: 'Логин'),
+                        ),
+                        TextField(
+                          controller: _kassaPasswordCtrl,
+                          decoration: const InputDecoration(labelText: 'Пароль'),
+                          obscureText: true,
+                        ),
+                        TextField(
+                          controller: _kassaEmailCtrl,
+                          decoration: const InputDecoration(labelText: 'E-mail продавца (для чека)'),
+                        ),
+                        TextField(
+                          controller: _kassaPaymentAddressCtrl,
+                          decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                     ),
                   ),
-                  TextField(
-                    controller: _kassaGroupCodeCtrl,
-                    decoration: const InputDecoration(labelText: 'Группа устройств (group)'),
-                  ),
-                  TextField(
-                    controller: _kassaOrangeKeyNameCtrl,
-                    decoration: const InputDecoration(labelText: 'Имя ключа подписи (key, необязательно)'),
-                  ),
-                  TextField(
-                    controller: _kassaOrangeCertPemCtrl,
-                    decoration: const InputDecoration(labelText: 'Клиентский сертификат (PEM)'),
-                    maxLines: 4,
-                  ),
-                  TextField(
-                    controller: _kassaOrangeKeyPemCtrl,
-                    decoration: const InputDecoration(labelText: 'Закрытый ключ (PEM)'),
-                    maxLines: 4,
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 8),
                 ],
-              ),
-            ),
-          ],
-          if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _kassaInnCtrl,
-                    decoration: const InputDecoration(labelText: 'ИНН организации'),
+                const RadioListTile<String>(
+                  title: Text('Облачная касса — OrangeData'),
+                  subtitle: Text('Отдельный протокол (mTLS + подпись запроса) — пока без поддержки маркированных товаров'),
+                  value: 'orange_data',
+                ),
+                if (_kassaType == 'orange_data') ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _kassaBaseUrlCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Адрес API (необязательно)',
+                            hintText: 'https://apip.orangedata.ru:2443/api/v2',
+                          ),
+                        ),
+                        TextField(
+                          controller: _kassaGroupCodeCtrl,
+                          decoration: const InputDecoration(labelText: 'Группа устройств (group)'),
+                        ),
+                        TextField(
+                          controller: _kassaOrangeKeyNameCtrl,
+                          decoration: const InputDecoration(labelText: 'Имя ключа подписи (key, необязательно)'),
+                        ),
+                        TextField(
+                          controller: _kassaOrangeCertPemCtrl,
+                          decoration: const InputDecoration(labelText: 'Клиентский сертификат (PEM)'),
+                          maxLines: 4,
+                        ),
+                        TextField(
+                          controller: _kassaOrangeKeyPemCtrl,
+                          decoration: const InputDecoration(labelText: 'Закрытый ключ (PEM)'),
+                          maxLines: 4,
+                          obscureText: true,
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
                   ),
-                  DropdownButtonFormField<String>(
-                    initialValue: _kassaSno,
-                    decoration: const InputDecoration(labelText: 'Система налогообложения'),
-                    items: const [
-                      DropdownMenuItem(value: 'osn', child: Text('ОСН')),
-                      DropdownMenuItem(value: 'usn_income', child: Text('УСН доход')),
-                      DropdownMenuItem(value: 'usn_income_outcome', child: Text('УСН доход − расход')),
-                      DropdownMenuItem(value: 'envd', child: Text('ЕНВД')),
-                      DropdownMenuItem(value: 'esn', child: Text('ЕСН')),
-                      DropdownMenuItem(value: 'patent', child: Text('Патент')),
-                    ],
-                    onChanged: (v) => setState(() => _kassaSno = v!),
-                  ),
-                  const SizedBox(height: 8),
                 ],
-              ),
+                if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _kassaInnCtrl,
+                          decoration: const InputDecoration(labelText: 'ИНН организации'),
+                        ),
+                        DropdownButtonFormField<String>(
+                          initialValue: _kassaSno,
+                          decoration: const InputDecoration(labelText: 'Система налогообложения'),
+                          items: const [
+                            DropdownMenuItem(value: 'osn', child: Text('ОСН')),
+                            DropdownMenuItem(value: 'usn_income', child: Text('УСН доход')),
+                            DropdownMenuItem(value: 'usn_income_outcome', child: Text('УСН доход − расход')),
+                            DropdownMenuItem(value: 'envd', child: Text('ЕНВД')),
+                            DropdownMenuItem(value: 'esn', child: Text('ЕСН')),
+                            DropdownMenuItem(value: 'patent', child: Text('Патент')),
+                          ],
+                          onChanged: (v) => setState(() => _kassaSno = v!),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                const RadioListTile<String>(
+                  title: Text('CloudKassir'),
+                  subtitle: Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
+                  value: 'cloud_kassir',
+                ),
+              ],
             ),
-          RadioListTile<String>(
-            title: const Text('CloudKassir'),
-            subtitle: const Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
-            value: 'cloud_kassir',
-            groupValue: _kassaType,
-            onChanged: (v) => setState(() => _kassaType = v!),
           ),
           OutlinedButton.icon(
             onPressed: _testing ? null : _testKassa,
@@ -727,14 +736,19 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 8),
-          ...TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
-                (p) => RadioListTile<TerminalProvider>(
-                  title: Text(p.label),
-                  value: p,
-                  groupValue: _terminalProvider,
-                  onChanged: (v) => setState(() => _terminalProvider = v!),
-                ),
-              ),
+          RadioGroup<TerminalProvider>(
+            groupValue: _terminalProvider,
+            onChanged: (v) => setState(() => _terminalProvider = v!),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
+                    (p) => RadioListTile<TerminalProvider>(
+                      title: Text(p.label),
+                      value: p,
+                    ),
+                  ).toList(),
+            ),
+          ),
           if (_terminalFields(_terminalProvider).first != null)
             Padding(
               padding: const EdgeInsets.only(left: 16),
