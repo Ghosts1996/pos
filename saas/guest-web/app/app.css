@@ -214,6 +214,11 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 .table-dot.busy { background: #C24A4A; color: #fff; }
 .table-dot.risky { background: #D9A441; color: #241A05; }
 .table-dot.small { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
+/* Круглый стол на кассе (shape:'circle') — овал вместо прямоугольника
+   (плитка не квадратная, --tile-h чуть меньше --tile-w), радиус 999px
+   надёжнее 50% на не-квадратной коробке. См. тот же приём в
+   lib/widgets/table_tile.dart и lib/client/screens/kolibri_hall_map_screen.dart. */
+.table-dot.round { border-radius: 999px; }
 .table-dot.pick { cursor: pointer; }
 .table-dot.chosen { outline: 3px solid var(--gold); outline-offset: -3px; }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; margin-top: 12px; }

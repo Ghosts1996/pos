@@ -2717,7 +2717,7 @@ function screenHall(pickMode) {
           ? 'Этот стол уже забронирован на выбранное время'
           : 'Стол занят до этого времени — выберите другое время или стол';
       return `
-        <div class="table-dot ${cls} ${canPick ? 'pick' : ''}
+        <div class="table-dot ${cls} ${t.shape === 'circle' ? 'round' : ''} ${canPick ? 'pick' : ''}
              ${pickedTable && pickedTable.id === t.id ? 'chosen' : ''}"
              ${canPick
                ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"
