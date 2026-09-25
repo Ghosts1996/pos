@@ -964,23 +964,27 @@ function planPriceForPeriod(plan, billingPeriod) {
 }
 
 /**
- * Цена ОДНОЙ дополнительной точки сети за billingPeriod — отдельная,
- * обычно более низкая цена (решение владельца платформы: "за доп.
- * заведения цены меньше"), задаётся полями priceRubAdditional/
- * priceRubAdditionalSemiannual/priceRubAdditionalYearly. Если тариф явно
- * не задал отдельную цену для доп. точки (поле отсутствует / пустая
- * строка / null — именно так выглядит НЕ настроенное поле в Firestore,
- * 0 же означает осознанный выбор "доп. точки бесплатно"), доп. точка
- * стоит столько же, сколько первая — это же поведение было ДО того, как
- * появилась сама возможность настроить разницу.
+ * Цена ОДНОЙ дополнительной точки сети за billingPeriod. По умолчанию
+ * (customAdditionalPrice не включён) — столько же, сколько первая: это
+ * безопасный дефолт, платформа сама никогда не занижает цену сети без
+ * явного решения. Только когда владелец платформы в Тарифах отдельно
+ * включил переключатель "Своя цена за доп. точку", читаются поля
+ * priceRubAdditional/priceRubAdditionalSemiannual/priceRubAdditionalYearly
+ * (решение "за доп. заведения цены меньше").
+ *
+ * ВАЖНО: это НЕ "поле не задано → как первая, 0 → бесплатно" — числовое
+ * поле в форме редактирования тарифа (см. savePlan() в console.js) всегда
+ * сохраняется КОНКРЕТНЫМ числом (пустое поле сохраняется как 0), поэтому
+ * само значение 0 не может служить признаком "владелец платформы про это
+ * поле ещё не думал" — для этого и нужен отдельный явный флаг-чекбокс, а
+ * не догадки по числу.
  */
 function additionalLocationPriceForPeriod(plan, billingPeriod) {
+  if (!plan.customAdditionalPrice) return planPriceForPeriod(plan, billingPeriod);
   const field = billingPeriod === "yearly" ? "priceRubAdditionalYearly"
     : billingPeriod === "semiannual" ? "priceRubAdditionalSemiannual"
     : "priceRubAdditional";
-  const raw = plan[field];
-  if (raw === undefined || raw === null || raw === "") return planPriceForPeriod(plan, billingPeriod);
-  return Number(raw) || 0;
+  return Number(plan[field]) || 0;
 }
 
 /** Полная цена подписки сети за billingPeriod: первая точка по обычной
