@@ -738,6 +738,18 @@ jobs:
           # только через createBuildJob).
           TENANT_SLUG: ${{ inputs.tenant_slug }}
           INVITE_CODE: ${{ inputs.invite_code }}
+          # Firebase C++ SDK (тянется транзитивно firebase_core для
+          # Windows-реализации) несёт свой CMakeLists.txt с cmake_minimum_required
+          # ниже 3.5 — начиная с CMake 4.x (уже стоит на windows-latest) это
+          # жёсткая ошибка ("Compatibility with CMake < 3.5 has been removed"),
+          # а не предупреждение, сборка падает ДО компиляции хоть одного файла.
+          # CMAKE_POLICY_VERSION_MINIMUM — официальный обходной путь из самого
+          # текста ошибки CMake (аналог флага -DCMAKE_POLICY_VERSION_MINIMUM=3.5,
+          # но как переменная окружения, потому что flutter build windows сам
+          # решает, как вызывать cmake — передать ему свой флаг напрямую нельзя).
+          # Затронут только выбор политик для СТОРОННЕГО CMakeLists.txt самого
+          # SDK, на нашу Dart/Flutter-часть сборки не влияет.
+          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
         run: |
           if [ -z "$SAAS_GATEWAY_URL" ]; then
             echo "::error::Секрет SAAS_GATEWAY_URL не задан — без него Windows-сборка не сможет получить конфигурацию Firebase в рантайме (см. resolveWindowsOptions в lib/firebase_options.dart)."
