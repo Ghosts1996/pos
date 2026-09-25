@@ -520,7 +520,24 @@ async function handleCreateTenant(req, res) {
   const tenantRef = firestore.collection("tenants").doc();
   const tenantId = tenantRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const resolvedPlanId = planId || "start";
+  // planId с клиента доверяем как ОДИНОЧНОМУ (chainId не передан) только
+  // если это ДЕЙСТВИТЕЛЬНО не тариф для сети — иначе (например, старая
+  // вкладка лендинга с уже выбранным тарифом сети в localStorage, у которой
+  // почему-то не отметился чекбокс "Это сеть") заведение получило бы
+  // planId с per-location ценой сети без самой сети — тот же класс бага,
+  // что и isChainPlan-фильтрация в консоли, только с другой стороны запроса
+  // (см. симметричную проверку в handleCreateChain для обратного случая).
+  let resolvedPlanId = "start";
+  if (!chainId && typeof planId === "string" && planId.trim()) {
+    const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
+    if (requestedSnap.exists && !requestedSnap.data().isChainPlan) resolvedPlanId = planId.trim();
+  } else if (chainId) {
+    // Точка сети (chainId уже провалидирован выше) не имеет собственного
+    // тарифа вовсе — planId с клиента для нового узла сети сюда не
+    // передаётся (см. addChainLocation в консоли), а если бы и был передан,
+    // не должен ни на что влиять: биллинг только на chains/{chainId}.
+    resolvedPlanId = "start";
+  }
   const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
   const trialDays = Number(planSnap.data()?.trialDays) || 7;
 
