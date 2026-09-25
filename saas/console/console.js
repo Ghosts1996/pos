@@ -95,16 +95,6 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
   return { xhr, promise };
 }
 
-// Метка версии консоли — меняется при каждой заметной правке этого файла.
-// Показывается мелко внизу экрана входа и панели платформы: единственный
-// способ на глаз отличить "деплой прошёл, но браузер показывает старый
-// кэш" от "деплой ещё не запускали" — без нужды листать `firebase deploy`
-// в терминале заново.
-const CONSOLE_BUILD = '2026-09-22.4-colored-svg-icons-aligned';
-function versionFooterHtml() {
-  return `<p class="small muted center" style="margin-top:24px;opacity:.5">build ${esc(CONSOLE_BUILD)}</p>`;
-}
-
 const state = {
   auth: null,
   db: null,
@@ -1058,7 +1048,6 @@ function screenLanding() {
           Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
         </p>
         ${publicFooterLinksHtml()}
-        ${versionFooterHtml()}
       </div>
     </footer>
 
@@ -1103,7 +1092,6 @@ function screenLanding() {
         <p class="small center muted" style="margin-top:20px">
           Уже есть аккаунт? <a href="#/login">Войти по паролю</a>
         </p>
-        ${versionFooterHtml()}
       `;
     } catch (e) {
       errEl.textContent = authErrorMessage(e);
@@ -1294,7 +1282,6 @@ function publicPageWrapHtml(title, bodyHtml) {
     ${bodyHtml}
     <p class="small center muted" style="margin-top:24px"><a href="#/">← На главную</a></p>
     ${publicFooterLinksHtml()}
-    ${versionFooterHtml()}
   `;
 }
 
@@ -1480,7 +1467,6 @@ function screenAuth() {
       <a href="#" id="f-switch">${authMode === 'login' ? 'Зарегистрироваться' : 'Войти'}</a>
     </p>
     <p class="small center muted"><a href="#/">← На главную</a></p>
-    ${versionFooterHtml()}
   `;
 
   $('f-switch').onclick = (e) => {
@@ -2294,15 +2280,19 @@ function watchDashboardData(tenantId) {
 
       <h2>Сборка APK</h2>
       <div class="card">
-        <p class="small muted">Одна кнопка — три личных приложения этого
-        заведения: касса для Android-планшета и касса для Windows (обе сами
-        присоединятся по коду заведения и коду приглашения устройства выше,
-        без ручного ввода — Windows-версию нужно просто распаковать и
-        запустить exe из архива), и гостевое приложение (для телефонов
-        гостей — меню, заказ из-за стола, вызов персонала, бонусы; название
-        и логотип — из раздела «Брендинг»). На Windows недоступны: сканер
-        через камеру (работает USB/Bluetooth-сканер-«пистолет» и ручной
-        ввод) и Bluetooth-принтер чека (работает сетевой Wi-Fi/LAN-принтер).</p>
+        <p class="small muted">Одна кнопка — сразу три личных приложения
+        этого заведения: касса для Android-планшета, касса для Windows и
+        гостевое приложение для телефонов гостей.</p>
+        <p class="small muted">Обе кассы сами присоединяются к заведению по
+        коду заведения и коду приглашения устройства выше — вводить их
+        вручную не нужно. Windows-версию достаточно распаковать из архива и
+        запустить exe.</p>
+        <p class="small muted">Гостевое приложение — меню, заказ из-за
+        стола, вызов персонала, бонусы; название и логотип берутся из
+        раздела «Брендинг».</p>
+        <p class="small muted">На Windows недоступны сканер через камеру и
+        Bluetooth-принтер чека — вместо них работают USB/Bluetooth-сканер
+        «пистолет» с ручным вводом кода и сетевой Wi-Fi/LAN-принтер.</p>
         ${canManage ? (() => {
           // Пока есть незавершённая сборка (см. проверку в handleCreateBuildJob
           // на сервере) — кнопка неактивна, чтобы не плодить дубли повторными
@@ -3645,8 +3635,6 @@ function screenSuperAdmin() {
         <h1>Безопасность</h1>
         <p class="small muted">Раздел в разработке.</p>
       </div>
-
-      ${versionFooterHtml()}
     </div>
   `;
 
