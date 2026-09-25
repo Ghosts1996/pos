@@ -861,7 +861,7 @@ function screenLanding() {
               <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
             </label>
             <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
-              <input type="checkbox" id="f-landing-agree">
+              <input type="checkbox" id="f-landing-agree" style="width:auto">
               <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
             </label>
             <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
@@ -1378,7 +1378,7 @@ function screenAuth() {
       `}
       ${authMode === 'signup' ? `
         <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
-          <input type="checkbox" id="f-agree">
+          <input type="checkbox" id="f-agree" style="width:auto">
           <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
         </label>
       ` : ''}
@@ -4296,7 +4296,7 @@ function watchPlans() {
           <input class="f-plan-field" data-plan="${esc(p.id)}" data-field="name" value="${esc(p.name || '')}">
         </label>
         <label class="row" style="width:auto;gap:6px;margin-bottom:12px">
-          <input type="checkbox" class="f-plan-checkbox f-plan-is-chain" data-plan="${esc(p.id)}" data-field="isChainPlan" ${p.isChainPlan ? 'checked' : ''}>
+          <input type="checkbox" class="f-plan-checkbox f-plan-is-chain" data-plan="${esc(p.id)}" data-field="isChainPlan" ${p.isChainPlan ? 'checked' : ''} style="width:auto">
           Тариф для сети заведений (своя цена за первую точку и за каждую следующую)
         </label>
         <label class="field"><span>${p.isChainPlan ? 'Цена за ПЕРВУЮ точку, ₽/мес' : 'Цена, ₽/мес'} (0 — не продаётся напрямую, только вручную через смену тарифа заведению)</span>
@@ -4310,7 +4310,7 @@ function watchPlans() {
         </label>
         <div class="f-plan-chain-fields" data-plan="${esc(p.id)}" style="${p.isChainPlan ? '' : 'display:none'};border-top:1px solid var(--border);padding-top:12px;margin-bottom:4px">
           <label class="row" style="width:auto;gap:6px;margin-bottom:10px">
-            <input type="checkbox" class="f-plan-checkbox f-plan-custom-additional" data-plan="${esc(p.id)}" data-field="customAdditionalPrice" ${p.customAdditionalPrice ? 'checked' : ''}>
+            <input type="checkbox" class="f-plan-checkbox f-plan-custom-additional" data-plan="${esc(p.id)}" data-field="customAdditionalPrice" ${p.customAdditionalPrice ? 'checked' : ''} style="width:auto">
             Своя цена за КАЖДУЮ ДОПОЛНИТЕЛЬНУЮ точку сети (без галочки — доп. точка стоит как первая)
           </label>
           <div class="f-plan-additional-price-fields" data-plan="${esc(p.id)}" style="${p.customAdditionalPrice ? '' : 'display:none'}">
