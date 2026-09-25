@@ -30,10 +30,14 @@ class SubscriptionGate {
   static final ValueNotifier<bool> blocked = ValueNotifier<bool>(false);
 
   static TenantStatus _tenantStatus = TenantStatus.active;
+  // null у одиночного заведения — статус сети (см. ChainInfo), которой
+  // может быть заблокирована сразу ВСЯ сеть, а не одна точка.
+  static TenantStatus? _chainStatus;
   static SubscriptionInfo? _subscription;
 
   static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tenantSub;
   static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _subscriptionSub;
+  static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _chainSub;
 
   /// Сколько дней осталось до реального удаления данных заведения — null,
   /// если подписка не в просрочке. Источник — последний известный
@@ -50,6 +54,7 @@ class SubscriptionGate {
   static void watch(String tenantId, TenantConfig initialConfig) {
     stop();
     _tenantStatus = initialConfig.tenant.status;
+    _chainStatus = initialConfig.chain?.status;
     _subscription = initialConfig.subscription;
     _recompute();
 
@@ -58,14 +63,27 @@ class SubscriptionGate {
       _tenantStatus = TenantStatusX.fromId(snap.data()?['status'] as String?);
       _recompute();
     }, onError: (_) {});
-    _subscriptionSub = db.collection('subscriptions').doc(tenantId).snapshots().listen((snap) {
-      _subscription = SubscriptionInfo.fromMap(snap.data(), tenantId);
+
+    // Для точки сети общая подписка лежит на subscriptions/{chainId}, а не
+    // subscriptions/{tenantId} (см. AppScope.loyaltyCol/handleCreateChain в
+    // saas-gateway) — id самого заведения тут не подходит.
+    final chainId = initialConfig.tenant.chainId;
+    final subscriptionId = chainId ?? tenantId;
+    _subscriptionSub = db.collection('subscriptions').doc(subscriptionId).snapshots().listen((snap) {
+      _subscription = SubscriptionInfo.fromMap(snap.data(), subscriptionId);
       _recompute();
     }, onError: (_) {});
+
+    if (chainId != null) {
+      _chainSub = db.collection('chains').doc(chainId).snapshots().listen((snap) {
+        _chainStatus = TenantStatusX.fromId(snap.data()?['status'] as String?);
+        _recompute();
+      }, onError: (_) {});
+    }
   }
 
   static void _recompute() {
-    blocked.value = computeBlocked(_tenantStatus, _subscription?.status);
+    blocked.value = computeBlocked(_tenantStatus, _subscription?.status, chainStatus: _chainStatus);
   }
 
   /// Останавливает слежение и возвращает в незаблокированное состояние —
@@ -73,9 +91,12 @@ class SubscriptionGate {
   static void stop() {
     _tenantSub?.cancel();
     _subscriptionSub?.cancel();
+    _chainSub?.cancel();
     _tenantSub = null;
     _subscriptionSub = null;
+    _chainSub = null;
     _subscription = null;
+    _chainStatus = null;
     _tenantStatus = TenantStatus.active;
     blocked.value = false;
   }
@@ -86,7 +107,9 @@ class SubscriptionGate {
 /// зависящую от Firestore, специально для юнит-теста: [SubscriptionGate]
 /// сам по себе завязан на реальный `FirebaseFirestore.instance`, которого
 /// в `flutter test` нет (см. тот же приём для AppScope.scopedPath).
-bool computeBlocked(TenantStatus tenantStatus, String? subscriptionStatus) {
-  final operationsAllowed = tenantStatus.allowsOperations && subscriptionStatus != 'cancelled';
+bool computeBlocked(TenantStatus tenantStatus, String? subscriptionStatus, {TenantStatus? chainStatus}) {
+  final operationsAllowed = tenantStatus.allowsOperations &&
+      (chainStatus == null || chainStatus.allowsOperations) &&
+      subscriptionStatus != 'cancelled';
   return !operationsAllowed;
 }

@@ -20,7 +20,10 @@ class GuestLinkService {
   GuestLinkService({PiiGatewayService? piiGateway})
       : _piiGateway = piiGateway ?? PiiGatewayService();
 
-  CollectionReference<Map<String, dynamic>> get _clients => AppScope.col('clients');
+  // Лояльность (профиль/бонусы гостя) — через loyaltyCol: у сети заведений
+  // общая на все точки (chains/{chainId}/clients), у одиночного заведения
+  // ничем не отличается от обычного AppScope.col (см. её docstring).
+  CollectionReference<Map<String, dynamic>> get _clients => AppScope.loyaltyCol('clients');
   CollectionReference<Map<String, dynamic>> get _calls => AppScope.col('waiterCalls');
   CollectionReference<Map<String, dynamic>> get _orders => AppScope.col('guestOrders');
   CollectionReference<Map<String, dynamic>> get _reviews => AppScope.col('reviews');
@@ -108,7 +111,7 @@ class GuestLinkService {
   /// permission-denied, и сохранение телефона зависало навсегда. Здесь
   /// лежит только пара «номер → uid»: ни имени, ни бонусов, ни трат.
   CollectionReference<Map<String, dynamic>> get _phoneIndex =>
-      AppScope.col('phoneIndex');
+      AppScope.loyaltyCol('phoneIndex');
 
   /// Занят ли номер ДРУГИМ профилем. Это чтение одного документа по id, а
   /// не запрос по коллекции, поэтому работает и у гостя.
@@ -240,7 +243,7 @@ class GuestLinkService {
     // а у постоянного гостя за пару лет операций бывает и больше — такой
     // батч отклонялся целиком, и объединение профилей падало с ошибкой,
     // уже успев слить балансы транзакцией выше.
-    final ops = await AppScope.col('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
+    final ops = await AppScope.loyaltyCol('bonusOperations').where('clientUid', isEqualTo: old.uid).get();
     const chunkSize = 400;
     for (var i = 0; i < ops.docs.length; i += chunkSize) {
       final batch = _db.batch();
@@ -297,7 +300,7 @@ class GuestLinkService {
           await _phoneIndex.doc(normalizePhone(phone)).set({'uid': doc.id});
         }
         if (code.isNotEmpty) {
-          await AppScope.col('referralCodes').doc(code).set({'uid': doc.id});
+          await AppScope.loyaltyCol('referralCodes').doc(code).set({'uid': doc.id});
         }
       }
       await marker.set({'lastRunAt': Timestamp.fromDate(DateTime.now())});
@@ -345,7 +348,7 @@ class GuestLinkService {
       }
     }
     if (referralCode.isNotEmpty) {
-      final codes = AppScope.col('referralCodes');
+      final codes = AppScope.loyaltyCol('referralCodes');
       final idx = await codes.doc(referralCode).get();
       if (idx.exists && (idx.data()?['uid'] as String?) == uid) {
         await codes.doc(referralCode).delete();
@@ -480,6 +483,14 @@ class GuestLinkService {
     await _clients.doc(uid).set({
       'activeSessionId': sessionId,
       'activeTableId': tableId,
+      // Профиль гостя сети общий на все точки, а чек физически принадлежит
+      // ОДНОЙ конкретной точке (её кассе) — без этого поля правила сети
+      // (chains/{chainId}/clients, chainSessionClaimOk) не смогли бы
+      // проверить, что sessionId правда из sessionClaims именно этой
+      // точки, а не подставлен гостем произвольно (см. saas/firestore.rules).
+      // Для одиночного заведения (chainId == null) поле не пишем вовсе —
+      // там в нём нет смысла и правила его не читают.
+      if (AppScope.chainId != null) 'activeTenantId': AppScope.tenantId,
       'lastVisitAt': Timestamp.fromDate(DateTime.now()),
     }, SetOptions(merge: true));
 
@@ -522,6 +533,7 @@ class GuestLinkService {
     await _clients.doc(uid).set({
       'activeSessionId': '',
       'activeTableId': '',
+      if (AppScope.chainId != null) 'activeTenantId': '',
     }, SetOptions(merge: true));
   }
 
@@ -802,6 +814,7 @@ class GuestLinkService {
         'bonusAccruedFor': sessionId,
         'activeSessionId': '',
         'activeTableId': '',
+        if (AppScope.chainId != null) 'activeTenantId': '',
         // Чек закрыт, но гостю ещё нужно предложить оценить визит. Экран
         // оценки раньше строился на activeSessionId, который здесь же и
         // обнулялся, — и «Спасибо за визит» исчезало в тот же миг, когда
@@ -830,7 +843,7 @@ class GuestLinkService {
     });
 
     if (bonus <= 0) return;
-    await AppScope.col('bonusOperations').add({
+    await AppScope.loyaltyCol('bonusOperations').add({
       'clientUid': clientUid,
       'sessionId': sessionId,
       'type': 'accrual',
@@ -897,7 +910,7 @@ class GuestLinkService {
     });
 
     if (applied > 0) {
-      await AppScope.col('bonusOperations').add({
+      await AppScope.loyaltyCol('bonusOperations').add({
         'clientUid': clientUid,
         'sessionId': sessionId,
         'type': 'redeem',
@@ -925,7 +938,7 @@ class GuestLinkService {
       {'bonusBalance': FieldValue.increment(amount)},
       SetOptions(merge: true),
     );
-    await AppScope.col('bonusOperations').add({
+    await AppScope.loyaltyCol('bonusOperations').add({
       'clientUid': clientUid,
       'sessionId': sessionId,
       'type': 'redeem_cancelled',

@@ -29,12 +29,19 @@ class AppScope {
   static String? _tenantId;
   static BrandingConfig? _branding;
   static String? _slug;
+  static String? _chainId;
 
   /// null — одно-арендный режим (как было исторически). Непустая строка —
   /// SaaS-режим, все обращения к данным вложены под этого арендатора.
   static String? get tenantId => _tenantId;
 
   static bool get isSaasMode => _tenantId != null;
+
+  /// Сеть заведений (chains/{chainId}, см. её docstring в
+  /// saas/firestore.rules) — null у одиночного заведения (подавляющее
+  /// большинство): тогда [loyaltyCol] ничем не отличается от [col].
+  /// Непустая строка — общий биллинг/лояльность нескольких точек сети.
+  static String? get chainId => _chainId;
 
   /// Брендинг текущего заведения (имя, логотип, цвета) — задаётся вместе с
   /// [enterTenant], читается экранами, которым сама тема (AppTheme.branded)
@@ -56,13 +63,14 @@ class AppScope {
   /// пользователя (или устройство подтвердило код приглашения). Что именно
   /// вызывает это на старте — решает main.dart/kolibri_main.dart, сам
   /// AppScope ничего не знает про Auth/логины.
-  static void enterTenant(String tenantId, {BrandingConfig? branding, String? slug}) {
+  static void enterTenant(String tenantId, {BrandingConfig? branding, String? slug, String? chainId}) {
     if (tenantId.trim().isEmpty) {
       throw ArgumentError('tenantId не может быть пустым');
     }
     _tenantId = tenantId;
     _branding = branding;
     _slug = slug;
+    _chainId = (chainId != null && chainId.isNotEmpty) ? chainId : null;
   }
 
   /// Возврат в одно-арендный режим (например, выход из SaaS-аккаунта или
@@ -71,6 +79,7 @@ class AppScope {
     _tenantId = null;
     _branding = null;
     _slug = null;
+    _chainId = null;
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому
@@ -85,6 +94,22 @@ class AppScope {
   /// одной строкой (раньше — `FirebaseFirestore.instance.doc('meta/x')`).
   static DocumentReference<Map<String, dynamic>> doc(String path) {
     return FirebaseFirestore.instance.doc(scopedPath(_tenantId, path));
+  }
+
+  /// Коллекции общей лояльности сети (clients/phoneIndex/referralCodes/
+  /// bonusOperations и соседние, см. [GuestLinkService]) — при активной
+  /// сети (см. [enterTenant]) живут в `chains/{chainId}/...`, а не в
+  /// `tenants/{tenantId}/...`, чтобы баланс/уровень/история гостя были
+  /// общими на все точки сети, а не свои на каждой точке в отдельности
+  /// (см. docstring "Сети заведений (chains)" в saas/firestore.rules).
+  ///
+  /// Для одиночного заведения ([chainId] == null, подавляющее большинство)
+  /// ведёт себя ИДЕНТИЧНО [col] — ни один вызывающий код не должен сам
+  /// решать, сеть это или нет, он просто всегда читает/пишет лояльность
+  /// через этот метод вместо [col].
+  static CollectionReference<Map<String, dynamic>> loyaltyCol(String name) {
+    if (_chainId == null) return col(name);
+    return FirebaseFirestore.instance.collection('chains/$_chainId/$name');
   }
 }
 
