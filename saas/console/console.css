@@ -545,7 +545,16 @@ a:hover { filter: brightness(1.2); }
 .landing-cta-inner { text-align: center; }
 .landing-cta-inner h3 { font-size: 23px; margin: 0 0 8px; color: #fff; }
 .landing-cta-inner p { color: rgba(255,255,255,.82); margin-bottom: 18px; }
-.landing-cta-inner .btn { width: auto; padding: 15px 32px; background: #fff; color: #052B6B; box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+.landing-cta-inner .btn {
+  /* width:auto само по себе не сжимает кнопку по содержимому — .btn
+     блочный display:flex, а не инлайновый, поэтому width:auto у него
+     всё равно растягивается на всю ширину контейнера (тот же класс
+     ошибки, что и с text-align:center на блочном потомке); нужен именно
+     inline-flex, чтобы text-align:center у .landing-cta-inner вообще
+     на что-то подействовал. */
+  display: inline-flex; width: auto; padding: 15px 32px;
+  background: #fff; color: #052B6B; box-shadow: 0 16px 40px rgba(0,0,0,.35);
+}
 @media (min-width: 860px) {
   .landing-cta-inner h3 { font-size: 30px; }
 }
