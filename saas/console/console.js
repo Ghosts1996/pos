@@ -2395,6 +2395,23 @@ function watchDashboardData(tenantId) {
           <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
         ` : '<p class="small muted">Тарифы пока не заданы платформой.</p>'}
       </div>
+      ${role === 'owner' && !tenant.chainId && plans && plans.some((p) => p.isChainPlan) ? `
+        <h2 style="margin-top:24px">Перейти на тариф сети</h2>
+        <p class="small muted" style="margin-top:-4px">Если планируете открыть ещё точки — можно перевести
+        уже работающее заведение в сеть: оно останется первой точкой, гости и бонусы никуда не денутся,
+        просто биллинг и лояльность станут общими на все точки сети.</p>
+        <div class="card">
+          ${plans.filter((p) => p.isChainPlan).map((p) => `
+            <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div class="grow">
+                <div>${esc(p.name || p.id)}</div>
+                <div class="small muted">от ${(Number(p.priceRub) || 0).toLocaleString('ru-RU')} ₽/мес за первую точку</div>
+              </div>
+              <button class="btn btn-ghost f-convert-to-chain" data-plan="${esc(p.id)}" style="width:auto">Перевести в сеть</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
     `;
 
     const brandingHtml = () => `
@@ -3141,6 +3158,9 @@ function watchDashboardData(tenantId) {
         const periodSelect = document.querySelector(`.f-plan-period[data-plan="${el.dataset.plan}"]`);
         startCheckout(tenantId, el.dataset.plan, periodSelect?.value || 'monthly', tenant?.chainId || null);
       };
+    });
+    document.querySelectorAll('.f-convert-to-chain').forEach((el) => {
+      el.onclick = () => convertTenantToChain(tenantId, tenant, el.dataset.plan);
     });
     if ($('f-request-build')) {
       $('f-request-build').onclick = () => requestBuild(tenantId);
@@ -4888,6 +4908,32 @@ async function startCheckout(tenantId, planId, billingPeriod, chainId) {
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось начать оплату: ${e?.message || e}`;
     return false;
+  }
+}
+
+/// Перевод уже РАБОТАЮЩЕГО одиночного заведения в новую сеть (см. кнопку
+/// "Перевести в сеть" в plansHtml() выше, только для role === 'owner' и
+/// только если у платформы вообще есть хотя бы один тариф сети) — заведение
+/// остаётся тем же документом и первой точкой сети, переносится вся уже
+/// накопленная лояльность гостей (см. handleConvertTenantToChain на
+/// сервере). Необратимо (обратной кнопки "разъединить сеть" нет), поэтому
+/// подтверждение — явный confirm() с прямым текстом об этом, а не просто
+/// "точно?".
+async function convertTenantToChain(tenantId, tenant, planId) {
+  const name = prompt('Название сети:', tenant?.name || '');
+  if (!name || !name.trim()) return;
+  const trimmedName = name.trim();
+  let slug = prompt('Код сети (латиница, цифры, дефис):', slugify(trimmedName));
+  if (slug === null) return;
+  slug = slug.trim();
+  if (!slug) { toast('Код сети не может быть пустым'); return; }
+  if (!confirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`)) return;
+  try {
+    await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
+    toast('Заведение переведено в сеть');
+    route();
+  } catch (e) {
+    toast(`Не удалось перевести в сеть: ${e?.message || e}`);
   }
 }
 
