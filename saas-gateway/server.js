@@ -364,6 +364,18 @@ async function writeSecurityEvent(req, decoded, action, { targetUid, targetEmail
   }
 }
 
+/** { tenantName, tenantSlug } для записи журнала безопасности — чтобы
+ *  лента читалась без поиска заведения по id (и оставалась понятной после
+ *  удаления заведения). */
+async function tenantLabel(tenantId, knownData) {
+  try {
+    const data = knownData || (await db().collection("tenants").doc(tenantId).get()).data() || {};
+    return { tenantName: data.name || null, tenantSlug: data.slug || null };
+  } catch (_) {
+    return { tenantName: null, tenantSlug: null };
+  }
+}
+
 async function writeAuditLog({ tenantId, actorId, action, metadata }) {
   await db().collection("auditLogs").add({
     tenantId: tenantId || null,
@@ -2482,6 +2494,9 @@ async function handleDisableTenant(req, res) {
   await writeAuditLog({
     tenantId, actorId: decoded.uid, action: "tenantSuspended", metadata: { reason: reason || null },
   });
+  await writeSecurityEvent(req, decoded, "tenantSuspended", {
+    tenantId, metadata: { ...(await tenantLabel(tenantId)), reason: reason || null },
+  });
   sendJson(res, 200, { ok: true });
 }
 
@@ -2495,6 +2510,7 @@ async function handleEnableTenant(req, res) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "tenantEnabled" });
+  await writeSecurityEvent(req, decoded, "tenantEnabled", { tenantId, metadata: await tenantLabel(tenantId) });
   sendJson(res, 200, { ok: true });
 }
 
@@ -2508,12 +2524,17 @@ async function handleChangeTenantPlan(req, res) {
   const planDoc = await db().collection("plans").doc(planId).get();
   if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
 
-  await db().collection("tenants").doc(tenantId).update({
+  const tenantRef = db().collection("tenants").doc(tenantId);
+  const before = (await tenantRef.get()).data() || {};
+  await tenantRef.update({
     planId,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await writeAuditLog({
     tenantId, actorId: decoded.uid, action: "planChangedBySuperAdmin", metadata: { planId },
+  });
+  await writeSecurityEvent(req, decoded, "planChangedBySuperAdmin", {
+    tenantId, metadata: { ...(await tenantLabel(tenantId, before)), fromPlanId: before.planId || null, planId },
   });
   sendJson(res, 200, { ok: true });
 }
@@ -2571,6 +2592,9 @@ async function handleGrantBonusPeriod(req, res) {
   await writeAuditLog({
     tenantId, actorId: decoded.uid, action: "bonusPeriodGranted", metadata: { days: daysNum, chainId },
   });
+  await writeSecurityEvent(req, decoded, "bonusPeriodGranted", {
+    tenantId, metadata: { ...(await tenantLabel(tenantId, tenantDoc.data())), days: daysNum, chainId },
+  });
   sendJson(res, 200, { ok: true, chainId });
 }
 
@@ -2597,6 +2621,153 @@ async function handleDeleteDemoTenant(req, res) {
 
   await purgeDemoTenant(tenantId);
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "demoTenantDeletedBySuperAdmin" });
+  await writeSecurityEvent(req, decoded, "demoTenantDeletedBySuperAdmin", {
+    tenantId, metadata: await tenantLabel(tenantId, tenantDoc.data()),
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Ручная правка подписки из карточки заведения в панели платформы
+ * (статус, «оплачено до», «триал до») — по сути выдача или отключение
+ * доступа без оплаты. Раньше писалась прямо из браузера и нигде не
+ * оставляла следа; теперь только здесь, с записью «было → стало» в журнал
+ * безопасности. Точка сети правит общую подписку сети (subscriptions/
+ * {chainId}), как и раньше в консоли.
+ */
+const SUBSCRIPTION_STATUSES = ["trial", "active", "past_due", "cancelled", "incomplete"];
+function dateInputToTimestamp(value, label) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new HttpError(400, `${label}: дата в формате ГГГГ-ММ-ДД`);
+  }
+  const ms = Date.parse(`${value}T12:00:00Z`);
+  if (!Number.isFinite(ms)) throw new HttpError(400, `${label}: некорректная дата`);
+  return admin.firestore.Timestamp.fromMillis(ms);
+}
+async function handleOverrideSubscription(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const { tenantId, status } = body;
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  if (!SUBSCRIPTION_STATUSES.includes(status)) throw new HttpError(400, "Неизвестный статус подписки");
+  const tenantDoc = await db().collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenantDoc.data().chainId || null;
+  const subRef = db().collection("subscriptions").doc(chainId || tenantId);
+  const before = (await subRef.get()).data() || {};
+
+  const payload = { status };
+  const periodEnd = dateInputToTimestamp(body.currentPeriodEnd, "Оплачено до");
+  const trialEnd = dateInputToTimestamp(body.trialEndsAt, "Триал до");
+  if (periodEnd) payload.currentPeriodEnd = periodEnd;
+  if (trialEnd) payload.trialEndsAt = trialEnd;
+  // Ручная правка всегда означает «разобрались вручную» — сбрасываем
+  // pastDueSince, иначе отсчёт до удаления данных продолжил бы тикать.
+  if (status !== "past_due") payload.pastDueSince = null;
+  await subRef.set(payload, { merge: true });
+
+  const day = (ts) => (ts && typeof ts.toDate === "function" ? ts.toDate().toISOString().slice(0, 10) : null);
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "subscriptionOverridden", metadata: { status, chainId } });
+  await writeSecurityEvent(req, decoded, "subscriptionOverridden", {
+    tenantId,
+    metadata: {
+      ...(await tenantLabel(tenantId, tenantDoc.data())),
+      chainId,
+      from: { status: before.status || null, currentPeriodEnd: day(before.currentPeriodEnd), trialEndsAt: day(before.trialEndsAt) },
+      to: { status, currentPeriodEnd: day(periodEnd) || day(before.currentPeriodEnd), trialEndsAt: day(trialEnd) || day(before.trialEndsAt) },
+    },
+  });
+  sendJson(res, 200, { ok: true, chainId });
+}
+
+/**
+ * Создание/правка/удаление тарифа (цены, лимиты) — раньше прямо из
+ * браузера; теперь здесь, чтобы каждое изменение цены попадало в журнал
+ * безопасности с «было → стало». Принимаются только известные поля своих
+ * типов — произвольный мусор в публичный документ тарифа не попадёт.
+ */
+const PLAN_NUMBER_FIELDS = [
+  "priceRub", "priceRubSemiannual", "priceRubYearly",
+  "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly",
+  "maxEmployees", "maxDevices", "maxTables", "maxStorageMb", "trialDays",
+];
+const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain"];
+const PLAN_FEATURE_FIELDS = ["reservations", "loyalty", "guestApp", "advancedReports"];
+function sanitizePlanFields(raw) {
+  const out = {};
+  const src = raw && typeof raw === "object" ? raw : {};
+  if (src.name !== undefined) {
+    if (typeof src.name !== "string" || !src.name.trim() || src.name.length > 80) {
+      throw new HttpError(400, "Название тарифа: от 1 до 80 символов");
+    }
+    out.name = src.name.trim();
+  }
+  for (const f of PLAN_NUMBER_FIELDS) {
+    if (src[f] === undefined) continue;
+    const n = Number(src[f]);
+    if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new HttpError(400, `Поле ${f}: число от 0`);
+    out[f] = n;
+  }
+  for (const f of PLAN_BOOL_FIELDS) {
+    if (src[f] === undefined) continue;
+    out[f] = src[f] === true;
+  }
+  if (src.features && typeof src.features === "object") {
+    out.features = {};
+    for (const f of PLAN_FEATURE_FIELDS) out.features[f] = src.features[f] === true;
+  }
+  return out;
+}
+async function handleSavePlan(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const planId = typeof body.planId === "string" ? body.planId : "";
+  if (!/^[a-z0-9-]{1,40}$/.test(planId)) throw new HttpError(400, "Код тарифа: только латиница, цифры и дефис");
+  const fields = sanitizePlanFields(body.fields);
+  const ref = db().collection("plans").doc(planId);
+  const snap = await ref.get();
+  const create = body.create === true;
+  if (create && snap.exists) throw new HttpError(409, "Тариф с таким кодом уже есть");
+  if (!create && !snap.exists) throw new HttpError(404, "Тариф не найден");
+  const before = snap.exists ? snap.data() : {};
+  await ref.set(fields, { merge: true });
+
+  // Незаданное раньше поле, пришедшее как 0/false/пусто (форма шлёт все
+  // поля разом, включая скрытые поля тарифа сети), изменением не считаем —
+  // иначе в журнале тонули бы настоящие изменения цен.
+  const changes = {};
+  if (!create) {
+    for (const [k, v] of Object.entries(fields)) {
+      if (k === "features") continue;
+      const was = before[k];
+      if (was === v) continue;
+      if (was === undefined && (v === 0 || v === false || v === "")) continue;
+      changes[k] = [was === undefined ? null : was, v];
+    }
+  }
+  if (create || Object.keys(changes).length) {
+    await writeSecurityEvent(req, decoded, create ? "planCreated" : "planUpdated", {
+      metadata: { planId, planName: fields.name || before.name || planId, changes, priceRub: fields.priceRub ?? before.priceRub ?? null },
+    });
+  }
+  sendJson(res, 200, { ok: true, changed: Object.keys(changes).length });
+}
+async function handleDeletePlan(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { planId } = await parseJsonBody(req);
+  if (typeof planId !== "string" || !/^[a-z0-9-]{1,40}$/.test(planId)) throw new HttpError(400, "Не указан тариф");
+  const ref = db().collection("plans").doc(planId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Тариф не найден");
+  const inUse = await db().collection("tenants").where("planId", "==", planId).limit(1).get();
+  await ref.delete();
+  await writeSecurityEvent(req, decoded, "planDeleted", {
+    metadata: { planId, planName: snap.data().name || planId, priceRub: snap.data().priceRub ?? null, wasInUse: !inUse.empty },
+  });
   sendJson(res, 200, { ok: true });
 }
 
@@ -2793,6 +2964,9 @@ const ROUTES = {
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
   "/recalculateUsage": handleRecalculateUsage,
+  "/overrideSubscription": handleOverrideSubscription,
+  "/savePlan": handleSavePlan,
+  "/deletePlan": handleDeletePlan,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,

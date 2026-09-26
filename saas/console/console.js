@@ -3664,6 +3664,7 @@ function screenSuperAdmin() {
         <h1>Безопасность</h1>
         <div class="sec-tabs">
           <button type="button" class="sec-tab active" data-sec="access">Доступ</button>
+          <button type="button" class="sec-tab" data-sec="journal">Журнал</button>
         </div>
 
         <div class="sec-pane active" data-sec-pane="access">
@@ -3671,6 +3672,19 @@ function screenSuperAdmin() {
           входил. Назначить или снять супер-админа — в разделе «Сотрудники платформы».</p>
           <div id="sec-access-warnings"></div>
           <div id="sec-access-list"><div class="spinner"></div></div>
+        </div>
+
+        <div class="sec-pane" data-sec-pane="journal">
+          <h2>Входы в панель</h2>
+          <p class="small muted">Последние 30 входов супер-админов: когда, откуда и с какого
+          устройства. Незнакомый вход — нажмите «Это был не я»: все сеансы этого
+          аккаунта завершатся, а пароль стоит сменить.</p>
+          <div id="sec-logins"><div class="spinner"></div></div>
+          <h2>Опасные действия</h2>
+          <p class="small muted">Действия, которыми можно навредить платформе: доступ
+          супер-админов, блокировки и удаление заведений, ручные решения по деньгам
+          (тарифы, подписки, бонусные дни). Запись нельзя изменить или удалить.</p>
+          <div id="sec-events"><div class="spinner"></div></div>
         </div>
       </div>
     </div>
@@ -4038,17 +4052,16 @@ function watchAllTenants() {
     if (!statusEl) return;
     if (btn) btn.disabled = true;
     try {
-      const payload = { status: statusEl.value };
-      if (periodEl.value) payload.currentPeriodEnd = Timestamp.fromDate(new Date(`${periodEl.value}T12:00:00`));
-      if (trialEl.value) payload.trialEndsAt = Timestamp.fromDate(new Date(`${trialEl.value}T12:00:00`));
-      // Ручной override всегда означает "разобрались вручную" — сбрасываем
-      // pastDueSince, иначе отсчёт до удаления данных продолжит тикать по
-      // старой дате даже после того, как деньги на самом деле пришли.
-      if (statusEl.value !== 'past_due') payload.pastDueSince = null;
-      // Точка сети правит общую подписку СЕТИ (subscriptions/{chainId}), а
-      // не свою несуществующую — см. её docstring в saas/firestore.rules.
-      const chainId = (allTenants.find((t) => t.id === tenantId) || {}).chainId;
-      await setDoc(doc(state.db, 'subscriptions', chainId || tenantId), payload, { merge: true });
+      // Через saas-gateway (handleOverrideSubscription): это по сути выдача
+      // доступа без оплаты, поэтому сервер пишет «было → стало» в журнал
+      // безопасности. Там же сброс pastDueSince и выбор subscriptions/
+      // {chainId} для точки сети.
+      await callSaasGateway('overrideSubscription', {
+        tenantId,
+        status: statusEl.value,
+        currentPeriodEnd: periodEl.value || null,
+        trialEndsAt: trialEl.value || null,
+      });
       toast('Подписка обновлена');
     } catch (e) {
       toast(`Не удалось обновить подписку: ${e?.message || e}`);
@@ -4549,7 +4562,9 @@ function watchPlans() {
     // handleCreateChain), но пометить чекбоксом можно любой тариф.
     const isChainPlan = id === 'chain' || confirm('Это тариф для сети заведений (своя цена за первую и доп. точки)?');
     try {
-      await setDoc(doc(state.db, 'plans', id), {
+      // Тарифы пишет только saas-gateway (handleSavePlan) — изменения цен
+      // попадают в журнал безопасности.
+      await callSaasGateway('savePlan', { planId: id, create: true, fields: {
         name: isChainPlan && id === 'chain' ? 'Сеть заведений' : id,
         priceRub: 0, priceRubSemiannual: 0, priceRubYearly: 0,
         ...(isChainPlan ? {
@@ -4559,7 +4574,7 @@ function watchPlans() {
         maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
         trialDays: 7, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
-      });
+      } });
       toast('Тариф создан — заполните цену и лимиты ниже');
     } catch (e) {
       toast(`Не удалось создать тариф: ${e?.message || e}`);
@@ -4578,7 +4593,7 @@ async function savePlan(planId) {
     document.querySelectorAll(`.f-plan-checkbox[data-plan="${planId}"]`).forEach((el) => {
       payload[el.dataset.field] = el.checked;
     });
-    await setDoc(doc(state.db, 'plans', planId), payload, { merge: true });
+    await callSaasGateway('savePlan', { planId, fields: payload });
     toast('Тариф сохранён');
   } catch (e) {
     toast(`Не удалось сохранить тариф: ${e?.message || e}`);
@@ -4600,7 +4615,7 @@ async function deletePlan(planId) {
       ? `Удалить тариф «${planId}»? Отменить нельзя.`
       : `Тариф «${planId}» сейчас назначен как минимум одному заведению — после удаления у него останется тариф без описания, назначьте другой вручную. Удалить всё равно?`;
     if (!confirm(warning)) return;
-    await deleteDoc(doc(state.db, 'plans', planId));
+    await callSaasGateway('deletePlan', { planId });
     toast('Тариф удалён');
   } catch (e) {
     toast(`Не удалось удалить тариф: ${e?.message || e}`);
@@ -4954,6 +4969,113 @@ function watchSecurity() {
     };
   });
   watchSecurityAccess();
+  watchSecurityJournal();
+}
+
+/** Поля тарифа по-человечески — для записей «Изменён тариф» в журнале. */
+const PLAN_FIELD_LABELS = {
+  name: 'название', priceRub: 'цена в месяц', priceRubSemiannual: 'цена за 6 мес',
+  priceRubYearly: 'цена за год', priceRubAdditional: 'доп. точка в месяц',
+  priceRubAdditionalSemiannual: 'доп. точка за 6 мес', priceRubAdditionalYearly: 'доп. точка за год',
+  maxEmployees: 'сотрудников', maxDevices: 'устройств', maxTables: 'столов', maxStorageMb: 'хранилище, МБ',
+  trialDays: 'дней пробного периода', isChainPlan: 'тариф сети', customAdditionalPrice: 'своя цена доп. точки',
+  aiEnabled: 'ИИ', customBranding: 'свой брендинг', customDomain: 'свой домен',
+};
+
+/** Подписи событий журнала безопасности (securityLog, см.
+ *  writeSecurityEvent в saas-gateway) и одна строка подробностей. */
+const SECURITY_EVENT_LABELS = {
+  superAdminGranted: 'Назначен супер-админ',
+  superAdminRevoked: 'Снят супер-админ',
+  adminSessionsRevoked: 'Завершены все сеансы',
+  tenantSuspended: 'Заведение заблокировано',
+  tenantEnabled: 'Заведение разблокировано',
+  planChangedBySuperAdmin: 'Заведению сменён тариф',
+  bonusPeriodGranted: 'Выданы бонусные дни',
+  demoTenantDeletedBySuperAdmin: 'Удалено демо-заведение',
+  subscriptionOverridden: 'Подписка изменена вручную',
+  planCreated: 'Создан тариф',
+  planUpdated: 'Изменён тариф',
+  planDeleted: 'Удалён тариф',
+};
+function securityEventDetails(e) {
+  const m = e.metadata || {};
+  const tenant = m.tenantName ? `«${m.tenantName}»${m.tenantSlug ? ` (${m.tenantSlug})` : ''}` : '';
+  const subLine = (x) => (x ? `${SUB_STATUS_LABELS[x.status] || x.status || '—'}${x.currentPeriodEnd ? `, оплачено до ${x.currentPeriodEnd}` : ''}${x.trialEndsAt ? `, триал до ${x.trialEndsAt}` : ''}` : '—');
+  switch (e.action) {
+    case 'superAdminGranted':
+    case 'superAdminRevoked':
+      return e.targetEmail || e.targetUid || '';
+    case 'adminSessionsRevoked':
+      return `${e.targetEmail || e.targetUid || ''}${m.reason === 'not-me' ? ' · «Это был не я»' : ''}`;
+    case 'tenantSuspended':
+      return `${tenant}${m.reason ? ` · причина: ${m.reason}` : ''}`;
+    case 'planChangedBySuperAdmin':
+      return `${tenant} · ${m.fromPlanId || '—'} → ${m.planId || '—'}`;
+    case 'bonusPeriodGranted':
+      return `${tenant} · +${m.days} ${pluralDays(Number(m.days) || 0)}${m.chainId ? ' (вся сеть)' : ''}`;
+    case 'subscriptionOverridden':
+      return `${tenant} · ${subLine(m.from)} → ${subLine(m.to)}`;
+    case 'planCreated':
+      return `${m.planName || m.planId || ''} (${m.planId || ''})`;
+    case 'planUpdated': {
+      const val = (v) => (v === true ? 'да' : v === false ? 'нет' : v ?? '—');
+      const ch = Object.entries(m.changes || {}).map(([k, [a, b]]) => `${PLAN_FIELD_LABELS[k] || k}: ${val(a)} → ${val(b)}`);
+      return `${m.planName || m.planId || ''}${ch.length ? ` · ${ch.slice(0, 6).join(', ')}${ch.length > 6 ? '…' : ''}` : ''}`;
+    }
+    case 'planDeleted':
+      return `${m.planName || m.planId || ''}${m.wasInUse ? ' · был назначен заведениям' : ''}`;
+    default:
+      return tenant;
+  }
+}
+
+/** «Журнал»: входы в панель (adminLogins) и опасные действия
+ *  (securityLog). Оба пишет только saas-gateway, читает только супер-админ. */
+function watchSecurityJournal() {
+  const loginsBox = $('sec-logins');
+  const eventsBox = $('sec-events');
+  let myAuthTime = null;
+  state.auth.currentUser?.getIdTokenResult().then((t) => {
+    myAuthTime = Math.floor(new Date(t.authTime).getTime() / 1000);
+  }).catch(() => {});
+
+  sub(onSnapshot(query(collection(state.db, 'adminLogins'), orderBy('firstSeenAt', 'desc'), limit(30)), (snap) => {
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    loginsBox.innerHTML = rows.length ? rows.map((l) => {
+      const mine = l.uid === state.uid;
+      const current = mine && myAuthTime && l.authTime && Math.floor(l.authTime.toMillis() / 1000) === myAuthTime;
+      const ips = (l.ips || [l.ip]).filter(Boolean);
+      return `
+        <div class="card sec-row${ips.length > 1 ? ' sec-warn' : ''}">
+          <div class="grow" style="min-width:0">
+            <div class="ellipsis" style="font-weight:600">${esc(l.email || l.uid)}${current ? ' <span class="muted small">(этот сеанс)</span>' : ''}</div>
+            <div class="small muted">${fmtDateTime(l.firstSeenAt)} · ${esc(describeUserAgent(l.userAgent))} · ${l.signInProvider === 'password' ? 'по паролю' : l.signInProvider === 'emailLink' ? 'по ссылке из письма' : esc(l.signInProvider || '—')}</div>
+            <div class="small muted">IP: ${esc(ips.join(', ') || '—')}${ips.length > 1 ? ' — IP менялся в течение сеанса' : ''} · активность до ${fmtDateTime(l.lastSeenAt)}</div>
+          </div>
+          ${current ? '' : `<button type="button" class="btn btn-ghost f-sec-not-me" data-uid="${esc(l.uid)}" data-label="${esc(l.email || l.uid)}" style="width:auto;flex:none">
+            ${mine ? 'Это был не я' : 'Завершить сеансы'}</button>`}
+        </div>`;
+    }).join('') : '<p class="small muted">Входов пока не записано.</p>';
+    loginsBox.querySelectorAll('.f-sec-not-me').forEach((el) => {
+      el.onclick = () => revokeAdminSessions(el.dataset.uid, el.dataset.label, el.dataset.uid === state.uid ? 'not-me' : null);
+    });
+  }, () => { loginsBox.innerHTML = '<p class="small muted">Журнал входов недоступен.</p>'; }));
+
+  sub(onSnapshot(query(collection(state.db, 'securityLog'), orderBy('createdAt', 'desc'), limit(50)), (snap) => {
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    eventsBox.innerHTML = rows.length ? rows.map((e) => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;gap:10px;align-items:flex-start">
+          <div class="grow" style="min-width:0">
+            <div style="font-weight:600">${esc(SECURITY_EVENT_LABELS[e.action] || e.action)}</div>
+            <div class="small">${esc(securityEventDetails(e))}</div>
+            <div class="small muted">${esc(e.actorEmail || e.actorId || 'система')} · IP ${esc(e.ip || '—')}</div>
+          </div>
+          <div class="small muted" style="flex:none">${fmtDateTime(e.createdAt)}</div>
+        </div>
+      </div>`).join('') : '<p class="small muted">Опасных действий пока не было.</p>';
+  }, () => { eventsBox.innerHTML = '<p class="small muted">Журнал недоступен.</p>'; }));
 }
 
 /** «Доступ»: все супер-админы, когда и кем назначены, последний вход
