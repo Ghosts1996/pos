@@ -3665,6 +3665,7 @@ function screenSuperAdmin() {
         <div class="sec-tabs">
           <button type="button" class="sec-tab active" data-sec="access">Доступ</button>
           <button type="button" class="sec-tab" data-sec="journal">Журнал</button>
+          <button type="button" class="sec-tab" data-sec="platform">Платформа</button>
         </div>
 
         <div class="sec-pane active" data-sec-pane="access">
@@ -3685,6 +3686,15 @@ function screenSuperAdmin() {
           супер-админов, блокировки и удаление заведений, ручные решения по деньгам
           (тарифы, подписки, бонусные дни). Запись нельзя изменить или удалить.</p>
           <div id="sec-events"><div class="spinner"></div></div>
+        </div>
+
+        <div class="sec-pane" data-sec-pane="platform">
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <p class="small muted grow" style="margin:0">Проверки, которые видны только с сервера.
+            Обновляется при открытии раздела.</p>
+            <button type="button" class="btn btn-ghost" id="f-sec-platform-refresh" style="width:auto;flex:none">Обновить</button>
+          </div>
+          <div id="sec-platform"><div class="spinner"></div></div>
         </div>
       </div>
     </div>
@@ -4970,6 +4980,189 @@ function watchSecurity() {
   });
   watchSecurityAccess();
   watchSecurityJournal();
+  let platformLoaded = false;
+  document.querySelector('.sec-tab[data-sec="platform"]')?.addEventListener('click', () => {
+    if (!platformLoaded) { platformLoaded = true; loadSecurityPlatform(); }
+  });
+  if ($('f-sec-platform-refresh')) $('f-sec-platform-refresh').onclick = () => loadSecurityPlatform();
+}
+
+function fmtMs(ms) {
+  return typeof ms === 'number' ? fmtDateTime(Timestamp.fromMillis(ms)) : '—';
+}
+function fmtBytes(n) {
+  if (!(n > 0)) return '0 Б';
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} КБ`;
+  return `${(n / 1024 / 1024).toFixed(1)} МБ`;
+}
+/** Строка чек-листа: ok | warn | bad | unknown. */
+function checkRowHtml(level, title, detail, actionsHtml = '') {
+  const icon = { ok: '✅', warn: '⚠️', bad: '⛔', unknown: '❔' }[level] || '❔';
+  const cls = level === 'warn' ? ' sec-warn' : level === 'bad' ? ' sec-bad' : '';
+  return `
+    <div class="card${cls}">
+      <div class="row" style="align-items:flex-start;gap:10px">
+        <div style="flex:none">${icon}</div>
+        <div class="grow" style="min-width:0">
+          <div style="font-weight:600">${esc(title)}</div>
+          ${detail ? `<div class="small muted" style="margin-top:4px">${detail}</div>` : ''}
+          ${actionsHtml ? `<div class="row" style="flex-wrap:wrap;gap:8px;margin-top:10px">${actionsHtml}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+/** «Платформа»: чек-лист состояния (см. handleSecurityStatus в
+ *  saas-gateway). */
+async function loadSecurityPlatform() {
+  const box = $('sec-platform');
+  if (!box) return;
+  box.innerHTML = '<div class="spinner"></div>';
+  let st;
+  try {
+    st = (await callSaasGateway('securityStatus', {})).data;
+  } catch (e) {
+    box.innerHTML = checkRowHtml('bad', 'Сервер платформы не ответил', esc(e?.message || String(e)));
+    return;
+  }
+  const rows = [];
+  const DAY = 86400000;
+
+  // Правила базы
+  if (st.rules?.status === 'ok') {
+    rows.push(checkRowHtml('ok', 'Правила базы актуальны', `Включая защиту завершённых сеансов супер-админов${st.rules.updatedAt ? ` · опубликованы ${esc(new Date(st.rules.updatedAt).toLocaleString('ru-RU'))}` : ''}.`));
+  } else if (st.rules?.status === 'outdated') {
+    rows.push(checkRowHtml('bad', 'В базе старые правила доступа', 'Опубликуйте актуальные: <code>firebase deploy --only firestore:rules --project saas-3bdc8</code> — без этого часть защит панели не работает.'));
+  } else {
+    rows.push(checkRowHtml('unknown', 'Не удалось проверить правила базы',
+      `Сервер не смог прочитать опубликованные правила (Firebase Rules API). Проверьте вручную, что выполнено <code>firebase deploy --only firestore:rules</code>.${st.rules?.error ? `<br><span class="muted">${esc(st.rules.error.slice(0, 160))}</span>` : ''}`));
+  }
+
+  // Секреты
+  const missing = (st.secrets || []).filter((x) => !x.set);
+  rows.push(checkRowHtml(missing.length ? 'bad' : 'ok',
+    missing.length ? `Не заданы настройки сервера: ${missing.length}` : 'Все ключи и секреты сервера заданы',
+    (st.secrets || []).map((x) => `${x.set ? '✓' : '✗'} ${esc(x.label)} <span class="muted">(${esc(x.key)})</span>`).join('<br>')
+      + '<br>Значения не показываются — только есть они или нет. Задаются в <code>/etc/saas-gateway.env</code>.'));
+
+  // Настоящий IP
+  rows.push(st.realIpHeader
+    ? checkRowHtml('ok', 'Сервер видит настоящие IP посетителей', 'nginx передаёт заголовок X-Real-IP — журнал входов и лимиты по IP работают.')
+    : checkRowHtml('warn', 'nginx не передаёт настоящий IP', 'В журнале входов будет 127.0.0.1, а лимиты по IP сработают на всех сразу. Добавьте в <code>location /saas/</code>: <code>proxy_set_header X-Real-IP $remote_addr;</code>'));
+
+  // ЮKassa
+  const wh = st.billingWebhook || {};
+  const whAge = wh.lastReceivedAt ? Date.now() - wh.lastReceivedAt : null;
+  rows.push(checkRowHtml(
+    !wh.lastReceivedAt ? 'unknown' : whAge > 45 * DAY ? 'warn' : 'ok',
+    !wh.lastReceivedAt ? 'Уведомлений от ЮKassa ещё не было' : whAge > 45 * DAY ? 'ЮKassa давно не присылала уведомлений' : 'Уведомления об оплатах от ЮKassa доходят',
+    `${wh.lastReceivedAt ? `Последнее: ${fmtMs(wh.lastReceivedAt)}${wh.lastEvent ? ` (${esc(wh.lastEvent)})` : ''}. ` : ''}${wh.lastPaymentAt ? `Последний платёж: ${fmtMs(wh.lastPaymentAt)}. ` : ''}`
+      + 'Если оплаты есть, а уведомлений нет — проверьте адрес уведомлений в кабинете ЮKassa: <code>https://pii.hookahpos.su/saas/billingWebhook</code>.'));
+
+  // Сертификаты
+  const c = st.certificates;
+  if (!c) {
+    rows.push(checkRowHtml('unknown', 'Сертификаты HTTPS ещё не проверялись', 'Первая проверка идёт через 5 минут после запуска сервера и дальше раз в сутки.',
+      '<button type="button" class="btn btn-ghost f-sec-certs" style="width:auto">Проверить сейчас</button>'));
+  } else {
+    const problems = c.problems || [];
+    const soon = c.soonest;
+    rows.push(checkRowHtml(problems.length ? (problems.some((p) => p.error || p.daysLeft < 3) ? 'bad' : 'warn') : 'ok',
+      problems.length ? `Проблемы с сертификатами HTTPS: ${problems.length} из ${c.total}` : `Сертификаты HTTPS в порядке (${c.total})`,
+      `Проверено: ${fmtMs(c.checkedAt)}.${soon ? ` Ближайший срок: ${esc(soon.host)} — через ${soon.daysLeft} ${pluralDays(soon.daysLeft)}.` : ''}`
+        + (problems.length ? '<br>' + problems.map((p) => `${esc(p.host)} — ${p.error ? esc(p.error) : `истекает через ${p.daysLeft} ${pluralDays(p.daysLeft)}`}`
+          + (p.host !== 'pii.hookahpos.su' ? ` <button type="button" class="btn-link sec-inline-link f-sec-reprovision" data-host="${esc(p.host)}">выпустить заново</button>` : '')).join('<br>') : '')
+        + '<br>certbot продлевает сертификаты сам; предупреждение значит, что продление не сработало.',
+      '<button type="button" class="btn btn-ghost f-sec-certs" style="width:auto">Проверить сейчас</button>'));
+  }
+
+  // Резервные копии
+  const b = st.backup || {};
+  const set = st.backupSettings || {};
+  const okAge = b.lastOkAt ? Date.now() - b.lastOkAt : null;
+  const level = b.status === 'too_large' ? 'warn' : b.status === 'error' ? 'bad' : !b.lastOkAt ? 'warn' : okAge > 3 * DAY ? 'warn' : 'ok';
+  const title = b.status === 'too_large' ? 'База слишком большая для бесплатной резервной копии'
+    : b.status === 'error' ? 'Последняя резервная копия не удалась'
+      : !b.lastOkAt ? 'Резервных копий базы ещё нет'
+        : okAge > 3 * DAY ? 'Резервная копия давно не обновлялась' : 'Резервные копии базы делаются';
+  const files = st.backups || [];
+  rows.push(checkRowHtml(level, title,
+    `${b.lastOkAt ? `Последняя удачная: ${fmtMs(b.lastOkAt)} · ${b.docs ?? '—'} документов · ${fmtBytes(b.bytes)}. ` : ''}`
+      + `${b.error ? `${esc(b.error)}. ` : ''}`
+      + `Автоматически раз в ${set.intervalHours || 24} ч, хранятся последние ${set.keep || 14}, лимит — ${set.maxDocs || 20000} документов (бесплатная квота чтений Firebase).`
+      + '<br>Копии лежат на этом же сервере: если сервер пропадёт, пропадут и они — раз в неделю скачивайте свежую к себе. Восстановление — скрипт <code>restore-backup.js</code> (см. README сервера).'
+      + (files.length ? '<br>' + files.slice(0, 5).map((f) => `${esc(f.name)} · ${fmtBytes(f.bytes)} <button type="button" class="btn-link sec-inline-link f-sec-backup-dl" data-name="${esc(f.name)}">скачать</button>`).join('<br>') : ''),
+    '<button type="button" class="btn btn-ghost" id="f-sec-backup-now" style="width:auto">Сделать копию сейчас</button>'));
+
+  // Супер-админы и сервер
+  const n = st.superAdmins || 0;
+  rows.push(checkRowHtml(n === 1 || n > 5 ? 'warn' : 'ok', `Супер-админов: ${n}`,
+    n === 1 ? 'Назначьте второго доверенного человека, иначе при потере доступа восстановить панель будет некому.' : n > 5 ? 'Снимите тех, кому полный доступ больше не нужен.' : 'Подробности — в подразделе «Доступ».'));
+  const g = st.gateway || {};
+  rows.push(checkRowHtml('ok', 'Сервер платформы работает',
+    `Без перезапуска: ${Math.floor((g.uptimeSec || 0) / 3600)} ч · Node ${esc(g.node || '—')} · сборки APK из ветки <code>${esc(st.githubRef || '—')}</code>.`));
+
+  box.innerHTML = rows.join('');
+
+  box.querySelectorAll('.f-sec-certs').forEach((el) => {
+    el.onclick = async () => {
+      el.disabled = true; el.textContent = 'Проверяю…';
+      try { await callSaasGateway('runCertificateCheck', {}); } catch (e) { toast(`Проверка не удалась: ${e?.message || e}`); }
+      loadSecurityPlatform();
+    };
+  });
+  box.querySelectorAll('.f-sec-reprovision').forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm(`Выпустить сертификат для ${el.dataset.host} заново?`)) return;
+      el.disabled = true;
+      try {
+        const r = await callSaasGateway('reprovisionDomain', { host: el.dataset.host });
+        toast(r.data?.check?.error ? `Не помогло: ${r.data.check.error}` : 'Сертификат выпущен');
+      } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+      loadSecurityPlatform();
+    };
+  });
+  if ($('f-sec-backup-now')) {
+    $('f-sec-backup-now').onclick = async () => {
+      const btn = $('f-sec-backup-now');
+      btn.disabled = true; btn.textContent = 'Делаю копию…';
+      try {
+        const r = (await callSaasGateway('runBackup', {})).data;
+        toast(r.status === 'ok' ? `Копия готова: ${r.docs} документов` : 'Копия не сделана — см. причину выше');
+      } catch (e) { toast(`Копия не удалась: ${e?.message || e}`); }
+      loadSecurityPlatform();
+    };
+  }
+  box.querySelectorAll('.f-sec-backup-dl').forEach((el) => {
+    el.onclick = () => downloadBackup(el.dataset.name);
+  });
+}
+
+/** Скачивание копии базы — только после ввода пароля (на сервере
+ *  requireRecentAuth), событие пишется в журнал безопасности. */
+async function downloadBackup(name) {
+  if (!(await reauthenticate(`скачать резервную копию ${name}`))) return;
+  try {
+    const idToken = await state.auth.currentUser.getIdToken(true);
+    const res = await fetch(`${SAAS_GATEWAY_URL}/downloadBackup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) {
+    toast(`Не удалось скачать: ${e?.message || e}`);
+  }
 }
 
 /** Поля тарифа по-человечески — для записей «Изменён тариф» в журнале. */
@@ -4997,6 +5190,9 @@ const SECURITY_EVENT_LABELS = {
   planCreated: 'Создан тариф',
   planUpdated: 'Изменён тариф',
   planDeleted: 'Удалён тариф',
+  backupCreated: 'Сделана резервная копия',
+  backupDownloaded: 'Скачана резервная копия базы',
+  domainReprovisioned: 'Сертификат поддомена выпущен заново',
 };
 function securityEventDetails(e) {
   const m = e.metadata || {};
@@ -5025,6 +5221,12 @@ function securityEventDetails(e) {
     }
     case 'planDeleted':
       return `${m.planName || m.planId || ''}${m.wasInUse ? ' · был назначен заведениям' : ''}`;
+    case 'backupCreated':
+      return m.status === 'ok' ? `${m.file || ''} · ${m.docs ?? '—'} документов` : 'не сделана (база больше лимита)';
+    case 'backupDownloaded':
+      return m.file || '';
+    case 'domainReprovisioned':
+      return m.host || '';
     default:
       return tenant;
   }

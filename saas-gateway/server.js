@@ -6,6 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const admin = require("firebase-admin");
 const { execFile } = require("child_process");
+const tls = require("tls");
+const zlib = require("zlib");
 
 /**
  * Онбординг SaaS-платформы Hookah POS БЕЗ Cloud Functions.
@@ -1453,6 +1455,13 @@ async function handleBillingWebhook(req, res) {
   const body = await parseJsonBody(req);
   const paymentId = body?.object?.id;
   if (typeof paymentId !== "string" || !paymentId) throw new HttpError(400, "bad request");
+  // Для чек-листа «Безопасность → Платформа»: если уведомления от ЮKassa
+  // давно не приходят, адрес webhook'а в её кабинете мог сбиться, и оплаты
+  // перестанут продлевать подписки. Не мешает основной обработке.
+  db().collection("platformStatus").doc("billingWebhook").set({
+    lastReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastEvent: typeof body.event === "string" ? body.event.slice(0, 60) : null,
+  }, { merge: true }).catch((e) => console.error("platformStatus/billingWebhook:", e.message || e));
 
   let payment;
   try {
@@ -2941,6 +2950,332 @@ async function handleRecordAdminLogin(req, res) {
   sendJson(res, 200, { ok: true, newSession });
 }
 
+// ------------------------------------------- security: состояние платформы
+
+// Поддомены заведений {slug}.GUEST_BASE_DOMAIN выпускает provision-tenant-
+// domain.sh (certbot) на этом же сервере — поэтому сертификаты проверяем,
+// подключаясь к локальному nginx (CERT_CHECK_CONNECT_HOST) с нужным SNI, а
+// не через внешний IP: многие хостинги не пускают сервер к самому себе
+// по публичному адресу.
+const GUEST_BASE_DOMAIN = process.env.GUEST_BASE_DOMAIN || "hookahpos.su";
+const GATEWAY_PUBLIC_HOST = process.env.GATEWAY_PUBLIC_HOST || `pii.${GUEST_BASE_DOMAIN}`;
+const CERT_CHECK_CONNECT_HOST = process.env.CERT_CHECK_CONNECT_HOST || "127.0.0.1";
+const CERT_CHECK_PORT = Number(process.env.CERT_CHECK_PORT) || 443;
+const CERT_WARN_DAYS = 14;
+const CERT_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function checkCertificate(host) {
+  return new Promise((resolve) => {
+    const socket = tls.connect({
+      host: CERT_CHECK_CONNECT_HOST, port: CERT_CHECK_PORT, servername: host, rejectUnauthorized: false, timeout: 8000,
+    }, () => {
+      const cert = socket.getPeerCertificate();
+      const authError = socket.authorizationError ? String(socket.authorizationError) : null;
+      socket.end();
+      if (!cert || !cert.valid_to) return resolve({ host, error: "сертификат не найден" });
+      // Сертификат другого домена (nginx отдал сертификат по умолчанию) —
+      // значит, для этого поддомена сертификата нет вовсе.
+      const names = String(cert.subjectaltname || "").split(",").map((n) => n.trim().replace(/^DNS:/, ""));
+      if (!names.includes(host) && !names.includes(`*.${host.split(".").slice(1).join(".")}`)) {
+        return resolve({ host, error: "сертификат выдан на другой домен" });
+      }
+      const validTo = new Date(cert.valid_to).getTime();
+      resolve({ host, validTo, daysLeft: Math.floor((validTo - Date.now()) / 86400000), authError });
+    });
+    socket.on("timeout", () => { socket.destroy(); resolve({ host, error: "нет ответа" }); });
+    socket.on("error", (e) => resolve({ host, error: e.code || e.message }));
+  });
+}
+
+let certCheckRunning = null;
+async function runCertificateCheck() {
+  if (certCheckRunning) return certCheckRunning;
+  certCheckRunning = (async () => {
+    const firestore = db();
+    const [tenants, chains] = await Promise.all([
+      firestore.collection("tenants").get(),
+      firestore.collection("chains").get(),
+    ]);
+    const slugs = new Set();
+    tenants.docs.forEach((d) => {
+      const t = d.data();
+      if (t.slug && t.demo !== true && t.status !== "deleted") slugs.add(t.slug);
+    });
+    chains.docs.forEach((d) => {
+      const c = d.data();
+      if (c.slug && c.status !== "deleted") slugs.add(c.slug);
+    });
+    const hosts = [GATEWAY_PUBLIC_HOST, ...[...slugs].sort().map((slug) => `${slug}.${GUEST_BASE_DOMAIN}`)];
+    const results = [];
+    for (let i = 0; i < hosts.length; i += 5) {
+      results.push(...(await Promise.all(hosts.slice(i, i + 5).map(checkCertificate))));
+    }
+    const problems = results.filter((r) => r.error || r.daysLeft < CERT_WARN_DAYS);
+    const soonest = results.filter((r) => typeof r.daysLeft === "number").sort((a, b) => a.daysLeft - b.daysLeft)[0] || null;
+    const summary = {
+      checkedAt: admin.firestore.FieldValue.serverTimestamp(),
+      total: results.length,
+      problems: problems.slice(0, 200),
+      soonest,
+    };
+    await firestore.collection("platformStatus").doc("certificates").set(summary);
+    return { total: results.length, problems: problems.length };
+  })();
+  try {
+    return await certCheckRunning;
+  } finally {
+    certCheckRunning = null;
+  }
+}
+
+function scheduleCertificateCheck() {
+  setTimeout(() => runCertificateCheck().catch((e) => console.error("проверка сертификатов:", e.message || e)), 5 * 60 * 1000);
+  setInterval(() => runCertificateCheck().catch((e) => console.error("проверка сертификатов:", e.message || e)), CERT_CHECK_INTERVAL_MS);
+}
+
+// ------------------------------------------------ резервные копии базы
+//
+// Firestore «managed export» требует тарифа Blaze и бакета Cloud Storage —
+// у saas-3bdc8 их нет (см. шапку файла). Поэтому копия делается здесь:
+// все документы читаются через Admin SDK и пишутся одним сжатым JSON в
+// BACKUP_DIR на этом сервере (права 600, только пользователь сервиса).
+// Каждый документ — одно чтение из бесплатной квоты Firebase (50 000 в
+// сутки на тарифе Spark, при превышении база встаёт до конца суток!),
+// поэтому перед копией размер базы оценивается через count(): больше
+// BACKUP_MAX_DOCS — копия не делается, а панель объясняет, почему.
+// Восстановление — вручную, скриптом restore-backup.js (см. README.md).
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
+const BACKUP_KEEP = Math.max(1, Number(process.env.BACKUP_KEEP) || 14);
+const BACKUP_MAX_DOCS = Math.max(100, Number(process.env.BACKUP_MAX_DOCS) || 20000);
+const BACKUP_INTERVAL_MS = Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS) || 24) * 60 * 60 * 1000;
+// Вложенные коллекции, которые не всегда удаётся найти выборкой (пустые
+// у первых документов): известные заранее + найденные по ходу обхода.
+const KNOWN_SUBCOLLECTIONS = [...TENANT_SUBCOLLECTIONS, "visits", "messages", "logins"];
+
+function serializeFirestoreValue(v) {
+  if (v === null || v === undefined) return v === undefined ? null : v;
+  if (v instanceof admin.firestore.Timestamp) return { __t: "ts", v: v.toMillis() };
+  if (v instanceof admin.firestore.GeoPoint) return { __t: "geo", lat: v.latitude, lng: v.longitude };
+  if (v instanceof admin.firestore.DocumentReference) return { __t: "ref", v: v.path };
+  if (Buffer.isBuffer(v)) return { __t: "bytes", v: v.toString("base64") };
+  if (Array.isArray(v)) return v.map(serializeFirestoreValue);
+  if (typeof v === "object") {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) out[k] = serializeFirestoreValue(x);
+    return out;
+  }
+  return v;
+}
+
+/** Все id коллекций базы: корневые + вложенные, найденные выборкой по 5
+ *  документов на уровень (до 4 уровней вложенности) и известные заранее. */
+async function discoverCollectionIds(firestore) {
+  const roots = (await firestore.listCollections()).map((c) => c.id);
+  const groups = new Set([...roots, ...KNOWN_SUBCOLLECTIONS]);
+  let frontier = [...groups];
+  for (let depth = 0; depth < 4 && frontier.length; depth++) {
+    const next = [];
+    for (const id of frontier) {
+      const sample = await firestore.collectionGroup(id).limit(5).get();
+      for (const d of sample.docs) {
+        for (const sub of await d.ref.listCollections()) {
+          if (!groups.has(sub.id)) { groups.add(sub.id); next.push(sub.id); }
+        }
+      }
+    }
+    frontier = next;
+  }
+  return [...groups].sort();
+}
+
+let backupRunning = null;
+async function runFirestoreBackup({ reason = "schedule" } = {}) {
+  if (backupRunning) return backupRunning;
+  backupRunning = (async () => {
+    const firestore = db();
+    const statusRef = firestore.collection("platformStatus").doc("backup");
+    const startedAt = Date.now();
+    try {
+      const ids = await discoverCollectionIds(firestore);
+      let estimate = 0;
+      for (const id of ids) estimate += (await firestore.collectionGroup(id).count().get()).data().count;
+      if (estimate > BACKUP_MAX_DOCS) {
+        await statusRef.set({
+          lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "too_large", docs: estimate, maxDocs: BACKUP_MAX_DOCS, reason,
+          error: `В базе ~${estimate} документов — больше лимита ${BACKUP_MAX_DOCS} для копии в пределах бесплатной квоты чтений`,
+        }, { merge: true });
+        return { status: "too_large", docs: estimate };
+      }
+      const docs = {};
+      for (const id of ids) {
+        const snap = await firestore.collectionGroup(id).get();
+        snap.docs.forEach((d) => { docs[d.ref.path] = serializeFirestoreValue(d.data()); });
+      }
+      fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+      const stamp = new Date().toISOString().replace(/:/g, "-").slice(0, 16);
+      const file = `firestore-${stamp}.json.gz`;
+      const payload = zlib.gzipSync(JSON.stringify({ format: 1, createdAt: new Date().toISOString(), collections: ids, docs }));
+      fs.writeFileSync(path.join(BACKUP_DIR, file), payload, { mode: 0o600 });
+      // Храним только последние BACKUP_KEEP копий.
+      const all = fs.readdirSync(BACKUP_DIR).filter((f) => /^firestore-.*\.json\.gz$/.test(f)).sort();
+      all.slice(0, Math.max(0, all.length - BACKUP_KEEP)).forEach((f) => fs.unlinkSync(path.join(BACKUP_DIR, f)));
+      const result = { status: "ok", file, docs: Object.keys(docs).length, bytes: payload.length, ms: Date.now() - startedAt };
+      await statusRef.set({
+        lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastOkAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...result, reason, error: null, kept: Math.min(all.length, BACKUP_KEEP),
+      }, { merge: true });
+      return result;
+    } catch (e) {
+      await statusRef.set({
+        lastRunAt: admin.firestore.FieldValue.serverTimestamp(), status: "error", reason, error: String(e.message || e).slice(0, 300),
+      }, { merge: true }).catch(() => {});
+      throw e;
+    }
+  })();
+  try {
+    return await backupRunning;
+  } finally {
+    backupRunning = null;
+  }
+}
+
+function listBackups() {
+  try {
+    return fs.readdirSync(BACKUP_DIR)
+      .filter((f) => /^firestore-.*\.json\.gz$/.test(f))
+      .sort().reverse()
+      .map((f) => ({ name: f, bytes: fs.statSync(path.join(BACKUP_DIR, f)).size }));
+  } catch (_) {
+    return [];
+  }
+}
+
+function scheduleFirestoreBackup() {
+  // Первая копия — через 10 минут после старта и только если последняя
+  // была давно: перезапуски сервиса не должны каждый раз читать всю базу.
+  const tick = async () => {
+    try {
+      const st = (await db().collection("platformStatus").doc("backup").get()).data() || {};
+      const last = st.lastRunAt && st.lastRunAt.toMillis ? st.lastRunAt.toMillis() : 0;
+      if (Date.now() - last < BACKUP_INTERVAL_MS - 60 * 60 * 1000) return;
+      await runFirestoreBackup({ reason: "schedule" });
+    } catch (e) {
+      console.error("резервная копия базы:", e.message || e);
+    }
+  };
+  setTimeout(tick, 10 * 60 * 1000);
+  setInterval(tick, 60 * 60 * 1000);
+}
+
+/**
+ * Чек-лист «Безопасность → Платформа»: что можно проверить только на
+ * сервере — заданы ли секреты (без значений), доходят ли уведомления
+ * ЮKassa, сроки сертификатов, резервные копии, актуальны ли правила базы,
+ * передаёт ли nginx настоящий IP.
+ */
+const SECURITY_SECRETS = [
+  ["FIREBASE_SERVICE_ACCOUNT_B64", "Сервисный ключ Firebase"],
+  ["FIREBASE_WEB_CONFIG_JSON", "Веб-конфиг Firebase (гостевой веб)"],
+  ["YOOKASSA_SHOP_ID", "ЮKassa: идентификатор магазина"],
+  ["YOOKASSA_SECRET_KEY", "ЮKassa: секретный ключ"],
+  ["GITHUB_PAT", "GitHub: токен для сборки APK"],
+  ["BUILD_CALLBACK_SECRET", "Секрет ответа сборки APK"],
+];
+// Уникальная строка из актуального saas/firestore.rules — по ней видно,
+// задеплоены ли правила с защитой завершённых сеансов супер-админов.
+const RULES_FEATURE_MARKER = "adminSessionFresh";
+
+async function handleSecurityStatus(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const firestore = db();
+  const [billing, certs, backup, lastPayment, admins] = await Promise.all([
+    firestore.collection("platformStatus").doc("billingWebhook").get(),
+    firestore.collection("platformStatus").doc("certificates").get(),
+    firestore.collection("platformStatus").doc("backup").get(),
+    firestore.collection("billingEvents").orderBy("receivedAt", "desc").limit(1).get().catch(() => null),
+    firestore.collection("superAdmins").get(),
+  ]);
+  let rules = { status: "unknown" };
+  try {
+    const ruleset = await getFirebaseApp().securityRules().getFirestoreRuleset();
+    const source = (ruleset.source || []).map((f) => f.content).join("\n");
+    rules = { status: source.includes(RULES_FEATURE_MARKER) ? "ok" : "outdated", updatedAt: ruleset.createTime || null };
+  } catch (e) {
+    rules = { status: "unknown", error: String(e.message || e).slice(0, 200) };
+  }
+  const ts = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : null);
+  const b = billing.exists ? billing.data() : {};
+  const lp = lastPayment && !lastPayment.empty ? lastPayment.docs[0].data() : null;
+  sendJson(res, 200, {
+    secrets: SECURITY_SECRETS.map(([key, label]) => ({ key, label, set: !!(process.env[key] && String(process.env[key]).trim()) })),
+    githubRef: GITHUB_REF,
+    billingWebhook: { lastReceivedAt: ts(b.lastReceivedAt), lastEvent: b.lastEvent || null, lastPaymentAt: lp ? ts(lp.receivedAt) : null },
+    certificates: certs.exists ? { ...certs.data(), checkedAt: ts(certs.data().checkedAt) } : null,
+    backup: backup.exists ? { ...backup.data(), lastRunAt: ts(backup.data().lastRunAt), lastOkAt: ts(backup.data().lastOkAt) } : null,
+    backups: listBackups(),
+    backupSettings: { keep: BACKUP_KEEP, maxDocs: BACKUP_MAX_DOCS, intervalHours: BACKUP_INTERVAL_MS / 3600000 },
+    rules,
+    realIpHeader: typeof req.headers["x-real-ip"] === "string" && !!req.headers["x-real-ip"].trim(),
+    superAdmins: admins.size,
+    gateway: { uptimeSec: Math.round(process.uptime()), node: process.version },
+  });
+}
+
+async function handleRunCertificateCheck(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  sendJson(res, 200, { ok: true, ...(await runCertificateCheck()) });
+}
+
+async function handleRunBackup(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const result = await runFirestoreBackup({ reason: "manual" });
+  await writeSecurityEvent(req, decoded, "backupCreated", { metadata: { file: result.file || null, docs: result.docs || null, status: result.status } });
+  sendJson(res, 200, { ok: true, ...result });
+}
+
+/** Скачать резервную копию — это вся база с персональными данными, поэтому
+ *  только сразу после ввода пароля и с записью в журнал безопасности. */
+async function handleDownloadBackup(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const { name } = await parseJsonBody(req);
+  if (typeof name !== "string" || !/^firestore-[0-9T-]+\.json\.gz$/.test(name)) throw new HttpError(400, "Неизвестная копия");
+  const file = path.join(BACKUP_DIR, name);
+  if (!fs.existsSync(file)) throw new HttpError(404, "Копия не найдена");
+  await writeSecurityEvent(req, decoded, "backupDownloaded", { metadata: { file: name } });
+  const data = fs.readFileSync(file);
+  res.writeHead(200, {
+    "Content-Type": "application/gzip",
+    "Content-Length": data.length,
+    "Content-Disposition": `attachment; filename="${name}"`,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
+  });
+  res.end(data);
+}
+
+/** Повторно выпустить сертификат поддомена (тот же provision-tenant-
+ *  domain.sh, что и при создании заведения) — кнопка у проблемного домена
+ *  в чек-листе. */
+async function handleReprovisionDomain(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { host } = await parseJsonBody(req);
+  const suffix = `.${GUEST_BASE_DOMAIN}`;
+  if (typeof host !== "string" || !host.endsWith(suffix)) throw new HttpError(400, "Можно только поддомен заведения");
+  const slug = normalizeSlug(host.slice(0, -suffix.length));
+  await provisionTenantDomain(slug);
+  await writeSecurityEvent(req, decoded, "domainReprovisioned", { metadata: { host } });
+  const check = await checkCertificate(host);
+  sendJson(res, 200, { ok: true, check });
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -2967,6 +3302,11 @@ const ROUTES = {
   "/overrideSubscription": handleOverrideSubscription,
   "/savePlan": handleSavePlan,
   "/deletePlan": handleDeletePlan,
+  "/securityStatus": handleSecurityStatus,
+  "/runCertificateCheck": handleRunCertificateCheck,
+  "/runBackup": handleRunBackup,
+  "/downloadBackup": handleDownloadBackup,
+  "/reprovisionDomain": handleReprovisionDomain,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,
@@ -3009,6 +3349,8 @@ scheduleDemoCleanup();
 scheduleBillingCron();
 scheduleUsageCron();
 schedulePlatformMetricsCron();
+scheduleCertificateCheck();
+scheduleFirestoreBackup();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
