@@ -82,6 +82,8 @@ class KolibriStoriesScreen extends StatelessWidget {
               CachedNetworkImage(
                 imageUrl: s.imageUrl,
                 fit: BoxFit.cover,
+                // Карточка 260pt — декодируем под неё, а не исходник целиком.
+                memCacheWidth: (260 * MediaQuery.of(context).devicePixelRatio).round(),
                 placeholder: (_, __) => const SizedBox.shrink(),
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
