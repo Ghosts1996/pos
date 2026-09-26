@@ -367,14 +367,14 @@ class _StartupError extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.wifi_off, size: 48, color: KolibriColors.textMuted),
+              Icon(Icons.wifi_off, size: 48, color: KolibriColors.textMuted),
               const SizedBox(height: 16),
               const Text(
                 'Не удалось подключиться',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Проверьте интернет и перезапустите приложение.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: KolibriColors.textMuted),
@@ -383,7 +383,7 @@ class _StartupError extends StatelessWidget {
                 const SizedBox(height: 16),
                 Text(details!,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: KolibriColors.textMuted, fontSize: 11)),
+                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 11)),
               ],
             ],
           ),

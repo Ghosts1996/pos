@@ -85,12 +85,18 @@ class KolibriStoriesScreen extends StatelessWidget {
                 placeholder: (_, __) => const SizedBox.shrink(),
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
+            // Затемнение под текстом — цветом карточки, а не жёстко тёмным:
+            // на светлой палитре заведения текст карточки тёмный, и на
+            // тёмной подложке его было бы не прочесть.
             Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Color(0xCC07100D)],
+                  colors: [
+                    KolibriColors.surface.withValues(alpha: 0),
+                    KolibriColors.surface.withValues(alpha: 0.85),
+                  ],
                 ),
               ),
             ),
@@ -109,7 +115,7 @@ class KolibriStoriesScreen extends StatelessWidget {
                     TextSpan(
                       children: linkifySpans(
                         s.text,
-                        style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                        style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                       ),
                     ),
                     maxLines: 3,

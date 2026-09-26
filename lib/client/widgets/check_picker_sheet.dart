@@ -67,7 +67,7 @@ class CheckPickerSheet extends StatelessWidget {
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'За этим столом открыто несколько счетов. Выберите свой — '
               'если ошибётесь, можно будет отвязаться на вкладке «Мой стол».',
               style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),

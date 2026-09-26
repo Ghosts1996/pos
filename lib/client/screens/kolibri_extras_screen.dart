@@ -119,7 +119,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   Widget _tipsBlock() {
     final sessionId = widget.profile?.activeSessionId ?? '';
     if (sessionId.isEmpty) {
-      return const Text('Чаевые можно оставить во время визита — откройте свой стол.',
+      return Text('Чаевые можно оставить во время визита — откройте свой стол.',
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 13));
     }
     return StreamBuilder(
@@ -131,7 +131,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
           children: [
             Text(
               employee.isEmpty ? 'Ваш кальянщик' : 'Ваш кальянщик: $employee',
-              style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+              style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -169,7 +169,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   Widget _giftCardBlock() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Код из нашего канала. Активируйте — бонусы сразу '
+          Text('Код из нашего канала. Активируйте — бонусы сразу '
               'появятся на счёте.',
               style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
           const SizedBox(height: 12),
@@ -299,7 +299,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Если все столы заняты — встаньте в очередь, мы напишем, '
+              Text('Если все столы заняты — встаньте в очередь, мы напишем, '
                   'как только стол освободится.',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
               const SizedBox(height: 12),
@@ -346,7 +346,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
             'Друг называет его в первый визит: ему '
             '${ReferralService.inviteeBonus.toStringAsFixed(0)} бонусов, вам — '
             '${ReferralService.inviterBonus.toStringAsFixed(0)}.',
-            style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+            style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
           ),
           const SizedBox(height: 14),
           Row(

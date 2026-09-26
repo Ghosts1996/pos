@@ -141,7 +141,7 @@ class _BookingSoonCardState extends State<BookingSoonCard> {
                 '${r.tableName.isEmpty ? '' : ', стол ${r.tableName}'}'
                 ' · ${r.guestsCount} чел. Подтвердите, что придёте, — или '
                 'освободите стол для других.',
-                style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
               ),
               const SizedBox(height: 14),
               Row(
