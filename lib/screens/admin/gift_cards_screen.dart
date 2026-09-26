@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/venue_models.dart';
+import '../../services/app_scope.dart';
 import '../../services/gift_card_service.dart';
+import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 
 /// Подарочные сертификаты — коды на бонусы.
@@ -205,12 +207,19 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
     _showIssued(card);
   }
 
+  /// Как гость найдёт приложение: название заведения (профиль или бренд).
+  String _appName() {
+    final name = VenueService.displayNameOf(VenueService.instance.cached);
+    if (name.isNotEmpty) return '«$name»';
+    return AppScope.isSaasMode ? 'заведения' : 'Colibri Lounge';
+  }
+
   void _showIssued(GiftCard card) {
     // Готовый текст для поста: чтобы не собирать его вручную каждый раз.
     final post = 'Промокод: ${card.code}\n'
         '${card.bonusAmount.toStringAsFixed(0)} бонусов на счёт'
         '${card.maxUses > 0 ? ' — первым ${card.maxUses}' : ''}.\n'
-        'Введите код в приложении Colibri Lounge: Профиль → Ещё → Сертификат.';
+        'Введите код в приложении ${_appName()}: Профиль → Ещё → Сертификат.';
 
     showDialog(
       context: context,

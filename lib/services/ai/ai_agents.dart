@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../venue_service.dart';
 import '../../models/session_model.dart';
 import 'ai_context_service.dart';
 import 'ai_settings.dart';
@@ -35,7 +36,8 @@ class AiAgent {
 }
 
 const _brandRules = '''
-Ты — часть цифровой команды кальянной-лаунджа «Colibri Lounge».
+Ты — часть цифровой команды кальянной-лаунджа. Название, адрес, часы работы
+и правила заведения — в блоке «О ЗАВЕДЕНИИ» ниже; другого названия не придумывай.
 Правила для всех ответов:
 - Пиши по-русски, коротко и по делу, без канцелярита и без воды.
 - Опирайся только на данные, полученные через инструменты или переданные в контексте.
@@ -188,12 +190,12 @@ $_hookahKnowledge
 
   static const concierge = AiAgent(
     id: 'concierge',
-    title: 'Консьерж Colibri',
+    title: 'Консьерж',
     description: 'Чат гостя: меню, бронь, бонусы, вызов кальянщика.',
     scope: AiToolScope.guest,
     tools: {'get_menu', 'get_free_slots', 'create_reservation', 'get_session', 'call_staff', 'save_guest_taste_note', 'get_guest_profile', 'get_weather'},
     systemPrompt: '''$_brandRules
-Роль: консьерж гостя в приложении «Colibri Lounge». Обращайся на «вы», тепло,
+Роль: консьерж гостя в приложении заведения. Обращайся на «вы», тепло,
 без фамильярности, ответ до 80 слов.
 Ты можешь: показать меню, найти свободное время и создать бронь, показать счёт
 гостя, позвать кальянщика к столу, запомнить вкусы, объяснить программу
@@ -439,8 +441,10 @@ class AiService {
     );
 
     final schemas = _registry.schemasFor(agent.scope, only: agent.tools);
+    final venue = await VenueService.instance.aiKnowledgeCached();
     final messages = <AiMessage>[
       AiMessage.system(agent.systemPrompt),
+      if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
       AiMessage.system(
           'Текущее время: ${DateTime.now().toIso8601String()} (${_weekdayRu(DateTime.now())})'),
       if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
@@ -494,13 +498,16 @@ class AiService {
     String userMessage, {
     String extraContext = '',
     List<AiMessage> history = const [],
-  }) {
+  }) async* {
     if (!agent.enabled) {
-      return Stream.value('Агент «${agent.title}» выключен в настройках ИИ.');
+      yield 'Агент «${agent.title}» выключен в настройках ИИ.';
+      return;
     }
-    return _client.stream(
+    final venue = await VenueService.instance.aiKnowledgeCached();
+    yield* _client.stream(
       messages: [
         AiMessage.system(agent.systemPrompt),
+        if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
         if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
         ...history,
         AiMessage.user(userMessage),

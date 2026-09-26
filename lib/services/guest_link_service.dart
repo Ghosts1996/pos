@@ -667,11 +667,21 @@ class GuestLinkService {
     String guestName = '',
     String comment = '',
   }) async {
+    // Имя стола обязательно: без него у персонала заказ приходил как «Стол ·
+    // …», и было непонятно, куда нести. Приложение гостя знает только id
+    // чека — имя берём из самого чека (его гостю читать можно).
+    var resolvedTable = tableName;
+    if (resolvedTable.isEmpty && sessionId.isNotEmpty) {
+      try {
+        final snap = await AppScope.col('sessions').doc(sessionId).get();
+        resolvedTable = (snap.data()?['tableName'] as String?) ?? '';
+      } catch (_) {}
+    }
     final order = GuestOrder(
       id: '',
       sessionId: sessionId,
       tableId: tableId,
-      tableName: tableName,
+      tableName: resolvedTable,
       clientUid: clientUid,
       guestName: guestName,
       items: items,

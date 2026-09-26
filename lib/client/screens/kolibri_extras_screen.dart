@@ -7,6 +7,7 @@ import '../../services/referral_service.dart';
 import '../../services/waitlist_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/table_label.dart';
 
 /// Дополнительные сервисы для гостя: чаевые кальянщику, сертификат,
 /// очередь на стол и приглашение друга.
@@ -220,8 +221,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
 
           final (text, color) = switch (last.status) {
             'granted' => (
-                'Сертификат ${last.code}: начислено '
-                    '${last.amount.toStringAsFixed(0)} бонусов',
+                'Сертификат ${last.code}: начислено ${bonusesLabel(last.amount)}',
                 KolibriColors.success
               ),
             'rejected' => (

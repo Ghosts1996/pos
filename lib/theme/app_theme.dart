@@ -57,6 +57,13 @@ class AppTheme {
         surface: AppColors.surface,
         primary: AppColors.primary,
         secondary: AppColors.selection,
+        // Без этих трёх ColorScheme.dark подставляет чёрный текст на
+        // «вторичном» фоне: выбранный ChoiceChip (вкладки X-отчёта, фильтры)
+        // и FilledButton.tonal («Подтвердить» в бронях) выглядели тусклыми,
+        // будто недоступными.
+        onSecondary: AppColors.textPrimary,
+        secondaryContainer: AppColors.selectionStrong,
+        onSecondaryContainer: AppColors.textPrimary,
         error: AppColors.danger,
         onSurface: AppColors.textPrimary,
         onPrimary: AppColors.textPrimary,
@@ -153,21 +160,31 @@ class AppTheme {
       ),
 
       // Вторичные / отмена действий поверх surface.
+      //
+      // Минимальная ширина — обычная (64), а не бесконечная, как было
+      // (Size.fromHeight): кнопка с бесконечной минимальной шириной внутри
+      // Row не может разложиться и в релизной сборке просто не рисуется
+      // (так пропадали кнопки быстрых сумм на экране оплаты), в Wrap
+      // занимает целую строку, а в диалоге растягивается во всю ширину.
+      // Где вторичная кнопка должна быть во всю ширину, её растягивает
+      // родитель (Column со stretch или SizedBox(width: double.infinity)).
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.textPrimary,
           side: const BorderSide(color: AppColors.border, width: 1.2),
-          minimumSize: const Size.fromHeight(AppSpacing.minTouchTarget),
+          minimumSize: const Size(64, AppSpacing.minTouchTarget),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
           ),
         ),
       ),
 
+      // Та же причина, что у outlinedButtonTheme: «Отмена» в диалогах
+      // растягивалась во всю ширину и выталкивала основную кнопку вниз.
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: AppColors.textMuted,
-          minimumSize: const Size.fromHeight(AppSpacing.minTouchTarget),
+          minimumSize: const Size(64, AppSpacing.minTouchTarget),
         ),
       ),
 

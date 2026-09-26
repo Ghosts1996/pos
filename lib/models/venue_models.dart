@@ -46,7 +46,9 @@ class VenueProfile {
   final bool cloudFunctionsEnabled;
 
   const VenueProfile({
-    this.name = 'Colibri Lounge',
+    // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
+    // нельзя — оно уходило в чек и в ИИ. См. VenueService.displayNameOf.
+    this.name = '',
     this.address = '',
     this.phone = '',
     this.about = '',
@@ -63,7 +65,7 @@ class VenueProfile {
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
     if (data == null) return const VenueProfile();
     return VenueProfile(
-      name: data['name'] ?? 'Colibri Lounge',
+      name: data['name'] ?? '',
       address: data['address'] ?? '',
       phone: data['phone'] ?? '',
       about: data['about'] ?? '',

@@ -53,6 +53,7 @@ class _StockTab extends StatefulWidget {
 
 class _StockTabState extends State<_StockTab> {
   final _fs = FirestoreService();
+  late final Stream<List<InventoryItem>> _stock = _fs.inventoryItemsStream();
   bool _showInactive = false;
 
   @override
@@ -63,7 +64,7 @@ class _StockTabState extends State<_StockTab> {
         child: const Icon(Icons.add),
       ),
       body: StreamBuilder<List<InventoryItem>>(
-        stream: _fs.inventoryItemsStream(),
+        stream: _stock,
         builder: (context, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final all = snap.data!;

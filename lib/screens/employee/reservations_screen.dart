@@ -7,6 +7,7 @@ import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/staff_session_store.dart';
 import '../../services/reservation_service.dart';
+import '../../services/venue_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/phone_utils.dart';
@@ -48,11 +49,24 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   String _onShift = '';
   bool _shiftIsMine = true;
 
+  /// Часы работы не заполнены ни на один день — гости в приложении не могут
+  /// забронировать стол (каждый день для них «закрыт»). Говорим об этом там,
+  /// где персонал смотрит на брони, а не молча теряем гостей.
+  bool _hoursMissing = false;
+
   @override
   void initState() {
     super.initState();
     _checkNotifications();
     _checkShift();
+    _checkHours();
+  }
+
+  Future<void> _checkHours() async {
+    try {
+      final p = await VenueService.instance.load();
+      if (mounted) setState(() => _hoursMissing = VenueService.hoursNotConfigured(p));
+    } catch (_) {}
   }
 
   Future<void> _checkShift() async {
@@ -136,6 +150,26 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       ),
       body: Column(
         children: [
+          if (_hoursMissing)
+            Material(
+              color: AppColors.danger.withValues(alpha: 0.12),
+              child: const Padding(
+                padding: EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.schedule, color: AppColors.danger, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Не заполнены часы работы — гости не могут забронировать стол '
+                        'в приложении. Админ → Профиль заведения → Часы работы.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (!_shiftIsMine && _onShift.isNotEmpty)
             Material(
               color: AppColors.primary.withValues(alpha: 0.12),
@@ -259,7 +293,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                     Text(
                       '${r.tableName.isEmpty ? 'стол не назначен' : r.tableName} · '
                       '${r.durationMinutes} мин · ${r.status.label}'
-                      '${r.source == 'kolibri' ? ' · Colibri' : ''}'
+                      '${r.source == 'kolibri' ? ' · из приложения' : ''}'
                       '${r.guestConfirmed ? ' · гость подтвердил' : ''}',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
