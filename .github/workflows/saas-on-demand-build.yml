@@ -788,13 +788,25 @@ jobs:
         shell: bash
         run: |
           # Путь менялся между версиями Flutter (с подпапкой архитектуры
-          # x64/arm64 и без неё) — ищем реально созданную папку Release, а
-          # не полагаемся на один жёстко прописанный путь.
-          DIR=$(find build/windows -type d -iname Release | head -1)
-          if [ -z "$DIR" ]; then
-            echo "::error::Не нашли папку Release после flutter build windows"
+          # x64/arm64 и без неё), поэтому ищем, а не прописываем жёстко. Но
+          # ищем именно папку с готовым .exe (runner/Release): просто первая
+          # попавшаяся «Release» оказывалась служебной
+          # x64/ALL_BUILD.dir/Release без единого файла приложения — архив
+          # выходил пустым, и выкладка на сервер падала.
+          EXE=$(find build/windows -type f -iname '*.exe' -path '*runner/Release/*' | head -1)
+          if [ -z "$EXE" ]; then
+            echo "::error::Не нашли собранный .exe (build/windows/**/runner/Release) после flutter build windows"
+            find build/windows -maxdepth 4 -type d | head -50
             exit 1
           fi
+          DIR=$(dirname "$EXE")
+          if [ ! -f "$DIR/flutter_windows.dll" ] || [ ! -d "$DIR/data" ]; then
+            echo "::error::В $DIR нет flutter_windows.dll или папки data — это не готовая сборка"
+            ls -la "$DIR"
+            exit 1
+          fi
+          echo "Папка сборки: $DIR"
+          ls -la "$DIR"
           echo "path=$DIR" >> "$GITHUB_OUTPUT"
 
       - name: Zip Release folder
@@ -804,6 +816,13 @@ jobs:
           $out = "${{ steps.outdir.outputs.path }}"
           $zipPath = "build/windows/${{ inputs.job_id_pos_windows }}.zip"
           Compress-Archive -Path "$out/*" -DestinationPath $zipPath -Force
+          # Пустой или несозданный архив — ошибка здесь, с понятной причиной,
+          # а не «нет такого файла» на шаге выкладки.
+          if (-not (Test-Path $zipPath) -or (Get-Item $zipPath).Length -lt 1MB) {
+            Write-Error "Архив Windows-сборки не создан или подозрительно мал: $zipPath"
+            exit 1
+          }
+          Write-Host ("Архив: {0} ({1:N1} МБ)" -f $zipPath, ((Get-Item $zipPath).Length / 1MB))
           echo "path=$zipPath" >> $env:GITHUB_OUTPUT
 
       - name: Upload Windows build artifact (GitHub Actions run log)
@@ -853,7 +872,13 @@ jobs:
         if: failure()
         shell: bash
         run: |
+          # Тело — из файла, а не аргументом -d: на Windows-раннере русский
+          # текст в аргументах curl.exe портился кодировкой, и в кабинете
+          # владелец видел «Windows-?????? ????? ?????».
+          cat > report.json <<JSON
+          {"jobId":"${{ inputs.job_id_pos_windows }}","status":"failed","errorMessage":"Windows-сборка кассы не удалась — подробности в логе запуска.","runUrl":"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+          JSON
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
-            -H "Content-Type: application/json" \
+            -H "Content-Type: application/json; charset=utf-8" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"failed\",\"errorMessage\":\"Windows-сборка кассы упала — подробности в логе запуска.\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            --data-binary @report.json
