@@ -217,43 +217,6 @@ function renderVenuePicker(chain) {
   });
 }
 
-/// Брендинг заведения (имя, цвета — раздел «Брендинг» в личном кабинете
-/// владельца) поверх дефолтной палитры "Colibri Lounge" в app.css. Те же
-/// CSS-переменные, что и в SaaS-версии table.html — общий набор для всей
-/// SaaS-раздачи гостя, независимо от того, приложение это или веб.
-/// Осветляет HEX-цвет к белому на [amount] (0..1) — та же формула, что и
-/// KolibriColors._lighten во Flutter-версии, чтобы surface/border вели себя
-/// одинаково в обеих раздачах одного заведения.
-function lighten(hex, amount) {
-  const [r, g, b] = hexToRgb(hex);
-  const mix = (c) => Math.round(c + (255 - c) * amount);
-  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
-}
-
-function hexToRgb(hex) {
-  const h = hex.replace('#', '');
-  const num = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
-  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
-}
-
-/// Контраст фон/текст по формуле WCAG 2 — та же проверка, что и в
-/// lib/theme/app_theme.dart и KolibriColors.applyBranding во Flutter:
-/// если владелец в разделе «Брендинг» выбрал слишком похожие фон и текст,
-/// откатываемся на дефолтную пару целиком, а не показываем гостю
-/// нечитаемый экран.
-function contrastRatio(hexA, hexB) {
-  const lum = ([r, g, b]) => {
-    const ch = (c) => {
-      const v = c / 255;
-      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-    };
-    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
-  };
-  const la = lum(hexToRgb(hexA)) + 0.05;
-  const lb = lum(hexToRgb(hexB)) + 0.05;
-  return la > lb ? la / lb : lb / la;
-}
-
 /// Имя, которое видит гость там, где раньше был жёстко зашитый демо-бренд
 /// "Colibri Lounge" — своё название заведения (branding.appName), а если
 /// владелец его не задавал, имя из профиля заведения, и только если совсем
@@ -262,6 +225,10 @@ function brandDisplayName() {
   return state.brandAppName || (state.venue && state.venue.name) || 'Hookah POS';
 }
 
+/// Брендинг заведения (имя, цвета — раздел «Брендинг» в личном кабинете
+/// владельца) поверх дефолтной палитры "Colibri Lounge" в app.css. Сам
+/// расчёт CSS-переменных — в palette.js (общий с table.html и кэшем в
+/// index.html): там же почему нельзя просто подставить цвета владельца.
 async function applyBranding() {
   try {
     // Для сети — брендинг САМОЙ СЕТИ (chains/{chainId}/branding), а не
@@ -275,32 +242,8 @@ async function applyBranding() {
     );
     if (!snap.exists()) return;
     const b = snap.data();
-    const css = document.documentElement.style;
-    if (b.primaryColor) css.setProperty('--primary', b.primaryColor);
-    if (b.secondaryColor) css.setProperty('--gold', b.secondaryColor);
-    if (b.accentColor) css.setProperty('--accent', b.accentColor);
-
-    let bg = b.backgroundColor;
-    let text = b.textColor;
-    try {
-      if (bg && text && contrastRatio(bg, text) < 3.0) { bg = null; text = null; }
-    } catch (_) { bg = null; text = null; }
-
-    if (text) css.setProperty('--text', text);
-    if (bg) {
-      css.setProperty('--bg', bg);
-      try {
-        css.setProperty('--surface', lighten(bg, 0.06));
-        css.setProperty('--surface-2', lighten(bg, 0.10));
-        css.setProperty('--border', lighten(bg, 0.16));
-      } catch (_) {
-        // Битый HEX — оставляем дефолтные surface/border из app.css.
-      }
-    }
-    if (b.appName) {
-      document.title = b.appName;
-      state.brandAppName = b.appName;
-    }
+    window.applyBrandPalette(b);
+    if (b.appName) state.brandAppName = b.appName;
 
     // В кэш — index.html применяет его СРАЗУ при следующем заходе, ещё до
     // сети (см. комментарий там же), чтобы страница не мелькала дефолтной
@@ -311,8 +254,8 @@ async function applyBranding() {
       if (slug) {
         localStorage.setItem('brand:' + slug, JSON.stringify({
           primaryColor: b.primaryColor, secondaryColor: b.secondaryColor,
-          accentColor: b.accentColor, backgroundColor: bg, textColor: text,
-          appName: b.appName,
+          accentColor: b.accentColor, backgroundColor: b.backgroundColor,
+          textColor: b.textColor, appName: b.appName,
         }));
       }
     } catch (_) {}
@@ -1956,7 +1899,7 @@ function screenProfile() {
       <button class="btn-primary" id="pSave">Сохранить</button>
     </div>
 
-    <div class="card" style="border-color:rgba(217,180,91,.45)">
+    <div class="card" style="border-color:color-mix(in srgb, var(--gold) 45%, transparent)">
       <div class="row" style="align-items:flex-start">
         <span style="color:var(--gold)">ⓘ</span>
         <div class="grow small muted">
@@ -1965,7 +1908,7 @@ function screenProfile() {
           ниже кальянщику, и мы перенесём историю визитов.
         </div>
       </div>
-      <div id="deviceId" style="margin-top:12px;background:rgba(0,0,0,.25);
+      <div id="deviceId" style="margin-top:12px;background:var(--inset, rgba(0,0,0,.25));
         border-radius:10px;padding:11px 12px;display:flex;align-items:center;
         gap:8px;cursor:pointer">
         <span class="muted">🪪</span>
