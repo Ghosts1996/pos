@@ -134,7 +134,7 @@ class KolibriHomeScreen extends StatelessWidget {
                               '${r.guestsCount} чел · '
                               '${r.tableName.isEmpty ? 'стол подберём' : r.tableName} · '
                               '${r.status.label}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: KolibriColors.textMuted, fontSize: 13),
                             ),
                           ],
@@ -244,7 +244,7 @@ class KolibriHomeScreen extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Бонусный счёт',
+              Text('Бонусный счёт',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
               const SizedBox(height: 6),
               Text('${bonus.toStringAsFixed(0)} ₽',
@@ -252,7 +252,7 @@ class KolibriHomeScreen extends StatelessWidget {
                       fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
               const SizedBox(height: 4),
               Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
-                  style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
             ],
           ),
           const Spacer(),
@@ -286,7 +286,7 @@ class KolibriHomeScreen extends StatelessWidget {
               const SizedBox(height: 12),
               Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
               Text(subtitle,
-                  style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
             ],
           ),
         ),

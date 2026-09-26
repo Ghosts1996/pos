@@ -39,7 +39,7 @@ class KolibriVenuePickerScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
+                  Text(
                     'В каком заведении сети вы сейчас находитесь?',
                     style: TextStyle(color: KolibriColors.textMuted, fontSize: 14),
                   ),
@@ -48,7 +48,7 @@ class KolibriVenuePickerScreen extends StatelessWidget {
             ),
             Expanded(
               child: locations.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         'В этой сети пока нет доступных заведений',
                         style: TextStyle(color: KolibriColors.textMuted),
@@ -112,7 +112,7 @@ class _VenueCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: KolibriColors.textMuted),
+              Icon(Icons.chevron_right_rounded, color: KolibriColors.textMuted),
             ],
           ),
         ),

@@ -172,7 +172,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                 CircleAvatar(
                   radius: 18,
                   backgroundColor: KolibriColors.primary,
-                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                  child: Icon(Icons.auto_awesome, color: KolibriColors.onPrimary, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -181,14 +181,14 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                     children: [
                       Text(widget.sommelierMode ? 'Кальянный сомелье' : 'Консьерж Colibri',
                           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-                      const Text('Подскажу по меню, броням и бонусам',
+                      Text('Подскажу по меню, броням и бонусам',
                           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
                     ],
                   ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: KolibriColors.textMuted),
+                  icon: Icon(Icons.close, color: KolibriColors.textMuted),
                 ),
               ],
             ),
@@ -203,9 +203,9 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
             ),
           Expanded(
             child: _msgs.isEmpty
-                ? const Center(
+                ? Center(
                     child: Padding(
-                      padding: EdgeInsets.all(32),
+                      padding: const EdgeInsets.all(32),
                       child: Text(
                         'Спросите, что взять сегодня — подберу под ваш вкус и настроение.',
                         textAlign: TextAlign.center,
@@ -235,7 +235,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                           child: SelectableText(
                             m.text,
                             style: TextStyle(
-                              color: m.mine ? Colors.white : KolibriColors.textPrimary,
+                              color: m.mine ? KolibriColors.onPrimary : KolibriColors.textPrimary,
                               height: 1.35,
                             ),
                           ),

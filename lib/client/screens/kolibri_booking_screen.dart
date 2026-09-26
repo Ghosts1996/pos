@@ -148,10 +148,10 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('· ', style: TextStyle(color: KolibriColors.textMuted)),
+                  Text('· ', style: TextStyle(color: KolibriColors.textMuted)),
                   Expanded(
                     child: Text(l,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: KolibriColors.textMuted, fontSize: 13, height: 1.4)),
                   ),
                 ],
@@ -228,7 +228,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         const Text('Бронь стола',
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
-        const Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
+        Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
         if (_venue != null)
           Padding(
@@ -269,13 +269,13 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                       Text(_weekday(d),
                           style: TextStyle(
                               fontSize: 12,
-                              color: selected ? Colors.white70 : KolibriColors.textMuted)),
+                              color: selected ? KolibriColors.onPrimary.withValues(alpha: 0.7) : KolibriColors.textMuted)),
                       const SizedBox(height: 4),
                       Text('${d.day}',
                           style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
-                              color: selected ? Colors.white : KolibriColors.textPrimary)),
+                              color: selected ? KolibriColors.onPrimary : KolibriColors.textPrimary)),
                     ],
                   ),
                 ),
@@ -395,7 +395,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                 ? 'Сменить номер можно только через администратора'
                 : 'Укажите номер в любом формате: +7, 8 или просто 9...',
             suffixIcon: _phoneLocked
-                ? const Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
+                ? Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
                 : null,
           ),
         ),
@@ -438,7 +438,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                     style: TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
                 Text(_venue!.rules,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: KolibriColors.textMuted, fontSize: 13, height: 1.4)),
               ],
             ),
@@ -463,7 +463,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           builder: (context, snap) {
             final list = snap.data ?? const <ReservationModel>[];
             if (list.isEmpty) {
-              return const Text('Пока броней нет',
+              return Text('Пока броней нет',
                   style: TextStyle(color: KolibriColors.textMuted));
             }
             return Column(

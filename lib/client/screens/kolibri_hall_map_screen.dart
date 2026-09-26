@@ -30,9 +30,9 @@ class KolibriHallMapScreen extends StatelessWidget {
         stream: fs.tablesStream(),
         builder: (context, snap) {
           if (snap.hasError) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(32),
+                padding: const EdgeInsets.all(32),
                 child: Text('Не удалось загрузить карту зала',
                     style: TextStyle(color: KolibriColors.textMuted)),
               ),
@@ -44,7 +44,7 @@ class KolibriHallMapScreen extends StatelessWidget {
 
           final tables = snap.data!;
           if (tables.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('Столы ещё не добавлены',
                   style: TextStyle(color: KolibriColors.textMuted)),
             );
@@ -99,7 +99,7 @@ class KolibriHallMapScreen extends StatelessWidget {
             decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
           ),
           const SizedBox(width: 8),
-          Text(text, style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+          Text(text, style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
         ],
       );
 
@@ -135,7 +135,7 @@ class KolibriHallMapScreen extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             ),
             Text('${table.seats} мест',
-                style: const TextStyle(color: KolibriColors.textMuted, fontSize: 11)),
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 11)),
           ],
         ),
       ),
