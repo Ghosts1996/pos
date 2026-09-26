@@ -554,7 +554,10 @@ async function handleCreateTenant(req, res) {
     updatedAt: now,
   });
   batch.set(firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`), {
-    tenantId, userId: uid, role: "owner", status: "active", createdAt: now,
+    // email — чтобы во вкладке «Команда» владелец был подписан своим
+    // адресом, а не безликим «Устройство · XXXX» (так консоль подписывает
+    // членства без email — планшеты, присоединённые по коду).
+    tenantId, userId: uid, email: decoded.email || null, role: "owner", status: "active", createdAt: now,
   });
   batch.set(tenantRef.collection("settings").doc("general"), {
     name: name.trim(), timezone: "Europe/Moscow", currency: "RUB", language: "ru",
@@ -860,6 +863,65 @@ async function handleConvertTenantToChain(req, res) {
   });
 
   sendJson(res, 200, { chainId, slug });
+}
+
+/**
+ * Приглашение в заведение по email (вкладка «Команда» в консоли) с ролью
+ * manager/employee — перенос одноимённой Cloud Function из
+ * saas/functions/index.js: Cloud Functions у проекта не развёрнуты (нужен
+ * тариф Blaze), и кнопка «Пригласить» всегда падала. Найти uid по email
+ * может только Admin SDK — поэтому это эндпоинт, а не прямая запись с
+ * клиента. Роли owner/admin здесь не выдаются намеренно (как и в правилах
+ * для прямой записи tenantMembers).
+ */
+async function handleInviteTenantMember(req, res) {
+  const decoded = await verifyAuth(req);
+  const uid = decoded.uid;
+  const body = await parseJsonBody(req);
+  const { tenantId, email: rawEmail, role } = body;
+  if (typeof tenantId !== "string" || !tenantId.trim()) {
+    throw new HttpError(400, "Не указано заведение");
+  }
+  if (!["manager", "employee"].includes(role)) {
+    throw new HttpError(400, "Роль должна быть «Менеджер» или «Сотрудник»");
+  }
+  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+  if (!email || !email.includes("@")) throw new HttpError(400, "Укажите email приглашаемого");
+
+  await requireTenantRole(tenantId, uid, ["owner", "admin"]);
+
+  let invitedUser;
+  try {
+    invitedUser = await getFirebaseApp().auth().getUserByEmail(email);
+  } catch (_) {
+    throw new HttpError(
+      404,
+      "Пользователь с таким email ещё не регистрировался в консоли — попросите его сначала создать аккаунт, а потом пригласите ещё раз"
+    );
+  }
+
+  const firestore = db();
+  const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${invitedUser.uid}`);
+  const existing = await memberRef.get();
+  if (existing.exists && existing.data().status === "active") {
+    throw new HttpError(409, "Этот человек уже состоит в заведении");
+  }
+  await memberRef.set({
+    tenantId,
+    userId: invitedUser.uid,
+    email,
+    role,
+    status: "active",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  // Точка сети — без зеркала в chainMembers новый сотрудник не увидел бы
+  // общую лояльность сети (см. docstring syncChainMembership).
+  const tenantSnap = await firestore.collection("tenants").doc(tenantId).get();
+  const chainId = tenantSnap.exists ? tenantSnap.data().chainId : null;
+  if (chainId) await syncChainMembership(chainId, invitedUser.uid, role, "active");
+  await writeAuditLog({ tenantId, actorId: uid, action: "memberInvited", metadata: { email, role } });
+
+  sendJson(res, 200, { ok: true, userId: invitedUser.uid });
 }
 
 /** Копирует все документы одной коллекции в другую (id сохраняется) и
@@ -2510,6 +2572,7 @@ const ROUTES = {
   "/createTenant": handleCreateTenant,
   "/createChain": handleCreateChain,
   "/convertTenantToChain": handleConvertTenantToChain,
+  "/inviteTenantMember": handleInviteTenantMember,
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
   "/createDemoTenant": handleCreateDemoTenant,

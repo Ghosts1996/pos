@@ -822,6 +822,12 @@ async function seedChain() {
 
     await setDoc(doc(db, "subscriptions/chainX"), { chainId: "chainX", planId: "chain", status: "active" });
     await setDoc(doc(db, "subscriptions/tenantSolo"), { tenantId: "tenantSolo", planId: "start", status: "active" });
+
+    // Супер-админ платформы — seedTwoTenants заводит его для своих блоков,
+    // но afterEach (clearFirestore) стирает базу между тестами, так что
+    // без этой строки "root" здесь был бы обычным незнакомцем и тест
+    // "супер-админ читает сеть" проверял бы не то, что заявлено.
+    await setDoc(doc(db, "superAdmins/root"), { since: new Date().toISOString() });
   });
 }
 
