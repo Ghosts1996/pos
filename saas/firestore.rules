@@ -201,6 +201,17 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
       allow write: if false;
     }
+    // Регистрации/попытки по IP и блок-лист IP и доменов почты
+    // («Безопасность → Активность») — IP не хранится в документе
+    // заведения, чтобы его не видели сотрудники заведения.
+    match /signupEvents/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+    match /blocklist/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
 
     // ---- tenants: сам факт существования заведения и его статус ----
     match /tenants/{tenantId} {
