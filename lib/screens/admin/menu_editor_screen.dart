@@ -7,6 +7,7 @@ import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
+import '../../utils/table_label.dart';
 
 /// Админ-редактор меню: категории, позиции и загрузка фото для них.
 /// Фото загружается через системный выбор (галерея/камера) и хранится в
@@ -86,7 +87,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                       onTap: () => _pickAndUploadCategoryImage(cat),
                     ),
                     title: Text(cat.name),
-                    subtitle: Text('${catItems.length} позиций'),
+                    subtitle: Text('${catItems.length} ${pluralRu(catItems.length, 'позиция', 'позиции', 'позиций')}'),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -654,7 +655,14 @@ class _EditableThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    // Отдельный узел доступности: иначе нажатие миниатюры сливалось с
+    // нажатием всей строки, и для экранного диктора (TalkBack) двойной тап
+    // по категории открывал выбор фото вместо списка позиций.
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Изменить фото',
+      child: InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: uploading ? null : onTap,
       child: SizedBox(
@@ -709,6 +717,7 @@ class _EditableThumb extends StatelessWidget {
               ),
           ],
         ),
+      ),
       ),
     );
   }

@@ -23,3 +23,6 @@ String pluralRu(num value, String one, String few, String many) {
 /// «81 бонус», «3 бонуса», «100 бонусов».
 String bonusesLabel(num value) =>
     '${value.toStringAsFixed(0)} ${pluralRu(value, 'бонус', 'бонуса', 'бонусов')}';
+
+/// «1 место», «4 места», «6 мест».
+String seatsLabel(int n) => '$n ${pluralRu(n, 'место', 'места', 'мест')}';

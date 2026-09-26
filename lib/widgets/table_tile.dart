@@ -4,6 +4,7 @@ import '../models/table_model.dart';
 import 'clock_ticker.dart';
 import 'timer_display.dart';
 import '../utils/constants.dart';
+import '../utils/table_label.dart';
 
 /// Плитка стола на карте зала (используется и в админке, и у сотрудника)
 class TableTile extends StatelessWidget {
@@ -87,7 +88,7 @@ class TableTile extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
           ),
-          Text('${table.seats} мест', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+          Text(seatsLabel(table.seats), style: const TextStyle(color: Colors.white70, fontSize: 10)),
           if (occupied && guestTag != null && guestTag!.isNotEmpty) ...[
             const SizedBox(height: 2),
             Text(

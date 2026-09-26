@@ -8,6 +8,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
 import 'payment_screen.dart';
+import '../../utils/table_label.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
@@ -561,7 +562,7 @@ class _MoveTableScreen extends StatelessWidget {
                       ? full
                           ? 'Занят, чеков: ${t.activeSessionIds.length}/${t.maxOpenSessions} — уже максимум'
                           : 'Занят, но можно открыть ещё чек (${t.activeSessionIds.length}/${t.maxOpenSessions})'
-                      : 'Свободен · ${t.seats} мест'),
+                      : 'Свободен · ${seatsLabel(t.seats)}'),
                   onTap: full ? null : () => Navigator.pop(context, t),
                 ),
               );
