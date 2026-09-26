@@ -3666,6 +3666,7 @@ function screenSuperAdmin() {
           <button type="button" class="sec-tab active" data-sec="access">Доступ</button>
           <button type="button" class="sec-tab" data-sec="journal">Журнал</button>
           <button type="button" class="sec-tab" data-sec="platform">Платформа</button>
+          <button type="button" class="sec-tab" data-sec="activity">Активность</button>
         </div>
 
         <div class="sec-pane active" data-sec-pane="access">
@@ -3695,6 +3696,39 @@ function screenSuperAdmin() {
             <button type="button" class="btn btn-ghost" id="f-sec-platform-refresh" style="width:auto;flex:none">Обновить</button>
           </div>
           <div id="sec-platform"><div class="spinner"></div></div>
+        </div>
+
+        <div class="sec-pane" data-sec-pane="activity">
+          <h2>Регистрации по IP</h2>
+          <p class="small muted">Создание заведений, сетей и демо за 7 дней по IP-адресам. Подсвечены
+          адреса с 3 и более регистрациями за сутки, упором в лимит демо или отказом по блокировке.</p>
+          <div id="sec-signups"><div class="spinner"></div></div>
+
+          <h2>Блокировки</h2>
+          <p class="small muted">С этих IP-адресов и доменов почты нельзя создать заведение, сеть или
+          демо. Уже зарегистрированные владельцы по-прежнему входят и работают.</p>
+          <div class="card">
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <select id="f-sec-block-type" style="width:auto;margin:0">
+                <option value="ip">IP-адрес</option>
+                <option value="emailDomain">Домен почты</option>
+              </select>
+              <input id="f-sec-block-value" class="grow" placeholder="203.0.113.7 или spam-mail.ru" style="margin:0;min-width:160px">
+            </div>
+            <input id="f-sec-block-reason" placeholder="Причина (необязательно)" style="margin-top:8px">
+            <button type="button" class="btn btn-ghost" id="f-sec-block-add" style="width:auto">Заблокировать</button>
+            <div id="f-sec-block-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+          </div>
+          <div id="sec-blocklist"></div>
+
+          <h2>Кассовые устройства</h2>
+          <p class="small muted">Устройства, которые 30 дней и дольше не выходили на связь: планшет мог
+          потеряться или уйти вместе с доступом к заведению. «Отключить» закрывает устройству доступ к
+          данным сразу.</p>
+          <label class="row" style="width:auto;gap:6px;margin-bottom:8px">
+            <input type="checkbox" id="f-sec-devices-all" style="width:auto;margin:0"> Показать все устройства
+          </label>
+          <div id="sec-devices"><div class="spinner"></div></div>
         </div>
       </div>
     </div>
@@ -4985,6 +5019,166 @@ function watchSecurity() {
     if (!platformLoaded) { platformLoaded = true; loadSecurityPlatform(); }
   });
   if ($('f-sec-platform-refresh')) $('f-sec-platform-refresh').onclick = () => loadSecurityPlatform();
+  watchSecurityActivity();
+  let devicesLoaded = false;
+  document.querySelector('.sec-tab[data-sec="activity"]')?.addEventListener('click', () => {
+    if (!devicesLoaded) { devicesLoaded = true; loadSecurityDevices(); }
+  });
+  if ($('f-sec-devices-all')) $('f-sec-devices-all').onchange = () => loadSecurityDevices();
+}
+
+const SIGNUP_TYPE_LABELS = {
+  tenant: 'заведение', chain: 'сеть', demo: 'демо',
+  rateLimited: 'упор в лимит демо', blocked: 'отказ по блокировке',
+};
+
+/** Заблокировать IP / домен почты (saas-gateway handleBlockEntry). */
+async function addBlockEntry(type, value, reason) {
+  await callSaasGateway('blockEntry', { type, value, reason: reason || null });
+}
+
+/** «Активность»: регистрации по IP (signupEvents) и блок-лист (blocklist). */
+function watchSecurityActivity() {
+  const signupsBox = $('sec-signups');
+  const blockBox = $('sec-blocklist');
+  let blocked = [];
+  let events = [];
+
+  const drawSignups = () => {
+    const now = Date.now();
+    const byIp = new Map();
+    events.forEach((e) => {
+      const at = e.createdAt?.toMillis ? e.createdAt.toMillis() : now;
+      const g = byIp.get(e.ip) || { ip: e.ip, day: 0, week: 0, types: new Set(), who: new Set(), last: 0 };
+      g.week += 1;
+      if (now - at < 86400000) g.day += 1;
+      g.types.add(e.type);
+      if (e.email) g.who.add(e.email);
+      g.last = Math.max(g.last, at);
+      byIp.set(e.ip, g);
+    });
+    const blockedIps = new Set(blocked.filter((b) => b.type === 'ip').map((b) => b.value));
+    const rows = [...byIp.values()].map((g) => ({
+      ...g, flag: g.day >= 3 || g.types.has('rateLimited') || g.types.has('blocked'),
+    })).sort((a, b) => (b.flag - a.flag) || (b.day - a.day) || (b.week - a.week)).slice(0, 30);
+    signupsBox.innerHTML = rows.length ? rows.map((g) => `
+      <div class="card sec-row${g.flag ? ' sec-warn' : ''}">
+        <div class="grow" style="min-width:0">
+          <div style="font-weight:600">${esc(g.ip)}${blockedIps.has(g.ip) ? ' <span class="small" style="color:var(--danger)">заблокирован</span>' : ''}</div>
+          <div class="small muted">За сутки: ${g.day} · за неделю: ${g.week} · ${[...g.types].map((t) => esc(SIGNUP_TYPE_LABELS[t] || t)).join(', ')}</div>
+          ${g.who.size ? `<div class="small muted ellipsis">${[...g.who].slice(0, 3).map(esc).join(', ')}${g.who.size > 3 ? ` и ещё ${g.who.size - 3}` : ''}</div>` : ''}
+          <div class="small muted">Последняя: ${fmtMs(g.last)}</div>
+        </div>
+        ${blockedIps.has(g.ip) ? '' : `<button type="button" class="btn btn-ghost f-sec-block-ip" data-ip="${esc(g.ip)}" style="width:auto;flex:none">Заблокировать IP</button>`}
+      </div>`).join('') : '<p class="small muted">За неделю регистраций не было.</p>';
+    signupsBox.querySelectorAll('.f-sec-block-ip').forEach((el) => {
+      el.onclick = async () => {
+        const reason = prompt(`Заблокировать регистрации с ${el.dataset.ip}? Причина (необязательно):`, 'массовые регистрации');
+        if (reason === null) return;
+        try { await addBlockEntry('ip', el.dataset.ip, reason); toast('IP заблокирован'); } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+      };
+    });
+  };
+
+  const since = Timestamp.fromMillis(Date.now() - 7 * 86400000);
+  sub(onSnapshot(query(collection(state.db, 'signupEvents'), where('createdAt', '>=', since), orderBy('createdAt', 'desc'), limit(500)), (snap) => {
+    events = snap.docs.map((d) => d.data());
+    drawSignups();
+  }, () => { signupsBox.innerHTML = '<p class="small muted">Недоступно.</p>'; }));
+
+  sub(onSnapshot(collection(state.db, 'blocklist'), (snap) => {
+    blocked = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    blockBox.innerHTML = blocked.length ? blocked.map((b) => `
+      <div class="card sec-row">
+        <div class="grow" style="min-width:0">
+          <div style="font-weight:600">${b.type === 'ip' ? 'IP' : 'Почта @'}${esc(b.type === 'ip' ? ` ${b.value}` : b.value)}</div>
+          <div class="small muted">${fmtDateTime(b.createdAt)} · ${esc(b.createdByEmail || '—')}${b.reason ? ` · ${esc(b.reason)}` : ''}</div>
+        </div>
+        <button type="button" class="btn-link f-sec-unblock" data-id="${esc(b.id)}" style="width:auto;flex:none">Снять</button>
+      </div>`).join('') : '<p class="small muted">Блокировок нет.</p>';
+    blockBox.querySelectorAll('.f-sec-unblock').forEach((el) => {
+      el.onclick = async () => {
+        if (!confirm('Снять блокировку?')) return;
+        try { await callSaasGateway('unblockEntry', { id: el.dataset.id }); toast('Блокировка снята'); } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+      };
+    });
+    drawSignups();
+  }, () => { blockBox.innerHTML = ''; }));
+
+  if ($('f-sec-block-add')) {
+    $('f-sec-block-add').onclick = async () => {
+      const errEl = $('f-sec-block-error');
+      errEl.textContent = '';
+      const value = $('f-sec-block-value').value.trim();
+      if (!value) { errEl.textContent = 'Укажите IP-адрес или домен почты'; return; }
+      $('f-sec-block-add').disabled = true;
+      try {
+        await addBlockEntry($('f-sec-block-type').value, value, $('f-sec-block-reason').value.trim());
+        $('f-sec-block-value').value = '';
+        $('f-sec-block-reason').value = '';
+        toast('Заблокировано');
+      } catch (e) {
+        errEl.textContent = e?.message || 'Не удалось заблокировать';
+      } finally {
+        $('f-sec-block-add').disabled = false;
+      }
+    };
+  }
+}
+
+/** Кассовые устройства с последней активностью (saas-gateway
+ *  handleSecurityDevices). По умолчанию — только те, что 30+ дней не на
+ *  связи, и отключённые. */
+async function loadSecurityDevices() {
+  const box = $('sec-devices');
+  if (!box) return;
+  box.innerHTML = '<div class="spinner"></div>';
+  let devices;
+  try {
+    devices = (await callSaasGateway('securityDevices', {})).data.devices || [];
+  } catch (e) {
+    box.innerHTML = `<p class="small muted">Не удалось загрузить: ${esc(e?.message || String(e))}</p>`;
+    return;
+  }
+  const STALE_MS = 30 * 86400000;
+  const now = Date.now();
+  const showAll = $('f-sec-devices-all')?.checked;
+  const withFlags = devices.filter((d) => !d.demo).map((d) => ({
+    ...d,
+    disabled: d.status === 'disabled' || d.authDisabled,
+    stale: !d.lastActiveAt || now - d.lastActiveAt >= STALE_MS,
+  }));
+  const shown = withFlags
+    .filter((d) => showAll || d.disabled || d.stale)
+    .sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
+  const staleCount = withFlags.filter((d) => d.stale && !d.disabled).length;
+  box.innerHTML = `<p class="small muted">Всего устройств: ${withFlags.length} · давно не на связи: ${staleCount}.</p>`
+    + (shown.length ? shown.map((d) => `
+      <div class="card sec-row${d.disabled ? '' : d.stale ? ' sec-warn' : ''}">
+        <div class="grow" style="min-width:0">
+          <div style="font-weight:600" class="ellipsis">${esc(d.tenantName || d.tenantId)}${d.tenantSlug ? ` <span class="muted small">(${esc(d.tenantSlug)})</span>` : ''}</div>
+          <div class="small muted">${esc(d.deviceName || 'Касса')} · ${esc(d.platform || '—')} · подключено ${fmtMs(d.createdAt)}</div>
+          <div class="small ${d.stale && !d.disabled ? '' : 'muted'}">Последняя активность: ${d.lastActiveAt ? fmtMs(d.lastActiveAt) : 'нет данных'}${d.disabled ? ' · <span style="color:var(--danger)">отключено</span>' : ''}</div>
+        </div>
+        <button type="button" class="btn btn-ghost f-sec-device" data-tenant="${esc(d.tenantId)}" data-uid="${esc(d.uid)}" data-enable="${d.disabled ? '1' : '0'}" style="width:auto;flex:none">
+          ${d.disabled ? 'Включить' : 'Отключить'}</button>
+      </div>`).join('') : '<p class="small muted">Все устройства на связи.</p>');
+  box.querySelectorAll('.f-sec-device').forEach((el) => {
+    el.onclick = async () => {
+      const enable = el.dataset.enable === '1';
+      let reason = null;
+      if (!enable) {
+        reason = prompt('Отключить устройство? Оно сразу потеряет доступ к данным заведения. Причина (необязательно):', 'давно не на связи');
+        if (reason === null) return;
+      } else if (!confirm('Включить устройство обратно?')) return;
+      el.disabled = true;
+      try {
+        await callSaasGateway(enable ? 'enableDevice' : 'disableDevice', { tenantId: el.dataset.tenant, uid: el.dataset.uid, reason });
+        toast(enable ? 'Устройство включено' : 'Устройство отключено');
+      } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+      loadSecurityDevices();
+    };
+  });
 }
 
 function fmtMs(ms) {
@@ -5193,6 +5387,12 @@ const SECURITY_EVENT_LABELS = {
   backupCreated: 'Сделана резервная копия',
   backupDownloaded: 'Скачана резервная копия базы',
   domainReprovisioned: 'Сертификат поддомена выпущен заново',
+  ipBlocked: 'Заблокирован IP',
+  ipUnblocked: 'Снята блокировка IP',
+  emailDomainBlocked: 'Заблокирован домен почты',
+  emailDomainUnblocked: 'Снята блокировка домена почты',
+  deviceDisabled: 'Отключено кассовое устройство',
+  deviceEnabled: 'Включено кассовое устройство',
 };
 function securityEventDetails(e) {
   const m = e.metadata || {};
@@ -5227,6 +5427,15 @@ function securityEventDetails(e) {
       return m.file || '';
     case 'domainReprovisioned':
       return m.host || '';
+    case 'ipBlocked':
+    case 'emailDomainBlocked':
+      return `${m.value || ''}${m.reason ? ` · ${m.reason}` : ''}`;
+    case 'ipUnblocked':
+    case 'emailDomainUnblocked':
+      return m.value || '';
+    case 'deviceDisabled':
+    case 'deviceEnabled':
+      return `${tenant}${m.deviceName ? ` · ${m.deviceName}` : ''}${m.reason ? ` · ${m.reason}` : ''}`;
     default:
       return tenant;
   }

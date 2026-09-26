@@ -561,6 +561,7 @@ async function handleCreateTenant(req, res) {
   if (!decoded.email_verified) {
     throw new HttpError(412, "Подтвердите email, прежде чем создавать заведение");
   }
+  await requireNotBlocked(req, decoded.email, "tenant");
 
   const body = await parseJsonBody(req);
   const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
@@ -680,6 +681,7 @@ async function handleCreateTenant(req, res) {
     console.error(`provisionTenantDomain(${slug}) не удался:`, e.message || e);
   });
 
+  recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
   sendJson(res, 200, { tenantId, slug, chainId });
 }
 
@@ -699,6 +701,7 @@ async function handleCreateChain(req, res) {
   if (!decoded.email_verified) {
     throw new HttpError(412, "Подтвердите email, прежде чем создавать сеть заведений");
   }
+  await requireNotBlocked(req, decoded.email, "chain");
 
   const body = await parseJsonBody(req);
   const { name, slug: rawSlug, planId } = body;
@@ -774,6 +777,7 @@ async function handleCreateChain(req, res) {
     console.error(`provisionTenantDomain(${slug}) не удался (сеть):`, e.message || e);
   });
 
+  recordSignupEvent(req, "chain", { uid, email: decoded.email, chainId, slug });
   sendJson(res, 200, { chainId, slug });
 }
 
@@ -2409,7 +2413,13 @@ function seedDemoData(tenantRef, batch, nowMs) {
  * scheduleDemoCleanup.
  */
 async function handleCreateDemoTenant(req, res) {
-  checkDemoRateLimit(clientIp(req));
+  try {
+    checkDemoRateLimit(clientIp(req));
+  } catch (e) {
+    recordSignupEvent(req, "rateLimited", {});
+    throw e;
+  }
+  await requireNotBlocked(req, null, "demo");
 
   const firestore = db();
   const slug = `demo-${randomDemoSuffix()}`;
@@ -2466,6 +2476,7 @@ async function handleCreateDemoTenant(req, res) {
   seedDemoData(tenantRef, batch, Date.now());
   await batch.commit();
 
+  recordSignupEvent(req, "demo", { tenantId, slug });
   sendJson(res, 200, { tenantId, slug, inviteCode });
 }
 
@@ -3276,6 +3287,204 @@ async function handleReprovisionDomain(req, res) {
   sendJson(res, 200, { ok: true, check });
 }
 
+// ------------------------------------- security: подозрительная активность
+
+/**
+ * Регистрации и попытки по IP (signupEvents): создание заведения, сети,
+ * демо, упор в лимит демо, отказ по блок-листу. По ним раздел
+ * «Безопасность → Активность» показывает всплески с одного адреса. Читает
+ * только супер-админ; IP хранится отдельно от документа заведения, чтобы
+ * его не видели сотрудники заведения. Упоры в лимит и отказы пишутся не
+ * чаще раза в час на IP — иначе бот сам бы заполнял коллекцию.
+ */
+const signupEventThrottle = new Map(); // `${type}:${ip}` -> ms
+function recordSignupEvent(req, type, { uid, email, tenantId, chainId, slug } = {}) {
+  const ip = clientIp(req);
+  if (type === "rateLimited" || type === "blocked") {
+    const key = `${type}:${ip}`;
+    if (Date.now() - (signupEventThrottle.get(key) || 0) < 60 * 60 * 1000) return;
+    signupEventThrottle.set(key, Date.now());
+  }
+  let col;
+  try {
+    col = db().collection("signupEvents");
+  } catch (e) {
+    console.error("signupEvents:", e.message || e);
+    return;
+  }
+  col.add({
+    type, ip,
+    uid: uid || null,
+    email: email || null,
+    emailDomain: email && email.includes("@") ? email.split("@").pop().toLowerCase() : null,
+    tenantId: tenantId || null,
+    chainId: chainId || null,
+    slug: slug || null,
+    userAgent: String(req.headers["user-agent"] || "").slice(0, 300),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch((e) => console.error("signupEvents:", e.message || e));
+}
+
+/**
+ * Блок-лист (blocklist/{ip_… | email_…}): IP-адреса и домены почты, с
+ * которых нельзя создавать заведения, сети и демо. Кэш на минуту — чтобы
+ * не читать коллекцию на каждый запрос.
+ */
+let blocklistCache = { at: 0, entries: [] };
+async function loadBlocklist() {
+  if (Date.now() - blocklistCache.at < 60 * 1000) return blocklistCache.entries;
+  const snap = await db().collection("blocklist").get();
+  blocklistCache = { at: Date.now(), entries: snap.docs.map((d) => d.data()) };
+  return blocklistCache.entries;
+}
+async function requireNotBlocked(req, email, kind) {
+  let entries;
+  try {
+    entries = await loadBlocklist();
+  } catch (e) {
+    // База недоступна — основная операция всё равно упадёт на ней же;
+    // здесь не подменяем её ошибку своей.
+    console.error("blocklist:", e.message || e);
+    return;
+  }
+  if (!entries.length) return;
+  const ip = clientIp(req);
+  const domain = email && email.includes("@") ? email.split("@").pop().toLowerCase() : null;
+  const hit = entries.find((e) => (e.type === "ip" && e.value === ip) || (e.type === "emailDomain" && domain && e.value === domain));
+  if (hit) {
+    recordSignupEvent(req, "blocked", { email, slug: kind });
+    throw new HttpError(403, "Регистрация с этого адреса ограничена. Если это ошибка — напишите в поддержку.");
+  }
+}
+
+function blockEntryId(type, value) {
+  return `${type === "ip" ? "ip" : "email"}_${value.replace(/[^a-zA-Z0-9.:-]/g, "_")}`;
+}
+
+async function handleBlockEntry(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const type = body.type === "emailDomain" ? "emailDomain" : body.type === "ip" ? "ip" : null;
+  if (!type) throw new HttpError(400, "Тип блокировки: IP или домен почты");
+  const value = typeof body.value === "string" ? body.value.trim().toLowerCase() : "";
+  if (type === "ip" && !/^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]{2,39}$/.test(value)) throw new HttpError(400, "Некорректный IP-адрес");
+  if (type === "emailDomain" && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value)) throw new HttpError(400, "Некорректный домен почты (например, spam-mail.ru)");
+  if (type === "emailDomain" && ["gmail.com", "yandex.ru", "mail.ru", "ya.ru", "icloud.com", "outlook.com", "bk.ru", "inbox.ru", "list.ru", "rambler.ru"].includes(value)) {
+    throw new HttpError(400, "Это массовый почтовый сервис — блокировка отрежет обычных клиентов. Блокируйте конкретный IP.");
+  }
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 200) : "";
+  await db().collection("blocklist").doc(blockEntryId(type, value)).set({
+    type, value, reason: reason || null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdBy: decoded.uid, createdByEmail: decoded.email || null,
+  });
+  blocklistCache.at = 0;
+  await writeSecurityEvent(req, decoded, type === "ip" ? "ipBlocked" : "emailDomainBlocked", { metadata: { value, reason: reason || null } });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleUnblockEntry(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { id } = await parseJsonBody(req);
+  if (typeof id !== "string" || !/^(ip|email)_[a-zA-Z0-9._:-]+$/.test(id)) throw new HttpError(400, "Не указана блокировка");
+  const ref = db().collection("blocklist").doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Блокировка не найдена");
+  await ref.delete();
+  blocklistCache.at = 0;
+  const e = snap.data();
+  await writeSecurityEvent(req, decoded, e.type === "ip" ? "ipUnblocked" : "emailDomainUnblocked", { metadata: { value: e.value } });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Кассовые устройства всех заведений с последней активностью. Приложение
+ * само lastSeenAt не обновляет (пишется один раз при подключении), зато
+ * каждое устройство — анонимный аккаунт Firebase Auth, и Firebase сам
+ * отмечает lastRefreshTime при каждом обновлении токена (примерно раз в
+ * час, пока касса работает). Её и берём — без изменений в приложении.
+ */
+async function handleSecurityDevices(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const firestore = db();
+  const [devicesSnap, tenantsSnap] = await Promise.all([
+    firestore.collectionGroup("devices").get(),
+    firestore.collection("tenants").get(),
+  ]);
+  const tenants = new Map(tenantsSnap.docs.map((d) => [d.id, d.data()]));
+  const devices = devicesSnap.docs
+    .filter((d) => d.ref.parent.parent && d.ref.parent.parent.parent.id === "tenants")
+    .map((d) => ({ uid: d.id, tenantId: d.ref.parent.parent.id, data: d.data() }));
+  const authInfo = new Map();
+  for (let i = 0; i < devices.length; i += 100) {
+    const chunk = devices.slice(i, i + 100).map((x) => ({ uid: x.uid }));
+    try {
+      const r = await getFirebaseApp().auth().getUsers(chunk);
+      r.users.forEach((u) => authInfo.set(u.uid, u));
+    } catch (e) {
+      console.error("getUsers(devices):", e.message || e);
+    }
+  }
+  const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : null);
+  const parse = (v) => (v ? Date.parse(v) || null : null);
+  const list = devices.map(({ uid, tenantId, data }) => {
+    const u = authInfo.get(uid);
+    const t = tenants.get(tenantId) || {};
+    const lastActiveAt = Math.max(
+      ms(data.lastSeenAt) || 0,
+      parse(u && u.metadata && u.metadata.lastRefreshTime) || 0,
+      parse(u && u.metadata && u.metadata.lastSignInTime) || 0,
+    ) || null;
+    return {
+      uid, tenantId,
+      tenantName: t.name || null, tenantSlug: t.slug || null, tenantStatus: t.status || null, demo: t.demo === true,
+      deviceName: data.deviceName || null, platform: data.platform || null, deviceType: data.deviceType || null,
+      status: data.status || "active",
+      authDisabled: !!(u && u.disabled),
+      authMissing: !u,
+      createdAt: ms(data.createdAt),
+      lastActiveAt,
+    };
+  });
+  sendJson(res, 200, { devices: list });
+}
+
+/** Отключить/включить кассовое устройство: членство в заведении (и сети),
+ *  статус устройства и сам анонимный аккаунт (с отзывом сеансов) — так
+ *  потерянный планшет не сможет даже прочитать данные заведения. */
+async function setDeviceEnabled(req, res, enabled) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { tenantId, uid, reason } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId || typeof uid !== "string" || !uid) throw new HttpError(400, "Не указано устройство");
+  const firestore = db();
+  const deviceRef = firestore.collection("tenants").doc(tenantId).collection("devices").doc(uid);
+  const deviceSnap = await deviceRef.get();
+  if (!deviceSnap.exists) throw new HttpError(404, "Устройство не найдено");
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  const status = enabled ? "active" : "disabled";
+  await deviceRef.set({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`);
+  if ((await memberRef.get()).exists) await memberRef.set({ status }, { merge: true });
+  const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
+  if (chainId) await syncChainMembership(chainId, uid, "employee", status);
+  await getFirebaseApp().auth().updateUser(uid, { disabled: !enabled });
+  if (!enabled) await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  await writeSecurityEvent(req, decoded, enabled ? "deviceEnabled" : "deviceDisabled", {
+    tenantId,
+    targetUid: uid,
+    metadata: {
+      ...(await tenantLabel(tenantId, tenantDoc.data())),
+      deviceName: deviceSnap.data().deviceName || null,
+      reason: typeof reason === "string" ? reason.slice(0, 200) : null,
+    },
+  });
+  sendJson(res, 200, { ok: true });
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -3307,6 +3516,11 @@ const ROUTES = {
   "/runBackup": handleRunBackup,
   "/downloadBackup": handleDownloadBackup,
   "/reprovisionDomain": handleReprovisionDomain,
+  "/blockEntry": handleBlockEntry,
+  "/unblockEntry": handleUnblockEntry,
+  "/securityDevices": handleSecurityDevices,
+  "/disableDevice": (req, res) => setDeviceEnabled(req, res, false),
+  "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,

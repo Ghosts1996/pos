@@ -770,6 +770,18 @@ describe("adminLogins / securityLog: только чтение супер-адм
     await assertFails(setDoc(doc(ctxFor("root"), "platformStatus/backup"), { status: "ok" }));
   });
 
+  it("регистрации по IP и блок-лист видит только супер-админ, пишет только сервер", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(db.doc("signupEvents/s1"), { type: "tenant", ip: "1.2.3.4" });
+      await setDoc(db.doc("blocklist/ip_1.2.3.4"), { type: "ip", value: "1.2.3.4" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "signupEvents/s1")));
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "blocklist/ip_1.2.3.4")));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "signupEvents/s1")));
+    await assertFails(deleteDoc(doc(ctxFor("root"), "blocklist/ip_1.2.3.4")));
+  });
+
   it("даже супер-админ не может подделать или стереть запись", async () => {
     await assertFails(setDoc(doc(ctxFor("root"), "securityLog/e2"), { action: "fake" }));
     await assertFails(deleteDoc(doc(ctxFor("root"), "securityLog/e1")));
