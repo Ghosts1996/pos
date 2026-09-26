@@ -2162,7 +2162,7 @@ async function handleDownloadBuild(req, res) {
   // гостевое приложение (независимые job'ы от одного нажатия «Собрать
   // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
   // друга без переименования вручную. Windows-кассу — от Android-кассы.
-  const fileNamePrefix = job.type === "guest" ? "colibri-lounge" : isWindows ? "hookah-pos-windows" : "hookah-pos";
+  const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "hookah-pos-windows" : "hookah-pos";
   const fileExt = isWindows ? "zip" : "apk";
   const contentType = isWindows ? "application/zip" : "application/vnd.android.package-archive";
 
