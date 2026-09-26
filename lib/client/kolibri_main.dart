@@ -9,6 +9,7 @@ import '../firebase_options.dart';
 import '../models/client_models.dart';
 import '../models/tenant_models.dart';
 import '../services/ai/ai_settings.dart';
+import '../services/ai/tooken_client.dart';
 import '../services/app_scope.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
@@ -47,6 +48,12 @@ import 'theme/kolibri_theme.dart';
 /// поведение уже работающих одиночных сборок не изменилось ни на йоту.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Гость в SaaS-сборке не видит ключей ИИ (meta/aiSecrets читает только
+  // персонал) — ИИ-консьерж ходит к модели через saas-gateway, который
+  // подставляет ключ заведения и ограничивает число запросов гостя.
+  if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
+    TookenClient.instance.useGatewayProxy(kSaasGatewayUrl);
+  }
 
   if (kSaasMode && kSaasPresetChainSlug.isNotEmpty) {
     if (!DefaultFirebaseOptions.isConfigured) {
