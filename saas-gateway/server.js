@@ -3330,26 +3330,69 @@ const SECURITY_SECRETS = [
   ["GITHUB_PAT", "GitHub: токен для сборки APK"],
   ["BUILD_CALLBACK_SECRET", "Секрет ответа сборки APK"],
 ];
-// Уникальная строка из актуального saas/firestore.rules — по ней видно,
-// задеплоены ли правила с защитой завершённых сеансов супер-админов.
-const RULES_FEATURE_MARKER = "adminSessionFresh";
+// Строки из актуального saas/firestore.rules — по ним видно, опубликованы
+// ли последние правила (защита сеансов супер-админов, склад кассы, ключи
+// ИИ отдельно от гостей, реквизиты платформы).
+const RULES_FEATURE_MARKERS = ["adminSessionFresh", "inventoryItems", "aiSecrets", "platformConfig"];
+
+// Реквизиты владельца платформы для оферты, политики конфиденциальности и
+// подвала сайта (их требует и модерация ЮKassa). Хранятся в
+// platformConfig/legal — публичное чтение, запись только здесь.
+const LEGAL_FIELDS = {
+  fullName: "ФИО ИП / название организации", ogrnip: "ОГРНИП / ОГРН", inn: "ИНН", address: "Адрес",
+  bankAccount: "Расчётный счёт", bankName: "Банк", bik: "БИК", corrAccount: "Корр. счёт",
+  email: "E-mail для претензий и обращений", phone: "Телефон", rknNumber: "Номер в реестре операторов ПДн",
+};
+const LEGAL_REQUIRED = ["fullName", "ogrnip", "inn", "address", "email"];
+
+function legalMissing(legal) {
+  return LEGAL_REQUIRED.filter((k) => !(legal && String(legal[k] || "").trim()));
+}
+
+async function handleSavePlatformLegal(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const body = await parseJsonBody(req);
+  const out = {};
+  for (const k of Object.keys(LEGAL_FIELDS)) {
+    const v = body[k] == null ? "" : String(body[k]).trim();
+    if (v.length > 300) throw new HttpError(400, `Слишком длинное поле «${LEGAL_FIELDS[k]}»`);
+    out[k] = v;
+  }
+  if (out.inn && !/^(\d{10}|\d{12})$/.test(out.inn)) throw new HttpError(400, "ИНН — 10 или 12 цифр");
+  if (out.ogrnip && !/^(\d{13}|\d{15})$/.test(out.ogrnip)) throw new HttpError(400, "ОГРН — 13 цифр, ОГРНИП — 15 цифр");
+  if (out.bik && !/^\d{9}$/.test(out.bik)) throw new HttpError(400, "БИК — 9 цифр");
+  if (out.bankAccount && !/^\d{20}$/.test(out.bankAccount)) throw new HttpError(400, "Расчётный счёт — 20 цифр");
+  if (out.corrAccount && !/^\d{20}$/.test(out.corrAccount)) throw new HttpError(400, "Корр. счёт — 20 цифр");
+  if (out.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(out.email)) throw new HttpError(400, "Проверьте e-mail");
+  await db().collection("platformConfig").doc("legal").set({
+    ...out, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: decoded.uid,
+  });
+  await writeSecurityEvent(req, decoded, "platformLegalUpdated", { metadata: { missing: legalMissing(out) } });
+  sendJson(res, 200, { ok: true, missing: legalMissing(out) });
+}
 
 async function handleSecurityStatus(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
   const firestore = db();
-  const [billing, certs, backup, lastPayment, admins] = await Promise.all([
+  const [billing, certs, backup, lastPayment, admins, legalDoc] = await Promise.all([
     firestore.collection("platformStatus").doc("billingWebhook").get(),
     firestore.collection("platformStatus").doc("certificates").get(),
     firestore.collection("platformStatus").doc("backup").get(),
     firestore.collection("billingEvents").orderBy("receivedAt", "desc").limit(1).get().catch(() => null),
     firestore.collection("superAdmins").get(),
+    firestore.collection("platformConfig").doc("legal").get(),
   ]);
   let rules = { status: "unknown" };
   try {
     const ruleset = await getFirebaseApp().securityRules().getFirestoreRuleset();
     const source = (ruleset.source || []).map((f) => f.content).join("\n");
-    rules = { status: source.includes(RULES_FEATURE_MARKER) ? "ok" : "outdated", updatedAt: ruleset.createTime || null };
+    rules = {
+      status: RULES_FEATURE_MARKERS.every((m) => source.includes(m)) ? "ok" : "outdated",
+      updatedAt: ruleset.createTime || null,
+    };
   } catch (e) {
     rules = { status: "unknown", error: String(e.message || e).slice(0, 200) };
   }
@@ -3367,6 +3410,7 @@ async function handleSecurityStatus(req, res) {
     rules,
     realIpHeader: typeof req.headers["x-real-ip"] === "string" && !!req.headers["x-real-ip"].trim(),
     superAdmins: admins.size,
+    legal: { missing: legalMissing(legalDoc.exists ? legalDoc.data() : null), fields: LEGAL_FIELDS },
     gateway: { uptimeSec: Math.round(process.uptime()), node: process.version },
   });
 }
@@ -4087,6 +4131,7 @@ const ROUTES = {
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
   "/uploadMenuImage": handleUploadMenuImage,
+  "/savePlatformLegal": handleSavePlatformLegal,
   "/recalculateUsage": handleRecalculateUsage,
   "/overrideSubscription": handleOverrideSubscription,
   "/savePlan": handleSavePlan,

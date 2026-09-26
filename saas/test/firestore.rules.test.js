@@ -1152,3 +1152,15 @@ describe("Каждая коллекция, которой пользуется �
     await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/inventoryItems/tobacco"), { quantity: 0 }));
   });
 });
+
+describe("Реквизиты платформы (platformConfig)", () => {
+  it("читает кто угодно (оферта публична), пишет только сервер — даже не супер-админ", async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "platformConfig/legal"), { inn: "771234567890" });
+    });
+    await assertSucceeds(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "platformConfig/legal")));
+    await assertFails(setDoc(doc(ctxFor("root"), "platformConfig/legal"), { inn: "000" }));
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "platformConfig/legal"), { inn: "000" }));
+  });
+});

@@ -295,6 +295,14 @@ service cloud.firestore {
     //      saas-gateway/server.js и saas_device_join_service.dart) — роль
     //      'owner' сюда, как и в tenantMembers, может положить только
     //      admin SDK при создании сети/точки. ----
+    // ---- Реквизиты владельца платформы (оферта, политика ПДн, подвал
+    //      сайта) — публичны; меняет только saas-gateway (savePlatformLegal,
+    //      с повторным вводом пароля и записью в журнал безопасности). ----
+    match /platformConfig/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /chainMembers/{id} {
       allow read: if isSuperAdmin() ||
         (signedIn() &&

@@ -136,7 +136,7 @@ async function main() {
     const r = await request("POST", "/createDemoTenant", { body: {}, headers: { "X-Forwarded-For": "203.0.113.77, 127.0.0.1" } });
     check("POST /createDemoTenant: поддельный X-Forwarded-For не обходит лимит -> 429", r.status === 429);
   }
-  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/uploadMenuImage?tenantId=x&folder=items&entityId=y"]) {
+  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal"]) {
     const r = await request("POST", path, { body: {} });
     check(`POST ${path} без токена -> 401`, r.status === 401);
   }
