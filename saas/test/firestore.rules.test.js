@@ -552,10 +552,18 @@ describe("Тарифы (plans): управляет только супер-ад�
     await assertSucceeds(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "plans/start")));
   });
 
-  it("супер-админ может создать и изменить тариф — панель платформы работает через прямую запись, без Cloud Function", async () => {
+  it("даже супер-админ не меняет тарифы напрямую — только через saas-gateway (журнал изменений цен)", async () => {
     const db = ctxFor("root");
-    await assertSucceeds(setDoc(doc(db, "plans/custom-vip"), { name: "VIP", priceRub: 19990 }));
-    await assertSucceeds(setDoc(doc(db, "plans/custom-vip"), { priceRub: 24990 }, { merge: true }));
+    await assertFails(setDoc(doc(db, "plans/custom-vip"), { name: "VIP", priceRub: 19990 }));
+    await assertFails(setDoc(doc(db, "plans/start"), { priceRub: 1 }, { merge: true }));
+  });
+
+  it("даже супер-админ не правит подписку напрямую — только через saas-gateway", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("subscriptions/tenantA"), { tenantId: "tenantA", status: "past_due" });
+    });
+    await assertFails(setDoc(doc(ctxFor("root"), "subscriptions/tenantA"), { status: "active" }, { merge: true }));
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "subscriptions/tenantA")));
   });
 
   it("владелец заведения не может менять тарифы платформы", async () => {

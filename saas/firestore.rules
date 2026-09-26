@@ -758,7 +758,10 @@ service cloud.firestore {
       // регистрации — как у любого нормального SaaS. Ничего секретного в
       // названии/цене/лимитах тарифа нет.
       allow read: if true;
-      allow write: if isSuperAdmin();
+      // Цены и лимиты меняет только saas-gateway (handleSavePlan/
+      // handleDeletePlan) — каждое изменение цены пишется в журнал
+      // безопасности с «было → стало».
+      allow write: if false;
     }
 
     // ---- Объявления платформы владельцам (см. панель платформы,
@@ -793,7 +796,10 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
         (resource.data.get('tenantId', null) != null && isMember(resource.data.tenantId)) ||
         (resource.data.get('chainId', null) != null && isChainMember(resource.data.chainId));
-      allow write: if isSuperAdmin();
+      // Ручная правка подписки (по сути выдача доступа без оплаты) — только
+      // через saas-gateway (handleOverrideSubscription), с записью в журнал
+      // безопасности; остальное (оплаты, триал, продление) и так пишет он.
+      allow write: if false;
     }
 
     // ---- Идемпотентность webhook'ов биллинга (handleBillingWebhook) — а
