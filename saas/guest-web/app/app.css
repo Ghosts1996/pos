@@ -64,7 +64,7 @@ button, .btn {
   gap: 8px;
   text-decoration: none;
 }
-.btn-primary { background: var(--primary); color: #04140E; }
+.btn-primary { background: var(--primary); color: var(--on-primary, #04140E); }
 .btn-ghost {
   background: var(--surface-2);
   color: var(--text);
@@ -122,6 +122,10 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 .tier {
   background: linear-gradient(135deg, rgba(217,180,91,.16), var(--surface));
   border: 1px solid rgba(217,180,91,.45);
+  /* Оттенок карточки — от фирменного «золота» заведения (palette.js).
+     Старые браузеры без color-mix остаются на строках выше. */
+  background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 16%, transparent), var(--surface));
+  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
 }
 .tier .bonus { font-size: 30px; font-weight: 700; color: var(--gold); }
 .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 10px 0 6px; }
@@ -133,7 +137,7 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
   border-radius: 999px; padding: 8px 14px; margin: 0 8px 8px 0;
   font-size: 14px; cursor: pointer;
 }
-.chip.on { background: var(--primary); color: #04140E; border-color: var(--primary); }
+.chip.on { background: var(--primary); color: var(--on-primary, #04140E); border-color: var(--primary); }
 
 .item { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .item:last-child { border-bottom: none; }
@@ -143,11 +147,15 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: flex; background: rgba(14,21,18,.96);
+  display: flex; background: var(--tabbar-bg, rgba(14,21,18,.96));
   border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
   backdrop-filter: blur(8px);
 }
+/* display:flex выше перебивает атрибут hidden — без этого меню было видно
+   уже на экранах выбора точки сети и «Заведение не найдено», где вкладки
+   ещё ничего не делают (роутер включается только после входа). */
+.tabbar[hidden] { display: none; }
 .tabbar a {
   flex: 1; text-align: center; padding: 10px 2px 8px;
   color: var(--muted); text-decoration: none; font-size: 11px;
@@ -239,5 +247,5 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
   padding: 0;
 }
 .daychip small { font-size: 11px; font-weight: 400; color: var(--muted); margin-bottom: 2px; }
-.daychip.on { background: var(--primary); color: #04140E; border-color: var(--primary); }
-.daychip.on small { color: rgba(4,20,14,.7); }
+.daychip.on { background: var(--primary); color: var(--on-primary, #04140E); border-color: var(--primary); }
+.daychip.on small { color: inherit; opacity: .7; }
