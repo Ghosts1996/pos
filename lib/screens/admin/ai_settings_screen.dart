@@ -6,12 +6,14 @@ import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
 import '../../theme/app_colors.dart';
 
-/// Админский экран подключения ИИ через Tooken Club (tooken.club):
-/// ключ, модели, выключатели агентов, проверка связи и расход токенов.
+/// Админский экран подключения ИИ: провайдер (Tooken Club, DarkAPI,
+/// Google Gemini или свой шлюз), ключи, модели, резервный провайдер,
+/// выключатели агентов, проверка связи и расход токенов.
 ///
-/// Ключ хранится в Firestore (meta/aiSettings), поэтому вводится один раз
-/// на любом устройстве и действует на всех планшетах и в клиентском
-/// приложении «Colibri Lounge».
+/// Ключи хранятся в Firestore (в SaaS — в meta/aiSecrets, доступном только
+/// персоналу), поэтому вводятся один раз на любом устройстве и действуют
+/// на всех планшетах; гостевое приложение ходит к ИИ через сервер
+/// платформы и ключей не видит.
 class AiSettingsScreen extends StatefulWidget {
   const AiSettingsScreen({super.key});
 
@@ -23,6 +25,10 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   final _store = AiSettingsStore.instance;
 
   late AiSettings _settings;
+
+  /// Провайдер, чьё подключение сейчас открыто в полях ниже (не обязательно
+  /// основной — можно заранее ввести ключ резервного).
+  String _editing = AiVendors.tooken.id;
   final _apiKey = TextEditingController();
   final _baseUrl = TextEditingController();
   final _model = TextEditingController();
@@ -32,7 +38,10 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   bool _saving = false;
   bool _obscureKey = true;
   String? _pingResult;
+  bool _pingOk = false;
   List<String> _models = const [];
+
+  AiVendor get _vendor => AiVendors.byId(_editing);
 
   @override
   void initState() {
@@ -41,46 +50,93 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final doc = await AppScope.doc('meta/aiSettings').get();
-    _settings = AiSettings.fromMap(doc.data());
-    _apiKey.text = _settings.apiKey;
-    _baseUrl.text = _settings.baseUrl;
-    _model.text = _settings.model;
-    _analyticsModel.text = _settings.analyticsModel;
+    _settings = await _store.load();
+    _editing = _settings.vendor;
+    _fillFields();
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _save() async {
-    setState(() => _saving = true);
-    _settings = _settings.copyWith(
-      apiKey: _apiKey.text.trim(),
-      baseUrl: _baseUrl.text.trim(),
-      model: _model.text.trim(),
-      analyticsModel: _analyticsModel.text.trim(),
+  /// Поля — из сохранённого подключения открытого провайдера.
+  void _fillFields() {
+    final c = _settings.configFor(_editing);
+    _apiKey.text = c.apiKey;
+    _baseUrl.text = c.baseUrl.isNotEmpty ? c.baseUrl : _vendor.baseUrl;
+    _model.text = c.model.isNotEmpty ? c.model : _vendor.defaultModel;
+    _analyticsModel.text = c.analyticsModel.isNotEmpty ? c.analyticsModel : _vendor.defaultAnalyticsModel;
+    _models = const [];
+    _pingResult = null;
+  }
+
+  /// Поля открытого провайдера — обратно в настройки (перед сохранением,
+  /// проверкой связи и переключением на другого провайдера).
+  void _commitFields() {
+    final c = _settings.configFor(_editing);
+    final base = _baseUrl.text.trim();
+    _settings = _settings.withVendorConfig(
+      _editing,
+      c.copyWith(
+        apiKey: _apiKey.text.trim(),
+        // Адрес по умолчанию не записываем: если провайдер его сменит,
+        // обновление приложения подхватит новый сам.
+        baseUrl: base == _vendor.baseUrl ? '' : base,
+        model: _model.text.trim(),
+        analyticsModel: _analyticsModel.text.trim(),
+      ),
     );
-    await _store.save(_settings);
-    if (mounted) {
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Настройки ИИ сохранены')));
+  }
+
+  void _switchEditing(String vendorId) {
+    _commitFields();
+    setState(() {
+      _editing = vendorId;
+      _fillFields();
+    });
+  }
+
+  Future<void> _save({bool silent = false}) async {
+    _commitFields();
+    if (_settings.fallbackVendor == _settings.vendor) {
+      _settings = _settings.copyWith(fallbackVendor: '');
+    }
+    setState(() => _saving = true);
+    try {
+      await _store.save(_settings);
+      if (mounted && !silent) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Настройки ИИ сохранены')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось сохранить: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _ping() async {
-    setState(() => _pingResult = null);
-    await _save();
+    _commitFields();
+    setState(() {
+      _pingResult = 'Проверяю…';
+      _pingOk = false;
+    });
     try {
-      final res = await TookenClient.instance.ping();
-      setState(() => _pingResult = 'Связь есть. Ответ модели: «$res»');
+      final res = await TookenClient.instance.ping(endpoint: _settings.endpointFor(_editing));
+      setState(() {
+        _pingOk = true;
+        _pingResult = '${_vendor.title}: связь есть. Ответ модели: «$res»';
+      });
     } catch (e) {
-      setState(() => _pingResult = 'Ошибка: $e');
+      setState(() {
+        _pingOk = false;
+        _pingResult = 'Ошибка: $e';
+      });
     }
   }
 
   Future<void> _loadModels() async {
-    await _save();
+    _commitFields();
     try {
-      final list = await TookenClient.instance.listModels();
+      final list = await TookenClient.instance.listModels(endpoint: _settings.endpointFor(_editing));
       setState(() => _models = list);
       if (list.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -94,11 +150,16 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     }
   }
 
+  bool _hasKey(String vendorId) =>
+      vendorId == _editing ? _apiKey.text.trim().isNotEmpty : _settings.configFor(vendorId).apiKey.isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final vendor = _vendor;
+    final suggested = {...vendor.suggestedModels, ..._models}.toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Настройки ИИ')),
@@ -112,13 +173,35 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             subtitle: const Text('Выключено — приложение работает без единого запроса к ИИ'),
           ),
           const Divider(),
-          _section('Подключение'),
+          _section('Провайдер'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: AiVendors.all.map((v) {
+              final selected = v.id == _editing;
+              final mark = v.id == _settings.vendor
+                  ? ' · основной'
+                  : v.id == _settings.fallbackVendor
+                      ? ' · резервный'
+                      : '';
+              return ChoiceChip(
+                selected: selected,
+                label: Text('${v.title}${_hasKey(v.id) ? ' ✓' : ''}$mark'),
+                onSelected: (_) => _switchEditing(v.id),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 6),
+          const Text('✓ — ключ сохранён. Ключ каждого провайдера хранится отдельно.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 14),
           TextField(
             controller: _apiKey,
             obscureText: _obscureKey,
+            onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: 'API-ключ',
-              helperText: 'Ключ из кабинета шлюза: tooken.club, ai.d1n0tf.ru и т.п.',
+              labelText: 'API-ключ ${vendor.title}',
+              helperText: vendor.keyHint,
               suffixIcon: IconButton(
                 icon: Icon(_obscureKey ? Icons.visibility : Icons.visibility_off),
                 onPressed: () => setState(() => _obscureKey = !_obscureKey),
@@ -128,54 +211,44 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _baseUrl,
-            decoration: const InputDecoration(
-              labelText: 'Base URL',
-              helperText: 'Адрес шлюза из личного кабинета (без /chat/completions)',
+            decoration: InputDecoration(
+              labelText: 'Адрес API',
+              helperText: vendor.id == AiVendors.custom.id
+                  ? 'Адрес шлюза из личного кабинета (без /chat/completions)'
+                  : 'Менять не нужно, если провайдер не дал другой адрес или вы не ходите через прокси',
             ),
           ),
-          const SizedBox(height: 10),
-          // Готовые шлюзы: подставляют адрес и формат одним нажатием,
-          // чтобы не искать их в кабинете при переустановке.
-          Wrap(
-            spacing: 8,
-            children: [
-              ActionChip(
-                label: const Text('tooken.club'),
-                onPressed: () => setState(() {
-                  _baseUrl.text = 'https://tooken.club/v1';
-                  _settings = _settings.copyWith(provider: 'openai');
-                }),
+          if (vendor.id == AiVendors.custom.id) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: ['auto', 'openai', 'anthropic'].contains(_settings.configFor(_editing).format)
+                  ? _settings.configFor(_editing).format
+                  : 'auto',
+              decoration: const InputDecoration(
+                labelText: 'Формат API',
+                helperText: 'Не знаете — оставьте «Определить автоматически»',
               ),
-              ActionChip(
-                label: const Text('ai.d1n0tf.ru (Claude)'),
-                onPressed: () => setState(() {
-                  _baseUrl.text = 'https://ai.d1n0tf.ru';
-                  _settings = _settings.copyWith(provider: 'anthropic');
-                  if (_model.text.isEmpty || _model.text.startsWith('gpt')) {
-                    _model.text = 'claude-sonnet-4-5';
-                    _analyticsModel.text = 'claude-sonnet-4-5';
-                  }
-                }),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: ['auto', 'openai', 'anthropic'].contains(_settings.provider)
-                ? _settings.provider
-                : 'auto',
-            decoration: const InputDecoration(
-              labelText: 'Формат API',
-              helperText: 'Не знаете — оставьте «Определить автоматически»',
+              items: const [
+                DropdownMenuItem(value: 'auto', child: Text('Определить автоматически')),
+                DropdownMenuItem(value: 'openai', child: Text('OpenAI-совместимый')),
+                DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)')),
+              ],
+              onChanged: (v) => setState(() => _settings = _settings.withVendorConfig(
+                  _editing, _settings.configFor(_editing).copyWith(format: v ?? 'auto'))),
             ),
-            items: const [
-              DropdownMenuItem(value: 'auto', child: Text('Определить автоматически')),
-              DropdownMenuItem(value: 'openai', child: Text('OpenAI-совместимый')),
-              DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)')),
-            ],
-            onChanged: (v) =>
-                setState(() => _settings = _settings.copyWith(provider: v ?? 'auto')),
-          ),
+          ],
+          if (vendor.note.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+              ),
+              child: Text(vendor.note, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
@@ -200,15 +273,21 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               ),
             ],
           ),
-          if (_models.isNotEmpty) ...[
+          if (suggested.isNotEmpty) ...[
             const SizedBox(height: 12),
+            const Text('Нажмите — подставится в «Основная модель», долгое нажатие — в «Модель для аналитики»:',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: _models
-                  .map((m) => ActionChip(
-                        label: Text(m, style: const TextStyle(fontSize: 12)),
-                        onPressed: () => setState(() => _model.text = m),
+              children: suggested
+                  .map((m) => GestureDetector(
+                        onLongPress: () => setState(() => _analyticsModel.text = m),
+                        child: ActionChip(
+                          label: Text(m, style: const TextStyle(fontSize: 12)),
+                          onPressed: () => setState(() => _model.text = m),
+                        ),
                       ))
                   .toList(),
             ),
@@ -216,6 +295,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
           const SizedBox(height: 12),
           Wrap(
             spacing: 12,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 onPressed: _saving ? null : _ping,
@@ -235,10 +315,43 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               child: Text(
                 _pingResult!,
                 style: TextStyle(
-                  color: _pingResult!.startsWith('Ошибка') ? AppColors.danger : AppColors.success,
+                  color: _pingResult!.startsWith('Ошибка')
+                      ? AppColors.danger
+                      : _pingOk
+                          ? AppColors.success
+                          : AppColors.textMuted,
                 ),
               ),
             ),
+          const Divider(height: 32),
+          _section('Какой провайдер использовать'),
+          DropdownButtonFormField<String>(
+            initialValue: _settings.vendor,
+            decoration: const InputDecoration(labelText: 'Основной провайдер'),
+            items: AiVendors.all
+                .map((v) => DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}')))
+                .toList(),
+            onChanged: (v) => setState(() {
+              _settings = _settings.copyWith(
+                vendor: v ?? _settings.vendor,
+                fallbackVendor: _settings.fallbackVendor == v ? '' : _settings.fallbackVendor,
+              );
+            }),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _settings.fallbackVendor,
+            decoration: const InputDecoration(
+              labelText: 'Резервный провайдер',
+              helperText: 'Если основной не ответит (нет связи, ключ, баланс, регион) — ИИ переключится сам',
+            ),
+            items: [
+              const DropdownMenuItem(value: '', child: Text('Не использовать')),
+              ...AiVendors.all.where((v) => v.id != _settings.vendor).map((v) =>
+                  DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}'))),
+            ],
+            onChanged: (v) => setState(() => _settings = _settings.copyWith(fallbackVendor: v ?? '')),
+          ),
           const Divider(height: 32),
           _section('Параметры генерации'),
           _slider(
@@ -252,11 +365,13 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             'Лимит ответа (токенов)',
             _settings.maxTokens.toDouble(),
             200,
-            2000,
+            4000,
             (v) => setState(() => _settings = _settings.copyWith(maxTokens: v.round())),
-            divisions: 18,
+            divisions: 38,
             labelFormat: (v) => v.round().toString(),
           ),
+          const Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
           const Divider(height: 32),
           _section('Агенты'),
           ...AiAgents.all.map(
@@ -329,12 +444,15 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       builder: (context, snap) {
         if (!snap.hasData) return const LinearProgressIndicator();
         final byAgent = <String, int>{};
+        final byVendor = <String, int>{};
         var total = 0;
         for (final d in snap.data!.docs) {
           final data = d.data() as Map<String, dynamic>;
           final t = (data['totalTokens'] as num?)?.toInt() ?? 0;
           final id = data['agentId']?.toString() ?? 'generic';
           byAgent[id] = (byAgent[id] ?? 0) + t;
+          final v = data['vendor']?.toString() ?? '';
+          if (v.isNotEmpty) byVendor[v] = (byVendor[v] ?? 0) + t;
           total += t;
         }
         if (total == 0) {
@@ -347,6 +465,11 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
           children: [
             Text('Всего за 30 дней: $total токенов',
                 style: const TextStyle(color: AppColors.textPrimary)),
+            if (byVendor.length > 1)
+              Text(
+                byVendor.entries.map((e) => '${AiVendors.byId(e.key).title}: ${e.value}').join(' · '),
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
             const SizedBox(height: 8),
             ...sorted.map((e) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),

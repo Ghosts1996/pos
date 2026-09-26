@@ -698,8 +698,32 @@ service cloud.firestore {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin']);
     }
+    // Настройки провайдеров в публичном документе — без ключей и адресов.
+    function aiVendorPublic(v, id) {
+      return !(id in v) ||
+        (v[id] is map && !('apiKey' in v[id]) && !('baseUrl' in v[id]));
+    }
+    function aiVendorsArePublic(v) {
+      return v is map &&
+        v.keys().hasOnly(['tooken', 'darkapi', 'gemini', 'custom']) &&
+        aiVendorPublic(v, 'tooken') && aiVendorPublic(v, 'darkapi') &&
+        aiVendorPublic(v, 'gemini') && aiVendorPublic(v, 'custom');
+    }
+    // Публичная часть настроек ИИ (включено ли, модели, агенты) — её читает
+    // и гостевое приложение. Ключи провайдеров сюда класть НЕЛЬЗЯ: гость
+    // (любой, кто вошёл в Kolibri) прочитал бы их. Ключи — в meta/aiSecrets.
     match /tenants/{tenantId}/meta/aiSettings {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin']) &&
+        !('apiKey' in request.resource.data) &&
+        !('vendorKeys' in request.resource.data) &&
+        (!('vendors' in request.resource.data) ||
+          aiVendorsArePublic(request.resource.data.vendors));
+    }
+    // Ключи и адреса провайдеров ИИ: только персонал (POS вызывает ИИ
+    // напрямую). Гостевое приложение ходит через шлюз /aiProxy.
+    match /tenants/{tenantId}/meta/aiSecrets {
+      allow read: if isStaff(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin']);
     }
     // Служебные документы meta/*, не требующие сужения до owner/admin —

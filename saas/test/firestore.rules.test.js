@@ -1012,3 +1012,59 @@ describe("Сеть заведений (chains) — общая лояльност
     await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
   });
 });
+
+describe("Настройки ИИ: ключи провайдеров не видны гостям", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+      await setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+        enabled: true, vendor: "gemini", vendors: { gemini: { model: "gemini-flash-latest", hasKey: true } },
+      });
+      await setDoc(doc(db, "tenants/tenantA/meta/aiSecrets"), {
+        vendors: { gemini: { apiKey: "secret", baseUrl: "" } },
+      });
+    });
+  });
+
+  it("гость читает публичные настройки ИИ, но не ключи", async () => {
+    const db = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantA/meta/aiSettings")));
+    await assertFails(getDoc(doc(db, "tenants/tenantA/meta/aiSecrets")));
+  });
+
+  it("сотрудник читает ключи (касса вызывает ИИ напрямую), но не меняет их", async () => {
+    const db = ctxFor("empA");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantA/meta/aiSecrets")));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSecrets"), { vendors: {} }));
+  });
+
+  it("чужой владелец не читает ключи заведения A", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/meta/aiSecrets")));
+  });
+
+  it("владелец сохраняет ключи в aiSecrets, а в публичные настройки — только без ключей", async () => {
+    const db = ctxFor("ownerA");
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/meta/aiSecrets"), {
+      vendors: { darkapi: { apiKey: "k", baseUrl: "" } },
+    }, { merge: true }));
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      enabled: true, vendor: "darkapi", fallbackVendor: "gemini",
+      vendors: { darkapi: { format: "", model: "gpt-4o-mini", analyticsModel: "", hasKey: true } },
+    }, { merge: true }));
+    // Старые сборки кассы клали ключ прямо в aiSettings — теперь нельзя.
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), { apiKey: "k" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      vendorKeys: { darkapi: { apiKey: "k" } },
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      vendors: { darkapi: { apiKey: "k" } },
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      vendors: { other: { model: "x" } },
+    }, { merge: true }));
+  });
+});

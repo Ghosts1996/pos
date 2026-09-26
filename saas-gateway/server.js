@@ -3720,6 +3720,205 @@ async function handleAnonymizeGuest(req, res) {
   sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
 }
 
+// ------------------------------------------------------------ ИИ: прокси
+
+// Провайдеры ИИ — те же значения по умолчанию, что и AiVendors в
+// lib/services/ai/ai_settings.dart (держать синхронно).
+const AI_VENDOR_DEFAULTS = {
+  tooken: { baseUrl: "https://tooken.club/v1", format: "openai", model: "gpt-4o-mini", analyticsModel: "gpt-4o" },
+  darkapi: { baseUrl: "https://darkapi.shop/v1", format: "openai", model: "deepseek-chat", analyticsModel: "deepseek-chat" },
+  gemini: {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", format: "openai",
+    model: "gemini-flash-latest", analyticsModel: "gemini-flash-latest",
+  },
+  custom: { baseUrl: "", format: "auto", model: "gpt-4o-mini", analyticsModel: "gpt-4o-mini" },
+};
+const AI_PROXY_PATHS = new Set(["chat/completions", "messages", "v1/messages"]);
+const AI_PROXY_LIMIT = 30; // запросов гостя
+const AI_PROXY_WINDOW_MS = 10 * 60 * 1000; // за 10 минут
+const aiProxyLimiter = new Map(); // uid -> { count, resetAt }
+
+function inferAiVendor(baseUrl) {
+  const u = String(baseUrl || "").toLowerCase();
+  if (!u || u.includes("tooken.club")) return "tooken";
+  if (u.includes("darkapi")) return "darkapi";
+  if (u.includes("generativelanguage.googleapis.com")) return "gemini";
+  return "custom";
+}
+
+/** Подключение провайдера для слота primary/fallback из meta/aiSettings и
+ *  meta/aiSecrets заведения (и старого формата, где ключ лежал прямо в
+ *  aiSettings). */
+function resolveAiVendor(settings, secrets, slot) {
+  const vendorId = slot === "fallback"
+    ? settings.fallbackVendor
+    : (settings.vendor || inferAiVendor(settings.baseUrl));
+  if (!vendorId || !AI_VENDOR_DEFAULTS[vendorId]) return null;
+  const def = AI_VENDOR_DEFAULTS[vendorId];
+  const pub = ((settings.vendors || {})[vendorId]) || {};
+  const sec = ((secrets.vendors || {})[vendorId]) || {};
+  // Старый формат (ключ и модель прямо в aiSettings) — только у основного.
+  const legacy = slot === "primary" ? settings : {};
+  let apiKey = sec.apiKey || "";
+  let baseUrl = sec.baseUrl || "";
+  if (!apiKey && legacy.apiKey) {
+    apiKey = legacy.apiKey;
+    baseUrl = baseUrl || legacy.baseUrl || "";
+  }
+  return {
+    vendorId,
+    apiKey,
+    baseUrl: (baseUrl || def.baseUrl).replace(/\/+$/, ""),
+    format: pub.format || (vendorId === "custom" ? legacy.provider : "") || def.format,
+    models: [
+      pub.model || legacy.model || def.model,
+      pub.analyticsModel || legacy.analyticsModel || legacy.model || def.analyticsModel,
+    ],
+  };
+}
+
+/**
+ * ИИ-консьерж гостевого приложения. Ключи ИИ заведения лежат в
+ * meta/aiSecrets, который читает только персонал; гость шлёт сюда тело
+ * запроса к модели, а сервер подставляет адрес и ключ провайдера и
+ * возвращает ответ как есть. Гость не может выбрать другую (дорогую)
+ * модель или огромный лимит ответа, и у него лимит запросов — иначе
+ * посторонний мог бы расходовать баланс ИИ заведения.
+ */
+async function handleAiProxy(req, res) {
+  const decoded = await verifyAuth(req);
+  const now = Date.now();
+  const lim = aiProxyLimiter.get(decoded.uid);
+  if (!lim || lim.resetAt <= now) {
+    aiProxyLimiter.set(decoded.uid, { count: 1, resetAt: now + AI_PROXY_WINDOW_MS });
+  } else if (lim.count >= AI_PROXY_LIMIT) {
+    throw new HttpError(429, "Слишком много вопросов подряд — попробуйте через несколько минут");
+  } else {
+    lim.count += 1;
+  }
+
+  const body = await parseJsonBody(req);
+  const { tenantId, slot, path: apiPath, format } = body;
+  const payload = body.body && typeof body.body === "object" ? { ...body.body } : null;
+  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  if (slot !== "primary" && slot !== "fallback") throw new HttpError(400, "Неизвестный провайдер");
+  if (!AI_PROXY_PATHS.has(apiPath) || !payload) throw new HttpError(400, "Некорректный запрос к ИИ");
+
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const tenantDoc = await tenantRef.get();
+  if (!tenantDoc.exists || ["deleted", "suspended"].includes(tenantDoc.data().status)) {
+    throw new HttpError(404, "Заведение не найдено");
+  }
+  const chainId = tenantDoc.data().chainId || null;
+  const loyaltyRoot = chainId ? firestore.collection("chains").doc(chainId) : tenantRef;
+  const [member, client, settingsDoc, secretsDoc] = await Promise.all([
+    firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get(),
+    loyaltyRoot.collection("clients").doc(decoded.uid).get(),
+    tenantRef.collection("meta").doc("aiSettings").get(),
+    tenantRef.collection("meta").doc("aiSecrets").get(),
+  ]);
+  const isMember = member.exists && member.data().status === "active";
+  if (!isMember && !client.exists) throw new HttpError(403, "Нет доступа к ИИ этого заведения");
+  const settings = settingsDoc.data() || {};
+  if (settings.enabled !== true) throw new HttpError(403, "ИИ в этом заведении выключен");
+  const vendor = resolveAiVendor(settings, secretsDoc.data() || {}, slot);
+  if (!vendor || !vendor.apiKey || !vendor.baseUrl) throw new HttpError(400, "ИИ заведения не настроен");
+
+  // Модель и лимит ответа — только из настроек заведения.
+  if (!vendor.models.includes(payload.model)) payload.model = vendor.models[0];
+  const maxCap = Math.min(8000, Math.max(512, (Number(settings.maxTokens) || 900) * 2));
+  if (!(Number(payload.max_tokens) > 0) || Number(payload.max_tokens) > maxCap) payload.max_tokens = maxCap;
+  delete payload.stream;
+
+  const fmt = vendor.format === "auto" ? (format === "anthropic" ? "anthropic" : "openai") : vendor.format;
+  const headers = fmt === "anthropic"
+    ? { "Content-Type": "application/json", "x-api-key": vendor.apiKey, "anthropic-version": "2023-06-01", Authorization: `Bearer ${vendor.apiKey}` }
+    : { "Content-Type": "application/json", Authorization: `Bearer ${vendor.apiKey}` };
+  let upstream;
+  try {
+    // Путь — по формату и настоящему адресу (гость адреса не видит и не
+    // знает, есть ли в нём уже /v1).
+    const upstreamPath = fmt === "anthropic"
+      ? (vendor.baseUrl.endsWith("/v1") ? "messages" : "v1/messages")
+      : "chat/completions";
+    upstream = await fetch(`${vendor.baseUrl}/${upstreamPath}`, {
+      method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(60000),
+    });
+  } catch (e) {
+    throw new HttpError(502, `Провайдер ИИ не ответил: ${e.message || e}`);
+  }
+  const text = await upstream.text();
+  res.writeHead(upstream.status, {
+    "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  });
+  res.end(text);
+}
+
+/**
+ * Разовый перенос ключей ИИ из meta/aiSettings (его читают гости) в
+ * meta/aiSecrets (только персонал) у заведений, сохранивших настройки
+ * старой версией приложения. После переноса правила базы не дают снова
+ * записать ключ в aiSettings.
+ */
+async function migrateAiSecrets() {
+  const firestore = db();
+  const tenants = await firestore.collection("tenants").get();
+  let moved = 0;
+  for (const t of tenants.docs) {
+    const ref = t.ref.collection("meta").doc("aiSettings");
+    const snap = await ref.get();
+    const d = snap.exists ? snap.data() : null;
+    if (!d || !(d.apiKey || d.vendorKeys)) continue;
+    const vendorId = AI_VENDOR_DEFAULTS[d.vendor] ? d.vendor : inferAiVendor(d.baseUrl);
+    const secVendors = {};
+    for (const [id, v] of Object.entries(d.vendorKeys || {})) {
+      if (AI_VENDOR_DEFAULTS[id] && v && typeof v === "object") {
+        secVendors[id] = { apiKey: String(v.apiKey || ""), baseUrl: String(v.baseUrl || "") };
+      }
+    }
+    if (d.apiKey && !(secVendors[vendorId] && secVendors[vendorId].apiKey)) {
+      secVendors[vendorId] = { apiKey: d.apiKey, baseUrl: d.baseUrl || "" };
+    }
+    // В публичной части — только известные провайдеры и без ключей/адресов
+    // (иначе правила базы не дадут владельцу сохранить настройки).
+    const pubVendors = {};
+    for (const [id, v] of Object.entries(d.vendors || {})) {
+      if (!AI_VENDOR_DEFAULTS[id] || !v || typeof v !== "object") continue;
+      const { apiKey: _k, baseUrl: _b, ...rest } = v;
+      pubVendors[id] = rest;
+    }
+    for (const [id, v] of Object.entries(secVendors)) {
+      pubVendors[id] = { ...(pubVendors[id] || {}), hasKey: !!v.apiKey };
+    }
+    if (d.apiKey) {
+      pubVendors[vendorId] = {
+        ...pubVendors[vendorId],
+        model: pubVendors[vendorId].model || d.model || "",
+        analyticsModel: pubVendors[vendorId].analyticsModel || d.analyticsModel || d.model || "",
+        format: pubVendors[vendorId].format || (vendorId === "custom" ? d.provider || "" : ""),
+      };
+    }
+    await t.ref.collection("meta").doc("aiSecrets").set({ vendors: secVendors }, { merge: true });
+    const del = admin.firestore.FieldValue.delete();
+    await ref.set({
+      vendor: vendorId, vendors: pubVendors,
+      apiKey: del, baseUrl: del, provider: del, model: del, analyticsModel: del, vendorKeys: del,
+    }, { merge: true });
+    moved += 1;
+  }
+  if (moved) console.log(`saas-gateway: ключи ИИ перенесены в aiSecrets у ${moved} заведений`);
+  return moved;
+}
+
+function scheduleAiSecretsMigration() {
+  const delay = Number(process.env.AI_SECRETS_MIGRATION_DELAY_MS) || 2 * 60 * 1000;
+  setTimeout(() => migrateAiSecrets().catch((e) => console.error("перенос ключей ИИ:", e.message || e)), delay);
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -3761,6 +3960,7 @@ const ROUTES = {
   "/resolveDataRequest": handleResolveDataRequest,
   "/findGuest": handleFindGuest,
   "/anonymizeGuest": handleAnonymizeGuest,
+  "/aiProxy": handleAiProxy,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,
@@ -3774,7 +3974,9 @@ const ROUTES = {
 function runHandler(handler, req, res) {
   handler(req, res).catch((e) => {
     const status = e instanceof HttpError ? e.status : 500;
-    sendJson(res, status, { error: e.message || String(e) });
+    // gateway: true — ошибка самого сервиса, а не проксированного ответа
+    // провайдера (см. handleAiProxy и _errorFor в tooken_client.dart).
+    sendJson(res, status, { error: e.message || String(e), gateway: true });
   });
 }
 
@@ -3805,6 +4007,7 @@ scheduleUsageCron();
 schedulePlatformMetricsCron();
 scheduleCertificateCheck();
 scheduleFirestoreBackup();
+scheduleAiSecretsMigration();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
