@@ -128,11 +128,12 @@ const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "clients", "devices", "discountCards", "employees",
   "giftCardClaims", "giftCards", "guestOrders", "happyHours", "inventory",
-  "inventoryCounts", "inventoryMovements", "marking_codes_sold",
-  "menuCategories", "menuItems", "meta", "phoneIndex", "pushQueue",
-  "referralCodes", "reservationSlots", "reservations", "reviews",
-  "sessionClaims", "sessions", "settings", "shifts", "staffNotes", "stories",
-  "tables", "tips", "usage", "waiterCalls", "waitlist",
+  "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
+  "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
+  "pushQueue", "referralCodes", "reservations", "reservationSlots",
+  "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
+  "staffShifts", "stories", "tables", "tips", "usage", "waiterCalls",
+  "waitlist",
 ];
 
 // Демо-заведения живут недолго и создаются анонимно (без email/пароля) —

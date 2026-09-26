@@ -917,6 +917,17 @@ service cloud.firestore {
     match /tenants/{tenantId}/inventory/{doc} {
       allow read, write: if isStaff(tenantId);
     }
+    // Склад кассы (lib/services/firestore_service.dart пишет именно в
+    // inventoryItems): без этого правила в SaaS не открывался раздел
+    // «Склад», а списание при продаже молча не происходило.
+    match /tenants/{tenantId}/inventoryItems/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+    // Отметки фоновых задач кассы (авто-неявка броней, дни рождения,
+    // перенос индексов гостей) — чтобы одна задача не выполнялась дважды.
+    match /tenants/{tenantId}/jobRuns/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
     match /tenants/{tenantId}/inventoryMovements/{doc} {
       allow read, write: if isStaff(tenantId);
     }
