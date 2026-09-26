@@ -455,6 +455,14 @@ a:hover { filter: brightness(1.2); }
    кнопка "Попробовать бесплатно" обрезается по правому краю экрана. */
 .landing-nav-login { display: none; font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .landing-nav-actions .btn { width: auto; padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+/* На самых узких телефонах (iPhone SE 1-го поколения, 320px) логотип и
+   полная надпись "Попробовать бесплатно" вместе шире экрана — оставляем
+   короткое "Попробовать". */
+.landing-nav-cta-short { display: none; }
+@media (max-width: 359px) {
+  .landing-nav-cta-full { display: none; }
+  .landing-nav-cta-short { display: inline; }
+}
 @media (min-width: 480px) {
   .landing-nav-actions .btn { padding: 10px 18px; font-size: 13.5px; }
 }
