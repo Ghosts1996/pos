@@ -195,6 +195,12 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
       allow write: if false;
     }
+    // Состояние платформы для чек-листа «Безопасность → Платформа»
+    // (сертификаты, резервные копии, уведомления ЮKassa) — пишет сервер.
+    match /platformStatus/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
 
     // ---- tenants: сам факт существования заведения и его статус ----
     match /tenants/{tenantId} {

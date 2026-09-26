@@ -582,3 +582,4 @@ a:hover { filter: brightness(1.2); }
 .sec-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .sec-warn { border-color: rgba(231, 178, 78, .55); background: rgba(231, 178, 78, .08); }
 .sec-bad { border-color: rgba(255, 92, 108, .55); background: rgba(255, 92, 108, .07); }
+.sec-inline-link { display: inline-flex; width: auto; padding: 0 0 0 6px; font-size: inherit; vertical-align: baseline; }

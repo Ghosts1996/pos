@@ -761,6 +761,15 @@ describe("adminLogins / securityLog: только чтение супер-адм
     await assertFails(getDoc(doc(ctxFor("ownerA"), "securityLog/e1")));
   });
 
+  it("состояние платформы (platformStatus) видит только супер-админ, пишет только сервер", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("platformStatus/backup"), { status: "ok" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "platformStatus/backup")));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "platformStatus/backup")));
+    await assertFails(setDoc(doc(ctxFor("root"), "platformStatus/backup"), { status: "ok" }));
+  });
+
   it("даже супер-админ не может подделать или стереть запись", async () => {
     await assertFails(setDoc(doc(ctxFor("root"), "securityLog/e2"), { action: "fake" }));
     await assertFails(deleteDoc(doc(ctxFor("root"), "securityLog/e1")));
