@@ -23,6 +23,7 @@
 <link rel="icon" href="icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="app.css">
+<script src="palette.js"></script>
 <script>
 // Кэш последнего применённого бренда (см. app.js: applyBranding()/boot()) —
 // применяется СРАЗУ, до какой-либо сети, чтобы при повторном заходе (тот же
@@ -38,14 +39,7 @@
     var slug = (location.hostname.split('.')[0] || '').trim();
     var raw = slug && localStorage.getItem('brand:' + slug);
     if (!raw) return;
-    var b = JSON.parse(raw);
-    var css = document.documentElement.style;
-    if (b.primaryColor) css.setProperty('--primary', b.primaryColor);
-    if (b.secondaryColor) css.setProperty('--gold', b.secondaryColor);
-    if (b.accentColor) css.setProperty('--accent', b.accentColor);
-    if (b.backgroundColor) css.setProperty('--bg', b.backgroundColor);
-    if (b.textColor) css.setProperty('--text', b.textColor);
-    if (b.appName) document.title = b.appName;
+    window.applyBrandPalette(JSON.parse(raw));
   } catch (_) {
     // Битый кэш — просто игнорируем, дальше подтянется свежий брендинг.
   }

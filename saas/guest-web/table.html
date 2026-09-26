@@ -69,7 +69,7 @@
     font-weight: 600;
     font-size: 16px;
   }
-  a.primary { background: var(--primary); color: #04140E; }
+  a.primary { background: var(--primary); color: var(--on-primary, #04140E); }
   a.ghost {
     background: var(--surface);
     color: var(--text);
@@ -92,6 +92,8 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
+<!-- Общий расчёт палитры с веб-приложением гостя (см. комментарий в нём). -->
+<script src="/app/palette.js"></script>
 <script>
 // Раньше цвета/название заведения применялись ТОЛЬКО после трёх сетевых
 // запросов подряд (resolveTenantBySlug → firebaseConfig → чтение
@@ -112,12 +114,7 @@
     if (!raw) return;
     var b = JSON.parse(raw);
     window.__cachedBrand = b;
-    var root = document.documentElement.style;
-    if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
-    if (b.secondaryColor) root.setProperty('--gold', b.secondaryColor);
-    if (b.backgroundColor) root.setProperty('--bg', b.backgroundColor);
-    if (b.textColor) root.setProperty('--text', b.textColor);
-    if (b.appName) document.title = b.appName;
+    if (window.applyBrandPalette) window.applyBrandPalette(b);
   } catch (_) {
     // Битый кэш — просто игнорируем, дальше подтянется свежий брендинг.
   }
@@ -307,16 +304,18 @@
       // branding/config читается совсем без входа (saas/firestore.rules:
       // "allow read: if true" — см. её же комментарий, почему), поэтому
       // без анонимного входа и без лишнего аккаунта на каждый заход сюда.
-      var snap = await getDoc(doc(db, 'tenants', tenantId, 'branding', 'config'));
+      // Точка сети — брендинг САМОЙ СЕТИ, как и в веб-приложении гостя
+      // (applyBranding в app/app.js): иначе страница стола красилась бы в
+      // цвета точки (у точки, добавленной в сеть позже, их может не быть
+      // вовсе), а открытое следом приложение — уже в цвета сети.
+      var chainId = resolveResult.json.chainId;
+      var snap = await getDoc(chainId
+        ? doc(db, 'chains', chainId, 'branding', 'config')
+        : doc(db, 'tenants', tenantId, 'branding', 'config'));
       if (!snap.exists()) return;
       var b = snap.data();
-      var root = document.documentElement.style;
-      if (b.primaryColor) root.setProperty('--primary', b.primaryColor);
-      if (b.secondaryColor) root.setProperty('--gold', b.secondaryColor);
-      if (b.backgroundColor) root.setProperty('--bg', b.backgroundColor);
-      if (b.textColor) root.setProperty('--text', b.textColor);
+      if (window.applyBrandPalette) window.applyBrandPalette(b);
       if (b.appName) {
-        document.title = b.appName;
         document.getElementById('brand-opening').textContent = b.appName;
         document.getElementById('brand-install').textContent = b.appName;
       }
