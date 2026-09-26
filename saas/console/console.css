@@ -568,3 +568,17 @@ a:hover { filter: brightness(1.2); }
 }
 
 .landing-footer { padding-top: 36px; padding-bottom: 60px; }
+
+/* ---- Панель платформы → «Безопасность» ---- */
+.sec-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+.sec-tab {
+  display: inline-flex; width: auto; padding: 8px 14px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.sec-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.sec-pane { display: none; }
+.sec-pane.active { display: block; }
+.sec-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sec-warn { border-color: rgba(231, 178, 78, .55); background: rgba(231, 178, 78, .08); }
+.sec-bad { border-color: rgba(255, 92, 108, .55); background: rgba(255, 92, 108, .07); }

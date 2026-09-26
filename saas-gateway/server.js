@@ -32,11 +32,9 @@ const { execFile } = require("child_process");
  * createTenant/createBuildJob, это эталонная копия на случай, если Blaze
  * когда-нибудь появится, но реально работает только версия здесь.
  *
- * ЧТО ЭТИМ НЕ ЗАКРЫТО (сознательно, см. обсуждение с владельцем платформы):
- * приглашение сотрудников по email (`inviteTenantMember`) — остаётся на
- * Cloud Functions/Blaze как есть (нужен Admin SDK auth().getUserByEmail —
- * привилегированная операция, но сам по себе email-инвайт не блокирует
- * приём платежей, поэтому его перенос отложен отдельно).
+ * Приглашение сотрудников по email (`inviteTenantMember`) — тоже здесь
+ * (раньше оставалось на Cloud Functions, и кнопка «Пригласить» в консоли
+ * всегда падала: функция не задеплоена).
  *
  * `enableTenant`/`disableTenant`/`changeTenantPlan` (модерация из панели
  * супер-админа) и `deleteDemoTenant` (ручное удаление демо-заведения) —
@@ -251,21 +249,49 @@ async function verifyAuth(req) {
   }
 }
 
-/** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
-async function requireSuperAdmin(uid) {
-  if (!uid) throw new HttpError(401, "Нужен вход");
-  const doc = await db().collection("superAdmins").doc(uid).get();
+/** Сеанс супер-админа ещё действует: вход был ПОСЛЕ последнего «Выйти на
+ *  всех устройствах» (superAdmins/{uid}.sessionsValidAfter, секунды — см.
+ *  handleRevokeAdminSessions; та же проверка в isSuperAdmin() в
+ *  saas/firestore.rules). */
+function adminSessionValid(adminData, decoded) {
+  const validAfter = adminData && adminData.sessionsValidAfter;
+  return typeof validAfter !== "number" || (Number(decoded.auth_time) || 0) > validAfter;
+}
+
+/** См. одноимённую функцию в saas/functions/index.js — та же проверка,
+ *  плюс завершённые сеансы (adminSessionValid). Возвращает данные
+ *  superAdmins/{uid}. */
+async function requireSuperAdmin(decoded) {
+  if (!decoded || !decoded.uid) throw new HttpError(401, "Нужен вход");
+  const doc = await db().collection("superAdmins").doc(decoded.uid).get();
   if (!doc.exists) throw new HttpError(403, "Только для супер-администратора платформы");
+  if (!adminSessionValid(doc.data(), decoded)) {
+    throw new HttpError(401, "Сеанс панели завершён — войдите заново");
+  }
+  return doc.data();
 }
 
 /** Не бросает — булев вариант requireSuperAdmin для точек, где супер-админ
  *  ДОПОЛНИТЕЛЬНО к обычным владельцам может выполнить действие (например,
  *  запросить сборку APK чужого заведения из панели поддержки), а не
  *  единственный, кому оно разрешено вообще. */
-async function isSuperAdminUid(uid) {
-  if (!uid) return false;
-  const doc = await db().collection("superAdmins").doc(uid).get();
-  return doc.exists;
+async function isSuperAdmin(decoded) {
+  if (!decoded || !decoded.uid) return false;
+  const doc = await db().collection("superAdmins").doc(decoded.uid).get();
+  return doc.exists && adminSessionValid(doc.data(), decoded);
+}
+
+// Назначить/снять супер-админа можно только сразу после ввода пароля
+// (консоль вызывает reauthenticate() и шлёт свежий токен): украденный или
+// забытый открытым сеанс сам по себе на это не годится. Раньше то же самое
+// окно пароля было только в браузере, а правила базы пускали писать в
+// superAdmins любой сеанс супер-админа напрямую.
+const RECENT_AUTH_MAX_AGE_SEC = 5 * 60;
+function requireRecentAuth(decoded) {
+  const age = Math.floor(Date.now() / 1000) - (Number(decoded.auth_time) || 0);
+  if (age > RECENT_AUTH_MAX_AGE_SEC) {
+    throw new HttpError(401, "Подтвердите пароль — это действие требует недавнего входа");
+  }
 }
 
 /** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
@@ -308,6 +334,33 @@ async function syncChainMembership(chainId, uid, role, status) {
     );
   } catch (e) {
     console.error(`syncChainMembership(${chainId}, ${uid}) не удался:`, e.message || e);
+  }
+}
+
+/**
+ * Журнал безопасности платформы (securityLog) — отдельно от auditLogs:
+ * там жизненный цикл заведений и оплаты, здесь только то, чем можно
+ * навредить платформе целиком (доступ супер-админов, ручные решения по
+ * деньгам и данным, блокировки). Читает только супер-админ, пишет только
+ * этот сервис (saas/firestore.rules). Не бросает — основное действие уже
+ * выполнено и не должно откатываться из-за журнала.
+ */
+async function writeSecurityEvent(req, decoded, action, { targetUid, targetEmail, tenantId, metadata } = {}) {
+  try {
+    await db().collection("securityLog").add({
+      action,
+      actorId: (decoded && decoded.uid) || null,
+      actorEmail: (decoded && decoded.email) || null,
+      targetUid: targetUid || null,
+      targetEmail: targetEmail || null,
+      tenantId: tenantId || null,
+      metadata: metadata || {},
+      ip: req ? clientIp(req) : null,
+      userAgent: req ? String(req.headers["user-agent"] || "").slice(0, 300) : null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.error(`writeSecurityEvent(${action}) не удался:`, e.message || e);
   }
 }
 
@@ -1033,7 +1086,7 @@ async function handleCreateBuildJob(req, res) {
   // из панели платформы, кнопка "Пересобрать" у неудачной сборки в общем
   // мониторе) — в дополнение к обычному владельцу/админу самого заведения,
   // не вместо него.
-  if (!(await isSuperAdminUid(decoded.uid))) {
+  if (!(await isSuperAdmin(decoded))) {
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
   }
 
@@ -1850,7 +1903,7 @@ function schedulePlatformMetricsCron() {
  *  графика на "Аналитике", а не через сутки ожидания фонового таймера. */
 async function handleRecalculateUsage(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   await Promise.all([runCalculateUsage(), runCalculatePlatformMetrics()]);
   sendJson(res, 200, { ok: true });
 }
@@ -2093,9 +2146,21 @@ function checkDemoRateLimit(ip) {
   entry.count += 1;
 }
 
+/**
+ * Настоящий IP клиента. nginx (см. README.md, location /saas/) кладёт его в
+ * X-Real-IP и ДОПИСЫВАЕТ в конец X-Forwarded-For ($proxy_add_x_forwarded_for).
+ * Первый элемент X-Forwarded-For присылает сам клиент — раньше брался
+ * именно он, и лимит на демо-заведения (а с ним и любые проверки по IP)
+ * обходился одним поддельным заголовком.
+ */
 function clientIp(req) {
+  const real = req.headers["x-real-ip"];
+  if (typeof real === "string" && real.trim()) return real.trim();
   const fwd = req.headers["x-forwarded-for"];
-  if (typeof fwd === "string" && fwd.length) return fwd.split(",")[0].trim();
+  if (typeof fwd === "string" && fwd.length) {
+    const parts = fwd.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
   return req.socket.remoteAddress || "unknown";
 }
 
@@ -2407,7 +2472,7 @@ async function purgeDemoTenant(tenantId) {
  */
 async function handleDisableTenant(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   const { tenantId, reason } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   await db().collection("tenants").doc(tenantId).update({
@@ -2422,7 +2487,7 @@ async function handleDisableTenant(req, res) {
 
 async function handleEnableTenant(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   const { tenantId } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   await db().collection("tenants").doc(tenantId).update({
@@ -2435,7 +2500,7 @@ async function handleEnableTenant(req, res) {
 
 async function handleChangeTenantPlan(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   const { tenantId, planId } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   if (typeof planId !== "string" || !planId) throw new HttpError(400, "Не указан тариф");
@@ -2472,7 +2537,7 @@ async function handleChangeTenantPlan(req, res) {
  */
 async function handleGrantBonusPeriod(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   const { tenantId, days } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
   const daysNum = Number(days);
@@ -2520,7 +2585,7 @@ async function handleGrantBonusPeriod(req, res) {
  */
 async function handleDeleteDemoTenant(req, res) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded.uid);
+  await requireSuperAdmin(decoded);
   const { tenantId } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
 
@@ -2564,6 +2629,147 @@ function scheduleDemoCleanup() {
   }, DEMO_CLEANUP_INTERVAL_MS);
 }
 
+// ------------------------------------------------------------ security
+
+/**
+ * Назначить супер-админа по email. Только супер-админ и только сразу после
+ * ввода пароля (requireRecentAuth). Кандидат ищется в Firebase Auth, а не в
+ * users/ (туда может написать сам пользователь), и почта у него должна
+ * быть подтверждена — иначе доступ к панели получил бы тот, кто просто
+ * зарегистрировался на чужой адрес.
+ */
+async function handleGrantSuperAdmin(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const body = await parseJsonBody(req);
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, "Введите корректный email");
+
+  let user;
+  try {
+    user = await getFirebaseApp().auth().getUserByEmail(email);
+  } catch (e) {
+    throw new HttpError(404, "Этот email ещё не зарегистрирован в консоли — попросите сотрудника сначала зарегистрироваться, затем попробуйте снова");
+  }
+  if (!user.emailVerified) {
+    throw new HttpError(400, "Почта этого пользователя не подтверждена — попросите его войти по ссылке из письма, затем попробуйте снова");
+  }
+  const ref = db().collection("superAdmins").doc(user.uid);
+  if ((await ref.get()).exists) throw new HttpError(409, "Уже супер-админ");
+  await ref.set({
+    email,
+    grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+    grantedBy: decoded.uid,
+    grantedByEmail: decoded.email || null,
+  });
+  await writeSecurityEvent(req, decoded, "superAdminGranted", { targetUid: user.uid, targetEmail: email });
+  sendJson(res, 200, { ok: true, uid: user.uid });
+}
+
+/** Снять супер-админа. Себя снять нельзя — так в панели всегда остаётся
+ *  хотя бы один супер-админ. Открытые сеансы снятого сразу завершаются. */
+async function handleRevokeSuperAdmin(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const { uid } = await parseJsonBody(req);
+  if (typeof uid !== "string" || !uid) throw new HttpError(400, "Не указан пользователь");
+  if (uid === decoded.uid) throw new HttpError(400, "Нельзя снять доступ у самого себя — попросите другого супер-админа");
+  const ref = db().collection("superAdmins").doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Этот пользователь не супер-админ");
+  await ref.delete();
+  try {
+    await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  } catch (e) {
+    console.error(`revokeRefreshTokens(${uid}) не удался:`, e.message || e);
+  }
+  await writeSecurityEvent(req, decoded, "superAdminRevoked", { targetUid: uid, targetEmail: snap.data().email || null });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * «Выйти на всех устройствах»: отзывает refresh-токены (новый токен уже не
+ * выдать) и ставит sessionsValidAfter — по нему и этот сервис
+ * (requireSuperAdmin), и правила базы (isSuperAdmin в saas/firestore.rules)
+ * перестают пускать ВСЕ ранее открытые сеансы сразу, а не через час, когда
+ * истечёт уже выданный токен. Свои сеансы можно завершить в любой момент;
+ * чужие — только после ввода пароля (иначе украденный сеанс мог бы
+ * бесконечно выкидывать настоящих админов).
+ */
+async function handleRevokeAdminSessions(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const uid = typeof body.uid === "string" && body.uid ? body.uid : decoded.uid;
+  if (uid !== decoded.uid) requireRecentAuth(decoded);
+  const ref = db().collection("superAdmins").doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Этот пользователь не супер-админ");
+  await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  await ref.set({ sessionsValidAfter: Math.floor(Date.now() / 1000) }, { merge: true });
+  await writeSecurityEvent(req, decoded, "adminSessionsRevoked", {
+    targetUid: uid,
+    targetEmail: snap.data().email || null,
+    metadata: { reason: typeof body.reason === "string" ? body.reason.slice(0, 200) : null },
+  });
+  sendJson(res, 200, { ok: true, self: uid === decoded.uid });
+}
+
+// Не чаще раза в 10 минут на один сеанс обновляем lastSeenAt — панель
+// может открываться много раз подряд, а запись в базу не бесплатна.
+const ADMIN_LOGIN_TOUCH_MS = 10 * 60 * 1000;
+const adminLoginTouched = new Map(); // sessionId -> ms
+
+/**
+ * Консоль вызывает при каждом открытии панели платформы. Один документ
+ * adminLogins/{uid}_{auth_time} на один вход (сеанс), с IP и браузером —
+ * по ним супер-админ видит в «Безопасности», откуда заходили в панель, и
+ * может нажать «Это был не я». Если в течение одного сеанса сменился IP,
+ * он добавляется в ips — тоже повод присмотреться.
+ */
+async function handleRecordAdminLogin(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const authTime = Number(decoded.auth_time) || 0;
+  const sessionId = `${decoded.uid}_${authTime}`;
+  const ip = clientIp(req);
+  const userAgent = String(req.headers["user-agent"] || "").slice(0, 300);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const ref = db().collection("adminLogins").doc(sessionId);
+  const snap = await ref.get();
+  let newSession = false;
+  if (!snap.exists) {
+    newSession = true;
+    await ref.set({
+      uid: decoded.uid,
+      email: decoded.email || null,
+      ip,
+      ips: [ip],
+      userAgent,
+      signInProvider: (decoded.firebase && decoded.firebase.sign_in_provider) || null,
+      authTime: admin.firestore.Timestamp.fromMillis(authTime * 1000),
+      firstSeenAt: now,
+      lastSeenAt: now,
+    });
+  } else {
+    const known = snap.data().ips || [];
+    const touched = adminLoginTouched.get(sessionId) || 0;
+    if (!known.includes(ip) || Date.now() - touched > ADMIN_LOGIN_TOUCH_MS) {
+      await ref.update({ lastSeenAt: now, ips: admin.firestore.FieldValue.arrayUnion(ip) });
+    }
+  }
+  adminLoginTouched.set(sessionId, Date.now());
+  if (newSession) {
+    await db().collection("superAdmins").doc(decoded.uid).set(
+      { lastLoginAt: now, lastLoginIp: ip, lastLoginUserAgent: userAgent },
+      { merge: true }
+    );
+  }
+  sendJson(res, 200, { ok: true, newSession });
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -2587,6 +2793,10 @@ const ROUTES = {
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
   "/recalculateUsage": handleRecalculateUsage,
+  "/grantSuperAdmin": handleGrantSuperAdmin,
+  "/revokeSuperAdmin": handleRevokeSuperAdmin,
+  "/revokeAdminSessions": handleRevokeAdminSessions,
+  "/recordAdminLogin": handleRecordAdminLogin,
   // Публичный (без Auth) адрес — его нужно прописать в личном кабинете
   // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
   // внутри самого handleBillingWebhook, не на уровне роутинга.

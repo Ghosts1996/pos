@@ -42,9 +42,18 @@ service cloud.firestore {
     }
 
     // ---- Платформенный супер-админ ----
+    // Супер-админ — и его сеанс не завершён кнопкой «Выйти на всех
+    // устройствах» (sessionsValidAfter, секунды; ставит только
+    // saas-gateway, см. handleRevokeAdminSessions): без этой проверки уже
+    // выданный токен продолжал бы открывать панель ещё до часа.
     function isSuperAdmin() {
       return signedIn() &&
-        exists(/databases/$(database)/documents/superAdmins/$(request.auth.uid));
+        exists(/databases/$(database)/documents/superAdmins/$(request.auth.uid)) &&
+        adminSessionFresh(get(/databases/$(database)/documents/superAdmins/$(request.auth.uid)).data);
+    }
+
+    function adminSessionFresh(sa) {
+      return !('sessionsValidAfter' in sa) || request.auth.token.auth_time > sa.sessionsValidAfter;
     }
 
     // ---- Членство в заведении ----
@@ -162,15 +171,29 @@ service cloud.firestore {
     }
 
     // Самого первого супер-админа заводит только консоль Firebase (вручную,
-    // при бутстрапе платформы) — этот путь всегда остаётся, write отсюда
-    // его не заменяет. Дальше супер-админы могут назначать друг друга сами
-    // (панель платформы → "Сотрудники платформы"), но замкнутый круг:
-    // isSuperAdmin() читает СУЩЕСТВУЮЩЕЕ состояние базы ДО этой записи —
-    // тот, у кого ещё нет документа в этой коллекции, не может создать его
-    // сам себе, каким бы ни было содержимое запроса.
+    // при бутстрапе платформы). Дальше супер-админы назначают и снимают
+    // друг друга только через saas-gateway (handleGrantSuperAdmin/
+    // handleRevokeSuperAdmin): там проверяется, что пароль введён только
+    // что, и каждое изменение пишется в securityLog. Прямая запись отсюда
+    // закрыта — раньше любой открытый сеанс супер-админа (забытый на чужом
+    // устройстве, украденный токен) мог назначить кого угодно в обход окна
+    // пароля, которое было только в браузере.
     match /superAdmins/{uid} {
       allow read: if isSelf(uid) || isSuperAdmin();
-      allow write: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // ---- Безопасность платформы: входы в панель (adminLogins) и журнал
+    //      чувствительных действий (securityLog). Читает только
+    //      супер-админ, пишет только saas-gateway (Admin SDK) — запись
+    //      журнала нельзя подделать или стереть из браузера. ----
+    match /adminLogins/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+    match /securityLog/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
     }
 
     // ---- tenants: сам факт существования заведения и его статус ----

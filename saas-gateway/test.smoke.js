@@ -128,6 +128,18 @@ async function main() {
     }
     check("POST /createDemoTenant: 6-й подряд запрос -> 429 (rate limit)", lastStatus === 429);
   }
+  {
+    // Лимит считается по НАСТОЯЩЕМУ IP (X-Real-IP от nginx / хвост
+    // X-Forwarded-For), а не по первому элементу X-Forwarded-For, который
+    // присылает сам клиент: подмена заголовка лимит не сбрасывает.
+    // За nginx заголовок выглядит как «подделка клиента, настоящий IP».
+    const r = await request("POST", "/createDemoTenant", { body: {}, headers: { "X-Forwarded-For": "203.0.113.77, 127.0.0.1" } });
+    check("POST /createDemoTenant: поддельный X-Forwarded-For не обходит лимит -> 429", r.status === 429);
+  }
+  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin"]) {
+    const r = await request("POST", path, { body: {} });
+    check(`POST ${path} без токена -> 401`, r.status === 401);
+  }
 
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);

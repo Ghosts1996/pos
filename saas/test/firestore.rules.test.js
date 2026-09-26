@@ -682,18 +682,22 @@ describe("broadcasts: объявления платформы — пишет т�
   });
 });
 
-describe("superAdmins: только существующий супер-админ может назначать/снимать других", () => {
+describe("superAdmins: назначать/снимать только через saas-gateway (свежий пароль + журнал)", () => {
   beforeEach(seedTwoTenants);
 
-  it("супер-админ может назначить нового супер-админа", async () => {
-    await assertSucceeds(setDoc(doc(ctxFor("root"), "superAdmins/ownerA"), { email: "a@x.com" }));
+  it("даже супер-админ не может назначить нового супер-админа напрямую из браузера", async () => {
+    await assertFails(setDoc(doc(ctxFor("root"), "superAdmins/ownerA"), { email: "a@x.com" }));
   });
 
-  it("супер-админ может снять доступ у другого супер-админа", async () => {
+  it("даже супер-админ не может снять доступ у другого напрямую из браузера", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("superAdmins/ownerA"), { email: "a@x.com" });
     });
-    await assertSucceeds(deleteDoc(doc(ctxFor("root"), "superAdmins/ownerA")));
+    await assertFails(deleteDoc(doc(ctxFor("root"), "superAdmins/ownerA")));
+  });
+
+  it("супер-админ не может сам себе сбросить «Выйти на всех устройствах»", async () => {
+    await assertFails(setDoc(doc(ctxFor("root"), "superAdmins/root"), { sessionsValidAfter: 0 }, { merge: true }));
   });
 
   it("обычный владелец не может назначить супер-админом даже самого себя", async () => {
@@ -706,6 +710,53 @@ describe("superAdmins: только существующий супер-адми
 
   it("анонимный/сторонний пользователь не может писать в superAdmins", async () => {
     await assertFails(setDoc(doc(ctxFor("stranger"), "superAdmins/stranger"), { email: "s@x.com" }));
+  });
+});
+
+describe("Завершённые сеансы супер-админа (sessionsValidAfter)", () => {
+  beforeEach(seedTwoTenants);
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  const rootAt = (authTime) => testEnv.authenticatedContext("root", { auth_time: authTime }).firestore();
+
+  it("вход ДО «Выйти на всех устройствах» больше не открывает данные платформы", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("superAdmins/root"), { since: "x", sessionsValidAfter: nowSec() });
+    });
+    await assertFails(getDoc(doc(rootAt(nowSec() - 3600), "tenants/tenantA")));
+  });
+
+  it("новый вход ПОСЛЕ завершения сеансов снова пускает", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("superAdmins/root"), { since: "x", sessionsValidAfter: nowSec() - 3600 });
+    });
+    await assertSucceeds(getDoc(doc(rootAt(nowSec()), "tenants/tenantA")));
+  });
+});
+
+describe("adminLogins / securityLog: только чтение супер-админом, запись только сервером", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(db.doc("adminLogins/root_1"), { uid: "root", ip: "1.2.3.4" });
+      await setDoc(db.doc("securityLog/e1"), { action: "superAdminGranted" });
+    });
+  });
+
+  it("супер-админ читает входы и журнал безопасности", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "adminLogins/root_1")));
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "securityLog/e1")));
+  });
+
+  it("владелец заведения их не видит", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "adminLogins/root_1")));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "securityLog/e1")));
+  });
+
+  it("даже супер-админ не может подделать или стереть запись", async () => {
+    await assertFails(setDoc(doc(ctxFor("root"), "securityLog/e2"), { action: "fake" }));
+    await assertFails(deleteDoc(doc(ctxFor("root"), "securityLog/e1")));
+    await assertFails(deleteDoc(doc(ctxFor("root"), "adminLogins/root_1")));
   });
 });
 
