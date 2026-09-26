@@ -93,9 +93,23 @@ class ChestnyZnakApiService {
       final code = (m['code'] ?? m['cis'] ?? '') as String;
       // Разные версии методички называли это поле по-разному
       // (valid / isValid / realCodeFoundInSystem) — берём первое найденное.
-      final valid = (m['valid'] ?? m['isValid'] ?? m['realCodeFoundInSystem']) as bool? ?? false;
-      final soldOrRetired = (m['isBlocked'] ?? m['utilised'] ?? m['sold']) as bool? ?? false;
-      final errorMessage = m['errorMessage'] ?? m['errorCode'] ?? m['message'];
+      final found = (m['valid'] ?? m['isValid'] ?? m['realCodeFoundInSystem']) as bool? ?? false;
+      // utilised — «код нанесён на товар»: у нормального товара это true,
+      // признаком продажи он НЕ является (раньше из-за этого годный код
+      // мог считаться уже проданным). Продан — sold, заблокирован
+      // госорганом — isBlocked; истёк срок годности — expireDate в прошлом.
+      final sold = m['sold'] == true;
+      final blocked = m['isBlocked'] == true;
+      final expire = DateTime.tryParse((m['expireDate'] ?? '').toString());
+      final expired = expire != null && expire.isBefore(DateTime.now());
+      final errorCode = m['errorCode'];
+      final errorMessage = m['errorMessage'] ??
+          m['message'] ??
+          (errorCode != null && errorCode != 0 && errorCode != '0' ? 'Код ошибки $errorCode' : null) ??
+          (blocked ? 'Товар заблокирован для продажи' : null) ??
+          (expired ? 'Истёк срок годности' : null);
+      final valid = found && !blocked && !expired;
+      final soldOrRetired = sold;
       return ChestnyZnakCodeCheck(
         code: code.isEmpty ? rawCodes.first : code,
         valid: valid,

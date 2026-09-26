@@ -10,6 +10,8 @@ import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_service.dart';
 import '../../services/egais_service.dart';
+import '../../services/venue_service.dart';
+import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
@@ -358,8 +360,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
               if (_bonusPaid > 0) 'бонусы ${_bonusPaid.toStringAsFixed(0)}₽',
             ].join(', ');
+      var venueName = VenueService.instance.cached.name.trim();
+      if (venueName.isEmpty) {
+        try {
+          venueName = (await VenueService.instance.load()).name.trim();
+        } catch (_) {}
+      }
+      if (venueName.isEmpty) venueName = AppScope.branding?.appName.trim() ?? '';
       await printer.printReceipt(ReceiptData(
-        venueName: 'Кальянная',
+        venueName: venueName.isEmpty ? 'Кальянная' : venueName,
         tableName: widget.session.tableName,
         employeeName: widget.session.employeeName,
         closedAt: DateTime.now(),
@@ -462,10 +471,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ],
       ];
 
+      final draft = FiscalReceipt(receiptId: widget.session.id, items: items, payments: const []);
+      final balanced = balancePayments(payments, draft.total);
       final result = await kassaService.sendReceipt(FiscalReceipt(
         receiptId: widget.session.id,
         items: items,
-        payments: payments.isEmpty ? [FiscalPayment('cash', billTotal)] : payments,
+        payments: balanced.isEmpty ? [FiscalPayment('cash', draft.total)] : balanced,
         buyerContact: _contactCtrl.text.trim(),
       ));
 

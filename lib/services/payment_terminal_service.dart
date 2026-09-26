@@ -4,6 +4,7 @@ import 'app_scope.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 
 /// Результат одной операции оплаты через терминал.
 class TerminalPaymentResult {
@@ -200,11 +201,13 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
       });
       final paymentId = init['PaymentId'].toString();
 
+      // PAYLOAD — ссылка СБП, QR рисуем сами. IMAGE отдаёт SVG-разметку
+      // (не картинку в base64), и Image.memory падал на ней.
       final qr = await _post('GetQr', {
         'PaymentId': paymentId,
-        'DataType': 'IMAGE',
+        'DataType': 'PAYLOAD',
       });
-      final qrImageBase64 = qr['Data'] as String?;
+      final qrPayload = qr['Data'] as String?;
 
       // Init/GetQr — это два похода в сеть; за это время экран оплаты
       // мог закрыться (сотрудник ушёл со стола). Показывать диалог в
@@ -212,12 +215,18 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
       // проверяем context.mounted и в этом случае просто ждём молча.
       final ctx = context;
       bool confirmedByGuest;
-      if (ctx != null && ctx.mounted && qrImageBase64 != null) {
-        confirmedByGuest = await _waitForPayment(ctx, paymentId, qrImageBase64, amount);
+      if (ctx != null && ctx.mounted && qrPayload != null && qrPayload.isNotEmpty) {
+        confirmedByGuest = await _waitForPayment(ctx, paymentId, qrPayload, amount);
       } else {
         confirmedByGuest = await _pollUntilDone(paymentId);
       }
 
+      if (!confirmedByGuest) {
+        // QR ещё действует: без отмены гость мог бы оплатить уже после
+        // того, как кассир закрыл окно, — деньги пришли бы мимо чека.
+        final paidMeanwhile = await _cancel(paymentId);
+        if (paidMeanwhile) return TerminalPaymentResult.success(operationId: paymentId);
+      }
       return confirmedByGuest
           ? TerminalPaymentResult.success(operationId: paymentId)
           : const TerminalPaymentResult.failure('Оплата по QR не завершена гостем');
@@ -231,31 +240,38 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
   /// Показывает гостю QR и сам следит за статусом, закрывая диалог по
   /// готовности — кассиру нажимать больше ничего не нужно.
   Future<bool> _waitForPayment(
-      BuildContext context, String paymentId, String qrImageBase64, double amount) async {
+      BuildContext context, String paymentId, String qrPayload, double amount) async {
     final resultCompleter = Completer<bool>();
-    Timer? poller;
+    BuildContext? dialogCtx;
+    var polling = false;
 
-    void stopPolling() {
-      poller?.cancel();
-      poller = null;
+    void finish(bool ok) {
+      if (resultCompleter.isCompleted) return;
+      resultCompleter.complete(ok);
+      final c = dialogCtx;
+      if (c != null && c.mounted) Navigator.pop(c);
     }
+
+    // Таймер один на весь диалог (а не в builder — тот вызывается при
+    // каждой перестройке, и опросов становилось несколько).
+    final poller = Timer.periodic(const Duration(seconds: 2), (_) async {
+      // Медленная сеть: не запускаем новый опрос, пока не ответил прошлый.
+      if (polling || resultCompleter.isCompleted) return;
+      polling = true;
+      final status = await _status(paymentId);
+      polling = false;
+      if (status == 'CONFIRMED') {
+        finish(true);
+      } else if (_failedStatuses.contains(status)) {
+        finish(false);
+      }
+    });
 
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        poller = Timer.periodic(const Duration(seconds: 2), (_) async {
-          final status = await _status(paymentId);
-          if (status == 'CONFIRMED') {
-            stopPolling();
-            if (!resultCompleter.isCompleted) resultCompleter.complete(true);
-            if (ctx.mounted) Navigator.pop(ctx);
-          } else if (status == 'REJECTED' || status == 'DEADLINE_EXPIRED' || status == 'CANCELED') {
-            stopPolling();
-            if (!resultCompleter.isCompleted) resultCompleter.complete(false);
-            if (ctx.mounted) Navigator.pop(ctx);
-          }
-        });
+        dialogCtx = ctx;
         return AlertDialog(
           title: const Text('Оплата по QR (СБП)'),
           content: Column(
@@ -264,25 +280,25 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
               Text('Гость сканирует код и переводит ${amount.toStringAsFixed(0)} ₽ '
                   'в своём банковском приложении.'),
               const SizedBox(height: 16),
-              Image.memory(base64Decode(qrImageBase64), width: 220, height: 220),
+              SizedBox(
+                width: 220,
+                height: 220,
+                child: QrImageView(data: qrPayload, backgroundColor: Colors.white),
+              ),
               const SizedBox(height: 16),
               const CircularProgressIndicator(),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                stopPolling();
-                if (!resultCompleter.isCompleted) resultCompleter.complete(false);
-                Navigator.pop(ctx);
-              },
+              onPressed: () => finish(false),
               child: const Text('Отменить'),
             ),
           ],
         );
       },
     );
-    stopPolling();
+    poller.cancel();
     if (!resultCompleter.isCompleted) resultCompleter.complete(false);
     return resultCompleter.future;
   }
@@ -293,9 +309,23 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
       await Future.delayed(const Duration(seconds: 2));
       final status = await _status(paymentId);
       if (status == 'CONFIRMED') return true;
-      if (status == 'REJECTED' || status == 'DEADLINE_EXPIRED' || status == 'CANCELED') return false;
+      if (_failedStatuses.contains(status)) return false;
     }
     return false;
+  }
+
+  static const _failedStatuses = {'REJECTED', 'DEADLINE_EXPIRED', 'CANCELED', 'AUTH_FAIL', 'REVERSED'};
+
+  /// Отменяет неоплаченный платёж. true — если выяснилось, что гость уже
+  /// успел заплатить (тогда отменять нельзя, и оплата засчитывается).
+  Future<bool> _cancel(String paymentId) async {
+    if (await _status(paymentId) == 'CONFIRMED') return true;
+    try {
+      await _post('Cancel', {'PaymentId': paymentId});
+    } catch (_) {
+      // Уже отменён/истёк — нечего отменять.
+    }
+    return await _status(paymentId) == 'CONFIRMED';
   }
 
   Future<String?> _status(String paymentId) async {

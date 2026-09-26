@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'app_scope.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
@@ -63,8 +65,14 @@ abstract class ReceiptPrinter {
 /// обеими реализациями ниже.
 Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperSize.mm58}) async {
   final profile = await CapabilityProfile.load();
-  final generator = Generator(paper, profile);
+  // По умолчанию библиотека кодирует текст в latin1, где кириллицы нет
+  // вовсе: любой русский чек падал с «Contains invalid characters» и не
+  // печатался. Чековые принтеры (Xprinter/Gprinter/Rongta/Epson) печатают
+  // кириллицу в кодовой странице CP866 — включаем её командой ESC t и
+  // кодируем текст тем же набором.
+  final generator = Generator(paper, profile, codec: const Cp866Codec());
   final bytes = <int>[];
+  bytes.addAll(generator.setGlobalCodeTable('CP866'));
 
   bytes.addAll(generator.text(
     data.venueName,
@@ -111,6 +119,70 @@ Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperS
 
 /// Bluetooth-принтер (в режиме классического SPP, как у подавляющего
 /// большинства недорогих 58-мм принтеров).
+/// Кодировка CP866 («DOS-кириллица») для ESC/POS-принтеров. Символы,
+/// которых в CP866 нет (₽, эмодзи, «ёлочки»), заменяются похожими или «?»,
+/// а не роняют печать всего чека.
+class Cp866Codec extends Encoding {
+  const Cp866Codec();
+
+  @override
+  String get name => 'cp866';
+
+  @override
+  Converter<List<int>, String> get decoder => const _Cp866Decoder();
+
+  @override
+  Converter<String, List<int>> get encoder => const _Cp866Encoder();
+
+  static const _replacements = {
+    '₽': 'р.', '«': '"', '»': '"', '„': '"', '“': '"', '”': '"', '—': '-', '–': '-',
+    '…': '...', '×': 'x', '‘': "'", '’': "'", '•': '*', '\u00A0': ' ',
+  };
+
+  static int? _byte(int c) {
+    if (c < 0x80) return c;
+    if (c >= 0x0410 && c <= 0x043F) return c - 0x0410 + 0x80; // А..п
+    if (c >= 0x0440 && c <= 0x044F) return c - 0x0440 + 0xE0; // р..я
+    switch (c) {
+      case 0x0401: return 0xF0; // Ё
+      case 0x0451: return 0xF1; // ё
+      case 0x00B0: return 0xF8; // °
+      case 0x00B7: return 0xFA; // ·
+      case 0x2116: return 0xFC; // №
+    }
+    return null;
+  }
+
+  static List<int> encodeString(String text) {
+    var t = text;
+    _replacements.forEach((from, to) => t = t.replaceAll(from, to));
+    final out = <int>[];
+    for (final rune in t.runes) {
+      out.add(_byte(rune) ?? 0x3F); // '?'
+    }
+    return out;
+  }
+}
+
+class _Cp866Encoder extends Converter<String, List<int>> {
+  const _Cp866Encoder();
+  @override
+  List<int> convert(String input) => Uint8List.fromList(Cp866Codec.encodeString(input));
+}
+
+class _Cp866Decoder extends Converter<List<int>, String> {
+  const _Cp866Decoder();
+  @override
+  String convert(List<int> input) => String.fromCharCodes(input.map((b) {
+        if (b < 0x80) return b;
+        if (b >= 0x80 && b <= 0xAF) return b - 0x80 + 0x0410;
+        if (b >= 0xE0 && b <= 0xEF) return b - 0xE0 + 0x0440;
+        if (b == 0xF0) return 0x0401;
+        if (b == 0xF1) return 0x0451;
+        return 0x3F;
+      }));
+}
+
 class BluetoothReceiptPrinter implements ReceiptPrinter {
   /// MAC-адрес принтера — выбирается пользователем один раз на экране
   /// настроек из списка сопряжённых Bluetooth-устройств
@@ -122,8 +194,21 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
   @override
   bool get isConnected => false; // проверяется асинхронно, см. connect()
 
+  /// На Android 12+ плагин отказывает во ВСЕХ вызовах (список устройств,
+  /// подключение, печать), пока приложение не получило разрешение
+  /// «Устройства поблизости» (BLUETOOTH_CONNECT/SCAN) — его запрашивает
+  /// только этот вызов, поэтому он идёт первым.
+  static Future<void> ensurePermission() async {
+    final granted = await PrintBluetoothThermal.isPermissionBluetoothGranted;
+    if (!granted) {
+      throw PrinterException('Нет разрешения «Устройства поблизости» (Bluetooth) — '
+          'разрешите его приложению в настройках Android и повторите.');
+    }
+  }
+
   @override
   Future<bool> connect() async {
+    await ensurePermission();
     final result = await PrintBluetoothThermal.connect(macPrinterAddress: macAddress);
     return result;
   }
@@ -135,6 +220,7 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
 
   @override
   Future<void> printReceipt(ReceiptData data) async {
+    await ensurePermission();
     final connected = await PrintBluetoothThermal.connectionStatus;
     if (!connected) {
       final ok = await connect();
@@ -143,13 +229,15 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
       }
     }
     final bytes = await _buildReceiptBytes(data);
-    await PrintBluetoothThermal.writeBytes(bytes);
+    final ok = await PrintBluetoothThermal.writeBytes(bytes);
+    if (!ok) throw PrinterException('Принтер ($macAddress) не принял данные — проверьте, что он включён и рядом');
   }
 
   /// Список уже сопряжённых в системе Bluetooth-устройств — для экрана
   /// выбора принтера в настройках (сначала пара выполняется в системных
   /// настройках Bluetooth телефона, здесь только выбор из списка).
-  static Future<List<BluetoothInfo>> pairedDevices() {
+  static Future<List<BluetoothInfo>> pairedDevices() async {
+    await ensurePermission();
     return PrintBluetoothThermal.pairedBluetooths;
   }
 }
