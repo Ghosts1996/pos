@@ -433,6 +433,11 @@ async function ensureProfile() {
 function watchProfile() {
   state.accountSubs.push(onSnapshot(doc(state.loyaltyRoot, 'clients', state.uid), (d) => {
     state.profile = d.exists() ? { id: d.id, ...d.data() } : null;
+    // Пока гость печатает имя или телефон, профиль не перерисовываем:
+    // любое обновление профиля (запись ID устройства при первом запуске,
+    // начисление бонусов кассой) иначе стирало введённое, и «Сохранить»
+    // записывало пустые поля.
+    if (location.hash === '#/profile' && state.profileDirty) return;
     // Экран «Мой стол» и «Главная» зависят от профиля — перерисуем.
     if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
   }, () => {}));
@@ -1935,10 +1940,20 @@ function screenProfile() {
         <button class="btn-ghost" id="switchVenueBtn">Сменить заведение сети</button>
       </p>` : ''}
 
+    <p class="center" style="margin-top:20px">
+      <button class="btn-link" id="deleteDataBtn" style="color:var(--muted);font-weight:500;width:auto;margin:0 auto">Удалить мои данные</button>
+    </p>
+
     <p class="small muted center" style="margin-top:28px">
       ${esc(brandDisplayName())} · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
+  $('deleteDataBtn').onclick = requestDataDeletion;
+  state.profileDirty = false;
+  ['pName', 'pPhone'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener('input', () => { state.profileDirty = true; });
+  });
   if (state.chainId) {
     // Сброс кэша выбранной точки сети (см. boot()) и обычная перезагрузка
     // страницы — здесь, в отличие от Flutter-приложения, это не риск: нет
@@ -2082,6 +2097,9 @@ async function saveProfile() {
     }
 
     const patch = { name: $('pName').value.trim() };
+    // Введённое уже прочитано — после записи профиль можно перерисовать
+    // (номер станет «только для чтения»).
+    state.profileDirty = false;
     if (!locked && phone) {
       patch.phone = phone;
       // Указатель «номер → гость»: вторичен, поэтому его осечка не должна
@@ -2095,6 +2113,31 @@ async function saveProfile() {
   } finally {
     const b = $('pSave');
     if (b) { b.disabled = false; b.textContent = 'Сохранить'; }
+  }
+}
+
+/// Право гостя потребовать удаления своих данных (152-ФЗ): запрос уходит
+/// в реестр платформы (saas-gateway /requestGuestDataDeletion) и
+/// обрабатывается вручную в течение 30 дней.
+async function requestDataDeletion() {
+  const ok = confirm('Удалить мои данные?\n\nМы удалим ваше имя, номер телефона и день рождения '
+    + 'из профиля, броней и заказов, а бонусы сгорят. Запрос обработают в течение 30 дней.');
+  if (!ok) return;
+  try {
+    const token = await state.auth.currentUser.getIdToken();
+    const res = await fetch(`${GATEWAY}/requestGuestDataDeletion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ tenantId: state.tenantId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || String(res.status));
+    const d = new Date(json.dueAt);
+    const due = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    toast(json.existing ? `Запрос уже отправлен — данные удалят не позднее ${due}`
+      : `Запрос принят — данные удалят не позднее ${due}`);
+  } catch (_) {
+    toast('Не удалось отправить запрос: проверьте интернет и попробуйте снова');
   }
 }
 

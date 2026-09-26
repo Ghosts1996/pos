@@ -3667,6 +3667,7 @@ function screenSuperAdmin() {
           <button type="button" class="sec-tab" data-sec="journal">Журнал</button>
           <button type="button" class="sec-tab" data-sec="platform">Платформа</button>
           <button type="button" class="sec-tab" data-sec="activity">Активность</button>
+          <button type="button" class="sec-tab" data-sec="data">Данные</button>
         </div>
 
         <div class="sec-pane active" data-sec-pane="access">
@@ -3729,6 +3730,47 @@ function screenSuperAdmin() {
             <input type="checkbox" id="f-sec-devices-all" style="width:auto;margin:0"> Показать все устройства
           </label>
           <div id="sec-devices"><div class="spinner"></div></div>
+        </div>
+
+        <div class="sec-pane" data-sec-pane="data">
+          <h2>Запросы о персональных данных</h2>
+          <p class="small muted">Удалить, выдать копию или исправить данные. Гости отправляют запрос
+          на удаление сами из профиля веб-версии; письма и звонки заводите здесь. Срок ответа —
+          30 дней с получения запроса (ч. 5 ст. 21 152-ФЗ), просроченные подсвечены.</p>
+          <div id="sec-requests"><div class="spinner"></div></div>
+          <div class="card">
+            <div style="font-weight:600;margin-bottom:8px">Новый запрос</div>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <select id="f-dr-subject" style="width:auto;margin:0">
+                <option value="guest">Гость</option>
+                <option value="owner">Владелец заведения</option>
+                <option value="other">Другое лицо</option>
+              </select>
+              <select id="f-dr-kind" style="width:auto;margin:0">
+                <option value="delete">Удалить данные</option>
+                <option value="export">Выдать копию данных</option>
+                <option value="correct">Исправить данные</option>
+              </select>
+            </div>
+            <input id="f-dr-contact" placeholder="Телефон или email" style="margin-top:8px">
+            <input id="f-dr-note" placeholder="Комментарий: откуда пришёл запрос, что именно просят">
+            <button type="button" class="btn btn-ghost" id="f-dr-create" style="width:auto">Завести запрос</button>
+            <div id="f-dr-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+          </div>
+
+          <h2>Найти гостя по телефону</h2>
+          <div class="card">
+            <div class="row" style="gap:8px">
+              <input id="f-guest-phone" class="grow" type="tel" placeholder="+7 999 123-45-67" style="margin:0">
+              <button type="button" class="btn btn-ghost" id="f-guest-find" style="width:auto">Найти</button>
+            </div>
+            <div id="sec-guest-found" style="margin-top:8px"></div>
+          </div>
+
+          <h2>Журнал удалений данных</h2>
+          <p class="small muted">Обезличенные гости, удалённые демо-заведения и заведения и сети, стёртые
+          после окончания льготного периода неоплаты.</p>
+          <div id="sec-deletions"><div class="spinner"></div></div>
         </div>
       </div>
     </div>
@@ -5025,6 +5067,182 @@ function watchSecurity() {
     if (!devicesLoaded) { devicesLoaded = true; loadSecurityDevices(); }
   });
   if ($('f-sec-devices-all')) $('f-sec-devices-all').onchange = () => loadSecurityDevices();
+  watchSecurityData();
+}
+
+const DATA_REQUEST_KIND_LABELS = { delete: 'Удалить данные', export: 'Выдать копию данных', correct: 'Исправить данные' };
+const DATA_REQUEST_SUBJECT_LABELS = { guest: 'гость', owner: 'владелец заведения', other: 'другое лицо' };
+const DATA_REQUEST_STATUS_LABELS = { new: 'новый', done: 'выполнен', rejected: 'отклонён' };
+
+/** Название заведения/сети по id — для строк реестра и журнала удалений
+ *  (одно чтение на id, дальше из кэша). */
+const securityNameCache = new Map();
+async function securityRootName(collectionName, id) {
+  if (!id) return '';
+  const key = `${collectionName}/${id}`;
+  if (!securityNameCache.has(key)) {
+    securityNameCache.set(key, getDoc(doc(state.db, collectionName, id))
+      .then((d) => (d.exists() ? (d.data().name || d.data().slug || id) : id))
+      .catch(() => id));
+  }
+  return securityNameCache.get(key);
+}
+
+/** Обезличить гостя (saas-gateway handleAnonymizeGuest) — только после
+ *  ввода пароля. */
+async function anonymizeGuest({ scope, id, clientUid, requestId, label }) {
+  if (!confirm(`Обезличить гостя ${label || ''}? Имя, телефон и день рождения будут удалены из профиля и из броней, заказов и отзывов, бонусы сгорят, аккаунт гостя удалится. Отменить нельзя.`)) return;
+  if (!(await reauthenticate('обезличить гостя'))) return;
+  try {
+    const r = (await callSaasGateway('anonymizeGuest', { scope, id, clientUid, requestId: requestId || null }, { forceRefresh: true })).data;
+    toast(`Гость обезличен · очищено записей: ${r.scrubbedRecords}`);
+  } catch (e) {
+    toast(`Не удалось: ${e?.message || e}`);
+  }
+}
+
+/** «Данные»: реестр запросов (dataRequests), поиск гостя по телефону и
+ *  журнал удалений. */
+function watchSecurityData() {
+  const reqBox = $('sec-requests');
+  const delBox = $('sec-deletions');
+
+  sub(onSnapshot(query(collection(state.db, 'dataRequests'), orderBy('createdAt', 'desc'), limit(100)), async (snap) => {
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const now = Date.now();
+    const html = await Promise.all(rows.map(async (r) => {
+      const venue = r.chainId ? await securityRootName('chains', r.chainId) : r.tenantId ? await securityRootName('tenants', r.tenantId) : '';
+      const due = r.dueAt?.toMillis ? r.dueAt.toMillis() : null;
+      const overdue = r.status === 'new' && due && due < now;
+      const canAnonymize = r.status === 'new' && r.kind === 'delete' && r.subjectType === 'guest' && r.clientUid;
+      return `
+        <div class="card sec-row${overdue ? ' sec-bad' : r.status === 'new' ? ' sec-warn' : ''}">
+          <div class="grow" style="min-width:0">
+            <div style="font-weight:600">${esc(DATA_REQUEST_KIND_LABELS[r.kind] || r.kind)} · ${esc(DATA_REQUEST_SUBJECT_LABELS[r.subjectType] || r.subjectType)}</div>
+            <div class="small">${esc(r.contact || '—')}${r.guestName ? ` · ${esc(r.guestName)}` : ''}${venue ? ` · ${esc(venue)}` : ''}</div>
+            <div class="small muted">${r.source === 'guest-web' ? 'из профиля гостя' : `заведён вручную${r.createdByEmail ? ` (${esc(r.createdByEmail)})` : ''}`} · ${fmtDateTime(r.createdAt)}${r.note ? ` · ${esc(r.note)}` : ''}</div>
+            <div class="small ${overdue ? '' : 'muted'}">${r.status === 'new'
+              ? `${overdue ? '<b style="color:var(--danger)">Просрочен</b> · ' : ''}ответить до ${due ? fmtMs(due) : '—'}`
+              : `${esc(DATA_REQUEST_STATUS_LABELS[r.status] || r.status)} ${fmtDateTime(r.resolvedAt)}${r.resolution ? ` · ${esc(r.resolution)}` : ''}`}</div>
+          </div>
+          ${r.status === 'new' ? `
+            <div class="row" style="flex-wrap:wrap;gap:6px;flex:none">
+              ${canAnonymize ? `<button type="button" class="btn btn-ghost f-dr-anon" data-id="${esc(r.id)}" data-scope="${r.chainId ? 'chain' : 'tenant'}" data-root="${esc(r.chainId || r.tenantId)}" data-uid="${esc(r.clientUid)}" data-label="${esc(r.contact || '')}" style="width:auto">Обезличить гостя</button>` : ''}
+              <button type="button" class="btn-link f-dr-resolve" data-id="${esc(r.id)}" data-status="done" style="width:auto">Выполнен</button>
+              <button type="button" class="btn-link f-dr-resolve" data-id="${esc(r.id)}" data-status="rejected" style="width:auto;color:var(--danger)">Отклонить</button>
+            </div>` : ''}
+        </div>`;
+    }));
+    reqBox.innerHTML = html.join('') || '<p class="small muted">Запросов пока не было.</p>';
+    reqBox.querySelectorAll('.f-dr-anon').forEach((el) => {
+      el.onclick = () => anonymizeGuest({ scope: el.dataset.scope, id: el.dataset.root, clientUid: el.dataset.uid, requestId: el.dataset.id, label: el.dataset.label });
+    });
+    reqBox.querySelectorAll('.f-dr-resolve').forEach((el) => {
+      el.onclick = async () => {
+        const done = el.dataset.status === 'done';
+        const resolution = prompt(done ? 'Что сделано (для истории):' : 'Причина отказа (для истории):', done ? '' : '');
+        if (resolution === null) return;
+        try {
+          await callSaasGateway('resolveDataRequest', { id: el.dataset.id, status: el.dataset.status, resolution });
+          toast(done ? 'Запрос отмечен выполненным' : 'Запрос отклонён');
+        } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+      };
+    });
+  }, () => { reqBox.innerHTML = '<p class="small muted">Реестр недоступен.</p>'; }));
+
+  if ($('f-dr-create')) {
+    $('f-dr-create').onclick = async () => {
+      const errEl = $('f-dr-error');
+      errEl.textContent = '';
+      const contact = $('f-dr-contact').value.trim();
+      if (!contact) { errEl.textContent = 'Укажите телефон или email'; return; }
+      $('f-dr-create').disabled = true;
+      try {
+        await callSaasGateway('createDataRequest', {
+          subjectType: $('f-dr-subject').value, kind: $('f-dr-kind').value, contact, note: $('f-dr-note').value.trim(),
+        });
+        $('f-dr-contact').value = ''; $('f-dr-note').value = '';
+        toast('Запрос заведён');
+      } catch (e) {
+        errEl.textContent = e?.message || 'Не удалось';
+      } finally {
+        $('f-dr-create').disabled = false;
+      }
+    };
+  }
+
+  if ($('f-guest-find')) {
+    $('f-guest-find').onclick = async () => {
+      const box = $('sec-guest-found');
+      box.innerHTML = '<div class="spinner"></div>';
+      try {
+        const r = (await callSaasGateway('findGuest', { phone: $('f-guest-phone').value })).data;
+        box.innerHTML = r.matches.length ? r.matches.map((m) => `
+          <div class="sec-row" style="padding:8px 0;border-top:1px solid var(--border)">
+            <div class="grow" style="min-width:0">
+              <div style="font-weight:600">${esc(m.guestName || 'Без имени')}${m.anonymized ? ' <span class="muted small">(уже обезличен)</span>' : ''}</div>
+              <div class="small muted">${m.scope === 'chain' ? 'Сеть' : 'Заведение'} «${esc(m.name || m.id)}» · визитов: ${Number(m.visits) || 0}</div>
+            </div>
+            ${m.anonymized ? '' : `<button type="button" class="btn btn-ghost f-guest-anon" data-scope="${m.scope}" data-root="${esc(m.id)}" data-uid="${esc(m.clientUid)}" style="width:auto;flex:none">Обезличить</button>`}
+          </div>`).join('') : `<p class="small muted">Гостя с номером ${esc(r.phone)} нет ни в одном заведении.</p>`;
+        box.querySelectorAll('.f-guest-anon').forEach((el) => {
+          el.onclick = () => anonymizeGuest({ scope: el.dataset.scope, id: el.dataset.root, clientUid: el.dataset.uid, label: r.phone });
+        });
+      } catch (e) {
+        box.innerHTML = `<p class="small" style="color:var(--danger)">${esc(e?.message || String(e))}</p>`;
+      }
+    };
+  }
+
+  // Журнал удалений: обезличивания и удаления демо — из securityLog,
+  // стирание заведений и сетей после льготного периода — из auditLogs
+  // (их пишет ночная задача биллинга).
+  let secDeletions = [];
+  let auditDeletions = [];
+  const drawDeletions = async () => {
+    const rows = [
+      ...secDeletions.map((e) => ({ at: e.createdAt, kind: e.action, e })),
+      ...auditDeletions.map((e) => ({ at: e.createdAt, kind: e.action, e })),
+    ].sort((a, b) => (b.at?.toMillis?.() || 0) - (a.at?.toMillis?.() || 0)).slice(0, 100);
+    const html = await Promise.all(rows.map(async ({ at, kind, e }) => {
+      const m = e.metadata || {};
+      let title = '';
+      let detail = '';
+      if (kind === 'guestAnonymized') {
+        title = 'Гость обезличен';
+        detail = `${m.phone || ''}${m.guestName ? ` · ${m.guestName}` : ''} · ${m.scope === 'chain' ? 'сеть' : 'заведение'} «${m.rootName || m.rootId || ''}» · очищено записей: ${m.scrubbedRecords ?? 0}`;
+      } else if (kind === 'demoTenantDeletedBySuperAdmin') {
+        title = 'Удалено демо-заведение';
+        detail = m.tenantName || e.tenantId || '';
+      } else if (kind === 'tenantDataPurged') {
+        title = 'Стёрты данные заведения (льготный период истёк)';
+        detail = await securityRootName('tenants', e.tenantId);
+      } else if (kind === 'chainDataPurged') {
+        title = 'Стёрты данные сети (льготный период истёк)';
+        detail = await securityRootName('chains', m.chainId);
+      }
+      return `
+        <div class="card">
+          <div class="row" style="justify-content:space-between;gap:10px;align-items:flex-start">
+            <div class="grow" style="min-width:0">
+              <div style="font-weight:600">${esc(title)}</div>
+              <div class="small">${esc(detail)}</div>
+              <div class="small muted">${esc(e.actorEmail || (e.actorId ? e.actorId : 'автоматически'))}</div>
+            </div>
+            <div class="small muted" style="flex:none">${fmtDateTime(at)}</div>
+          </div>
+        </div>`;
+    }));
+    delBox.innerHTML = html.join('') || '<p class="small muted">Удалений пока не было.</p>';
+  };
+  sub(onSnapshot(query(collection(state.db, 'securityLog'), where('action', 'in', ['guestAnonymized', 'demoTenantDeletedBySuperAdmin']), limit(100)), (snap) => {
+    secDeletions = snap.docs.map((d) => d.data());
+    drawDeletions();
+  }, () => {}));
+  sub(onSnapshot(query(collection(state.db, 'auditLogs'), where('action', 'in', ['tenantDataPurged', 'chainDataPurged']), limit(100)), (snap) => {
+    auditDeletions = snap.docs.map((d) => d.data());
+    drawDeletions();
+  }, () => {}));
 }
 
 const SIGNUP_TYPE_LABELS = {
@@ -5393,6 +5611,11 @@ const SECURITY_EVENT_LABELS = {
   emailDomainUnblocked: 'Снята блокировка домена почты',
   deviceDisabled: 'Отключено кассовое устройство',
   deviceEnabled: 'Включено кассовое устройство',
+  dataRequestCreated: 'Заведён запрос о персональных данных',
+  dataRequestDone: 'Запрос о персональных данных выполнен',
+  dataRequestRejected: 'Запрос о персональных данных отклонён',
+  guestLookup: 'Поиск гостя по телефону',
+  guestAnonymized: 'Гость обезличен',
 };
 function securityEventDetails(e) {
   const m = e.metadata || {};
@@ -5433,6 +5656,15 @@ function securityEventDetails(e) {
     case 'ipUnblocked':
     case 'emailDomainUnblocked':
       return m.value || '';
+    case 'dataRequestCreated':
+      return `${DATA_REQUEST_KIND_LABELS[m.kind] || m.kind || ''} · ${m.contact || ''}`;
+    case 'dataRequestDone':
+    case 'dataRequestRejected':
+      return `${DATA_REQUEST_KIND_LABELS[m.kind] || m.kind || ''} · ${m.contact || ''}`;
+    case 'guestLookup':
+      return `${m.phone || ''} · найдено: ${m.found ?? 0}`;
+    case 'guestAnonymized':
+      return `${m.phone || ''}${m.guestName ? ` · ${m.guestName}` : ''} · «${m.rootName || m.rootId || ''}»`;
     case 'deviceDisabled':
     case 'deviceEnabled':
       return `${tenant}${m.deviceName ? ` · ${m.deviceName}` : ''}${m.reason ? ` · ${m.reason}` : ''}`;

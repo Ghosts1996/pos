@@ -212,6 +212,13 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
       allow write: if false;
     }
+    // Реестр запросов субъектов персональных данных (152-ФЗ): гость
+    // отправляет запрос на удаление через saas-gateway, остальное заводит
+    // супер-админ — тоже через сервер, чтобы всё попадало в журнал.
+    match /dataRequests/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
 
     // ---- tenants: сам факт существования заведения и его статус ----
     match /tenants/{tenantId} {

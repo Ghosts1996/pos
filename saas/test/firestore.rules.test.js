@@ -782,6 +782,16 @@ describe("adminLogins / securityLog: только чтение супер-адм
     await assertFails(deleteDoc(doc(ctxFor("root"), "blocklist/ip_1.2.3.4")));
   });
 
+  it("запросы на удаление данных видит только супер-админ, гость и владелец — нет", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("dataRequests/r1"), { kind: "delete", clientUid: "guest1", status: "new" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "dataRequests/r1")));
+    await assertFails(getDoc(doc(ctxFor("guest1"), "dataRequests/r1")));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "dataRequests/r1")));
+    await assertFails(setDoc(doc(ctxFor("root"), "dataRequests/r2"), { kind: "delete" }));
+  });
+
   it("даже супер-админ не может подделать или стереть запись", async () => {
     await assertFails(setDoc(doc(ctxFor("root"), "securityLog/e2"), { action: "fake" }));
     await assertFails(deleteDoc(doc(ctxFor("root"), "securityLog/e1")));
