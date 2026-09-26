@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/fiscal_receipt.dart';
+import 'package:hookah_pos/services/egais_service.dart';
 import 'package:hookah_pos/services/kassa_service.dart';
 import 'package:hookah_pos/services/printer_service.dart';
 
@@ -308,6 +309,50 @@ void main() {
       expect(FiscalVatRateX.fromId('bogus'), FiscalVatRate.none);
       expect(normalizeReceiptPhone('+7 (999) 000-11-22'), '+79990001122');
       expect(normalizeReceiptPhone('9990001122'), '+79990001122');
+    });
+  });
+
+  group('ЕГАИС (УТМ)', () {
+    const outXml = '<?xml version="1.0" encoding="UTF-8" standalone="no"?><A>'
+        '<url replyId="0d2f6b4e-1111-2222-3333-444455556666">http://localhost:8080/opt/out/WayBill_v4/101</url>'
+        '<url replyId="0d2f6b4e-1111-2222-3333-444455556666">http://localhost:8080/opt/out/FORM2REGINFO/102</url>'
+        '<url>http://localhost:8080/opt/out/Ticket/103</url><ver>2</ver></A>';
+
+    test('входящие документы УТМ разбираются по типам', () {
+      final docs = EgaisUtmService.parseIncoming(outXml);
+      expect(docs.map((d) => d.type), ['WayBill_v4', 'FORM2REGINFO', 'Ticket']);
+      expect(docs.first.isWaybill, isTrue);
+      expect(docs.first.label, contains('Накладная поставщика'));
+      expect(docs[1].label, 'Справка к накладной');
+      expect(docs[2].replyId, '');
+    });
+
+    test('ЕГАИС включается только переключателем «продаётся алкоголь»', () {
+      expect(buildEgaisService({'utmHost': '10.0.0.5', 'egaisEnabled': false}), isNull);
+      expect(buildEgaisService({'egaisEnabled': true}), isNull, reason: 'без адреса УТМ');
+      expect(buildEgaisService({'utmHost': '10.0.0.5'})?.utmHost, '10.0.0.5', reason: 'старые настройки');
+      expect(buildEgaisService({'utmHost': '10.0.0.5', 'egaisEnabled': true, 'egaisFsrarId': '030000000001'})?.fsrarId,
+          '030000000001');
+    });
+
+    test('проверка связи с УТМ: число документов и накладных', () async {
+      HttpOverrides.global = null;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((req) async {
+        req.response.headers.contentType = ContentType('application', 'xml', charset: 'utf-8');
+        req.response.write(req.uri.path == '/opt/out' ? outXml : '');
+        await req.response.close();
+      });
+      final utm = EgaisUtmService(utmHost: '127.0.0.1', utmPort: server.port, fsrarId: '030000000001');
+      final st = await utm.checkConnection();
+      expect(st.ok, isTrue, reason: st.message);
+      expect(st.message, contains('Входящих документов: 3'));
+      expect(st.message, contains('накладных поставщиков: 1'));
+      final docs = await utm.incomingDocuments();
+      expect(docs.first.type, 'Ticket', reason: 'новые сверху');
+      await server.close(force: true);
+      final down = await EgaisUtmService(utmHost: '127.0.0.1', utmPort: 1).checkConnection();
+      expect(down.ok, isFalse);
     });
   });
 }

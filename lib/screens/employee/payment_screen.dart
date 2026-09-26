@@ -9,7 +9,6 @@ import '../../services/payment_terminal_service.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_service.dart';
-import '../../services/egais_service.dart';
 import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
@@ -509,35 +508,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
           // момент официально выводит их из оборота через ОФД → ИС МП.
           _showKassaWarning('Чек пробит, ${markingCodes.length} код(ов) маркировки списано');
         }
-        await _sendToEgaisIfNeeded();
       }
     } catch (e) {
       _showKassaWarning('Не удалось отправить чек в кассу: $e');
-    }
-  }
-
-  /// Отправляет документ розничной продажи в ЕГАИС (УТМ) по алкогольным
-  /// позициям чека — вызывается сразу после успешной фискализации в кассе.
-  /// Не блокирует и не отменяет уже проведённую оплату при сбое: касса уже
-  /// пробила чек, стол уже закрыт, а неотправленный документ ЕГАИС — это
-  /// отдельная проблема, которую нужно решать (обычно повторной отправкой
-  /// после восстановления связи с УТМ), но не откатом уже состоявшейся
-  /// продажи. Поэтому при ошибке — только предупреждение на экране.
-  Future<void> _sendToEgaisIfNeeded() async {
-    try {
-      final lines = await _fs.resolveAlcoholSaleLines(widget.session.orderItems);
-      if (lines.isEmpty) return;
-      final egais = activeEgaisService;
-      if (egais == null) {
-        _showKassaWarning('В чеке есть алкоголь, но УТМ ЕГАИС не настроен — Настройки → Интеграции');
-        return;
-      }
-      await egais.sendRetailSale(lines: lines, receiptNumber: widget.session.id);
-      _showKassaWarning('Продажа алкоголя отправлена в ЕГАИС');
-    } on EgaisException catch (e) {
-      _showKassaWarning('Не удалось отправить продажу в ЕГАИС: $e');
-    } catch (e) {
-      _showKassaWarning('Не удалось отправить продажу в ЕГАИС: $e');
     }
   }
 

@@ -1113,3 +1113,42 @@ describe("ИИ сети: один ключ на все точки", () => {
     await assertFails(setDoc(doc(db, "chains/chainX/meta/aiSecrets"), { vendors: {} }));
   });
 });
+
+describe("Каждая коллекция, которой пользуется касса, описана в правилах", () => {
+  // В правилах нет общего catch-all (см. комментарий в firestore.rules),
+  // поэтому коллекция, забытая здесь, в SaaS молча не работает: так было со
+  // складом (inventoryItems) и журналом фоновых задач (jobRuns).
+  it("все AppScope.col/loyaltyCol из lib/ имеют match в firestore.rules", () => {
+    const rules = fs.readFileSync(path.join(__dirname, "..", "firestore.rules"), "utf8");
+    const libDir = path.join(__dirname, "..", "..", "lib");
+    const used = new Set();
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".dart")) {
+          const src = fs.readFileSync(p, "utf8");
+          for (const m of src.matchAll(/AppScope\.(?:col|loyaltyCol)\('([A-Za-z_]+)'\)/g)) used.add(m[1]);
+        }
+      }
+    };
+    walk(libDir);
+    const missing = [...used].filter((c) => !rules.includes(`match /tenants/{tenantId}/${c}/`));
+    assert.deepStrictEqual(missing, [], `нет правил для: ${missing.join(", ")}`);
+  });
+
+  it("склад и журнал задач: персонал читает и пишет, гость и чужое заведение — нет", async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+    const emp = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/inventoryItems/tobacco"), { name: "Табак", quantity: 1000 }));
+    await assertSucceeds(getDoc(doc(emp, "tenants/tenantA/inventoryItems/tobacco")));
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/jobRuns/noShow"), { lastRunAt: 1 }));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/inventoryItems/tobacco")));
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/inventoryItems/tobacco"), { quantity: 0 }));
+  });
+});

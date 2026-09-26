@@ -1,176 +1,102 @@
-import 'dart:convert';
 import 'app_scope.dart';
 import 'package:http/http.dart' as http;
-import 'package:xml/xml.dart';
-import 'package:uuid/uuid.dart';
-import '../models/egais_models.dart';
 
-/// Интеграция с ЕГАИС.
+/// ЕГАИС в заведении общепита.
 ///
-/// ВАЖНО, честно про то, что здесь реально автоматизировано, а что нет:
+/// ЕГАИС нужен ТОЛЬКО если заведение продаёт алкоголь (включая пиво) — у
+/// кальянной без алкоголя его просто нет. Общепит, в отличие от розницы,
+/// НЕ отправляет в ЕГАИС каждую продажу с кассы: он принимает накладные
+/// поставщиков (ТТН), переводит продукцию в торговый зал и отмечает
+/// вскрытие бутылок крепкого алкоголя. Эти документы подписываются
+/// крипто-ключом организации в УТМ — программе ФСРАР на компьютере
+/// заведения; касса обращается к ней по локальной сети.
 ///
-/// 1. ЕГАИС не принимает запросы напрямую из приложения — по закону обмен
-///    идёт через УТМ (Универсальный Транспортный Модуль), программу от
-///    ЦРПТ/Росалкогольрегулирования, которая:
-///      • ставится на отдельный ПК/сервер в той же локальной сети, что и
-///        касса/планшет;
-///      • требует физический крипто-ключ (JaCarta/Рутокен PINPad) с
-///        сертификатом организации, которым УТМ подписывает документы;
-///      • сама поднимает локальный HTTP-сервер, обычно на
-///        `http://<ip-компьютера-с-УТМ>:8080`.
-///    Наше приложение — это клиент к УТМ, а не к ЕГАИС напрямую. Ссылку/IP
-///    компьютера с УТМ нужно один раз указать в настройках интеграций.
-///
-/// 2. Реальный протокол УТМ — это обмен XML-документами по HTTP:
-///      POST http://<utm host>:8080/opt/in/<ИмяМетода>   (multipart, файл xml_file)
-///      GET  http://<utm host>:8080/opt/out               (входящие от ЕГАИС документы)
-///    Ниже реализован именно этот протокол — реальные HTTP-вызовы, а не
-///    заглушка. Но структура XML документа `ЧекАлкоРозница`/`ПродажаПива`
-///    (набор тегов, версия схемы) регулярно уточняется Росалкогольрегулированием,
-///    и её стоит сверить с актуальными методическими рекомендациями УТМ
-///    перед боевым запуском — здесь заложен корректный на 2025-2026 год
-///    минимальный набор полей, но это тот кусок, который в первую очередь
-///    стоит показать интегратору ЕГАИС на объекте.
-///
-/// 3. Каждой позиции алкоголя в вашем справочнике нужен алкокод — он не
-///    придумывается на кассе, а выдаётся ЕГАИС при заведении марки/партии
-///    в личном кабинете организации. См. поле [AlcoholInfo.alcCode].
+/// Здесь — то, что работает одинаково во всех версиях УТМ: проверка связи
+/// и список входящих документов (`/opt/out` отдаёт
+/// `<A><url replyId="…">http://…/opt/out/ТИП/номер</url>…</A>`), чтобы
+/// администратор видел, что пришла новая накладная и её нужно принять.
+/// Раньше при закрытии стола касса слала в УТМ самодельный «чек продажи»,
+/// которого нет в форматах ЕГАИС для общепита, — эта отправка убрана.
 class EgaisUtmService {
-  final Uuid _uuid = const Uuid();
+  final String utmHost;
+  final int utmPort;
 
-  /// Адрес компьютера с установленным УТМ, например `192.168.1.50`.
-  /// Задаётся в настройках интеграций и хранится в Firestore
-  /// (settings/integrations), не хардкодится.
-  String utmHost;
-  int utmPort;
+  /// Идентификатор организации в ЕГАИС (ФСРАР ИД, 12 цифр) — из УТМ или
+  /// личного кабинета ЕГАИС.
+  final String fsrarId;
 
-  EgaisUtmService({required this.utmHost, this.utmPort = 8080});
+  EgaisUtmService({required this.utmHost, this.utmPort = 8080, this.fsrarId = ''});
 
-  Uri _uri(String method) => Uri.parse('http://$utmHost:$utmPort/opt/in/$method');
+  Uri get _outUri => Uri.parse('http://$utmHost:$utmPort/opt/out');
 
-  /// Простая проверка, что УТМ вообще поднят и отвечает — дергаем
-  /// стандартный метод получения версии УТМ. Используется на экране
-  /// настроек кнопкой "Проверить соединение".
   Future<EgaisConnectionStatus> checkConnection() async {
     try {
-      final resp = await http
-          .get(Uri.parse('http://$utmHost:$utmPort/utm/version'))
-          .timeout(const Duration(seconds: 5));
-      if (resp.statusCode == 200) {
-        return EgaisConnectionStatus(ok: true, message: resp.body.trim());
+      final resp = await http.get(_outUri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode != 200 || !resp.body.contains('<A')) {
+        return EgaisConnectionStatus(ok: false, message: 'Адрес отвечает, но это не УТМ (код ${resp.statusCode})');
       }
-      return EgaisConnectionStatus(ok: false, message: 'УТМ ответил кодом ${resp.statusCode}');
+      final docs = parseIncoming(resp.body);
+      final waybills = docs.where((d) => d.isWaybill).length;
+      return EgaisConnectionStatus(
+        ok: true,
+        message: 'УТМ на связи. Входящих документов: ${docs.length}'
+            '${waybills > 0 ? ', из них накладных поставщиков: $waybills' : ''}.'
+            '${fsrarId.isEmpty ? ' Укажите ФСРАР ИД организации.' : ''}',
+      );
     } catch (e) {
       return EgaisConnectionStatus(
         ok: false,
         message: 'Нет связи с УТМ по адресу $utmHost:$utmPort — проверьте, что '
-            'компьютер с УТМ включён, находится в той же сети и порт 8080 не '
-            'закрыт файрволом. ($e)',
+            'компьютер с УТМ включён, в той же сети, крипто-ключ вставлен, а порт '
+            '$utmPort не закрыт файрволом. ($e)',
       );
     }
   }
 
-  /// Формирует и отправляет в УТМ документ розничной продажи для позиций
-  /// чека, отмеченных как алкоголь. Крепкий алкоголь и пиво уходят разными
-  /// документами, поэтому список линий разбивается автоматически.
-  ///
-  /// Возвращает id документа на стороне УТМ (нужен для последующей сверки
-  /// статуса через [pollDocumentStatus]), либо бросает [EgaisException].
-  Future<String> sendRetailSale({
-    required List<EgaisSaleLine> lines,
-    required String receiptNumber,
-  }) async {
-    if (lines.isEmpty) {
-      throw EgaisException('Нет алкогольных позиций для отправки в ЕГАИС');
+  /// Входящие документы из УТМ (новые сверху).
+  Future<List<EgaisIncomingDoc>> incomingDocuments() async {
+    final resp = await http.get(_outUri).timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw EgaisException('УТМ ответил кодом ${resp.statusCode}');
     }
-
-    final strong = lines.where((l) => !l.isBeer).toList();
-    final beer = lines.where((l) => l.isBeer).toList();
-
-    String? lastDocId;
-    if (strong.isNotEmpty) {
-      lastDocId = await _sendDocument(
-        method: 'CheckAlcoRetail',
-        rootTag: 'ЧекАлкоРозница',
-        lines: strong,
-        receiptNumber: receiptNumber,
-      );
-    }
-    if (beer.isNotEmpty) {
-      lastDocId = await _sendDocument(
-        method: 'BeerRetailSale',
-        rootTag: 'ПродажаПива',
-        lines: beer,
-        receiptNumber: receiptNumber,
-      );
-    }
-    return lastDocId!;
+    return parseIncoming(resp.body).reversed.toList();
   }
 
-  Future<String> _sendDocument({
-    required String method,
-    required String rootTag,
-    required List<EgaisSaleLine> lines,
-    required String receiptNumber,
-  }) async {
-    final docId = _uuid.v4();
-    final builder = XmlBuilder();
-    builder.processing('xml', 'version="1.0" encoding="UTF-8"');
-    builder.element('Documents', nest: () {
-      builder.element(rootTag, nest: () {
-        builder.element('Identity', nest: () => builder.text(docId));
-        builder.element('Number', nest: () => builder.text(receiptNumber));
-        builder.element('Date', nest: () => builder.text(_egaisDate(DateTime.now())));
-        builder.element('Content', nest: () {
-          for (final line in lines) {
-            builder.element('Position', nest: () {
-              builder.element('AlcCode', nest: () => builder.text(line.alcCode));
-              builder.element('Quantity', nest: () => builder.text(line.quantityLiters.toStringAsFixed(4)));
-            });
-          }
-        });
-      });
-    });
-    final xmlDoc = builder.buildDocument().toXmlString(pretty: false);
+  static final _urlRe = RegExp(r'<url(?:\s+replyId="([^"]*)")?\s*>([^<]+)</url>');
 
-    final request = http.MultipartRequest('POST', _uri(method))
-      ..files.add(http.MultipartFile.fromBytes(
-        'xml_file',
-        utf8.encode(xmlDoc),
-        filename: '$docId.xml',
-      ));
+  /// Разбор ответа `/opt/out` (вынесен для теста без УТМ).
+  static List<EgaisIncomingDoc> parseIncoming(String xml) => _urlRe.allMatches(xml).map((m) {
+        final url = m.group(2)!.trim();
+        final parts = Uri.tryParse(url)?.pathSegments ?? const <String>[];
+        final i = parts.indexOf('out');
+        final type = (i >= 0 && i + 1 < parts.length) ? parts[i + 1] : '';
+        return EgaisIncomingDoc(type: type, url: url, replyId: m.group(1) ?? '');
+      }).toList();
+}
 
-    try {
-      final streamed = await request.send().timeout(const Duration(seconds: 15));
-      final resp = await http.Response.fromStream(streamed);
-      if (resp.statusCode != 200) {
-        throw EgaisException('УТМ вернул ошибку ${resp.statusCode}: ${resp.body}');
-      }
-      return docId;
-    } catch (e) {
-      if (e is EgaisException) rethrow;
-      throw EgaisException('Не удалось отправить документ в УТМ: $e');
+class EgaisIncomingDoc {
+  final String type;
+  final String url;
+  final String replyId;
+  const EgaisIncomingDoc({required this.type, required this.url, this.replyId = ''});
+
+  bool get isWaybill => type.startsWith('WayBill') || type.startsWith('WAYBILL');
+
+  /// Понятное название типа документа.
+  String get label {
+    final t = type.toLowerCase();
+    if (t.startsWith('waybillact')) return 'Акт к накладной';
+    if (t.startsWith('waybill')) return 'Накладная поставщика — примите в УТМ/ЕГАИС';
+    if (t.startsWith('form2reginfo') || t.startsWith('formbreginfo') || t.startsWith('form1reginfo')) {
+      return 'Справка к накладной';
     }
+    if (t.startsWith('ticket')) return 'Квитанция ЕГАИС о приёме документа';
+    if (t.startsWith('replyrests')) return 'Остатки';
+    if (t.startsWith('replypartner') || t.startsWith('replyclient')) return 'Справочник организаций';
+    if (t.startsWith('actwriteoff')) return 'Акт списания';
+    if (t.startsWith('transfertoshop') || t.startsWith('transferfromshop')) return 'Перемещение между регистрами';
+    return type.isEmpty ? 'Документ' : type;
   }
-
-  /// Забирает входящие документы (квитанции о принятии/отказе) из УТМ —
-  /// реальный обмен асинхронный: сам факт HTTP 200 при отправке значит
-  /// только "УТМ принял документ в очередь", а не "ЕГАИС подтвердила
-  /// продажу". Итоговый статус приходит позже отдельным документом сюда.
-  Future<List<String>> pollIncomingDocuments() async {
-    try {
-      final resp = await http
-          .get(Uri.parse('http://$utmHost:$utmPort/opt/out'))
-          .timeout(const Duration(seconds: 10));
-      if (resp.statusCode != 200) return [];
-      return [resp.body];
-    } catch (_) {
-      return [];
-    }
-  }
-
-  String _egaisDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
 
 class EgaisConnectionStatus {
@@ -186,22 +112,26 @@ class EgaisException implements Exception {
   String toString() => message;
 }
 
-/// Единая точка получения активного клиента УТМ во всём приложении — как
-/// [kassaService]/[activeReceiptPrinter]. null, пока IP УТМ не указан в
-/// Настройках → Интеграции: тогда экран оплаты просто не пытается
-/// отправлять документ в ЕГАИС (см. `payment_screen.dart`), вместо падения.
+/// Подключённый УТМ — null, пока в заведении не включён ЕГАИС (Настройки →
+/// Интеграции → «В заведении продаётся алкоголь») или не указан адрес УТМ.
 EgaisUtmService? activeEgaisService;
 
-/// Подтягивает сохранённый IP компьютера с УТМ (settings/integrations) и
-/// заполняет [activeEgaisService] — вызывается один раз при старте
-/// приложения, аналогично [loadSavedKassaSettings] в `kassa_service.dart`.
+EgaisUtmService? buildEgaisService(Map<String, dynamic> data) {
+  final host = (data['utmHost'] as String?)?.trim() ?? '';
+  // Старые настройки без переключателя: адрес УТМ указан — значит включено.
+  final enabled = data['egaisEnabled'] as bool? ?? host.isNotEmpty;
+  if (!enabled || host.isEmpty) return null;
+  return EgaisUtmService(utmHost: host, fsrarId: (data['egaisFsrarId'] as String?)?.trim() ?? '');
+}
+
+/// Подтягивает сохранённые настройки ЕГАИС (settings/integrations) — один
+/// раз при старте, как и остальные интеграции.
 Future<void> loadSavedEgaisSettings() async {
   try {
     final doc = await AppScope.col('settings').doc('integrations').get();
-    final host = doc.data()?['utmHost'] as String?;
-    activeEgaisService = (host != null && host.isNotEmpty) ? EgaisUtmService(utmHost: host) : null;
+    activeEgaisService = buildEgaisService(doc.data() ?? const {});
   } catch (_) {
-    // Нет сети/документа при первом запуске — activeEgaisService остаётся
-    // null до захода в Настройки → Интеграции.
+    // Нет сети/документа при первом запуске — ЕГАИС остаётся выключенным
+    // до захода в Настройки → Интеграции.
   }
 }
