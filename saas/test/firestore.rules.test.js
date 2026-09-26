@@ -1068,3 +1068,48 @@ describe("Настройки ИИ: ключи провайдеров не вид
     }, { merge: true }));
   });
 });
+
+describe("ИИ сети: один ключ на все точки", () => {
+  beforeEach(async () => {
+    await seedChain();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "chains/chainX/meta/aiSettings"), {
+        enabled: true, vendor: "darkapi", vendors: { darkapi: { model: "deepseek-chat", hasKey: true } },
+      });
+      await setDoc(doc(db, "chains/chainX/meta/aiSecrets"), { vendors: { darkapi: { apiKey: "chain-key", baseUrl: "" } } });
+    });
+  });
+
+  it("владелец сети сохраняет общие ключи и настройки, но не кладёт ключ в публичную часть", async () => {
+    const db = ctxFor("chainOwner");
+    await assertSucceeds(setDoc(doc(db, "chains/chainX/meta/aiSecrets"), {
+      vendors: { gemini: { apiKey: "g", baseUrl: "" } },
+    }, { merge: true }));
+    await assertSucceeds(setDoc(doc(db, "chains/chainX/meta/aiSettings"), {
+      enabled: true, vendor: "darkapi", fallbackVendor: "gemini",
+      vendors: { gemini: { format: "", model: "gemini-flash-latest", analyticsModel: "", hasKey: true } },
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "chains/chainX/meta/aiSettings"), { apiKey: "leak" }, { merge: true }));
+  });
+
+  it("сотрудник любой точки сети читает общий ключ (касса вызывает ИИ), но не меняет", async () => {
+    const db = ctxFor("empX1");
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/meta/aiSecrets")));
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/meta/aiSettings")));
+    await assertFails(setDoc(doc(db, "chains/chainX/meta/aiSecrets"), { vendors: {} }));
+  });
+
+  it("гость сети видит, что ИИ включён, но не видит ключ", async () => {
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/meta/aiSettings")));
+    await assertFails(getDoc(doc(db, "chains/chainX/meta/aiSecrets")));
+  });
+
+  it("чужие (сотрудник другого заведения) не видят ни настроек, ни ключа сети", async () => {
+    const db = ctxFor("staleEmp");
+    await assertFails(getDoc(doc(db, "chains/chainX/meta/aiSettings")));
+    await assertFails(getDoc(doc(db, "chains/chainX/meta/aiSecrets")));
+    await assertFails(setDoc(doc(db, "chains/chainX/meta/aiSecrets"), { vendors: {} }));
+  });
+});

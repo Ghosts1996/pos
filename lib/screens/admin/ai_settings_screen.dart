@@ -166,6 +166,19 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Card(
+            child: ListTile(
+              leading: Icon(AiSettingsStore.instance.isChainShared ? Icons.hub_outlined : Icons.key_outlined),
+              title: Text(AiSettingsStore.instance.isChainShared
+                  ? 'Общие настройки для всей сети'
+                  : 'Ключи ИИ этого заведения'),
+              subtitle: Text(AiSettingsStore.instance.isChainShared
+                  ? 'Ключ провайдера покупается один раз и работает во всех точках сети. '
+                      'Изменения здесь сразу применятся во всех точках.'
+                  : 'Заведение подключает свой ключ провайдера — оплата ИИ идёт напрямую провайдеру, '
+                      'платформа ключи не выдаёт.'),
+            ),
+          ),
           SwitchListTile(
             value: _settings.enabled,
             onChanged: (v) => setState(() => _settings = _settings.copyWith(enabled: v)),

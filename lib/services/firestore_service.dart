@@ -952,6 +952,13 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => MenuCategory.fromDoc(d)).toList());
   }
 
+  /// Позиции меню по id (для фискального чека: ставка НДС, предмет
+  /// расчёта). Удалённые позиции просто отсутствуют в ответе.
+  Future<Map<String, MenuItem>> menuItemsByIds(Set<String> ids) async {
+    final docs = await Future.wait(ids.map((id) => AppScope.col('menuItems').doc(id).get()));
+    return {for (final d in docs) if (d.exists) d.id: MenuItem.fromDoc(d)};
+  }
+
   Stream<List<MenuItem>> menuItemsStream() {
     return AppScope.col('menuItems').snapshots().map(
         (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());

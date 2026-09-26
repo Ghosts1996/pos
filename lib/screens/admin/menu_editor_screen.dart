@@ -1,5 +1,6 @@
 import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import '../../models/fiscal_receipt.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/inventory_models.dart';
@@ -248,6 +249,9 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final components = List<MenuItemComponent>.from(item?.components ?? []);
     // Режим: false = простая, true = составная (микс)
     bool isComposite = item?.isComposite ?? false;
+    // Фискальные реквизиты позиции (54-ФЗ)
+    var vat = item?.vat ?? '';
+    var fiscalSubject = item?.fiscalSubject ?? 'commodity';
 
     final result = await showDialog<_ItemDialogResult>(
       context: context,
@@ -266,6 +270,28 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   controller: priceCtrl,
                   decoration: const InputDecoration(labelText: 'Цена, ₽'),
                   keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: fiscalSubject,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'В чеке это'),
+                  items: const [
+                    FiscalPaymentObject.commodity,
+                    FiscalPaymentObject.service,
+                    FiscalPaymentObject.excise,
+                  ].map((o) => DropdownMenuItem(value: o.id, child: Text(o.label))).toList(),
+                  onChanged: (v) => setDialogState(() => fiscalSubject = v ?? 'commodity'),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: vat,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Ставка НДС'),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('Как у заведения')),
+                    ...FiscalVatRate.values.map((v) => DropdownMenuItem(value: v.id, child: Text(v.label))),
+                  ],
+                  onChanged: (v) => setDialogState(() => vat = v ?? ''),
                 ),
                 const SizedBox(height: 12),
 
@@ -419,6 +445,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     weightUnit: weightUnit,
                     inventoryItemId: isComposite ? '' : (linkedInventoryId ?? ''),
                     components: isComposite ? List.from(components) : [],
+                    vat: vat,
+                    fiscalSubject: fiscalSubject,
                   )),
               child: const Text('Сохранить'),
             ),
@@ -437,6 +465,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         weightUnit: result.weightUnit,
         inventoryItemId: result.inventoryItemId,
         components: result.components,
+        vat: result.vat,
+        fiscalSubject: result.fiscalSubject,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -446,6 +476,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         weightUnit: result.weightUnit,
         inventoryItemId: result.inventoryItemId,
         components: result.components,
+        vat: result.vat,
+        fiscalSubject: result.fiscalSubject,
       ));
     }
   }
@@ -588,6 +620,8 @@ class _ItemDialogResult {
   final InventoryUnit weightUnit;
   final String inventoryItemId;
   final List<MenuItemComponent> components;
+  final String vat;
+  final String fiscalSubject;
 
   _ItemDialogResult({
     required this.name,
@@ -596,6 +630,8 @@ class _ItemDialogResult {
     required this.weightUnit,
     this.inventoryItemId = '',
     this.components = const [],
+    this.vat = '',
+    this.fiscalSubject = 'commodity',
   });
 }
 

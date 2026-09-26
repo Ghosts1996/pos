@@ -405,11 +405,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // маркированного товара должна попасть в чек ОТДЕЛЬНОЙ строкой с
       // quantity=1 и своим кодом в теге 1162 (так требует ФФД, нельзя
       // "размазать" один код на несколько единиц в одной строке).
-      final codesByMenuItem = <String, List<String>>{};
+      final codesByMenuItem = <String, List<AttachedMarkingCode>>{};
       for (final entry in markingCodes) {
         if (entry.menuItemId.isEmpty) continue;
-        codesByMenuItem.putIfAbsent(entry.menuItemId, () => []).add(entry.code.raw);
+        codesByMenuItem.putIfAbsent(entry.menuItemId, () => []).add(entry);
       }
+      // Ставка НДС и предмет расчёта — из карточки позиции меню (или
+      // ставка заведения по умолчанию).
+      final menu = await _fs.menuItemsByIds(
+          widget.session.orderItems.map((l) => l.menuItemId).where((id) => id.isNotEmpty).toSet());
+      FiscalVatRate vatOf(OrderItem line) {
+        final own = menu[line.menuItemId]?.vat ?? '';
+        return own.isEmpty ? kassaDefaultVat : FiscalVatRateX.fromId(own, fallback: kassaDefaultVat);
+      }
+
+      FiscalPaymentObject subjectOf(OrderItem line) =>
+          FiscalPaymentObjectX.fromId(menu[line.menuItemId]?.fiscalSubject);
 
       // Цены позиций в фискальном чеке должны быть УЖЕ со скидкой.
       // Раньше позиции уходили по полному прайсу, а платежи — по факту
@@ -423,7 +434,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       final items = <FiscalReceiptItem>[];
       for (final line in widget.session.orderItems) {
-        final codes = List<String>.from(codesByMenuItem[line.menuItemId] ?? const []);
+        final codes = List<AttachedMarkingCode>.from(codesByMenuItem[line.menuItemId] ?? const []);
         // Столько единиц позиции промаркировано отсканированными кодами —
         // на них заводим отдельные строки chek'а с markingCode.
         final markedCount = codes.length.clamp(0, line.qty);
@@ -432,8 +443,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
             name: line.name,
             price: priceOf(line),
             quantity: 1,
-            paymentObject: FiscalPaymentObject.markedGood,
-            markingCode: codes[i],
+            vat: vatOf(line),
+            paymentObject: subjectOf(line),
+            markingCode: codes[i].code.raw,
+            markingPermit: codes[i].permit,
           ));
         }
         // Остаток количества этой позиции (не покрытый сканированием —
@@ -449,6 +462,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
             name: line.name,
             price: priceOf(line),
             quantity: rest.toDouble(),
+            vat: vatOf(line),
+            paymentObject: subjectOf(line),
           ));
         }
       }

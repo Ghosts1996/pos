@@ -9,31 +9,114 @@
 /// провайдера.
 library fiscal_receipt;
 
-/// Ставка НДС позиции (тег ФФД 1199). По умолчанию `none` — большинство
-/// небольших заведений на УСН/патенте НДС не платят; если у заведения
-/// общая система налогообложения, ставку нужно проставлять по позициям.
-enum FiscalVatRate { vat20, vat10, vat0, none }
+/// Ставка НДС позиции (тег ФФД 1199). По умолчанию `none` — «без НДС»
+/// (УСН/патент без НДС). С 01.01.2026 основная ставка — 22%, для УСН с
+/// НДС — 5% и 7%. 20% оставлена только для чеков по старым операциям.
+enum FiscalVatRate { none, vat0, vat5, vat7, vat10, vat20, vat22 }
 
 extension FiscalVatRateX on FiscalVatRate {
-  /// Код ставки НДС в терминах большинства провайдеров облачных касс
-  /// (АТОЛ Онлайн и совместимые с ним по духу API).
-  String get providerCode {
+  /// Значение для хранения в настройках/позициях меню.
+  String get id => name;
+
+  String get label {
     switch (this) {
-      case FiscalVatRate.vat20:
-        return 'vat20';
-      case FiscalVatRate.vat10:
-        return 'vat10';
-      case FiscalVatRate.vat0:
-        return 'vat0';
       case FiscalVatRate.none:
-        return 'none';
+        return 'Без НДС';
+      case FiscalVatRate.vat0:
+        return 'НДС 0%';
+      case FiscalVatRate.vat5:
+        return 'НДС 5% (УСН)';
+      case FiscalVatRate.vat7:
+        return 'НДС 7% (УСН)';
+      case FiscalVatRate.vat10:
+        return 'НДС 10%';
+      case FiscalVatRate.vat20:
+        return 'НДС 20% (до 2026 г.)';
+      case FiscalVatRate.vat22:
+        return 'НДС 22%';
     }
   }
+
+  /// Код ставки в протоколе АТОЛ Онлайн (v4 и v5).
+  String get providerCode => name;
+
+  /// Код ставки OrangeData (поле `tax`). С 01.01.2026 код 1 означает 22%
+  /// (20% — только с флагом useTax20, для возвратов за 2025 год).
+  int get orangeDataCode {
+    switch (this) {
+      case FiscalVatRate.vat20:
+      case FiscalVatRate.vat22:
+        return 1;
+      case FiscalVatRate.vat10:
+        return 2;
+      case FiscalVatRate.vat0:
+        return 5;
+      case FiscalVatRate.none:
+        return 6;
+      case FiscalVatRate.vat5:
+        return 7;
+      case FiscalVatRate.vat7:
+        return 8;
+    }
+  }
+
+  static FiscalVatRate fromId(String? id, {FiscalVatRate fallback = FiscalVatRate.none}) =>
+      FiscalVatRate.values.firstWhere((v) => v.name == id, orElse: () => fallback);
 }
 
-/// Признак предмета расчёта (тег ФФД 1212) — обычный товар/услуга или
-/// маркированный товар. Влияет на то, обязателен ли [FiscalReceiptItem.markingCode].
+/// Признак предмета расчёта (тег ФФД 1212). Для маркированного товара
+/// провайдеру уходит «с кодом маркировки»: подакцизный (табак, пиво) —
+/// 31, прочий (вода, соки) — 33.
 enum FiscalPaymentObject { commodity, service, excise, markedGood }
+
+extension FiscalPaymentObjectX on FiscalPaymentObject {
+  String get id => name;
+
+  String get label {
+    switch (this) {
+      case FiscalPaymentObject.commodity:
+        return 'Товар';
+      case FiscalPaymentObject.service:
+        return 'Услуга (кальян, аренда)';
+      case FiscalPaymentObject.excise:
+        return 'Подакцизный товар (табак, пиво, алкоголь)';
+      case FiscalPaymentObject.markedGood:
+        return 'Маркированный товар';
+    }
+  }
+
+  /// Числовой код тега 1212 для ФФД 1.2 (АТОЛ v5, OrangeData).
+  int ffd12Code({required bool marked}) {
+    switch (this) {
+      case FiscalPaymentObject.service:
+        return 4;
+      case FiscalPaymentObject.excise:
+        return marked ? 31 : 2;
+      case FiscalPaymentObject.commodity:
+      case FiscalPaymentObject.markedGood:
+        return marked ? 33 : 1;
+    }
+  }
+
+  static FiscalPaymentObject fromId(String? id) => FiscalPaymentObject.values
+      .firstWhere((v) => v.name == id, orElse: () => FiscalPaymentObject.commodity);
+}
+
+/// Результат проверки кода в «Честном знаке» (разрешительный режим) —
+/// передаётся в чек отраслевым реквизитом (теги 1260–1265), без него касса
+/// с 2024 года не пропускает часть маркированных товаров (табак, пиво).
+class MarkingPermit {
+  final String reqId;
+  final String reqTimestamp;
+  const MarkingPermit({required this.reqId, required this.reqTimestamp});
+
+  /// Постановление Правительства РФ № 1944 от 21.11.2023 (ФОИВ 030).
+  static const federalId = '030';
+  static const documentDate = '21.11.2023';
+  static const documentNumber = '1944';
+
+  String get value => 'UUID=$reqId&Time=$reqTimestamp';
+}
 
 /// Одна строка фискального чека.
 class FiscalReceiptItem {
@@ -50,6 +133,9 @@ class FiscalReceiptItem {
   /// кассы — см. docstring в `chestny_znak_service.dart`).
   final String? markingCode;
 
+  /// Результат онлайн-проверки кода в «Честном знаке» — если проверка была.
+  final MarkingPermit? markingPermit;
+
   const FiscalReceiptItem({
     required this.name,
     required this.price,
@@ -57,6 +143,7 @@ class FiscalReceiptItem {
     this.vat = FiscalVatRate.none,
     this.paymentObject = FiscalPaymentObject.commodity,
     this.markingCode,
+    this.markingPermit,
   });
 
   /// С копейками: price * quantity в double даёт хвосты вроде 999.98999…

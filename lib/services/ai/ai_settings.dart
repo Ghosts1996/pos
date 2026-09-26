@@ -369,6 +369,13 @@ class AiSettings {
 
 /// Глобальный кэш настроек ИИ: один раз подписываемся на документы,
 /// дальше все агенты читают [current] синхронно, без похода в сеть.
+///
+/// Где лежат настройки:
+///  • одиночное заведение — tenants/{id}/meta/aiSettings (+ aiSecrets);
+///  • точка сети — chains/{chainId}/meta/aiSettings (+ aiSecrets): ключ
+///    покупается один раз на всю сеть и действует во всех точках. Пока у
+///    сети своих настроек нет, работают прежние настройки самой точки —
+///    при первом сохранении они переезжают на уровень сети.
 class AiSettingsStore {
   AiSettingsStore._();
   static final AiSettingsStore instance = AiSettingsStore._();
@@ -379,6 +386,9 @@ class AiSettingsStore {
   AiSettings _current = const AiSettings();
   AiSettings get current => _current;
 
+  // Документы сети и (для совместимости) самой точки.
+  Map<String, dynamic>? _chainData;
+  Map<String, dynamic>? _chainSecrets;
   Map<String, dynamic>? _data;
   Map<String, dynamic>? _secrets;
   final List<StreamSubscription> _subs = [];
@@ -388,19 +398,43 @@ class AiSettingsStore {
   /// хранит всё в одном документе, как раньше.
   bool get _split => AppScope.isSaasMode;
 
-  void _rebuild() => _current = AiSettings.fromMap(_data, secrets: _secrets);
+  /// Настройки общие на всю сеть заведений.
+  bool get isChainShared => AppScope.chainId != null;
+
+  DocumentReference<Map<String, dynamic>> _chainDoc(String path) =>
+      FirebaseFirestore.instance.doc('chains/${AppScope.chainId}/$path');
+
+  /// Куда сохранять: сеть — на уровень сети, иначе — заведение.
+  DocumentReference<Map<String, dynamic>> _target(String path) =>
+      isChainShared ? _chainDoc(path) : AppScope.doc(path);
+
+  void _rebuild() {
+    final useChain = isChainShared && _chainData != null;
+    _current = AiSettings.fromMap(
+      useChain ? _chainData : _data,
+      secrets: useChain ? _chainSecrets : _secrets,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _read(DocumentReference<Map<String, dynamic>> ref) async {
+    try {
+      return (await ref.get()).data();
+    } catch (_) {
+      return null; // нет прав (гость и ключи) или нет сети
+    }
+  }
 
   /// Прочитать настройки один раз (экран настроек). Ключи — если есть
   /// права (персонал); у гостя их нет, это не ошибка.
   Future<AiSettings> load() async {
-    final doc = await AppScope.doc(_path).get();
-    Map<String, dynamic>? secrets;
-    if (_split) {
-      try {
-        secrets = (await AppScope.doc(_secretsPath).get()).data();
-      } catch (_) {}
+    if (isChainShared) {
+      final chain = await _read(_chainDoc(_path));
+      if (chain != null) {
+        return AiSettings.fromMap(chain, secrets: _split ? await _read(_chainDoc(_secretsPath)) : null);
+      }
     }
-    return AiSettings.fromMap(doc.data(), secrets: secrets);
+    final own = await _read(AppScope.doc(_path));
+    return AiSettings.fromMap(own, secrets: _split ? await _read(AppScope.doc(_secretsPath)) : null);
   }
 
   /// Вызывается один раз при старте приложения (main). Не блокирует запуск:
@@ -410,36 +444,28 @@ class AiSettingsStore {
       await s.cancel();
     }
     _subs.clear();
-    try {
-      _data = (await AppScope.doc(_path).get()).data();
-    } catch (_) {
-      _data = null;
-    }
-    if (_split) {
-      try {
-        _secrets = (await AppScope.doc(_secretsPath).get()).data();
-      } catch (_) {
-        _secrets = null; // гость: ключей не видит, ходит через saas-gateway
-      }
+    _data = await _read(AppScope.doc(_path));
+    if (_split) _secrets = await _read(AppScope.doc(_secretsPath));
+    if (isChainShared) {
+      _chainData = await _read(_chainDoc(_path));
+      if (_split) _chainSecrets = await _read(_chainDoc(_secretsPath));
     }
     _rebuild();
-    _subs.add(AppScope.doc(_path).snapshots().listen((d) {
-      _data = d.data();
-      _rebuild();
-    }, onError: (_) {}));
-    if (_split) {
-      _subs.add(AppScope.doc(_secretsPath).snapshots().listen((d) {
-        _secrets = d.data();
+
+    void listen(DocumentReference<Map<String, dynamic>> ref, void Function(Map<String, dynamic>?) set) {
+      _subs.add(ref.snapshots().listen((d) {
+        set(d.data());
         _rebuild();
       }, onError: (_) {}));
     }
-  }
 
-  Stream<AiSettings> stream() => AppScope.doc(_path).snapshots().map((d) {
-        _data = d.data();
-        _rebuild();
-        return _current;
-      });
+    listen(AppScope.doc(_path), (d) => _data = d);
+    if (_split) listen(AppScope.doc(_secretsPath), (d) => _secrets = d);
+    if (isChainShared) {
+      listen(_chainDoc(_path), (d) => _chainData = d);
+      if (_split) listen(_chainDoc(_secretsPath), (d) => _chainSecrets = d);
+    }
+  }
 
   Future<void> save(AiSettings settings) async {
     final pub = settings.toPublicMap();
@@ -447,8 +473,8 @@ class AiSettingsStore {
     // в SaaS ключ больше не должен лежать в документе, который читают гости.
     const legacy = ['apiKey', 'baseUrl', 'provider', 'model', 'analyticsModel', 'vendorKeys'];
     if (_split) {
-      await AppScope.doc(_secretsPath).set(settings.toSecretsMap(), SetOptions(merge: true));
-      await AppScope.doc(_path).set({
+      await _target(_secretsPath).set(settings.toSecretsMap(), SetOptions(merge: true));
+      await _target(_path).set({
         ...pub,
         for (final f in legacy) f: FieldValue.delete(),
       }, SetOptions(merge: true));
@@ -466,8 +492,14 @@ class AiSettingsStore {
         'analyticsModel': p.analyticsModel,
       }, SetOptions(merge: true));
     }
-    _data = await AppScope.doc(_path).get().then((d) => d.data()).catchError((_) => pub);
-    if (_split) _secrets = settings.toSecretsMap();
+    final saved = await _read(_target(_path)) ?? pub;
+    if (isChainShared) {
+      _chainData = saved;
+      if (_split) _chainSecrets = settings.toSecretsMap();
+    } else {
+      _data = saved;
+      if (_split) _secrets = settings.toSecretsMap();
+    }
     _rebuild();
   }
 }

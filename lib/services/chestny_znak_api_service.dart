@@ -87,6 +87,10 @@ class ChestnyZnakApiService {
       throw ChestnyZnakApiException('Не удалось разобрать ответ «Честного знака»: ${resp.body}');
     }
 
+    // Идентификатор и время проверки — для отраслевого реквизита чека
+    // (разрешительный режим, теги 1260–1265).
+    final reqId = (data['reqId'] ?? '').toString();
+    final reqTimestamp = (data['reqTimestamp'] ?? '').toString();
     final list = (data['codes'] as List?) ?? const [];
     return list.map((raw) {
       final m = raw as Map<String, dynamic>;
@@ -116,6 +120,8 @@ class ChestnyZnakApiService {
         alreadyRetired: soldOrRetired,
         errorMessage: errorMessage?.toString(),
         raw: m,
+        reqId: reqId,
+        reqTimestamp: reqTimestamp,
       );
     }).toList();
   }
@@ -136,12 +142,18 @@ class ChestnyZnakCodeCheck {
   /// выше не нашёл нужное поле в конкретной версии ответа ЦРПТ.
   final Map<String, dynamic> raw;
 
+  /// Идентификатор и время запроса проверки — нужны кассе для чека.
+  final String reqId;
+  final String reqTimestamp;
+
   const ChestnyZnakCodeCheck({
     required this.code,
     required this.valid,
     required this.alreadyRetired,
     this.errorMessage,
     this.raw = const {},
+    this.reqId = '',
+    this.reqTimestamp = '',
   });
 }
 
