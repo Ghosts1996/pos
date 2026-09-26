@@ -3485,6 +3485,241 @@ async function setDeviceEnabled(req, res, enabled) {
   sendJson(res, 200, { ok: true });
 }
 
+// ------------------------------------ security: персональные данные (152-ФЗ)
+//
+// Реестр запросов субъектов персональных данных (dataRequests): удалить,
+// выдать копию, исправить. Гость отправляет запрос на удаление сам (кнопка
+// «Удалить мои данные» в профиле веб-версии), остальные запросы (письмо,
+// звонок) супер-админ заводит вручную. Срок — 30 дней с получения (ч. 5
+// ст. 21 152-ФЗ), панель подсвечивает просроченные. Читает только
+// супер-админ, пишет только этот сервис.
+const DATA_REQUEST_DUE_DAYS = 30;
+const DATA_REQUEST_KINDS = ["delete", "export", "correct"];
+const DATA_REQUEST_SUBJECTS = ["guest", "owner", "other"];
+
+async function handleCreateDataRequest(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const subjectType = DATA_REQUEST_SUBJECTS.includes(body.subjectType) ? body.subjectType : null;
+  const kind = DATA_REQUEST_KINDS.includes(body.kind) ? body.kind : null;
+  if (!subjectType || !kind) throw new HttpError(400, "Укажите, чей запрос и что просят сделать");
+  const contact = typeof body.contact === "string" ? body.contact.trim().slice(0, 120) : "";
+  if (!contact) throw new HttpError(400, "Укажите контакт (телефон или email), по которому пришёл запрос");
+  const now = Date.now();
+  const ref = await db().collection("dataRequests").add({
+    subjectType, kind, contact,
+    tenantId: typeof body.tenantId === "string" && body.tenantId ? body.tenantId : null,
+    note: typeof body.note === "string" ? body.note.trim().slice(0, 500) : null,
+    source: "manual",
+    status: "new",
+    createdAt: admin.firestore.Timestamp.fromMillis(now),
+    dueAt: admin.firestore.Timestamp.fromMillis(now + DATA_REQUEST_DUE_DAYS * 86400000),
+    createdBy: decoded.uid, createdByEmail: decoded.email || null,
+  });
+  await writeSecurityEvent(req, decoded, "dataRequestCreated", { metadata: { requestId: ref.id, subjectType, kind, contact } });
+  sendJson(res, 200, { ok: true, id: ref.id });
+}
+
+/** Гость сам просит удалить свои данные (веб-версия гостя). Нужен его
+ *  (анонимный) вход и существующий профиль в этом заведении/сети; один
+ *  открытый запрос на гостя — повторное нажатие не плодит дубли. */
+async function handleRequestGuestDataDeletion(req, res) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const tenantId = typeof body.tenantId === "string" && body.tenantId ? body.tenantId : null;
+  if (!tenantId) throw new HttpError(400, "Не указано заведение");
+  const firestore = db();
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenantDoc.data().chainId || null;
+  const loyaltyRoot = chainId ? firestore.collection("chains").doc(chainId) : firestore.collection("tenants").doc(tenantId);
+  const client = await loyaltyRoot.collection("clients").doc(decoded.uid).get();
+  if (!client.exists) throw new HttpError(404, "Профиль гостя не найден");
+  const open = await firestore.collection("dataRequests").where("clientUid", "==", decoded.uid).get();
+  const existing = open.docs.find((d) => d.data().status === "new" && d.data().kind === "delete");
+  if (existing) {
+    sendJson(res, 200, { ok: true, id: existing.id, dueAt: existing.data().dueAt.toMillis(), existing: true });
+    return;
+  }
+  const c = client.data();
+  const now = Date.now();
+  const ref = await firestore.collection("dataRequests").add({
+    subjectType: "guest", kind: "delete",
+    contact: c.phone || (c.shortDeviceId ? `ID устройства ${c.shortDeviceId}` : "без контакта"),
+    guestName: c.name || null,
+    clientUid: decoded.uid, tenantId, chainId,
+    source: "guest-web",
+    status: "new",
+    createdAt: admin.firestore.Timestamp.fromMillis(now),
+    dueAt: admin.firestore.Timestamp.fromMillis(now + DATA_REQUEST_DUE_DAYS * 86400000),
+  });
+  sendJson(res, 200, { ok: true, id: ref.id, dueAt: now + DATA_REQUEST_DUE_DAYS * 86400000 });
+}
+
+async function handleResolveDataRequest(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { id, status, resolution } = await parseJsonBody(req);
+  if (typeof id !== "string" || !id) throw new HttpError(400, "Не указан запрос");
+  if (!["done", "rejected"].includes(status)) throw new HttpError(400, "Статус: выполнен или отклонён");
+  const ref = db().collection("dataRequests").doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Запрос не найден");
+  await ref.set({
+    status,
+    resolution: typeof resolution === "string" ? resolution.trim().slice(0, 500) : null,
+    resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    resolvedBy: decoded.uid, resolvedByEmail: decoded.email || null,
+  }, { merge: true });
+  await writeSecurityEvent(req, decoded, status === "done" ? "dataRequestDone" : "dataRequestRejected", {
+    metadata: { requestId: id, contact: snap.data().contact || null, kind: snap.data().kind || null },
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+/** Найти гостя по телефону во всех заведениях и сетях — для запросов,
+ *  пришедших письмом или звонком. Читает phoneIndex/{телефон} у каждого
+ *  заведения и сети (без запросов по коллекциям-группам, которым нужен
+ *  отдельный индекс). */
+function normalizeRuPhone(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("8")) d = `7${d.slice(1)}`;
+  if (d.length === 10 && d.startsWith("9")) d = `7${d}`;
+  return d;
+}
+async function handleFindGuest(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { phone } = await parseJsonBody(req);
+  const normalized = normalizeRuPhone(phone);
+  if (!/^7\d{10}$/.test(normalized)) throw new HttpError(400, "Телефон в формате +7 999 123-45-67");
+  const firestore = db();
+  const [tenants, chains] = await Promise.all([firestore.collection("tenants").get(), firestore.collection("chains").get()]);
+  const roots = [
+    ...tenants.docs.filter((d) => !d.data().chainId && d.data().status !== "deleted" && d.data().demo !== true)
+      .map((d) => ({ scope: "tenant", id: d.id, name: d.data().name, slug: d.data().slug, ref: d.ref })),
+    ...chains.docs.filter((d) => d.data().status !== "deleted")
+      .map((d) => ({ scope: "chain", id: d.id, name: d.data().name, slug: d.data().slug, ref: d.ref })),
+  ];
+  const matches = [];
+  for (let i = 0; i < roots.length; i += 10) {
+    await Promise.all(roots.slice(i, i + 10).map(async (r) => {
+      const idx = await r.ref.collection("phoneIndex").doc(normalized).get();
+      const uid = idx.exists ? idx.data().uid : null;
+      if (!uid) return;
+      const client = await r.ref.collection("clients").doc(uid).get();
+      const c = client.exists ? client.data() : {};
+      matches.push({
+        scope: r.scope, id: r.id, name: r.name || null, slug: r.slug || null, clientUid: uid,
+        guestName: c.name || null, visits: c.visits || 0, anonymized: c.anonymized === true,
+      });
+    }));
+  }
+  await writeSecurityEvent(req, decoded, "guestLookup", { metadata: { phone: normalized, found: matches.length } });
+  sendJson(res, 200, { phone: normalized, matches });
+}
+
+/**
+ * Обезличить гостя (удаление по запросу, 152-ФЗ): в профиле остаются
+ * только обезличенные цифры (сколько потратил и визитов — для отчётов
+ * заведения), имя, телефон, день рождения и прочее стираются; удаляются
+ * указатели телефона и реферального кода; из броней, листа ожидания,
+ * заказов, вызовов и отзывов во всех точках убираются имя и телефон;
+ * анонимный аккаунт гостя удаляется. Только после ввода пароля.
+ */
+async function handleAnonymizeGuest(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const body = await parseJsonBody(req);
+  const clientUid = typeof body.clientUid === "string" ? body.clientUid : "";
+  const scope = body.scope === "chain" ? "chain" : "tenant";
+  const rootId = typeof body.id === "string" ? body.id : "";
+  if (!clientUid || !rootId) throw new HttpError(400, "Не указан гость");
+  const firestore = db();
+  const root = firestore.collection(scope === "chain" ? "chains" : "tenants").doc(rootId);
+  const rootDoc = await root.get();
+  if (!rootDoc.exists) throw new HttpError(404, "Заведение или сеть не найдены");
+  const clientRef = root.collection("clients").doc(clientUid);
+  const clientSnap = await clientRef.get();
+  if (!clientSnap.exists) throw new HttpError(404, "Профиль гостя не найден");
+  const c = clientSnap.data();
+
+  // Указатели на гостя
+  if (c.phone) {
+    const idx = root.collection("phoneIndex").doc(String(c.phone));
+    const idxSnap = await idx.get();
+    if (idxSnap.exists && idxSnap.data().uid === clientUid) await idx.delete();
+  }
+  if (c.referralCode) {
+    const code = root.collection("referralCodes").doc(String(c.referralCode));
+    const codeSnap = await code.get();
+    if (codeSnap.exists && codeSnap.data().uid === clientUid) await code.delete();
+  }
+  // Профиль: только обезличенная статистика
+  await clientRef.set({
+    name: "", phone: "",
+    totalSpent: Number(c.totalSpent) || 0,
+    visits: Number(c.visits) || 0,
+    bonusBalance: 0,
+    anonymized: true,
+    anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Имя и телефон в записях точек (у сети — во всех её точках)
+  const tenantIds = scope === "chain"
+    ? (await firestore.collection("tenants").where("chainId", "==", rootId).get()).docs.map((d) => d.id)
+    : [rootId];
+  let scrubbed = 0;
+  for (const tid of tenantIds) {
+    for (const [col, patch] of [
+      ["reservations", { guestName: "Гость (данные удалены)", phone: "" }],
+      ["waitlist", { guestName: "Гость (данные удалены)", phone: "" }],
+      ["guestOrders", { guestName: "" }],
+      ["waiterCalls", { guestName: "" }],
+      ["reviews", { guestName: "" }],
+    ]) {
+      const snap = await firestore.collection("tenants").doc(tid).collection(col).where("clientUid", "==", clientUid).get();
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = firestore.batch();
+        snap.docs.slice(i, i + 400).forEach((d) => batch.update(d.ref, patch));
+        await batch.commit();
+      }
+      scrubbed += snap.size;
+    }
+  }
+
+  // Анонимный аккаунт гостя (у владельцев/сотрудников с почтой не трогаем)
+  let accountDeleted = false;
+  try {
+    const u = await getFirebaseApp().auth().getUser(clientUid);
+    if (!u.email && !u.phoneNumber && (u.providerData || []).length === 0) {
+      await getFirebaseApp().auth().deleteUser(clientUid);
+      accountDeleted = true;
+    }
+  } catch (_) {}
+
+  if (typeof body.requestId === "string" && body.requestId) {
+    await firestore.collection("dataRequests").doc(body.requestId).set({
+      status: "done",
+      resolution: "Гость обезличен",
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolvedBy: decoded.uid, resolvedByEmail: decoded.email || null,
+    }, { merge: true });
+  }
+  await writeSecurityEvent(req, decoded, "guestAnonymized", {
+    tenantId: scope === "tenant" ? rootId : null,
+    targetUid: clientUid,
+    metadata: {
+      scope, rootId, rootName: rootDoc.data().name || null,
+      guestName: c.name || null, phone: c.phone || null,
+      scrubbedRecords: scrubbed, accountDeleted, requestId: body.requestId || null,
+    },
+  });
+  sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -3521,6 +3756,11 @@ const ROUTES = {
   "/securityDevices": handleSecurityDevices,
   "/disableDevice": (req, res) => setDeviceEnabled(req, res, false),
   "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
+  "/createDataRequest": handleCreateDataRequest,
+  "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
+  "/resolveDataRequest": handleResolveDataRequest,
+  "/findGuest": handleFindGuest,
+  "/anonymizeGuest": handleAnonymizeGuest,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,
