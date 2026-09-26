@@ -42,13 +42,16 @@ const SAAS_GATEWAY_URL = 'https://pii.hookahpos.su/saas';
  *  Cloud Function — с ID-токеном текущего пользователя в заголовке и JSON
  *  телом. Бросает Error с понятным сообщением (существующие вызывающие
  *  места уже показывают e.message пользователю). */
-async function callSaasGateway(path, data) {
+async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   if (!SAAS_GATEWAY_URL) {
     throw new Error(
       'SAAS_GATEWAY_URL не задан в console.js — заведите свой сервис (см. saas-gateway/README.md) и пропишите его адрес.'
     );
   }
-  const idToken = await state.auth.currentUser?.getIdToken();
+  // forceRefresh — сразу после reauthenticate(): действиям, которые сервер
+  // пускает только со свежим вводом пароля (requireRecentAuth), нужен токен
+  // с новым auth_time, а не закэшированный от прошлого входа.
+  const idToken = await state.auth.currentUser?.getIdToken(forceRefresh);
   const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
     method: 'POST',
     headers: {
@@ -632,7 +635,23 @@ function handleAuthChange(user) {
 
   // Флаг платформы, не заведения — не блокирует обычный экран владельца,
   // поэтому отдельная лёгкая подписка, а не часть watchMemberships().
-  state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), (d) => {
+  state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), async (d) => {
+    // «Выйти на всех устройствах» (раздел «Безопасность»): этот вход
+    // случился раньше — правила базы и saas-gateway его уже не пускают,
+    // поэтому сразу выходим, а не показываем панель, где всё падает с
+    // «нет прав».
+    const validAfter = d.exists() ? d.data().sessionsValidAfter : null;
+    if (typeof validAfter === 'number' && state.auth.currentUser) {
+      try {
+        const token = await state.auth.currentUser.getIdTokenResult();
+        const authTime = Math.floor(new Date(token.authTime).getTime() / 1000);
+        if (authTime <= validAfter) {
+          toast('Сеансы панели завершены на всех устройствах — войдите заново');
+          await signOut(state.auth);
+          return;
+        }
+      } catch (_) {}
+    }
     state.isSuperAdmin = d.exists();
     route();
   }, () => {
@@ -3643,7 +3662,16 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="security">
         <h1>Безопасность</h1>
-        <p class="small muted">Раздел в разработке.</p>
+        <div class="sec-tabs">
+          <button type="button" class="sec-tab active" data-sec="access">Доступ</button>
+        </div>
+
+        <div class="sec-pane active" data-sec-pane="access">
+          <p class="small muted">Кто имеет полный доступ к панели платформы и когда в неё
+          входил. Назначить или снять супер-админа — в разделе «Сотрудники платформы».</p>
+          <div id="sec-access-warnings"></div>
+          <div id="sec-access-list"><div class="spinner"></div></div>
+        </div>
       </div>
     </div>
   `;
@@ -3682,6 +3710,10 @@ function screenSuperAdmin() {
   watchAdminInfra();
   watchAdminBroadcasts();
   watchAdminSupportTickets();
+  watchSecurity();
+  // Отметка входа в панель (IP, браузер) — см. handleRecordAdminLogin в
+  // saas-gateway. Сбой не мешает работе панели.
+  callSaasGateway('recordAdminLogin', {}).catch(() => {});
 }
 
 /** Обращения в поддержку — вкладка "Поддержка" панели платформы (супер-админ
@@ -4838,22 +4870,14 @@ function watchSuperAdmins() {
   };
 }
 
+// Назначение и снятие — только через saas-gateway (handleGrantSuperAdmin/
+// handleRevokeSuperAdmin): сервер сам проверяет, что пароль введён только
+// что, ищет кандидата в Firebase Auth (с подтверждённой почтой) и пишет
+// событие в журнал безопасности. Писать в superAdmins из браузера правила
+// базы больше не дают. forceRefresh — токен с новым auth_time после
+// reauthenticate().
 async function promoteSuperAdmin(email) {
-  // Найти можно только того, кто уже сам зарегистрировался в консоли —
-  // ровно тот же приём, что и приглашение сотрудника заведения
-  // (inviteTenantMember): нельзя выдать роль тому, у кого ещё даже нет
-  // аккаунта, потому что не к чему привязать документ (нужен его uid).
-  const q = query(collection(state.db, 'users'), where('email', '==', email), limit(1));
-  const snap = await getDocs(q);
-  if (snap.empty) {
-    throw new Error('Этот email ещё не зарегистрирован в консоли — попросите сотрудника сначала зарегистрироваться (кнопка «Зарегистрироваться» на экране входа), затем попробуйте снова');
-  }
-  const uid = snap.docs[0].id;
-  await setDoc(doc(state.db, 'superAdmins', uid), {
-    email,
-    grantedAt: Timestamp.fromDate(new Date()),
-    grantedBy: state.uid,
-  });
+  await callSaasGateway('grantSuperAdmin', { email }, { forceRefresh: true });
 }
 
 async function revokeSuperAdmin(uid) {
@@ -4864,11 +4888,118 @@ async function revokeSuperAdmin(uid) {
   if (!confirm('Снять права супер-админа платформы у этого пользователя?')) return;
   if (!(await reauthenticate('снять доступ супер-админа'))) return;
   try {
-    await deleteDoc(doc(state.db, 'superAdmins', uid));
+    await callSaasGateway('revokeSuperAdmin', { uid }, { forceRefresh: true });
     toast('Доступ снят');
   } catch (e) {
     toast(`Не удалось снять доступ: ${e?.message || e}`);
   }
+}
+
+// ---------- БЕЗОПАСНОСТЬ ----------
+
+/** «Chrome · Windows» из User-Agent — чтобы в списке входов было видно, с
+ *  какого устройства заходили, без простыни строки браузера. */
+function describeUserAgent(ua) {
+  const s = String(ua || '');
+  if (!s) return 'неизвестное устройство';
+  const browser = /YaBrowser/.test(s) ? 'Яндекс Браузер'
+    : /Edg\//.test(s) ? 'Edge'
+      : /OPR\//.test(s) ? 'Opera'
+        : /Firefox\//.test(s) ? 'Firefox'
+          : /Chrome\//.test(s) ? 'Chrome'
+            : /Safari\//.test(s) ? 'Safari' : 'браузер';
+  const os = /Windows/.test(s) ? 'Windows'
+    : /Android/.test(s) ? 'Android'
+      : /iPhone|iPad|iPod/.test(s) ? 'iOS'
+        : /Mac OS X|Macintosh/.test(s) ? 'macOS'
+          : /Linux/.test(s) ? 'Linux' : '';
+  return os ? `${browser} · ${os}` : browser;
+}
+
+/** Секунды (sessionsValidAfter) → «дд.мм.гггг чч:мм». */
+function fmtEpochSec(sec) {
+  return typeof sec === 'number' ? fmtDateTime(Timestamp.fromMillis(sec * 1000)) : '—';
+}
+
+/** «Выйти на всех устройствах» для себя или другого супер-админа (см.
+ *  handleRevokeAdminSessions в saas-gateway). Свои сеансы — без пароля
+ *  (это защитное действие), чужие — только после ввода пароля. */
+async function revokeAdminSessions(uid, label, reason) {
+  const self = uid === state.uid;
+  const question = self
+    ? 'Завершить ВСЕ ваши сеансы панели на всех устройствах, включая этот? Потребуется войти заново.'
+    : `Завершить все сеансы супер-админа ${label} на всех устройствах? Ему придётся войти заново.`;
+  if (!confirm(question)) return;
+  if (!self && !(await reauthenticate(`завершить сеансы ${label}`))) return;
+  try {
+    await callSaasGateway('revokeAdminSessions', { uid, reason: reason || null }, { forceRefresh: !self });
+    if (self) {
+      toast('Все сеансы завершены — войдите заново');
+      await signOut(state.auth);
+    } else {
+      toast('Сеансы завершены');
+    }
+  } catch (e) {
+    toast(`Не удалось завершить сеансы: ${e?.message || e}`);
+  }
+}
+
+/** Раздел «Безопасность» панели платформы: переключатель подразделов и их
+ *  загрузка. */
+function watchSecurity() {
+  document.querySelectorAll('.sec-tab').forEach((el) => {
+    el.onclick = () => {
+      document.querySelectorAll('.sec-tab').forEach((b) => b.classList.toggle('active', b === el));
+      document.querySelectorAll('.sec-pane').forEach((p) => p.classList.toggle('active', p.dataset.secPane === el.dataset.sec));
+    };
+  });
+  watchSecurityAccess();
+}
+
+/** «Доступ»: все супер-админы, когда и кем назначены, последний вход
+ *  (время, IP, браузер) и «Выйти на всех устройствах». Предупреждает, если
+ *  супер-админ один (восстановить доступ будет некому) или их слишком
+ *  много (у каждого полный доступ к платформе). */
+function watchSecurityAccess() {
+  const list = $('sec-access-list');
+  const warnings = $('sec-access-warnings');
+  sub(onSnapshot(collection(state.db, 'superAdmins'), (snap) => {
+    const admins = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.id === state.uid ? -1 : b.id === state.uid ? 1 : String(a.email || '').localeCompare(String(b.email || ''))));
+    const warn = [];
+    if (admins.length === 1) {
+      warn.push('Супер-админ один. Если он потеряет доступ к почте или паролю, восстановить панель будет некому — назначьте второго доверенного человека.');
+    }
+    if (admins.length > 5) {
+      warn.push(`Супер-админов ${admins.length}. У каждого полный доступ ко всем заведениям и деньгам платформы — снимите тех, кому он больше не нужен.`);
+    }
+    warnings.innerHTML = warn.map((w) => `<div class="card sec-warn"><div class="small">⚠️ ${esc(w)}</div></div>`).join('');
+
+    list.innerHTML = admins.map((a) => {
+      const label = a.email || `без email · ${a.id.slice(-6).toUpperCase()}`;
+      const self = a.id === state.uid;
+      return `
+        <div class="card sec-row">
+          <div class="grow" style="min-width:0">
+            <div class="ellipsis" style="font-weight:600">${esc(label)}${self ? ' <span class="muted small">(вы)</span>' : ''}</div>
+            <div class="small muted">Назначен: ${a.grantedAt ? fmtDate(a.grantedAt) : esc(a.since || '—')}${a.grantedByEmail ? ` · ${esc(a.grantedByEmail)}` : ''}</div>
+            <div class="small muted">Последний вход в панель: ${a.lastLoginAt
+              ? `${fmtDateTime(a.lastLoginAt)} · ${esc(a.lastLoginIp || '—')} · ${esc(describeUserAgent(a.lastLoginUserAgent))}`
+              : 'не записан'}</div>
+            ${typeof a.sessionsValidAfter === 'number' ? `<div class="small muted">Сеансы завершались: ${fmtEpochSec(a.sessionsValidAfter)}</div>` : ''}
+          </div>
+          <button type="button" class="btn btn-ghost f-sec-revoke-sessions" data-uid="${esc(a.id)}" data-label="${esc(label)}" style="width:auto;flex:none">
+            ${self ? 'Выйти на всех устройствах' : 'Завершить сеансы'}
+          </button>
+        </div>`;
+    }).join('') || '<p class="small muted">Список пуст.</p>';
+
+    list.querySelectorAll('.f-sec-revoke-sessions').forEach((el) => {
+      el.onclick = () => revokeAdminSessions(el.dataset.uid, el.dataset.label);
+    });
+  }, () => {
+    list.innerHTML = '<p class="small muted">Список недоступен.</p>';
+  }));
 }
 
 // ---------- ПОДПИСКА (ЮKASSA) И СБОРКА APK ----------
