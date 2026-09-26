@@ -436,6 +436,14 @@ function randomInviteCode() {
   return out;
 }
 
+// Подпись участника заведения: email, если он есть в членстве; иначе
+// известный email (свой аккаунт / владелец в панели платформы) — у
+// владельцев, заведённых до того, как шлюз начал писать email в
+// tenantMembers, его там нет; иначе это планшет, присоединённый по коду.
+function memberLabel(m, knownEmail) {
+  return m.email || knownEmail || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`;
+}
+
 function slugify(s) {
   return String(s ?? '')
     .toLowerCase()
@@ -869,7 +877,7 @@ function screenLanding() {
         </div>
         <div class="landing-nav-actions">
           <a class="landing-nav-login" href="#/login">Войти</a>
-          <button class="btn btn-primary" id="f-landing-nav-cta">Попробовать бесплатно</button>
+          <button class="btn btn-primary" id="f-landing-nav-cta"><span class="landing-nav-cta-full">Попробовать бесплатно</span><span class="landing-nav-cta-short">Попробовать</span></button>
         </div>
       </div>
     </nav>
@@ -2203,7 +2211,7 @@ function watchDashboardData(tenantId) {
         </div>
         <div class="small muted" style="margin-top:6px">
           ${esc(subscriptionLine)} ·
-          <button class="btn-link f-dash-tab" data-tab="billing" style="width:auto">Подробнее</button>
+          <button class="btn-link f-dash-tab" data-tab="billing" style="width:auto;display:inline-flex;padding:0;font-size:inherit">Подробнее</button>
         </div>
       </div>
       ${tenant.chainId ? chainLocationsHtml() : ''}
@@ -2465,7 +2473,7 @@ function watchDashboardData(tenantId) {
       <div class="card">
         ${members === null ? '<div class="small muted">Загрузка…</div>' : sortedMembers.map((m) => `
           <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-            <div class="ellipsis">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
+            <div class="ellipsis">${esc(memberLabel(m, m.userId === state.uid ? state.auth.currentUser?.email : null))}${m.userId === state.uid ? ' <span class="muted small">(вы)</span>' : ''}</div>
             <div class="small muted">${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
             ${canManage && m.userId !== state.uid && ['manager', 'employee'].includes(m.role) ? `
               <div class="row" style="flex-wrap:wrap;margin-top:6px">
@@ -2476,7 +2484,7 @@ function watchDashboardData(tenantId) {
                 <button class="btn-link f-member-toggle" data-uid="${esc(m.userId)}" data-active="${m.status === 'active' ? '1' : '0'}">
                   ${m.status === 'active' ? 'Отключить' : 'Включить'}
                 </button>
-                <button class="btn-link f-member-delete" data-uid="${esc(m.userId)}" data-device="${m.email ? '0' : '1'}" data-label="${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)}" style="color:var(--danger)">
+                <button class="btn-link f-member-delete" data-uid="${esc(m.userId)}" data-device="${m.email ? '0' : '1'}" data-label="${esc(memberLabel(m))}" style="color:var(--danger)">
                   Удалить
                 </button>
               </div>
@@ -3038,8 +3046,7 @@ function watchDashboardData(tenantId) {
         if (!email) { errEl.textContent = 'Введите email'; return; }
         $('f-invite-submit').disabled = true;
         try {
-          const inviteTenantMember = httpsCallable(state.functions, 'inviteTenantMember');
-          await inviteTenantMember({ tenantId, email, role: inviteRole });
+          await callSaasGateway('inviteTenantMember', { tenantId, email, role: inviteRole });
           $('f-invite-email').value = '';
           toast('Приглашение добавлено');
         } catch (e) {
@@ -3161,7 +3168,7 @@ function watchDashboardData(tenantId) {
   };
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
-    plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    plans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
     draw();
   }).catch(() => { plans = []; draw(); });
 
@@ -4058,7 +4065,7 @@ function watchAllTenants() {
 
         <div class="small muted" style="margin-bottom:4px">Команда</div>
         ${sortedMembers.length ? sortedMembers.map((m) => `
-          <div class="small" style="padding:2px 0">${esc(m.email || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`)} — ${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
+          <div class="small" style="padding:2px 0">${esc(memberLabel(m, m.userId === t.ownerUserId ? t.ownerEmail : null))} — ${esc(ROLE_LABELS[m.role] || m.role)}${m.status !== 'active' ? ' · отключён' : ''}</div>
         `).join('') : '<div class="small muted">Пусто</div>'}
 
         <div class="row" style="justify-content:space-between;align-items:center;margin-top:12px">
@@ -4917,7 +4924,16 @@ async function convertTenantToChain(tenantId, tenant, planId) {
   if (!slug) { toast('Код сети не может быть пустым'); return; }
   if (!confirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`)) return;
   try {
-    await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
+    const res = await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
+    // state.tenants строит watchMemberships только при изменении членств —
+    // а перевод в сеть меняет сам tenants/{id}, не tenantMembers, поэтому
+    // без этого блок "Сеть заведений" в кабинете остался бы без названия
+    // и без списка точек до перезагрузки страницы.
+    const entry = state.tenants.find((t) => t.id === tenantId);
+    if (entry) {
+      entry.chainId = res.data.chainId;
+      entry.chainName = trimmedName;
+    }
     toast('Заведение переведено в сеть');
     route();
   } catch (e) {
