@@ -385,7 +385,7 @@ Firebase Secret Manager — эти операции больше не Cloud Func
 |---|---|---|
 | `GITHUB_PAT` | токен для запуска сборки APK | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained → доступ ТОЛЬКО к репозиторию `Ghosts1996/pos`, права ТОЛЬКО `Actions: Read and write` |
 | `BUILD_CALLBACK_SECRET` | общий секрет для обратного вызова от GitHub Actions | Придумайте сами (`openssl rand -hex 32`) — это же значение пойдёт и в секреты GitHub ниже |
-| `GITHUB_REF` (необязательно) | ветка, из которой запускать сборку | По умолчанию `claude/pos-continued`, менять не нужно, пока код там же |
+| `GITHUB_REF` (необязательно) | ветка, из которой запускать сборку | По умолчанию `claude/dazzling-babbage-n65p6l` — та же ветка, из которой деплоится сервер; менять не нужно, пока код там же |
 | `YOOKASSA_SHOP_ID` | id магазина ЮKassa | Личный кабинет ЮKassa → Настройки → API-ключи и HTTP-уведомления |
 | `YOOKASSA_SECRET_KEY` | секретный ключ магазина | Там же |
 
@@ -632,7 +632,7 @@ Firebase Console → Authentication → Sign-in method для SaaS-проект�
      постоянный ключ подписи для обоих приложений).
 4. `saas-gateway/server.js` запускает сборку через `workflow_dispatch` с
    `ref: GITHUB_REF` (переменная окружения, по умолчанию
-   `claude/pos-continued` — именно там сейчас живёт весь код SaaS-платформы,
+   `claude/dazzling-babbage-n65p6l` — именно там сейчас живёт весь код SaaS-платформы,
    `main` трогать нельзя, см. историю разработки). Когда ветку в итоге
    смержат в `main`, достаточно прописать `GITHUB_REF=main` в
    `/etc/saas-gateway.env` на сервере и перезапустить сервис

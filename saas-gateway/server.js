@@ -68,7 +68,7 @@ const zlib = require("zlib");
  *     быть прописано в секрете репозитория BUILD_CALLBACK_SECRET.
  *   GITHUB_REF — ветка/тег, из которого GitHub должен запускать
  *     saas-on-demand-build.yml (см. GITHUB_REF ниже) — по умолчанию
- *     claude/pos-continued, не main: пока весь код SaaS-платформы живёт
+ *     claude/dazzling-babbage-n65p6l, не main: пока весь код SaaS-платформы живёт
  *     именно там (main трогать нельзя, см. историю разработки), запрос на
  *     запуск workflow с ref: "main" получал от GitHub 404 — файла с таким
  *     содержимым на main просто нет. Когда ветку в итоге смержат в main,
@@ -85,7 +85,11 @@ const zlib = require("zlib");
 const GITHUB_OWNER = "Ghosts1996";
 const GITHUB_REPO = "pos";
 const GITHUB_SAAS_WORKFLOW = "saas-on-demand-build.yml";
-const GITHUB_REF = process.env.GITHUB_REF || "claude/pos-continued";
+// Ветка, в которой идёт разработка платформы (сюда же деплоится этот
+// сервис — см. README.md). Прежняя claude/pos-continued отстала: сборка из
+// неё выдавала заведениям старое приложение, несовместимое с текущими
+// правилами базы и этим сервером.
+const GITHUB_REF = process.env.GITHUB_REF || "claude/dazzling-babbage-n65p6l";
 
 // Куда saas-on-demand-build.yml кладёт готовые личные APK по SSH (шаг
 // "Deploy APK to own server" — см. её же docstring и saas/README.md,
@@ -1362,7 +1366,8 @@ async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = 
   const auth = Buffer.from(`${shopId}:${secretKey}`).toString("base64");
   const headers = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
   if (idempotenceKey) headers["Idempotence-Key"] = idempotenceKey;
-  const res = await fetch(`https://api.yookassa.ru/v3/${path}`, {
+  const base = (process.env.YOOKASSA_API_URL || "https://api.yookassa.ru/v3").replace(/\/+$/, "");
+  const res = await fetch(`${base}/${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -1370,6 +1375,43 @@ async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = 
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(`YooKassa ${method} ${path} -> ${res.status}: ${JSON.stringify(json)}`);
   return json;
+}
+
+/**
+ * Чек 54-ФЗ за подписку («Чеки от ЮKassa»). Включается переменной
+ * YOOKASSA_RECEIPTS=1 — только если в кабинете ЮKassa подключена
+ * отправка чеков: тогда без чека ЮKassa отклоняет платёж. Ставка НДС —
+ * YOOKASSA_VAT_CODE (по умолчанию 1 — «без НДС»), система налогообложения —
+ * YOOKASSA_TAX_SYSTEM_CODE (необязательно, 1–6 по справочнику ЮKassa).
+ */
+function yookassaReceipt(description, price, email) {
+  if (process.env.YOOKASSA_RECEIPTS !== "1" || !email) return undefined;
+  const receipt = {
+    customer: { email },
+    items: [{
+      description: description.slice(0, 128),
+      quantity: "1.00",
+      amount: { value: price.toFixed(2), currency: "RUB" },
+      vat_code: Number(process.env.YOOKASSA_VAT_CODE) || 1,
+      payment_mode: "full_payment",
+      payment_subject: "service",
+    }],
+  };
+  const tax = Number(process.env.YOOKASSA_TAX_SYSTEM_CODE);
+  if (tax >= 1 && tax <= 6) receipt.tax_system_code = tax;
+  return receipt;
+}
+
+/** E-mail владельца заведения/сети — для чека автопродления. */
+async function billingOwnerEmail(isChain, id) {
+  const doc = await db().collection(isChain ? "chains" : "tenants").doc(id).get();
+  const uid = doc.data()?.ownerUserId;
+  if (!uid) return null;
+  try {
+    return (await admin.auth().getUser(uid)).email || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /** Число НЕ удалённых точек сети — тариф на сеть посчитан за каждую точку
@@ -1422,6 +1464,9 @@ async function handleCreateCheckoutSession(req, res) {
   const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
   const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
+  const description = isChain
+    ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} точек`
+    : `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
   const payment = await yookassaRequest("payments", {
     method: "POST",
     idempotenceKey: crypto.randomUUID(),
@@ -1430,9 +1475,9 @@ async function handleCreateCheckoutSession(req, res) {
       capture: true,
       save_payment_method: true,
       confirmation: { type: "redirect", return_url: returnUrl },
-      description: isChain
-        ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} точек`
-        : `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`,
+      description,
+      receipt: yookassaReceipt(`Подписка Hookah POS: тариф «${plan.name || planId}», ${periodLabel}`, price,
+        decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId)),
       metadata: {
         tenantId: isChain ? null : tenantId,
         chainId: isChain ? chainId : null,
@@ -1467,6 +1512,15 @@ async function handleBillingWebhook(req, res) {
     lastEvent: typeof body.event === "string" ? body.event.slice(0, 60) : null,
   }, { merge: true }).catch((e) => console.error("platformStatus/billingWebhook:", e.message || e));
 
+  // Уведомления о возвратах несут id возврата, а не платежа: перепроверка
+  // по payments/{id} дала бы 404 → 502, и ЮKassa ретраила бы их сутки.
+  // Возвраты оформляются вручную из кабинета ЮKassa — здесь только журнал.
+  if (typeof body.event === "string" && body.event.startsWith("refund.")) {
+    await writeAuditLog({ tenantId: null, actorId: null, action: "billingRefundNotified", metadata: { refundId: paymentId } });
+    sendJson(res, 200, { ok: true, ignored: true });
+    return;
+  }
+
   let payment;
   try {
     payment = await yookassaRequest(`payments/${paymentId}`);
@@ -1490,12 +1544,22 @@ async function handleBillingWebhook(req, res) {
     sendJson(res, 200, { ok: true, ignored: true });
     return;
   }
+  // Промежуточные статусы (pending, waiting_for_capture) ничего не меняют —
+  // и НЕ записываются как обработанные, иначе уведомление об успешной
+  // оплате того же платежа потом было бы проигнорировано.
+  if (payment.status !== "succeeded" && payment.status !== "canceled") {
+    sendJson(res, 200, { ok: true, pending: true });
+    return;
+  }
 
   const firestore = db();
   const eventRef = firestore.collection("billingEvents").doc(paymentId);
   const alreadyProcessed = await firestore.runTransaction(async (tx) => {
     const seen = await tx.get(eventRef);
-    if (seen.exists) return true;
+    // applied:false — прошлая доставка упала между записью события и
+    // продлением подписки: применяем ещё раз. У старых записей поля нет —
+    // они были обработаны целиком.
+    if (seen.exists && seen.data().applied !== false) return true;
     tx.set(eventRef, {
       tenantId, chainId, planId, billingPeriod, status: payment.status,
       // Сумма — для аналитики платформы (панель Super Admin, выручка): без
@@ -1504,6 +1568,7 @@ async function handleBillingWebhook(req, res) {
       amount: Number(payment.amount?.value) || 0,
       purpose: payment.metadata?.purpose || "subscription",
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      applied: false,
     });
     return false;
   });
@@ -1514,34 +1579,49 @@ async function handleBillingWebhook(req, res) {
 
   if (payment.status === "succeeded") {
     const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
-    const periodEnd = admin.firestore.Timestamp.fromMillis(Date.now() + periodDays * 86400000);
-    const update = {
-      tenantId, chainId, planId, billingPeriod,
-      status: "active",
-      provider: "yookassa",
-      externalSubscriptionId: paymentId,
-      currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
-      currentPeriodEnd: periodEnd,
-      cancelAtPeriodEnd: false,
-    };
-    // save_payment_method делает способ оплаты сохранённым только с согласия
-    // платёжной системы — сохраняем payment_method_id, только когда ЮKassa
-    // это подтвердила.
-    if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
-
-    // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa будет
-    // бесконечно ретраить), если документ заведения/сети почему-то ещё не
-    // существует — webhook обязан быть maximally resilient.
-    await firestore.collection("subscriptions").doc(billingId).set(update, { merge: true });
+    const subRef = firestore.collection("subscriptions").doc(billingId);
+    await firestore.runTransaction(async (tx) => {
+      const cur = (await tx.get(subRef)).data() || {};
+      // Оплата раньше срока (или автопродление за сутки до конца) не должна
+      // съедать оставшиеся оплаченные/пробные дни: новый период — от конца
+      // текущего, если он ещё не наступил.
+      const now = Date.now();
+      const ends = [now];
+      if (cur.status === "active" && cur.currentPeriodEnd?.toMillis) ends.push(cur.currentPeriodEnd.toMillis());
+      if (cur.status === "trial" && cur.trialEndsAt?.toMillis) ends.push(cur.trialEndsAt.toMillis());
+      const base = Math.max(...ends);
+      const update = {
+        tenantId, chainId, planId, billingPeriod,
+        status: "active",
+        provider: "yookassa",
+        externalSubscriptionId: paymentId,
+        currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
+        currentPeriodEnd: admin.firestore.Timestamp.fromMillis(base + periodDays * 86400000),
+        cancelAtPeriodEnd: false,
+        // Иначе при СЛЕДУЮЩЕЙ просрочке остался бы старый pastDueSince
+        // (markPastDue его не перезаписывает) — и данные заведения стёрлись
+        // бы в ту же ночь, без льготных 10 дней.
+        pastDueSince: null,
+        renewalAttemptedAt: admin.firestore.FieldValue.delete(),
+      };
+      // save_payment_method делает способ оплаты сохранённым только с
+      // согласия платёжной системы — сохраняем payment_method_id, только
+      // когда ЮKassa это подтвердила.
+      if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
+      // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa
+      // будет бесконечно ретраить), если документа почему-то ещё нет.
+      tx.set(subRef, update, { merge: true });
+    });
     await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).set({
       status: "active",
       planId,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId } });
-  } else if (payment.status === "canceled") {
+  } else {
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
   }
+  await eventRef.update({ applied: true });
 
   sendJson(res, 200, { ok: true });
 }
@@ -1676,6 +1756,8 @@ async function runChargeRecurringSubscriptions() {
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
     try {
+      const receipt = yookassaReceipt(`Подписка Hookah POS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
+        price, await billingOwnerEmail(isChain, targetId));
       await yookassaRequest("payments", {
         method: "POST",
         // Ключ детерминирован от даты окончания периода — повторный прогон
@@ -1686,6 +1768,7 @@ async function runChargeRecurringSubscriptions() {
           amount: { value: price.toFixed(2), currency: "RUB" },
           capture: true,
           payment_method_id: sub.paymentMethodId,
+          receipt,
           description: isChain
             ? `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} точек`
             : `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
@@ -1764,9 +1847,33 @@ async function runEnforceGracePeriod() {
 // таймер на оба шага, а не гарантия конкретного порядка/времени суток —
 // как и в оригинале, шаги независимы и защищены собственными проверками
 // (renewalAttemptedAt) от повторного срабатывания в тот же день.
+/**
+ * Суточная задача, переживающая перезапуски: время последнего прогона — в
+ * platformStatus/cronJobs, проверка — раз в час (первая — через
+ * [firstDelayMs] после старта). Раньше задачи висели на setInterval(24 ч)
+ * от момента запуска процесса: каждый деплой/перезапуск сбрасывал отсчёт,
+ * и при обновлениях чаще раза в сутки автопродление подписок, льготный
+ * период и подсчёт usage не запускались вообще.
+ */
+function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
+  const ref = () => db().collection("platformStatus").doc("cronJobs");
+  const tick = async () => {
+    try {
+      const last = (await ref().get()).data()?.[name]?.toMillis?.() ?? 0;
+      if (Date.now() - last < intervalMs - 60 * 60 * 1000) return;
+      await ref().set({ [name]: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await run();
+    } catch (e) {
+      console.error(`saas-gateway: задача ${name}:`, e.message || e);
+    }
+  };
+  setTimeout(tick, Number(process.env.CRON_FIRST_DELAY_MS) || firstDelayMs);
+  setInterval(tick, 60 * 60 * 1000);
+}
+
 const BILLING_CRON_INTERVAL_MS = 24 * 3600 * 1000;
 function scheduleBillingCron() {
-  setInterval(async () => {
+  scheduleDailyJob("billing", BILLING_CRON_INTERVAL_MS, async () => {
     try {
       await runChargeRecurringSubscriptions();
     } catch (e) {
@@ -1777,7 +1884,7 @@ function scheduleBillingCron() {
     } catch (e) {
       console.error("saas-gateway: ошибка проверки льготного периода:", e.message || e);
     }
-  }, BILLING_CRON_INTERVAL_MS);
+  });
 }
 
 // ------------------------------------------------------- calculateUsage
@@ -1822,13 +1929,7 @@ async function runCalculateUsage() {
 
 const USAGE_CRON_INTERVAL_MS = 24 * 3600 * 1000;
 function scheduleUsageCron() {
-  setInterval(async () => {
-    try {
-      await runCalculateUsage();
-    } catch (e) {
-      console.error("saas-gateway: ошибка подсчёта usage заведений:", e.message || e);
-    }
-  }, USAGE_CRON_INTERVAL_MS);
+  scheduleDailyJob("usage", USAGE_CRON_INTERVAL_MS, runCalculateUsage, 15 * 60 * 1000);
 }
 
 /**
@@ -1906,18 +2007,7 @@ async function runCalculatePlatformMetrics() {
 
 const PLATFORM_METRICS_CRON_INTERVAL_MS = 24 * 3600 * 1000;
 function schedulePlatformMetricsCron() {
-  // Никакого немедленного прогона при старте (в отличие от идеи "запустить
-  // сразу") — server.js require()'ится и в smoke-тестах без настоящего
-  // Firestore (см. docstring test.smoke.js), а первый снимок и так можно
-  // получить сразу же вручную через ту же кнопку "Пересчитать сейчас", что
-  // и usage (см. handleRecalculateUsage) — не нужен второй способ того же.
-  setInterval(async () => {
-    try {
-      await runCalculatePlatformMetrics();
-    } catch (e) {
-      console.error("saas-gateway: ошибка снимка метрик платформы:", e.message || e);
-    }
-  }, PLATFORM_METRICS_CRON_INTERVAL_MS);
+  scheduleDailyJob("platformMetrics", PLATFORM_METRICS_CRON_INTERVAL_MS, runCalculatePlatformMetrics, 20 * 60 * 1000);
 }
 
 /** Ручной запуск того же самого расчёта — кнопка "Пересчитать сейчас" в

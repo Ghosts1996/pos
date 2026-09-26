@@ -149,7 +149,7 @@ systemctl restart saas-gateway
 консоли — см. `saas/README.md`):
 
 ```bash
-cd /root/pos-deploy && git pull origin claude/pos-continued
+cd /root/pos-deploy && git fetch origin claude/dazzling-babbage-n65p6l && git checkout claude/dazzling-babbage-n65p6l && git pull origin claude/dazzling-babbage-n65p6l
 rsync -a --exclude node_modules /root/pos-deploy/saas-gateway/ /opt/saas-gateway/
 cd /opt/saas-gateway && npm install --omit=dev
 chown -R saas-gateway:saas-gateway /opt/saas-gateway
@@ -176,6 +176,18 @@ systemctl restart saas-gateway
 4. В `saas/console/console.js` ничего дополнительно менять не нужно —
    `startCheckout()` уже обращается на `callSaasGateway('createCheckoutSession', ...)`,
    то есть на этот сервис, а не на Cloud Function.
+5. Если в кабинете ЮKassa подключены «Чеки от ЮKassa» (54-ФЗ для продажи
+   подписки) — добавьте `YOOKASSA_RECEIPTS=1`: без чека ЮKassa такие платежи
+   отклоняет. Ставка НДС — `YOOKASSA_VAT_CODE` (по умолчанию `1`, «без
+   НДС»), система налогообложения — `YOOKASSA_TAX_SYSTEM_CODE` (1–6, по
+   справочнику ЮKassa). Чек уходит на e-mail владельца заведения/сети.
+
+Как считается период: оплата раньше срока (или автопродление) добавляет
+месяц/полгода/год к концу текущего оплаченного или пробного периода, а не
+к сегодняшней дате. Оплата после просрочки снимает отсчёт до удаления
+данных. Автопродление, льготный период и подсчёт usage — суточные задачи,
+время их последнего прогона хранится в `platformStatus/cronJobs`, так что
+перезапуск сервиса не сдвигает и не пропускает их.
 
 ## nginx — добавить маршрут `/saas/` к уже настроенному домену
 
