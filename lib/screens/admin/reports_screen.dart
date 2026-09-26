@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
+import '../../utils/table_label.dart';
 
 enum _Period { today, week, month, custom }
 
@@ -179,7 +180,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             child: ListTile(
                               leading: const Icon(Icons.person_outline),
                               title: Text(e.key),
-                              subtitle: Text('${e.value.visits} визитов'),
+                              subtitle: Text('${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')}'),
                               trailing: Text(
                                 '${e.value.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
                                 style: const TextStyle(fontWeight: FontWeight.bold),

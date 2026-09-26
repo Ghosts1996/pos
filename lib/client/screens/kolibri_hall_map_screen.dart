@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/table_label.dart';
 
 /// Карта зала для гостя — та же схема столов, что видит кальянщик на POS,
 /// в реальном времени. Только просмотр занятости.
@@ -134,7 +135,7 @@ class KolibriHallMapScreen extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             ),
-            Text('${table.seats} мест',
+            Text(seatsLabel(table.seats),
                 style: TextStyle(color: KolibriColors.textMuted, fontSize: 11)),
           ],
         ),
