@@ -1292,6 +1292,9 @@ function screenLanding() {
 // Доступны по прямой ссылке и без входа — см. PUBLIC_ROUTES выше.
 
 function publicFooterLinksHtml() {
+  // Строка с реквизитами (ИП, ИНН, e-mail) дорисовывается после загрузки
+  // platformConfig/legal — её требуют на сайте 54-ФЗ и модерация ЮKassa.
+  setTimeout(fillLegalFooter, 0);
   return `
     <p class="small center muted" style="margin-top:14px">
       <a href="#/legal/offer">Оферта</a> ·
@@ -1299,7 +1302,49 @@ function publicFooterLinksHtml() {
       <a href="#/status">Статус</a> ·
       <a href="#/faq">FAQ</a>
     </p>
+    <p class="small center muted legal-footer" style="margin-top:4px"></p>
   `;
+}
+
+// Реквизиты владельца платформы (Безопасность → Платформа → «Реквизиты»).
+let legalCache = null;
+async function loadPlatformLegal() {
+  if (legalCache) return legalCache;
+  try {
+    const d = await getDoc(doc(state.db, 'platformConfig', 'legal'));
+    legalCache = d.exists() ? d.data() : {};
+  } catch (_) {
+    legalCache = {};
+  }
+  return legalCache;
+}
+
+async function fillLegalFooter() {
+  const els = document.querySelectorAll('.legal-footer');
+  if (!els.length) return;
+  const l = await loadPlatformLegal();
+  if (!l.fullName) return;
+  const parts = [l.fullName, l.inn ? `ИНН ${l.inn}` : '', l.ogrnip ? `ОГРНИП ${l.ogrnip}` : '', l.email, l.phone].filter(Boolean);
+  els.forEach((el) => { el.textContent = parts.join(' · '); });
+}
+
+/** Подставляет в оферту/политику реквизиты вместо «[указать]», если они
+ *  заполнены в панели платформы. Сам текст документов не меняется. */
+async function fillLegalRequisites() {
+  const el = $('legal-requisites');
+  if (!el) return;
+  const l = await loadPlatformLegal();
+  if (!l.fullName) return;
+  const v = (x) => esc(x || '—');
+  const isOrg = !/^ИП\s|индивидуальн/i.test(l.fullName) && (l.ogrnip || '').length === 13;
+  const who = isOrg ? v(l.fullName) : `Индивидуальный предприниматель ${v(l.fullName.replace(/^ИП\s+/i, ''))}`;
+  el.innerHTML = el.dataset.kind === 'privacy'
+    ? `${who}. ${isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}. ИНН: ${v(l.inn)}. Адрес: ${v(l.address)}. `
+      + `Номер в реестре операторов персональных данных Роскомнадзора: ${v(l.rknNumber)}. `
+      + `Email для обращений по вопросам персональных данных: ${v(l.email)}.`
+    : `${who}. ${isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}. ИНН: ${v(l.inn)}. Адрес места жительства/для корреспонденции: ${v(l.address)}. `
+      + `Банковские реквизиты: р/с ${v(l.bankAccount)}, банк ${v(l.bankName)}, БИК ${v(l.bik)}, к/с ${v(l.corrAccount)}. `
+      + `Контактный email для претензий: ${v(l.email)}.${l.phone ? ` Телефон: ${v(l.phone)}.` : ''}`;
 }
 
 function publicPageWrapHtml(title, bodyHtml) {
@@ -1361,9 +1406,10 @@ function screenLegalOffer() {
       <h2>12. Прочие условия</h2>
       <p class="small muted">Во всём, что не урегулировано настоящей офертой, стороны руководствуются законодательством РФ. Обработка персональных данных, передаваемых в рамках использования Платформы, осуществляется в соответствии с Политикой конфиденциальности, являющейся неотъемлемой частью договора.</p>
       <h2>13. Реквизиты Исполнителя</h2>
-      <p class="small muted">Индивидуальный предприниматель [ФИО полностью]. ОГРНИП: [указать]. ИНН: [указать]. Адрес места жительства/для корреспонденции: [указать]. Банковские реквизиты: р/с [указать], банк [указать], БИК [указать], к/с [указать]. Контактный email для претензий: [указать]. <i>(Поля — на замену перед публикацией; после регистрации ИП в ФНС впишите сюда настоящие данные.)</i></p>
+      <p class="small muted" id="legal-requisites" data-kind="offer">Индивидуальный предприниматель [ФИО полностью]. ОГРНИП: [указать]. ИНН: [указать]. Адрес места жительства/для корреспонденции: [указать]. Банковские реквизиты: р/с [указать], банк [указать], БИК [указать], к/с [указать]. Контактный email для претензий: [указать]. <i>(Поля — на замену перед публикацией; после регистрации ИП в ФНС впишите сюда настоящие данные.)</i></p>
     </div>
   `);
+  fillLegalRequisites();
 }
 
 function screenLegalPrivacy() {
@@ -1419,9 +1465,10 @@ function screenLegalPrivacy() {
       <h2 style="margin-top:0">11. Заключительные положения</h2>
       <p class="small muted">Оператор вправе вносить изменения в настоящую Политику — актуальная редакция всегда доступна на этой странице.</p>
       <h2>12. Реквизиты и контакты</h2>
-      <p class="small muted">Индивидуальный предприниматель [ФИО полностью]. ОГРНИП: [указать]. ИНН: [указать]. Адрес: [указать]. Номер в реестре операторов персональных данных Роскомнадзора: [указать после рассмотрения уведомления на pd.rkn.gov.ru]. Email для обращений по вопросам персональных данных: [указать]. <i>(Поля — на замену перед публикацией.)</i></p>
+      <p class="small muted" id="legal-requisites" data-kind="privacy">Индивидуальный предприниматель [ФИО полностью]. ОГРНИП: [указать]. ИНН: [указать]. Адрес: [указать]. Номер в реестре операторов персональных данных Роскомнадзора: [указать после рассмотрения уведомления на pd.rkn.gov.ru]. Email для обращений по вопросам персональных данных: [указать]. <i>(Поля — на замену перед публикацией.)</i></p>
     </div>
   `);
+  fillLegalRequisites();
 }
 
 function screenStatus() {
@@ -5756,11 +5803,52 @@ async function loadSecurityPlatform() {
   const n = st.superAdmins || 0;
   rows.push(checkRowHtml(n === 1 || n > 5 ? 'warn' : 'ok', `Супер-админов: ${n}`,
     n === 1 ? 'Назначьте второго доверенного человека, иначе при потере доступа восстановить панель будет некому.' : n > 5 ? 'Снимите тех, кому полный доступ больше не нужен.' : 'Подробности — в подразделе «Доступ».'));
+  // Реквизиты для оферты/политики/подвала сайта
+  const lg = st.legal || { missing: [], fields: {} };
+  const lgMissing = (lg.missing || []).map((k) => (lg.fields || {})[k] || k);
+  rows.push(checkRowHtml(lgMissing.length ? 'bad' : 'ok',
+    lgMissing.length ? 'Не заполнены реквизиты для оферты и сайта' : 'Реквизиты платформы заполнены',
+    lgMissing.length
+      ? `Без них нельзя принимать оплату (54-ФЗ, модерация ЮKassa): в оферте и политике сейчас «[указать]». Не хватает: ${esc(lgMissing.join(', '))}.`
+      : 'Подставляются в оферту, политику конфиденциальности и подвал сайта.',
+    '<button type="button" class="btn btn-ghost" id="f-sec-legal-edit" style="width:auto">Реквизиты</button>'));
+  rows.push('<div id="sec-legal-form" style="display:none"></div>');
+
   const g = st.gateway || {};
   rows.push(checkRowHtml('ok', 'Сервер платформы работает',
     `Без перезапуска: ${Math.floor((g.uptimeSec || 0) / 3600)} ч · Node ${esc(g.node || '—')} · сборки APK из ветки <code>${esc(st.githubRef || '—')}</code>.`));
 
   box.innerHTML = rows.join('');
+
+  if ($('f-sec-legal-edit')) $('f-sec-legal-edit').onclick = async () => {
+    const form = $('sec-legal-form');
+    if (form.style.display !== 'none') { form.style.display = 'none'; return; }
+    legalCache = null;
+    const l = await loadPlatformLegal();
+    const fields = lg.fields || {};
+    form.innerHTML = `<div class="card">
+      ${Object.entries(fields).map(([k, label]) => `
+        <label class="field"><span>${esc(label)}${(['fullName', 'ogrnip', 'inn', 'address', 'email']).includes(k) ? ' *' : ''}</span>
+          <input class="f-legal-input" data-key="${esc(k)}" value="${esc(l[k] || '')}" autocomplete="off">
+        </label>`).join('')}
+      <p class="small muted">Для ИП — ФИО полностью и ОГРНИП (15 цифр), для организации — название и ОГРН (13 цифр). Сохранение попросит пароль.</p>
+      <button type="button" class="btn btn-primary" id="f-sec-legal-save" style="width:auto">Сохранить реквизиты</button>
+    </div>`;
+    form.style.display = '';
+    $('f-sec-legal-save').onclick = async () => {
+      if (!(await reauthenticate('изменить реквизиты платформы'))) return;
+      const payload = {};
+      form.querySelectorAll('.f-legal-input').forEach((el) => { payload[el.dataset.key] = el.value.trim(); });
+      try {
+        await callSaasGateway('savePlatformLegal', payload, { forceRefresh: true });
+        legalCache = null;
+        toast('Реквизиты сохранены');
+        loadSecurityPlatform();
+      } catch (e) {
+        toast(`Не сохранено: ${e?.message || e}`);
+      }
+    };
+  };
 
   box.querySelectorAll('.f-sec-certs').forEach((el) => {
     el.onclick = async () => {
@@ -5849,6 +5937,7 @@ const SECURITY_EVENT_LABELS = {
   planDeleted: 'Удалён тариф',
   backupCreated: 'Сделана резервная копия',
   backupDownloaded: 'Скачана резервная копия базы',
+  platformLegalUpdated: 'Изменены реквизиты платформы',
   domainReprovisioned: 'Сертификат поддомена выпущен заново',
   ipBlocked: 'Заблокирован IP',
   ipUnblocked: 'Снята блокировка IP',
