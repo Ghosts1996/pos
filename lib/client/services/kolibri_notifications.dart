@@ -8,6 +8,7 @@ import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/reservation_service.dart';
 import '../../services/venue_service.dart';
+import '../../utils/table_label.dart';
 
 /// Уведомления гостя без сервера.
 ///
@@ -188,7 +189,7 @@ class KolibriNotifications {
         return (
           'Бронь подтверждена',
           'Ждём вас $time'
-              '${r.tableName.isEmpty ? '' : ', стол ${r.tableName}'}. '
+              '${r.tableName.isEmpty ? '' : ', ${tableLabel(r.tableName)}'}. '
               'Стол закреплён за вами.'
         );
       case ReservationStatus.cancelled:
@@ -234,7 +235,7 @@ class KolibriNotifications {
       return;
     }
 
-    final where = r.tableName.isEmpty ? '' : ', стол ${r.tableName}';
+    final where = r.tableName.isEmpty ? '' : ', ${tableLabel(r.tableName)}';
 
     unawaited(_notify.scheduleAt(
       id: hourId,
@@ -351,7 +352,7 @@ class KolibriNotifications {
 
       unawaited(_notify.show(
         id: NotificationService.idFor('bonus_${DateTime.now().millisecondsSinceEpoch}'),
-        title: 'Начислено ${gained.toStringAsFixed(0)} бонусов',
+        title: 'Начислено ${bonusesLabel(gained)}',
         body: 'Баланс: ${profile.bonusBalance.toStringAsFixed(0)} ₽. '
             'Списать можно на кассе при следующем визите.',
       ));

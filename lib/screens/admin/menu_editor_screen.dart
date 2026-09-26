@@ -20,6 +20,8 @@ class MenuEditorScreen extends StatefulWidget {
 
 class _MenuEditorScreenState extends State<MenuEditorScreen> {
   final _fs = FirestoreService();
+  late final Stream<List<MenuCategory>> _categories = _fs.categoriesStream();
+  late final Stream<List<MenuItem>> _items = _fs.menuItemsStream();
   final _storage = StorageService();
 
   // Пока идёт загрузка фото конкретной категории/позиции — блокируем именно
@@ -62,12 +64,12 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         ],
       ),
       body: StreamBuilder<List<MenuCategory>>(
-        stream: _fs.categoriesStream(),
+        stream: _categories,
         builder: (context, catSnap) {
           if (!catSnap.hasData) return const Center(child: CircularProgressIndicator());
           final categories = catSnap.data!;
           return StreamBuilder<List<MenuItem>>(
-            stream: _fs.menuItemsStream(),
+            stream: _items,
             builder: (context, itemSnap) {
               final items = itemSnap.data ?? [];
               if (categories.isEmpty) {

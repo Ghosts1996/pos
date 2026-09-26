@@ -92,13 +92,16 @@ class AdminHomeScreen extends StatelessWidget {
               child: Text(entry.key,
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             ),
-            GridView.count(
+            // Ширина плитки, а не число колонок: на телефоне по-прежнему 2,
+            // на планшете 5–6 — раньше там было 4 огромные плитки и на экран
+            // помещалось всего 8 разделов из двух десятков.
+            GridView.extent(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              crossAxisCount: MediaQuery.of(context).size.width > 800 ? 4 : 2,
+              maxCrossAxisExtent: 220,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 1.25,
+              childAspectRatio: 1.35,
               children: entry.value
                   .map((t) => Card(
                         child: InkWell(

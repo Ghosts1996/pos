@@ -17,6 +17,8 @@ class GuestsScreen extends StatefulWidget {
 class _GuestsScreenState extends State<GuestsScreen> {
   final _link = GuestLinkService();
   final _search = TextEditingController();
+  // Одна подписка на экран — поиск делает setState на каждую букву.
+  late final Stream<List<ClientProfile>> _clients = _link.allClientsStream();
   String _query = '';
 
   @override
@@ -202,7 +204,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
           ),
           Expanded(
             child: StreamBuilder<List<ClientProfile>>(
-              stream: _link.allClientsStream(),
+              stream: _clients,
               builder: (context, snap) {
                 if (!snap.hasData) {
                   return const Center(child: CircularProgressIndicator());

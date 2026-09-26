@@ -2456,6 +2456,19 @@ function seedDemoData(tenantRef, batch, nowMs) {
   batch.set(tenantRef.collection("employees").doc(), { name: "Демо-сотрудник", pinCode: "1111", role: "employee" });
   batch.set(tenantRef.collection("employees").doc(), { name: "Демо-админ", pinCode: "111111", role: "admin" });
 
+  // Профиль заведения: без часов работы гостевая бронь в демо была бы
+  // недоступна (каждый день «закрыто»), а без имени ИИ-консьерж не знал бы,
+  // как называется заведение.
+  const demoHours = {};
+  for (let d = 1; d <= 7; d++) demoHours[String(d)] = "12:00-02:00";
+  batch.set(tenantRef.collection("meta").doc("venueProfile"), {
+    name: "Демо-заведение",
+    address: "",
+    phone: "",
+    about: "Тестовое заведение платформы: примеры столов, меню и броней.",
+    workingHours: demoHours,
+  });
+
   const orderItemsOf = (items) => items.map((i) => ({ menuItemId: "", name: i.name, price: i.price, qty: i.qty }));
   const ts = (minutesAgo) => admin.firestore.Timestamp.fromMillis(nowMs - minutesAgo * 60000);
 

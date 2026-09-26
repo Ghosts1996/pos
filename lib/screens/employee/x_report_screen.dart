@@ -40,6 +40,8 @@ class _XReportScreenState extends State<XReportScreen> {
   Future<List<ShiftModel>>? _recentShiftsFuture;
   Future<List<SessionModel>>? _future;
   bool _busy = false;
+  // Одна подписка на экран: смена периода/фильтра делает setState.
+  late final Stream<List<Employee>> _employees = _fs.employeesStream();
 
   @override
   void initState() {
@@ -243,7 +245,7 @@ class _XReportScreenState extends State<XReportScreen> {
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ),
                 StreamBuilder<List<Employee>>(
-                  stream: _fs.employeesStream(),
+                  stream: _employees,
                   builder: (context, snap) {
                     final names = <String>[
                       'Все официанты',
@@ -528,7 +530,10 @@ class _XReportScreenState extends State<XReportScreen> {
   String _formatSelectedRange() {
     switch (_period) {
       case _Period.shift:
-        return 'Смена ещё не открыта';
+        // Открыта смена или нет — уже сказано в плашке над списком
+        // (_buildShiftHeader); раньше здесь всегда стояло «Смена ещё не
+        // открыта», даже под плашкой «Смена открыта».
+        return '';
       case _Period.pastShift:
         return _selectedPastShift == null
             ? 'Смена не выбрана'
@@ -544,7 +549,7 @@ class _XReportScreenState extends State<XReportScreen> {
 
   void _copyReport(_XReportData data, int refundsCount) {
     final buf = StringBuffer();
-    buf.writeln('X-отчёт: ${_formatSelectedRange()}');
+    buf.writeln('X-отчёт: ${_period == _Period.shift ? 'текущая смена' : _formatSelectedRange()}');
     if (_employeeFilter != 'Все официанты') buf.writeln('Официант: $_employeeFilter');
     buf.writeln('');
     for (final i in data.items) {

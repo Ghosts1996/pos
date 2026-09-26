@@ -42,6 +42,28 @@ Firebase — и запустит всё как systemd-сервис (`pii-gatewa
 В конце скрипт сам проверит себя (`curl http://127.0.0.1:8080/health`) —
 если увидите `{"ok":true}`, сервис запущен.
 
+## Гости SaaS-заведений (обязательно для платформы)
+
+Гости заведений платформы входят в **отдельный** Firebase-проект платформы,
+а не в `hoocah-pos`. Их токен шлюз проверяет вторым сервисным аккаунтом —
+тем же, что уже стоит у `saas-gateway`. Без него приложение гостя любого
+SaaS-заведения не сможет сохранить имя/телефон и отправить бронь (шлюз
+ответит 503 с подсказкой).
+
+Одна команда на сервере — берёт ключ из настроек `saas-gateway`, дописывает
+его в настройки PII-шлюза под именем `SAAS_FIREBASE_SERVICE_ACCOUNT_B64` и
+перезапускает сервис:
+
+```bash
+sudo sh -c 'grep "^FIREBASE_SERVICE_ACCOUNT_B64=" /etc/saas-gateway.env | sed "s/^/SAAS_/" >> /etc/pii-gateway.env' \
+  && sudo systemctl restart pii-gateway && sudo systemctl is-active pii-gateway
+```
+
+Профиль гостя СЕТИ заведений шлюз сам кладёт в общую лояльность сети
+(`chains/{chainId}/clients/{uid}`), одиночного заведения — в
+`tenants/{tenantId}/clients/{uid}`. В PostgreSQL у сети одна запись на все
+её точки (`tenant_id = 'chain:<id>'`).
+
 ## TLS (HTTPS) — нужен домен
 
 Сервис слушает только `127.0.0.1:8080` — наружу его открывает `nginx` с

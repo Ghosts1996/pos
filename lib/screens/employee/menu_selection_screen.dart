@@ -30,6 +30,12 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
   final _fs = FirestoreService();
   final _cz = ChestnyZnakService();
   String _query = '';
+  // Подписки создаются один раз на экран, а не в build(): поиск делает
+  // setState на каждую букву, и без этого каждая буква заново открывала
+  // три подписки на базу (категории, позиции, счёт).
+  late final Stream<List<MenuCategory>> _categories = _fs.categoriesStream();
+  late final Stream<List<MenuItem>> _items = _fs.menuItemsStream();
+  late final Stream<SessionModel?> _sessionUpdates = _fs.sessionStream(widget.session.id);
   bool _scanBusy = false;
 
   /// Общий обработчик для обоих способов сканирования — HID-сканера
@@ -151,7 +157,6 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
       // не открыт в текстовом поле.
       onCode: _onScan,
       child: Scaffold(
-      backgroundColor: const Color(0xFFF2F2F2),
       appBar: AppBar(
         title: const Text('Меню'),
         actions: [
@@ -185,12 +190,12 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
         ),
       ),
       body: StreamBuilder<List<MenuCategory>>(
-        stream: _fs.categoriesStream(),
+        stream: _categories,
         builder: (context, catSnap) {
           if (!catSnap.hasData) return const Center(child: CircularProgressIndicator());
           final categories = catSnap.data!;
           return StreamBuilder<List<MenuItem>>(
-            stream: _fs.menuItemsStream(),
+            stream: _items,
             builder: (context, itemSnap) {
               if (!itemSnap.hasData) return const Center(child: CircularProgressIndicator());
               final allAvailable = itemSnap.data!.where((i) => i.available).toList();
@@ -210,8 +215,11 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
 
               return GridView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
+                // Ширина плитки, а не число колонок: на телефоне так же 3
+                // колонки, а на планшете кассы — 7–8, а не три плитки во
+                // весь экран.
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 160,
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
                   childAspectRatio: 0.82,
@@ -231,7 +239,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           );
         },
       ),
-      bottomNavigationBar: _CheckoutBar(session: widget.session),
+      bottomNavigationBar: _CheckoutBar(updates: _sessionUpdates),
       ),
     );
   }
@@ -241,14 +249,17 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
 /// количеств всех позиций текущего счёта. Тап возвращает на экран стола,
 /// где виден весь счёт целиком (аналог перехода к чеку в Restik POS).
 class _CheckoutBar extends StatelessWidget {
-  final SessionModel session;
-  const _CheckoutBar({required this.session});
+  final Stream<SessionModel?> updates;
+
+  /// Сколько экранов закрыть, чтобы оказаться на экране стола: из меню — 1,
+  /// из категории — 2 (иначе кнопку приходилось нажимать дважды).
+  final int depth;
+  const _CheckoutBar({required this.updates, this.depth = 1});
 
   @override
   Widget build(BuildContext context) {
-    final fs = FirestoreService();
     return StreamBuilder<SessionModel?>(
-      stream: fs.sessionStream(session.id),
+      stream: updates,
       builder: (context, snap) {
         final count = snap.data?.orderItems.fold<int>(0, (sum, i) => sum + i.qty) ?? 0;
         return SafeArea(
@@ -261,7 +272,12 @@ class _CheckoutBar extends StatelessWidget {
                 foregroundColor: AppColors.textPrimary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                final nav = Navigator.of(context);
+                for (var i = 0; i < depth && nav.canPop(); i++) {
+                  nav.pop();
+                }
+              },
               child: Text(
                 count > 0 ? 'Перейти к чеку ($count)' : 'Перейти к чеку',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
@@ -350,8 +366,11 @@ class _CategoryItemsScreen extends StatelessWidget {
 
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
+            // На телефоне 2 колонки, на планшете 4–5: раньше одна карточка
+            // растягивалась на пол-экрана, и цена с кнопкой «+» уходили
+            // за нижний край.
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 260,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
               childAspectRatio: 0.78,
@@ -369,7 +388,7 @@ class _CategoryItemsScreen extends StatelessWidget {
           );
         },
       ),
-      bottomNavigationBar: _CheckoutBar(session: session),
+      bottomNavigationBar: _CheckoutBar(updates: fs.sessionStream(session.id), depth: 2),
     );
   }
 }

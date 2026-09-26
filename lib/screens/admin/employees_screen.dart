@@ -13,6 +13,7 @@ class EmployeesScreen extends StatefulWidget {
 
 class _EmployeesScreenState extends State<EmployeesScreen> {
   final _fs = FirestoreService();
+  late final Stream<List<Employee>> _employees = _fs.employeesStream();
   // PIN-коды по умолчанию скрыты звёздочками — их видно только сотруднику,
   // который вводит свой PIN на входе. Чтобы посмотреть чужой PIN в
   // админке, нужно осознанно нажать на значок глаза для конкретной строки.
@@ -27,7 +28,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         child: const Icon(Icons.add),
       ),
       body: StreamBuilder<List<Employee>>(
-        stream: _fs.employeesStream(),
+        stream: _employees,
         builder: (context, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final employees = snap.data!;

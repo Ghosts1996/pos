@@ -31,18 +31,22 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   String _categoryId = '';
   String _search = '';
   bool _sending = false;
+  // Подписки — одни на весь экран: корзина, чипы категорий и поиск делают
+  // setState, и подписка в build() переоткрывалась бы на каждое нажатие.
+  late final Stream<List<MenuCategory>> _categories = _link.publicCategoriesStream();
+  late final Stream<List<MenuItem>> _menu = _link.publicMenuStream();
 
   double get _cartTotal => _cart.values.fold(0.0, (s, i) => s + i.total);
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MenuCategory>>(
-      stream: _link.publicCategoriesStream(),
+      stream: _categories,
       builder: (context, catSnap) {
         final categories = catSnap.data ?? const <MenuCategory>[];
 
         return StreamBuilder<List<MenuItem>>(
-          stream: _link.publicMenuStream(),
+          stream: _menu,
           builder: (context, itemSnap) {
             if (itemSnap.hasError) {
               return Center(

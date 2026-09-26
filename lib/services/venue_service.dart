@@ -83,11 +83,48 @@ class VenueService {
 
   // ---------- БАЗА ЗНАНИЙ ДЛЯ ИИ ----------
 
-  /// Текстовый блок для промпта агентов. Передаётся как extraContext —
-  /// дешевле инструмента и всегда актуален.
+  /// Название заведения для чека и ИИ: из профиля, иначе имя приложения из
+  /// брендинга (SaaS), иначе — исторический бренд одно-арендной сборки.
+  static String displayNameOf(VenueProfile p) {
+    if (p.name.trim().isNotEmpty) return p.name.trim();
+    final brand = AppScope.branding?.appName.trim() ?? '';
+    if (brand.isNotEmpty) return brand;
+    return AppScope.isSaasMode ? '' : 'Colibri Lounge';
+  }
+
+  /// true — владелец так и не заполнил часы работы ни на один день. Гостевая
+  /// бронь в этом случае невозможна (каждый день выглядит выходным), и об
+  /// этом надо сказать и гостю, и персоналу, а не молча показывать «закрыто».
+  static bool hoursNotConfigured(VenueProfile p) =>
+      p.workingHours.values.every((v) => v.trim().isEmpty);
+
+  String? _aiKnowledgeCache;
+  DateTime _aiKnowledgeAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// [aiKnowledge] с кэшем на 5 минут: его получает каждый запрос к ИИ, а
+  /// профиль и акции меняются редко. Ошибка чтения — пустая строка, ИИ
+  /// просто отвечает без сведений о заведении.
+  Future<String> aiKnowledgeCached() async {
+    final fresh = DateTime.now().difference(_aiKnowledgeAt) < const Duration(minutes: 5);
+    if (_aiKnowledgeCache != null && fresh) return _aiKnowledgeCache!;
+    try {
+      _aiKnowledgeCache = await aiKnowledge();
+    } catch (_) {
+      _aiKnowledgeCache = '';
+    }
+    _aiKnowledgeAt = DateTime.now();
+    return _aiKnowledgeCache!;
+  }
+
+  /// Текстовый блок для промпта агентов (см. AiAgents.run): название,
+  /// адрес, часы, правила и действующие акции заведения.
   Future<String> aiKnowledge() async {
     final p = await load();
-    final happy = await activeHappyHour();
+    HappyHour? happy;
+    try {
+      happy = await activeHappyHour();
+    } catch (_) {}
+    final name = displayNameOf(p);
 
     final days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
     final hours = [
@@ -96,10 +133,10 @@ class VenueService {
     ].join(', ');
 
     return [
-      'ЗАВЕДЕНИЕ: ${p.name}',
+      if (name.isNotEmpty) 'ЗАВЕДЕНИЕ: $name',
       if (p.address.isNotEmpty) 'Адрес: ${p.address}',
       if (p.phone.isNotEmpty) 'Телефон: ${p.phone}',
-      'Часы работы: $hours',
+      if (!hoursNotConfigured(p)) 'Часы работы: $hours',
       if (p.about.isNotEmpty) 'О нас: ${p.about}',
       if (p.rules.isNotEmpty) 'Правила: ${p.rules}',
       if (p.depositFrom > 0)

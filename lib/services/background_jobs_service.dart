@@ -5,6 +5,7 @@ import 'app_scope.dart';
 import '../models/reservation_model.dart';
 import 'birthday_service.dart';
 import 'venue_service.dart';
+import '../utils/table_label.dart';
 
 /// Фоновые задания заведения, которые раньше жили в Cloud Functions.
 ///
@@ -114,7 +115,7 @@ class BackgroundJobsService {
           .set({'active': false}, SetOptions(merge: true));
 
       names.add('${r.guestName.isEmpty ? 'Гость' : r.guestName} '
-          '(${r.guestsCount} чел, стол ${r.tableName.isEmpty ? '—' : r.tableName})');
+          '(${r.guestsCount} чел, ${r.tableName.isEmpty ? 'стол —' : tableLabel(r.tableName)})');
     }
 
     if (names.isEmpty) return;

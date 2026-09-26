@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../models/reservation_model.dart';
 import '../../services/reservation_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/table_label.dart';
 
 /// Плашка «Бронь скоро — придёте?».
 ///
@@ -138,7 +139,7 @@ class _BookingSoonCardState extends State<BookingSoonCard> {
               const SizedBox(height: 6),
               Text(
                 '${_time(r.startTime)}'
-                '${r.tableName.isEmpty ? '' : ', стол ${r.tableName}'}'
+                '${r.tableName.isEmpty ? '' : ', ${tableLabel(r.tableName)}'}'
                 ' · ${r.guestsCount} чел. Подтвердите, что придёте, — или '
                 'освободите стол для других.',
                 style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),

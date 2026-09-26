@@ -179,7 +179,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(widget.sommelierMode ? 'Кальянный сомелье' : 'Консьерж Colibri',
+                      Text(widget.sommelierMode ? 'Кальянный сомелье' : 'ИИ-консьерж',
                           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
                       Text('Подскажу по меню, броням и бонусам',
                           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),

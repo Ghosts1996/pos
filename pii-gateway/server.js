@@ -66,6 +66,25 @@ function getFirebaseApp() {
   return firebaseApp;
 }
 
+// Гости SaaS-заведений входят в ОТДЕЛЬНЫЙ Firebase-проект платформы (не
+// hoocah-pos): их ID-токен проверяется и профиль зеркалируется только его
+// сервисным аккаунтом. Без этого проверка токена SaaS-гостя падала с
+// «incorrect aud», и в SaaS-приложении гостя не сохранялись ни профиль, ни
+// бронь. На сервере это тот же ключ, что у saas-gateway
+// (FIREBASE_SERVICE_ACCOUNT_B64 в /etc/saas-gateway.env), см. README.md.
+let saasApp;
+function getSaasApp() {
+  if (saasApp !== undefined) return saasApp;
+  const b64 = process.env.SAAS_FIREBASE_SERVICE_ACCOUNT_B64;
+  if (!b64) {
+    saasApp = null;
+    return null;
+  }
+  const serviceAccount = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  saasApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) }, "saas");
+  return saasApp;
+}
+
 function sendJson(res, statusCode, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(statusCode, {
@@ -125,9 +144,22 @@ async function handleRegisterGuestProfile(req, res) {
     return sendJson(res, 401, { error: "нет токена авторизации" });
   }
 
+  const tenant = typeof tenantId === "string" ? tenantId : "";
+  // tenantId непустой — гость SaaS-заведения (проект платформы), пустой —
+  // одно-арендная сборка (проект hoocah-pos), как было.
+  let fbApp;
+  if (tenant) {
+    fbApp = getSaasApp();
+    if (!fbApp) {
+      return sendJson(res, 503, {
+        error: "pii-gateway не подключён к проекту платформы: задайте SAAS_FIREBASE_SERVICE_ACCOUNT_B64 (см. README.md)",
+      });
+    }
+  }
+
   let decoded;
   try {
-    decoded = await getFirebaseApp().auth().verifyIdToken(idToken);
+    decoded = await (fbApp || getFirebaseApp()).auth().verifyIdToken(idToken);
   } catch (e) {
     return sendJson(res, 401, { error: "невалидный токен: " + e.message });
   }
@@ -135,13 +167,32 @@ async function handleRegisterGuestProfile(req, res) {
     return sendJson(res, 403, { error: "нельзя писать чужой профиль" });
   }
 
-  const tenant = typeof tenantId === "string" ? tenantId : "";
+  // Профиль гостя СЕТИ заведений общий на все её точки (лояльность сети,
+  // chains/{chainId}/clients — оттуда его читает приложение гостя, см.
+  // AppScope.loyaltyCol). Сеть берём из документа заведения, а не из
+  // запроса: клиенту здесь не доверяем.
+  let chainId = "";
+  if (tenant) {
+    let tenantSnap;
+    try {
+      tenantSnap = await admin.firestore(fbApp).doc(`tenants/${tenant}`).get();
+    } catch (e) {
+      return sendJson(res, 502, { error: "не удалось прочитать заведение: " + e.message });
+    }
+    if (!tenantSnap.exists) {
+      return sendJson(res, 404, { error: "заведение не найдено" });
+    }
+    chainId = String(tenantSnap.data().chainId || "");
+  }
+  // Ключ в первичной базе совпадает с тем, где живёт профиль: у сети — одна
+  // запись на все её точки.
+  const storeKey = chainId ? `chain:${chainId}` : tenant;
   const pgClient = await getPool().connect();
   try {
     await pgClient.query("BEGIN");
     const existing = await pgClient.query(
       "SELECT name, phone FROM guest_profiles WHERE tenant_id = $1 AND uid = $2 FOR UPDATE",
-      [tenant, uid]
+      [storeKey, uid]
     );
     const prevName = existing.rows[0]?.name ?? "";
     const prevPhone = existing.rows[0]?.phone ?? "";
@@ -153,7 +204,7 @@ async function handleRegisterGuestProfile(req, res) {
        VALUES ($1, $2, $3, $4, now())
        ON CONFLICT (tenant_id, uid)
        DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = now()`,
-      [tenant, uid, nextName, nextPhone]
+      [storeKey, uid, nextName, nextPhone]
     );
     await pgClient.query("COMMIT");
   } catch (e) {
@@ -167,8 +218,10 @@ async function handleRegisterGuestProfile(req, res) {
 
   // Зеркало в Firestore — ТОЛЬКО после успешного commit в РФ-базу выше.
   try {
-    const db = admin.firestore(getFirebaseApp());
-    const path = tenant ? `tenants/${tenant}/clients/${uid}` : `clients/${uid}`;
+    const db = admin.firestore(fbApp || getFirebaseApp());
+    const path = chainId
+      ? `chains/${chainId}/clients/${uid}`
+      : tenant ? `tenants/${tenant}/clients/${uid}` : `clients/${uid}`;
     const patch = {};
     if (name !== undefined) patch.name = String(name);
     if (phone !== undefined) patch.phone = String(phone);

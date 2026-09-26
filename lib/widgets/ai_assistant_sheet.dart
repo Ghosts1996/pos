@@ -238,7 +238,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
         color: AppColors.warning.withValues(alpha: 0.15),
         padding: const EdgeInsets.all(12),
         child: const Text(
-          'ИИ не подключён. Админ → Настройки ИИ → ключ tooken.club.',
+          'ИИ не подключён. Администратор → Настройки ИИ → ключ провайдера.',
           style: TextStyle(color: AppColors.warning, fontSize: 13),
         ),
       );

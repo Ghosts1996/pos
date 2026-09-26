@@ -94,7 +94,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
                       'ждёт ${e.waitingMinutes} мин'
                       '${e.promisedMinutes > 0 ? ' · обещали ~${e.promisedMinutes}' : ''}'
                       '${invited ? ' · приглашён' : ''}'
-                      '${e.source == 'kolibri' ? ' · Colibri' : ''}',
+                      '${e.source == 'kolibri' ? ' · из приложения' : ''}',
                       style: TextStyle(
                         color: overdue ? AppColors.danger : AppColors.textMuted,
                         fontSize: 13,

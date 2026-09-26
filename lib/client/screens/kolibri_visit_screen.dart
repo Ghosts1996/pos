@@ -11,6 +11,7 @@ import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
 import 'kolibri_qr_scan_screen.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/table_label.dart';
 
 /// «Мой стол»: живой счёт гостя.
 ///
@@ -123,7 +124,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Стол ${s.tableName}',
+            Text(tableLabel(s.tableName),
                 style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
             TextButton(
               onPressed: () => _link.unbind(_auth.uid),
@@ -320,13 +321,17 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                 ...orders.map((o) => ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
+                      // Касса ведёт заказ так: new → preparing (принят в
+                      // чек) → ready (несём к столу); rejected — отклонён.
+                      // Раньше здесь проверялся несуществующий 'accepted', и
+                      // гость до конца видел «Ждёт подтверждения».
                       leading: Icon(
-                        o.status == 'accepted'
+                        _orderAccepted(o.status)
                             ? Icons.check_circle
                             : o.status == 'rejected'
                                 ? Icons.cancel
                                 : Icons.schedule,
-                        color: o.status == 'accepted'
+                        color: _orderAccepted(o.status)
                             ? KolibriColors.success
                             : o.status == 'rejected'
                                 ? KolibriColors.danger
@@ -335,11 +340,12 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                       title: Text(o.items.map((i) => '${i.name}×${i.qty}').join(', '),
                           style: const TextStyle(fontSize: 13)),
                       subtitle: Text(
-                        o.status == 'accepted'
-                            ? 'Принят'
-                            : o.status == 'rejected'
-                                ? 'Отклонён: ${o.rejectReason}'
-                                : 'Ждёт подтверждения',
+                        switch (o.status) {
+                          'preparing' || 'accepted' => 'Принят — готовим',
+                          'ready' => 'Готов — несём к столу',
+                          'rejected' => o.rejectReason.isEmpty ? 'Отклонён' : 'Отклонён: ${o.rejectReason}',
+                          _ => 'Ждёт подтверждения',
+                        },
                         style: const TextStyle(fontSize: 12),
                       ),
                     )),
@@ -482,12 +488,12 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           const Text('Спасибо за визит!',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          Text('Счёт за столом $tableName закрыт на '
+          Text('Счёт (${tableLabel(tableName)}) закрыт на '
               '${total.toStringAsFixed(0)} ₽.',
               style: TextStyle(color: KolibriColors.textMuted)),
           if (bonusEarned > 0) ...[
             const SizedBox(height: 6),
-            Text('Начислено ${bonusEarned.toStringAsFixed(0)} бонусов',
+            Text('Начислено ${bonusesLabel(bonusEarned)}',
                 style: TextStyle(color: KolibriColors.primary)),
           ],
           const SizedBox(height: 24),
@@ -648,3 +654,6 @@ class _RatingBarState extends State<_RatingBar> {
     );
   }
 }
+
+bool _orderAccepted(String status) =>
+    status == 'preparing' || status == 'ready' || status == 'accepted';
