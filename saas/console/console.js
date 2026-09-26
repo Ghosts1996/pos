@@ -2450,6 +2450,9 @@ function watchDashboardData(tenantId) {
         ` : ''}
 
         <div class="small muted" style="margin-bottom:8px">Цвета</div>
+        <p class="small muted" style="margin:-4px 0 10px">Касса всегда остаётся в тёмной теме —
+        от бренда она берёт акцентные цвета. Светлый фон применяется только в приложении
+        и веб-версии для гостей.</p>
         ${colorFieldHtml('f-color-primary', 'Основной', primaryColor, canManage)}
         ${colorFieldHtml('f-color-secondary', 'Вторичный', secondaryColor, canManage)}
         ${colorFieldHtml('f-color-button', 'Кнопки', buttonColor, canManage)}

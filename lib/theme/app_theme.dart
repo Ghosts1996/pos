@@ -237,7 +237,13 @@ class AppTheme {
 
     var background = _parseHexColor(branding.backgroundColor) ?? AppColors.background;
     var text = _parseHexColor(branding.textColor) ?? AppColors.textPrimary;
-    if (_contrastRatio(background, text) < 3.0) {
+    // Светлый фон (пресет «Песочный светлый» в консоли) касса тоже не
+    // берёт: карточки, диалоги и поля ввода здесь остаются тёмными из базы
+    // [dark], и тёмный текст бренда на них читался с контрастом ~1.1:1.
+    // Касса и так задумана только тёмной (см. main.dart) — светлая пара
+    // фон/текст остаётся гостевому приложению, а касса берёт у бренда
+    // только акценты (primary/secondary/button).
+    if (_contrastRatio(background, text) < 3.0 || _relativeLuminance(background) > 0.4) {
       background = AppColors.background;
       text = AppColors.textPrimary;
     }
