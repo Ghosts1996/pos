@@ -29,6 +29,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
+  final _fsrarIdCtrl = TextEditingController();
+  bool _egaisEnabled = false;
+  List<EgaisIncomingDoc>? _egaisDocs;
   String _kassaType = 'mock'; // mock | atol_cloud | orange_data | cloud_kassir
   final _kassaBaseUrlCtrl = TextEditingController();
   final _kassaGroupCodeCtrl = TextEditingController();
@@ -73,6 +76,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
     _utmHostCtrl.text = data['utmHost'] ?? '';
+    _fsrarIdCtrl.text = data['egaisFsrarId'] ?? '';
+    _egaisEnabled = data['egaisEnabled'] as bool? ?? (data['utmHost'] ?? '').toString().trim().isNotEmpty;
     _kassaType = data['kassaType'] ?? 'mock';
     _kassaBaseUrlCtrl.text = data['kassaBaseUrl'] ?? '';
     _kassaGroupCodeCtrl.text = data['kassaGroupCode'] ?? '';
@@ -125,6 +130,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
       'utmHost': _utmHostCtrl.text.trim(),
+      'egaisEnabled': _egaisEnabled,
+      'egaisFsrarId': _fsrarIdCtrl.text.trim(),
       'kassaType': _kassaType,
       'kassaBaseUrl': _kassaBaseUrlCtrl.text.trim(),
       'kassaGroupCode': _kassaGroupCodeCtrl.text.trim(),
@@ -189,8 +196,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   }
 
   void _applyActiveEgais() {
-    final host = _utmHostCtrl.text.trim();
-    activeEgaisService = host.isNotEmpty ? EgaisUtmService(utmHost: host) : null;
+    activeEgaisService = buildEgaisService({
+      'utmHost': _utmHostCtrl.text.trim(),
+      'egaisEnabled': _egaisEnabled,
+      'egaisFsrarId': _fsrarIdCtrl.text.trim(),
+    });
   }
 
   void _applyActiveChestnyZnak() {
@@ -280,10 +290,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       });
       return;
     }
-    final status = await EgaisUtmService(utmHost: host).checkConnection();
+    final service = EgaisUtmService(utmHost: host, fsrarId: _fsrarIdCtrl.text.trim());
+    final status = await service.checkConnection();
+    List<EgaisIncomingDoc>? docs;
+    if (status.ok) {
+      try {
+        docs = await service.incomingDocuments();
+      } catch (_) {}
+    }
     setState(() {
       _testing = false;
       _testResult = status.message;
+      _egaisDocs = docs;
     });
   }
 
@@ -434,6 +452,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   void dispose() {
     _networkIpCtrl.dispose();
     _utmHostCtrl.dispose();
+    _fsrarIdCtrl.dispose();
     _kassaBaseUrlCtrl.dispose();
     _kassaOrangeKeyPassCtrl.dispose();
     _kassaOrangeSignKeyPemCtrl.dispose();
@@ -538,28 +557,55 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             label: const Text('Тестовая печать'),
           ),
           const Divider(height: 40),
-          const Text('ЕГАИС (УТМ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('ЕГАИС (алкоголь)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          const Text(
-            'Укажите IP-адрес компьютера, на котором установлен и запущен УТМ '
-            'с подключённым крипто-ключом организации. Приложение обращается к '
-            'нему по локальной сети — само по себе оно ничего не подписывает.',
-            style: TextStyle(color: Colors.grey),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _egaisEnabled,
+            onChanged: (v) => setState(() => _egaisEnabled = v),
+            title: const Text('В заведении продаётся алкоголь (включая пиво)'),
+            subtitle: const Text('Без алкоголя ЕГАИС не нужен — оставьте выключенным.'),
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _utmHostCtrl,
-            decoration: const InputDecoration(labelText: 'IP компьютера с УТМ', hintText: '192.168.1.50'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _testing ? null : _testUtm,
-            icon: const Icon(Icons.wifi_tethering),
-            label: const Text('Проверить связь с УТМ'),
-          ),
-          if (_testResult != null) ...[
-            const SizedBox(height: 12),
-            Text(_testResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+          if (_egaisEnabled) ...[
+            const Text(
+              'Общепит не отправляет в ЕГАИС каждую продажу: принимает накладные поставщиков, '
+              'переводит продукцию в торговый зал и в день вскрытия бутылки крепкого алкоголя '
+              'отмечает её в ЕГАИС. Документы подписываются крипто-ключом в УТМ на компьютере '
+              'заведения. Здесь — связь с УТМ и входящие документы: касса покажет, что пришла '
+              'новая накладная. Приём накладных и вскрытие тары оформляются в УТМ/программе ЕГАИС.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _fsrarIdCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'ФСРАР ИД организации', hintText: '030000000000'),
+            ),
+            TextField(
+              controller: _utmHostCtrl,
+              decoration: const InputDecoration(labelText: 'IP компьютера с УТМ', hintText: '192.168.1.50'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _testing ? null : _testUtm,
+              icon: const Icon(Icons.wifi_tethering),
+              label: const Text('Проверить связь и входящие документы'),
+            ),
+            if (_testResult != null) ...[
+              const SizedBox(height: 12),
+              Text(_testResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ],
+            if (_egaisDocs != null && _egaisDocs!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ..._egaisDocs!.take(20).map((d) => ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(d.isWaybill ? Icons.local_shipping_outlined : Icons.description_outlined,
+                        color: d.isWaybill ? Colors.orange : null),
+                    title: Text(d.label),
+                    subtitle: Text(d.type, style: const TextStyle(fontSize: 11)),
+                  )),
+            ],
           ],
           const Divider(height: 40),
           const Text('Честный ЗНАК (маркировка)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),

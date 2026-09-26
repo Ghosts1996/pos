@@ -75,22 +75,3 @@ class AlcoholInfo {
         isBeer: isBeer ?? this.isBeer,
       );
 }
-
-/// Одна строка алкогольной продажи, которую нужно передать в УТМ при
-/// закрытии чека со спиртным — собирается из позиций чека на экране оплаты.
-class EgaisSaleLine {
-  final String alcCode;
-  final double quantityLiters; // объём тары × количество
-  final bool isBeer;
-
-  const EgaisSaleLine({
-    required this.alcCode,
-    required this.quantityLiters,
-    required this.isBeer,
-  });
-}
-
-/// Статус отправки документа продажи в УТМ — отображается в истории чека,
-/// чтобы официант/админ видел, прошла ли отметка в ЕГАИС, а не просто
-/// "чек напечатан".
-enum EgaisSendStatus { notRequired, pending, sent, failed }
