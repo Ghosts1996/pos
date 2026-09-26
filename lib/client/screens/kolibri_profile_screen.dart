@@ -296,7 +296,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   ],
                 ),
                 const SizedBox(height: 6),
-                const Text(
+                Text(
                   'Вы не узнаете, что бронь подтвердили, заказ готов или '
                   'начислены бонусы. Включается одной кнопкой.',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
@@ -340,7 +340,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 'Визитов: ${p?.visits ?? 0} · потрачено '
                 '${(p?.totalSpent ?? 0).toStringAsFixed(0)} ₽ · кешбэк '
                 '${(p?.cashbackPercent ?? 3).toStringAsFixed(0)}%',
-                style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
               ),
               // Прогресс до следующего уровня: без него гость видит только
               // текущий статус и не понимает, что до следующего осталось
@@ -363,7 +363,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                       : 'До уровня «${p.nextTier!.name}» осталось '
                           '${p.toNextTier.toStringAsFixed(0)} ₽ '
                           '(кешбэк вырастет до ${p.nextTier!.cashback.toStringAsFixed(0)}%)',
-                  style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
                 ),
               ],
               if ((p?.discountPercent ?? 0) > 0)
@@ -392,7 +392,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 ? 'Сменить номер можно только через администратора'
                 : 'Укажите номер в любом формате: +7, 8 или просто 9...',
             suffixIcon: _phoneLocked
-                ? const Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
+                ? Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
                 : null,
           ),
           onTap: _phoneLocked
@@ -422,7 +422,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 children: [
                   Icon(Icons.info_outline, color: KolibriColors.gold, size: 20),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Бонусы копятся на этом устройстве и находятся по вашему номеру '
                       'на кассе. Сменили телефон — назовите номер и покажите ID '
@@ -443,17 +443,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
-                    color: Colors.black26,
+                    color: KolibriColors.inset,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.badge_outlined, size: 16, color: KolibriColors.textMuted),
+                      Icon(Icons.badge_outlined, size: 16, color: KolibriColors.textMuted),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'ID устройства: $_shortDeviceId',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
                             color: KolibriColors.textMuted,
@@ -461,7 +461,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                           ),
                         ),
                       ),
-                      const Icon(Icons.copy, size: 14, color: KolibriColors.textMuted),
+                      Icon(Icons.copy, size: 14, color: KolibriColors.textMuted),
                     ],
                   ),
                 ),
@@ -505,14 +505,14 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               .snapshots(),
           builder: (context, snap) {
             if (snap.hasError) {
-              return const Text('Не удалось загрузить историю',
+              return Text('Не удалось загрузить историю',
                   style: TextStyle(color: KolibriColors.textMuted));
             }
             if (!snap.hasData) return const LinearProgressIndicator();
 
             final docs = snap.data!.docs;
             if (docs.isEmpty) {
-              return const Text('Операций пока нет',
+              return Text('Операций пока нет',
                   style: TextStyle(color: KolibriColors.textMuted));
             }
             return Column(
@@ -568,7 +568,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         Text(
           '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber',
           textAlign: TextAlign.center,
-          style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+          style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
         ),
       ],
     );
@@ -591,13 +591,13 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           stream: _link.visitsStream(_auth.uid),
           builder: (context, snap) {
             if (snap.hasError) {
-              return const Text('Не удалось загрузить историю',
+              return Text('Не удалось загрузить историю',
                   style: TextStyle(color: KolibriColors.textMuted));
             }
             if (!snap.hasData) return const LinearProgressIndicator();
             final visits = snap.data!;
             if (visits.isEmpty) {
-              return const Text(
+              return Text(
                 'Визитов пока нет. Отсканируйте QR-код на столе — визит '
                 'зачтётся автоматически, и сумма чека пойдёт в ваш уровень.',
                 style: TextStyle(color: KolibriColors.textMuted),
@@ -642,7 +642,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             Text(items,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
           ],
           if (v.bonusEarned > 0 || v.bonusSpent > 0) ...[
             const SizedBox(height: 6),

@@ -147,7 +147,7 @@ class _KolibriShellState extends State<KolibriShell> {
             backgroundColor: KolibriColors.primary,
             onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),
             tooltip: 'ИИ-консьерж',
-            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 18),
+            child: Icon(Icons.auto_awesome, color: KolibriColors.onPrimary, size: 18),
           ),
           // Штатное место кнопки — снизу справа, над панелью вкладок.
           // Было endTop: без AppBar эта позиция ставит кнопку центром ровно

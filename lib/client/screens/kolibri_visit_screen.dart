@@ -75,7 +75,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           const Text('Мой стол',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Отсканируйте QR-код на своём столе — откроются счёт, таймер '
             'сеанса и кнопки вызова кальянщика.',
             style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
@@ -105,7 +105,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             label: const Text('Карта зала'),
           ),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             'Стол открывается только по коду с самого стола — так вы '
             'наверняка попадёте на свой счёт, а не на соседний. Если код '
             'не сканируется, позовите кальянщика: он откроет стол сам.',
@@ -155,7 +155,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           child: Column(
             children: [
               Text(over ? 'Сеанс завершён' : 'До конца сеанса',
-                  style: const TextStyle(color: KolibriColors.textMuted)),
+                  style: TextStyle(color: KolibriColors.textMuted)),
               const SizedBox(height: 8),
               Text(
                 '$minutes:$seconds',
@@ -169,7 +169,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               ),
               if (s.refillCount > 0)
                 Text('Перезабивок: ${s.refillCount}',
-                    style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
             ],
           ),
           );
@@ -227,7 +227,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                             Text('${c.type.label} — передали в '
                                 '${c.createdAt.hour.toString().padLeft(2, '0')}:'
                                 '${c.createdAt.minute.toString().padLeft(2, '0')}',
-                                style: const TextStyle(
+                                style: TextStyle(
                                     color: KolibriColors.textMuted, fontSize: 13)),
                           ],
                         ))
@@ -243,7 +243,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         const Text('Ваш счёт', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         if (s.orderItems.isEmpty)
-          const Text('Пока пусто — закажите в разделе «Меню»',
+          Text('Пока пусто — закажите в разделе «Меню»',
               style: TextStyle(color: KolibriColors.textMuted))
         else
           Container(
@@ -261,7 +261,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                         children: [
                           Expanded(child: Text('${i.name} ×${i.qty}')),
                           Text('${i.total.toStringAsFixed(0)} ₽',
-                              style: const TextStyle(color: KolibriColors.textMuted)),
+                              style: TextStyle(color: KolibriColors.textMuted)),
                         ],
                       ),
                     )),
@@ -418,7 +418,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                         Expanded(
                           child: Text(
                             rule,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: KolibriColors.textMuted,
                               fontSize: 13,
                               height: 1.45,
@@ -484,7 +484,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           const SizedBox(height: 8),
           Text('Счёт за столом $tableName закрыт на '
               '${total.toStringAsFixed(0)} ₽.',
-              style: const TextStyle(color: KolibriColors.textMuted)),
+              style: TextStyle(color: KolibriColors.textMuted)),
           if (bonusEarned > 0) ...[
             const SizedBox(height: 6),
             Text('Начислено ${bonusEarned.toStringAsFixed(0)} бонусов',

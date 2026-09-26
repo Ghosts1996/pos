@@ -45,9 +45,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
           stream: _link.publicMenuStream(),
           builder: (context, itemSnap) {
             if (itemSnap.hasError) {
-              return const Center(
+              return Center(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(32),
                   child: Text('Не удалось загрузить меню. Проверьте интернет.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: KolibriColors.textMuted)),
@@ -86,7 +86,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 if (categories.isNotEmpty) _categoryChips(categories),
                 Expanded(
                   child: sections.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text('Ничего не найдено',
                               style: TextStyle(color: KolibriColors.textMuted)))
                       : ListView.builder(
@@ -117,7 +117,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                                       ),
                                       const SizedBox(width: 8),
                                       Text('${section.items.length}',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               color: KolibriColors.textMuted, fontSize: 13)),
                                     ],
                                   ),
@@ -147,7 +147,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             Expanded(
               child: TextField(
                 onChanged: (v) => setState(() => _search = v),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: 'Поиск по меню',
                   prefixIcon: Icon(Icons.search, color: KolibriColors.textMuted),
                 ),
@@ -204,7 +204,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               child: item.imageUrl.isEmpty
                   ? Container(
                       color: KolibriColors.surfaceElevated,
-                      child: const Icon(Icons.local_fire_department,
+                      child: Icon(Icons.local_fire_department,
                           color: KolibriColors.textMuted),
                     )
                   : CachedNetworkImage(
@@ -214,7 +214,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                           Container(color: KolibriColors.surfaceElevated),
                       errorWidget: (_, __, ___) => Container(
                         color: KolibriColors.surfaceElevated,
-                        child: const Icon(Icons.image_not_supported,
+                        child: Icon(Icons.image_not_supported,
                             color: KolibriColors.textMuted),
                       ),
                     ),
@@ -231,7 +231,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 Text(
                   '${item.price.toStringAsFixed(0)} ₽'
                   '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.name}' : ''}',
-                  style: const TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                 ),
               ],
             ),
@@ -246,7 +246,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               children: [
                 IconButton(
                   onPressed: () => _remove(item),
-                  icon: const Icon(Icons.remove_circle_outline,
+                  icon: Icon(Icons.remove_circle_outline,
                       color: KolibriColors.textMuted),
                 ),
                 Text('$inCart', style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -302,7 +302,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('${_cart.length} позиции',
-                      style: const TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                      style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
                   Text('${_cartTotal.toStringAsFixed(0)} ₽',
                       style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 ],
