@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import '../../models/fiscal_receipt.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
@@ -42,6 +43,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
     try {
       final marking = _cz.parse(rawCode);
       final gtin = marking?.gtin ?? rawCode;
+      MarkingPermit? permit;
 
       if (marking != null) {
         final alreadySold = await _cz.isAlreadySold(marking);
@@ -64,6 +66,9 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
             if (online.alreadyRetired) {
               _showSnack('По данным «Честного знака» этот код уже выведен из оборота — продавать нельзя');
               return;
+            }
+            if (online.reqId.isNotEmpty) {
+              permit = MarkingPermit(reqId: online.reqId, reqTimestamp: online.reqTimestamp);
             }
           }
         } on ChestnyZnakApiException catch (e) {
@@ -92,6 +97,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           receiptId: widget.session.id,
           menuItemId: menuItem.id,
           itemName: menuItem.name,
+          permit: permit,
         );
       }
     } catch (e) {

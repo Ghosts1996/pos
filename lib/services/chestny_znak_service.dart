@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../models/fiscal_receipt.dart';
 import '../models/marking_code.dart';
 import 'chestny_znak_api_service.dart';
 
@@ -83,8 +84,13 @@ class ChestnyZnakService {
     required String receiptId,
     String menuItemId = '',
     String itemName = '',
+    MarkingPermit? permit,
   }) async {
     await AppScope.col('marking_codes_sold').doc(_docId(code)).set({
+      // Результат проверки в «Честном знаке» (разрешительный режим) — уйдёт
+      // в чек отраслевым реквизитом.
+      if (permit != null) 'permitReqId': permit.reqId,
+      if (permit != null) 'permitReqTimestamp': permit.reqTimestamp,
       'gtin': code.gtin,
       'serial': code.serial,
       'raw': code.raw,
@@ -124,6 +130,12 @@ class ChestnyZnakService {
               ),
               menuItemId: (d.data()['menuItemId'] as String?) ?? '',
               itemName: (d.data()['itemName'] as String?) ?? '',
+              permit: (d.data()['permitReqId'] as String?)?.isNotEmpty == true
+                  ? MarkingPermit(
+                      reqId: d.data()['permitReqId'] as String,
+                      reqTimestamp: (d.data()['permitReqTimestamp'] ?? '').toString(),
+                    )
+                  : null,
             ))
         .toList();
   }
@@ -135,5 +147,6 @@ class AttachedMarkingCode {
   final MarkingCode code;
   final String menuItemId;
   final String itemName;
-  const AttachedMarkingCode({required this.code, required this.menuItemId, required this.itemName});
+  final MarkingPermit? permit;
+  const AttachedMarkingCode({required this.code, required this.menuItemId, required this.itemName, this.permit});
 }

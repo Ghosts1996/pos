@@ -38,6 +38,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaEmailCtrl = TextEditingController();
   final _kassaPaymentAddressCtrl = TextEditingController();
   String _kassaSno = 'osn';
+  String _kassaVat = 'none';
+  String _kassaApiVersion = 'v5';
   final _kassaOrangeKeyNameCtrl = TextEditingController();
   final _kassaOrangeCertPemCtrl = TextEditingController();
   final _kassaOrangeKeyPemCtrl = TextEditingController();
@@ -80,6 +82,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaEmailCtrl.text = data['kassaEmail'] ?? '';
     _kassaPaymentAddressCtrl.text = data['kassaPaymentAddress'] ?? '';
     _kassaSno = data['kassaSno'] ?? 'osn';
+    _kassaVat = FiscalVatRateX.fromId(data['kassaVat'] as String?).id;
+    _kassaApiVersion = data['kassaApiVersion'] == 'v4' ? 'v4' : 'v5';
     _kassaOrangeKeyNameCtrl.text = data['kassaOrangeKeyName'] ?? '';
     _kassaOrangeCertPemCtrl.text = data['kassaOrangeCertPem'] ?? '';
     _kassaOrangeKeyPemCtrl.text = data['kassaOrangeKeyPem'] ?? '';
@@ -130,6 +134,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaEmail': _kassaEmailCtrl.text.trim(),
       'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
       'kassaSno': _kassaSno,
+      'kassaVat': _kassaVat,
+      'kassaApiVersion': _kassaApiVersion,
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
       'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
@@ -163,6 +169,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaEmail': _kassaEmailCtrl.text.trim(),
       'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
       'kassaSno': _kassaSno,
+      'kassaVat': _kassaVat,
+      'kassaApiVersion': _kassaApiVersion,
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
       'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
@@ -674,9 +682,21 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                           decoration: const InputDecoration(labelText: 'Пароль'),
                           obscureText: true,
                         ),
+                        DropdownButtonFormField<String>(
+                          initialValue: _kassaApiVersion,
+                          decoration: const InputDecoration(labelText: 'Протокол'),
+                          items: const [
+                            DropdownMenuItem(value: 'v5', child: Text('v5 — ФФД 1.2 (рекомендуется, нужен для маркировки)')),
+                            DropdownMenuItem(value: 'v4', child: Text('v4 — ФФД 1.05 (старые кассы)')),
+                          ],
+                          onChanged: (v) => setState(() => _kassaApiVersion = v ?? 'v5'),
+                        ),
                         TextField(
                           controller: _kassaEmailCtrl,
-                          decoration: const InputDecoration(labelText: 'E-mail продавца (для чека)'),
+                          decoration: const InputDecoration(
+                            labelText: 'E-mail продавца (для чека)',
+                            helperText: 'Если гость не оставил контакт, электронный чек уйдёт на этот адрес',
+                          ),
                         ),
                         TextField(
                           controller: _kassaPaymentAddressCtrl,
@@ -689,7 +709,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 ],
                 const RadioListTile<String>(
                   title: Text('Облачная касса — OrangeData'),
-                  subtitle: Text('Отдельный протокол (mTLS + подпись запроса) — пока без поддержки маркированных товаров'),
+                  subtitle: Text('Отдельный протокол (mTLS + подпись запроса), ФФД 1.2 — с маркированными товарами'),
                   value: 'orange_data',
                 ),
                 if (_kassaType == 'orange_data') ...[
@@ -767,6 +787,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                             DropdownMenuItem(value: 'patent', child: Text('Патент')),
                           ],
                           onChanged: (v) => setState(() => _kassaSno = v!),
+                        ),
+                        DropdownButtonFormField<String>(
+                          initialValue: _kassaVat,
+                          decoration: const InputDecoration(
+                            labelText: 'Ставка НДС по умолчанию',
+                            helperText: 'Для позиций меню без своей ставки (её можно задать в редакторе меню)',
+                          ),
+                          items: FiscalVatRate.values
+                              .map((v) => DropdownMenuItem(value: v.id, child: Text(v.label)))
+                              .toList(),
+                          onChanged: (v) => setState(() => _kassaVat = v ?? 'none'),
                         ),
                         const SizedBox(height: 8),
                       ],
