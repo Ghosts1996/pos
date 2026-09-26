@@ -793,16 +793,19 @@ jobs:
           # попавшаяся «Release» оказывалась служебной
           # x64/ALL_BUILD.dir/Release без единого файла приложения — архив
           # выходил пустым, и выкладка на сервер падала.
-          EXE=$(find build/windows -type f -iname '*.exe' -path '*runner/Release/*' | head -1)
-          if [ -z "$EXE" ]; then
-            echo "::error::Не нашли собранный .exe (build/windows/**/runner/Release) после flutter build windows"
+          # Берём саму папку runner/Release, где рядом лежат .exe кассы,
+          # flutter_windows.dll и data/. Искать просто «любой .exe внутри»
+          # нельзя: плагины кладут свои вспомогательные exe глубже в data/
+          # (например win_ble/assets/BLEServer.exe).
+          DIR=""
+          while IFS= read -r d; do
+            if [ -f "$d/flutter_windows.dll" ] && [ -d "$d/data" ] && ls "$d"/*.exe >/dev/null 2>&1; then
+              DIR="$d"; break
+            fi
+          done < <(find build/windows -type d -path '*/runner/Release')
+          if [ -z "$DIR" ]; then
+            echo "::error::Не нашли готовую папку runner/Release (exe + flutter_windows.dll + data) после flutter build windows"
             find build/windows -maxdepth 4 -type d | head -50
-            exit 1
-          fi
-          DIR=$(dirname "$EXE")
-          if [ ! -f "$DIR/flutter_windows.dll" ] || [ ! -d "$DIR/data" ]; then
-            echo "::error::В $DIR нет flutter_windows.dll или папки data — это не готовая сборка"
-            ls -la "$DIR"
             exit 1
           fi
           echo "Папка сборки: $DIR"
