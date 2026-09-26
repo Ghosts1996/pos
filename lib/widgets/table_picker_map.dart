@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
+import '../utils/table_label.dart';
 
 /// Занятый интервал стола для подписи на карте выбора.
 ///
@@ -107,7 +108,7 @@ class TablePickerMap extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                        Text('${t.seats} мест', style: const TextStyle(fontSize: 10)),
+                        Text(seatsLabel(t.seats), style: const TextStyle(fontSize: 10)),
                       ],
                     ),
                   ),
@@ -134,7 +135,7 @@ class TablePickerMap extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(table.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-              Text('${table.seats} мест', style: const TextStyle(color: Colors.grey)),
+              Text(seatsLabel(table.seats), style: const TextStyle(color: Colors.grey)),
               const SizedBox(height: 14),
               if (todays.isEmpty)
                 const Text('На этот день стол свободен')
