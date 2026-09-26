@@ -214,6 +214,10 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                   : CachedNetworkImage(
                       imageUrl: item.imageUrl,
                       fit: BoxFit.cover,
+                      // Декодируем под размер миниатюры, а не всё фото
+                      // (до 1600px): иначе длинное меню дёргается при
+                      // прокрутке и съедает память на слабых телефонах.
+                      memCacheWidth: (72 * MediaQuery.of(context).devicePixelRatio).round(),
                       placeholder: (_, __) =>
                           Container(color: KolibriColors.surfaceElevated),
                       errorWidget: (_, __, ___) => Container(

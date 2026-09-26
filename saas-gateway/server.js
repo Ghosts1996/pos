@@ -655,6 +655,10 @@ async function handleCreateTenant(req, res) {
   batch.set(tenantRef.collection("settings").doc("deviceInvite"), {
     code: randomInviteCode(), rotatedAt: now,
   });
+  // Профиль заведения с его названием — сразу: его берут чек, ИИ-консьерж и
+  // экран «Профиль заведения» на кассе. Часы работы владелец заполняет сам
+  // (касса и приложение гостя напомнят, пока они пустые).
+  batch.set(tenantRef.collection("meta").doc("venueProfile"), { name: name.trim() }, { merge: true });
   // Собственная подписка есть только у одиночного заведения — у точки сети
   // биллинг общий, на chains/{chainId} (см. handleCreateChain).
   if (!chainId) {
