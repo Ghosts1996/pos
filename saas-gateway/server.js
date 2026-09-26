@@ -1591,6 +1591,7 @@ async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
   }
 
   await tenantRef.set({ status: "deleted", updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await removeTenantUploads(tenantId);
   if (!skipSubscription) {
     await firestore.collection("subscriptions").doc(tenantId).set({ status: "cancelled" }, { merge: true });
   }
@@ -2154,6 +2155,49 @@ async function handleUploadBrandingLogo(req, res) {
   sendJson(res, 200, { path: `/branding/${tenantId}/logo.${ext}` });
 }
 
+/**
+ * Фото блюд и категорий меню кассы (раньше — общий бакет Supabase, где
+ * файлы всех заведений лежали в одной папке и любое заведение могло
+ * перезаписать или удалить чужие). Теперь — в папку своего заведения
+ * рядом с логотипом: публичное чтение статикой nginx (/branding/, меню
+ * видят гости), запись — только персонал этого заведения. Тело — сырые
+ * байты картинки, как у uploadBrandingLogo.
+ */
+const MENU_IMAGE_FOLDERS = new Set(["items", "categories"]);
+async function handleUploadMenuImage(req, res) {
+  const decoded = await verifyAuth(req);
+  const requestUrl = new URL(req.url, "http://localhost");
+  const tenantId = requestUrl.searchParams.get("tenantId") || "";
+  const folder = requestUrl.searchParams.get("folder") || "";
+  const entityId = requestUrl.searchParams.get("entityId") || "";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "не указан tenantId");
+  if (!MENU_IMAGE_FOLDERS.has(folder)) throw new HttpError(400, "неизвестная папка меню");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(entityId)) throw new HttpError(400, "некорректный id позиции");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin", "manager", "employee"]);
+
+  const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  const ext = BRANDING_CONTENT_TYPES[contentType];
+  if (!ext) throw new HttpError(400, "поддерживаются только PNG, JPEG и WebP");
+  const buffer = await readRawBody(req, BRANDING_MAX_BYTES);
+  if (!buffer.length) throw new HttpError(400, "пустой файл");
+
+  const dir = path.join(BRANDING_UPLOADS_DIR, tenantId, "menu", folder);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await Promise.all(
+    Object.values(BRANDING_CONTENT_TYPES)
+      .filter((oldExt) => oldExt !== ext)
+      .map((oldExt) => fs.promises.unlink(path.join(dir, `${entityId}.${oldExt}`)).catch(() => {}))
+  );
+  await fs.promises.writeFile(path.join(dir, `${entityId}.${ext}`), buffer);
+  sendJson(res, 200, { path: `/branding/${tenantId}/menu/${folder}/${entityId}.${ext}` });
+}
+
+/** Логотип и фото меню удалённого заведения — вместе с его данными. */
+async function removeTenantUploads(tenantId) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) return;
+  await fs.promises.rm(path.join(BRANDING_UPLOADS_DIR, tenantId), { recursive: true, force: true }).catch(() => {});
+}
+
 // ---------------------------------------------------- createDemoTenant
 
 const demoRateLimiter = new Map(); // ip -> { count, resetAt }
@@ -2490,6 +2534,7 @@ async function purgeDemoTenant(tenantId) {
   }
   await tenantRef.delete();
   await firestore.collection("subscriptions").doc(tenantId).delete().catch(() => {});
+  await removeTenantUploads(tenantId);
 }
 
 // ----------------------------------------- super-admin: enable/disable/plan
@@ -3941,6 +3986,7 @@ const ROUTES = {
   "/getDownloadUrl": handleGetDownloadUrl,
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
+  "/uploadMenuImage": handleUploadMenuImage,
   "/recalculateUsage": handleRecalculateUsage,
   "/overrideSubscription": handleOverrideSubscription,
   "/savePlan": handleSavePlan,

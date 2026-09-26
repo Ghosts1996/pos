@@ -173,6 +173,13 @@ jobs:
           add_permission "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
           add_permission "android.permission.WAKE_LOCK"
 
+          # Касса ходит к УТМ ЕГАИС по http:// в локальной сети заведения
+          # (УТМ не умеет HTTPS) — Android 9+ без этого флага молча
+          # блокирует такие запросы. Гостевому приложению это не нужно.
+          if [ "${{ matrix.app }}" = "pos" ] && ! grep -q "usesCleartextTraffic" "$MANIFEST"; then
+            sed -i '0,/<application/s//<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+          fi
+
           if ! grep -q "android.hardware.camera" "$MANIFEST"; then
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
           fi

@@ -1,7 +1,14 @@
 import 'dart:async';
 
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../build_info.dart';
+import 'app_scope.dart';
 
 /// Тонкая обёртка над Supabase Storage для загрузки фото категорий и
 /// позиций меню (аналог фото-плиток "Бургеры", "Барная карта" в Restik POS).
@@ -58,6 +65,11 @@ class StorageService {
   }) async {
     final bytes = await file.readAsBytes();
     final ext = _extensionOf(file.name);
+    // SaaS: фото — в папку своего заведения на сервере платформы, а не в
+    // общий бакет, где заведения видели и могли стереть файлы друг друга.
+    if (AppScope.isSaasMode && kSaasGatewayUrl.isNotEmpty) {
+      return _uploadViaGateway(bytes: bytes, ext: ext, folder: folder, entityId: entityId);
+    }
     final path = '$folder/$entityId.$ext';
 
     await _client.storage.from(_bucket).uploadBinary(
@@ -103,6 +115,37 @@ class StorageService {
       // загружена и сохранена, просто останется один лишний файл с
       // устаревшим расширением.
     }
+  }
+
+  Future<String> _uploadViaGateway({
+    required List<int> bytes,
+    required String ext,
+    required String folder,
+    required String entityId,
+  }) async {
+    const types = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'webp': 'image/webp'};
+    final type = types[ext];
+    if (type == null) {
+      throw Exception('Формат .$ext не поддерживается — выберите фото в JPG, PNG или WebP');
+    }
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final base = kSaasGatewayUrl.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$base/uploadMenuImage').replace(queryParameters: {
+      'tenantId': AppScope.tenantId!,
+      'folder': folder,
+      'entityId': entityId,
+    });
+    final resp = await http
+        .post(uri, headers: {'Content-Type': type, if (token != null) 'Authorization': 'Bearer $token'}, body: bytes)
+        .timeout(const Duration(seconds: 60));
+    Map<String, dynamic> data = const {};
+    try {
+      data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } catch (_) {}
+    if (resp.statusCode != 200 || data['path'] is! String) {
+      throw Exception('Не удалось загрузить фото (${resp.statusCode}): ${data['error'] ?? 'сервер не ответил'}');
+    }
+    return '${Uri.parse(base).origin}${data['path']}?t=${DateTime.now().millisecondsSinceEpoch}';
   }
 
   String _extensionOf(String fileName) {

@@ -203,6 +203,15 @@ int orangeDataPaymentTypeCode(String type) {
   }
 }
 
+/// Сумма в рублях с копейками: 333.33 * 3 в double даёт 999.9899999…,
+/// а касса принимает только два знака после запятой.
+double roundKopecks(double v) => (v * 100).roundToDouble() / 100;
+
+String _normalizeBaseUrl(String url, String fallback) {
+  final u = url.trim().replaceAll(RegExp(r'/+$'), '');
+  return u.isEmpty ? fallback : u;
+}
+
 String _fiscalTimestamp(DateTime d) {
   String two(int n) => n.toString().padLeft(2, '0');
   return '${two(d.day)}.${two(d.month)}.${d.year} ${two(d.hour)}:${two(d.minute)}:${two(d.second)}';
@@ -252,8 +261,10 @@ class AtolCloudKassaService implements KassaService {
   String? _token;
   DateTime? _tokenExpiresAt;
 
+  static const defaultBaseUrl = 'https://online.atol.ru';
+
   AtolCloudKassaService({
-    required this.baseUrl,
+    required String baseUrl,
     required this.groupCode,
     required this.login,
     required this.password,
@@ -261,11 +272,31 @@ class AtolCloudKassaService implements KassaService {
     required this.companyEmail,
     required this.companyPaymentAddress,
     this.companySno = FiscalTaxSystem.osn,
-  });
+  }) : baseUrl = _normalizeBaseUrl(baseUrl, defaultBaseUrl);
 
   @override
   bool get isAvailable =>
       login.isNotEmpty && password.isNotEmpty && groupCode.isNotEmpty && companyInn.isNotEmpty;
+
+  /// Тело ответа кассы как JSON — у АТОЛ и реселлеров при сбоях приходит
+  /// HTML-страница шлюза, её показываем понятным текстом, а не
+  /// FormatException.
+  static Map<String, dynamic> _json(http.Response resp) {
+    try {
+      final d = jsonDecode(utf8.decode(resp.bodyBytes, allowMalformed: true));
+      return d is Map<String, dynamic> ? d : <String, dynamic>{};
+    } catch (_) {
+      throw KassaException('Касса ответила не в формате API (${resp.statusCode}) — проверьте «Адрес API провайдера»');
+    }
+  }
+
+  /// Текст ошибки АТОЛ: `error` — объект {code, text, type}.
+  static String _errorText(Map<String, dynamic> data, http.Response resp) {
+    final e = data['error'];
+    if (e is Map) return '${e['text'] ?? e['type'] ?? e}${e['code'] != null ? ' (код ${e['code']})' : ''}';
+    if (e != null) return e.toString();
+    return 'HTTP ${resp.statusCode}';
+  }
 
   Future<String> _ensureToken() async {
     if (_token != null && _tokenExpiresAt != null && DateTime.now().isBefore(_tokenExpiresAt!)) {
@@ -278,9 +309,9 @@ class AtolCloudKassaService implements KassaService {
           body: jsonEncode({'login': login, 'pass': password}),
         )
         .timeout(const Duration(seconds: 10));
-    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final data = _json(resp);
     if (resp.statusCode != 200 || data['token'] == null) {
-      throw KassaException('Не удалось авторизоваться в кассе: ${data['error'] ?? resp.body}');
+      throw KassaException('Не удалось авторизоваться в кассе: ${_errorText(data, resp)}');
     }
     _token = data['token'] as String;
     // Токен обычно живёт около 24 часов — обновляем заранее, за час до
@@ -309,7 +340,7 @@ class AtolCloudKassaService implements KassaService {
         'items': receipt.items
             .map((i) => {
                   'name': i.name,
-                  'price': i.price,
+                  'price': roundKopecks(i.price),
                   'quantity': i.quantity,
                   'sum': i.sum,
                   'measurement_unit': 'шт',
@@ -323,7 +354,7 @@ class AtolCloudKassaService implements KassaService {
                 })
             .toList(),
         'payments': receipt.payments
-            .map((p) => {'type': atolPaymentTypeCode(p.type), 'sum': p.amount})
+            .map((p) => {'type': atolPaymentTypeCode(p.type), 'sum': roundKopecks(p.amount)})
             .toList(),
         'total': receipt.total,
       },
@@ -334,18 +365,25 @@ class AtolCloudKassaService implements KassaService {
   Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async {
     String uuid;
     try {
-      final token = await _ensureToken();
-      final resp = await http
+      final body = jsonEncode(_buildReceiptBody(receipt));
+      Future<http.Response> sell() async => http
           .post(
             Uri.parse('$baseUrl/possystem/v4/$groupCode/sell'),
-            headers: {'Content-Type': 'application/json', 'Token': token},
-            body: jsonEncode(_buildReceiptBody(receipt)),
+            headers: {'Content-Type': 'application/json; charset=utf-8', 'Token': await _ensureToken()},
+            body: body,
           )
           .timeout(const Duration(seconds: 15));
+      var resp = await sell();
+      // Токен мог протухнуть раньше наших 23 часов (сменили пароль,
+      // провайдер перезапустился) — берём новый и повторяем один раз.
+      if (resp.statusCode == 401) {
+        _token = null;
+        resp = await sell();
+      }
 
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final data = _json(resp);
       if (resp.statusCode != 200 && resp.statusCode != 201) {
-        return FiscalReceiptResult.failure('Касса отклонила чек: ${data['error'] ?? resp.body}');
+        return FiscalReceiptResult.failure('Касса отклонила чек: ${_errorText(data, resp)}');
       }
       final receivedUuid = data['uuid'] as String?;
       if (receivedUuid == null) {
@@ -376,11 +414,11 @@ class AtolCloudKassaService implements KassaService {
               headers: {'Token': token},
             )
             .timeout(const Duration(seconds: 10));
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        if (resp.statusCode == 401) _token = null;
+        final data = _json(resp);
         final status = data['status'] as String?;
         if (status == 'fail') {
-          final error = data['error'] as Map<String, dynamic>?;
-          return FiscalReceiptResult.failure('Касса отклонила чек: ${error?['text'] ?? data}');
+          return FiscalReceiptResult.failure('Касса отклонила чек: ${_errorText(data, resp)}');
         }
         if (status == 'done') {
           final payload = data['payload'] as Map<String, dynamic>? ?? {};
@@ -422,41 +460,70 @@ class AtolCloudKassaService implements KassaService {
 /// протоколом. Обычные (немаркированные) чеки эта реализация фискализирует
 /// по-настоящему.
 class OrangeDataKassaService implements KassaService {
+  /// Боевой контур. Тестовый — https://apip.orangedata.ru:2443/api/v2
+  /// (с тестовыми сертификатами из документации OrangeData).
+  static const defaultBaseUrl = 'https://api.orangedata.ru:12003/api/v2';
+  static const testBaseUrl = 'https://apip.orangedata.ru:2443/api/v2';
+
   final String baseUrl;
   final String inn;
   final String? group;
   final String? keyName;
+
+  /// Клиентский сертификат и его ключ (client.crt / client.key) — для
+  /// защищённого соединения (mTLS).
   final String clientCertPem;
   final String clientKeyPem;
   final String? certPassphrase;
+
+  /// Отдельный закрытый ключ ПОДПИСИ запросов (private_key.pem, его
+  /// открытую часть загружают в личный кабинет OrangeData). Это НЕ ключ
+  /// сертификата: подписанный ключом client.key чек OrangeData отклоняет.
+  /// Пусто — для совместимости со старыми настройками подписываем
+  /// ключом сертификата.
+  final String signKeyPem;
+
+  /// Корневой сертификат OrangeData (cacert.pem): их сервер подписан
+  /// собственным центром сертификации, которого нет в системе.
+  final String caCertPem;
   final FiscalTaxSystem taxationSystem;
 
   OrangeDataKassaService({
-    this.baseUrl = 'https://apip.orangedata.ru:2443/api/v2',
+    String baseUrl = defaultBaseUrl,
     required this.inn,
     required this.clientCertPem,
     required this.clientKeyPem,
+    this.signKeyPem = '',
+    this.caCertPem = '',
     this.group,
     this.keyName,
     this.certPassphrase,
     this.taxationSystem = FiscalTaxSystem.osn,
-  });
+  }) : baseUrl = _normalizeBaseUrl(baseUrl, defaultBaseUrl);
 
   @override
   bool get isAvailable => inn.isNotEmpty && clientCertPem.isNotEmpty && clientKeyPem.isNotEmpty;
 
   HttpClient _mtlsClient() {
     final ctx = SecurityContext(withTrustedRoots: true);
+    if (caCertPem.trim().isNotEmpty) {
+      ctx.setTrustedCertificatesBytes(Uint8List.fromList(utf8.encode(caCertPem)));
+    }
     ctx.useCertificateChainBytes(Uint8List.fromList(utf8.encode(clientCertPem)));
     ctx.usePrivateKeyBytes(
       Uint8List.fromList(utf8.encode(clientKeyPem)),
-      password: certPassphrase,
+      password: (certPassphrase ?? '').isEmpty ? null : certPassphrase,
     );
     return HttpClient(context: ctx);
   }
 
   String _sign(String body) {
-    final privateKey = CryptoUtils.rsaPrivateKeyFromPem(clientKeyPem);
+    final pem = signKeyPem.trim().isNotEmpty ? signKeyPem : clientKeyPem;
+    // Генератор ключей OrangeData выдаёт PKCS#1 («BEGIN RSA PRIVATE KEY»),
+    // openssl genpkey — PKCS#8 («BEGIN PRIVATE KEY»): понимаем оба.
+    final privateKey = pem.contains('BEGIN RSA PRIVATE KEY')
+        ? CryptoUtils.rsaPrivateKeyFromPemPkcs1(pem)
+        : CryptoUtils.rsaPrivateKeyFromPem(pem);
     final signer = RSASigner(SHA256Digest(), '0609608648016503040201');
     signer.init(true, PrivateKeyParameter<RSAPrivateKey>(privateKey));
     final sig = signer.generateSignature(Uint8List.fromList(utf8.encode(body)));
@@ -475,7 +542,7 @@ class OrangeDataKassaService implements KassaService {
         'positions': receipt.items
             .map((i) => {
                   'quantity': i.quantity,
-                  'price': i.price,
+                  'price': roundKopecks(i.price),
                   'tax': orangeDataVatCode(i.vat),
                   'text': i.name,
                   'paymentMethodType': _orangeDataPaymentMethodFull,
@@ -484,7 +551,7 @@ class OrangeDataKassaService implements KassaService {
             .toList(),
         'checkClose': {
           'payments': receipt.payments
-              .map((p) => {'type': orangeDataPaymentTypeCode(p.type), 'amount': p.amount})
+              .map((p) => {'type': orangeDataPaymentTypeCode(p.type), 'amount': roundKopecks(p.amount)})
               .toList(),
           'taxationSystem': taxationSystem.orangeDataCode,
         },
@@ -521,7 +588,16 @@ class OrangeDataKassaService implements KassaService {
         // без ожидания, опрос статуса ниже останется без соединения.
         return await _pollStatus(client, receipt.receiptId);
       }
+      if (resp.statusCode == 401) {
+        return const FiscalReceiptResult.failure(
+            'OrangeData не принял подпись запроса (401) — проверьте «Ключ подписи» (private_key.pem) '
+            'и что его открытая часть загружена в личный кабинет OrangeData.');
+      }
       return FiscalReceiptResult.failure('Касса отклонила чек (${resp.statusCode}): $respBody');
+    } on HandshakeException catch (e) {
+      return FiscalReceiptResult.failure(
+          'OrangeData: не удалось установить защищённое соединение — проверьте клиентский '
+          'сертификат, его ключ и пароль, корневой сертификат OrangeData ($e)');
     } catch (e) {
       return FiscalReceiptResult.failure('Ошибка связи с кассой OrangeData: $e');
     } finally {
@@ -626,14 +702,15 @@ KassaService buildKassaService(Map<String, dynamic> data) {
       );
     case 'orange_data':
       return OrangeDataKassaService(
-        baseUrl: s('kassaBaseUrl').isEmpty
-            ? 'https://apip.orangedata.ru:2443/api/v2'
-            : s('kassaBaseUrl'),
+        baseUrl: s('kassaBaseUrl'),
         inn: s('kassaInn'),
         group: s('kassaGroupCode'),
         keyName: s('kassaOrangeKeyName'),
         clientCertPem: s('kassaOrangeCertPem'),
         clientKeyPem: s('kassaOrangeKeyPem'),
+        certPassphrase: s('kassaOrangeKeyPass'),
+        signKeyPem: s('kassaOrangeSignKeyPem'),
+        caCertPem: s('kassaOrangeCaPem'),
         taxationSystem: sno,
       );
     case 'cloud_kassir':

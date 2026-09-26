@@ -59,7 +59,8 @@ class FiscalReceiptItem {
     this.markingCode,
   });
 
-  double get sum => price * quantity;
+  /// С копейками: price * quantity в double даёт хвосты вроде 999.98999…
+  double get sum => (price * quantity * 100).roundToDouble() / 100;
 }
 
 /// Способ расчёта одной части оплаты чека (тег 1031/1081/1215/1216).
@@ -91,7 +92,52 @@ class FiscalReceipt {
     this.buyerContact = '',
   });
 
-  double get total => items.fold(0, (sum, i) => sum + i.sum);
+  double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
+}
+
+/// Подгоняет платежи под итог чека: касса отклоняет чек, если сумма
+/// оплат не равна сумме позиций. Расхождения бывают двух видов:
+///   • копейки от скидки в процентах (цена каждой позиции округлена) —
+///     добавляем/снимаем их у самого крупного платежа;
+///   • гость дал наличных больше (сдача) — в чек идёт только
+///     причитающееся, лишнее снимаем сначала с наличных.
+/// Недоплату больше рубля не «дорисовываем» — это ошибка ввода, и касса
+/// честно откажет.
+List<FiscalPayment> balancePayments(List<FiscalPayment> payments, double total) {
+  double r(double v) => (v * 100).roundToDouble() / 100;
+  final list = payments.map((p) => FiscalPayment(p.type, r(p.amount))).where((p) => p.amount > 0).toList();
+  if (list.isEmpty) return list;
+  var diff = r(total - list.fold<double>(0, (s, p) => s + p.amount));
+  if (diff == 0) return list;
+  if (diff < 0) {
+    // Переплата: снимаем с наличных, потом с остальных (кроме предоплаты —
+    // бонусы/сертификат списаны ровно на свою сумму).
+    final order = [
+      ...list.where((p) => p.type == 'cash'),
+      ...list.where((p) => p.type != 'cash' && p.type != 'prepayment'),
+      ...list.where((p) => p.type == 'prepayment'),
+    ];
+    var excess = -diff;
+    final reduced = <FiscalPayment, double>{};
+    for (final p in order) {
+      if (excess <= 0) break;
+      final cut = excess < p.amount ? excess : p.amount;
+      reduced[p] = r(p.amount - cut);
+      excess = r(excess - cut);
+    }
+    return list
+        .map((p) => reduced.containsKey(p) ? FiscalPayment(p.type, reduced[p]!) : p)
+        .where((p) => p.amount > 0)
+        .toList();
+  }
+  if (diff <= 1) {
+    var maxIdx = 0;
+    for (var i = 1; i < list.length; i++) {
+      if (list[i].amount > list[maxIdx].amount) maxIdx = i;
+    }
+    list[maxIdx] = FiscalPayment(list[maxIdx].type, r(list[maxIdx].amount + diff));
+  }
+  return list;
 }
 
 class FiscalReceiptResult {
