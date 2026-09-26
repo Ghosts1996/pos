@@ -259,6 +259,42 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
   касса работает) стоит проверить вручную хотя бы раз, тем же способом,
   каким это делали для pii-gateway.
 
+## Резервные копии базы и проверка сертификатов
+
+Сервис сам делает резервную копию всей базы Firestore раз в сутки (через
+10 минут после старта, если последняя копия старше суток) в
+`/opt/saas-gateway/backups/firestore-ГГГГ-ММ-ДДTЧЧ-ММ.json.gz` (права 600) и
+хранит последние 14. Managed export Firestore недоступен без Blaze, поэтому
+копия читает документы через Admin SDK — каждый документ это одно чтение
+из бесплатной квоты (50 000 в сутки на Spark). Если в базе больше
+`BACKUP_MAX_DOCS` документов, копия не делается, а раздел «Безопасность →
+Платформа» объясняет почему. Там же — «Сделать копию сейчас» и скачивание
+копии (только после ввода пароля, с записью в журнал безопасности).
+
+Копии лежат на том же сервере — раз в неделю скачивайте свежую к себе.
+
+Восстановление (перезаписывает документы тем, что было в копии; созданные
+после копии документы не трогает):
+
+```bash
+cd /opt/saas-gateway
+set -a; . /etc/saas-gateway.env; set +a
+node restore-backup.js backups/firestore-...json.gz --dry-run          # сколько документов
+node restore-backup.js backups/firestore-...json.gz --only=tenants/ID --yes   # одно заведение
+node restore-backup.js backups/firestore-...json.gz --yes              # вся база
+```
+
+Сертификаты HTTPS поддоменов заведений проверяются раз в сутки
+подключением к локальному nginx (`127.0.0.1:443` с нужным SNI) —
+предупреждение появляется за 14 дней до окончания или если сертификата
+для поддомена нет.
+
+Необязательные переменные окружения: `BACKUP_DIR`, `BACKUP_KEEP` (14),
+`BACKUP_MAX_DOCS` (20000), `BACKUP_INTERVAL_HOURS` (24),
+`GUEST_BASE_DOMAIN` (hookahpos.su), `GATEWAY_PUBLIC_HOST`
+(pii.hookahpos.su), `CERT_CHECK_CONNECT_HOST` (127.0.0.1),
+`CERT_CHECK_PORT` (443).
+
 ## Демо-режим
 
 Кнопка «Демо» в приложении (см. `SaasDevicePairingScreen`) вызывает
