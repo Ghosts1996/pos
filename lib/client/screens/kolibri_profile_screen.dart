@@ -16,6 +16,7 @@ import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_extras_screen.dart';
+import '../../utils/table_label.dart';
 
 /// Профиль гостя: имя, телефон, бонусы, история операций.
 ///
@@ -372,7 +373,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               Text('Уровень «$tier»',
                   style: TextStyle(color: tierColor, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text('${(p?.bonusBalance ?? 0).toStringAsFixed(0)} бонусов',
+              Text(bonusesLabel(p?.bonusBalance ?? 0),
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Text(
@@ -679,7 +680,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 child: Text(
                   '${v.date.day.toString().padLeft(2, '0')}.'
                   '${v.date.month.toString().padLeft(2, '0')}.${v.date.year}'
-                  '${v.tableName.isEmpty ? '' : ' · стол ${v.tableName}'}',
+                  '${v.tableName.isEmpty ? '' : ' · ${tableLabel(v.tableName)}'}',
                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                 ),
               ),
@@ -698,7 +699,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             const SizedBox(height: 6),
             Text(
               [
-                if (v.bonusEarned > 0) '+${v.bonusEarned.toStringAsFixed(0)} бонусов',
+                if (v.bonusEarned > 0) '+${bonusesLabel(v.bonusEarned)}',
                 if (v.bonusSpent > 0) 'списано ${v.bonusSpent.toStringAsFixed(0)} ₽ бонусами',
               ].join(' · '),
               style: const TextStyle(color: KolibriColors.success, fontSize: 12),

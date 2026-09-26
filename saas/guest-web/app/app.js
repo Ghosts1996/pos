@@ -741,10 +741,17 @@ async function placeOrder(items, redraw) {
   if (!chosen.length) return;
 
   try {
+    // Имя стола — из самого чека: без него персонал видел заказ как
+    // «Стол · …» и не знал, куда нести.
+    let tableName = '';
+    try {
+      const ses = await getDoc(doc(state.root, 'sessions', p.activeSessionId));
+      tableName = (ses.exists() && ses.data().tableName) || '';
+    } catch (_) { /* не критично — заказ всё равно уйдёт с id стола */ }
     await addDoc(collection(state.root, 'guestOrders'), {
       sessionId: p.activeSessionId,
       tableId: p.activeTableId || '',
-      tableName: '',
+      tableName,
       clientUid: state.uid,
       guestName: p.name || '',
       items: chosen,
@@ -836,9 +843,16 @@ async function markTakenChecks(checks) {
   }));
 }
 
+/** Заголовок стола: имя обычно уже «Стол 2» — не превращаем в «Стол Стол 2». */
+function tableTitle(name) {
+  const n = String(name || '').trim();
+  if (!n) return 'Ваш стол';
+  return /^стол/i.test(n) ? n : 'Стол ' + n;
+}
+
 function chooseCheck(tableId, tableName, checks) {
   screenEl().innerHTML = `
-    <h1>${tableName ? 'Стол ' + esc(tableName) : 'Ваш стол'}</h1>
+    <h1>${esc(tableTitle(tableName))}</h1>
     <p class="muted small">За этим столом открыто несколько счетов.
     Выберите свой — если ошибётесь, можно будет отвязаться.</p>
     ${checks.map((c, i) => {
@@ -964,7 +978,7 @@ function drawTable(s) {
 
   screenEl().innerHTML = `
     <div class="row">
-      <h1 class="grow ellipsis">Стол ${esc(s.tableName || '')}</h1>
+      <h1 class="grow ellipsis">${esc(tableTitle(s.tableName))}</h1>
       <button class="btn-link" id="unbind">Это не мой стол</button>
     </div>
 
@@ -1134,7 +1148,7 @@ function tableFinished(s) {
   const total = items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
   screenEl().innerHTML = `
     <h1>Спасибо за визит!</h1>
-    <p class="muted">Счёт за столом ${esc(s.tableName || '')} закрыт на ${money(total)}.</p>
+    <p class="muted">Счёт (${esc(tableTitle(s.tableName))}) закрыт на ${money(total)}.</p>
     <h2>Как всё прошло?</h2>
     <div class="card">
       <div class="center" id="stars" style="font-size:30px;letter-spacing:6px">
@@ -1715,7 +1729,7 @@ function watchMyBookings() {
             <div class="row">
               <div class="grow">
                 <div style="font-weight:600">${t ? dmy(t) + ' в ' + hhmm(t) : ''}
-                  ${r.tableName ? '· стол ' + esc(r.tableName) : ''}</div>
+                  ${r.tableName ? '· ' + esc(tableTitle(r.tableName)) : ''}</div>
                 <div class="small muted">${r.guestsCount || 2} чел. ·
                   ${esc(STATUS_LABEL[r.status] || r.status)}${r.guestConfirmed ? ' · вы подтвердили' : ''}</div>
               </div>
@@ -1830,7 +1844,7 @@ function renderSoonCard(boxId, docs) {
         </div>
       </div>
       <div class="small muted" style="margin-top:6px">
-        ${hhmm(t)}${r.tableName ? ', стол ' + esc(r.tableName) : ''} ·
+        ${hhmm(t)}${r.tableName ? ', ' + esc(tableTitle(r.tableName)) : ''} ·
         ${r.guestsCount || 2} чел. Подтвердите, что придёте, — или освободите
         стол для других.
       </div>
@@ -2161,7 +2175,7 @@ function watchVisits() {
             <div class="row">
               <div class="grow">
                 <div style="font-weight:600">${date ? dmy(date) + ' в ' + hhmm(date) : ''}
-                  ${v.tableName ? '· стол ' + esc(v.tableName) : ''}</div>
+                  ${v.tableName ? '· ' + esc(tableTitle(v.tableName)) : ''}</div>
                 ${items ? `<div class="small muted ellipsis">${esc(items)}</div>` : ''}
               </div>
               <div style="text-align:right">
@@ -2228,7 +2242,7 @@ function screenExtras() {
       <div style="margin-top:12px">
         <div id="xMyCode" style="font-size:18px;font-weight:700">Ваш код: …</div>
         <p class="small muted" style="margin:6px 0 14px">Друг называет его в
-          первый визит: ему ${INVITEE_BONUS} бонусов, вам — ${INVITER_BONUS}.</p>
+          первый визит: ему ${INVITEE_BONUS} ${plural(INVITEE_BONUS, 'бонус', 'бонуса', 'бонусов')}, вам — ${INVITER_BONUS}.</p>
         <div class="row" style="gap:10px">
           <input id="xRef" class="grow" placeholder="Код друга"
             autocapitalize="characters" spellcheck="false">
@@ -2393,7 +2407,7 @@ function watchGiftClaims() {
 
       if (last.status === 'granted') {
         box.textContent = `Сертификат ${last.code}: начислено `
-          + `${Math.round(Number(last.amount) || 0)} бонусов`;
+          + `${Math.round(Number(last.amount) || 0)} ${plural(Math.round(Number(last.amount) || 0), 'бонус', 'бонуса', 'бонусов')}`;
         box.style.color = 'var(--primary)';
       } else if (last.status === 'rejected') {
         box.textContent = `Сертификат ${last.code}: `
@@ -2568,7 +2582,7 @@ async function applyReferralCode() {
 
     await setDoc(doc(state.loyaltyRoot, 'clients', state.uid),
       { referredBy: inviter, referralCodeUsed: code }, { merge: true });
-    say(`Код принят: после первого визита вам начислим ${INVITEE_BONUS} бонусов, `
+    say(`Код принят: после первого визита вам начислим ${INVITEE_BONUS} ${plural(INVITEE_BONUS, 'бонус', 'бонуса', 'бонусов')}, `
       + `другу — ${INVITER_BONUS}.`);
   } catch (_) {
     say('Не удалось применить код — проверьте связь.');

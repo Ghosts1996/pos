@@ -221,7 +221,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
   double get _paidTotal => _methods.fold(0.0, (sum, m) => sum + m.parse());
   double get _diff => _total - _paidTotal;
 
-  bool get _canPay => _closeWithoutPayment || _diff.abs() < 0.01;
+  /// Сдача гостю: переплата, которую покрывают внесённые наличные (гость дал
+  /// 5000 за чек 4600). Переплата картой или терминалом — это опечатка, а не
+  /// сдача, и она по-прежнему не даёт провести оплату.
+  double get _change {
+    final over = _paidTotal - _total;
+    return over > 0.004 && over <= _cash.parse() + 0.004 ? over : 0;
+  }
+
+  /// Наличные, которые остаются в кассе: внесено минус сдача. Именно эта
+  /// сумма уходит в выручку, фискальный чек и начисление бонусов.
+  double get _cashNet => _cash.parse() - _change;
+
+  bool get _canPay => _closeWithoutPayment || _diff.abs() < 0.01 || _change > 0;
 
   /// Две подсказки быстрой суммы — округление вверх до сотни и до
   /// ближайшей "круглой" суммы. Удобно для приёма наличных и расчёта сдачи.
@@ -284,7 +296,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       await _fs.closeSessionWithPayment(
         widget.session.id,
         widget.session.tableId,
-        cash: _closeWithoutPayment ? 0 : _cash.parse(),
+        cash: _closeWithoutPayment ? 0 : _cashNet,
         card: _closeWithoutPayment ? 0 : _card.parse(),
         terminal: _closeWithoutPayment ? 0 : _terminal.parse(),
         comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid,
@@ -303,7 +315,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         // лежат в том числе сами бонусы и сертификат, и начисление с них
         // означало бы кешбэк с кешбэка (бонусы подпитывали сами себя, а
         // уровень лояльности рос за счёт заведения).
-        final paid = _cash.parse() + _card.parse() + _terminal.parse();
+        final paid = _cashNet + _card.parse() + _terminal.parse();
         unawaited(GuestLinkService()
             .accrueBonuses(
               clientUid: _clientUid,
@@ -354,6 +366,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ? 'Без оплаты'
           : [
               if (_cash.parse() > 0) 'наличные ${_cash.parse().toStringAsFixed(0)}₽',
+              if (_change > 0) 'сдача ${_change.toStringAsFixed(0)}₽',
               if (_card.parse() > 0) 'карта ${_card.parse().toStringAsFixed(0)}₽',
               if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
@@ -477,7 +490,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (_closeWithoutPayment)
           FiscalPayment('other', billTotal)
         else ...[
-          if (_cash.parse() > 0) FiscalPayment('cash', _cash.parse()),
+          if (_cashNet > 0) FiscalPayment('cash', _cashNet),
           if (_card.parse() > 0) FiscalPayment('card', _card.parse()),
           if (_terminal.parse() > 0) FiscalPayment('card', _terminal.parse()),
           if (_comp.parse() > 0) FiscalPayment('other', _comp.parse()),
@@ -586,7 +599,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   enabled: !_closeWithoutPayment,
                   trailing: m == _terminal ? _terminalPayButton() : null,
                 ),
-              _contactField(),
               if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
@@ -612,13 +624,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   child: Text(
                     _diff > 0
                         ? 'Не хватает ${_fmt(_diff)} ${AppConstants.currencySymbol}'
-                        : 'Сдача ${_fmt(-_diff)} ${AppConstants.currencySymbol}',
+                        : _change > 0
+                            ? 'Сдача ${_fmt(_change)} ${AppConstants.currencySymbol}'
+                            : 'Переплата ${_fmt(-_diff)} ${AppConstants.currencySymbol} — сдачу можно дать только из наличных',
                     style: TextStyle(
-                      color: _diff > 0 ? AppColors.danger : AppColors.success,
+                      color: _diff > 0 || _change == 0 ? AppColors.danger : AppColors.success,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
+              // Быстрые суммы и «сдача» — сразу под полями оплаты, к которым
+              // относятся; контакт для электронного чека — после них.
+              _contactField(),
               const Divider(height: 28),
               // Переключение в «без оплаты» обязано вернуть уже списанные
               // бонусы/сертификат: чек закрывается за счёт заведения, а не
@@ -771,7 +788,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
               style: const TextStyle(fontSize: 16, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 isDense: true,
-                hintText: '0',
+                // Не «0», как у сумм выше: поле необязательное и не денежное —
+                // сюда касса отправит электронный чек.
+                hintText: 'необязательно',
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 filled: true,
                 fillColor: AppColors.surface,
@@ -791,15 +810,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
+  /// Переключается нажатием на всю строку, а не только на сам маленький
+  /// переключатель — на планшете в спешке по нему легко промахнуться.
   Widget _toggleRow(String label, bool value, void Function(bool) onChanged) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 16)),
-          Switch(value: value, onChanged: onChanged),
-        ],
+    return MergeSemantics(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onChanged(!value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+              Switch(value: value, onChanged: onChanged),
+            ],
+          ),
+        ),
       ),
     );
   }

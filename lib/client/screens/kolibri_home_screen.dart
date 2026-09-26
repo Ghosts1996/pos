@@ -10,6 +10,7 @@ import '../theme/kolibri_theme.dart';
 import '../widgets/kolibri_ai_chat.dart';
 import 'kolibri_qr_scan_screen.dart';
 import 'kolibri_stories_screen.dart';
+import '../../utils/table_label.dart';
 
 /// Главный экран гостя: бонусы, текущий визит, ближайшая бронь и быстрые
 /// действия. Все блоки живые — данные те же, что видит кассир на POS.
@@ -81,7 +82,7 @@ class KolibriHomeScreen extends StatelessWidget {
                             Icon(Icons.local_fire_department,
                                 color: KolibriColors.accent, size: 20),
                             const SizedBox(width: 8),
-                            Text('Вы за столом ${s.tableName}',
+                            Text('Вы за столом: ${tableLabel(s.tableName)}',
                                 style: const TextStyle(
                                     fontSize: 16, fontWeight: FontWeight.w600)),
                           ],

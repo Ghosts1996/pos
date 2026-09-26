@@ -4,6 +4,7 @@ import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'reservation_service.dart';
 import 'push_service.dart';
+import '../utils/table_label.dart';
 
 /// Лист ожидания: что делать, когда мест нет.
 ///
@@ -133,7 +134,7 @@ class WaitlistService {
           title: 'Стол готов',
           body: tableName.isEmpty
               ? 'Ждём вас в ближайшие 15 минут'
-              : 'Стол $tableName ваш — ждём в ближайшие 15 минут',
+              : '${tableLabel(tableName)} ваш — ждём в ближайшие 15 минут',
         );
       }
     }

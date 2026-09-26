@@ -74,6 +74,18 @@ async function run() {
     assert.strictEqual(res.statusCode, 401);
   }
 
+  {
+    // Гость SaaS-заведения при неподключённом проекте платформы — понятная
+    // 503, а не «невалидный токен» от чужого проекта.
+    delete process.env.SAAS_FIREBASE_SERVICE_ACCOUNT_B64;
+    const res = await request("POST", "/", {
+      headers: { Authorization: "Bearer not-a-real-token" },
+      body: JSON.stringify({ tenantId: "t1", uid: "abc123", phone: "79995061580" }),
+    });
+    assert.strictEqual(res.statusCode, 503);
+    assert.match(JSON.parse(res.body).error, /SAAS_FIREBASE_SERVICE_ACCOUNT_B64/);
+  }
+
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
   server.close(() => process.exit(0));
 }

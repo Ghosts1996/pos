@@ -46,6 +46,9 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   bool _sending = false;
   VenueProfile? _venue;
 
+  /// Профиль загружен, но часы работы не заданы ни на один день.
+  bool get _hoursUnknown => _venue != null && VenueService.hoursNotConfigured(_venue!);
+
   // Стрим создаём один раз: если создавать его прямо в build() (как было),
   // каждый setState на этом экране — а их тут много (выбор даты, гостей,
   // длительности, загрузка слотов) — пересоздаёт Firestore-подписку.
@@ -230,7 +233,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         const SizedBox(height: 4),
         Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
-        if (_venue != null)
+        if (_venue != null && !_hoursUnknown)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
@@ -335,9 +338,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Text(
-              _venue?.workingHours[_day.weekday]?.isNotEmpty == true
-                  ? 'На этот день свободного времени нет — выберите другую дату'
-                  : 'В этот день мы закрыты — выберите другую дату',
+              _hoursUnknown
+                  // Часы работы не заполнены вовсе — это не «закрыто
+                  // каждый день», и гостю нужен рабочий путь, а не тупик.
+                  ? 'Онлайн-бронь пока недоступна — заведение ещё не указало часы работы. '
+                      '${(_venue?.phone ?? '').isNotEmpty ? 'Забронируйте по телефону ${_venue!.phone}.' : 'Забронируйте по телефону или у кальянщика.'}'
+                  : _venue?.workingHours[_day.weekday]?.isNotEmpty == true
+                      ? 'На этот день свободного времени нет — выберите другую дату'
+                      : 'В этот день мы закрыты — выберите другую дату',
               style: const TextStyle(color: KolibriColors.warning),
             ),
           )
