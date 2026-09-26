@@ -41,6 +41,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaOrangeKeyNameCtrl = TextEditingController();
   final _kassaOrangeCertPemCtrl = TextEditingController();
   final _kassaOrangeKeyPemCtrl = TextEditingController();
+  final _kassaOrangeKeyPassCtrl = TextEditingController();
+  final _kassaOrangeSignKeyPemCtrl = TextEditingController();
+  final _kassaOrangeCaPemCtrl = TextEditingController();
   String _czCircuit = 'pilot'; // pilot | prod
   final _czTokenCtrl = TextEditingController();
   final _czTestCodeCtrl = TextEditingController();
@@ -80,6 +83,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaOrangeKeyNameCtrl.text = data['kassaOrangeKeyName'] ?? '';
     _kassaOrangeCertPemCtrl.text = data['kassaOrangeCertPem'] ?? '';
     _kassaOrangeKeyPemCtrl.text = data['kassaOrangeKeyPem'] ?? '';
+    _kassaOrangeKeyPassCtrl.text = data['kassaOrangeKeyPass'] ?? '';
+    _kassaOrangeSignKeyPemCtrl.text = data['kassaOrangeSignKeyPem'] ?? '';
+    _kassaOrangeCaPemCtrl.text = data['kassaOrangeCaPem'] ?? '';
     _czCircuit = data['czCircuit'] ?? 'pilot';
     _czTokenCtrl.text = data['czToken'] ?? '';
     _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
@@ -127,6 +133,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
       'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
+      'kassaOrangeKeyPass': _kassaOrangeKeyPassCtrl.text,
+      'kassaOrangeSignKeyPem': _kassaOrangeSignKeyPemCtrl.text.trim(),
+      'kassaOrangeCaPem': _kassaOrangeCaPemCtrl.text.trim(),
       'czCircuit': _czCircuit,
       'czToken': _czTokenCtrl.text.trim(),
       'terminalProvider': _terminalProvider.id,
@@ -157,6 +166,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
       'kassaOrangeKeyPem': _kassaOrangeKeyPemCtrl.text.trim(),
+      'kassaOrangeKeyPass': _kassaOrangeKeyPassCtrl.text,
+      'kassaOrangeSignKeyPem': _kassaOrangeSignKeyPemCtrl.text.trim(),
+      'kassaOrangeCaPem': _kassaOrangeCaPemCtrl.text.trim(),
     });
   }
 
@@ -276,7 +288,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (!kassaService.isAvailable) {
       setState(() {
         _testing = false;
-        _testResult = 'Заполните логин/пароль/group_code кассы';
+        _testResult = _kassaType == 'orange_data'
+            ? 'Заполните ИНН, клиентский сертификат и его ключ'
+            : 'Заполните логин, пароль, group code и ИНН';
       });
       return;
     }
@@ -413,6 +427,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _networkIpCtrl.dispose();
     _utmHostCtrl.dispose();
     _kassaBaseUrlCtrl.dispose();
+    _kassaOrangeKeyPassCtrl.dispose();
+    _kassaOrangeSignKeyPemCtrl.dispose();
+    _kassaOrangeCaPemCtrl.dispose();
     _kassaGroupCodeCtrl.dispose();
     _kassaLoginCtrl.dispose();
     _kassaPasswordCtrl.dispose();
@@ -638,7 +655,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                       children: [
                         TextField(
                           controller: _kassaBaseUrlCtrl,
-                          decoration: const InputDecoration(labelText: 'Адрес API провайдера', hintText: 'https://online.atol.ru'),
+                          decoration: const InputDecoration(
+                            labelText: 'Адрес API провайдера (необязательно)',
+                            hintText: 'https://online.atol.ru',
+                            helperText: 'Пусто — АТОЛ Онлайн. Тестовый контур: https://testonline.atol.ru',
+                          ),
                         ),
                         TextField(
                           controller: _kassaGroupCodeCtrl,
@@ -680,7 +701,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                           controller: _kassaBaseUrlCtrl,
                           decoration: const InputDecoration(
                             labelText: 'Адрес API (необязательно)',
-                            hintText: 'https://apip.orangedata.ru:2443/api/v2',
+                            hintText: OrangeDataKassaService.defaultBaseUrl,
+                            helperText: 'Пусто — боевой контур. Тестовый: ${OrangeDataKassaService.testBaseUrl}',
                           ),
                         ),
                         TextField(
@@ -693,14 +715,31 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                         ),
                         TextField(
                           controller: _kassaOrangeCertPemCtrl,
-                          decoration: const InputDecoration(labelText: 'Клиентский сертификат (PEM)'),
+                          decoration: const InputDecoration(labelText: 'Клиентский сертификат (client.crt)'),
                           maxLines: 4,
                         ),
                         TextField(
                           controller: _kassaOrangeKeyPemCtrl,
-                          decoration: const InputDecoration(labelText: 'Закрытый ключ (PEM)'),
+                          decoration: const InputDecoration(labelText: 'Ключ сертификата (client.key)'),
                           maxLines: 4,
+                        ),
+                        TextField(
+                          controller: _kassaOrangeKeyPassCtrl,
+                          decoration: const InputDecoration(labelText: 'Пароль ключа сертификата (если есть)'),
                           obscureText: true,
+                        ),
+                        TextField(
+                          controller: _kassaOrangeSignKeyPemCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Ключ подписи запросов (private_key.pem)',
+                            helperText: 'Отдельный от client.key; его открытую часть загружают в ЛК OrangeData',
+                          ),
+                          maxLines: 4,
+                        ),
+                        TextField(
+                          controller: _kassaOrangeCaPemCtrl,
+                          decoration: const InputDecoration(labelText: 'Корневой сертификат OrangeData (cacert.pem)'),
+                          maxLines: 4,
                         ),
                         const SizedBox(height: 8),
                       ],
