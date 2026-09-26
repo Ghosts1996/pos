@@ -470,12 +470,14 @@ void main() {
       expect(FiscalTaxSystemX.fromId('envd'), FiscalTaxSystem.envd);
     });
 
-    test('способ оплаты АТОЛ: наличные/карта/аванс различаются, неизвестное — «иная форма»', () {
-      expect(atolPaymentTypeCode('cash'), 1);
-      expect(atolPaymentTypeCode('card'), 2);
-      expect(atolPaymentTypeCode('prepayment'), 3);
-      expect(atolPaymentTypeCode('other'), 5);
-      expect(atolPaymentTypeCode('чепуха'), 5);
+    test('способ оплаты АТОЛ: 0 наличные, 1 безналичные, 2 аванс, 4 встречное предоставление', () {
+      // Коды протокола АТОЛ Онлайн (v4/v5), сверены с эталонными клиентами
+      // lamoda/atol-client и Platron/atol-sdk-api-v5.
+      expect(atolPaymentTypeCode('cash'), 0);
+      expect(atolPaymentTypeCode('card'), 1);
+      expect(atolPaymentTypeCode('prepayment'), 2);
+      expect(atolPaymentTypeCode('other'), 4);
+      expect(atolPaymentTypeCode('чепуха'), 4);
     });
 
     test('способ оплаты OrangeData: свои коды, не совпадающие с АТОЛ', () {
@@ -492,7 +494,10 @@ void main() {
       expect(atolPaymentObjectCode(FiscalPaymentObject.excise), 'excise');
     });
 
-    test('ставки НДС OrangeData: 20%/10%/0%/без НДС — разные коды', () {
+    test('ставки НДС OrangeData: 22%/10%/0%/без НДС/5%/7% — свои коды', () {
+      expect(orangeDataVatCode(FiscalVatRate.vat22), 1);
+      expect(orangeDataVatCode(FiscalVatRate.vat5), 7);
+      expect(orangeDataVatCode(FiscalVatRate.vat7), 8);
       expect(orangeDataVatCode(FiscalVatRate.vat20), 1);
       expect(orangeDataVatCode(FiscalVatRate.vat10), 2);
       expect(orangeDataVatCode(FiscalVatRate.vat0), 5);
@@ -513,27 +518,30 @@ void main() {
       expect(empty.phone, isNull);
     });
 
-    test('OrangeData отказывает в маркированных товарах явным сообщением', () async {
+    test('OrangeData: маркированный товар принимается (ФФД 1.2), битый сертификат — понятная ошибка', () async {
       final service = OrangeDataKassaService(
         inn: '7700000000',
         clientCertPem: 'x',
         clientKeyPem: 'x',
       );
-      final result = await service.sendReceipt(const FiscalReceipt(
+      const receipt = FiscalReceipt(
         receiptId: 'r1',
         items: [
           FiscalReceiptItem(
-            name: 'Кальян',
+            name: 'Табак',
             price: 1000,
             quantity: 1,
-            paymentObject: FiscalPaymentObject.markedGood,
+            paymentObject: FiscalPaymentObject.excise,
             markingCode: '0104600439526936213abc',
           ),
         ],
         payments: [FiscalPayment('cash', 1000)],
-      ));
+      );
+      final doc = service.buildDocument(receipt)['content'] as Map;
+      expect((doc['positions'] as List).first['itemCode'], '0104600439526936213abc');
+      final result = await service.sendReceipt(receipt);
       expect(result.success, isFalse);
-      expect(result.errorMessage, contains('АТОЛ'));
+      expect(result.errorMessage, contains('сертификат'));
     });
 
     test('CloudKassir — честная заготовка: недоступна, объясняет почему', () async {

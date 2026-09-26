@@ -3947,14 +3947,23 @@ async function handleAiProxy(req, res) {
   }
   const chainId = tenantDoc.data().chainId || null;
   const loyaltyRoot = chainId ? firestore.collection("chains").doc(chainId) : tenantRef;
-  const [member, client, settingsDoc, secretsDoc] = await Promise.all([
+  // У сети один набор ключей на все точки (chains/{id}/meta/ai*); пока его
+  // нет — прежние настройки самой точки.
+  const [member, client, chainSettingsDoc, chainSecretsDoc] = await Promise.all([
     firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get(),
     loyaltyRoot.collection("clients").doc(decoded.uid).get(),
-    tenantRef.collection("meta").doc("aiSettings").get(),
-    tenantRef.collection("meta").doc("aiSecrets").get(),
+    chainId ? loyaltyRoot.collection("meta").doc("aiSettings").get() : null,
+    chainId ? loyaltyRoot.collection("meta").doc("aiSecrets").get() : null,
   ]);
   const isMember = member.exists && member.data().status === "active";
   if (!isMember && !client.exists) throw new HttpError(403, "Нет доступа к ИИ этого заведения");
+  const useChain = !!(chainSettingsDoc && chainSettingsDoc.exists);
+  const [settingsDoc, secretsDoc] = useChain
+    ? [chainSettingsDoc, chainSecretsDoc]
+    : await Promise.all([
+      tenantRef.collection("meta").doc("aiSettings").get(),
+      tenantRef.collection("meta").doc("aiSecrets").get(),
+    ]);
   const settings = settingsDoc.data() || {};
   if (settings.enabled !== true) throw new HttpError(403, "ИИ в этом заведении выключен");
   const vendor = resolveAiVendor(settings, secretsDoc.data() || {}, slot);

@@ -319,6 +319,23 @@ service cloud.firestore {
       allow write: if hasChainRole(chainId, ['owner', 'admin']);
     }
 
+    // ---- ИИ сети: один набор ключей и настроек на все точки (владелец
+    //      покупает API один раз). Тот же принцип, что у заведения (см.
+    //      tenants/{tenantId}/meta/aiSettings ниже): публичная часть без
+    //      ключей видна гостям сети, ключи — только персоналу точек. ----
+    match /chains/{chainId}/meta/aiSettings {
+      allow read: if isChainStaff(chainId) || isChainGuest(chainId) || isSuperAdmin();
+      allow write: if hasChainRole(chainId, ['owner', 'admin']) &&
+        !('apiKey' in request.resource.data) &&
+        !('vendorKeys' in request.resource.data) &&
+        (!('vendors' in request.resource.data) ||
+          aiVendorsArePublic(request.resource.data.vendors));
+    }
+    match /chains/{chainId}/meta/aiSecrets {
+      allow read: if isChainStaff(chainId);
+      allow write: if hasChainRole(chainId, ['owner', 'admin']);
+    }
+
     // ---- Общая лояльность сети: профиль/баланс/история визитов гостя один
     //      на всю сеть, а не на каждую точку — см. docstring chains/{chainId}
     //      выше. Форма правил намеренно зеркалит tenants/{tenantId}/clients

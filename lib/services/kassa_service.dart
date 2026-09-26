@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:basic_utils/basic_utils.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart';
@@ -133,34 +134,26 @@ const String _atolPaymentMethodFull = 'full_payment';
 /// Код способа расчёта (тег 1214) для OrangeData — "полный расчёт".
 const int _orangeDataPaymentMethodFull = 4;
 
-int orangeDataVatCode(FiscalVatRate v) {
-  // Используется только внутри OrangeData-клиента (см. ниже) — вынесен
-  // сюда, чтобы не заводить два одинаковых свитча в разных классах.
-  switch (v) {
-    case FiscalVatRate.vat20:
-      return 1;
-    case FiscalVatRate.vat10:
-      return 2;
-    case FiscalVatRate.vat0:
-      return 5;
-    case FiscalVatRate.none:
-      return 6;
-  }
-}
+int orangeDataVatCode(FiscalVatRate v) => v.orangeDataCode;
 
+/// Вид оплаты (тег 1031/1081/1215/1217) в протоколе АТОЛ Онлайн (v4 и v5):
+/// 0 — наличные, 1 — безналичные, 2 — зачёт аванса (бонусы, сертификат),
+/// 4 — встречное предоставление. Раньше коды были сдвинуты на единицу —
+/// наличные уходили в налоговую как безналичные, карта как аванс.
 int atolPaymentTypeCode(String type) {
   switch (type) {
     case 'cash':
-      return 1;
+      return 0;
     case 'card':
-      return 2;
+      return 1;
     case 'prepayment':
-      return 3;
+      return 2;
     default:
-      return 5;
+      return 4;
   }
 }
 
+/// Предмет расчёта для АТОЛ v4 (ФФД 1.05) — строкой.
 String atolPaymentObjectCode(FiscalPaymentObject o) {
   switch (o) {
     case FiscalPaymentObject.service:
@@ -169,24 +162,7 @@ String atolPaymentObjectCode(FiscalPaymentObject o) {
       return 'excise';
     case FiscalPaymentObject.commodity:
     case FiscalPaymentObject.markedGood:
-      // Признак "это маркированный товар" в протоколе передаётся полями
-      // mark_code/mark_quantity у самой позиции, а не отдельным значением
-      // payment_object — "markedGood" не входит в перечень ФФД для этого
-      // тега, поэтому и для маркированного, и для обычного товара здесь
-      // одно и то же значение "commodity".
       return 'commodity';
-  }
-}
-
-int orangeDataPaymentSubjectType(FiscalPaymentObject o) {
-  switch (o) {
-    case FiscalPaymentObject.service:
-      return 4;
-    case FiscalPaymentObject.excise:
-      return 2;
-    case FiscalPaymentObject.commodity:
-    case FiscalPaymentObject.markedGood:
-      return 1;
   }
 }
 
@@ -201,6 +177,16 @@ int orangeDataPaymentTypeCode(String type) {
     default:
       return 16;
   }
+}
+
+/// Телефон покупателя для кассы: только цифры с «+» (АТОЛ принимает
+/// `^\+?[0-9]{1,18}$`, OrangeData — `+{Ц}`). 8XXXXXXXXXX → +7XXXXXXXXXX.
+String? normalizeReceiptPhone(String raw) {
+  var d = raw.replaceAll(RegExp(r'[^0-9]'), '');
+  if (d.isEmpty) return null;
+  if (d.length == 11 && d.startsWith('8')) d = '7${d.substring(1)}';
+  if (d.length == 10) d = '7$d';
+  return '+$d';
 }
 
 /// Сумма в рублях с копейками: 333.33 * 3 в double даёт 999.9899999…,
@@ -222,24 +208,20 @@ String _fiscalTimestamp(DateTime d) {
 ({String? email, String? phone}) splitReceiptContact(String contact) {
   final c = contact.trim();
   if (c.isEmpty) return (email: null, phone: null);
-  return c.contains('@') ? (email: c, phone: null) : (email: null, phone: c);
+  return c.contains('@') ? (email: c, phone: null) : (email: null, phone: normalizeReceiptPhone(c));
 }
 
-/// Клиент облачной кассы по протоколу "АТОЛ Онлайн" v4 — тем же протоколом
-/// пользуются некоторые реселлеры (например, Ferma/OFD.ru предоставляет
-/// совместимый API-конвертер поверх АТОЛ Онлайн), поэтому для них достаточно
-/// указать в `baseUrl` их собственный адрес API, оставив всё остальное как
-/// есть. Три параметра `login`/`password`/`groupCode`, а также реквизиты
-/// организации ниже — выдаёт провайдер после заключения договора и
-/// регистрации кассы в его личном кабинете; в коде их быть не должно —
-/// только в настройках интеграций приложения.
+/// Клиент облачной кассы по протоколу «АТОЛ Онлайн» — v5 (ФФД 1.2, по
+/// умолчанию; обязателен для маркированных товаров) или v4 (ФФД 1.05, для
+/// касс, ещё не переведённых на 1.2). Тем же протоколом пользуются
+/// некоторые реселлеры (Ferma/OFD.ru и др.) — у них свой `baseUrl`.
+/// `login`/`password`/`groupCode` и реквизиты организации выдаёт провайдер
+/// после договора; в коде их нет — только в Настройках → Интеграции.
 ///
-/// ВНИМАНИЕ: конкретные названия полей у облачных касс время от времени
-/// уточняются версиями протокола (v4 для ФФД 1.05, v5 для ФФД 1.2, который
-/// обязателен при продаже маркированных товаров). Схема ниже соответствует
-/// стабильному, годами не менявшемуся ядру протокола v4 — перед подключением
-/// к продаже маркированного товара сверьте раздел про `mark_code`/
-/// `mark_quantity` с актуальной документацией именно вашего провайдера.
+/// Коды полей сверены с эталонными клиентами протокола (lamoda/atol-client
+/// V4/V5, Platron/atol-sdk-api-v5): вид оплаты 0/1/2/4, предмет расчёта в
+/// v5 — число (1 товар, 2 подакцизный, 4 услуга, 31/33 — с маркировкой),
+/// `measure` 0 — штуки, код маркировки — `mark_code.gs1m` (base64).
 class AtolCloudKassaService implements KassaService {
   final String baseUrl; // например https://online.atol.ru
   final String groupCode;
@@ -258,6 +240,9 @@ class AtolCloudKassaService implements KassaService {
   /// заведения, а не сайт (сайт указывается только для дистанционных продаж).
   final String companyPaymentAddress;
 
+  /// 'v5' (ФФД 1.2) или 'v4' (ФФД 1.05).
+  final String apiVersion;
+
   String? _token;
   DateTime? _tokenExpiresAt;
 
@@ -272,7 +257,11 @@ class AtolCloudKassaService implements KassaService {
     required this.companyEmail,
     required this.companyPaymentAddress,
     this.companySno = FiscalTaxSystem.osn,
-  }) : baseUrl = _normalizeBaseUrl(baseUrl, defaultBaseUrl);
+    String apiVersion = 'v5',
+  })  : baseUrl = _normalizeBaseUrl(baseUrl, defaultBaseUrl),
+        apiVersion = apiVersion == 'v4' ? 'v4' : 'v5';
+
+  bool get _v5 => apiVersion == 'v5';
 
   @override
   bool get isAvailable =>
@@ -304,7 +293,7 @@ class AtolCloudKassaService implements KassaService {
     }
     final resp = await http
         .post(
-          Uri.parse('$baseUrl/possystem/v4/getToken'),
+          Uri.parse('$baseUrl/possystem/$apiVersion/getToken'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'login': login, 'pass': password}),
         )
@@ -320,39 +309,28 @@ class AtolCloudKassaService implements KassaService {
     return _token!;
   }
 
-  Map<String, dynamic> _buildReceiptBody(FiscalReceipt receipt) {
+  @visibleForTesting
+  Map<String, dynamic> buildReceiptBody(FiscalReceipt receipt) {
     final contact = splitReceiptContact(receipt.buyerContact);
+    // Контакт покупателя обязателен (e-mail или телефон): облачная касса
+    // не печатает бумажный чек. Гость контакт не оставил — чек уходит на
+    // e-mail заведения, гостю можно показать QR чека на экране.
+    final clientEmail = contact.email ?? (contact.phone == null ? companyEmail : null);
     return {
       'timestamp': _fiscalTimestamp(DateTime.now()),
       'external_id': receipt.receiptId,
       'receipt': {
-        if (contact.email != null || contact.phone != null)
-          'client': {
-            if (contact.email != null) 'email': contact.email,
-            if (contact.phone != null) 'phone': contact.phone,
-          },
+        'client': {
+          if (clientEmail != null && clientEmail.isNotEmpty) 'email': clientEmail,
+          if (contact.phone != null) 'phone': contact.phone,
+        },
         'company': {
           'email': companyEmail,
           'sno': companySno.atolCode,
           'inn': companyInn,
           'payment_address': companyPaymentAddress,
         },
-        'items': receipt.items
-            .map((i) => {
-                  'name': i.name,
-                  'price': roundKopecks(i.price),
-                  'quantity': i.quantity,
-                  'sum': i.sum,
-                  'measurement_unit': 'шт',
-                  'payment_method': _atolPaymentMethodFull,
-                  'payment_object': atolPaymentObjectCode(i.paymentObject),
-                  'vat': {'type': i.vat.providerCode},
-                  if (i.markingCode != null) ...{
-                    'mark_quantity': {'numerator': 1, 'denominator': 1},
-                    'mark_code': {'mark_code_raw': i.markingCode},
-                  },
-                })
-            .toList(),
+        'items': receipt.items.map(_v5 ? _itemV5 : _itemV4).toList(),
         'payments': receipt.payments
             .map((p) => {'type': atolPaymentTypeCode(p.type), 'sum': roundKopecks(p.amount)})
             .toList(),
@@ -361,14 +339,58 @@ class AtolCloudKassaService implements KassaService {
     };
   }
 
+  Map<String, dynamic> _itemV5(FiscalReceiptItem i) {
+    final marked = i.markingCode != null && i.markingCode!.isNotEmpty;
+    final permit = i.markingPermit;
+    return {
+      'name': i.name,
+      'price': roundKopecks(i.price),
+      'quantity': i.quantity,
+      'sum': i.sum,
+      'measure': 0, // штуки
+      'payment_method': _atolPaymentMethodFull,
+      'payment_object': i.paymentObject.ffd12Code(marked: marked),
+      'vat': {'type': i.vat.providerCode},
+      if (marked) ...{
+        'mark_processing_mode': '0',
+        'mark_code': {'gs1m': base64.encode(utf8.encode(i.markingCode!))},
+        if (permit != null)
+          'sectoral_item_props': [
+            {
+              'federal_id': MarkingPermit.federalId,
+              'date': MarkingPermit.documentDate,
+              'number': MarkingPermit.documentNumber,
+              'value': permit.value,
+            },
+          ],
+      },
+    };
+  }
+
+  Map<String, dynamic> _itemV4(FiscalReceiptItem i) => {
+        'name': i.name,
+        'price': roundKopecks(i.price),
+        'quantity': i.quantity,
+        'sum': i.sum,
+        'measurement_unit': 'шт',
+        'payment_method': _atolPaymentMethodFull,
+        'payment_object': atolPaymentObjectCode(i.paymentObject),
+        'vat': {'type': i.vat.providerCode},
+      };
+
   @override
   Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async {
+    if (!_v5 && receipt.items.any((i) => (i.markingCode ?? '').isNotEmpty)) {
+      return const FiscalReceiptResult.failure(
+          'Маркированный товар пробивается только по ФФД 1.2 — выберите «АТОЛ Онлайн v5» в Настройках → Интеграции '
+          '(и переведите кассу на ФФД 1.2 в кабинете АТОЛ, если ещё не переведена).');
+    }
     String uuid;
     try {
-      final body = jsonEncode(_buildReceiptBody(receipt));
+      final body = jsonEncode(buildReceiptBody(receipt));
       Future<http.Response> sell() async => http
           .post(
-            Uri.parse('$baseUrl/possystem/v4/$groupCode/sell'),
+            Uri.parse('$baseUrl/possystem/$apiVersion/$groupCode/sell'),
             headers: {'Content-Type': 'application/json; charset=utf-8', 'Token': await _ensureToken()},
             body: body,
           )
@@ -410,7 +432,7 @@ class AtolCloudKassaService implements KassaService {
         final token = await _ensureToken();
         final resp = await http
             .get(
-              Uri.parse('$baseUrl/possystem/v4/$groupCode/report/$uuid'),
+              Uri.parse('$baseUrl/possystem/$apiVersion/$groupCode/report/$uuid'),
               headers: {'Token': token},
             )
             .timeout(const Duration(seconds: 10));
@@ -449,16 +471,11 @@ class AtolCloudKassaService implements KassaService {
 /// после регистрации кассы в личном кабинете — это один и тот же ключ для
 /// обеих ролей.
 ///
-/// ВНИМАНИЕ: маркированные товары («Честный ЗНАК») здесь пока не
-/// поддержаны — `nomenclatureCode` в протоколе OrangeData представляет
-/// собой не просто отсканированную строку, а отдельно кодируемую
-/// бинарную структуру, и без официальной документации/SDK OrangeData под
-/// рукой рисковать точностью этой части не стоит: неверно собранный код
-/// может увести настоящий товар "в никуда" вместо легального выбытия из
-/// оборота. Для продажи маркированных товаров используйте
-/// [AtolCloudKassaService], где формат проще и подтверждён публичным
-/// протоколом. Обычные (немаркированные) чеки эта реализация фискализирует
-/// по-настоящему.
+/// Документ — в формате ФФД 1.2 (`ffdVersion: 4`), поля сверены с
+/// официальным описанием API OrangeData для ФФД 1.2 (github.com/
+/// orangedata-official/API): мера количества 0 — штуки, код маркировки —
+/// `itemCode` как его прочитал сканер, `plannedStatus` 1 — штучный товар
+/// реализован, результат проверки «Честного знака» — `industryAttribute`.
 class OrangeDataKassaService implements KassaService {
   /// Боевой контур. Тестовый — https://apip.orangedata.ru:2443/api/v2
   /// (с тестовыми сертификатами из документации OrangeData).
@@ -530,7 +547,8 @@ class OrangeDataKassaService implements KassaService {
     return base64.encode(sig.bytes);
   }
 
-  Map<String, dynamic> _buildDocument(FiscalReceipt receipt) {
+  @visibleForTesting
+  Map<String, dynamic> buildDocument(FiscalReceipt receipt) {
     final contact = splitReceiptContact(receipt.buyerContact);
     return {
       'id': receipt.receiptId,
@@ -538,17 +556,32 @@ class OrangeDataKassaService implements KassaService {
       if (group != null && group!.isNotEmpty) 'group': group,
       if (keyName != null && keyName!.isNotEmpty) 'key': keyName,
       'content': {
+        'ffdVersion': 4, // ФФД 1.2
         'type': 1, // приход
-        'positions': receipt.items
-            .map((i) => {
-                  'quantity': i.quantity,
-                  'price': roundKopecks(i.price),
-                  'tax': orangeDataVatCode(i.vat),
-                  'text': i.name,
-                  'paymentMethodType': _orangeDataPaymentMethodFull,
-                  'paymentSubjectType': orangeDataPaymentSubjectType(i.paymentObject),
-                })
-            .toList(),
+        'positions': receipt.items.map((i) {
+          final marked = (i.markingCode ?? '').isNotEmpty;
+          final permit = i.markingPermit;
+          return {
+            'quantity': i.quantity,
+            'price': roundKopecks(i.price),
+            'tax': orangeDataVatCode(i.vat),
+            'text': i.name,
+            'paymentMethodType': _orangeDataPaymentMethodFull,
+            'paymentSubjectType': i.paymentObject.ffd12Code(marked: marked),
+            'quantityMeasurementUnit': 0, // штуки
+            if (marked) ...{
+              'itemCode': i.markingCode,
+              'plannedStatus': 1, // штучный товар реализован
+              if (permit != null)
+                'industryAttribute': {
+                  'foivId': MarkingPermit.federalId,
+                  'causeDocumentDate': MarkingPermit.documentDate,
+                  'causeDocumentNumber': MarkingPermit.documentNumber,
+                  'value': permit.value,
+                },
+            },
+          };
+        }).toList(),
         'checkClose': {
           'payments': receipt.payments
               .map((p) => {'type': orangeDataPaymentTypeCode(p.type), 'amount': roundKopecks(p.amount)})
@@ -563,16 +596,10 @@ class OrangeDataKassaService implements KassaService {
 
   @override
   Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async {
-    if (receipt.items.any((i) => i.markingCode != null)) {
-      return const FiscalReceiptResult.failure(
-        'OrangeData: продажа маркированных товаров здесь не поддержана — '
-        'выберите АТОЛ Онлайн для чеков с кодами «Честного знака».',
-      );
-    }
     HttpClient? client;
     try {
       client = _mtlsClient();
-      final body = jsonEncode(_buildDocument(receipt));
+      final body = jsonEncode(buildDocument(receipt));
       final signature = _sign(body);
 
       final req = await client.postUrl(Uri.parse('$baseUrl/documents'));
@@ -594,7 +621,7 @@ class OrangeDataKassaService implements KassaService {
             'и что его открытая часть загружена в личный кабинет OrangeData.');
       }
       return FiscalReceiptResult.failure('Касса отклонила чек (${resp.statusCode}): $respBody');
-    } on HandshakeException catch (e) {
+    } on TlsException catch (e) {
       return FiscalReceiptResult.failure(
           'OrangeData: не удалось установить защищённое соединение — проверьте клиентский '
           'сертификат, его ключ и пароль, корневой сертификат OrangeData ($e)');
@@ -666,6 +693,10 @@ class KassaException implements Exception {
 /// не придётся.
 KassaService kassaService = MockKassaService();
 
+/// Ставка НДС заведения по умолчанию (Настройки → Интеграции → касса) —
+/// для позиций меню, у которых своя ставка не задана.
+FiscalVatRate kassaDefaultVat = FiscalVatRate.none;
+
 /// Подтягивает сохранённые настройки кассы (settings/integrations) и
 /// заполняет [kassaService] — вызывается один раз при старте приложения,
 /// аналогично [loadSavedPrinterSettings] в `printer_service.dart`.
@@ -685,6 +716,7 @@ Future<void> loadSavedKassaSettings() async {
 /// функцией, чтобы экран настроек и загрузка при старте не расходились в
 /// том, какие поля к какому провайдеру относятся.
 KassaService buildKassaService(Map<String, dynamic> data) {
+  kassaDefaultVat = FiscalVatRateX.fromId(data['kassaVat'] as String?);
   final type = data['kassaType'] as String? ?? 'mock';
   String s(String key) => data[key] as String? ?? '';
   final sno = FiscalTaxSystemX.fromId(data['kassaSno'] as String?);
@@ -699,6 +731,7 @@ KassaService buildKassaService(Map<String, dynamic> data) {
         companyEmail: s('kassaEmail'),
         companyPaymentAddress: s('kassaPaymentAddress'),
         companySno: sno,
+        apiVersion: s('kassaApiVersion'),
       );
     case 'orange_data':
       return OrangeDataKassaService(

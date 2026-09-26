@@ -101,6 +101,7 @@ void main() {
     final requests = <String>[];
     var tokenCalls = 0;
     var failFirstSell = false;
+    var lastVersion = '';
     Map<String, dynamic>? lastSell;
 
     setUp(() async {
@@ -115,7 +116,9 @@ void main() {
         final body = await utf8.decodeStream(req);
         requests.add('${req.method} ${req.uri.path} ${req.headers.value('Token') ?? ''}');
         req.response.headers.contentType = ContentType.json;
-        if (req.uri.path == '/possystem/v4/getToken') {
+        final path = req.uri.path.replaceFirst('/possystem/v4/', '/possystem/v5/');
+        lastVersion = req.uri.path.contains('/v4/') ? 'v4' : 'v5';
+        if (path == '/possystem/v5/getToken') {
           tokenCalls++;
           final creds = jsonDecode(body) as Map;
           if (creds['pass'] != 'secret') {
@@ -126,7 +129,7 @@ void main() {
           } else {
             req.response.write(jsonEncode({'token': 'T$tokenCalls', 'error': null}));
           }
-        } else if (req.uri.path == '/possystem/v4/G1/sell') {
+        } else if (path == '/possystem/v5/G1/sell') {
           if (failFirstSell && req.headers.value('Token') == 'T1') {
             req.response.statusCode = 401;
             req.response.write(jsonEncode({'error': {'code': 11, 'text': 'Токен устарел'}}));
@@ -134,7 +137,7 @@ void main() {
             lastSell = jsonDecode(body) as Map<String, dynamic>;
             req.response.write(jsonEncode({'uuid': 'u-1', 'status': 'wait', 'error': null}));
           }
-        } else if (req.uri.path == '/possystem/v4/G1/report/u-1') {
+        } else if (path == '/possystem/v5/G1/report/u-1') {
           req.response.write(jsonEncode({
             'status': 'done',
             'payload': {'fiscal_document_number': 42, 'fiscal_document_attribute': 777, 'fn_number': '999'},
@@ -148,7 +151,8 @@ void main() {
 
     tearDown(() => server.close(force: true));
 
-    AtolCloudKassaService kassa({String pass = 'secret', String? url}) => AtolCloudKassaService(
+    AtolCloudKassaService kassa({String pass = 'secret', String? url, String version = 'v5'}) => AtolCloudKassaService(
+          apiVersion: version,
           baseUrl: url ?? 'http://127.0.0.1:${server.port}/',
           groupCode: 'G1',
           login: 'l',
@@ -175,10 +179,15 @@ void main() {
       expect(lastSell!['external_id'], 'sess-1');
       expect((r['items'] as List).first['sum'], 999.99);
       expect(r['total'], 999.99);
-      expect((r['payments'] as List).first, {'type': 2, 'sum': 999.99});
+      // Безналичная оплата — код 1 (раньше уходил 2 — «зачёт аванса»).
+      expect((r['payments'] as List).first, {'type': 1, 'sum': 999.99});
+      expect(lastVersion, 'v5');
+      final item = (r['items'] as List).first as Map;
+      expect(item['payment_object'], 1);
+      expect(item['measure'], 0);
       expect((r['company'] as Map)['sno'], 'usn_income');
       expect((r['client'] as Map)['email'], 'guest@mail.ru');
-      expect(requests.first, startsWith('POST /possystem/v4/getToken'), reason: 'адрес без двойного слэша');
+      expect(requests.first, startsWith('POST /possystem/v5/getToken'), reason: 'адрес без двойного слэша');
     });
 
     test('протухший токен: касса берёт новый и повторяет чек', () async {
@@ -196,11 +205,109 @@ void main() {
       expect(res.errorMessage, isNot(contains('{')));
     });
 
+    test('v4 (ФФД 1.05): старые пути и строковый предмет расчёта; маркировку не пробивает', () async {
+      final res = await kassa(version: 'v4').sendReceipt(receipt);
+      expect(res.success, isTrue, reason: res.errorMessage);
+      expect(lastVersion, 'v4');
+      expect(((lastSell!['receipt'] as Map)['items'] as List).first['payment_object'], 'commodity');
+      final marked = await kassa(version: 'v4').sendReceipt(const FiscalReceipt(
+        receiptId: 'm',
+        items: [FiscalReceiptItem(name: 'Табак', price: 900, quantity: 1, markingCode: '0104600000000001215abc')],
+        payments: [FiscalPayment('cash', 900)],
+      ));
+      expect(marked.success, isFalse);
+      expect(marked.errorMessage, contains('ФФД 1.2'));
+    });
+
     test('пустой адрес — АТОЛ Онлайн по умолчанию', () {
       expect(kassa(url: '').baseUrl, AtolCloudKassaService.defaultBaseUrl);
       expect(buildKassaService({'kassaType': 'orange_data'}), isA<OrangeDataKassaService>());
       expect((buildKassaService({'kassaType': 'orange_data'}) as OrangeDataKassaService).baseUrl,
           'https://api.orangedata.ru:12003/api/v2');
+    });
+  });
+
+  group('Тело чека v5 / OrangeData ФФД 1.2', () {
+    final atol = AtolCloudKassaService(
+      baseUrl: '',
+      groupCode: 'G',
+      login: 'l',
+      password: 'p',
+      companyInn: '7700000000',
+      companyEmail: 'lounge@mail.ru',
+      companyPaymentAddress: 'Москва',
+    );
+    const code = '0104600000000001215abcdef\u001d93ABCD';
+    const permit = MarkingPermit(reqId: 'b1c2', reqTimestamp: '1727337600000');
+    const receipt = FiscalReceipt(
+      receiptId: 'r1',
+      items: [
+        FiscalReceiptItem(name: 'Кальян', price: 1500, quantity: 1, paymentObject: FiscalPaymentObject.service, vat: FiscalVatRate.vat22),
+        FiscalReceiptItem(
+          name: 'Табак',
+          price: 900,
+          quantity: 1,
+          paymentObject: FiscalPaymentObject.excise,
+          vat: FiscalVatRate.vat5,
+          markingCode: code,
+          markingPermit: permit,
+        ),
+        FiscalReceiptItem(name: 'Вода', price: 150, quantity: 2, markingCode: code),
+      ],
+      payments: [FiscalPayment('cash', 2000), FiscalPayment('card', 500), FiscalPayment('prepayment', 200)],
+      buyerContact: '8 (999) 123-45-67',
+    );
+
+    test('АТОЛ v5: предмет расчёта, НДС, код маркировки и разрешительный режим', () {
+      final r = atol.buildReceiptBody(receipt)['receipt'] as Map;
+      final items = (r['items'] as List).cast<Map>();
+      expect(items[0]['payment_object'], 4);
+      expect(items[0]['vat'], {'type': 'vat22'});
+      expect(items[0].containsKey('mark_code'), isFalse);
+      expect(items[1]['payment_object'], 31, reason: 'подакцизный с маркировкой');
+      expect(items[1]['vat'], {'type': 'vat5'});
+      expect(items[1]['mark_processing_mode'], '0');
+      expect(utf8.decode(base64.decode((items[1]['mark_code'] as Map)['gs1m'] as String)), code);
+      expect(items[1]['sectoral_item_props'], [
+        {'federal_id': '030', 'date': '21.11.2023', 'number': '1944', 'value': 'UUID=b1c2&Time=1727337600000'},
+      ]);
+      expect(items[2]['payment_object'], 33, reason: 'товар с маркировкой');
+      expect(items[2].containsKey('sectoral_item_props'), isFalse);
+      expect((r['payments'] as List).map((p) => (p as Map)['type']), [0, 1, 2]);
+      expect(r['client'], {'phone': '+79991234567'});
+    });
+
+    test('АТОЛ: без контакта гостя чек уходит на e-mail заведения', () {
+      final r = atol.buildReceiptBody(const FiscalReceipt(
+        receiptId: 'r2',
+        items: [FiscalReceiptItem(name: 'Чай', price: 300, quantity: 1)],
+        payments: [FiscalPayment('cash', 300)],
+      ))['receipt'] as Map;
+      expect(r['client'], {'email': 'lounge@mail.ru'});
+    });
+
+    test('OrangeData: ФФД 1.2, коды НДС 22/5/без НДС, itemCode и отраслевой реквизит', () {
+      final od = OrangeDataKassaService(inn: '7700000000', clientCertPem: 'c', clientKeyPem: 'k');
+      final c = od.buildDocument(receipt)['content'] as Map;
+      expect(c['ffdVersion'], 4);
+      final p = (c['positions'] as List).cast<Map>();
+      expect(p.map((e) => e['tax']), [1, 7, 6]);
+      expect(p.map((e) => e['paymentSubjectType']), [4, 31, 33]);
+      expect(p.every((e) => e['quantityMeasurementUnit'] == 0), isTrue);
+      expect(p[1]['itemCode'], code);
+      expect(p[1]['plannedStatus'], 1);
+      expect((p[1]['industryAttribute'] as Map)['foivId'], '030');
+      expect(c['customerContact'], '+79991234567');
+      expect(((c['checkClose'] as Map)['payments'] as List).map((e) => (e as Map)['type']), [1, 2, 14]);
+    });
+
+    test('коды НДС для всех ставок', () {
+      expect(FiscalVatRate.values.map((v) => v.providerCode),
+          ['none', 'vat0', 'vat5', 'vat7', 'vat10', 'vat20', 'vat22']);
+      expect(FiscalVatRate.values.map((v) => v.orangeDataCode), [6, 5, 7, 8, 2, 1, 1]);
+      expect(FiscalVatRateX.fromId('bogus'), FiscalVatRate.none);
+      expect(normalizeReceiptPhone('+7 (999) 000-11-22'), '+79990001122');
+      expect(normalizeReceiptPhone('9990001122'), '+79990001122');
     });
   });
 }

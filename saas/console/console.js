@@ -16,7 +16,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  collection, query, where, orderBy, limit, Timestamp,
+  collection, query, where, orderBy, limit, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
   getFunctions, httpsCallable,
@@ -1921,11 +1921,28 @@ const NAV_ICON_PATHS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   back: '<path d="M11 5 4 12l7 7"/><line x1="4" y1="12" x2="20" y2="12"/>',
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M12 8.5 13.2 11l2.3 1-2.3 1L12 15.5 10.8 13l-2.3-1 2.3-1Z"/>',
 };
 
 function navIconHtml(name, color) {
   return `<span class="nav-icon" style="--icon-bg:${esc(color)}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON_PATHS[name] || ''}</svg></span>`;
 }
+
+// Провайдеры ИИ — те же значения, что AiVendors в
+// lib/services/ai/ai_settings.dart и AI_VENDOR_DEFAULTS в saas-gateway.
+const AI_VENDORS = [
+  { id: 'tooken', title: 'Tooken Club', baseUrl: 'https://tooken.club/v1', model: 'gpt-4o-mini',
+    hint: 'Ключ из личного кабинета tooken.club', models: ['gpt-4o-mini', 'gpt-4o', 'claude-sonnet-4-5', 'deepseek-chat'] },
+  { id: 'darkapi', title: 'DarkAPI', baseUrl: 'https://darkapi.shop/v1', model: 'deepseek-chat',
+    hint: 'Ключ из кабинета darkapi.shop — там же адрес API', models: ['deepseek-chat', 'deepseek-reasoner'],
+    note: 'Имена моделей у DarkAPI свои — сверьте с кабинетом darkapi.shop.' },
+  { id: 'gemini', title: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-flash-latest',
+    hint: 'Ключ из Google AI Studio (aistudio.google.com → Get API key)', models: ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest'],
+    note: 'Google не пускает к Gemini API из России — нужен прокси в «Адресе API» или резервный провайдер.' },
+  { id: 'custom', title: 'Свой шлюз', baseUrl: '', model: 'gpt-4o-mini',
+    hint: 'Ключ из кабинета вашего шлюза', models: [], note: 'Любой OpenAI- или Anthropic-совместимый шлюз — укажите его адрес.' },
+];
+const aiVendor = (id) => AI_VENDORS.find((v) => v.id === id) || AI_VENDORS[0];
 
 const DASHBOARD_NAV = [
   { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
@@ -1934,6 +1951,7 @@ const DASHBOARD_NAV = [
   { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
   { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
   { id: 'team', icon: 'users', color: '#10B981', label: 'Команда' },
+  { id: 'ai', icon: 'spark', color: '#A855F7', label: 'ИИ' },
   { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль' },
   { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки' },
   { id: 'faq', icon: 'question', color: '#EF4444', label: 'FAQ' },
@@ -2017,6 +2035,13 @@ function watchDashboardData(tenantId) {
   let plans = null;
   let buildJobs = null;
   let generalSettings = null;
+  // ИИ: публичная часть (meta/aiSettings), ключи (meta/aiSecrets) и
+  // несохранённые правки формы — draw() перерисовывает всё на каждое
+  // обновление данных, поэтому правки живут в aiDraft, а не только в DOM.
+  let aiPub = null;
+  let aiSec = null;
+  let aiLegacy = null; // настройки самой точки сети до перехода на общие
+  let aiDraft = null;
   let paymentHistory = null;
   // Активные объявления платформы (см. watchAdminBroadcasts в панели
   // супер-админа) — баннер на "Обзоре", скрытие конкретного объявления
@@ -2733,9 +2758,106 @@ function watchDashboardData(tenantId) {
 
     const supportHtml = () => selectedTicket ? ticketThreadHtml() : ticketListHtml();
 
+    const aiState = () => {
+      if (aiDraft) return aiDraft;
+      const pub = aiPub || aiLegacy?.pub || {};
+      const sec = (aiPub ? aiSec : aiLegacy?.sec) || {};
+      const vendors = {};
+      AI_VENDORS.forEach((v) => {
+        const p = (pub.vendors || {})[v.id] || {};
+        const k = (sec.vendors || {})[v.id] || {};
+        vendors[v.id] = {
+          hasKey: !!(p.hasKey || k.apiKey), apiKey: '', model: p.model || '', baseUrl: k.baseUrl || '',
+          format: p.format || '', analyticsModel: p.analyticsModel || '',
+          // Ключ прежних настроек точки — при первом сохранении переносится
+          // в общие настройки сети (в форме не показывается).
+          carryKey: aiPub ? '' : (k.apiKey || ''),
+        };
+      });
+      // Старый формат (один шлюз прямо в aiSettings) — показываем как есть.
+      const legacyVendor = pub.vendor || (pub.baseUrl ? (String(pub.baseUrl).includes('darkapi') ? 'darkapi'
+        : String(pub.baseUrl).includes('generativelanguage') ? 'gemini'
+          : String(pub.baseUrl).includes('tooken') ? 'tooken' : 'custom') : 'tooken');
+      return {
+        enabled: pub.enabled === true, vendor: legacyVendor, fallbackVendor: pub.fallbackVendor || '',
+        vendors, migrated: !aiPub && !!aiLegacy,
+      };
+    };
+
+    const aiVendorCardHtml = (st, id, slotLabel) => {
+      const v = aiVendor(id);
+      const c = st.vendors[id];
+      return `
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <b>${esc(v.title)}</b>
+            <span class="small muted">${esc(slotLabel)}${c.hasKey ? ' · ✓ ключ сохранён' : ''}</span>
+          </div>
+          <label class="field"><span>API-ключ</span>
+            <input type="password" autocomplete="off" class="f-ai-input" data-vendor="${esc(id)}" data-field="apiKey"
+              value="${esc(c.apiKey)}" placeholder="${esc(c.hasKey ? 'сохранён — оставьте пустым, чтобы не менять' : v.hint)}" ${canManage ? '' : 'disabled'}>
+          </label>
+          <label class="field"><span>Модель</span>
+            <input class="f-ai-input" data-vendor="${esc(id)}" data-field="model" list="ai-models-${esc(id)}"
+              value="${esc(c.model)}" placeholder="${esc(v.model || 'имя модели')}" ${canManage ? '' : 'disabled'}>
+            <datalist id="ai-models-${esc(id)}">${v.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
+          </label>
+          <label class="field"><span>Адрес API${id === 'custom' ? '' : ' (необязательно)'}</span>
+            <input class="f-ai-input" data-vendor="${esc(id)}" data-field="baseUrl" value="${esc(c.baseUrl)}"
+              placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}" ${canManage ? '' : 'disabled'}>
+          </label>
+          ${id === 'custom' ? `
+            <label class="field"><span>Формат API</span>
+              <select class="f-ai-input" data-vendor="custom" data-field="format" ${canManage ? '' : 'disabled'}>
+                ${[['', 'Определить автоматически'], ['openai', 'OpenAI-совместимый'], ['anthropic', 'Anthropic (Claude)']]
+                  .map(([val, label]) => `<option value="${val}" ${c.format === val ? 'selected' : ''}>${label}</option>`).join('')}
+              </select>
+            </label>` : ''}
+          ${v.note ? `<p class="small muted" style="margin-top:6px">${esc(v.note)}</p>` : ''}
+        </div>`;
+    };
+
+    const aiHtml = () => {
+      const st = aiState();
+      const chainName = tenant.chainName || (state.tenants.find((t) => t.id === tenantId) || {}).chainName || '';
+      return `
+        <h2>ИИ-помощники</h2>
+        <div class="card">
+          <p class="small muted" style="margin-top:0">${tenant.chainId
+            ? `Общие настройки для всей сети${chainName ? ` «${esc(chainName)}»` : ''}: ключ провайдера покупается один раз и работает во всех точках сети.`
+            : 'Ключ провайдера ИИ этого заведения. Оплата идёт напрямую провайдеру по его тарифам — платформа ключи не выдаёт.'}</p>
+          ${st.migrated ? '<p class="small" style="color:var(--warning,#F59E0B)">Сейчас работают прежние настройки этой точки. После сохранения они станут общими для всей сети.</p>' : ''}
+          <label class="row" style="gap:8px;align-items:center;margin:8px 0">
+            <input type="checkbox" id="f-ai-enabled" ${st.enabled ? 'checked' : ''} ${canManage ? '' : 'disabled'}>
+            <span>Включить ИИ-помощников (касса и консьерж в гостевом приложении)</span>
+          </label>
+          <label class="field"><span>Основной провайдер</span>
+            <select id="f-ai-vendor" ${canManage ? '' : 'disabled'}>
+              ${AI_VENDORS.map((v) => `<option value="${v.id}" ${st.vendor === v.id ? 'selected' : ''}>${esc(v.title)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field"><span>Резервный провайдер — если основной не ответил</span>
+            <select id="f-ai-fallback" ${canManage ? '' : 'disabled'}>
+              <option value="">— нет —</option>
+              ${AI_VENDORS.filter((v) => v.id !== st.vendor).map((v) => `<option value="${v.id}" ${st.fallbackVendor === v.id ? 'selected' : ''}>${esc(v.title)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${aiVendorCardHtml(st, st.vendor, 'основной')}
+        ${st.fallbackVendor && st.fallbackVendor !== st.vendor ? aiVendorCardHtml(st, st.fallbackVendor, 'резервный') : ''}
+        ${canManage ? `
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="f-ai-save" style="width:auto">Сохранить</button>
+            <button class="btn btn-ghost" id="f-ai-test" style="width:auto">Проверить связь</button>
+          </div>` : '<p class="small muted">Менять настройки ИИ может владелец или администратор.</p>'}
+        <div id="f-ai-msg" class="small" style="margin-top:10px"></div>
+        <p class="small muted">Тонкая настройка агентов (какие помощники включены, лимит ответа) — в кассе: Админ → Настройки ИИ.</p>
+      `;
+    };
+
     const TAB_RENDERERS = {
       overview: overviewHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
-      branding: brandingHtml, team: teamHtml, profile: profileHtml, settings: settingsHtml,
+      branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml,
     };
     body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId);
@@ -2758,6 +2880,99 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'ai') {
+      const aiRoot = () => (tenant.chainId ? ['chains', tenant.chainId] : ['tenants', tenantId]);
+      const ensureDraft = () => { if (!aiDraft) aiDraft = JSON.parse(JSON.stringify(aiState())); return aiDraft; };
+      const aiMsg = (text, ok = true) => {
+        const el = $('f-ai-msg');
+        if (el) { el.textContent = text; el.style.color = ok ? 'var(--success,#22C55E)' : 'var(--danger)'; }
+      };
+      document.querySelectorAll('.f-ai-input').forEach((el) => {
+        el.oninput = el.onchange = () => { ensureDraft().vendors[el.dataset.vendor][el.dataset.field] = el.value.trim(); };
+      });
+      if ($('f-ai-enabled')) $('f-ai-enabled').onchange = (e) => { ensureDraft().enabled = e.target.checked; };
+      if ($('f-ai-vendor')) $('f-ai-vendor').onchange = (e) => {
+        const d = ensureDraft();
+        d.vendor = e.target.value;
+        if (d.fallbackVendor === d.vendor) d.fallbackVendor = '';
+        draw();
+      };
+      if ($('f-ai-fallback')) $('f-ai-fallback').onchange = (e) => { ensureDraft().fallbackVendor = e.target.value; draw(); };
+
+      const saveAi = async () => {
+        const d = ensureDraft();
+        const main = d.vendors[d.vendor];
+        if (d.enabled && !main.hasKey && !main.apiKey) throw new Error('Укажите API-ключ основного провайдера');
+        if (d.vendor === 'custom' && !main.baseUrl) throw new Error('Для своего шлюза нужен «Адрес API»');
+        const secVendors = {};
+        const pubVendors = {};
+        AI_VENDORS.forEach((v) => {
+          const c = d.vendors[v.id];
+          const key = c.apiKey || c.carryKey || '';
+          secVendors[v.id] = { baseUrl: c.baseUrl || '', ...(key ? { apiKey: key } : {}) };
+          pubVendors[v.id] = {
+            format: v.id === 'custom' ? (c.format || '') : '', model: c.model || '',
+            analyticsModel: c.analyticsModel || '', hasKey: !!(c.hasKey || c.apiKey),
+          };
+        });
+        // Сначала ключи (только персонал), потом публичная часть без ключей.
+        await setDoc(doc(state.db, ...aiRoot(), 'meta', 'aiSecrets'), { vendors: secVendors }, { merge: true });
+        const del = deleteField();
+        await setDoc(doc(state.db, ...aiRoot(), 'meta', 'aiSettings'), {
+          enabled: d.enabled, vendor: d.vendor, fallbackVendor: d.fallbackVendor || '', vendors: pubVendors,
+          updatedAt: Timestamp.fromDate(new Date()),
+          apiKey: del, baseUrl: del, provider: del, model: del, analyticsModel: del, vendorKeys: del,
+        }, { merge: true });
+        aiDraft = null;
+      };
+
+      if ($('f-ai-save')) $('f-ai-save').onclick = async () => {
+        const btn = $('f-ai-save');
+        btn.disabled = true;
+        try {
+          await saveAi();
+          draw();
+          aiMsg('Сохранено');
+        } catch (e) {
+          aiMsg(`Не удалось сохранить: ${e?.message || e}`, false);
+        } finally {
+          if ($('f-ai-save')) $('f-ai-save').disabled = false;
+        }
+      };
+      if ($('f-ai-test')) $('f-ai-test').onclick = async () => {
+        const btn = $('f-ai-test');
+        btn.disabled = true;
+        aiMsg('Проверяю…');
+        try {
+          if (aiDraft) await saveAi();
+          const st = aiState();
+          if (!st.enabled) throw new Error('Сначала включите ИИ и сохраните');
+          const anthropic = st.vendor === 'custom' && st.vendors.custom.format === 'anthropic';
+          const idToken = await state.auth.currentUser?.getIdToken();
+          const res = await fetch(`${SAAS_GATEWAY_URL}/aiProxy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+            body: JSON.stringify({
+              tenantId, slot: 'primary', format: anthropic ? 'anthropic' : 'openai',
+              path: anthropic ? 'v1/messages' : 'chat/completions',
+              body: { messages: [{ role: 'user', content: 'Ответь одним словом: OK' }], max_tokens: 256 },
+            }),
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) {
+            const err = json?.error;
+            throw new Error(typeof err === 'string' ? err : (err?.message || `провайдер ответил ${res.status}`));
+          }
+          const text = json?.choices?.[0]?.message?.content ?? json?.content?.[0]?.text ?? '';
+          aiMsg(`Связь есть: ${aiVendor(st.vendor).title} ответил${text ? ` «${String(text).slice(0, 60)}»` : ''}`);
+        } catch (e) {
+          aiMsg(`Нет связи: ${e?.message || e}`, false);
+        } finally {
+          if ($('f-ai-test')) $('f-ai-test').disabled = false;
+        }
+      };
+    }
+
     document.querySelectorAll('.f-ticket-open').forEach((el) => {
       el.onclick = () => selectTicket(el.dataset.id);
     });
@@ -3230,12 +3445,42 @@ function watchDashboardData(tenantId) {
   };
   sub(() => { if (unsubBranding) unsubBranding(); });
 
+  // ИИ: у сети — общие настройки на все точки (chains/{id}/meta/ai*), у
+  // одиночного заведения — свои. Пока у сети общих нет, показываем прежние
+  // настройки точки (aiLegacy), при сохранении они станут общими.
+  let unsubAi = [];
+  const watchAiFor = (chainId) => {
+    unsubAi.forEach((u) => u());
+    unsubAi = [];
+    aiPub = null; aiSec = null; aiLegacy = null; aiDraft = null;
+    const root = chainId ? ['chains', chainId] : ['tenants', tenantId];
+    unsubAi.push(onSnapshot(doc(state.db, ...root, 'meta', 'aiSettings'), (d) => {
+      aiPub = d.exists() ? d.data() : null;
+      if (!aiPub && chainId && !aiLegacy) {
+        Promise.all([
+          getDoc(doc(state.db, 'tenants', tenantId, 'meta', 'aiSettings')),
+          getDoc(doc(state.db, 'tenants', tenantId, 'meta', 'aiSecrets')).catch(() => null),
+        ]).then(([p, k]) => {
+          if (p.exists()) { aiLegacy = { pub: p.data(), sec: k && k.exists() ? k.data() : {} }; draw(); }
+        }).catch(() => {});
+      }
+      draw();
+    }, () => {}));
+    unsubAi.push(onSnapshot(doc(state.db, ...root, 'meta', 'aiSecrets'), (d) => {
+      aiSec = d.exists() ? d.data() : null;
+      draw();
+    }, () => {}));
+  };
+  sub(() => unsubAi.forEach((u) => u()));
+
   sub(onSnapshot(doc(state.db, 'tenants', tenantId), (d) => {
     const prevChainId = tenant?.chainId || null;
+    const firstLoad = !tenant;
     tenant = d.exists() ? d.data() : null;
     const nextChainId = tenant?.chainId || null;
     if (nextChainId !== prevChainId || !unsubSubscription) watchSubscriptionFor(nextChainId);
     if (nextChainId !== prevChainId || !unsubBranding) watchBrandingFor(nextChainId);
+    if (nextChainId !== prevChainId || firstLoad) watchAiFor(nextChainId);
     draw();
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite'), (d) => {

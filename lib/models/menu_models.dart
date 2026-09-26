@@ -107,6 +107,14 @@ class MenuItem {
   /// Пример: "Тарелка Снэков" = орешки 50 г + чипсы 75 г + сухарики 75 г.
   final List<MenuItemComponent> components;
 
+  /// Ставка НДС позиции для фискального чека ('vat22', 'vat5', 'none'…,
+  /// см. FiscalVatRate). Пусто — ставка заведения по умолчанию.
+  final String vat;
+
+  /// Предмет расчёта для чека: 'commodity' (товар), 'service' (услуга —
+  /// кальян, аренда), 'excise' (подакцизный — табак, пиво, алкоголь).
+  final String fiscalSubject;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -118,6 +126,8 @@ class MenuItem {
     this.weightUnit = InventoryUnit.g,
     this.inventoryItemId = '',
     this.components = const [],
+    this.vat = '',
+    this.fiscalSubject = 'commodity',
   });
 
   /// Позиция привязана к складу через простую связь.
@@ -145,10 +155,14 @@ class MenuItem {
       components: rawComponents
           .map((e) => MenuItemComponent.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList(),
+      vat: (data['vat'] as String?) ?? '',
+      fiscalSubject: (data['fiscalSubject'] as String?) ?? 'commodity',
     );
   }
 
   Map<String, dynamic> toMap() => {
+        'vat': vat,
+        'fiscalSubject': fiscalSubject,
         'categoryId': categoryId,
         'name': name,
         'price': price,
@@ -170,9 +184,13 @@ class MenuItem {
     InventoryUnit? weightUnit,
     String? inventoryItemId,
     List<MenuItemComponent>? components,
+    String? vat,
+    String? fiscalSubject,
   }) =>
       MenuItem(
         id: id,
+        vat: vat ?? this.vat,
+        fiscalSubject: fiscalSubject ?? this.fiscalSubject,
         categoryId: categoryId ?? this.categoryId,
         name: name ?? this.name,
         price: price ?? this.price,
