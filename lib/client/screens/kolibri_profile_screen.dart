@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import '../../services/app_scope.dart';
 import '../../build_info.dart';
 import 'package:flutter/material.dart';
@@ -178,6 +182,41 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     _name.dispose();
     _phone.dispose();
     super.dispose();
+  }
+
+  Future<void> _requestDataDeletion() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить мои данные?'),
+        content: const Text('Мы удалим ваше имя, номер телефона и день рождения из профиля, '
+            'броней и заказов, а бонусы сгорят. Запрос обработают в течение 30 дней.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Отправить запрос')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      final resp = await http
+          .post(
+            Uri.parse('$kSaasGatewayUrl/requestGuestDataDeletion'),
+            headers: {'Content-Type': 'application/json', if (token != null) 'Authorization': 'Bearer $token'},
+            body: jsonEncode({'tenantId': AppScope.tenantId}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (resp.statusCode != 200) throw StateError((json['error'] as String?) ?? 'ошибка ${resp.statusCode}');
+      final due = DateTime.fromMillisecondsSinceEpoch((json['dueAt'] as num).toInt());
+      final dueText = '${due.day.toString().padLeft(2, '0')}.${due.month.toString().padLeft(2, '0')}.${due.year}';
+      _snack(json['existing'] == true
+          ? 'Запрос уже отправлен — данные удалят не позднее $dueText'
+          : 'Запрос принят — данные удалят не позднее $dueText');
+    } catch (e) {
+      _snack('Не удалось отправить запрос: проверьте интернет и попробуйте снова');
+    }
   }
 
   void _snack(String text) {
@@ -559,6 +598,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               onPressed: _switchChainVenue,
               icon: const Icon(Icons.storefront_outlined, size: 18),
               label: const Text('Сменить заведение сети'),
+            ),
+          ),
+
+        // Право гостя потребовать удаления своих данных (152-ФЗ) — запрос
+        // уходит в реестр платформы (saas-gateway /requestGuestDataDeletion),
+        // обрабатывается вручную в течение 30 дней.
+        if (AppScope.isSaasMode && kSaasGatewayUrl.isNotEmpty)
+          Center(
+            child: TextButton(
+              onPressed: _requestDataDeletion,
+              child: Text('Удалить мои данные', style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
             ),
           ),
 
