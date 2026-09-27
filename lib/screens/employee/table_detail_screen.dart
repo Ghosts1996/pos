@@ -110,13 +110,18 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     return result;
   }
 
-  Future<void> _refill(SessionModel session) async {
+  Future<void> _refill(SessionModel session, bool unlimited) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Перезабивка'),
-        content: Text('Сбросить таймер и начать новые '
-            '${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
+        content: Text(unlimited
+            // Стол без ограничения времени: таймер не трогаем — только
+            // отмечаем перезабивку и заново запускаем напоминание про угли.
+            ? 'Отметить перезабивку? Напоминание про угли начнётся заново, '
+                'время стола не ограничивается.'
+            : 'Сбросить таймер и начать новые '
+                '${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Перезабить')),
@@ -126,9 +131,10 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     if (confirm == true) {
       try {
         await _fs.refillSession(session.id,
-            tableId: session.tableId, durationMinutes: AppConstants.sessionMinutes);
+            tableId: session.tableId,
+            durationMinutes: unlimited ? AppConstants.unlimitedSessionMinutes : AppConstants.sessionMinutes);
       } catch (e) {
-        _showError('Не удалось обновить таймер — проверьте интернет');
+        _showError('Не удалось отметить перезабивку — проверьте интернет');
       }
     }
   }
@@ -438,6 +444,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   /// при длинном заказе.
   Widget _activeSession(TableModel t, SessionModel session) {
     final hookah = VenueService.instance.terms.isHookah;
+    // «Перезабивка» — у того, кто отвечает за кальяны (кальянщик, а в
+    // кальянной ещё универсал и админ), см. AppConstants.handlesHookah.
+    final canRefill = widget.employee.handlesHookah(hookahVenue: hookah);
     // Стол «без ограничений» (см. AppConstants.unlimitedSessionMinutes):
     // таймер и кнопка «Время» ему не нужны — вместо отсчёта показываем,
     // сколько гости уже сидят.
@@ -450,20 +459,21 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
       icon: Icons.call_split_rounded,
       label: 'Разделить',
       hint: 'счёт на части',
-      // У стола без ограничения времени «Перезабивки» нет (это тот же
-      // сброс таймера) — главное место занимает раздел счёта.
-      accent: !hookah || unlimited,
+      // Кто кальяны не ведёт, у того «Перезабивки» нет — главное место
+      // занимает раздел счёта.
+      accent: !canRefill,
       onTap: () => _splitBill(t, session),
     );
     final actions = <_TableAction>[
-      if (hookah && !unlimited)
+      if (canRefill)
         _TableAction(
           icon: Icons.refresh_rounded,
           label: 'Перезабивка',
+          hint: unlimited ? 'угли заново' : null,
           accent: true,
-          onTap: () => _refill(session),
+          onTap: () => _refill(session, unlimited),
         ),
-      if (!hookah || unlimited) split,
+      if (!canRefill) split,
       if (!unlimited)
         _TableAction(
           icon: Icons.more_time_rounded,
@@ -489,7 +499,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         hint: 'за другой стол',
         onTap: () => _moveTable(session, t),
       ),
-      if (hookah && !unlimited) split,
+      if (canRefill) split,
       if (hasOtherChecks || canAddMore)
         _TableAction(
           icon: Icons.receipt_long_outlined,
@@ -511,7 +521,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             child: ListView(
               padding: EdgeInsets.fromLTRB(side, 12, side, 24),
               children: [
-                _SessionStatusCard(session: session, showRefills: hookah && !unlimited, unlimited: unlimited),
+                _SessionStatusCard(session: session, showRefills: canRefill, unlimited: unlimited),
                 const SizedBox(height: 12),
                 _ActionGrid(actions: actions),
                 const SizedBox(height: 24),
