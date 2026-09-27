@@ -4,6 +4,7 @@ import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/timer_display.dart';
+import '../../widgets/clock_ticker.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
@@ -108,13 +109,17 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     return result;
   }
 
-  Future<void> _refill(String sessionId, String tableId) async {
+  Future<void> _refill(SessionModel session, bool unlimited) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Перезабивка'),
-        content: Text(
-            'Сбросить таймер и начать новые ${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
+        content: Text(unlimited
+            // Без ограничения времени таймер сбрасывать нечего — перезабивка
+            // отмечается в счётчике и перезапускает напоминание про угли.
+            ? 'Отметить перезабивку? Напоминание про угли начнётся заново.'
+            : 'Сбросить таймер и начать новые '
+                '${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Перезабить')),
@@ -123,9 +128,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (confirm == true) {
       try {
-        await _fs.refillSession(sessionId, tableId: tableId, durationMinutes: AppConstants.sessionMinutes);
+        // Стол без ограничения времени таким и остаётся — даже если по
+        // умолчанию в заведении сеанс ограничен.
+        await _fs.refillSession(session.id,
+            tableId: session.tableId,
+            durationMinutes: unlimited ? AppConstants.unlimitedSessionMinutes : AppConstants.sessionMinutes);
       } catch (e) {
-        _showError('Не удалось обновить таймер — проверьте интернет');
+        _showError('Не удалось отметить перезабивку — проверьте интернет');
       }
     }
   }
@@ -298,7 +307,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.table.name)),
+      appBar: AppBar(title: Text(tableLabel(widget.table.name))),
       // Подписываемся только на ЭТОТ стол (а не на всю коллекцию столов,
       // как было раньше) — так изменение любого другого стола в зале не
       // грузит сеть и не перестраивает этот экран лишний раз.
@@ -325,19 +334,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           // для текущего чека — локальный _sessionId, а закрытие чека с
           // другого устройства отслеживается ниже напрямую по статусу
           // документа самой сессии (см. sessSnap/session.status).
-          if (_sessionId == null) {
-            return Center(
-              child: _busy
-                  ? const CircularProgressIndicator()
-                  : ElevatedButton.icon(
-                      onPressed: _startSession,
-                      icon: const Icon(Icons.play_arrow),
-                      label: Text(AppConstants.sessionUnlimited
-                          ? _startLabel
-                          : '$_startLabel (${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)})'),
-                    ),
-            );
-          }
+          if (_sessionId == null) return _freeTable(t);
 
           return StreamBuilder<SessionModel?>(
             stream: _fs.sessionStream(_sessionId!),
@@ -367,162 +364,557 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              final hasOtherChecks = t.activeSessionIds.length > 1;
-              final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
-
-              return SingleChildScrollView(
-                // Обычный EdgeInsets.all(16) не учитывал системную зону снизу
-                // (жестовая навигация на части устройств) — кнопка "Закрыть
-                // стол", последняя в списке, обрезалась/перекрывалась
-                // системными иконками. Добавляем нижний safe-area отступ
-                // поверх обычного паддинга.
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  16 + MediaQuery.of(context).padding.bottom,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (hasOtherChecks || canAddMore)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: OutlinedButton.icon(
-                          onPressed: () => _pickAnotherCheck(t),
-                          icon: const Icon(Icons.receipt_long),
-                          label: Text(hasOtherChecks
-                              ? 'Чеки за столом (${t.activeSessionIds.length}/${t.maxOpenSessions})'
-                              : 'Открыть ещё один чек'),
-                        ),
-                      ),
-                    Center(child: TimerDisplay(plannedEnd: session.plannedEnd, fontSize: 56)),
-                    const SizedBox(height: 4),
-                    Center(
-                        child: Text(
-                            VenueService.instance.terms.isHookah
-                                ? 'Открыл: ${session.employeeName} · Перезабивок: ${session.refillCount}'
-                                : 'Открыл: ${session.employeeName}',
-                            style: const TextStyle(color: AppColors.textMuted))),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _editGuestTag(session),
-                        icon: const Icon(Icons.local_offer_outlined, size: 18),
-                        label: Text(session.guestTag.isEmpty
-                            ? 'Подписать стол'
-                            : 'Подпись: ${session.guestTag}'),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        // Перезабивка — кальянное действие.
-                        if (VenueService.instance.terms.isHookah)
-                          ElevatedButton.icon(
-                            onPressed: () => _refill(session.id, session.tableId),
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Перезабивка'),
-                          ),
-                        ElevatedButton.icon(
-                          onPressed: () => _extend(session.id, session.plannedEnd, session.tableId),
-                          icon: const Icon(Icons.timer),
-                          label: const Text('Обновить таймер'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => session.discountPercent > 0
-                              ? _removeCard(session.id)
-                              : _applyCard(session.id),
-                          icon: Icon(session.discountPercent > 0
-                              ? Icons.remove_circle_outline
-                              : Icons.card_giftcard),
-                          label: Text(session.discountPercent > 0
-                              ? 'Скидка ${session.discountPercent.toStringAsFixed(0)}% (убрать)'
-                              : 'Скидочная карта'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => _moveTable(session, t),
-                          icon: const Icon(Icons.sync_alt),
-                          label: const Text('Пересадить стол'),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 32),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Заказ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        FilledButton.tonalIcon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: AppColors.textPrimary,
-                            minimumSize: const Size(0, 40),
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                          ),
-                          onPressed: () async {
-                            await Navigator.of(context).push(MaterialPageRoute(
-                                builder: (_) => MenuSelectionScreen(session: session)));
-                          },
-                          icon: const Icon(Icons.add),
-                          label: const Text('Добавить'),
-                        ),
-                      ],
-                    ),
-                    if (session.orderItems.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Пока пусто', style: TextStyle(color: AppColors.textMuted)),
-                      ),
-                    ...session.orderItems.map((i) => ListTile(
-                          dense: true,
-                          title: Text(i.name),
-                          subtitle: Text(
-                              '${i.price.toStringAsFixed(0)} ${AppConstants.currencySymbol} × ${i.qty} = ${i.total.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
-                          trailing: i.menuItemId.isEmpty
-                              ? null
-                              : Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.remove_circle_outline),
-                                      onPressed: () => _changeQty(session.id, i.menuItemId, -1),
-                                    ),
-                                    Text('${i.qty}'),
-                                    IconButton(
-                                      icon: const Icon(Icons.add_circle_outline),
-                                      onPressed: () => _changeQty(session.id, i.menuItemId, 1),
-                                    ),
-                                  ],
-                                ),
-                        )),
-                    const Divider(),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Итого', style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text('${session.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-                      onPressed: () => _openPayment(session),
-                      icon: const Icon(Icons.payment),
-                      label: const Text('Закрыть стол'),
-                    ),
-                  ],
-                ),
-              );
+              return _activeSession(t, session);
             },
           );
         },
+      ),
+    );
+  }
+
+  /// Свободный стол: одна понятная кнопка вместо голой кнопки посреди экрана.
+  Widget _freeTable(TableModel t) {
+    final duration = AppConstants.sessionUnlimited
+        ? 'без ограничения времени'
+        : 'сеанс ${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}';
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Icon(Icons.table_restaurant, size: 40, color: AppColors.success),
+              ),
+              const SizedBox(height: 16),
+              const Text('Стол свободен', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text('${seatsLabel(t.seats)} · $duration',
+                  textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textMuted)),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : _startSession,
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.play_arrow_rounded),
+                  label: Text(_startLabel, style: const TextStyle(fontSize: 18)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Открытый чек: статус стола, действия плитками, заказ и закреплённая
+  /// снизу панель с итогом — итог и «Закрыть стол» видны всегда, даже
+  /// при длинном заказе.
+  Widget _activeSession(TableModel t, SessionModel session) {
+    final hookah = VenueService.instance.terms.isHookah;
+    // Стол «без ограничений» (см. AppConstants.unlimitedSessionMinutes):
+    // таймер и кнопка «Время» ему не нужны — вместо отсчёта показываем,
+    // сколько гости уже сидят.
+    final unlimited = AppConstants.isUnlimitedRemaining(session.remaining);
+    final hasOtherChecks = t.activeSessionIds.length > 1;
+    final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
+    final discounted = session.discountPercent > 0;
+
+    final actions = <_TableAction>[
+      if (hookah)
+        _TableAction(
+          icon: Icons.refresh_rounded,
+          label: 'Перезабивка',
+          accent: true,
+          onTap: () => _refill(session, unlimited),
+        ),
+      if (!unlimited)
+        _TableAction(
+          icon: Icons.more_time_rounded,
+          label: 'Время',
+          hint: '+15 · +30 · +60',
+          onTap: () => _extend(session.id, session.plannedEnd, session.tableId),
+        ),
+      _TableAction(
+        icon: Icons.local_offer_outlined,
+        label: session.guestTag.isEmpty ? 'Подписать' : 'Подпись',
+        hint: session.guestTag.isEmpty ? 'кто за столом' : session.guestTag,
+        onTap: () => _editGuestTag(session),
+      ),
+      _TableAction(
+        icon: discounted ? Icons.percent_rounded : Icons.card_giftcard,
+        label: discounted ? 'Скидка ${session.discountPercent.toStringAsFixed(0)}%' : 'Скидка',
+        hint: discounted ? 'убрать' : 'по карте',
+        onTap: () => discounted ? _removeCard(session.id) : _applyCard(session.id),
+      ),
+      _TableAction(
+        icon: Icons.swap_horiz_rounded,
+        label: 'Пересадить',
+        hint: 'за другой стол',
+        onTap: () => _moveTable(session, t),
+      ),
+      if (hasOtherChecks || canAddMore)
+        _TableAction(
+          icon: Icons.receipt_long_outlined,
+          label: hasOtherChecks ? 'Чеки' : 'Ещё чек',
+          hint: hasOtherChecks
+              ? '${t.activeSessionIds.length} из ${t.maxOpenSessions}'
+              : 'отдельный счёт',
+          onTap: () => _pickAnotherCheck(t),
+        ),
+    ];
+
+    return LayoutBuilder(builder: (context, box) {
+      // На планшете содержимое не растягивается на всю ширину — так его
+      // удобнее читать; на телефоне — стандартные поля 16.
+      final side = box.maxWidth > 792 ? (box.maxWidth - 760) / 2 : 16.0;
+      return Column(
+        children: [
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(side, 12, side, 24),
+              children: [
+                _SessionStatusCard(session: session, hookah: hookah, unlimited: unlimited),
+                const SizedBox(height: 12),
+                _ActionGrid(actions: actions),
+                const SizedBox(height: 24),
+                _orderHeader(session),
+                const SizedBox(height: 10),
+                if (session.orderItems.isEmpty)
+                  _emptyOrder(session)
+                else
+                  _orderList(session),
+              ],
+            ),
+          ),
+          _TotalBar(session: session, side: side, onPay: () => _openPayment(session)),
+        ],
+      );
+    });
+  }
+
+  Future<void> _openMenu(SessionModel session) => Navigator.of(context)
+      .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session)));
+
+  Widget _orderHeader(SessionModel session) {
+    final count = session.orderItems.fold<int>(0, (a, i) => a + i.qty);
+    return Row(
+      children: [
+        const Text('Заказ', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        if (count > 0)
+          Text('  ·  $count ${pluralRu(count, 'позиция', 'позиции', 'позиций')}',
+              style: const TextStyle(color: AppColors.textMuted)),
+        const Spacer(),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+          onPressed: () => _openMenu(session),
+          icon: const Icon(Icons.add),
+          label: const Text('Добавить'),
+        ),
+      ],
+    );
+  }
+
+  Widget _emptyOrder(SessionModel session) => Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _openMenu(session),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Column(
+              children: [
+                Icon(Icons.restaurant_menu, size: 34, color: AppColors.textMuted),
+                SizedBox(height: 10),
+                Text('Заказ пока пуст', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                SizedBox(height: 4),
+                Text('Нажмите, чтобы открыть меню', style: TextStyle(color: AppColors.textMuted)),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  Widget _orderList(SessionModel session) {
+    final rows = <Widget>[];
+    for (var k = 0; k < session.orderItems.length; k++) {
+      final i = session.orderItems[k];
+      if (k > 0) rows.add(const Divider(height: 1, color: AppColors.border));
+      rows.add(Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(i.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('${_money(i.price)} × ${i.qty}',
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ],
+              ),
+            ),
+            if (i.menuItemId.isNotEmpty)
+              _QtyStepper(
+                qty: i.qty,
+                onMinus: () => _changeQty(session.id, i.menuItemId, -1),
+                onPlus: () => _changeQty(session.id, i.menuItemId, 1),
+              ),
+            SizedBox(
+              width: 76,
+              child: Text(_money(i.total),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ));
+    }
+    if (session.discountPercent > 0) {
+      rows.add(const Divider(height: 1, color: AppColors.border));
+      rows.add(Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text('Скидка ${session.discountPercent.toStringAsFixed(0)}%',
+                  style: const TextStyle(color: AppColors.success)),
+            ),
+            Text('−${_money(session.orderTotal - session.totalWithDiscount)}',
+                style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ));
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(children: rows),
+    );
+  }
+}
+
+String _money(double v) => '${v.toStringAsFixed(0)} ${AppConstants.currencySymbol}';
+
+String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+String _sat(Duration d) => TimerDisplay.formatSat(d);
+
+/// Главная карточка стола: сколько осталось (или сколько уже сидят, если
+/// время не ограничено), кто открыл, подпись, перезабивки, скидка.
+class _SessionStatusCard extends StatelessWidget {
+  final SessionModel session;
+  final bool hookah;
+  final bool unlimited;
+  const _SessionStatusCard({required this.session, required this.hookah, required this.unlimited});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TickerBuilder(builder: (context, now) {
+            final left = session.plannedEnd.difference(now);
+            final sat = now.difference(session.startTime);
+            final String caption;
+            final String big;
+            final String sub;
+            final Color color;
+            if (unlimited) {
+              caption = 'За столом';
+              big = _sat(sat);
+              sub = 'с ${_hhmm(session.startTime)}';
+              color = AppColors.textPrimary;
+            } else if (left.isNegative) {
+              caption = 'Время вышло';
+              big = '+${TimerDisplay.formatRemaining(-left)}';
+              sub = 'закончилось в ${_hhmm(session.plannedEnd)} · за столом ${_sat(sat)}';
+              color = AppColors.danger;
+            } else {
+              caption = 'Осталось';
+              big = TimerDisplay.formatRemaining(left);
+              sub = 'до ${_hhmm(session.plannedEnd)} · за столом ${_sat(sat)}';
+              color = TimerDisplay.colorFor(left);
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(caption, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                const SizedBox(height: 2),
+                Text(big,
+                    style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.w700,
+                      color: color,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    )),
+                Text(sub, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              ],
+            );
+          }),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _InfoChip(icon: Icons.person_outline, text: session.employeeName.isEmpty ? '—' : session.employeeName),
+              if (hookah)
+                _InfoChip(
+                  icon: Icons.refresh_rounded,
+                  text: session.refillCount == 0
+                      ? 'без перезабивок'
+                      : '${session.refillCount} ${pluralRu(session.refillCount, 'перезабивка', 'перезабивки', 'перезабивок')}',
+                ),
+              if (session.discountPercent > 0)
+                _InfoChip(
+                  icon: Icons.percent_rounded,
+                  text: 'скидка ${session.discountPercent.toStringAsFixed(0)}%',
+                  color: AppColors.success,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Color color;
+  const _InfoChip({required this.icon, required this.text, this.color = AppColors.textMuted});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: Text(text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color == AppColors.textMuted ? AppColors.textPrimary : color, fontSize: 13)),
+            ),
+          ],
+        ),
+      );
+}
+
+class _TableAction {
+  final IconData icon;
+  final String label;
+  final String? hint;
+  final bool accent;
+  final VoidCallback onTap;
+  const _TableAction({required this.icon, required this.label, this.hint, this.accent = false, required this.onTap});
+}
+
+/// Действия со столом — ровной сеткой плиток: 3 в ряд на телефоне, больше
+/// на планшете. Раньше это были кнопки разной ширины во всю строку.
+class _ActionGrid extends StatelessWidget {
+  final List<_TableAction> actions;
+  const _ActionGrid({required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      const gap = 10.0;
+      final cols = box.maxWidth < 440 ? 3 : (box.maxWidth < 640 ? 4 : 6);
+      final w = (box.maxWidth - gap * (cols - 1)) / cols;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final a in actions)
+            SizedBox(
+              width: w,
+              child: Material(
+                color: a.accent ? AppColors.primary : AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: a.onTap,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 88),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: a.accent ? AppColors.primary : AppColors.border),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(a.icon, size: 26, color: AppColors.textPrimary),
+                        const SizedBox(height: 6),
+                        Text(a.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        if (a.hint != null)
+                          Text(a.hint!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: a.accent ? AppColors.textPrimary.withValues(alpha: 0.8) : AppColors.textMuted)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+}
+
+/// − 2 + — количество позиции прямо в строке заказа.
+class _QtyStepper extends StatelessWidget {
+  final int qty;
+  final VoidCallback onMinus;
+  final VoidCallback onPlus;
+  const _QtyStepper({required this.qty, required this.onMinus, required this.onPlus});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget btn(IconData icon, VoidCallback onTap, String tip) => SizedBox(
+          width: 36,
+          height: 36,
+          child: IconButton(
+            tooltip: tip,
+            padding: EdgeInsets.zero,
+            iconSize: 18,
+            onPressed: onTap,
+            icon: Icon(icon),
+          ),
+        );
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          btn(Icons.remove, onMinus, 'Меньше'),
+          SizedBox(
+            width: 24,
+            child: Text('$qty',
+                textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          btn(Icons.add, onPlus, 'Больше'),
+        ],
+      ),
+    );
+  }
+}
+
+/// Итог и «Закрыть стол» — закреплены внизу экрана.
+class _TotalBar extends StatelessWidget {
+  final SessionModel session;
+  final double side;
+  final VoidCallback onPay;
+  const _TotalBar({required this.session, required this.side, required this.onPay});
+
+  @override
+  Widget build(BuildContext context) {
+    final discounted = session.discountPercent > 0;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surfaceElevated,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      padding: EdgeInsets.fromLTRB(side, 12, side, 12 + MediaQuery.of(context).padding.bottom),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Итого', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(_money(session.totalWithDiscount),
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                    if (discounted) ...[
+                      const SizedBox(width: 8),
+                      Text(_money(session.orderTotal),
+                          style: const TextStyle(
+                            color: AppColors.textMuted,
+                            decoration: TextDecoration.lineThrough,
+                          )),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 56,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.success,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: onPay,
+              icon: const Icon(Icons.payments_outlined),
+              label: const Text('Закрыть стол', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
       ),
     );
   }

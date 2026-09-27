@@ -190,6 +190,7 @@ class _TableWithTimerState extends State<_TableWithTimer> {
         return TableTile(
           table: widget.table,
           plannedEnd: session?.plannedEnd,
+          startTime: session?.startTime,
           checkCount: widget.table.activeSessionIds.length,
           guestTag: session?.guestTag,
           onTap: widget.onTap,

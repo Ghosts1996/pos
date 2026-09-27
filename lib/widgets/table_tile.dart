@@ -14,6 +14,7 @@ class TableTile extends StatelessWidget {
 
   final TableModel table;
   final DateTime? plannedEnd; // если стол занят — время окончания ближайшего чека
+  final DateTime? startTime; // начало этого чека — для стола «без ограничений»
   final VoidCallback? onTap;
   final bool isDraggablePreview;
   final int checkCount; // сколько чеков сейчас открыто на столе
@@ -28,6 +29,7 @@ class TableTile extends StatelessWidget {
     super.key,
     required this.table,
     this.plannedEnd,
+    this.startTime,
     this.onTap,
     this.isDraggablePreview = false,
     this.checkCount = 1,
@@ -105,7 +107,7 @@ class TableTile extends StatelessWidget {
           ],
           if (occupied && plannedEnd != null) ...[
             const SizedBox(height: 4),
-            TimerDisplay(plannedEnd: plannedEnd!, fontSize: 13),
+            TimerDisplay(plannedEnd: plannedEnd!, startTime: startTime, fontSize: 13),
           ],
         ],
       ),
