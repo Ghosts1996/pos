@@ -1251,3 +1251,66 @@ describe("Чаевые: гость выбирает, кому из смены, �
     await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/cashOps/op2"), op()));
   });
 });
+
+describe("Аудит безопасности: гость не накрутит себе бонусы и не подделает журнал", () => {
+  beforeEach(seedTwoTenants);
+
+  it("гость не может создать профиль сразу с бонусами, тратами, уровнем или скидкой", async () => {
+    const db = testEnv.authenticatedContext("hacker").firestore();
+    const ref = doc(db, "tenants/tenantA/clients/hacker");
+    await assertFails(setDoc(ref, { name: "X", bonusBalance: 100000 }));
+    await assertFails(setDoc(ref, { name: "X", totalSpent: 9999999 }));
+    await assertFails(setDoc(ref, { name: "X", visits: 500 }));
+    await assertFails(setDoc(ref, { name: "X", tier: "vip" }));
+    await assertFails(setDoc(ref, { name: "X", discountPercent: 50 }));
+    await assertFails(setDoc(ref, { name: "X", discountCardId: "card1" }));
+  });
+
+  it("обычный профиль нового гостя (нули, как пишут приложения) создаётся", async () => {
+    const db = testEnv.authenticatedContext("newbie").firestore();
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/clients/newbie"), {
+      name: "", phone: "", bonusBalance: 0, totalSpent: 0, visits: 0,
+      discountCardId: "", discountPercent: 0, activeSessionId: "", activeTableId: "",
+    }));
+  });
+
+  it("гость не может поменять себе визиты и скидку в существующем профиле", async () => {
+    const db = testEnv.authenticatedContext("guestA").firestore();
+    const ref = doc(db, "tenants/tenantA/clients/guestA");
+    await assertFails(updateDoc(ref, { visits: 100 }));
+    await assertFails(updateDoc(ref, { discountPercent: 30 }));
+    await assertSucceeds(updateDoc(ref, { name: "Гость А. Новое имя" }));
+  });
+
+  it("то же в общем профиле сети", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "chains/chainX"), { name: "Сеть" });
+    });
+    const db = testEnv.authenticatedContext("hacker").firestore();
+    await assertFails(setDoc(doc(db, "chains/chainX/clients/hacker"), { name: "X", bonusBalance: 5000 }));
+    await assertSucceeds(setDoc(doc(db, "chains/chainX/clients/hacker"), { name: "X", bonusBalance: 0 }));
+    await assertFails(updateDoc(doc(db, "chains/chainX/clients/hacker"), { totalSpent: 100000 }));
+  });
+
+  it("посторонний не пишет в журнал ИИ и действия ИИ чужого заведения", async () => {
+    const outsider = testEnv.authenticatedContext("stranger").firestore();
+    await assertFails(setDoc(doc(outsider, "tenants/tenantA/aiLogs/x"), { text: "spam" }));
+    await assertFails(setDoc(doc(outsider, "tenants/tenantA/aiActions/x"), { tool: "x", scope: "staff" }));
+  });
+
+  it("гость пишет журнал ИИ своего заведения и только свои действия ИИ", async () => {
+    const guest = testEnv.authenticatedContext("guestA").firestore();
+    await assertSucceeds(setDoc(doc(guest, "tenants/tenantA/aiLogs/l1"), { text: "вопрос" }));
+    await assertSucceeds(setDoc(doc(guest, "tenants/tenantA/aiActions/a1"), { tool: "book", scope: "guest", guestUid: "guestA" }));
+    await assertFails(setDoc(doc(guest, "tenants/tenantA/aiActions/a2"), { tool: "discount", scope: "staff", employeeName: "Админ" }));
+    await assertFails(setDoc(doc(guest, "tenants/tenantA/aiActions/a3"), { tool: "book", scope: "guest", guestUid: "someoneElse" }));
+  });
+
+  it("гость может позвать персонал push-уведомлением, но не разослать текст гостям", async () => {
+    const guest = testEnv.authenticatedContext("guestA").firestore();
+    await assertSucceeds(setDoc(doc(guest, "tenants/tenantA/pushQueue/p1"), { topic: "staff", title: "Чаевые", body: "Аня — 200 ₽" }));
+    await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p2"), { topic: "guests-all", title: "Акция", body: "Переведите..." }));
+    await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p3"), { token: "victim-device", title: "x", body: "y" }));
+    await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p4"), { topic: "staff", title: "x", body: "y".repeat(600) }));
+  });
+});
