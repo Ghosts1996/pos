@@ -1714,6 +1714,17 @@ function screenOnboarding() {
       <label class="field"><span id="f-slug-label">Код заведения</span>
         <input id="f-slug" placeholder="hookah-lounge-riga">
       </label>
+      <label class="field"><span>Тип заведения</span>
+        <select id="f-venue-type">
+          <option value="hookah">Кальянная / лаунж</option>
+          <option value="restaurant">Ресторан</option>
+          <option value="cafe">Кафе / кофейня</option>
+          <option value="bar">Бар</option>
+        </select>
+      </label>
+      <div class="small muted" style="margin:-6px 0 14px">От типа зависят слова в приложении гостя
+      («позвать кальянщика» или «позвать официанта») и кнопки вызова за столом. Сменить можно на кассе:
+      Настройки → Профиль заведения.</div>
       <label class="field"><span>Лейбл в приложении (короткое имя под иконкой)</span>
         <input id="f-brand-name" placeholder="Оставьте пустым — возьмём из названия" maxlength="12">
       </label>
@@ -1846,7 +1857,10 @@ function screenOnboarding() {
       // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
       const res = await callSaasGateway(
         'createTenant',
-        { name, slug, ...(chosenPlanId && !isChain ? { planId: chosenPlanId } : {}), ...(chainId ? { chainId } : {}) }
+        {
+          name, slug, venueType: $('f-venue-type').value,
+          ...(chosenPlanId && !isChain ? { planId: chosenPlanId } : {}), ...(chainId ? { chainId } : {}),
+        }
       );
       window.localStorage.removeItem('selectedPlanId');
       window.localStorage.removeItem('skipTrial');

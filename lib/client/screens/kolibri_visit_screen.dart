@@ -6,6 +6,8 @@ import '../../models/venue_models.dart';
 import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/venue_service.dart';
+import '../../services/tips_service.dart';
+import '../widgets/kolibri_tips_panel.dart';
 import '../../widgets/clock_ticker.dart';
 import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
@@ -63,7 +65,12 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           // Чек закрыли на кассе — предлагаем оценить визит.
           return _visitFinished(s);
         }
-        return _activeVisit(s);
+        // Тип заведения и чаевые приходят с профилем заведения — он может
+        // приехать позже чека.
+        return ValueListenableBuilder<VenueProfile>(
+          valueListenable: VenueService.instance.notifier,
+          builder: (context, _, __) => _activeVisit(s),
+        );
       },
     );
   }
@@ -77,8 +84,11 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text(
-            'Отсканируйте QR-код на своём столе — откроются счёт, таймер '
-            'сеанса и кнопки вызова кальянщика.',
+            VenueService.instance.terms.isHookah
+                ? 'Отсканируйте QR-код на своём столе — откроются счёт, таймер '
+                    'сеанса и кнопки вызова кальянщика.'
+                : 'Отсканируйте QR-код на своём столе — откроются счёт и '
+                    'кнопки вызова ${VenueService.instance.terms.staffAcc}.',
             style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
           ),
           const SizedBox(height: 24),
@@ -109,7 +119,8 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           Text(
             'Стол открывается только по коду с самого стола — так вы '
             'наверняка попадёте на свой счёт, а не на соседний. Если код '
-            'не сканируется, позовите кальянщика: он откроет стол сам.',
+            'не сканируется, позовите ${VenueService.instance.terms.staffAcc}: '
+            'он откроет стол сам.',
             style: TextStyle(
                 color: KolibriColors.textMuted, fontSize: 12, height: 1.5),
           ),
@@ -118,6 +129,10 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
       );
 
   Widget _activeVisit(SessionModel s) {
+    final terms = VenueService.instance.terms;
+    // Таймер сеанса нужен кальянной; в ресторане и кафе стол просто занят,
+    // пока его не закроют. «Без ограничений» — тоже без таймера.
+    final showTimer = terms.isHookah && !AppConstants.isUnlimitedRemaining(s.remaining);
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
@@ -137,7 +152,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         // ---- Таймер сеанса ----
         // Единственное место экрана, которое обязано обновляться каждую
         // секунду, — поэтому только оно и перестраивается.
-        TickerBuilder(builder: (context, _) {
+        if (showTimer) TickerBuilder(builder: (context, _) {
           final left = s.remaining;
           final over = left.isNegative;
           final minutes = left.inMinutes.abs();
@@ -179,31 +194,42 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         const SizedBox(height: 20),
 
         // ---- Кнопки обращений ----
+        // Угли, перезабивка и кальянщик — только в кальянной. В ресторане,
+        // кафе и баре гость зовёт официанта и просит счёт.
         const Text('Позвать', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _callButton(s, GuestCallType.coal, Icons.local_fire_department)),
-            const SizedBox(width: 10),
-            Expanded(child: _callButton(s, GuestCallType.refill, Icons.refresh)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(child: _callButton(s, GuestCallType.waiter, Icons.pan_tool_alt)),
-            const SizedBox(width: 10),
-            Expanded(child: _callButton(s, GuestCallType.bill, Icons.payments)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(child: _callButton(s, GuestCallType.callWaiter, Icons.room_service)),
-            const SizedBox(width: 10),
-            const Expanded(child: SizedBox()),
-          ],
-        ),
+        if (terms.isHookah) ...[
+          Row(
+            children: [
+              Expanded(child: _callButton(s, GuestCallType.coal, Icons.local_fire_department)),
+              const SizedBox(width: 10),
+              Expanded(child: _callButton(s, GuestCallType.refill, Icons.refresh)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _callButton(s, GuestCallType.waiter, Icons.pan_tool_alt)),
+              const SizedBox(width: 10),
+              Expanded(child: _callButton(s, GuestCallType.bill, Icons.payments)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _callButton(s, GuestCallType.callWaiter, Icons.room_service)),
+              const SizedBox(width: 10),
+              const Expanded(child: SizedBox()),
+            ],
+          ),
+        ] else
+          Row(
+            children: [
+              Expanded(child: _callButton(s, GuestCallType.callWaiter, Icons.room_service)),
+              const SizedBox(width: 10),
+              Expanded(child: _callButton(s, GuestCallType.bill, Icons.payments)),
+            ],
+          ),
 
         // ---- Статус вызовов ----
         StreamBuilder<List<WaiterCall>>(
@@ -295,13 +321,29 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                   const SizedBox(height: 8),
                   Text(
                     'Доступно бонусов: ${widget.profile!.bonusBalance.toStringAsFixed(0)} ₽ — '
-                    'скажите кальянщику, чтобы списать при оплате',
+                    'скажите ${VenueService.instance.terms.staffDat}, чтобы списать при оплате',
                     style: TextStyle(color: KolibriColors.gold, fontSize: 12),
                   ),
                 ],
               ],
             ),
           ),
+
+        // ---- Чаевые ----
+        // Рядом со счётом, а не только в «Ещё»: о чаевых думают именно
+        // тогда, когда смотрят на счёт.
+        if (VenueService.instance.cached.tipsEnabled) ...[
+          const SizedBox(height: 12),
+          _TipsTotalLine(sessionId: s.id, clientUid: _auth.uid),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _openTips(s.id),
+              icon: const Icon(Icons.volunteer_activism, size: 18),
+              label: const Text('Оставить чаевые'),
+            ),
+          ),
+        ],
 
         // ---- Мои заказы из приложения ----
         const SizedBox(height: 24),
@@ -535,6 +577,29 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         ],
       );
 
+  void _openTips(String sessionId) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: KolibriColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Чаевые', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 14),
+              KolibriTipsPanel(sessionId: sessionId, clientUid: _auth.uid),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Типы вызовов, которые уже переданы и ещё не закрыты кальянщиком.
   /// Повторное нажатие по такому типу ничего нового не создаёт.
   final _pendingCalls = <GuestCallType>{};
@@ -565,7 +630,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               // правки) вызов официанта — что было бы просто неверно.
               final toWhom = type.targetPosition == AppConstants.positionWaiter
                   ? 'официанту'
-                  : 'кальянщику';
+                  : VenueService.instance.terms.staffDat;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('${type.label} — передали $toWhom'),
@@ -588,6 +653,33 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
     );
   }
 
+}
+
+/// «Чаевые к счёту: 300 ₽» — чтобы гость видел, сколько всего отдаст.
+class _TipsTotalLine extends StatefulWidget {
+  final String sessionId;
+  final String clientUid;
+  const _TipsTotalLine({required this.sessionId, required this.clientUid});
+
+  @override
+  State<_TipsTotalLine> createState() => _TipsTotalLineState();
+}
+
+class _TipsTotalLineState extends State<_TipsTotalLine> {
+  late final Stream<List<TipModel>> _tips =
+      TipsService.instance.sessionTipsStream(widget.sessionId, clientUid: widget.clientUid);
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<TipModel>>(
+        stream: _tips,
+        builder: (context, snap) {
+          final onBill = (snap.data ?? const <TipModel>[]).where((t) => t.onBill);
+          final sum = onBill.fold<double>(0, (a, t) => a + t.amount);
+          if (sum <= 0) return const SizedBox.shrink();
+          return Text('Чаевые к счёту: ${sum.toStringAsFixed(0)} ₽ — возьмём вместе с оплатой',
+              style: const TextStyle(color: KolibriColors.success, fontSize: 13));
+        },
+      );
 }
 
 /// Оценка визита: звёзды + необязательный комментарий.

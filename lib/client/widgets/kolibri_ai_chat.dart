@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/venue_service.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
@@ -141,7 +142,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       if (mounted) {
         setState(() => _error = e is AiException
             ? e.message
-            : 'Консьерж сейчас недоступен, позовите кальянщика в зале.');
+            : 'Консьерж сейчас недоступен, позовите ${VenueService.instance.terms.staffAcc} в зале.');
       }
     }
 
@@ -194,11 +195,11 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
             ),
           ),
           if (!ready)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Text(
-                'Консьерж временно недоступен. Позовите кальянщика — он поможет.',
-                style: TextStyle(color: KolibriColors.warning, fontSize: 13),
+                'Консьерж временно недоступен. Позовите ${VenueService.instance.terms.staffAcc} — он поможет.',
+                style: const TextStyle(color: KolibriColors.warning, fontSize: 13),
               ),
             ),
           Expanded(

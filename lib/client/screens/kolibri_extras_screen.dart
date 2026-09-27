@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/venue_models.dart';
 import '../../services/gift_card_service.dart';
-import '../../services/guest_link_service.dart';
+import '../../services/venue_service.dart';
+import '../widgets/kolibri_tips_panel.dart';
 import '../../services/referral_service.dart';
 import '../../services/waitlist_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/table_label.dart';
 
-/// Дополнительные сервисы для гостя: чаевые кальянщику, сертификат,
+/// Дополнительные сервисы для гостя: чаевые персоналу, сертификат,
 /// очередь на стол и приглашение друга.
 ///
 /// Все четыре вещи объединены на одном экране сознательно — это редкие
@@ -24,7 +25,6 @@ class KolibriExtrasScreen extends StatefulWidget {
 
 class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   final _auth = KolibriAuthService();
-  final _link = GuestLinkService();
   final _cards = GiftCardService.instance;
   final _waitlist = WaitlistService.instance;
   final _referral = ReferralService.instance;
@@ -55,18 +55,30 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Чаевые владелец может выключить — профиль заведения приходит
+    // асинхронно, поэтому экран слушает его.
+    return ValueListenableBuilder<VenueProfile>(
+      valueListenable: VenueService.instance.notifier,
+      builder: (context, _, __) => _list(),
+    );
+  }
+
+  Widget _list() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
         const Text('Ещё', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         const SizedBox(height: 20),
 
-        _section(
-          icon: Icons.volunteer_activism,
-          title: 'Чаевые кальянщику',
-          child: _tipsBlock(),
-        ),
-        const SizedBox(height: 16),
+        // Владелец мог выключить чаевые в профиле заведения.
+        if (VenueService.instance.cached.tipsEnabled) ...[
+          _section(
+            icon: Icons.volunteer_activism,
+            title: 'Чаевые',
+            child: _tipsBlock(),
+          ),
+          const SizedBox(height: 16),
+        ],
 
         _section(
           icon: Icons.card_giftcard,
@@ -123,46 +135,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
       return Text('Чаевые можно оставить во время визита — откройте свой стол.',
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 13));
     }
-    return StreamBuilder(
-      stream: _link.sessionStream(sessionId),
-      builder: (context, snap) {
-        final employee = snap.data?.employeeName ?? '';
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              employee.isEmpty ? 'Ваш кальянщик' : 'Ваш кальянщик: $employee',
-              style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [200.0, 500.0, 1000.0]
-                  .map((amount) => OutlinedButton(
-                        onPressed: () => _leaveTip(amount, employee, sessionId),
-                        child: Text('${amount.toStringAsFixed(0)} ₽'),
-                      ))
-                  .toList(),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _leaveTip(double amount, String employeeName, String sessionId) async {
-    await TipsService.instance.leaveTip(
-      amount: amount,
-      employeeName: employeeName.isEmpty ? 'Смена' : employeeName,
-      sessionId: sessionId,
-      clientUid: _auth.uid,
-    );
-    if (!mounted) return;
-    // Деньги списывает платёжный провайдер на следующем шаге; здесь мы
-    // зафиксировали намерение и сообщили смене.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Спасибо! ${amount.toStringAsFixed(0)} ₽ передадим кальянщику')),
-    );
+    return KolibriTipsPanel(sessionId: sessionId, clientUid: _auth.uid);
   }
 
   // ---------- СЕРТИФИКАТ ----------

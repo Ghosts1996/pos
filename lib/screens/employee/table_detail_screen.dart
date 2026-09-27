@@ -9,6 +9,7 @@ import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
 import 'payment_screen.dart';
 import '../../utils/table_label.dart';
+import '../../services/venue_service.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
@@ -31,6 +32,8 @@ class TableDetailScreen extends StatefulWidget {
 }
 
 class _TableDetailScreenState extends State<TableDetailScreen> {
+  /// «Начать сеанс» — про кальян; в ресторане и кафе стол просто открывают.
+  String get _startLabel => VenueService.instance.terms.isHookah ? 'Начать сеанс' : 'Открыть стол';
   final _fs = FirestoreService();
   bool _busy = false;
   String? _sessionId;
@@ -96,7 +99,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Начать сеанс'),
+            child: Text(_startLabel),
           ),
         ],
       ),
@@ -329,8 +332,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   : ElevatedButton.icon(
                       onPressed: _startSession,
                       icon: const Icon(Icons.play_arrow),
-                      label: Text(
-                          'Начать сеанс (${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)})'),
+                      label: Text(AppConstants.sessionUnlimited
+                          ? _startLabel
+                          : '$_startLabel (${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)})'),
                     ),
             );
           }
@@ -396,7 +400,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     const SizedBox(height: 4),
                     Center(
                         child: Text(
-                            'Открыл: ${session.employeeName} · Перезабивок: ${session.refillCount}',
+                            VenueService.instance.terms.isHookah
+                                ? 'Открыл: ${session.employeeName} · Перезабивок: ${session.refillCount}'
+                                : 'Открыл: ${session.employeeName}',
                             style: const TextStyle(color: AppColors.textMuted))),
                     const SizedBox(height: 8),
                     Center(
@@ -414,11 +420,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       runSpacing: 8,
                       alignment: WrapAlignment.center,
                       children: [
-                        ElevatedButton.icon(
-                          onPressed: () => _refill(session.id, session.tableId),
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Перезабивка'),
-                        ),
+                        // Перезабивка — кальянное действие.
+                        if (VenueService.instance.terms.isHookah)
+                          ElevatedButton.icon(
+                            onPressed: () => _refill(session.id, session.tableId),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Перезабивка'),
+                          ),
                         ElevatedButton.icon(
                           onPressed: () => _extend(session.id, session.plannedEnd, session.tableId),
                           icon: const Icon(Icons.timer),

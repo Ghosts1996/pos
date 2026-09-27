@@ -11,6 +11,8 @@ import '../models/staff_shift_model.dart';
 import '../models/inventory_models.dart';
 import '../utils/constants.dart';
 import 'venue_service.dart';
+import 'tips_service.dart';
+import '../utils/shift_time.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -379,6 +381,10 @@ class FirestoreService {
     bool fiscalReceiptPrinted = false,
     List<OrderItem> orderItems = const [],
     String employeeName = '',
+    Map<String, String> tipsPaidVia = const {},
+    double tipsCash = 0,
+    double tipsCard = 0,
+    List<String> tipsCancelled = const [],
   }) async {
     // 1. Закрываем чек.
     //    Транзакция + проверка статуса делают закрытие ИДЕМПОТЕНТНЫМ: если
@@ -402,7 +408,19 @@ class FirestoreService {
         'closedWithoutPayment': closedWithoutPayment,
         'receiptPrinted': receiptPrinted,
         'fiscalReceiptPrinted': fiscalReceiptPrinted,
+        'tipsCash': tipsCash,
+        'tipsCard': tipsCard,
       });
+      // Чаевые, взятые вместе со счётом, отмечаются оплаченными в той же
+      // транзакции: чек не может закрыться, а чаевые — повиснуть «к счёту»
+      // (и наоборот, повторное нажатие не отметит их второй раз).
+      final now = Timestamp.fromDate(DateTime.now());
+      tipsPaidVia.forEach((id, via) {
+        tx.update(AppScope.col('tips').doc(id), {'status': 'paid', 'paidAt': now, 'paidVia': via});
+      });
+      for (final id in tipsCancelled) {
+        tx.update(AppScope.col('tips').doc(id), {'status': 'cancelled', 'cancelledAt': now});
+      }
       return false;
     });
 
@@ -730,18 +748,8 @@ class FirestoreService {
   /// фактического нажатия кнопки. Часы работы не заданы на сегодня, пустая
   /// строка (выходной) или не распарсились — время не трогаем: это не
   /// обязательная настройка, и без неё поведение должно остаться прежним.
-  DateTime _clampToVenueOpening(DateTime now) {
-    final hours = VenueService.instance.cached.workingHours[now.weekday];
-    if (hours == null || hours.isEmpty) return now;
-    final openPart = hours.split('-').first.trim();
-    final parts = openPart.split(':');
-    if (parts.length != 2) return now;
-    final h = int.tryParse(parts[0]);
-    final m = int.tryParse(parts[1]);
-    if (h == null || m == null) return now;
-    final openingToday = DateTime(now.year, now.month, now.day, h, m);
-    return now.isBefore(openingToday) ? openingToday : now;
-  }
+  DateTime _clampToVenueOpening(DateTime now) =>
+      clampShiftStartToOpening(now, VenueService.instance.cached.workingHours);
 
   /// Начинает личную смену сотрудника, если у него сейчас нет открытой.
   /// Если она уже открыта — просто возвращает её id, не создавая вторую.
@@ -750,7 +758,7 @@ class FirestoreService {
     final shiftRef = AppScope.col('staffShifts').doc();
     final startedAt = _clampToVenueOpening(DateTime.now());
 
-    return _db.runTransaction<String>((tx) async {
+    final id = await _db.runTransaction<String>((tx) async {
       final stateDoc = await tx.get(stateRef);
       final openByEmployee =
           Map<String, dynamic>.from(stateDoc.data()?['openByEmployee'] ?? {});
@@ -779,6 +787,43 @@ class FirestoreService {
       tx.set(stateRef, {'openByEmployee': openByEmployee}, SetOptions(merge: true));
       return shiftRef.id;
     });
+    // Смена уже шла (открыли до обновления) — сотрудника в списке могло не
+    // быть; дописать его повторно безопасно.
+    await _putTipsMember(employee, startedAt);
+    return id;
+  }
+
+  /// Сотрудник появляется в списке «кому оставить чаевые» у гостя, когда
+  /// начинает смену. Отдельной записью, а не в транзакции смены: если
+  /// правила базы для meta/tipsTeam ещё не выложены, учёт рабочего времени
+  /// не должен ломаться из-за чаевых. Расхождения чинит [syncTipsTeam].
+  Future<void> _putTipsMember(Employee employee, DateTime since) async {
+    try {
+      await TipsService.teamRef.set({
+        'members': {employee.id: TipsService.memberOf(employee, since).toMap()},
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  /// Пересобирает список «кто на смене» для чаевых по открытым личным
+  /// сменам. Вызывается при старте кассы: чинит смены, открытые до
+  /// обновления, и убирает тех, чью смену закрыли вручную в табеле.
+  Future<void> syncTipsTeam() async {
+    final open = await AppScope.col('staffShifts').where('status', isEqualTo: 'open').get();
+    final employees = {for (final e in await employeesOnce()) e.id: e};
+    final members = <String, dynamic>{};
+    for (final d in open.docs) {
+      final shift = StaffShiftModel.fromDoc(d);
+      final e = employees[shift.employeeId];
+      if (e == null) continue;
+      members[e.id] = TipsService.memberOf(e, shift.startedAt).toMap();
+    }
+    // set без merge: состав заменяется целиком, лишние записи уходят.
+    await TipsService.teamRef.set({
+      'members': members,
+      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    });
   }
 
   /// Заканчивает личную смену. [endedAt] и [manual] — для ручной правки
@@ -788,7 +833,7 @@ class FirestoreService {
     final end = endedAt ?? DateTime.now();
     final shiftRef = AppScope.col('staffShifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('staffShiftState');
-    await _db.runTransaction((tx) async {
+    final wasCurrent = await _db.runTransaction<bool>((tx) async {
       final stateDoc = await tx.get(stateRef);
       tx.update(shiftRef, {
         'status': 'closed',
@@ -800,8 +845,23 @@ class FirestoreService {
       if (openByEmployee[employeeId] == shiftId) {
         openByEmployee[employeeId] = null;
         tx.set(stateRef, {'openByEmployee': openByEmployee}, SetOptions(merge: true));
+        return true;
       }
+      return false;
     });
+    // Ушёл со смены — гость больше не видит его в выборе, кому чаевые.
+    // Только если закрыли ТЕКУЩУЮ смену: админ, дозакрывающий в табеле
+    // вчерашнюю забытую смену, не должен убрать того, кто работает сейчас.
+    if (wasCurrent) _removeTipsMember(employeeId).ignore();
+  }
+
+  Future<void> _removeTipsMember(String employeeId) async {
+    try {
+      await TipsService.teamRef.set({
+        'members': {employeeId: FieldValue.delete()},
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      }, SetOptions(merge: true));
+    } catch (_) {}
   }
 
   /// Стрим текущей открытой личной смены ОДНОГО сотрудника — для
@@ -976,6 +1036,14 @@ class FirestoreService {
   Stream<List<Employee>> employeesStream() {
     return AppScope.col('employees').snapshots().map(
         (snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList());
+  }
+
+  /// Список сотрудников разово — для отчётов. Не `employeesStream().first`:
+  /// первый снимок подписки отдаётся из локального кэша, и сотрудник,
+  /// заведённый на другом планшете, в «Зарплату» не попадал.
+  Future<List<Employee>> employeesOnce() async {
+    final snap = await AppScope.col('employees').get();
+    return snap.docs.map((d) => Employee.fromDoc(d)).toList();
   }
 
   /// Кто может стоять на смене — все, кроме администраторов.

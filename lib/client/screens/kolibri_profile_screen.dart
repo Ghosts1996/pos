@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../services/venue_service.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -120,7 +121,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               ? 'У вас сейчас открыт стол в этом заведении. Приложение '
                   'забудет текущее заведение и после перезапуска перестанет '
                   'его показывать — сам счёт при этом останется открытым, '
-                  'закрыть его сможет кальянщик. Сменить всё равно?'
+                  'закрыть его сможет ${VenueService.instance.terms.staff}. Сменить всё равно?'
               : 'Приложение забудет текущее заведение и после перезапуска снова '
                   'спросит, в каком заведении сети вы находитесь.',
         ),
@@ -255,9 +256,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               // Про чужой профиль не рассказываем ничего — ни имени, ни
               // баланса: раньше здесь показывался бонусный счёт другого
               // человека любому, кто угадал его номер телефона.
-              content: const Text(
+              content: Text(
                 'На этот номер уже есть профиль. Чтобы его бонусы и история '
-                'появились на этом устройстве, назовите кальянщику номер и '
+                'появились на этом устройстве, назовите ${VenueService.instance.terms.staffDat} номер и '
                 '«ID устройства» ниже — он объединит профили на кассе за пару '
                 'секунд.',
               ),
@@ -466,7 +467,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                     child: Text(
                       'Бонусы копятся на этом устройстве и находятся по вашему номеру '
                       'на кассе. Сменили телефон — назовите номер и покажите ID '
-                      'устройства ниже кальянщику, и мы перенесём историю визитов.',
+                      'устройства ниже ${VenueService.instance.terms.staffDat}, и мы перенесём историю визитов.',
                       style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                     ),
                   ),

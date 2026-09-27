@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import '../models/venue_models.dart';
 
@@ -13,8 +15,19 @@ class VenueService {
   static final VenueService instance = VenueService._();
 
 
-  VenueProfile _cached = const VenueProfile();
+  /// Профиль заведения, последний известный. Слушать через [notifier] —
+  /// экраны, которые зависят от типа заведения или настроек чаевых,
+  /// перерисуются, когда профиль придёт (он приезжает асинхронно, почти
+  /// всегда позже первой отрисовки).
+  final ValueNotifier<VenueProfile> notifier = ValueNotifier(const VenueProfile());
+  VenueProfile get _cached => notifier.value;
+  set _cached(VenueProfile p) => notifier.value = p;
   VenueProfile get cached => _cached;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _watchSub;
+  String _watchedPath = '';
+
+  /// Слова под тип заведения (кальянщик/официант/бармен) — см. VenueTerms.
+  VenueTerms get terms => _cached.terms;
 
   static const _profilePath = 'meta/venueProfile';
 
@@ -26,7 +39,13 @@ class VenueService {
 
   /// Подписка при старте приложения — профиль всегда свежий.
   void watch() {
-    AppScope.doc(_profilePath).snapshots().listen(
+    // watch() зовут и при старте, и фоновые службы — вторая подписка на тот
+    // же документ не нужна. Другое заведение (точка сети) — переподписка.
+    final ref = AppScope.doc(_profilePath);
+    if (_watchSub != null && _watchedPath == ref.path) return;
+    _watchSub?.cancel();
+    _watchedPath = ref.path;
+    _watchSub = ref.snapshots().listen(
           (d) => _cached = VenueProfile.fromMap(d.data()),
           onError: (_) {},
         );

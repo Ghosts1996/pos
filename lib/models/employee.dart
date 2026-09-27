@@ -26,6 +26,11 @@ class Employee {
   final bool salesPercentEnabled;
   final double salesPercentRate; // %, напр. 5 = 5%
 
+  /// Личная ссылка для чаевых (Нетмонет, CloudTips, страница банка) —
+  /// необязательно. Если задана, гость может перевести чаевые напрямую
+  /// сотруднику, минуя кассу. Без неё чаевые добавляются к счёту.
+  final String tipsLink;
+
   Employee({
     required this.id,
     required this.name,
@@ -39,6 +44,7 @@ class Employee {
     this.overtimeMultiplier = 1.5,
     this.salesPercentEnabled = false,
     this.salesPercentRate = 0,
+    this.tipsLink = '',
   });
 
   /// Хоть один способ расчёта зарплаты настроен — иначе отчёт по сотруднику
@@ -60,6 +66,7 @@ class Employee {
       overtimeMultiplier: (data['overtimeMultiplier'] ?? 1.5).toDouble(),
       salesPercentEnabled: data['salesPercentEnabled'] ?? false,
       salesPercentRate: (data['salesPercentRate'] ?? 0).toDouble(),
+      tipsLink: (data['tipsLink'] ?? '').toString(),
     );
   }
 
@@ -75,6 +82,7 @@ class Employee {
         'overtimeMultiplier': overtimeMultiplier,
         'salesPercentEnabled': salesPercentEnabled,
         'salesPercentRate': salesPercentRate,
+        'tipsLink': tipsLink,
       };
 
   Employee copyWith({
@@ -89,6 +97,7 @@ class Employee {
     double? overtimeMultiplier,
     bool? salesPercentEnabled,
     double? salesPercentRate,
+    String? tipsLink,
   }) {
     return Employee(
       id: id,
@@ -103,6 +112,7 @@ class Employee {
       overtimeMultiplier: overtimeMultiplier ?? this.overtimeMultiplier,
       salesPercentEnabled: salesPercentEnabled ?? this.salesPercentEnabled,
       salesPercentRate: salesPercentRate ?? this.salesPercentRate,
+      tipsLink: tipsLink ?? this.tipsLink,
     );
   }
 }

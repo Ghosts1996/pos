@@ -3,6 +3,7 @@ import '../../models/employee.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_calculator.dart';
+import '../../services/tips_service.dart';
 import '../../utils/constants.dart';
 
 /// Расчёт зарплаты сотрудников за выбранный период: часы (оклад +
@@ -25,6 +26,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
   List<PayrollResult> _results = [];
   List<Employee> _unconfigured = [];
 
+  /// Чаевые «всей смене», которые не на кого было поделить (никто не
+  /// отмечал начало смены), и чаевые по именам, которых больше нет.
+  double _unassignedTips = 0;
+
   @override
   void initState() {
     super.initState();
@@ -40,9 +45,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
       _error = null;
     });
     try {
-      final employees = await _fs.employeesStream().first;
+      final employees = await _fs.employeesOnce();
       final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
       final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
+      // Чаевые не должны ронять весь отчёт: если их не удалось загрузить,
+      // зарплата всё равно посчитается.
+      var tips = const <TipModel>[];
+      try {
+        tips = await TipsService.instance.paidInRange(_rangeStart, _rangeEnd);
+      } catch (_) {}
+      final tipShares = TipsService.sharesByEmployee(tips);
+      final usedTipKeys = <String>{};
 
       // Та же выручка, что в "Отчётах": возвраты и чеки, закрытые без оплаты,
       // в неё не входят (иначе процент с продаж начислялся бы на деньги,
@@ -72,22 +85,35 @@ class _PayrollScreenState extends State<PayrollScreen> {
       final results = <PayrollResult>[];
       final unconfigured = <Employee>[];
       for (final emp in employees) {
+        final empTips = (tipShares[emp.id] ?? 0) + (tipShares['name:${emp.name}'] ?? 0);
+        usedTipKeys.addAll([emp.id, 'name:${emp.name}']);
+        final empShifts = shifts.where((s) => s.employeeId == emp.id).toList();
         if (!emp.payrollConfigured) {
-          unconfigured.add(emp);
+          // Зарплата не настроена, но чаевые ему оставили — их всё равно
+          // нужно выдать, поэтому карточка нужна.
+          if (empTips > 0) {
+            results.add(PayrollCalculator.calculate(
+                employee: emp, closedShifts: empShifts, salesRevenue: 0, tips: empTips));
+          } else {
+            unconfigured.add(emp);
+          }
           continue;
         }
-        final empShifts = shifts.where((s) => s.employeeId == emp.id).toList();
         final revenue =
             (revenueByEmployeeId[emp.id] ?? 0) + (revenueByNameFallback[emp.name] ?? 0);
         results.add(PayrollCalculator.calculate(
-            employee: emp, closedShifts: empShifts, salesRevenue: revenue));
+            employee: emp, closedShifts: empShifts, salesRevenue: revenue, tips: empTips));
       }
+      final unassignedTips = tipShares.entries
+          .where((e) => !usedTipKeys.contains(e.key))
+          .fold<double>(0, (a, e) => a + e.value);
       results.sort((a, b) => b.total.compareTo(a.total));
 
       if (!mounted) return;
       setState(() {
         _results = results;
         _unconfigured = unconfigured;
+        _unassignedTips = unassignedTips;
         _loading = false;
       });
     } catch (e) {
@@ -222,6 +248,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
                     : ListView(
                         children: [
                           _totalsCard(),
+                          if (_unassignedTips > 0.5)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                              child: Text(
+                                'Чаевые без получателя: ${_unassignedTips.toStringAsFixed(0)} '
+                                '${AppConstants.currencySymbol} — «всей смене», когда никто не отмечал '
+                                'начало смены, или сотрудникам, которых уже нет в списке. '
+                                'Поделите их вручную.',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
                           ..._results.map(_employeeCard),
                           if (_unconfigured.isNotEmpty)
                             Padding(
@@ -279,6 +316,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
           '${_numStr(emp.salesPercentRate)}% от ${r.salesRevenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
           '${r.salesPercentPay.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
     }
+    if (r.tips > 0) {
+      rows.add(_row('Чаевые', 'от гостей, не зарплата',
+          '${r.tips.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -300,7 +341,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Итого', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(r.tips > 0 ? 'К выплате' : 'Итого',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
                 Text('${r.total.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ],

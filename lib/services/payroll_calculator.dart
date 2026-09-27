@@ -12,6 +12,10 @@ class PayrollResult {
   final double salesPercentPay;
   final int shiftsCount;
 
+  /// Чаевые за период (оплаченные вместе со счётом, включая долю от
+  /// «чаевых всей смене»). Не зарплата, но выдать их сотруднику нужно.
+  final double tips;
+
   PayrollResult({
     required this.employee,
     required this.normalHours,
@@ -21,10 +25,14 @@ class PayrollResult {
     required this.salesRevenue,
     required this.salesPercentPay,
     required this.shiftsCount,
+    this.tips = 0,
   });
 
   double get totalHours => normalHours + overtimeHours;
-  double get total => hourlyPay + overtimePay + salesPercentPay;
+  double get wages => hourlyPay + overtimePay + salesPercentPay;
+
+  /// К выплате: зарплата + чаевые.
+  double get total => wages + tips;
 }
 
 /// Считает зарплату сотрудника за период по его же закрытым личным сменам и
@@ -46,6 +54,7 @@ class PayrollCalculator {
     required Employee employee,
     required List<StaffShiftModel> closedShifts,
     required double salesRevenue,
+    double tips = 0,
   }) {
     // Границы значений (множитель переработки не меньше 1, процент с продаж
     // 0..100, ставка и порог переработки не отрицательные) проверяются при
@@ -94,6 +103,7 @@ class PayrollCalculator {
       salesRevenue: salesRevenue,
       salesPercentPay: salesPercentPay,
       shiftsCount: closedShifts.where((s) => s.endedAt != null).length,
+      tips: tips,
     );
   }
 }

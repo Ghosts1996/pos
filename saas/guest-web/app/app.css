@@ -138,6 +138,13 @@ label.field span { display: block; font-size: 13px; color: var(--muted); margin-
   font-size: 14px; cursor: pointer;
 }
 .chip.on { background: var(--primary); color: var(--on-primary, #04140E); border-color: var(--primary); }
+/* Чипы-кнопки (чаевые): у <button> свои шрифт и цвет — берём общие. */
+button.chip {
+  width: auto; min-height: 0; justify-content: flex-start; font: inherit; font-size: 14px;
+  font-weight: 400; color: inherit; background: var(--surface-2); padding: 8px 14px;
+}
+button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; }
 
 .item { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .item:last-child { border-bottom: none; }
