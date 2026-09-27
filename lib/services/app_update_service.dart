@@ -398,13 +398,19 @@ class AppUpdateService {
         return;
       }
       if (total > 0 && received != total) throw _UpdateError('файл скачался не полностью');
-      // И APK, и zip — это zip-архивы: начинаются с «PK». Не «PK» —
-      // пришла страница ошибки, а не сборка; ставить её нельзя.
-      if (header.length < 2 || header[0] != 0x50 || header[1] != 0x4B) {
+      // APK и старый zip Windows-сборки — zip-архивы, начинаются с «PK»;
+      // установщик Windows (setup.exe) — с «MZ». Что-то другое — пришла
+      // страница ошибки, а не сборка; ставить её нельзя.
+      final isZip = header.length == 2 && header[0] == 0x50 && header[1] == 0x4B;
+      final isExe = platform == 'windows' && header.length == 2 && header[0] == 0x4D && header[1] == 0x5A;
+      if (!isZip && !isExe) {
         throw _UpdateError('сервер прислал не файл сборки');
       }
-      if (await target.exists()) await target.delete();
-      await part.rename(target.path);
+      final dest = isExe ? _installerFor(target) : target;
+      for (final old in {target, _installerFor(target)}) {
+        if (await old.exists()) await old.delete();
+      }
+      await part.rename(dest.path);
       state.value = AppUpdateState(AppUpdatePhase.ready, info: info);
       if (_isForeground()) {
         await install();
@@ -438,7 +444,8 @@ class AppUpdateService {
   Future<void> install() async {
     final info = state.value.info;
     if (info == null) return;
-    final file = await _fileFor(info.buildNumber);
+    var file = await _fileFor(info.buildNumber);
+    if (platform == 'windows' && await _installerFor(file).exists()) file = _installerFor(file);
     if (!await file.exists()) {
       state.value = AppUpdateState(AppUpdatePhase.available, info: info);
       return;
@@ -497,7 +504,21 @@ class AppUpdateService {
     }
   }
 
+  /// Тот же файл обновления, но установщиком (setup.exe вместо zip).
+  static File _installerFor(File f) => File(f.path.replaceAll(RegExp(r'\.zip$'), '.exe'));
+
   Future<void> _installWindows(File zip) async {
+    // Установщик (сборки с setup.exe): ставит тихо поверх той же папки и
+    // сам запускает кассу снова (см. [Run] с Check: WizardSilent в CI).
+    if (zip.path.toLowerCase().endsWith('.exe')) {
+      await Process.start(
+        zip.path,
+        ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'],
+        mode: ProcessStartMode.detached,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      exit(0);
+    }
     final exe = Platform.resolvedExecutable;
     final dir = File(exe).parent.path;
     final script = File('${zip.parent.path}\\apply-update.ps1');
@@ -552,7 +573,7 @@ Start-Process -FilePath \$exe -WorkingDirectory \$dest
       final dir = await _dirProvider();
       if (!await dir.exists()) return;
       await for (final f in dir.list()) {
-        final m = RegExp(r'update-(\d+)\.(apk|zip)(\.part)?$').firstMatch(f.path);
+        final m = RegExp(r'update-(\d+)\.(apk|zip|exe)(\.part)?$').firstMatch(f.path);
         if (m == null) continue;
         final n = int.parse(m.group(1)!);
         if (n <= currentBuild || m.group(3) != null) await _deleteQuietly(f);

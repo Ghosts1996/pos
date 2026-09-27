@@ -878,21 +878,82 @@ jobs:
           ls -la "$DIR"
           echo "path=$DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Zip Release folder
+      # Установщик setup.exe вместо zip-архива: касса ставится как обычная
+      # программа — ярлыки на рабочем столе и в «Пуске», удаление через
+      # «Приложения» Windows, повторная установка обновляет поверх (AppId
+      # постоянный). Ставится в профиль пользователя без прав
+      # администратора. Рядом с exe кладём библиотеки Visual C++ — без них
+      # на «чистом» моноблоке касса не запускается.
+      - name: Build Windows installer (setup.exe)
         id: zip
         shell: pwsh
         run: |
-          $out = "${{ steps.outdir.outputs.path }}"
-          $zipPath = "build/windows/${{ inputs.job_id_pos_windows }}.zip"
-          Compress-Archive -Path "$out/*" -DestinationPath $zipPath -Force
-          # Пустой или несозданный архив — ошибка здесь, с понятной причиной,
-          # а не «нет такого файла» на шаге выкладки.
-          if (-not (Test-Path $zipPath) -or (Get-Item $zipPath).Length -lt 1MB) {
-            Write-Error "Архив Windows-сборки не создан или подозрительно мал: $zipPath"
+          $out = (Resolve-Path "${{ steps.outdir.outputs.path }}").Path
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (Test-Path $src) { Copy-Item $src $out -Force }
+          }
+          $exe = (Get-ChildItem $out -Filter *.exe | Select-Object -First 1).Name
+          if (-not $exe) { Write-Error "В папке сборки нет exe"; exit 1 }
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $iscc)) { Write-Error "Inno Setup не установлен"; exit 1 }
+
+          $dist = (New-Item -ItemType Directory -Force -Path "build/windows/installer").FullName
+          $name = "${{ inputs.job_id_pos_windows }}"
+          $iss = @"
+          [Setup]
+          AppId={{6F1C2A9E-3B7D-4E5A-9C41-5A7D3E2B9C10}
+          AppName=Hookah POS
+          AppVersion=1.0.${{ github.run_number }}
+          AppPublisher=Hookah POS
+          DefaultDirName={autopf}\Hookah POS
+          DefaultGroupName=Hookah POS
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=lowest
+          OutputDir=$dist
+          OutputBaseFilename=$name
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          UninstallDisplayIcon={app}\$exe
+          CloseApplications=yes
+
+          [Languages]
+          Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
+
+          [Files]
+          Source: "$out\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\Hookah POS"; Filename: "{app}\$exe"
+          Name: "{autodesktop}\Hookah POS"; Filename: "{app}\$exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\$exe"; Description: "Запустить Hookah POS"; Flags: nowait postinstall skipifsilent
+          ; Тихая установка — это обновление изнутри кассы: запускаем её снова.
+          Filename: "{app}\$exe"; Flags: nowait; Check: WizardSilent
+          "@
+          $issPath = Join-Path $dist "hookah_pos.iss"
+          # Inno Setup читает .iss с BOM как UTF-8 — иначе русские подписи
+          # в установщике превратятся в «кракозябры».
+          [System.IO.File]::WriteAllText($issPath, $iss, (New-Object System.Text.UTF8Encoding $true))
+          & $iscc $issPath
+          if ($LASTEXITCODE -ne 0) { Write-Error "ISCC завершился с ошибкой $LASTEXITCODE"; exit 1 }
+
+          $setup = Join-Path $dist "$name.exe"
+          if (-not (Test-Path $setup) -or (Get-Item $setup).Length -lt 1MB) {
+            Write-Error "Установщик не создан или подозрительно мал: $setup"
             exit 1
           }
-          Write-Host ("Архив: {0} ({1:N1} МБ)" -f $zipPath, ((Get-Item $zipPath).Length / 1MB))
-          echo "path=$zipPath" >> $env:GITHUB_OUTPUT
+          Write-Host ("Установщик: {0} ({1:N1} МБ)" -f $setup, ((Get-Item $setup).Length / 1MB))
+          echo "path=$setup" >> $env:GITHUB_OUTPUT
 
       - name: Upload Windows build artifact (GitHub Actions run log)
         uses: actions/upload-artifact@v4
