@@ -3,6 +3,8 @@ import '../../models/client_models.dart';
 import '../../models/employee.dart';
 import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Экран кальянной/бара (KDS): очередь заказов гостей и вызовов из зала
 /// крупными карточками — чтобы видеть с расстояния и работать в одно касание.
@@ -93,8 +95,8 @@ class KdsScreen extends StatelessWidget {
       color: waiting >= _slaMinutes ? AppColors.danger : AppColors.success,
       title: o.tableName.isEmpty ? 'Стол' : o.tableName,
       subtitle: preparing
-          ? 'Готовим · ${o.total.toStringAsFixed(0)} ₽'
-          : 'Заказ из приложения · ${o.total.toStringAsFixed(0)} ₽',
+          ? 'Готовим · ${rub(o.total)}'
+          : 'Заказ из приложения · ${rub(o.total)}',
       body: o.items.map((i) => '${i.name} ×${i.qty}').join('\n'),
       minutes: waiting,
       actionLabel: preparing ? 'Готово' : 'Принять в чек',
@@ -107,7 +109,7 @@ class KdsScreen extends StatelessWidget {
           }
         } catch (e) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
           }
         }
       },

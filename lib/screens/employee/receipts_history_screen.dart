@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
-import '../../utils/constants.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 enum _Period { today, week, month, custom }
 
@@ -98,7 +99,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
       builder: (_) => AlertDialog(
         title: const Text('Возврат чека'),
         content: Text(
-            'Оформить возврат чека на ${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol} '
+            'Оформить возврат чека на ${rub(s.totalWithDiscount)} '
             '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
@@ -121,7 +122,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось оформить возврат: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось оформить возврат: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -154,7 +155,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                             dense: true,
                             title: Text(i.name),
                             trailing: Text(
-                                '${i.qty} × ${i.price.toStringAsFixed(0)} = ${i.total.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+                                '${i.qty} × ${i.price.toStringAsFixed(0)} = ${rub(i.total)}'),
                           ))
                       .toList(),
                 ),
@@ -164,7 +165,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text('К оплате', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text('${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                  Text(rub(s.totalWithDiscount),
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 ],
               ),
@@ -253,7 +254,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 }
                 if (snap.hasError) {
                   return Center(
-                      child: Text('Ошибка загрузки: ${snap.error}',
+                      child: Text('Ошибка загрузки: ${humanError(snap.error, lower: true)}',
                           style: const TextStyle(color: AppColors.danger)));
                 }
                 final sessions = snap.data ?? [];
@@ -276,7 +277,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                           '${s.refunded ? '  ·  возврат оформлен' : ''}',
                         ),
                         trailing: Text(
-                          '${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                          rub(s.totalWithDiscount),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             decoration: s.refunded ? TextDecoration.lineThrough : null,

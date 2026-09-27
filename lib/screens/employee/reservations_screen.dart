@@ -14,6 +14,8 @@ import '../../utils/phone_utils.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/table_picker_map.dart';
 import 'table_detail_screen.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
 /// Сюда мгновенно прилетают брони из клиентского приложения
@@ -229,7 +231,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         stream: _service.dayStream(_day),
         builder: (context, snap) {
           if (snap.hasError) {
-            return Center(child: Text('Ошибка: ${snap.error}'));
+            return Center(child: Text('Ошибка: ${humanError(snap.error, lower: true)}'));
           }
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
@@ -316,7 +318,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             const SizedBox(height: 8),
             Text(
               'Предзаказ: ${r.preOrder.map((i) => '${i.name} ×${i.qty}').join(', ')} '
-              '— ${r.preOrderTotal.toStringAsFixed(0)} ₽',
+              '— ${rub(r.preOrderTotal)}',
               style: const TextStyle(color: AppColors.success, fontSize: 13),
             ),
           ],
@@ -384,7 +386,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       await action();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
   }
@@ -410,7 +412,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
   }

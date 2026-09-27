@@ -6,6 +6,7 @@ import '../../services/payroll_calculator.dart';
 import '../../services/tips_service.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
+import '../../utils/human_error.dart';
 
 /// Расчёт зарплаты сотрудников за выбранный период: часы и смены (ставка
 /// за час или оклад за смену + переработка) — из «Смены сотрудников»,
@@ -124,7 +125,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       // никогда не заканчивается, без единого объяснения.
       if (!mounted) return;
       setState(() {
-        _error = 'Не удалось загрузить: $e';
+        _error = 'Не удалось загрузить: ${humanError(e, lower: true)}';
         _loading = false;
       });
     }

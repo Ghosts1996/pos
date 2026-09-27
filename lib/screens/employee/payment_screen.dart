@@ -17,6 +17,7 @@ import '../../services/guest_link_service.dart';
 import '../../services/referral_service.dart';
 import '../../widgets/bonus_redeem_panel.dart';
 import '../../services/tips_service.dart';
+import '../../utils/human_error.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / за счёт заведения,
@@ -322,7 +323,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось связаться с терминалом: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось связаться с терминалом: ${humanError(e, lower: true)}')));
       }
     } finally {
       if (mounted) setState(() => _terminalBusy = false);
@@ -449,7 +450,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось напечатать чек: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось напечатать чек: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -580,7 +581,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         }
       }
     } catch (e) {
-      _showKassaWarning('Не удалось отправить чек в кассу: $e');
+      _showKassaWarning('Не удалось отправить чек в кассу: ${humanError(e, lower: true)}');
     }
   }
 

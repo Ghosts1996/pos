@@ -9,6 +9,7 @@ import '../../services/notification_service.dart';
 import '../../services/reservation_service.dart';
 import '../../services/venue_service.dart';
 import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// Уведомления гостя без сервера.
 ///
@@ -353,7 +354,7 @@ class KolibriNotifications {
       unawaited(_notify.show(
         id: NotificationService.idFor('bonus_${DateTime.now().millisecondsSinceEpoch}'),
         title: 'Начислено ${bonusesLabel(gained)}',
-        body: 'Баланс: ${profile.bonusBalance.toStringAsFixed(0)} ₽. '
+        body: 'Баланс: ${rub(profile.bonusBalance)}. '
             'Списать можно на кассе при следующем визите.',
       ));
     }, onError: (_) {});

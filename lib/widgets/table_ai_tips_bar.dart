@@ -5,6 +5,8 @@ import '../services/ai/ai_agents.dart';
 import '../services/ai/ai_settings.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/human_error.dart';
+import '../utils/money.dart';
 
 /// Полоса ИИ-подсказок над меню на экране стола.
 ///
@@ -81,7 +83,7 @@ class _TableAiTipsBarState extends State<TableAiTipsBar> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
   }
@@ -116,7 +118,7 @@ class _TableAiTipsBarState extends State<TableAiTipsBar> {
                     side: const BorderSide(color: AppColors.border),
                     onPressed: () => _add(t),
                     label: Text(
-                      '${t.name}${t.price > 0 ? ' · ${t.price.toStringAsFixed(0)} ₽' : ''}'
+                      '${t.name}${t.price > 0 ? ' · ${rub(t.price)}' : ''}'
                       '${t.reason.isEmpty ? '' : ' — ${t.reason}'}',
                       style: const TextStyle(color: AppColors.textPrimary, fontSize: 12),
                     ),
