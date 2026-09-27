@@ -8,6 +8,7 @@ import '../models/menu_models.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
+import '../models/cash_op.dart';
 import '../models/staff_shift_model.dart';
 import '../models/inventory_models.dart';
 import '../utils/constants.dart';
@@ -663,19 +664,63 @@ class FirestoreService {
   /// возврат" у сотрудника, аналог возврата чеков в Restik POS. Чек
   /// остаётся в истории, но помечается как возвращённый и больше не
   /// учитывается в выручке X- и обычных отчётов.
-  Future<void> refundSession(String sessionId) {
-    return AppScope.col('sessions').doc(sessionId).update({
-      'refunded': true,
-      'refundedAt': Timestamp.fromDate(DateTime.now()),
+  ///
+  /// Если за чек платили наличными — эти деньги отдают гостю из кассы:
+  /// в той же транзакции записывается расход «Возврат наличными» в текущую
+  /// смену, и «Наличные в кассе» сразу его учитывают.
+  Future<void> refundSession(String sessionId, {String employeeName = '', String employeeId = ''}) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    final stateRef = AppScope.col('meta').doc('shiftState');
+    await _db.runTransaction((tx) async {
+      final doc = await tx.get(ref);
+      final state = await tx.get(stateRef);
+      final data = doc.data();
+      if (data == null || data['refunded'] == true) return;
+      final cash = ((data['paymentCash'] ?? 0) as num).toDouble();
+      final update = <String, dynamic>{
+        'refunded': true,
+        'refundedAt': Timestamp.fromDate(DateTime.now()),
+        'refundCashOut': cash > 0,
+      };
+      if (cash > 0) {
+        final opRef = AppScope.col('cashOps').doc();
+        tx.set(
+            opRef,
+            CashOp(
+              id: opRef.id,
+              shiftId: (state.data()?['openShiftId'] ?? '').toString(),
+              type: CashOpType.refund,
+              amount: cash,
+              comment: 'Возврат чека · ${(data['tableName'] ?? '').toString()}',
+              employeeName: employeeName,
+              employeeId: employeeId,
+              createdAt: DateTime.now(),
+              sessionId: sessionId,
+            ).toMap());
+        update['refundCashOpId'] = opRef.id;
+      }
+      tx.update(ref, update);
     });
   }
 
   /// Отменить возврат чека (если оформили по ошибке) — снова учитывается
-  /// в отчётах как обычный оплаченный чек.
-  Future<void> undoRefundSession(String sessionId) {
-    return AppScope.col('sessions').doc(sessionId).update({
-      'refunded': false,
-      'refundedAt': null,
+  /// в отчётах как обычный оплаченный чек, а расход наличных по возврату
+  /// помечается отменённым.
+  Future<void> undoRefundSession(String sessionId, {String employeeName = ''}) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final doc = await tx.get(ref);
+      final data = doc.data();
+      if (data == null) return;
+      final opId = (data['refundCashOpId'] ?? '').toString();
+      tx.update(ref, {'refunded': false, 'refundedAt': null, 'refundCashOut': false, 'refundCashOpId': null});
+      if (opId.isNotEmpty) {
+        tx.update(AppScope.col('cashOps').doc(opId), {
+          'cancelled': true,
+          'cancelledBy': employeeName,
+          'cancelledAt': Timestamp.fromDate(DateTime.now()),
+        });
+      }
     });
   }
 
@@ -788,6 +833,8 @@ class FirestoreService {
         openedBy: employeeName,
         openedById: employeeId,
         status: 'open',
+        // Размен — то, что оставили в кассе, закрывая прошлую смену.
+        openingCash: ((data?['cashLeft'] ?? 0) as num).toDouble(),
       );
       tx.set(shiftRef, shift.toMap());
       tx.set(stateRef, {'openShiftId': shiftRef.id});
@@ -807,7 +854,13 @@ class FirestoreService {
   /// meta/shiftState.openShiftId указывающим на уже закрытую смену (см.
   /// комментарий в openShiftIfNeeded выше). Атомарность здесь убирает саму
   /// возможность такого рассинхрона.
-  Future<void> closeShift(String shiftId, String employeeName) async {
+  ///
+  /// [cash] — пересчёт кассы: сколько должно быть, сколько насчитали,
+  /// сколько инкассировать и сколько оставить на размен следующей смене.
+  /// Инкассация при закрытии записывается операцией в эту же смену — в той
+  /// же транзакции, что и закрытие.
+  Future<void> closeShift(String shiftId, String employeeName,
+      {String employeeId = '', ShiftCashClose? cash}) async {
     final now = DateTime.now();
     final shiftRef = AppScope.col('shifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('shiftState');
@@ -817,12 +870,82 @@ class FirestoreService {
         'status': 'closed',
         'closedAt': Timestamp.fromDate(now),
         'closedBy': employeeName,
+        if (cash != null) ...{
+          'closingExpectedCash': cash.expected,
+          'closingCountedCash': cash.counted,
+          'closingCollected': cash.collect,
+          'closingLeftCash': cash.leave,
+        },
       });
-      final data = stateDoc.data();
-      if (data?['openShiftId'] == shiftId) {
-        tx.set(stateRef, {'openShiftId': null});
+      if (cash != null && cash.collect > 0) {
+        final opRef = AppScope.col('cashOps').doc();
+        tx.set(
+            opRef,
+            CashOp(
+              id: opRef.id,
+              shiftId: shiftId,
+              type: CashOpType.collection,
+              amount: cash.collect,
+              comment: 'При закрытии смены',
+              employeeName: employeeName,
+              employeeId: employeeId,
+              createdAt: now,
+            ).toMap());
       }
+      final data = stateDoc.data();
+      tx.set(
+          stateRef,
+          {
+            if (data?['openShiftId'] == shiftId) 'openShiftId': null,
+            // Что оставили в кассе — размен следующей смены.
+            if (cash != null) 'cashLeft': cash.leave,
+          },
+          SetOptions(merge: true));
     });
+  }
+
+  // ---------- НАЛИЧНЫЕ В КАССЕ ----------
+
+  static final _cashOpsS = SharedStreams<List<CashOp>>();
+
+  /// Операции с наличными смены (инкассации, внесения, выплаты, возвраты)
+  /// — живые, по времени. Одно равенство — индекс не нужен.
+  Stream<List<CashOp>> cashOpsStream(String shiftId) => _cashOpsS.get(
+      _k(shiftId),
+      () => AppScope.col('cashOps').where('shiftId', isEqualTo: shiftId).snapshots().map(
+          (snap) => snap.docs.map(CashOp.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt))));
+
+  Future<List<CashOp>> cashOpsForShift(String shiftId) async {
+    final snap = await AppScope.col('cashOps').where('shiftId', isEqualTo: shiftId).get();
+    return snap.docs.map(CashOp.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// Операции за период — для отчёта «по дате и времени».
+  Future<List<CashOp>> cashOpsInRange(DateTime start, DateTime end) async {
+    final snap = await AppScope.col('cashOps')
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('createdAt', isLessThan: Timestamp.fromDate(end))
+        .get();
+    return snap.docs.map(CashOp.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  Future<void> addCashOp(CashOp op) async {
+    final ref = AppScope.col('cashOps').doc();
+    await ref.set(op.toMap());
+  }
+
+  /// Ошибочную операцию не удаляем, а отменяем — она остаётся в истории.
+  Future<void> cancelCashOp(String opId, String employeeName) async {
+    await AppScope.col('cashOps').doc(opId).update({
+      'cancelled': true,
+      'cancelledBy': employeeName,
+      'cancelledAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
+
+  /// Поправить размен на начало смены (если пересчитали и там не столько).
+  Future<void> setOpeningCash(String shiftId, double amount) async {
+    await AppScope.col('shifts').doc(shiftId).update({'openingCash': amount});
   }
 
   /// Последние N смен (для просмотра прошлых смен в X-отчёте), отсортированы
@@ -1577,4 +1700,21 @@ class TableFullException implements Exception {
 class TableOccupiedDeleteException implements Exception {
   @override
   String toString() => 'Нельзя удалить стол с активным чеком — сначала закройте счёт';
+}
+
+/// Пересчёт кассы при закрытии смены (см. FirestoreService.closeShift).
+class ShiftCashClose {
+  /// Сколько должно было быть по учёту.
+  final double expected;
+
+  /// Сколько насчитали на самом деле.
+  final double counted;
+
+  /// Сколько забрали (инкассация при закрытии).
+  final double collect;
+
+  /// Сколько оставили на размен следующей смене.
+  final double leave;
+
+  const ShiftCashClose({required this.expected, required this.counted, required this.collect, required this.leave});
 }

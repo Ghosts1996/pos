@@ -1233,4 +1233,21 @@ describe("Чаевые: гость выбирает, кому из смены, �
     await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/tips/pos1"), tip({ clientUid: "", source: "pos" })));
     await assertSucceeds(updateDoc(doc(emp, "tenants/tenantA/tips/pos1"), { status: "paid", paidVia: "cash" }));
   });
+
+  it("наличные в кассе: касса записывает операции, отменяет флагом, удалить и переписать нельзя", async () => {
+    const emp = ctxFor("empA");
+    const op = (over = {}) => ({ shiftId: "sh1", type: "collection", amount: 3000, comment: "", employeeName: "Анна",
+      employeeId: "e1", createdAt: new Date(), cancelled: false, sessionId: "", ...over });
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/cashOps/op1"), op()));
+    await assertFails(setDoc(doc(emp, "tenants/tenantA/cashOps/bad1"), op({ amount: -5 })));
+    await assertFails(setDoc(doc(emp, "tenants/tenantA/cashOps/bad2"), op({ type: "gift" })));
+    await assertFails(setDoc(doc(emp, "tenants/tenantA/cashOps/bad3"), op({ cancelled: true })));
+    await assertFails(updateDoc(doc(emp, "tenants/tenantA/cashOps/op1"), { amount: 1 }));
+    await assertSucceeds(updateDoc(doc(emp, "tenants/tenantA/cashOps/op1"),
+      { cancelled: true, cancelledBy: "Анна", cancelledAt: new Date() }));
+    await assertFails(updateDoc(doc(emp, "tenants/tenantA/cashOps/op1"), { cancelled: false }));
+    await assertFails(deleteDoc(doc(emp, "tenants/tenantA/cashOps/op1")));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/cashOps/op1")));
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/cashOps/op2"), op()));
+  });
 });

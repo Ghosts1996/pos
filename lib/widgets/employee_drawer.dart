@@ -19,6 +19,7 @@ import '../services/ai/ai_agents.dart';
 import '../models/client_models.dart';
 import 'ai_assistant_sheet.dart';
 import '../utils/human_error.dart';
+import 'close_shift_dialog.dart';
 
 /// Меню сотрудника — боковая панель: зал, брони, очередь заказов, лист
 /// ожидания, смена, X-отчёт, история чеков, склад и ассистент зала.
@@ -54,36 +55,10 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     if (mounted) setState(() => _busy = false);
   }
 
+  /// Закрытие кассовой смены — с пересчётом наличных, как в X-отчёте.
   Future<void> _closeShift(ShiftModel shift) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Закрыть смену?'),
-        content: const Text(
-            'После закрытия смены новые продажи будут учитываться уже в следующей смене. '
-            'Отчёт по этой смене останется доступен в разделе "Прошлые смены".'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true), child: const Text('Закрыть смену')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
     setState(() => _busy = true);
-    try {
-      await _fs.closeShift(shift.id, widget.employee.name);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Смена закрыта')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: ${humanError(e, lower: true)}')));
-      }
-    }
+    await closeShiftWithCashCount(context, shift: shift, employee: widget.employee);
     if (mounted) setState(() => _busy = false);
   }
 

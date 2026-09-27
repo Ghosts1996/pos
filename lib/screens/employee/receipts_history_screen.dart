@@ -100,7 +100,8 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
         title: const Text('Возврат чека'),
         content: Text(
             'Оформить возврат чека на ${rub(s.totalWithDiscount)} '
-            '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'),
+            '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'
+            '${s.paymentCash > 0 ? '\nНаличные ${rub(s.paymentCash)} будут списаны из кассы как возврат гостю.' : ''}'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(
@@ -113,7 +114,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
     );
     if (confirm != true) return;
     try {
-      await _fs.refundSession(s.id);
+      await _fs.refundSession(s.id, employeeName: widget.employee.name, employeeId: widget.employee.id);
       _load();
       if (mounted) {
         ScaffoldMessenger.of(context)
