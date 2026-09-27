@@ -932,7 +932,10 @@ exports.completeBuildJob = onRequest({ region: REGION, secrets: [BUILD_CALLBACK_
     res.status(405).send("method not allowed");
     return;
   }
-  if (req.get("x-callback-secret") !== BUILD_CALLBACK_SECRET.value()) {
+  // Сравнение за постоянное время — по времени ответа секрет не подобрать.
+  const given = Buffer.from(String(req.get("x-callback-secret") || ""), "utf8");
+  const expected = Buffer.from(String(BUILD_CALLBACK_SECRET.value() || ""), "utf8");
+  if (given.length !== expected.length || expected.length === 0 || !crypto.timingSafeEqual(given, expected)) {
     res.status(403).send("forbidden");
     return;
   }

@@ -7,6 +7,8 @@ const path = require("path");
 const admin = require("firebase-admin");
 const { execFile } = require("child_process");
 const tls = require("tls");
+const dns = require("dns");
+const net = require("net");
 const zlib = require("zlib");
 
 /**
@@ -113,6 +115,16 @@ const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
 const BRANDING_UPLOADS_DIR = path.join(__dirname, "branding-uploads");
 const BRANDING_MAX_BYTES = 5 * 1024 * 1024;
 const BRANDING_CONTENT_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+/** Файл действительно картинка заявленного типа — по сигнатуре, а не по
+ *  заголовку Content-Type, который присылает клиент: иначе под видом
+ *  «логотипа» можно было выложить на домен платформы HTML или скрипт. */
+function imageMatchesType(buffer, ext) {
+  if (ext === "png") return buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (ext === "jpg") return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (ext === "webp") return buffer.length > 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
+  return false;
+}
 
 // Тот же список, что и RESERVED_SLUGS в saas/functions/index.js, плюс
 // "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса.
@@ -237,8 +249,18 @@ function normalizeSlug(raw) {
 function randomInviteCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
-  for (let i = 0; i < 8; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  // crypto.randomInt, а не Math.random: код приглашения открывает доступ
+  // кассы ко всем данным заведения — он должен быть непредсказуемым.
+  for (let i = 0; i < 8; i++) out += alphabet[crypto.randomInt(alphabet.length)];
   return out;
+}
+
+/** Сравнение секретов за постоянное время — по времени ответа нельзя
+ *  подбирать секрет посимвольно. */
+function secretsEqual(given, expected) {
+  const a = Buffer.from(String(given || ""), "utf8");
+  const b = Buffer.from(String(expected || ""), "utf8");
+  return a.length === b.length && b.length > 0 && crypto.timingSafeEqual(a, b);
 }
 
 function randomDemoSuffix() {
@@ -252,7 +274,7 @@ async function verifyAuth(req) {
   try {
     return await getFirebaseApp().auth().verifyIdToken(idToken);
   } catch (e) {
-    throw new HttpError(401, "невалидный токен: " + e.message);
+    throw new HttpError(401, "Сеанс истёк или недействителен — войдите заново");
   }
 }
 
@@ -1113,7 +1135,8 @@ async function handleCreateBuildJob(req, res) {
   const decoded = await verifyAuth(req);
   const body = await parseJsonBody(req);
   const { tenantId } = body;
-  if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
+  // Формат — до любых проверок: tenantId уходит в параметры сборки в CI.
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
   // Супер-админ платформы может пересобрать APK ЛЮБОГО заведения (например
   // из панели платформы, кнопка "Пересобрать" у неудачной сборки в общем
   // мониторе) — в дополнение к обычному владельцу/админу самого заведения,
@@ -2053,7 +2076,7 @@ async function handleRecalculateUsage(req, res) {
  */
 async function handleCompleteBuildJob(req, res) {
   const expected = process.env.BUILD_CALLBACK_SECRET || "";
-  if (!expected || req.headers["x-callback-secret"] !== expected) {
+  if (!expected || !secretsEqual(req.headers["x-callback-secret"], expected)) {
     throw new HttpError(403, "forbidden");
   }
   const body = await parseJsonBody(req);
@@ -2353,7 +2376,7 @@ async function handleUploadBrandingLogo(req, res) {
   const decoded = await verifyAuth(req);
   const requestUrl = new URL(req.url, "http://localhost");
   const tenantId = requestUrl.searchParams.get("tenantId") || "";
-  if (!tenantId) throw new HttpError(400, "не указан tenantId");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "не указан tenantId");
   await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
 
   const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
@@ -2362,6 +2385,7 @@ async function handleUploadBrandingLogo(req, res) {
 
   const buffer = await readRawBody(req, BRANDING_MAX_BYTES);
   if (!buffer.length) throw new HttpError(400, "пустой файл");
+  if (!imageMatchesType(buffer, ext)) throw new HttpError(400, "файл не похож на картинку PNG, JPEG или WebP");
 
   const dir = path.join(BRANDING_UPLOADS_DIR, tenantId);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -2406,6 +2430,7 @@ async function handleUploadMenuImage(req, res) {
   if (!ext) throw new HttpError(400, "поддерживаются только PNG, JPEG и WebP");
   const buffer = await readRawBody(req, BRANDING_MAX_BYTES);
   if (!buffer.length) throw new HttpError(400, "пустой файл");
+  if (!imageMatchesType(buffer, ext)) throw new HttpError(400, "файл не похож на картинку PNG, JPEG или WebP");
 
   const dir = path.join(BRANDING_UPLOADS_DIR, tenantId, "menu", folder);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -4113,6 +4138,51 @@ function resolveAiVendor(settings, secrets, slot) {
  * модель или огромный лимит ответа, и у него лимит запросов — иначе
  * посторонний мог бы расходовать баланс ИИ заведения.
  */
+/** Адрес из IPv4/IPv6, который нельзя отдавать в руки владельца заведения:
+ *  loopback, частные сети, link-local (метаданные облака), CGNAT,
+ *  multicast и служебные диапазоны. */
+function isPrivateAddress(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
+  }
+  const v6 = ip.toLowerCase();
+  if (v6 === "::" || v6 === "::1") return true;
+  const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateAddress(mapped[1]);
+  return /^(fc|fd|fe8|fe9|fea|feb|ff)/.test(v6);
+}
+
+/** Адрес провайдера ИИ задаёт владелец заведения — сервер не должен по его
+ *  команде ходить во внутреннюю сеть (127.0.0.1, соседние сервисы,
+ *  метаданные облака) и отдавать ответ обратно (SSRF). Только https и
+ *  только внешние адреса; для тестов с локальным провайдером —
+ *  AI_PROXY_ALLOW_PRIVATE=1 (в бою не задавать). */
+async function assertPublicAiUrl(raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch (_) {
+    throw new HttpError(400, "Адрес провайдера ИИ указан неверно");
+  }
+  if (process.env.AI_PROXY_ALLOW_PRIVATE === "1") return;
+  if (u.protocol !== "https:") throw new HttpError(400, "Адрес провайдера ИИ должен начинаться с https://");
+  if (u.username || u.password) throw new HttpError(400, "Адрес провайдера ИИ не должен содержать логин и пароль");
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  let addresses;
+  try {
+    addresses = net.isIP(host) ? [host] : (await dns.promises.lookup(host, { all: true })).map((a) => a.address);
+  } catch (_) {
+    throw new HttpError(502, "Адрес провайдера ИИ не найден — проверьте его в настройках ИИ");
+  }
+  if (!addresses.length || addresses.some(isPrivateAddress)) {
+    throw new HttpError(400, "Адрес провайдера ИИ должен быть внешним сервисом, а не внутренним адресом");
+  }
+}
+
 async function handleAiProxy(req, res) {
   const decoded = await verifyAuth(req);
   const now = Date.now();
@@ -4161,6 +4231,7 @@ async function handleAiProxy(req, res) {
   if (settings.enabled !== true) throw new HttpError(403, "ИИ в этом заведении выключен");
   const vendor = resolveAiVendor(settings, secretsDoc.data() || {}, slot);
   if (!vendor || !vendor.apiKey || !vendor.baseUrl) throw new HttpError(400, "ИИ заведения не настроен");
+  await assertPublicAiUrl(vendor.baseUrl);
 
   // Модель и лимит ответа — только из настроек заведения.
   if (!vendor.models.includes(payload.model)) payload.model = vendor.models[0];
@@ -4179,8 +4250,11 @@ async function handleAiProxy(req, res) {
     const upstreamPath = fmt === "anthropic"
       ? (vendor.baseUrl.endsWith("/v1") ? "messages" : "v1/messages")
       : "chat/completions";
+    // redirect: "error" — иначе внешний адрес мог бы переадресовать запрос
+    // во внутреннюю сеть уже после проверки выше.
     upstream = await fetch(`${vendor.baseUrl}/${upstreamPath}`, {
       method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(60000),
+      redirect: "error",
     });
   } catch (e) {
     throw new HttpError(502, `Провайдер ИИ не ответил: ${e.message || e}`);
@@ -4315,10 +4389,17 @@ const ROUTES = {
 
 function runHandler(handler, req, res) {
   handler(req, res).catch((e) => {
-    const status = e instanceof HttpError ? e.status : 500;
+    const known = e instanceof HttpError;
+    // Непредусмотренная ошибка (Firestore, сеть, баг) — подробности только в
+    // журнал сервера: наружу они выдавали бы внутреннее устройство
+    // платформы (пути, коллекции, тексты исключений библиотек).
+    if (!known) console.error(`saas-gateway ${(req.url || "").split("?")[0]}:`, e && e.stack ? e.stack : e);
     // gateway: true — ошибка самого сервиса, а не проксированного ответа
     // провайдера (см. handleAiProxy и _errorFor в tooken_client.dart).
-    sendJson(res, status, { error: e.message || String(e), gateway: true });
+    sendJson(res, known ? e.status : 500, {
+      error: known ? e.message : "Внутренняя ошибка сервера — попробуйте ещё раз чуть позже",
+      gateway: true,
+    });
   });
 }
 

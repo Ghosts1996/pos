@@ -159,6 +159,24 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    // ---- Поля профиля гостя, которые ведёт ТОЛЬКО касса ----
+    // Бонусы, сумма трат (от неё уровень и кешбэк), число визитов, уровень
+    // и скидка дисконтной карты. Раньше гость не мог поменять часть из них
+    // в существующем профиле, но мог СОЗДАТЬ профиль сразу с любым
+    // bonusBalance/totalSpent и потом оплатить ими счёт на кассе.
+    function guestProfileCleanOnCreate(d) {
+      return d.get('bonusBalance', 0) == 0 &&
+        d.get('totalSpent', 0) == 0 &&
+        d.get('visits', 0) == 0 &&
+        d.get('discountPercent', 0) == 0 &&
+        d.get('discountCardId', '') in ['', null] &&
+        !('tier' in d);
+    }
+    function guestProfileCleanOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId']);
+    }
+
     // ---- users: свой профиль читает/правит сам, супер-админ — любой ----
     match /users/{uid} {
       allow read: if isSelf(uid) || isSuperAdmin();
@@ -369,16 +387,15 @@ service cloud.firestore {
            get(/databases/$(database)/documents/tenants/$(tid)/sessionClaims/$(sid)).data.uid == uid);
       }
 
-      allow create: if isChainStaff(chainId) || (isSelf(uid) && chainSessionClaimOk(''));
+      allow create: if isChainStaff(chainId) ||
+        (isSelf(uid) && chainSessionClaimOk('') && guestProfileCleanOnCreate(request.resource.data));
       allow update: if isChainStaff(chainId) ||
         (isSelf(uid) &&
          chainSessionClaimOk(resource.data.get('activeSessionId', '')) &&
          (!('phone' in request.resource.data) ||
           resource.data.get('phone', '') == '' ||
           request.resource.data.phone == resource.data.phone) &&
-         (!('bonusBalance' in request.resource.data.diff(resource.data).affectedKeys())) &&
-         (!('tier' in request.resource.data.diff(resource.data).affectedKeys())) &&
-         (!('totalSpent' in request.resource.data.diff(resource.data).affectedKeys())));
+         guestProfileCleanOnUpdate());
       allow delete: if isChainStaff(chainId);
     }
 
@@ -565,16 +582,15 @@ service cloud.firestore {
            get(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(sid)).data.uid == uid);
       }
 
-      allow create: if isStaff(tenantId) || (isSelf(uid) && sessionClaimOk(''));
+      allow create: if isStaff(tenantId) ||
+        (isSelf(uid) && sessionClaimOk('') && guestProfileCleanOnCreate(request.resource.data));
       allow update: if isStaff(tenantId) ||
         (isSelf(uid) &&
          sessionClaimOk(resource.data.get('activeSessionId', '')) &&
          (!('phone' in request.resource.data) ||
           resource.data.get('phone', '') == '' ||
           request.resource.data.phone == resource.data.phone) &&
-         (!('bonusBalance' in request.resource.data.diff(resource.data).affectedKeys())) &&
-         (!('tier' in request.resource.data.diff(resource.data).affectedKeys())) &&
-         (!('totalSpent' in request.resource.data.diff(resource.data).affectedKeys())));
+         guestProfileCleanOnUpdate());
       allow delete: if isStaff(tenantId);
     }
 
@@ -791,14 +807,23 @@ service cloud.firestore {
       allow create: if isStaff(tenantId);
       allow update, delete: if false;
     }
+    // Пишут касса и гость ЭТОГО заведения — раньше хватало любого входа в
+    // проект, и посторонний мог засорять журнал ИИ чужого заведения.
     match /tenants/{tenantId}/aiLogs/{doc} {
       allow read: if isStaff(tenantId);
-      allow create: if signedIn();
+      allow create: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow update, delete: if isStaff(tenantId);
     }
+    // Действия ИИ-ассистента (журнал «Активность»). Гость пишет только
+    // свои — с пометкой scope: 'guest' и своим uid: раньше хватало любого
+    // входа в проект, и подброшенная запись выглядела бы как действие
+    // персонала чужого заведения.
     match /tenants/{tenantId}/aiActions/{doc} {
       allow read: if isStaff(tenantId);
-      allow create: if signedIn();
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         request.resource.data.get('scope', '') == 'guest' &&
+         request.resource.data.get('guestUid', '') == request.auth.uid);
       allow update, delete: if isStaff(tenantId);
     }
     match /tenants/{tenantId}/staffNotes/{doc} {
@@ -1026,9 +1051,20 @@ service cloud.firestore {
     }
     // Очередь push: пишут оба приложения (гость — только в СВОЁМ заведении),
     // читает и рассылает Cloud Function.
+    // Гость может только позвать персонал (топики staff*), а не разослать
+    // произвольный текст всем гостям заведения или на чужое устройство.
     match /tenants/{tenantId}/pushQueue/{doc} {
       allow read: if isStaff(tenantId);
-      allow create: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         request.resource.data.get('topic', '') is string &&
+         request.resource.data.get('topic', '').matches('staff(-[A-Za-z0-9_-]+)*') &&
+         !('token' in request.resource.data) &&
+         !('clientUid' in request.resource.data) &&
+         request.resource.data.get('title', '') is string &&
+         request.resource.data.get('title', '').size() <= 120 &&
+         request.resource.data.get('body', '') is string &&
+         request.resource.data.get('body', '').size() <= 500);
       allow update, delete: if false;
     }
   }

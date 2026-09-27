@@ -125,6 +125,30 @@ jobs:
     name: Build ${{ matrix.app }}
 
     steps:
+      # Первым делом — формат всех входных параметров. Их присылает
+      # saas-gateway (он сам генерирует id и проверяет права), но запустить
+      # workflow_dispatch можно и мимо него; ниже часть значений попадает в
+      # shell-команды и пути — поэтому всё, что не похоже на id/код/слаг,
+      # останавливает сборку до того, как она получит доступ к секретам.
+      - name: Validate inputs
+        shell: bash
+        env:
+          IN_TENANT_ID: ${{ inputs.tenant_id }}
+          IN_JOB_POS: ${{ inputs.job_id_pos }}
+          IN_JOB_KOLIBRI: ${{ inputs.job_id_kolibri }}
+          IN_JOB_WIN: ${{ inputs.job_id_pos_windows }}
+          IN_SLUG: ${{ inputs.tenant_slug }}
+          IN_INVITE: ${{ inputs.invite_code }}
+        run: |
+          fail() { echo "::error::Некорректный параметр сборки: $1"; exit 1; }
+          id_ok() { [[ -z "$1" || "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; }
+          id_ok "$IN_TENANT_ID" || fail tenant_id
+          id_ok "$IN_JOB_POS" || fail job_id_pos
+          id_ok "$IN_JOB_KOLIBRI" || fail job_id_kolibri
+          id_ok "$IN_JOB_WIN" || fail job_id_pos_windows
+          [[ -z "$IN_SLUG" || "$IN_SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || fail tenant_slug
+          [[ -z "$IN_INVITE" || "$IN_INVITE" =~ ^[A-Za-z0-9]{4,32}$ ]] || fail invite_code
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -553,7 +577,9 @@ jobs:
           # можно дёрнуть и напрямую), доверять им как части shell-команды
           # нельзя, только как значению переменной окружения.
           TENANT_SLUG: ${{ inputs.tenant_slug }}
-          INVITE_CODE: ${{ inputs.invite_code }}
+          # Код приглашения нужен только кассе: гостевой APK раздаётся публично,
+          # и код в нём открыл бы любому доступ кассы к данным заведения.
+          INVITE_CODE: ${{ matrix.app == 'pos' && inputs.invite_code || '' }}
         run: |
           if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
@@ -563,11 +589,8 @@ jobs:
             echo "::error::Секрет ${{ matrix.appid_secret }} не задан — см. saas/README.md, раздел «APK-конвейер»."
             exit 1
           fi
-          # INVITE_CODE прокидывается и в сборку гостевого приложения тоже —
-          # там она просто не используется (см. lib/client/kolibri_main.dart:
-          # гостю, в отличие от кассы, код приглашения не нужен вообще), так
-          # что проще передавать одинаково в обе, чем городить matrix-условие
-          # только ради одной лишней переменной окружения без эффекта.
+          # INVITE_CODE в гостевой сборке пустой (см. env выше): гостю код
+          # приглашения не нужен, а публичный APK не должен его содержать.
           # --build-number — versionCode APK. Номер запуска растёт с каждой
           # сборкой, поэтому новая версия ставится ПОВЕРХ старой (Android не
           # даёт поставить версию с меньшим versionCode), а IN_APP_UPDATES
@@ -600,11 +623,15 @@ jobs:
         # с пустым jobId и не долетел бы ни до одного buildJobs-документа,
         # оставив запись в консоли вечно висеть "в очереди".
         if: always()
+        env:
+          APP: ${{ matrix.app }}
+          JOB_POS: ${{ inputs.job_id_pos }}
+          JOB_KOLIBRI: ${{ inputs.job_id_kolibri }}
         run: |
-          if [ "${{ matrix.app }}" = "pos" ]; then
-            echo "value=${{ inputs.job_id_pos }}" >> "$GITHUB_OUTPUT"
+          if [ "$APP" = "pos" ]; then
+            echo "value=$JOB_POS" >> "$GITHUB_OUTPUT"
           else
-            echo "value=${{ inputs.job_id_kolibri }}" >> "$GITHUB_OUTPUT"
+            echo "value=$JOB_KOLIBRI" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Rename APK
@@ -712,6 +739,30 @@ jobs:
     name: Build pos (Windows)
 
     steps:
+      # Первым делом — формат всех входных параметров. Их присылает
+      # saas-gateway (он сам генерирует id и проверяет права), но запустить
+      # workflow_dispatch можно и мимо него; ниже часть значений попадает в
+      # shell-команды и пути — поэтому всё, что не похоже на id/код/слаг,
+      # останавливает сборку до того, как она получит доступ к секретам.
+      - name: Validate inputs
+        shell: bash
+        env:
+          IN_TENANT_ID: ${{ inputs.tenant_id }}
+          IN_JOB_POS: ${{ inputs.job_id_pos }}
+          IN_JOB_KOLIBRI: ${{ inputs.job_id_kolibri }}
+          IN_JOB_WIN: ${{ inputs.job_id_pos_windows }}
+          IN_SLUG: ${{ inputs.tenant_slug }}
+          IN_INVITE: ${{ inputs.invite_code }}
+        run: |
+          fail() { echo "::error::Некорректный параметр сборки: $1"; exit 1; }
+          id_ok() { [[ -z "$1" || "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; }
+          id_ok "$IN_TENANT_ID" || fail tenant_id
+          id_ok "$IN_JOB_POS" || fail job_id_pos
+          id_ok "$IN_JOB_KOLIBRI" || fail job_id_kolibri
+          id_ok "$IN_JOB_WIN" || fail job_id_pos_windows
+          [[ -z "$IN_SLUG" || "$IN_SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || fail tenant_slug
+          [[ -z "$IN_INVITE" || "$IN_INVITE" =~ ^[A-Za-z0-9]{4,32}$ ]] || fail invite_code
+
       - name: Checkout
         uses: actions/checkout@v4
 
