@@ -65,6 +65,10 @@ class Employee {
   bool handlesHookah({required bool hookahVenue}) =>
       AppConstants.handlesHookah(position: position, role: role, hookahVenue: hookahVenue);
 
+  /// Кнопка «Перезабивка» — см. AppConstants.canRefillHookah.
+  bool canRefillHookah({required bool hookahVenue}) =>
+      AppConstants.canRefillHookah(position: position, role: role, hookahVenue: hookahVenue);
+
   factory Employee.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     return Employee(

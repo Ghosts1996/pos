@@ -137,6 +137,20 @@ class AppConstants {
     return hookahVenue && (p == positionUniversal || role == roleAdmin);
   }
 
+  /// Кнопка «Перезабивка» на экране стола: кальянщику и универсалу —
+  /// всегда (кальяны подают и в баре, и в кафе, а универсал подменяет
+  /// кальянщика), администратору — в кальянной. Напоминания про угли —
+  /// отдельно, см. [handlesHookah].
+  static bool canRefillHookah({
+    required String position,
+    String role = roleEmployee,
+    required bool hookahVenue,
+  }) {
+    final p = normalizePosition(position);
+    if (p == positionHookahMaster || p == positionUniversal) return true;
+    return hookahVenue && role == roleAdmin;
+  }
+
   static String positionLabel(String position) {
     switch (position) {
       case positionWaiter:
