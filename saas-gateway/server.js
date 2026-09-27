@@ -2206,8 +2206,23 @@ async function handleDownloadBuild(req, res) {
   // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
   // друга без переименования вручную. Windows-кассу — от Android-кассы.
   const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "hookah-pos-windows" : "hookah-pos";
-  const fileExt = isWindows ? "zip" : "apk";
-  const contentType = isWindows ? "application/zip" : "application/vnd.android.package-archive";
+  // Windows-сборка раньше была zip-архивом, теперь — установщик setup.exe.
+  // На диске оба лежат как "{jobId}.apk", поэтому что внутри, смотрим по
+  // первым байтам: «MZ» — exe, иначе — старый zip.
+  let isInstaller = false;
+  if (isWindows) {
+    try {
+      const fh = await fs.promises.open(filePath, "r");
+      const { buffer } = await fh.read(Buffer.alloc(2), 0, 2, 0);
+      await fh.close();
+      isInstaller = buffer.toString("latin1") === "MZ";
+    } catch (_) {}
+  }
+  const fileNamePrefix2 = isInstaller ? "hookah-pos-setup" : fileNamePrefix;
+  const fileExt = isWindows ? (isInstaller ? "exe" : "zip") : "apk";
+  const contentType = isWindows
+    ? (isInstaller ? "application/vnd.microsoft.portable-executable" : "application/zip")
+    : "application/vnd.android.package-archive";
 
   // X-Accel-Redirect, не fs.createReadStream(...).pipe(res): раньше файл
   // отдавал сам Node-процесс — на реальном телефоне загрузка зависала
@@ -2224,7 +2239,7 @@ async function handleDownloadBuild(req, res) {
   // выше про filePath) независимо от того, что фактически внутри.
   res.writeHead(200, {
     "Content-Type": contentType,
-    "Content-Disposition": `attachment; filename="${fileNamePrefix}-${jobId}.${fileExt}"`,
+    "Content-Disposition": `attachment; filename="${fileNamePrefix2}-${jobId}.${fileExt}"`,
     "Access-Control-Allow-Origin": "*",
     "X-Accel-Redirect": `/internal-tenant-builds/${job.tenantId}/${jobId}.apk`,
   });
