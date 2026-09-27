@@ -252,4 +252,63 @@ void main() {
       expect(find.text('Главный'), findsOneWidget);
     });
   });
+
+  group('«Проверить обновления» из меню', () {
+    test('последняя версия — так и говорим, с номером сборки', () async {
+      final svc = _svc(_FakeServer(latest: 42), dir);
+      expect(await svc.checkManually(), 'У вас последняя версия (сборка 42)');
+      expect(svc.state.value.phase, AppUpdatePhase.none);
+    });
+
+    test('вышла новая — сообщаем номер и показываем плашку, даже если нажимали «Позже»', () async {
+      final svc = _svc(_FakeServer(latest: 43), dir);
+      svc.later();
+      final text = await svc.checkManually();
+      expect(text, contains('сборка 43'));
+      expect(svc.state.value.phase, AppUpdatePhase.available);
+      expect(svc.visibleFor(svc.state.value), isTrue);
+    });
+
+    AppUpdateService failing(int status, String body) => AppUpdateService(
+          app: 'pos',
+          platform: 'android',
+          currentBuild: 23,
+          gatewayUrl: 'https://gw.test/saas',
+          clientFactory: () => MockClient((_) async => http.Response.bytes(utf8.encode(body), status,
+              headers: {'content-type': 'application/json; charset=utf-8'})),
+          dirProvider: () async => dir,
+          authToken: () async => 'tok',
+          tenantId: () => 'tenant1',
+          isForeground: () => false,
+        );
+
+    test('на сервере старый saas-gateway без /appUpdate — понятная подсказка', () async {
+      final text = await failing(404, '{"error":"not found"}').checkManually();
+      expect(text, contains('обновите saas-gateway'));
+    });
+
+    test('ошибка сервера со своим текстом — показываем его', () async {
+      final text = await failing(404, '{"error":"Заведение не найдено"}').checkManually();
+      expect(text, 'Не удалось проверить: Заведение не найдено');
+    });
+
+    test('нет доступа', () async {
+      expect(await failing(401, '{"error":"x"}').checkManually(), contains('войдите в кассу заново'));
+    });
+
+    test('устройство не привязано к заведению', () async {
+      final svc = AppUpdateService(
+        app: 'pos',
+        platform: 'android',
+        currentBuild: 23,
+        gatewayUrl: 'https://gw.test/saas',
+        clientFactory: () => MockClient((_) async => http.Response('{}', 200)),
+        dirProvider: () async => dir,
+        authToken: () async => 'tok',
+        tenantId: () => null,
+        isForeground: () => false,
+      );
+      expect(await svc.checkManually(), 'Устройство ещё не привязано к заведению');
+    });
+  });
 }
