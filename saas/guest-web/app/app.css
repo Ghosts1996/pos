@@ -194,14 +194,25 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
    диапазон «от края до края минус плитка» — так стол с координатой 0 или 1
    прижимается к краю целиком, а не наполовину уезжает за него. Именно так
    карта считается и на кассе. */
+/* Холст схемы — тех же пропорций, что на кассе (1000×640, плитка 104):
+   как администратор расставил столы, так гость их и видит. На телефоне
+   схема шире экрана — её листают вбок, зато плитки крупные и не
+   налезают друг на друга. */
+.hall-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 18px;
+}
 .hall {
-  --tile-w: clamp(58px, 20vw, 96px);
-  --tile-h: calc(var(--tile-w) * 0.82);
+  --tile-w: 10.4%;
+  --tile-h: 16.25%;
   position: relative;
   width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 62vh;
-  background: var(--surface);
+  min-width: 600px;
+  aspect-ratio: 1000 / 640;
+  background:
+    radial-gradient(circle, var(--border) 1.2px, transparent 1.4px) 0 0 / 4% 6.25%,
+    var(--surface);
   border: 1px solid var(--border);
   border-radius: 18px;
   overflow: hidden;

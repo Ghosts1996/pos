@@ -7,6 +7,10 @@ class PayrollResult {
   final double normalHours;
   final double overtimeHours;
   final double hourlyPay;
+
+  /// Оклад за смену: [shiftsPaid] смен × ставка за смену.
+  final double shiftPay;
+  final int shiftsPaid;
   final double overtimePay;
   final double salesRevenue;
   final double salesPercentPay;
@@ -21,6 +25,8 @@ class PayrollResult {
     required this.normalHours,
     required this.overtimeHours,
     required this.hourlyPay,
+    this.shiftPay = 0,
+    this.shiftsPaid = 0,
     required this.overtimePay,
     required this.salesRevenue,
     required this.salesPercentPay,
@@ -29,7 +35,10 @@ class PayrollResult {
   });
 
   double get totalHours => normalHours + overtimeHours;
-  double get wages => hourlyPay + overtimePay + salesPercentPay;
+  double get wages => hourlyPay + shiftPay + overtimePay + salesPercentPay;
+
+  /// Цена часа переработки — для строки «2 ч × 375 ₽» в отчёте.
+  double get overtimeHourPrice => overtimeHours > 0 ? overtimePay / overtimeHours : 0;
 
   /// К выплате: зарплата + чаевые.
   double get total => wages + tips;
@@ -41,6 +50,34 @@ class PayrollResult {
 /// в секундах, делённая на 3600. Так смена, идущая через полночь, считается
 /// ровно так же, как любая другая — не теряется и не задваивается.
 class PayrollCalculator {
+  /// Оклад за смену: если сотрудник закрыл смену и открыл снова меньше чем
+  /// через столько времени (случайно нажал «Закончить смену», отходил),
+  /// это одна рабочая смена — оклад за неё один, а часы для переработки
+  /// складываются. Иначе один выход на работу оплачивался бы дважды.
+  static const shiftMergeGap = Duration(hours: 3);
+
+  /// Рабочие смены для оклада за смену: закрытые, с положительной длиной,
+  /// по времени начала; соседние с перерывом меньше [shiftMergeGap] —
+  /// одна смена (её часы = сумма часов частей, без перерыва).
+  static List<double> workedShiftHours(List<StaffShiftModel> shifts) {
+    final closed = shifts
+        .where((s) => s.endedAt != null && s.endedAt!.isAfter(s.startedAt))
+        .toList()
+      ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    final hours = <double>[];
+    DateTime? lastEnd;
+    for (final s in closed) {
+      final h = s.endedAt!.difference(s.startedAt).inSeconds / 3600.0;
+      if (lastEnd != null && s.startedAt.difference(lastEnd) < shiftMergeGap) {
+        hours[hours.length - 1] += h;
+      } else {
+        hours.add(h);
+      }
+      if (lastEnd == null || s.endedAt!.isAfter(lastEnd)) lastEnd = s.endedAt;
+    }
+    return hours;
+  }
+
   /// Переработка считается ОТДЕЛЬНО ПО КАЖДОЙ смене, а не суммарно за
   /// календарный день или весь период: если порог у сотрудника — 8 часов, а
   /// он отработал две смены по 6 часов в один день, переработки не будет
@@ -69,16 +106,26 @@ class PayrollCalculator {
     final hourlyRate = employee.hourlyRate < 0 ? 0.0 : employee.hourlyRate;
     final overtimeMultiplier = employee.overtimeMultiplier < 1 ? 1.0 : employee.overtimeMultiplier;
     final salesPercentRate = employee.salesPercentRate.clamp(0.0, 100.0);
+    final shiftRate = employee.shiftRate < 0 ? 0.0 : employee.shiftRate;
+    final overtimeHourRate = employee.overtimeHourRate < 0 ? 0.0 : employee.overtimeHourRate;
+    final byShift = employee.shiftRateEnabled;
 
     double normalHours = 0;
     double overtimeHours = 0;
 
-    for (final shift in closedShifts) {
-      final endedAt = shift.endedAt;
-      if (endedAt == null) continue; // открытая смена в расчёт не входит
-      final hours = endedAt.difference(shift.startedAt).inSeconds / 3600.0;
-      if (hours <= 0) continue; // защита от испорченной ручной записи (конец раньше начала)
-
+    // При окладе за смену часы считаются по рабочим сменам (случайно
+    // разорванная смена — одна, см. workedShiftHours), при почасовой — по
+    // каждой записи отдельно, как и раньше.
+    final perShiftHours = byShift
+        ? workedShiftHours(closedShifts)
+        : [
+            for (final shift in closedShifts)
+              // открытая смена в расчёт не входит; конец раньше начала —
+              // испорченная ручная запись
+              if (shift.endedAt != null && shift.endedAt!.isAfter(shift.startedAt))
+                shift.endedAt!.difference(shift.startedAt).inSeconds / 3600.0,
+          ];
+    for (final hours in perShiftHours) {
       if (employee.overtimeEnabled && hours > overtimeThreshold) {
         normalHours += overtimeThreshold;
         overtimeHours += hours - overtimeThreshold;
@@ -88,9 +135,18 @@ class PayrollCalculator {
     }
 
     final hourlyPay = employee.hourlyRateEnabled ? normalHours * hourlyRate : 0.0;
-    final overtimePay = employee.hourlyRateEnabled && employee.overtimeEnabled
-        ? overtimeHours * hourlyRate * overtimeMultiplier
-        : 0.0;
+    final shiftsPaid = byShift ? perShiftHours.length : 0;
+    final shiftPay = shiftsPaid * shiftRate;
+    final double overtimePay;
+    if (!employee.overtimeEnabled) {
+      overtimePay = 0;
+    } else if (byShift) {
+      overtimePay = overtimeHours * overtimeHourRate;
+    } else if (employee.hourlyRateEnabled) {
+      overtimePay = overtimeHours * hourlyRate * overtimeMultiplier;
+    } else {
+      overtimePay = 0;
+    }
     final salesPercentPay =
         employee.salesPercentEnabled ? salesRevenue * salesPercentRate / 100.0 : 0.0;
 
@@ -99,6 +155,8 @@ class PayrollCalculator {
       normalHours: normalHours,
       overtimeHours: overtimeHours,
       hourlyPay: hourlyPay,
+      shiftPay: shiftPay,
+      shiftsPaid: shiftsPaid,
       overtimePay: overtimePay,
       salesRevenue: salesRevenue,
       salesPercentPay: salesPercentPay,

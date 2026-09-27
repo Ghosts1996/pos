@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
+import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
+import 'hall_plan_view.dart';
 
 /// Занятый интервал стола для подписи на карте выбора.
 ///
@@ -38,7 +40,7 @@ class TableBusyInterval {
 /// (обычно результат ReservationService.availableTables на нужный интервал —
 /// там же учтены и живые сеансы, а не только брони), а подписи на плитках —
 /// по [busyIntervals] (занятость на выбранный день).
-class TablePickerMap extends StatelessWidget {
+class TablePickerMap extends StatefulWidget {
   final List<TableModel> tables;
   final Set<String> freeTableIds;
   final List<TableBusyInterval> busyIntervals;
@@ -61,63 +63,90 @@ class TablePickerMap extends StatelessWidget {
   static const _freeColor = Color(0xFF22C55E);
   static const _busyColor = Color(0xFFEF4444);
   static const _selectedColor = Color(0xFF0B5ED7);
-  static const _tileSize = 84.0;
+
+  @override
+  State<TablePickerMap> createState() => _TablePickerMapState();
+}
+
+class _TablePickerMapState extends State<TablePickerMap> {
+  /// Зона зала — у каждой своя схема (см. TableModel.zone).
+  String? _zone;
+
+  List<TableModel> get tables => widget.tables;
+  List<TableBusyInterval> get busyIntervals => widget.busyIntervals;
+  ValueChanged<TableModel> get onSelect => widget.onSelect;
+  static const _busyColor = TablePickerMap._busyColor;
 
   @override
   Widget build(BuildContext context) {
     if (tables.isEmpty) {
       return const Center(child: Text('Столы ещё не добавлены'));
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final h = constraints.hasBoundedHeight ? constraints.maxHeight : 360.0;
-        return SizedBox(
-          width: w,
-          height: h,
-          child: Stack(
-            children: tables.map((t) {
-              final free = freeTableIds.contains(t.id);
-              final selected = t.id == selectedTableId;
-              final color = selected ? _selectedColor : (free ? _freeColor : _busyColor);
-              return Positioned(
-                left: (t.x * (w - _tileSize)).clamp(0, w - _tileSize),
-                top: (t.y * (h - _tileSize)).clamp(0, h - _tileSize),
-                child: GestureDetector(
-                  onTap: () => _openInfo(context, t, free),
-                  child: Container(
-                    width: _tileSize,
-                    height: _tileSize,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.18),
-                      border: Border.all(color: color, width: selected ? 3 : 2),
-                      borderRadius: t.shape == 'circle'
-                          ? BorderRadius.circular(_tileSize)
-                          : BorderRadius.circular(14),
+    final zones = hallZones(tables);
+    final zoneKeys = [...zones, if (zones.isNotEmpty && tables.any((t) => t.zone.isEmpty)) ''];
+    final zone = zoneKeys.isEmpty ? null : (zoneKeys.contains(_zone) ? _zone! : zoneKeys.first);
+    final shown = zone == null ? tables : tables.where((t) => t.zone == zone).toList();
+    return Column(
+      children: [
+        if (zoneKeys.isNotEmpty)
+          SizedBox(
+            height: 46,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final z in zoneKeys)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(z.isEmpty ? kNoZoneLabel : z),
+                      selected: z == zone,
+                      onSelected: (_) => setState(() => _zone = z),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          selected ? Icons.check_circle : Icons.table_restaurant,
-                          color: color,
-                          size: 20,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(t.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                        Text(seatsLabel(t.seats), style: const TextStyle(fontSize: 10)),
-                      ],
-                    ),
+                  ),
+              ],
+            ),
+          ),
+        Expanded(
+          // Та же схема, что у администратора (логический холст, см.
+          // hall_layout.dart), — на телефоне её можно двигать пальцем.
+          child: HallPlanView(
+            tables: shown,
+            floorColor: Theme.of(context).colorScheme.surface,
+            lineColor: Theme.of(context).dividerColor,
+            tileBuilder: (t) {
+              final free = widget.freeTableIds.contains(t.id);
+              final selected = t.id == widget.selectedTableId;
+              final color = selected
+                  ? TablePickerMap._selectedColor
+                  : (free ? TablePickerMap._freeColor : TablePickerMap._busyColor);
+              return GestureDetector(
+                onTap: () => _openInfo(context, t, free),
+                child: Container(
+                  width: kHallTile,
+                  height: kHallTile,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.18),
+                    border: Border.all(color: color, width: selected ? 3 : 2),
+                    borderRadius: t.shape == 'circle' ? BorderRadius.circular(kHallTile) : BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(selected ? Icons.check_circle : Icons.table_restaurant, color: color, size: 22),
+                      const SizedBox(height: 4),
+                      Text(t.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                      Text(seatsLabel(t.seats), style: const TextStyle(fontSize: 11.5)),
+                    ],
                   ),
                 ),
               );
-            }).toList(),
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 

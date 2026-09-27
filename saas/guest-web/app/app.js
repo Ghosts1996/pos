@@ -3053,7 +3053,8 @@ function screenHall(pickMode) {
     <p class="muted small">${pickMode
       ? 'Серым отмечены столы, которых не хватит на вашу компанию, красным — занятые на выбранное время.'
       : 'Занятость столов обновляется в реальном времени.'}</p>
-    <div class="hall" id="hall"><div class="spinner"></div></div>
+    <div class="chips" id="hallZones"></div>
+    <div class="hall-scroll"><div class="hall" id="hall"><div class="spinner"></div></div></div>
     <div class="legend">
       <span><i style="background:#3F9D5B"></i> свободен</span>
       <span><i style="background:#D9A441"></i> впритык</span>
@@ -3068,13 +3069,33 @@ function screenHall(pickMode) {
   const durMs = (bookingDraft.duration || 90) * 60 * 1000;
 
   let tablesLoaded = false;
+  // Зона зала (терраса, VIP…): у каждой зоны своя схема, как на кассе.
+  let hallZone = null;
 
-  const draw = (tables) => {
+  const draw = (allTables) => {
     const box = $('hall');
     if (!box) return;
     // Зеркало броней иногда приходит раньше самих столов: без этой
     // проверки карта на мгновение писала «не настроена» и мигала.
     if (!tablesLoaded) return;
+    const zones = [];
+    allTables.forEach((t) => {
+      const z = String(t.zone || '').trim();
+      if (z && !zones.includes(z)) zones.push(z);
+    });
+    if (zones.length && allTables.some((t) => !String(t.zone || '').trim())) zones.push('');
+    if (zones.length && !zones.includes(hallZone)) hallZone = zones[0];
+    const zonesEl = $('hallZones');
+    if (zonesEl) {
+      zonesEl.innerHTML = zones.map((z) => `
+        <button class="chip ${z === hallZone ? 'on' : ''}" data-zone="${esc(z)}">${esc(z || 'Без зоны')}</button>`).join('');
+      zonesEl.querySelectorAll('[data-zone]').forEach((el) => {
+        el.onclick = () => { hallZone = el.dataset.zone; draw(allTables); };
+      });
+    }
+    const tables = zones.length
+      ? allTables.filter((t) => String(t.zone || '').trim() === hallZone)
+      : allTables;
     if (!tables.length) {
       box.innerHTML = `<p class="muted small" style="padding:20px">Карта зала пока не настроена.</p>`;
       return;
@@ -3129,7 +3150,7 @@ function screenHall(pickMode) {
              style="left:calc(${x} * (100% - var(--tile-w)));
                     top:calc(${y} * (100% - var(--tile-h)))">
           ${esc(t.name || '')}
-          <small>${Number(t.seats) || 0} мест${tooSmall ? ' · мало' : ''}</small>
+          <small>${Number(t.seats) || 0} ${plural(Number(t.seats) || 0, 'место', 'места', 'мест')}${tooSmall ? ' · мало' : ''}</small>
         </div>`;
     }).join('');
 
@@ -3151,7 +3172,7 @@ function screenHall(pickMode) {
   sub(onSnapshot(collection(state.root, 'tables'), (snap) => {
     tablesLoaded = true;
     tables = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru', { numeric: true }));
     draw(tables);
   }, () => {
     const box = $('hall');

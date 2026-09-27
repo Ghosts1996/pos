@@ -4,10 +4,12 @@ import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_calculator.dart';
 import '../../services/tips_service.dart';
-import '../../utils/constants.dart';
+import '../../utils/bill_split.dart';
+import '../../utils/table_label.dart';
 
-/// Расчёт зарплаты сотрудников за выбранный период: часы (оклад +
-/// переработка) — из "Смены сотрудников", выручка для процента с продаж —
+/// Расчёт зарплаты сотрудников за выбранный период: часы и смены (ставка
+/// за час или оклад за смену + переработка) — из «Смены сотрудников»,
+/// выручка для процента с продаж —
 /// из закрытых чеков (та же выручка, что и в "Отчётах", те же исключения:
 /// возвраты и чеки, закрытые без оплаты, в неё не входят).
 class PayrollScreen extends StatefulWidget {
@@ -183,7 +185,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
   String _fmtDay(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
 
-  static String _numStr(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+  static String _numStr(double v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toString().replaceAll('.', ',');
+
+  /// «3 000 ₽», «766,50 ₽».
+  static String _rub(double v) => formatKopecks((v * 100).round());
+
+  /// «7,5» — часы с десятичной запятой, как принято в русском тексте.
+  static String _hours(double v) => v.toStringAsFixed(1).replaceAll('.', ',');
 
   @override
   Widget build(BuildContext context) {
@@ -252,8 +261,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                               child: Text(
-                                'Чаевые без получателя: ${_unassignedTips.toStringAsFixed(0)} '
-                                '${AppConstants.currencySymbol} — «всей смене», когда никто не отмечал '
+                                'Чаевые без получателя: ${_rub(_unassignedTips)}'
+                                ' — «всей смене», когда никто не отмечал '
                                 'начало смены, или сотрудникам, которых уже нет в списке. '
                                 'Поделите их вручную.',
                                 style: const TextStyle(fontSize: 12),
@@ -288,7 +297,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
-            Text('${totalHours.toStringAsFixed(1)} ч · Итого: ${totalPay.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+            Text('${_hours(totalHours)} ч · Итого: ${_rub(totalPay)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
@@ -299,26 +308,31 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Widget _employeeCard(PayrollResult r) {
     final emp = r.employee;
     final rows = <Widget>[];
+    if (emp.shiftRateEnabled) {
+      rows.add(_row('Оклад за смену',
+          '${r.shiftsPaid} × ${_rub(emp.shiftRate)}',
+          _rub(r.shiftPay)));
+    }
     if (emp.hourlyRateEnabled) {
       rows.add(_row('Обычные часы',
-          '${r.normalHours.toStringAsFixed(1)} ч × ${_numStr(emp.hourlyRate)} ${AppConstants.currencySymbol}',
-          '${r.hourlyPay.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
+          '${_hours(r.normalHours)} ч × ${_rub(emp.hourlyRate)}',
+          _rub(r.hourlyPay)));
     }
-    if (emp.hourlyRateEnabled && emp.overtimeEnabled && r.overtimeHours > 0) {
+    if (emp.overtimeEnabled && r.overtimeHours > 0 && r.overtimePay > 0) {
       rows.add(_row(
           'Переработка',
-          '${r.overtimeHours.toStringAsFixed(1)} ч × ${_numStr(emp.hourlyRate * emp.overtimeMultiplier)} ${AppConstants.currencySymbol}',
-          '${r.overtimePay.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
+          '${_hours(r.overtimeHours)} ч × ${_rub(r.overtimeHourPrice)}',
+          _rub(r.overtimePay)));
     }
     if (emp.salesPercentEnabled) {
       rows.add(_row(
           'Процент с продаж',
-          '${_numStr(emp.salesPercentRate)}% от ${r.salesRevenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
-          '${r.salesPercentPay.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
+          '${_numStr(emp.salesPercentRate)}% от ${_rub(r.salesRevenue)}',
+          _rub(r.salesPercentPay)));
     }
     if (r.tips > 0) {
       rows.add(_row('Чаевые', 'от гостей, не зарплата',
-          '${r.tips.toStringAsFixed(0)} ${AppConstants.currencySymbol}'));
+          _rub(r.tips)));
     }
 
     return Card(
@@ -332,7 +346,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(emp.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                Text('${r.shiftsCount} смен', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text(
+                    '${r.shiftsCount} ${pluralRu(r.shiftsCount, 'смена', 'смены', 'смен')} · '
+                    '${_hours(r.totalHours)} ч',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
               ],
             ),
             const SizedBox(height: 6),
@@ -343,7 +360,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               children: [
                 Text(r.tips > 0 ? 'К выплате' : 'Итого',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text('${r.total.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                Text(_rub(r.total),
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ],
             ),
