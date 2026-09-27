@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
+import '../utils/money.dart';
 
 /// Результат одной операции оплаты через терминал.
 class TerminalPaymentResult {
@@ -90,7 +91,7 @@ class ManualTerminalService implements PaymentTerminalService {
       builder: (ctx) => AlertDialog(
         title: const Text('Оплата на терминале'),
         content: Text(
-          'Внесите ${amount.toStringAsFixed(0)} ₽ на терминале эквайринга и '
+          'Внесите ${rub(amount)} на терминале эквайринга и '
           'дождитесь его собственного чека/слипа.\n\n'
           'Нажмите «Оплата прошла» только после того, как терминал это подтвердил.',
         ),
@@ -277,7 +278,7 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Гость сканирует код и переводит ${amount.toStringAsFixed(0)} ₽ '
+              Text('Гость сканирует код и переводит ${rub(amount)} '
                   'в своём банковском приложении.'),
               const SizedBox(height: 16),
               SizedBox(
