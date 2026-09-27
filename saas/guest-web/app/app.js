@@ -76,6 +76,14 @@ const state = {
   accountSubs: [],
   ticker: null,
   cart: {},
+  /// Экран «Мой стол» перерисовывается на каждое изменение чека. Подписки
+  /// на вызовы, заказы и чаевые при этом заводятся один раз на экран (id
+  /// чека здесь), а их последние данные лежат в tableCache — иначе каждая
+  /// перерисовка добавляла бы ещё по подписке.
+  tableWatch: null,
+  tableCache: { calls: [], orders: [] },
+  /// Чаевые: кто на смене, свои чаевые к чеку и выбор гостя в форме.
+  tips: { sid: null, watching: false, session: null, team: [], mine: [], to: null, preset: 10, custom: '' },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -137,9 +145,32 @@ function clearScreen() {
   state.screenSubs.forEach((off) => { try { off(); } catch (_) {} });
   state.screenSubs = [];
   if (state.ticker) { clearInterval(state.ticker); state.ticker = null; }
+  state.tableWatch = null;
+  state.tableCache = { calls: [], orders: [] };
+  state.tips.watching = false;
 }
 
 function sub(off) { state.screenSubs.push(off); }
+
+// ---------- ТИП ЗАВЕДЕНИЯ ----------
+// Те же правила, что VenueTerms в приложении: кальянная, ресторан, кафе
+// или бар. От типа зависят слова про персонал и кнопки вызова за столом.
+// Нет поля — кальянная: так работали все заведения до настройки.
+function venueType() {
+  const t = (state.venue || {}).venueType;
+  return ['hookah', 'restaurant', 'cafe', 'bar'].includes(t) ? t : 'hookah';
+}
+const isHookah = () => venueType() === 'hookah';
+/// Кто обслуживает стол: form — 'nom' («кальянщик подтвердит»), 'acc'
+/// («позовите кальянщика») или 'dat' («скажите кальянщику»).
+function staffWord(form) {
+  const t = venueType();
+  const w = t === 'hookah' ? ['кальянщик', 'кальянщика', 'кальянщику']
+    : t === 'bar' ? ['бармен', 'бармена', 'бармену']
+      : ['официант', 'официанта', 'официанту'];
+  return w[{ nom: 0, acc: 1, dat: 2 }[form] || 0];
+}
+const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
 
 // ---------- ЗАПУСК ----------
 
@@ -443,6 +474,12 @@ function watchProfile() {
   }, () => {}));
 }
 
+/// Иконка вкладки «Мой стол»: огонёк — кальянной, тарелка — остальным.
+function applyVenueTypeChrome() {
+  const ico = document.querySelector('[data-tab="table"] .ico');
+  if (ico) ico.textContent = isHookah() ? '🔥' : '🍽';
+}
+
 function watchVenue() {
   // Путь ровно тот же, что у приложения: meta/venueProfile. Раньше здесь
   // стоял выдуманный 'venue/profile' — документа по нему нет, поэтому
@@ -450,7 +487,11 @@ function watchVenue() {
   // любой день, а правила заведения не показывались вовсе.
   state.accountSubs.push(onSnapshot(doc(state.root, 'meta', 'venueProfile'), (d) => {
     const had = !!state.venue;
+    const prevType = venueType();
     state.venue = d.exists() ? d.data() : null;
+    applyVenueTypeChrome();
+    // Сменили тип заведения — перерисовать экраны со словами и кнопками.
+    if (had && prevType !== venueType()) route();
     // Профиль заведения приезжает асинхронно и почти всегда ПОЗЖЕ первой
     // отрисовки. Экраны, которые от него зависят — часы работы в брони и
     // правила на «Моём столе», — нужно перерисовать, иначе гость видит
@@ -714,7 +755,7 @@ function cartBlock() {
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">Ваш заказ</div>
       <div class="small muted" style="margin-bottom:12px">
-        Кальянщик подтвердит заказ, и позиции появятся в счёте.
+        ${cap(staffWord('nom'))} подтвердит заказ, и позиции появятся в счёте.
       </div>
       <button class="btn-primary" id="sendOrder">Отправить заказ</button>
     </div>`;
@@ -762,7 +803,7 @@ async function placeOrder(items, redraw) {
     });
     state.cart = {};
     redraw();
-    toast('Заказ передан кальянщику');
+    toast(`Заказ передан ${staffWord('dat')}`);
   } catch (e) {
     toast('Не удалось отправить заказ');
   }
@@ -805,7 +846,7 @@ async function bindToTable(tableId) {
 
     if (!ids.length) {
       return failBind('За этим столом сейчас нет открытого счёта — '
-        + 'попросите кальянщика начать сеанс.');
+        + `попросите ${staffWord('acc')} открыть стол.`);
     }
 
     // Несколько счетов за столом — гость выбирает свой. Чужие показываем,
@@ -889,7 +930,7 @@ async function claimSession(tableId, sessionId) {
     // разбираться к кальянщику вместо того, чтобы повторить попытку.
     if (e && e.code === 'permission-denied') {
       return failBind('Этот счёт уже открыт у другого гостя. '
-        + 'Если это ваш стол — попросите кальянщика открыть вам свой счёт.');
+        + `Если это ваш стол — попросите ${staffWord('acc')} открыть вам свой счёт.`);
     }
     return failBind('Не удалось открыть стол. Проверьте интернет и попробуйте ещё раз.');
   }
@@ -955,15 +996,15 @@ function tableEmpty() {
 
   screenEl().innerHTML = `
     <h1>Мой стол</h1>
-    <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт,
-    таймер сеанса и кнопки вызова кальянщика.</p>
+    <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт${isHookah() ? `,
+    таймер сеанса` : ''} и кнопки вызова ${staffWord('acc')}.</p>
     <a class="btn btn-primary" href="#/scan">📷 Сканировать QR стола</a>
     <div style="height:10px"></div>
     <a class="btn btn-ghost" href="#/hall">🗺 Карта зала</a>
     <div style="height:14px"></div>
     <p class="small muted">Стол открывается только по коду с самого стола —
     так вы наверняка попадёте на свой счёт, а не на соседний. Если код не
-    сканируется, позовите кальянщика: он откроет стол сам.</p>
+    сканируется, позовите ${staffWord('acc')}: он откроет стол сам.</p>
     ${rules.length ? `
       <div class="card" style="margin-top:22px">
         <div style="font-weight:600;margin-bottom:12px">ⓘ Правила заведения</div>
@@ -974,7 +1015,14 @@ function tableEmpty() {
 function drawTable(s) {
   const items = s.orderItems || [];
   const total = items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+  const discount = Number(s.discountPercent) || 0;
   const bonus = Number((state.profile || {}).bonusBalance) || 0;
+  const hookah = isHookah();
+  const plannedEnd = toDate(s.plannedEnd);
+  // Таймер — только кальянной и только если время сеанса ограничено:
+  // у стола «без ограничений» конец через десять лет.
+  const showTimer = hookah && plannedEnd && plannedEnd - new Date() < 365 * 24 * 3600 * 1000;
+  const tipsOn = (state.venue || {}).tipsEnabled !== false;
 
   screenEl().innerHTML = `
     <div class="row">
@@ -982,9 +1030,10 @@ function drawTable(s) {
       <button class="btn-link" id="unbind">Это не мой стол</button>
     </div>
 
-    <div class="card timer" id="timer"><div class="value">—</div></div>
+    ${showTimer ? `<div class="card timer" id="timer"><div class="value">—</div></div>` : ''}
 
     <h2>Позвать</h2>
+    ${hookah ? `
     <div class="btn-row">
       <button class="btn-ghost" data-call="coal">🔥 Поменять угли</button>
       <button class="btn-ghost" data-call="refill">🔄 Перезабивка</button>
@@ -995,7 +1044,11 @@ function drawTable(s) {
       <button class="btn-ghost" data-call="bill">💸 Счёт, пожалуйста</button>
     </div>
     <div style="height:10px"></div>
-    <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>
+    <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>` : `
+    <div class="btn-row">
+      <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>
+      <button class="btn-ghost" data-call="bill">💸 Счёт, пожалуйста</button>
+    </div>`}
     <div id="calls"></div>
 
     <h2>Ваш счёт</h2>
@@ -1005,40 +1058,56 @@ function drawTable(s) {
           <span class="grow">${esc(i.name)} ×${Number(i.qty) || 0}</span>
           <span class="muted">${money((Number(i.price) || 0) * (Number(i.qty) || 0))}</span>
         </div>`).join('') + `
-        <div class="bill-total"><span>Итого</span><span>${money(total)}</span></div>
+        ${discount > 0 ? `<div class="bill-line" style="color:var(--gold)">
+          <span class="grow">Скидка ${Math.round(discount)}%</span>
+          <span>−${money(total * discount / 100)}</span></div>` : ''}
+        <div class="bill-total"><span>Итого</span><span>${money(total * (1 - discount / 100))}</span></div>
         ${bonus >= 1 ? `<div class="small" style="color:var(--gold);margin-top:10px">
-          Доступно бонусов: ${money(bonus)} — скажите кальянщику, чтобы списать при оплате</div>` : ''}
+          Доступно бонусов: ${money(bonus)} — скажите ${staffWord('dat')}, чтобы списать при оплате</div>` : ''}
       ` : `<p class="muted small" style="margin:0">Пока пусто — закажите в разделе «Меню»</p>`}
     </div>
+
+    ${tipsOn ? `<h2>Чаевые</h2><div class="card"><div id="tipsPanel"></div></div>` : ''}
 
     <div id="orders"></div>
   `;
 
-  const plannedEnd = toDate(s.plannedEnd);
-  const tick = () => {
-    const box = $('timer');
-    if (!box || !plannedEnd) return;
-    const left = plannedEnd - new Date();
-    const over = left < 0;
-    const abs = Math.abs(left);
-    const mins = Math.floor(abs / 60000);
-    const secs = Math.floor((abs % 60000) / 1000);
-    box.className = 'card timer ' + (over ? 'over' : mins <= 15 ? 'soon' : 'ok');
-    box.innerHTML = `
-      <div class="muted small">${over ? 'Сеанс завершён' : 'До конца сеанса'}</div>
-      <div class="value">${mins}:${pad(secs)}</div>
-      ${Number(s.refillCount) > 0 ? `<div class="small muted">Перезабивок: ${s.refillCount}</div>` : ''}`;
-  };
-  tick();
-  state.ticker = setInterval(tick, 1000);
+  if (state.ticker) { clearInterval(state.ticker); state.ticker = null; }
+  if (showTimer) {
+    const tick = () => {
+      const box = $('timer');
+      if (!box) return;
+      const left = plannedEnd - new Date();
+      const over = left < 0;
+      const abs = Math.abs(left);
+      const mins = Math.floor(abs / 60000);
+      const secs = Math.floor((abs % 60000) / 1000);
+      box.className = 'card timer ' + (over ? 'over' : mins <= 15 ? 'soon' : 'ok');
+      box.innerHTML = `
+        <div class="muted small">${over ? 'Сеанс завершён' : 'До конца сеанса'}</div>
+        <div class="value">${mins}:${pad(secs)}</div>
+        ${Number(s.refillCount) > 0 ? `<div class="small muted">Перезабивок: ${s.refillCount}</div>` : ''}`;
+    };
+    tick();
+    state.ticker = setInterval(tick, 1000);
+  }
 
   $('unbind').onclick = unbind;
   screenEl().querySelectorAll('[data-call]').forEach((el) => {
     el.onclick = () => callStaff(el.dataset.call, s, el);
   });
 
-  watchCalls();
-  watchOrders(s.id);
+  state.tips.session = s;
+  if (state.tableWatch !== s.id) {
+    state.tableWatch = s.id;
+    watchCalls();
+    watchOrders(s.id);
+    if (tipsOn) watchTips(s.id);
+  } else {
+    paintCalls();
+    paintOrders(s.id);
+  }
+  paintTips();
 }
 
 const CALL_LABELS = {
@@ -1068,7 +1137,9 @@ async function callStaff(type, s, btn) {
   btn.disabled = true;
   const original = btn.innerHTML;
   btn.innerHTML = 'Передано';
-  toast(`${label} — передали кальянщику`);
+  // Счёт и официанта получает официант, остальное — кальянщик.
+  const toWhom = type === 'bill' || type === 'callWaiter' ? 'официанту' : staffWord('dat');
+  toast(`${label} — передали ${toWhom}`);
   // Через минуту разрешаем позвать снова: кальянщик мог не услышать.
   setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 60000);
 }
@@ -1077,52 +1148,62 @@ function watchCalls() {
   sub(onSnapshot(
     query(collection(state.root, 'waiterCalls'), where('clientUid', '==', state.uid)),
     (snap) => {
-      const box = $('calls');
-      if (!box) return;
-      const fresh = Date.now() - 30 * 60 * 1000;
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-        .filter((c) => c.status === 'new')
-        .filter((c) => { const t = toDate(c.createdAt); return t && t.getTime() > fresh; })
-        .sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt))
-        .slice(0, 4);
-      box.innerHTML = list.map((c) => {
-        const t = toDate(c.createdAt);
-        return `<div class="row small muted" style="margin-top:8px">
-          <span style="color:var(--primary)">✓</span>
-          <span>${esc(CALL_LABELS[c.type] || 'Вызов')} — передали в ${t ? hhmm(t) : ''}</span>
-        </div>`;
-      }).join('');
+      state.tableCache.calls = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      paintCalls();
     }, () => {}));
+}
+
+function paintCalls() {
+  const box = $('calls');
+  if (!box) return;
+  const fresh = Date.now() - 30 * 60 * 1000;
+  const list = state.tableCache.calls
+    .filter((c) => c.status === 'new')
+    .filter((c) => { const t = toDate(c.createdAt); return t && t.getTime() > fresh; })
+    .sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt))
+    .slice(0, 4);
+  box.innerHTML = list.map((c) => {
+    const t = toDate(c.createdAt);
+    return `<div class="row small muted" style="margin-top:8px">
+      <span style="color:var(--primary)">✓</span>
+      <span>${esc(CALL_LABELS[c.type] || 'Вызов')} — передали в ${t ? hhmm(t) : ''}</span>
+    </div>`;
+  }).join('');
 }
 
 function watchOrders(sessionId) {
   sub(onSnapshot(
     query(collection(state.root, 'guestOrders'), where('clientUid', '==', state.uid)),
     (snap) => {
-      const box = $('orders');
-      if (!box) return;
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-        .filter((o) => o.sessionId === sessionId)
-        .sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
-      if (!list.length) { box.innerHTML = ''; return; }
-
-      const label = (st) => ({
-        new: 'Ждёт подтверждения',
-        preparing: 'Готовится',
-        ready: 'Готов',
-        rejected: 'Отклонён',
-      }[st] || st);
-
-      box.innerHTML = `<h2>Заказы из приложения</h2>` + list.map((o) => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div>${(o.items || []).map((i) => esc(i.name) + '×' + (i.qty || 1)).join(', ')}</div>
-              <div class="small muted">${esc(label(o.status))}${o.rejectReason ? ' · ' + esc(o.rejectReason) : ''}</div>
-            </div>
-          </div>
-        </div>`).join('');
+      state.tableCache.orders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      paintOrders(sessionId);
     }, () => {}));
+}
+
+function paintOrders(sessionId) {
+  const box = $('orders');
+  if (!box) return;
+  const list = state.tableCache.orders
+    .filter((o) => o.sessionId === sessionId)
+    .sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
+  if (!list.length) { box.innerHTML = ''; return; }
+
+  const label = (st) => ({
+    new: 'Ждёт подтверждения',
+    preparing: 'Готовится',
+    ready: 'Готов',
+    rejected: 'Отклонён',
+  }[st] || st);
+
+  box.innerHTML = `<h2>Заказы из приложения</h2>` + list.map((o) => `
+    <div class="card">
+      <div class="row">
+        <div class="grow">
+          <div>${(o.items || []).map((i) => esc(i.name) + '×' + (i.qty || 1)).join(', ')}</div>
+          <div class="small muted">${esc(label(o.status))}${o.rejectReason ? ' · ' + esc(o.rejectReason) : ''}</div>
+        </div>
+      </div>
+    </div>`).join('');
 }
 
 async function unbind() {
@@ -1249,7 +1330,7 @@ function screenBooking() {
     <h1>Бронь стола</h1>
     ${todayHours
       ? `<p class="small" style="color:var(--gold);margin-bottom:16px">Работаем ${esc(todayHours.raw)}</p>`
-      : `<p class="small muted">Часы работы не заданы — уточните у кальянщика.</p>`}
+      : `<p class="small muted">Часы работы не заданы — уточните у ${staffWord('acc')}.</p>`}
 
     <h2 style="margin-top:0">Дата</h2>
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch">
@@ -1684,7 +1765,7 @@ async function sendBooking() {
       // а бонусы уехали бы не туда.
       if (await phoneTakenByOther(phone)) {
         alert('Номер уже зарегистрирован\n\n'
-          + 'На этот номер уже есть профиль. Назовите кальянщику номер и '
+          + `На этот номер уже есть профиль. Назовите ${staffWord('dat')} номер и `
           + '«ID устройства» из профиля — он объединит их на кассе. '
           + 'Бронь при этом уже отправлена.');
       } else {
@@ -1924,7 +2005,7 @@ function screenProfile() {
         <div class="grow small muted">
           Бонусы копятся на этом устройстве и находятся по вашему номеру на
           кассе. Сменили телефон — назовите номер и покажите ID устройства
-          ниже кальянщику, и мы перенесём историю визитов.
+          ниже ${staffWord('dat')}, и мы перенесём историю визитов.
         </div>
       </div>
       <div id="deviceId" style="margin-top:12px;background:var(--inset, rgba(0,0,0,.25));
@@ -1982,7 +2063,7 @@ function screenProfile() {
       if ((state.profile || {}).activeSessionId) {
         const ok = confirm('У вас сейчас открыт стол в этом заведении. После '
           + 'смены заведения приложение перестанет его показывать (сам счёт '
-          + 'останется открытым, закрыть его сможет кальянщик). Сменить всё равно?');
+          + `останется открытым, закрыть его сможет ${staffWord('nom')}). Сменить всё равно?`);
         if (!ok) return;
       }
       try {
@@ -2103,7 +2184,7 @@ async function saveProfile() {
         // тот, кто угадал его номер телефона.
         alert('Номер уже зарегистрирован\n\n'
           + 'На этот номер уже есть профиль. Чтобы его бонусы и история '
-          + 'появились на этом устройстве, назовите кальянщику номер и '
+          + `появились на этом устройстве, назовите ${staffWord('dat')} номер и `
           + '«ID устройства» ниже — он объединит профили на кассе за пару '
           + 'секунд.');
         return;
@@ -2210,11 +2291,11 @@ function screenExtras() {
       <h1 style="margin:0">Ещё</h1>
     </div>
 
-    <div class="card">
+    ${(state.venue || {}).tipsEnabled !== false ? `<div class="card">
       <div class="row"><span style="color:var(--primary)">🫶</span>
-        <b class="grow">Чаевые кальянщику</b></div>
+        <b class="grow">Чаевые</b></div>
       <div id="xTips" style="margin-top:12px"></div>
-    </div>
+    </div>` : ''}
 
     <div class="card">
       <div class="row"><span style="color:var(--primary)">🎁</span>
@@ -2252,7 +2333,7 @@ function screenExtras() {
       </div>
     </div>`;
 
-  renderTips();
+  renderExtrasTips();
   renderQueue();
   ensureReferralCode();
   $('xCardBtn').onclick = activateGiftCard;
@@ -2261,8 +2342,233 @@ function screenExtras() {
 }
 
 // ---------- ЧАЕВЫЕ ----------
+//
+// Гость выбирает, КОМУ — любому, кто сейчас на смене (meta/tipsTeam ведёт
+// касса), или всей смене сразу, — и СКОЛЬКО: процент от счёта или своя
+// сумма. «Добавить к счёту» — касса возьмёт чаевые вместе с оплатой;
+// «Перевести напрямую» — по личной ссылке сотрудника, минуя кассу. Та же
+// логика, что KolibriTipsPanel в приложении.
 
-function renderTips() {
+const TIP_TEAM = '__team__';
+const TIP_PERCENTS = [5, 10, 15];
+const TIP_FIXED = [100, 200, 500];
+const POSITION_LABELS = {
+  waiter: 'Официант', hookah_master: 'Кальянщик', bartender: 'Бармен', cook: 'Повар', host: 'Хостес',
+};
+
+/// Процент от счёта, округлённый до 10 ₽, но не меньше 10 ₽.
+function tipFromPercent(bill, p) {
+  if (bill <= 0 || p <= 0) return 0;
+  const r = Math.round(bill * p / 100 / 10) * 10;
+  return r < 10 ? 10 : r;
+}
+
+function sessionBill(s) {
+  const items = (s && s.orderItems) || [];
+  const total = items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+  return total * (1 - (Number((s || {}).discountPercent) || 0) / 100);
+}
+
+/// Кто на смене. Отмеченные больше 18 часов назад — забытые смены,
+/// вчерашний сотрудник гостю не нужен.
+function parseTipsTeam(data) {
+  const members = (data && data.members) || {};
+  const cutoff = Date.now() - 18 * 3600 * 1000;
+  return Object.entries(members)
+    .filter(([, m]) => m && String(m.name || '').trim())
+    .filter(([, m]) => { const t = toDate(m.since); return !t || t.getTime() >= cutoff; })
+    .map(([id, m]) => ({ id, name: String(m.name).trim(), position: m.position || '', tipsLink: m.tipsLink || '' }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+function watchTips(sessionId) {
+  const t = state.tips;
+  if (t.watching && t.sid === sessionId) return;
+  if (t.sid !== sessionId) Object.assign(t, { to: null, preset: 10, custom: '', mine: [] });
+  t.sid = sessionId;
+  t.watching = true;
+  sub(onSnapshot(doc(state.root, 'meta', 'tipsTeam'), (d) => {
+    t.team = parseTipsTeam(d.exists() ? d.data() : null);
+    paintTips();
+  }, () => { t.team = []; paintTips(); }));
+  // Гостю правила дают читать только свои записи — отсюда clientUid.
+  sub(onSnapshot(query(collection(state.root, 'tips'),
+    where('sessionId', '==', sessionId), where('clientUid', '==', state.uid)), (snap) => {
+    t.mine = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (toDate(a.createdAt) || 0) - (toDate(b.createdAt) || 0));
+    paintTips();
+  }, () => {}));
+}
+
+function tipsRecipients() {
+  const t = state.tips;
+  const s = t.session || {};
+  if (t.team.length) return t.team;
+  const name = String(s.employeeName || '').trim();
+  return name ? [{ id: s.employeeId || '', name, position: '', tipsLink: '' }] : [];
+}
+
+function tipsPreset(bill) {
+  const p = state.tips.preset;
+  if (p === -1) return -1;
+  if (bill > 0 && p > 1000) return 10;
+  if (bill <= 0 && p < 1000) return 1000 + TIP_FIXED[1];
+  return p;
+}
+
+function tipsAmount(bill, preset) {
+  if (preset === -1) return Number(String(state.tips.custom).replace(/\D/g, '')) || 0;
+  if (preset > 1000) return preset - 1000;
+  return tipFromPercent(bill, preset);
+}
+
+function paintTips() {
+  const box = $('tipsPanel');
+  if (!box) return;
+  const t = state.tips;
+  const s = t.session || {};
+  const venue = state.venue || {};
+  const team = tipsRecipients();
+  const teamAllowed = venue.tipsTeamEnabled !== false && team.length !== 1;
+  if (t.to == null || (t.to !== TIP_TEAM && !team.some((m) => m.id === t.to))) {
+    const opener = team.find((m) => m.id && m.id === s.employeeId);
+    t.to = opener ? opener.id : team.length ? team[0].id : (teamAllowed ? TIP_TEAM : null);
+  }
+  if (t.to === TIP_TEAM && !teamAllowed && team.length) t.to = team[0].id;
+  const sel = t.to === TIP_TEAM ? null : (team.find((m) => m.id === t.to) || null);
+  const bill = sessionBill(s);
+  const preset = tipsPreset(bill);
+  const amount = tipsAmount(bill, preset);
+  const link = sel && /^https:\/\//.test(sel.tipsLink || '') ? sel.tipsLink : '';
+  const chip = (attr, val, label, on) =>
+    `<button class="chip${on ? ' on' : ''}" ${attr}="${esc(val)}">${esc(label)}</button>`;
+
+  // Пока гость вводит свою сумму, форму не перерисовываем — иначе поле
+  // теряло бы фокус на каждом обновлении списка смены.
+  const typing = document.activeElement && document.activeElement.id === 'tipCustom';
+  if (!typing) {
+    box.innerHTML = `
+      <div class="small muted" style="margin-bottom:8px">Кому</div>
+      ${team.length || teamAllowed ? `<div class="chips">
+        ${team.map((m) => chip('data-tip-to', m.id,
+          POSITION_LABELS[m.position] ? `${m.name} · ${POSITION_LABELS[m.position]}` : m.name, t.to === m.id)).join('')}
+        ${teamAllowed ? chip('data-tip-to', TIP_TEAM, 'Всей смене', t.to === TIP_TEAM) : ''}
+      </div>` : `<p class="small muted">Смена ещё не отмечена — чаевые получит смена целиком.</p>`}
+      <div class="small muted" style="margin:14px 0 8px">Сколько</div>
+      <div class="chips">
+        ${bill > 0
+          ? TIP_PERCENTS.map((p) => chip('data-tip-p', p, `${p}% · ${money(tipFromPercent(bill, p))}`, preset === p)).join('')
+          : TIP_FIXED.map((v) => chip('data-tip-p', 1000 + v, money(v), preset === 1000 + v)).join('')}
+        ${chip('data-tip-p', -1, 'Своя сумма', preset === -1)}
+      </div>
+      ${preset === -1 ? `<input id="tipCustom" inputmode="numeric" maxlength="6" placeholder="Сумма, ₽"
+        value="${esc(t.custom)}" style="margin-top:10px;max-width:180px">` : ''}
+      <button class="btn-primary" id="tipAdd" style="margin-top:16px"></button>
+      ${link ? `<button class="btn-ghost" id="tipLink" style="margin-top:8px">↗ Перевести напрямую: ${esc(sel.name)}</button>` : ''}
+      <p class="small muted" style="margin:8px 0 0">Чаевые не входят в счёт заведения — их получит
+        ${sel ? esc(sel.name) : 'смена, поровну'}.</p>
+      <div id="tipsMine"></div>`;
+    box.querySelectorAll('[data-tip-to]').forEach((el) => {
+      el.onclick = () => { t.to = el.dataset.tipTo; paintTips(); };
+    });
+    box.querySelectorAll('[data-tip-p]').forEach((el) => {
+      el.onclick = () => { t.preset = Number(el.dataset.tipP); paintTips(); };
+    });
+    const input = $('tipCustom');
+    if (input) {
+      input.oninput = () => {
+        t.custom = input.value.replace(/\D/g, '');
+        if (input.value !== t.custom) input.value = t.custom;
+        paintTipsButton();
+      };
+    }
+    $('tipAdd').onclick = () => leaveTip('bill', sel, team);
+    if ($('tipLink')) $('tipLink').onclick = () => leaveTip('link', sel, team, link);
+  }
+  paintTipsButton();
+  paintMyTips();
+}
+
+function paintTipsButton() {
+  const btn = $('tipAdd');
+  if (!btn) return;
+  const bill = sessionBill(state.tips.session);
+  const amount = tipsAmount(bill, tipsPreset(bill));
+  btn.textContent = amount > 0 ? `Добавить к счёту · ${money(amount)}` : 'Добавить к счёту';
+  btn.disabled = amount <= 0;
+  if ($('tipLink')) $('tipLink').disabled = amount <= 0;
+}
+
+function paintMyTips() {
+  const box = $('tipsMine');
+  if (!box) return;
+  const list = state.tips.mine.filter((x) => x.status !== 'cancelled');
+  if (!list.length) { box.innerHTML = ''; return; }
+  const status = (x) => x.method === 'link' ? 'переведено напрямую'
+    : x.status === 'paid' ? 'оплачено, спасибо!' : 'добавим к счёту';
+  box.innerHTML = `<div class="small muted" style="margin:14px 0 6px">Ваши чаевые за этот визит</div>`
+    + list.map((x) => `
+      <div class="row small" style="margin-top:4px">
+        <span class="grow" style="${x.status === 'paid' ? 'color:var(--success, #22c55e)' : ''}">
+          ${money(x.amount)} — ${esc(x.target === 'team' ? 'Всей смене' : (x.employeeName || 'Смене'))} · ${status(x)}</span>
+        ${x.method !== 'link' && x.status === 'pending'
+          ? `<button class="btn-link" data-tip-cancel="${esc(x.id)}">Отменить</button>` : ''}
+      </div>`).join('');
+  box.querySelectorAll('[data-tip-cancel]').forEach((el) => {
+    el.onclick = async () => {
+      el.disabled = true;
+      try {
+        await updateDoc(doc(state.root, 'tips', el.dataset.tipCancel),
+          { status: 'cancelled', cancelledAt: Timestamp.fromDate(new Date()) });
+      } catch (_) { toast('Не удалось отменить — проверьте связь'); el.disabled = false; }
+    };
+  });
+}
+
+async function leaveTip(method, to, team, link = '') {
+  const t = state.tips;
+  const s = t.session || {};
+  const bill = sessionBill(s);
+  const amount = tipsAmount(bill, tipsPreset(bill));
+  if (amount <= 0) return;
+  if (amount > 100000) { toast('Слишком большая сумма — проверьте, пожалуйста'); return; }
+  // Ссылку открываем сразу по нажатию — иначе браузер сочтёт это
+  // всплывающим окном и заблокирует.
+  if (method === 'link') window.open(link, '_blank', 'noopener');
+  const btn = $(method === 'link' ? 'tipLink' : 'tipAdd');
+  if (btn) btn.disabled = true;
+  try {
+    await addDoc(collection(state.root, 'tips'), {
+      amount,
+      target: to ? 'employee' : 'team',
+      employeeId: to ? to.id : '',
+      employeeName: to ? to.name : 'Всей смене',
+      position: to ? to.position : '',
+      teamMembers: to ? [] : team.filter((m) => m.id).map((m) => ({ id: m.id, name: m.name })),
+      sessionId: t.sid,
+      tableName: s.tableName || '',
+      clientUid: state.uid,
+      comment: '',
+      method,
+      source: 'guest',
+      // Правила базы разрешают гостю создавать чаевые только в этом
+      // статусе: оплаченными их отмечает касса.
+      status: 'pending',
+      createdAt: Timestamp.fromDate(new Date()),
+    });
+    t.custom = '';
+    toast(method === 'link'
+      ? `Спасибо! ${to ? to.name : 'Сотрудник'} увидит, что вы перевели чаевые`
+      : `Спасибо! ${money(amount)} добавим к счёту — ${staffWord('nom')} возьмёт их при оплате`);
+  } catch (_) {
+    toast('Не удалось отправить — проверьте связь');
+  } finally {
+    paintTips();
+  }
+}
+
+/// Чаевые на экране «Ещё»: тот же блок, что на «Моём столе».
+function renderExtrasTips() {
   const box = $('xTips');
   if (!box) return;
   const sessionId = (state.profile || {}).activeSessionId || '';
@@ -2271,49 +2577,13 @@ function renderTips() {
       визита — откройте свой стол.</p>`;
     return;
   }
-
-  // Имя кальянщика лежит в чеке. Свой чек гостю читать можно — чужие нет.
+  box.innerHTML = `<div id="tipsPanel"></div>`;
+  // Сумма и тот, кто открыл стол, — из чека. Свой чек гостю читать можно.
   sub(onSnapshot(doc(state.root, 'sessions', sessionId), (d) => {
-    const who = d.exists() ? (d.data().employeeName || '') : '';
-    box.innerHTML = `
-      <p class="small muted">${who ? 'Ваш кальянщик: ' + esc(who) : 'Ваш кальянщик'}</p>
-      <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
-        ${[200, 500, 1000].map((a) =>
-          `<button class="btn-ghost" data-tip="${a}">${a} ₽</button>`).join('')}
-      </div>`;
-    box.querySelectorAll('[data-tip]').forEach((el) => {
-      el.onclick = () => leaveTip(Number(el.dataset.tip), who, sessionId, el);
-    });
-  }, () => {
-    box.innerHTML = `<p class="small muted">Чаевые можно оставить во время
-      визита — откройте свой стол.</p>`;
-  }));
-}
-
-async function leaveTip(amount, employeeName, sessionId, btn) {
-  btn.disabled = true;
-  try {
-    await addDoc(collection(state.root, 'tips'), {
-      amount,
-      employeeId: '',
-      employeeName: employeeName || 'Смена',
-      sessionId,
-      clientUid: state.uid,
-      comment: '',
-      method: 'app',
-      // Правила базы разрешают гостю создавать чаевые только в этом
-      // статусе: подтверждает оплату касса.
-      status: 'pending',
-      createdAt: Timestamp.fromDate(new Date()),
-    });
-    // Деньги списывает платёжный провайдер на следующем шаге; здесь мы
-    // зафиксировали намерение и сообщили смене.
-    toast(`Спасибо! ${amount} ₽ передадим кальянщику`);
-  } catch (_) {
-    toast('Не удалось отправить — проверьте связь');
-  } finally {
-    btn.disabled = false;
-  }
+    state.tips.session = d.exists() ? { id: d.id, ...d.data() } : null;
+    paintTips();
+  }, () => {}));
+  watchTips(sessionId);
 }
 
 // ---------- СЕРТИФИКАТ ----------

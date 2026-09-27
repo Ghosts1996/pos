@@ -16,6 +16,7 @@ import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/referral_service.dart';
 import '../../widgets/bonus_redeem_panel.dart';
+import '../../services/tips_service.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / за счёт заведения,
@@ -101,6 +102,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
     return rest < 0 ? 0 : rest;
   }
 
+  /// Чаевые, которые гость попросил добавить к счёту (из приложения) или
+  /// которые кассир добавил здесь же. Берутся вместе с оплатой, но в
+  /// выручку, фискальный чек и начисление бонусов не входят.
+  List<TipModel> _tips = const [];
+  StreamSubscription<List<TipModel>>? _tipsSub;
+  double get _tipsTotal => _closeWithoutPayment ? 0 : _tips.fold(0.0, (a, t) => a + t.amount);
+
+  /// Всего взять с гостя: счёт + чаевые.
+  double get _due => _total + _tipsTotal;
+
+  /// Чаевые берутся из живых денег — наличных, карты, терминала. «За счёт
+  /// заведения» чаевые оплатить не может: это не деньги гостя.
+  bool get _tipsCovered => _tipsSplit.uncovered < 0.005;
+
+  /// Из каких денег взяты чаевые — см. splitTips.
+  ({double cash, double card, double terminal, double uncovered}) get _tipsSplit => splitTips(
+        tips: _tipsTotal,
+        cash: _cashNet,
+        card: _card.parse(),
+        terminal: _terminal.parse(),
+      );
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +140,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
     for (final m in _methods) {
       m.controller.addListener(() => setState(() {}));
     }
+
+    _tipsSub = TipsService.instance.sessionTipsStream(widget.session.id).listen((all) {
+      if (!mounted) return;
+      setState(() {
+        _tips = all.where((t) => t.onBill).toList();
+        // Пока кассир ничего не трогал руками, сумма «наличными» следит за
+        // итогом: гость добавил чаевые из приложения — поле уже с ними.
+        if (_revealed.isEmpty) {
+          _cash.controller.text = _fmt(_due);
+          for (final m in _methods) {
+            if (m != _cash) m.controller.text = '0';
+          }
+        }
+      });
+    }, onError: (_) {});
 
     // Гость из «Colibri Lounge», сидящий за этим чеком, — нужен для
     // бонусов и реферальной программы. Если приложения у гостя нет,
@@ -136,6 +174,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   @override
   void dispose() {
+    _tipsSub?.cancel();
     for (final m in _methods) {
       m.dispose();
     }
@@ -191,8 +230,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
       for (final other in _methods) {
         if (other != method) other.controller.text = '0';
       }
-      if (_total > 0.004) {
-        method.controller.text = _fmt(_total);
+      if (_due > 0.004) {
+        method.controller.text = _fmt(_due);
       }
     });
   }
@@ -219,13 +258,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   double get _paidTotal => _methods.fold(0.0, (sum, m) => sum + m.parse());
-  double get _diff => _total - _paidTotal;
+  double get _diff => _due - _paidTotal;
 
   /// Сдача гостю: переплата, которую покрывают внесённые наличные (гость дал
   /// 5000 за чек 4600). Переплата картой или терминалом — это опечатка, а не
   /// сдача, и она по-прежнему не даёт провести оплату.
   double get _change {
-    final over = _paidTotal - _total;
+    final over = _paidTotal - _due;
     return over > 0.004 && over <= _cash.parse() + 0.004 ? over : 0;
   }
 
@@ -233,14 +272,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// сумма уходит в выручку, фискальный чек и начисление бонусов.
   double get _cashNet => _cash.parse() - _change;
 
-  bool get _canPay => _closeWithoutPayment || _diff.abs() < 0.01 || _change > 0;
+  bool get _canPay =>
+      _closeWithoutPayment || ((_diff.abs() < 0.01 || _change > 0) && _tipsCovered);
 
   /// Две подсказки быстрой суммы — округление вверх до сотни и до
   /// ближайшей "круглой" суммы. Удобно для приёма наличных и расчёта сдачи.
   List<double> get _quickAmounts {
-    if (_total <= 0) return const [];
-    final toHundred = (_total / 100).ceil() * 100.0;
-    var toRound = (_total / 500).ceil() * 500.0;
+    if (_due <= 0) return const [];
+    final toHundred = (_due / 100).ceil() * 100.0;
+    var toRound = (_due / 500).ceil() * 500.0;
     if (toRound <= toHundred) toRound += 500;
     return [toHundred, toRound];
   }
@@ -260,7 +300,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// "Оплатить" ниже, как обычно.
   Future<void> _payViaTerminal() async {
     if (_terminalBusy || _busy) return;
-    final amount = _diff > 0.004 ? _diff : _total;
+    final amount = _diff > 0.004 ? _diff : _due;
     if (amount <= 0) return;
     setState(() => _terminalBusy = true);
     try {
@@ -289,17 +329,32 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
+  // Выручка по способам оплаты — без чаевых.
+  double get _revenueCash => _cashNet - _tipsSplit.cash;
+  double get _revenueCard => _card.parse() - _tipsSplit.card;
+  double get _revenueTerminal => _terminal.parse() - _tipsSplit.terminal;
+
   Future<void> _pay() async {
     if (!_canPay || _busy) return;
     setState(() => _busy = true);
     try {
+      final split = _tipsSplit;
+      final tipsVia = split.cash >= _tipsTotal - 0.004
+          ? 'cash'
+          : split.cash < 0.004
+              ? 'card'
+              : 'mixed';
       await _fs.closeSessionWithPayment(
         widget.session.id,
         widget.session.tableId,
-        cash: _closeWithoutPayment ? 0 : _cashNet,
-        card: _closeWithoutPayment ? 0 : _card.parse(),
-        terminal: _closeWithoutPayment ? 0 : _terminal.parse(),
+        cash: _closeWithoutPayment ? 0 : _revenueCash,
+        card: _closeWithoutPayment ? 0 : _revenueCard,
+        terminal: _closeWithoutPayment ? 0 : _revenueTerminal,
         comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid,
+        tipsPaidVia: _closeWithoutPayment ? const {} : {for (final t in _tips) t.id: tipsVia},
+        tipsCancelled: _closeWithoutPayment ? [for (final t in _tips) t.id] : const [],
+        tipsCash: _closeWithoutPayment ? 0 : split.cash,
+        tipsCard: _closeWithoutPayment ? 0 : split.card + split.terminal,
         guestContact: _contactCtrl.text.trim(),
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
@@ -315,7 +370,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         // лежат в том числе сами бонусы и сертификат, и начисление с них
         // означало бы кешбэк с кешбэка (бонусы подпитывали сами себя, а
         // уровень лояльности рос за счёт заведения).
-        final paid = _cashNet + _card.parse() + _terminal.parse();
+        final paid = _revenueCash + _revenueCard + _revenueTerminal;
         unawaited(GuestLinkService()
             .accrueBonuses(
               clientUid: _clientUid,
@@ -371,6 +426,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
               if (_bonusPaid > 0) 'бонусы ${_bonusPaid.toStringAsFixed(0)}₽',
+              if (_tipsTotal > 0) 'в т.ч. чаевые ${_tipsTotal.toStringAsFixed(0)}₽',
             ].join(', ');
       var venueName = VenueService.instance.cached.name.trim();
       if (venueName.isEmpty) {
@@ -490,9 +546,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (_closeWithoutPayment)
           FiscalPayment('other', billTotal)
         else ...[
-          if (_cashNet > 0) FiscalPayment('cash', _cashNet),
-          if (_card.parse() > 0) FiscalPayment('card', _card.parse()),
-          if (_terminal.parse() > 0) FiscalPayment('card', _terminal.parse()),
+          // Чаевые — не выручка и в фискальный чек не входят.
+          if (_revenueCash > 0.004) FiscalPayment('cash', _revenueCash),
+          if (_revenueCard > 0.004) FiscalPayment('card', _revenueCard),
+          if (_revenueTerminal > 0.004) FiscalPayment('card', _revenueTerminal),
           if (_comp.parse() > 0) FiscalPayment('other', _comp.parse()),
           if (prepaid > 0) FiscalPayment('prepayment', prepaid),
         ],
@@ -560,8 +617,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('К оплате: ${_fmt(_total)} ${AppConstants.currencySymbol}',
+              Text('К оплате: ${_fmt(_due)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
+              if (_tipsTotal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'счёт ${_fmt(_total)} + чаевые ${_fmt(_tipsTotal)}',
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+                  ),
+                ),
               if (_bonusPaid > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
@@ -583,7 +648,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       _clientUid = profile.uid;
                       // Пересобираем поле "наличными": гость доплачивает
                       // уже уменьшенную сумму.
-                      _cash.controller.text = _fmt(_total);
+                      _cash.controller.text = _fmt(_due);
                       for (final m in _methods) {
                         if (m != _cash) m.controller.text = '0';
                       }
@@ -593,6 +658,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 const SizedBox(height: 12),
                 const Divider(height: 28),
               ],
+              if (!_closeWithoutPayment) _tipsSection(),
               for (final m in _methods)
                 _amountField(
                   m,
@@ -631,6 +697,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       color: _diff > 0 || _change == 0 ? AppColors.danger : AppColors.success,
                       fontWeight: FontWeight.w500,
                     ),
+                  ),
+                ),
+              if (!_closeWithoutPayment && !_tipsCovered && _diff.abs() < 0.01)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    'Чаевые нельзя провести «за счёт заведения» — их платит гость',
+                    style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
               // Быстрые суммы и «сдача» — сразу под полями оплаты, к которым
@@ -673,6 +747,82 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ),
       ),
     );
+  }
+
+  /// Чаевые к этому счёту: что гость добавил из приложения, плюс кнопка
+  /// «+ Чаевые» — гость сказал вслух «добавьте 10% официанту».
+  Widget _tipsSection() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final t in _tips)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  const Icon(Icons.volunteer_activism, size: 18, color: AppColors.success),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Чаевые ${t.isTeam ? 'всей смене' : t.recipientLabel}: ${_fmt(t.amount)} ${AppConstants.currencySymbol}'
+                      '${t.source == 'guest' ? ' · из приложения' : ''}',
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Убрать чаевые',
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => TipsService.instance.cancel(t.id),
+                  ),
+                ],
+              ),
+            ),
+          if (VenueService.instance.cached.tipsEnabled || _tips.isNotEmpty)
+            TextButton.icon(
+              style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+              onPressed: _addTip,
+              icon: const Icon(Icons.add),
+              label: const Text('Добавить чаевые'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addTip() async {
+    List<TipTeamMember> team;
+    try {
+      team = await TipsService.instance.team();
+    } catch (_) {
+      team = const [];
+    }
+    // Смену никто не отмечал — предлагаем хотя бы того, кто открыл стол.
+    if (team.isEmpty && widget.session.employeeName.trim().isNotEmpty) {
+      team = [TipTeamMember(id: widget.session.employeeId, name: widget.session.employeeName.trim())];
+    }
+    if (!mounted) return;
+    final result = await showDialog<({TipTeamMember? to, double amount})>(
+      context: context,
+      builder: (ctx) => _AddTipDialog(team: team, bill: _total, fmt: _fmt),
+    );
+    if (result == null || result.amount <= 0) return;
+    try {
+      await TipsService.instance.leaveTip(
+        amount: result.amount,
+        to: result.to,
+        team: result.to == null ? team.where((m) => m.id.isNotEmpty).toList() : const [],
+        sessionId: widget.session.id,
+        tableName: widget.session.tableName,
+        source: 'pos',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось добавить чаевые — проверьте интернет')));
+      }
+    }
   }
 
   /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа
@@ -828,6 +978,98 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Кому и сколько чаевых добавить к счёту (кассир вводит со слов гостя).
+class _AddTipDialog extends StatefulWidget {
+  final List<TipTeamMember> team;
+  final double bill;
+  final String Function(double) fmt;
+  const _AddTipDialog({required this.team, required this.bill, required this.fmt});
+
+  @override
+  State<_AddTipDialog> createState() => _AddTipDialogState();
+}
+
+class _AddTipDialogState extends State<_AddTipDialog> {
+  final _amount = TextEditingController();
+
+  /// id получателя; '' — всей смене.
+  late String _to = widget.team.length == 1 ? widget.team.first.id : '';
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = double.tryParse(_amount.text.replaceAll(',', '.').trim()) ?? 0;
+    return AlertDialog(
+      title: const Text('Чаевые к счёту'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _to,
+              decoration: const InputDecoration(labelText: 'Кому'),
+              items: [
+                if (widget.team.length != 1) const DropdownMenuItem(value: '', child: Text('Всей смене (поровну)')),
+                for (final m in widget.team)
+                  DropdownMenuItem(
+                    value: m.id,
+                    child: Text([
+                      m.name,
+                      AppConstants.positionGuestLabel(m.position),
+                    ].where((e) => e.isNotEmpty).join(' · ')),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _to = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amount,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]'))],
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(labelText: 'Сумма', suffixText: '₽'),
+            ),
+            if (widget.bill > 0) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final p in const [5, 10, 15])
+                    ActionChip(
+                      label: Text('$p% · ${widget.fmt(tipFromPercent(widget.bill, p))}'),
+                      onPressed: () => setState(
+                          () => _amount.text = widget.fmt(tipFromPercent(widget.bill, p))),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(
+          onPressed: amount <= 0
+              ? null
+              : () {
+                  final to = widget.team.where((m) => m.id == _to && _to.isNotEmpty).firstOrNull;
+                  Navigator.pop(context, (to: to, amount: amount));
+                },
+          child: const Text('Добавить'),
+        ),
+      ],
     );
   }
 }

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
+import '../../services/tips_service.dart';
+import '../../services/venue_service.dart';
 
 class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
@@ -116,6 +118,15 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         TextEditingController(text: _numStr(emp?.overtimeMultiplier ?? 1.5));
     bool salesPercentEnabled = emp?.salesPercentEnabled ?? false;
     final salesPercentCtrl = TextEditingController(text: _numStr(emp?.salesPercentRate ?? 0));
+    final tipsLinkCtrl = TextEditingController(text: emp?.tipsLink ?? '');
+    // «Кальянщик» в списке нужен только кальянной — в ресторане он лишь
+    // путает. Но если он уже назначен, пункт оставляем, чтобы не потерять.
+    final positions = AppConstants.employeePositions
+        .where((p) =>
+            p != AppConstants.positionHookahMaster ||
+            VenueService.instance.terms.isHookah ||
+            emp?.position == p)
+        .toList();
     String? error;
     bool saving = false;
 
@@ -176,7 +187,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                   DropdownButtonFormField<String>(
                     initialValue: position,
                     decoration: const InputDecoration(labelText: 'Специализация'),
-                    items: AppConstants.employeePositions
+                    items: positions
                         .map((p) => DropdownMenuItem(
                               value: p,
                               child: Text(AppConstants.positionLabel(p)),
@@ -187,8 +198,23 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                   const Text(
                     'Определяет, какие вызовы гостя из-за стола придут этому '
                     'сотруднику (например, официант не будет получать вызов '
-                    'кальянщика на угли). Универсал получает все вызовы.',
+                    'кальянщика на угли). Универсал получает все вызовы. '
+                    'Повар и хостес вызовов не получают, но им тоже можно '
+                    'оставить чаевые.',
                     style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: tipsLinkCtrl,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      labelText: 'Ссылка для чаевых (необязательно)',
+                      hintText: 'https://…',
+                      helperText: 'Личная страница чаевых (Нетмонет, CloudTips, банк). '
+                          'Гость сможет перевести напрямую. Имя и должность гость '
+                          'видит, пока сотрудник на смене.',
+                      helperMaxLines: 3,
+                    ),
                   ),
                   const Divider(height: 24),
                   Text('Зарплата', style: Theme.of(ctx).textTheme.titleSmall),
@@ -315,6 +341,12 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                         setSt(() => error = 'Укажите процент больше нуля или выключите его');
                         return;
                       }
+                      final tipsLink = tipsLinkCtrl.text.trim();
+                      if (tipsLink.isNotEmpty &&
+                          !(Uri.tryParse(tipsLink)?.isAbsolute == true && tipsLink.startsWith('https://'))) {
+                        setSt(() => error = 'Ссылка для чаевых должна начинаться с https://');
+                        return;
+                      }
                       setSt(() {
                         saving = true;
                         error = null;
@@ -343,6 +375,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                             overtimeMultiplier: overtimeMultiplier,
                             salesPercentEnabled: salesPercentEnabled,
                             salesPercentRate: salesPercentRate,
+                            tipsLink: tipsLink,
                           ),
                         );
                       }
@@ -365,6 +398,8 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         await fs.addEmployee(newEmp);
       } else {
         await fs.updateEmployee(newEmp);
+        // Если он сейчас на смене — гость сразу увидит новое имя и ссылку.
+        TipsService.instance.refreshMember(newEmp).catchError((_) {});
       }
     } catch (e) {
       if (context.mounted) {

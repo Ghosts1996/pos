@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/venue_service.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/guest_link_service.dart';
 import '../widgets/check_picker_sheet.dart';
@@ -86,7 +87,8 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
       if (result.isEmpty) {
         setState(() {
           _handling = false;
-          _error = 'За этим столом сейчас нет открытого счёта — попросите кальянщика начать сеанс';
+          _error = 'За этим столом сейчас нет открытого счёта — '
+              'попросите ${VenueService.instance.terms.staffAcc} открыть стол';
         });
         return;
       }

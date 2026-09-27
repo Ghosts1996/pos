@@ -385,8 +385,26 @@ service cloud.firestore {
     // ---- Чаевые ----
     match /tips/{doc} {
       allow read: if isStaff() || (signedIn() && resource.data.clientUid == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.status == 'pending';
-      allow update, delete: if isStaff();
+      allow create: if isStaff() || (signedIn() &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.amount <= 100000);
+      // Гость может отменить свои ещё не оплаченные чаевые — и только это.
+      allow update: if isStaff() ||
+        (signedIn() &&
+         resource.data.clientUid == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.status == 'cancelled' &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
+      allow delete: if isStaff();
+    }
+
+    // Кто сейчас на смене: гость выбирает, кому оставить чаевые.
+    match /meta/tipsTeam {
+      allow read: if signedIn();
+      allow write: if isStaff();
     }
 
     // ---- Всё остальное (склад, смены, сотрудники, чеки ККТ, ЕГАИС) ----

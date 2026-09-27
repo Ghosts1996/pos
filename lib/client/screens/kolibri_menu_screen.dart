@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../services/venue_service.dart';
 import 'package:flutter/material.dart';
 import '../../models/menu_models.dart';
 import '../../models/session_model.dart';
@@ -208,7 +209,10 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               child: item.imageUrl.isEmpty
                   ? Container(
                       color: KolibriColors.surfaceElevated,
-                      child: Icon(Icons.local_fire_department,
+                      child: Icon(
+                          VenueService.instance.terms.isHookah
+                              ? Icons.local_fire_department
+                              : Icons.restaurant,
                           color: KolibriColors.textMuted),
                     )
                   : CachedNetworkImage(
@@ -358,7 +362,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       if (!mounted) return;
       setState(_cart.clear);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заказ отправлен — кальянщик подтвердит его')),
+        SnackBar(content: Text('Заказ отправлен — ${VenueService.instance.terms.staff} подтвердит его')),
       );
     } catch (e) {
       if (mounted) {

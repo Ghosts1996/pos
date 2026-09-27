@@ -342,7 +342,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                   // Часы работы не заполнены вовсе — это не «закрыто
                   // каждый день», и гостю нужен рабочий путь, а не тупик.
                   ? 'Онлайн-бронь пока недоступна — заведение ещё не указало часы работы. '
-                      '${(_venue?.phone ?? '').isNotEmpty ? 'Забронируйте по телефону ${_venue!.phone}.' : 'Забронируйте по телефону или у кальянщика.'}'
+                      '${(_venue?.phone ?? '').isNotEmpty ? 'Забронируйте по телефону ${_venue!.phone}.' : 'Забронируйте по телефону или у ${VenueService.instance.terms.staffAcc}.'}'
                   : _venue?.workingHours[_day.weekday]?.isNotEmpty == true
                       ? 'На этот день свободного времени нет — выберите другую дату'
                       : 'В этот день мы закрыты — выберите другую дату',

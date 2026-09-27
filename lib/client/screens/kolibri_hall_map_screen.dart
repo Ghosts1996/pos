@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/venue_service.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../theme/kolibri_theme.dart';
@@ -126,7 +127,10 @@ class KolibriHallMapScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(busy ? Icons.local_fire_department : Icons.table_restaurant,
+            Icon(
+                busy
+                    ? (VenueService.instance.terms.isHookah ? Icons.local_fire_department : Icons.people)
+                    : Icons.table_restaurant,
                 color: color, size: 22),
             const SizedBox(height: 6),
             Text(

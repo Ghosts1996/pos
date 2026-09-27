@@ -66,12 +66,24 @@ class AdminHomeScreen extends StatelessWidget {
       ],
     };
 
+    // Под этим экраном в стеке только заставка запуска: стрелка «Назад»
+    // (и системная кнопка) уводили на пустой экран с логотипом, откуда не
+    // выйти. Выход — кнопкой справа, она возвращает на ввод PIN.
+    return PopScope(
+      canPop: false,
+      child: _scaffold(context, groups),
+    );
+  }
+
+  Widget _scaffold(BuildContext context, Map<String, List<_AdminTile>> groups) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: Text('Админ · ${employee.name}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
+            tooltip: 'Выйти',
             // Забываем сохранённый вход — иначе экран PIN тут же вернул
             // бы в приложение того же сотрудника.
             onPressed: () async {

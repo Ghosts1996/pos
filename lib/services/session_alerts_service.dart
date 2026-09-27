@@ -7,6 +7,7 @@ import '../models/session_model.dart';
 import '../utils/constants.dart';
 import 'notification_service.dart';
 import 'staff_session_store.dart';
+import 'venue_service.dart';
 
 /// Следит за залом и ставит уведомления кальянщику.
 ///
@@ -121,6 +122,14 @@ class SessionAlertsService {
       }
     }
     _watchShift();
+
+    // Тип заведения решает, нужны ли напоминания про угли: в ресторане их
+    // быть не должно. Профиль читаем до подписки на столы, чтобы первые же
+    // будильники поставились правильно (в изоляте службы кэша ещё нет).
+    try {
+      await VenueService.instance.load();
+    } catch (_) {}
+    VenueService.instance.watch();
 
     _watchSessions();
     _watchReservations();
@@ -253,15 +262,20 @@ class SessionAlertsService {
     // должны сработать на уже чужом столе.
     if (!_mine) return;
 
-    await _notify.scheduleAt(
-      id: coalId,
-      when: coalFrom.add(coalAfter),
-      title: 'Угли: ${s.tableName}',
-      body: s.refillCount > 0
-          ? 'Прошло 35 минут после перезабивки — проверьте угли'
-          : 'Прошло 35 минут — пора поменять угли',
-    );
+    // Угли — только в кальянной.
+    if (VenueService.instance.terms.isHookah) {
+      await _notify.scheduleAt(
+        id: coalId,
+        when: coalFrom.add(coalAfter),
+        title: 'Угли: ${s.tableName}',
+        body: s.refillCount > 0
+            ? 'Прошло 35 минут после перезабивки — проверьте угли'
+            : 'Прошло 35 минут — пора поменять угли',
+      );
+    }
 
+    // Стол «без ограничений» не заканчивается — предупреждать не о чем.
+    if (AppConstants.isUnlimitedRemaining(s.remaining)) return;
     await _notify.scheduleAt(
       id: endId,
       when: s.plannedEnd.subtract(warnBefore),

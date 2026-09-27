@@ -668,12 +668,24 @@ service cloud.firestore {
       allow update, delete: if isStaff(tenantId);
     }
 
+    // Чаевые: гость создаёт только свои и только «ожидают оплаты» — оплату
+    // отмечает касса. Сумма ограничена, чтобы опечатка «50000» вместо «500»
+    // не повисла на счёте. Отменить гость может только свои неоплаченные.
     match /tenants/{tenantId}/tips/{doc} {
       allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
-      allow create: if isTenantGuest(tenantId) &&
+      allow create: if isStaff(tenantId) || (isTenantGuest(tenantId) &&
         request.resource.data.clientUid == request.auth.uid &&
-        request.resource.data.status == 'pending';
-      allow update, delete: if isStaff(tenantId);
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.amount <= 100000);
+      allow update: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.clientUid == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.status == 'cancelled' &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
+      allow delete: if isStaff(tenantId);
     }
 
     match /tenants/{tenantId}/waitlist/{doc} {
@@ -719,9 +731,20 @@ service cloud.firestore {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
     }
+    // Профиль заведения правят на кассе («Профиль заведения» за PIN
+    // администратора), а планшет входит в заведение с ролью employee — с
+    // hasRole(['owner','admin']) сохранение не проходило ни с одного
+    // планшета (та же история, что с settings/* выше). Поэтому isStaff.
     match /tenants/{tenantId}/meta/venueProfile {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
-      allow write: if hasRole(tenantId, ['owner', 'admin']);
+      allow write: if isStaff(tenantId);
+    }
+    // Кто сейчас на смене — имена, должности и ссылки для чаевых. Гость
+    // выбирает из них, кому оставить чаевые; сотрудников и смены целиком
+    // (PIN, ставки) он по-прежнему не видит. Ведёт касса.
+    match /tenants/{tenantId}/meta/tipsTeam {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
     }
     // Настройки провайдеров в публичном документе — без ключей и адресов.
     function aiVendorPublic(v, id) {
