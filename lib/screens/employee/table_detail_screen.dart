@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
@@ -42,10 +44,29 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   bool _busy = false;
   String? _sessionId;
 
+  /// Карточка вошедшего сотрудника из базы — живая: админ поменял
+  /// должность (например, сделал кальянщиком) — «Перезабивка» появляется
+  /// сразу, без повторного входа. Пока не пришла — та, что была при входе.
+  Employee? _me;
+  StreamSubscription<List<Employee>>? _meSub;
+
   @override
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
+    _meSub = _fs.employeesStream().listen((list) {
+      final fresh = list.where((e) => e.id == widget.employee.id).firstOrNull;
+      final cur = _me ?? widget.employee;
+      if (fresh != null && mounted && (fresh.position != cur.position || fresh.role != cur.role)) {
+        setState(() => _me = fresh);
+      }
+    }, onError: (_) {});
+  }
+
+  @override
+  void dispose() {
+    _meSub?.cancel();
+    super.dispose();
   }
 
   void _showError(Object e) {
@@ -437,9 +458,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   /// при длинном заказе.
   Widget _activeSession(TableModel t, SessionModel session) {
     final hookah = VenueService.instance.terms.isHookah;
-    // «Перезабивка» — у того, кто отвечает за кальяны (кальянщик, а в
-    // кальянной ещё универсал и админ), см. AppConstants.handlesHookah.
-    final canRefill = widget.employee.handlesHookah(hookahVenue: hookah);
+    // «Перезабивка» — у кальянщика и универсала, а в кальянной ещё у
+    // админа, см. AppConstants.canRefillHookah.
+    final canRefill = (_me ?? widget.employee).canRefillHookah(hookahVenue: hookah);
     // Стол «без ограничений» (см. AppConstants.unlimitedSessionMinutes):
     // таймер и кнопка «Время» ему не нужны — вместо отсчёта показываем,
     // сколько гости уже сидят.

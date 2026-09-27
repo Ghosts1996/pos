@@ -31,4 +31,28 @@ void main() {
       expect(duty(''), isTrue);
     });
   });
+
+  group('Кнопка «Перезабивка» на экране стола', () {
+    bool refill(String position, {String role = AppConstants.roleEmployee, bool hookah = true}) =>
+        AppConstants.canRefillHookah(position: position, role: role, hookahVenue: hookah);
+
+    test('кальянщик и универсал — всегда, в любом типе заведения', () {
+      for (final hookah in [true, false]) {
+        expect(refill(AppConstants.positionHookahMaster, hookah: hookah), isTrue);
+        expect(refill(AppConstants.positionUniversal, hookah: hookah), isTrue);
+      }
+    });
+
+    test('официант, бармен, повар, хостес — нет', () {
+      expect(refill(AppConstants.positionWaiter), isFalse);
+      expect(refill(AppConstants.positionBartender), isFalse);
+      expect(refill(AppConstants.positionCook), isFalse);
+      expect(refill(AppConstants.positionHost), isFalse);
+    });
+
+    test('администратор — в кальянной', () {
+      expect(refill(AppConstants.positionWaiter, role: AppConstants.roleAdmin), isTrue);
+      expect(refill(AppConstants.positionWaiter, role: AppConstants.roleAdmin, hookah: false), isFalse);
+    });
+  });
 }

@@ -12,7 +12,7 @@ import '../../utils/money.dart';
 import '../../models/cash_op.dart';
 import '../../services/printer_service.dart';
 import '../../services/venue_service.dart';
-import '../../widgets/cash_drawer_card.dart';
+import 'cash_screen.dart';
 import '../../widgets/shift_flow.dart';
 
 enum _Period { shift, pastShift, custom }
@@ -346,22 +346,18 @@ class _XReportScreenState extends State<XReportScreen> {
                           _countRow('Возвратов за период', refunded.length),
                           _totalRow('Сумма возвратов', refunded.fold(0.0, (s, e) => s + e.totalWithDiscount)),
                         ],
-                        if (cash != null && !cash.rangeOnly && cash.shift != null) ...[
-                          const SizedBox(height: 16),
-                          if (_employeeFilter != 'Все официанты')
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 6),
-                              child: Text('Касса — общая на всех, без фильтра по официанту.',
-                                  style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                        // Сама касса — инкассация, внесение, выплата,
+                        // операции и пересчёты — на отдельном экране «Касса».
+                        if (cash != null && !cash.rangeOnly && cash.live)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(builder: (_) => CashScreen(employee: widget.employee))),
+                              icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+                              label: const Text('Касса: инкассация, внесение, выплата'),
                             ),
-                          CashDrawerCard(
-                            summary: cash.summary,
-                            ops: cash.ops,
-                            shift: cash.shift!,
-                            employee: widget.employee,
-                            live: cash.live,
                           ),
-                        ],
                         const SizedBox(height: 20),
                         Row(children: [
                           Expanded(
