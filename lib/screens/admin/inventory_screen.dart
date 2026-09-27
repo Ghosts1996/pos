@@ -5,6 +5,7 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import 'inventory_item_detail_screen.dart';
 import 'inventory_count_screen.dart';
+import '../../utils/adaptive.dart';
 
 /// Склад — отдельный от меню раздел админки. Позиции полностью
 /// произвольные (заводит и убирает сам админ) и покрывают что угодно:
@@ -30,11 +31,14 @@ class InventoryScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            _StockTab(employee: employee),
-            _CountTab(employee: employee),
-          ],
+        body: CenteredBody(
+          maxWidth: 900,
+          child: TabBarView(
+            children: [
+              _StockTab(employee: employee),
+              _CountTab(employee: employee),
+            ],
+          ),
         ),
       ),
     );
@@ -63,79 +67,82 @@ class _StockTabState extends State<_StockTab> {
         onPressed: () => _editItem(context, null),
         child: const Icon(Icons.add),
       ),
-      body: StreamBuilder<List<InventoryItem>>(
-        stream: _stock,
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final all = snap.data!;
-          if (all.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Позиций склада пока нет.\nНажмите «+», чтобы добавить первую — '
-                  'например, сорт табака в граммах или пиво в банках.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
-              ),
-            );
-          }
-
-          final inactiveCount = all.where((i) => !i.active).length;
-          final visible = all.where((i) => i.active || _showInactive).toList();
-          final categories = visible.map((i) => i.category).toSet().toList()
-            ..sort((a, b) => a.compareTo(b));
-
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 96),
-            children: [
-              if (inactiveCount > 0)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: InkWell(
-                    onTap: () => setState(() => _showInactive = !_showInactive),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _showInactive ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                          size: 16,
-                          color: AppColors.textMuted,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _showInactive
-                              ? 'Скрыть отключённые ($inactiveCount)'
-                              : 'Показать отключённые ($inactiveCount)',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              for (final cat in categories) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      body: CenteredBody(
+        maxWidth: 900,
+        child: StreamBuilder<List<InventoryItem>>(
+          stream: _stock,
+          builder: (context, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final all = snap.data!;
+            if (all.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
                   child: Text(
-                    cat.isEmpty ? 'Без категории' : cat,
-                    style: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
-                    ),
+                    'Позиций склада пока нет.\nНажмите «+», чтобы добавить первую — '
+                    'например, сорт табака в граммах или пиво в банках.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted),
                   ),
                 ),
-                ...visible.where((i) => i.category == cat).map((item) => _ItemTile(
-                      item: item,
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => InventoryItemDetailScreen(itemId: item.id, employee: widget.employee),
+              );
+            }
+
+            final inactiveCount = all.where((i) => !i.active).length;
+            final visible = all.where((i) => i.active || _showInactive).toList();
+            final categories = visible.map((i) => i.category).toSet().toList()
+              ..sort((a, b) => a.compareTo(b));
+
+            return ListView(
+              padding: const EdgeInsets.only(bottom: 96),
+              children: [
+                if (inactiveCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: InkWell(
+                      onTap: () => setState(() => _showInactive = !_showInactive),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _showInactive ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                            size: 16,
+                            color: AppColors.textMuted,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _showInactive
+                                ? 'Скрыть отключённые ($inactiveCount)'
+                                : 'Показать отключённые ($inactiveCount)',
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                for (final cat in categories) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Text(
+                      cat.isEmpty ? 'Без категории' : cat,
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ),
+                  ...visible.where((i) => i.category == cat).map((item) => _ItemTile(
+                        item: item,
+                        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => InventoryItemDetailScreen(itemId: item.id, employee: widget.employee),
+                        )),
                       )),
-                    )),
+                ],
               ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

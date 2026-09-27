@@ -92,6 +92,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
       final confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
+          scrollable: true,
           title: const Text('Удалить стол?'),
           content: Text('Стол «${table.name}» будет удалён без возможности отмены.'),
           actions: [

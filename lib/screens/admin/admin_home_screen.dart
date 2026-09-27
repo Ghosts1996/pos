@@ -23,6 +23,7 @@ import 'guests_screen.dart';
 import 'loyalty_settings_screen.dart';
 import 'session_settings_screen.dart';
 import '../login_screen.dart';
+import '../../utils/adaptive.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
 /// ежедневная работа (отчёты, меню, склад), затем ИИ, затем настройки —
@@ -113,13 +114,16 @@ class AdminHomeScreen extends StatelessWidget {
             // Ширина плитки, а не число колонок: на телефоне по-прежнему 2,
             // на планшете 5–6 — раньше там было 4 огромные плитки и на экран
             // помещалось всего 8 разделов из двух десятков.
-            GridView.extent(
+            GridView(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              maxCrossAxisExtent: 220,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.35,
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 220,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                // Две строки подписи с поправкой на системный шрифт.
+                mainAxisExtent: context.scaledExtent(112, textPart: 40),
+              ),
               children: entry.value
                   .map((t) => Card(
                         child: InkWell(
@@ -133,7 +137,8 @@ class AdminHomeScreen extends StatelessWidget {
                               const SizedBox(height: 8),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                                child: Text(t.title, textAlign: TextAlign.center),
+                                child: Text(t.title,
+                                    textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
                               ),
                             ],
                           ),

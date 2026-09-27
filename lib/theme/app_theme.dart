@@ -221,6 +221,10 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
+        // Поля по бокам 20 вместо 40: на узком телефоне (320–360 dp) окну
+        // с формой не хватало ширины. Планшет не меняется — ширину диалога
+        // там задаёт его содержимое.
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       ),
 
       navigationDrawerTheme: const NavigationDrawerThemeData(

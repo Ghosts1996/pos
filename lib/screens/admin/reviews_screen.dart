@@ -5,6 +5,7 @@ import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/phone_utils.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Отзывы гостей — кто, когда и что поставил.
 ///
@@ -58,54 +59,57 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<List<GuestReview>>(
-        stream: _link.recentReviewsStream(limit: 100),
-        builder: (context, snap) {
-          if (snap.hasError) {
-            return Center(child: Text('Ошибка: ${humanError(snap.error, lower: true)}'));
-          }
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: CenteredBody(
+        maxWidth: 760,
+        child: StreamBuilder<List<GuestReview>>(
+          stream: _link.recentReviewsStream(limit: 100),
+          builder: (context, snap) {
+            if (snap.hasError) {
+              return Center(child: Text('Ошибка: ${humanError(snap.error, lower: true)}'));
+            }
+            if (!snap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-          final all = snap.data!;
-          final list = _onlyBelow == 0
-              ? all
-              : all.where((r) => r.rating < _onlyBelow).toList();
+            final all = snap.data!;
+            final list = _onlyBelow == 0
+                ? all
+                : all.where((r) => r.rating < _onlyBelow).toList();
 
-          if (all.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Отзывов пока нет. Гость видит предложение оценить визит '
-                  'сразу после того, как вы закроете его чек.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted),
+            if (all.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text(
+                    'Отзывов пока нет. Гость видит предложение оценить визит '
+                    'сразу после того, как вы закроете его чек.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted),
+                  ),
                 ),
-              ),
-            );
-          }
+              );
+            }
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _summary(all),
-              const SizedBox(height: 16),
-              if (list.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Text('Под фильтр ничего не попало — и хорошо.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textMuted)),
-                ),
-              for (final r in list) ...[
-                _tile(r),
-                const SizedBox(height: 10),
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _summary(all),
+                const SizedBox(height: 16),
+                if (list.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('Под фильтр ничего не попало — и хорошо.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.textMuted)),
+                  ),
+                for (final r in list) ...[
+                  _tile(r),
+                  const SizedBox(height: 10),
+                ],
               ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

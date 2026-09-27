@@ -19,6 +19,7 @@ import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
+import 'utils/adaptive.dart';
 import 'widgets/app_update_banner.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
@@ -180,11 +181,16 @@ class HookahPosApp extends StatelessWidget {
       //
       // Поверх — плашка «Вышла новая версия» (AppUpdateBanner): видна на
       // любом экране, обновление качается и ставится прямо из кассы.
-      builder: (context, child) => AppUpdateBanner(
-        child: ValueListenableBuilder<bool>(
-          valueListenable: SubscriptionGate.blocked,
-          builder: (context, isBlocked, _) =>
-              isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+      //
+      // Снаружи всего — AdaptiveAppFrame: предел системного шрифта и
+      // вертикальная ориентация на телефоне (планшет — любая).
+      builder: (context, child) => AdaptiveAppFrame(
+        child: AppUpdateBanner(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: SubscriptionGate.blocked,
+            builder: (context, isBlocked, _) =>
+                isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+          ),
         ),
       ),
     );

@@ -5,6 +5,7 @@ import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/adaptive.dart';
 
 enum _Period { today, week, month, custom }
 
@@ -97,6 +98,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
+        scrollable: true,
         title: const Text('Возврат чека'),
         content: Text(
             'Оформить возврат чека на ${rub(s.totalWithDiscount)} '
@@ -206,94 +208,97 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('История чеков')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Сегодня'),
-                  selected: _period == _Period.today,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.today);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('7 дней'),
-                  selected: _period == _Period.week,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.week);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('30 дней'),
-                  selected: _period == _Period.month,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.month);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('Свой период'),
-                  selected: _period == _Period.custom,
-                  onSelected: (_) => _pickCustomRange(),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: FutureBuilder<List<SessionModel>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(
-                      child: Text('Ошибка загрузки: ${humanError(snap.error, lower: true)}',
-                          style: const TextStyle(color: AppColors.danger)));
-                }
-                final sessions = snap.data ?? [];
-                if (sessions.isEmpty) {
-                  return const Center(child: Text('За этот период закрытых чеков нет'));
-                }
-                return RefreshIndicator(
-                  onRefresh: () async => _load(),
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    itemCount: sessions.length,
-                    itemBuilder: (context, index) {
-                      final s = sessions[index];
-                      return ListTile(
-                        leading: Icon(s.refunded ? Icons.undo : Icons.receipt_long,
-                            color: s.refunded ? Colors.orange : null),
-                        title: Text('${s.tableName} · ${s.employeeName}'),
-                        subtitle: Text(
-                          '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}'
-                          '${s.refunded ? '  ·  возврат оформлен' : ''}',
-                        ),
-                        trailing: Text(
-                          rub(s.totalWithDiscount),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            decoration: s.refunded ? TextDecoration.lineThrough : null,
-                            color: s.refunded ? AppColors.textMuted : null,
-                          ),
-                        ),
-                        onTap: () => _openDetails(s),
-                      );
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Сегодня'),
+                    selected: _period == _Period.today,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.today);
+                      _load();
                     },
                   ),
-                );
-              },
+                  ChoiceChip(
+                    label: const Text('7 дней'),
+                    selected: _period == _Period.week,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.week);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('30 дней'),
+                    selected: _period == _Period.month,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.month);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('Свой период'),
+                    selected: _period == _Period.custom,
+                    onSelected: (_) => _pickCustomRange(),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            Expanded(
+              child: FutureBuilder<List<SessionModel>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return Center(
+                        child: Text('Ошибка загрузки: ${humanError(snap.error, lower: true)}',
+                            style: const TextStyle(color: AppColors.danger)));
+                  }
+                  final sessions = snap.data ?? [];
+                  if (sessions.isEmpty) {
+                    return const Center(child: Text('За этот период закрытых чеков нет'));
+                  }
+                  return RefreshIndicator(
+                    onRefresh: () async => _load(),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: sessions.length,
+                      itemBuilder: (context, index) {
+                        final s = sessions[index];
+                        return ListTile(
+                          leading: Icon(s.refunded ? Icons.undo : Icons.receipt_long,
+                              color: s.refunded ? Colors.orange : null),
+                          title: Text('${s.tableName} · ${s.employeeName}'),
+                          subtitle: Text(
+                            '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}'
+                            '${s.refunded ? '  ·  возврат оформлен' : ''}',
+                          ),
+                          trailing: Text(
+                            rub(s.totalWithDiscount),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              decoration: s.refunded ? TextDecoration.lineThrough : null,
+                              color: s.refunded ? AppColors.textMuted : null,
+                            ),
+                          ),
+                          onTap: () => _openDetails(s),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

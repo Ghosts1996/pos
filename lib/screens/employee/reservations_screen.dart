@@ -18,6 +18,7 @@ import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/shift_crew.dart';
 import '../../widgets/shift_flow.dart';
+import '../../utils/adaptive.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
 /// Сюда мгновенно прилетают брони из клиентского приложения
@@ -133,7 +134,16 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Брони — ${_fmtDay(_day)}'),
+        // Дата — строкой ниже: на узком телефоне три кнопки справа
+        // обрезали заголовок до «Брон…» вместе с датой.
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Брони'),
+            Text(_fmtDay(_day), style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'ИИ: разбор броней',
@@ -166,78 +176,81 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Бронь по телефону'),
       ),
-      body: Column(
-        children: [
-          if (_hoursMissing)
-            Material(
-              color: AppColors.danger.withValues(alpha: 0.12),
-              child: const Padding(
-                padding: EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Row(
-                  children: [
-                    Icon(Icons.schedule, color: AppColors.danger, size: 20),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Не заполнены часы работы — гости не могут забронировать стол '
-                        'в приложении. Админ → Профиль заведения → Часы работы.',
-                        style: TextStyle(fontSize: 13),
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            if (_hoursMissing)
+              Material(
+                color: AppColors.danger.withValues(alpha: 0.12),
+                child: const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.schedule, color: AppColors.danger, size: 20),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Не заполнены часы работы — гости не могут забронировать стол '
+                          'в приложении. Админ → Профиль заведения → Часы работы.',
+                          style: TextStyle(fontSize: 13),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          if (!_shiftIsMine && _onShift.isNotEmpty)
-            Material(
-              color: AppColors.primary.withValues(alpha: 0.12),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Row(
-                  children: [
-                    const Icon(Icons.badge_outlined,
-                        color: AppColors.primary, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Вы не на смене — вызовы гостей и новые брони приходят '
-                        'уведомлениями тем, кто на смене: $_onShift',
-                        style: const TextStyle(fontSize: 13),
+            if (!_shiftIsMine && _onShift.isNotEmpty)
+              Material(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.badge_outlined,
+                          color: AppColors.primary, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Вы не на смене — вызовы гостей и новые брони приходят '
+                          'уведомлениями тем, кто на смене: $_onShift',
+                          style: const TextStyle(fontSize: 13),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          if (!_notificationsOn)
-            Material(
-              color: AppColors.warning.withValues(alpha: 0.15),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Row(
-                  children: [
-                    const Icon(Icons.notifications_off,
-                        color: AppColors.warning, size: 20),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'Уведомления на планшете выключены — новые брони и '
-                        'вызовы гостей не всплывают',
-                        style: TextStyle(fontSize: 13),
+            if (!_notificationsOn)
+              Material(
+                color: AppColors.warning.withValues(alpha: 0.15),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.notifications_off,
+                          color: AppColors.warning, size: 20),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Уведомления на планшете выключены — новые брони и '
+                          'вызовы гостей не всплывают',
+                          style: TextStyle(fontSize: 13),
+                        ),
                       ),
-                    ),
-                    TextButton(
-                      onPressed: _enableNotifications,
-                      child: const Text('Включить'),
-                    ),
-                  ],
+                      TextButton(
+                        onPressed: _enableNotifications,
+                        child: const Text('Включить'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            Expanded(
+              child: _list(),
             ),
-          Expanded(
-            child: _list(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -260,7 +273,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.all(12),
+            // Снизу — место под кнопку «Бронь по телефону».
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
             itemCount: list.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (_, i) => _tile(list[i]),
@@ -544,6 +558,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
+          scrollable: true,
           title: const Text('Новая бронь'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

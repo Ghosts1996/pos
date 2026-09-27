@@ -12,6 +12,7 @@ import '../../services/chestny_znak_service.dart';
 import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/referral_service.dart';
@@ -614,7 +615,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          // На планшете — колонка по центру, а не суммы на весь экран.
+          padding: centeredListPadding(context, maxWidth: 680, horizontal: 20, top: 20, bottom: 20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -669,7 +671,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
-                  child: Row(
+                  child: Wrap(
+                    runSpacing: 4,
                     children: _quickAmounts.map((v) {
                       return Padding(
                         padding: const EdgeInsets.only(right: 8),
@@ -1010,6 +1013,7 @@ class _AddTipDialogState extends State<_AddTipDialog> {
   Widget build(BuildContext context) {
     final amount = double.tryParse(_amount.text.replaceAll(',', '.').trim()) ?? 0;
     return AlertDialog(
+      scrollable: true,
       title: const Text('Чаевые к счёту'),
       content: SizedBox(
         width: 380,

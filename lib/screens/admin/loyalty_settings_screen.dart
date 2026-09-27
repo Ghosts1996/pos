@@ -3,6 +3,7 @@ import '../../models/client_models.dart';
 import '../../services/app_scope.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Настройка порогов и процента кешбека программы лояльности гостя —
 /// те же 5 уровней (Бронза/Серебро/Золото/Платина/Алмаз), что показаны
@@ -131,58 +132,61 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Программа лояльности')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const Text(
-                  'Уровень гостя считается по сумме ВСЕХ его закрытых чеков за всё '
-                  'время. Процент кешбэка начисляется бонусами при оплате — '
-                  '1 бонус = 1 ₽.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 16),
-                for (final r in _rows) ...[
-                  Text(r.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: r.from,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'От, ₽'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: r.cashback,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'Кешбэк, %'),
-                        ),
-                      ),
-                    ],
+      body: CenteredBody(
+        maxWidth: Breakpoints.form,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Уровень гостя считается по сумме ВСЕХ его закрытых чеков за всё '
+                    'время. Процент кешбэка начисляется бонусами при оплате — '
+                    '1 бонус = 1 ₽.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+                  for (final r in _rows) ...[
+                    Text(r.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: r.from,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(labelText: 'От, ₽'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: r.cashback,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(labelText: 'Кешбэк, %'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                  if (_error != null) ...[
+                    Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                    const SizedBox(height: 12),
+                  ],
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Сохранить'),
+                  ),
                 ],
-                if (_error != null) ...[
-                  Text(_error!, style: const TextStyle(color: AppColors.danger)),
-                  const SizedBox(height: 12),
-                ],
-                FilledButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Сохранить'),
-                ),
-              ],
-            ),
+              ),
+      ),
     );
   }
 }

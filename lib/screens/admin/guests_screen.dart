@@ -4,6 +4,7 @@ import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/adaptive.dart';
 
 /// Справочник гостей «Colibri Lounge» для администратора: уровень
 /// лояльности, кешбэк, число визитов, сумма трат и бонусный баланс —
@@ -49,6 +50,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text('Удалить «$name»?'),
         content: Text(
           'Профиль, номер телефона и история визитов гостя будут удалены '
@@ -90,6 +92,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     final newPhone = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text('Новый номер · ${profile.name.isEmpty ? 'Гость' : profile.name}'),
         content: TextField(
           controller: ctrl,
@@ -125,6 +128,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Объединить с новым устройством'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -190,89 +194,92 @@ class _GuestsScreenState extends State<GuestsScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              controller: _search,
-              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Поиск по имени или телефону',
-                isDense: true,
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                controller: _search,
+                onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Поиск по имени или телефону',
+                  isDense: true,
+                ),
               ),
             ),
-          ),
-          Expanded(
-            child: StreamBuilder<List<ClientProfile>>(
-              stream: _clients,
-              builder: (context, snap) {
-                if (!snap.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                var guests = snap.data!;
-                if (_query.isNotEmpty) {
-                  guests = guests
-                      .where((g) =>
-                          g.name.toLowerCase().contains(_query) ||
-                          g.phone.toLowerCase().contains(_query))
-                      .toList();
-                }
-                if (guests.isEmpty) {
-                  return const Center(child: Text('Гостей не найдено'));
-                }
-                return ListView.separated(
-                  itemCount: guests.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final g = guests[i];
-                    final tierColor = _tierColor(g.tier);
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: tierColor.withValues(alpha: 0.2),
-                        child: Icon(Icons.person, color: tierColor),
-                      ),
-                      title: Text(g.name.isEmpty ? 'Гость' : g.name),
-                      subtitle: Text(
-                        '${g.phone.isEmpty ? 'без телефона' : g.phone} · '
-                        'уровень «${g.tier}» (${g.cashbackPercent.toStringAsFixed(0)}% кешбэк)\n'
-                        'Визитов: ${g.visits} · потрачено ${rub(g.totalSpent)} · '
-                        'бонусов ${rub(g.bonusBalance)}',
-                      ),
-                      isThreeLine: true,
-                      trailing: PopupMenuButton<String>(
-                        icon: const Icon(Icons.more_vert),
-                        onSelected: (v) {
-                          if (v == 'phone') _changePhone(g);
-                          if (v == 'delete') _deleteGuest(g);
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: 'phone',
-                            child: ListTile(
-                              leading: Icon(Icons.edit_outlined),
-                              title: Text('Сменить номер'),
-                              contentPadding: EdgeInsets.zero,
+            Expanded(
+              child: StreamBuilder<List<ClientProfile>>(
+                stream: _clients,
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  var guests = snap.data!;
+                  if (_query.isNotEmpty) {
+                    guests = guests
+                        .where((g) =>
+                            g.name.toLowerCase().contains(_query) ||
+                            g.phone.toLowerCase().contains(_query))
+                        .toList();
+                  }
+                  if (guests.isEmpty) {
+                    return const Center(child: Text('Гостей не найдено'));
+                  }
+                  return ListView.separated(
+                    itemCount: guests.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final g = guests[i];
+                      final tierColor = _tierColor(g.tier);
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: tierColor.withValues(alpha: 0.2),
+                          child: Icon(Icons.person, color: tierColor),
+                        ),
+                        title: Text(g.name.isEmpty ? 'Гость' : g.name),
+                        subtitle: Text(
+                          '${g.phone.isEmpty ? 'без телефона' : g.phone} · '
+                          'уровень «${g.tier}» (${g.cashbackPercent.toStringAsFixed(0)}% кешбэк)\n'
+                          'Визитов: ${g.visits} · потрачено ${rub(g.totalSpent)} · '
+                          'бонусов ${rub(g.bonusBalance)}',
+                        ),
+                        isThreeLine: true,
+                        trailing: PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert),
+                          onSelected: (v) {
+                            if (v == 'phone') _changePhone(g);
+                            if (v == 'delete') _deleteGuest(g);
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'phone',
+                              child: ListTile(
+                                leading: Icon(Icons.edit_outlined),
+                                title: Text('Сменить номер'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
                             ),
-                          ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            child: ListTile(
-                              leading: Icon(Icons.delete_outline, color: AppColors.danger),
-                              title: Text('Удалить гостя', style: TextStyle(color: AppColors.danger)),
-                              contentPadding: EdgeInsets.zero,
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: ListTile(
+                                leading: Icon(Icons.delete_outline, color: AppColors.danger),
+                                title: Text('Удалить гостя', style: TextStyle(color: AppColors.danger)),
+                                contentPadding: EdgeInsets.zero,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       backgroundColor: AppColors.background,
     );

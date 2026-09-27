@@ -89,6 +89,7 @@ class ManualTerminalService implements PaymentTerminalService {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Оплата на терминале'),
         content: Text(
           'Внесите ${rub(amount)} на терминале эквайринга и '
@@ -274,6 +275,7 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
       builder: (ctx) {
         dialogCtx = ctx;
         return AlertDialog(
+          scrollable: true,
           title: const Text('Оплата по QR (СБП)'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

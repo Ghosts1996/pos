@@ -3,6 +3,7 @@ import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/ai_assistant_sheet.dart';
+import '../../utils/adaptive.dart';
 
 /// «ИИ-разборы» для администратора: выручка, закупки, отзывы, маркетинг.
 /// Каждая карточка — один готовый сценарий агента в один тап, без промптов.
@@ -80,73 +81,76 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (!ready)
-            Container(
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            if (!ready)
+              Container(
+                width: double.infinity,
+                color: AppColors.warning.withValues(alpha: 0.15),
+                padding: const EdgeInsets.all(12),
+                child: const Text('ИИ не подключён — откройте «Настройки ИИ» и введите API-ключ.',
+                    style: TextStyle(color: AppColors.warning)),
+              ),
+            // Ширина задаётся явно: без этого в некоторых сборках текст
+            // получал нулевую ширину и рассыпался по букве в строке.
+            SizedBox(
               width: double.infinity,
-              color: AppColors.warning.withValues(alpha: 0.15),
-              padding: const EdgeInsets.all(12),
-              child: const Text('ИИ не подключён — откройте «Настройки ИИ» и введите API-ключ.',
-                  style: TextStyle(color: AppColors.warning)),
-            ),
-          // Ширина задаётся явно: без этого в некоторых сборках текст
-          // получал нулевую ширину и рассыпался по букве в строке.
-          SizedBox(
-            width: double.infinity,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.max,
-                children: [
-                  Flexible(
-                    child: Text(
-                      'Период: ${_fmt(_range.start)} — ${_fmt(_range.end)}',
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.textMuted),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.max,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Период: ${_fmt(_range.start)} — ${_fmt(_range.end)}',
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: AppColors.textMuted),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    // Компактная кнопка рядом с текстом.
-                    style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
-                    onPressed: _pickRange,
-                    icon: const Icon(Icons.date_range, size: 18),
-                    label: const Text('Выбрать'),
-                  ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      // Компактная кнопка рядом с текстом.
+                      style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                      onPressed: _pickRange,
+                      icon: const Icon(Icons.date_range, size: 18),
+                      label: const Text('Выбрать'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 108,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  _card('Разбор выручки', Icons.trending_up, AppColors.primary, () {
+                    _run('Разбор выручки',
+                        () => _ai.analyzeSales(from: _range.start, to: _range.end));
+                  }),
+                  _card('Заявка на закупку', Icons.local_shipping, AppColors.warning, () {
+                    _run('Заявка на закупку', () => _ai.restockPlan());
+                  }),
+                  _card('Отзывы гостей', Icons.reviews, AppColors.success, () {
+                    _run('Отзывы гостей', () => _ai.reviewDigest());
+                  }),
+                  _card('Идеи акций', Icons.campaign, AppColors.selection, () {
+                    _run('Идеи акций', () => _ai.marketingIdeas());
+                  }),
+                  _card('Брони на смену', Icons.event_seat, AppColors.primary, () {
+                    _run('Брони на смену', () => _ai.hostessBriefing());
+                  }),
                 ],
               ),
             ),
-          ),
-          SizedBox(
-            height: 108,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              children: [
-                _card('Разбор выручки', Icons.trending_up, AppColors.primary, () {
-                  _run('Разбор выручки',
-                      () => _ai.analyzeSales(from: _range.start, to: _range.end));
-                }),
-                _card('Заявка на закупку', Icons.local_shipping, AppColors.warning, () {
-                  _run('Заявка на закупку', () => _ai.restockPlan());
-                }),
-                _card('Отзывы гостей', Icons.reviews, AppColors.success, () {
-                  _run('Отзывы гостей', () => _ai.reviewDigest());
-                }),
-                _card('Идеи акций', Icons.campaign, AppColors.selection, () {
-                  _run('Идеи акций', () => _ai.marketingIdeas());
-                }),
-                _card('Брони на смену', Icons.event_seat, AppColors.primary, () {
-                  _run('Брони на смену', () => _ai.hostessBriefing());
-                }),
-              ],
-            ),
-          ),
-          const Divider(height: 24),
-          Expanded(child: _resultView()),
-        ],
+            const Divider(height: 24),
+            Expanded(child: _resultView()),
+          ],
+        ),
       ),
     );
   }
