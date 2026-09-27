@@ -5,6 +5,7 @@ import '../models/client_models.dart';
 import '../models/reservation_model.dart';
 import '../models/session_model.dart';
 import '../utils/constants.dart';
+import '../utils/shift_crew.dart';
 import 'notification_service.dart';
 import 'staff_session_store.dart';
 import 'venue_service.dart';
@@ -56,6 +57,12 @@ class SessionAlertsService {
   String _shiftEmployeeName = '';
   StreamSubscription? _shift;
 
+  /// Кто сейчас отметил начало своей смены (открытые личные смены). Вызовы
+  /// получают они — каждый по своей специализации; ушедший домой больше
+  /// не получает, даже если смену заведения открывал он.
+  Set<String> _onShift = const {};
+  StreamSubscription? _crew;
+
   /// Специализация вошедшего на ЭТОМ устройстве (см. AppConstants.position*
   /// и Employee.position) — читается один раз при [start] вместе с
   /// [_myEmployeeId]. Универсал (значение по умолчанию, пока владелец
@@ -85,10 +92,12 @@ class SessionAlertsService {
   /// Во всех остальных случаях — смена не открыта, старая запись без id,
   /// вход не сохранён — уведомляем: потерянный вызов гостя хуже лишнего
   /// уведомления.
-  bool get _mine =>
-      _shiftEmployeeId.isEmpty ||
-      _shiftEmployeeId == _deviceShiftOwnerId ||
-      (_myEmployeeId.isEmpty || _shiftEmployeeId == _myEmployeeId);
+  bool get _mine => alertsForThisDevice(
+        onShift: _onShift,
+        myId: _myEmployeeId,
+        deviceOwnerId: _deviceShiftOwnerId,
+        shiftOpenerId: _shiftEmployeeId,
+      );
 
   /// Имя того, кто сейчас на смене, — для экранов кассы.
   String get shiftEmployeeName => _shiftEmployeeName;
@@ -141,6 +150,7 @@ class SessionAlertsService {
     _watchMe();
     _identityTimer = Timer.periodic(const Duration(minutes: 2), (_) => refreshIdentity());
     _watchShift();
+    _watchCrew();
 
     // Тип заведения решает, нужны ли напоминания про угли: в ресторане их
     // быть не должно. Профиль читаем до подписки на столы, чтобы первые же
@@ -227,6 +237,23 @@ class SessionAlertsService {
     }, onError: (_) {});
   }
 
+  void _watchCrew() {
+    _crew = AppScope.col('staffShifts').where('status', isEqualTo: 'open').snapshots().listen((snap) {
+      final was = _mine;
+      // Забытую со вчера смену не считаем: тот сотрудник давно дома.
+      _onShift = {
+        for (final d in snap.docs)
+          if ((d.data()['employeeId'] as String? ?? '').isNotEmpty &&
+              d.data()['startedAt'] is Timestamp &&
+              !isStaleShift((d.data()['startedAt'] as Timestamp).toDate()))
+            d.data()['employeeId'] as String,
+      };
+      // Пришёл или ушёл тот, от кого зависит это устройство, — будильники
+      // по углям переставляем, как при смене открывшего смену.
+      if (was != _mine) unawaited(_replanSessions());
+    }, onError: (_) {});
+  }
+
   /// Смену открыл кто-то другой (или её только что открыли).
   Future<void> _onShiftChanged() async {
     // Смену могли открыть с этого же устройства прямо сейчас — перечитаем,
@@ -259,6 +286,9 @@ class SessionAlertsService {
   Future<void> stop() async {
     await _shift?.cancel();
     _shift = null;
+    await _crew?.cancel();
+    _crew = null;
+    _onShift = const {};
     await _me?.cancel();
     _me = null;
     _identityTimer?.cancel();
