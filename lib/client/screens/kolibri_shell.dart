@@ -16,6 +16,7 @@ import 'kolibri_home_screen.dart';
 import 'kolibri_menu_screen.dart';
 import 'kolibri_profile_screen.dart';
 import 'kolibri_visit_screen.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/human_error.dart';
 
 /// Корневой каркас «Colibri Lounge»: 5 вкладок + плавающая кнопка
@@ -154,7 +155,9 @@ class _KolibriShellState extends State<KolibriShell> {
         ];
 
         return Scaffold(
-          body: SafeArea(bottom: false, child: pages[_index]),
+          // На планшете вкладки — колонкой по центру: карточки и меню,
+          // растянутые на 1280 dp, читались хуже, чем на телефоне.
+          body: SafeArea(bottom: false, child: CenteredBody(maxWidth: 760, child: pages[_index])),
           floatingActionButton: FloatingActionButton.small(
             backgroundColor: KolibriColors.primary,
             onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),

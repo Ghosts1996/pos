@@ -217,6 +217,7 @@ class CashDrawerCard extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Отменить операцию?'),
         content: Text('${op.type.label} на ${rub(op.amount)} в ${_hhmm(op.createdAt)}. '
             'Она останется в истории зачёркнутой и перестанет учитываться в кассе.'),
@@ -244,6 +245,7 @@ class CashDrawerCard extends StatelessWidget {
     final value = await showDialog<double>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Размен на начало смены'),
         content: TextField(
           controller: ctrl,
@@ -347,6 +349,7 @@ class _CashOpDialogState extends State<_CashOpDialog> {
     final collect = widget.type == CashOpType.collection;
     final keep = widget.expected - widget.opening;
     return AlertDialog(
+      scrollable: true,
       title: Text(widget.type.label),
       content: SizedBox(
         width: 380,

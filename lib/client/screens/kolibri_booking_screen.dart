@@ -516,6 +516,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Отменить бронь?'),
         content: Text('${_fmtDate(r.startTime)} в ${_fmtTime(r.startTime)}'),
         actions: [
@@ -630,6 +631,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
+          scrollable: true,
           title: const Text('Бронь отправлена'),
           content: const Text(
               'Мы придержим стол и подтвердим бронь в приложении. '

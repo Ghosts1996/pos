@@ -100,6 +100,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     final newPhone = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Новый номер гостя'),
         content: TextField(
           controller: ctrl,

@@ -50,6 +50,7 @@ class _AboutAppDialogState extends State<_AboutAppDialog> {
   Widget build(BuildContext context) {
     final service = AppUpdateService.instance;
     return AlertDialog(
+      scrollable: true,
       title: const Text('Обновления'),
       content: SizedBox(
         width: 380,

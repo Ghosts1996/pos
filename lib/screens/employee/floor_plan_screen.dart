@@ -14,6 +14,7 @@ import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/reservation_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/hall_layout.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/employee_drawer.dart';
@@ -311,12 +312,14 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         ),
       );
 
-  static const _cardGrid = SliverGridDelegateWithMaxCrossAxisExtent(
-    maxCrossAxisExtent: 240,
-    mainAxisExtent: 116,
-    crossAxisSpacing: 10,
-    mainAxisSpacing: 10,
-  );
+  /// Сетка карточек столов: высота карточки растёт вместе с системным
+  /// шрифтом (три строки текста), иначе при «крупном шрифте» низ обрезался.
+  SliverGridDelegate _cardGridOf(BuildContext context) => SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
+        mainAxisExtent: context.scaledExtent(116, textPart: 56),
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      );
 
   /// Схема в рамке: скруглённая «площадка» зала.
   Widget _mapFrame(Widget map) => DecoratedBox(
@@ -412,7 +415,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(side, 0, side, 8),
                       sliver: SliverGrid(
-                        gridDelegate: _cardGrid,
+                        gridDelegate: _cardGridOf(context),
                         delegate: SliverChildBuilderDelegate(
                           (context, j) => _card(sections[i].$2[j], calls, reservations),
                           childCount: sections[i].$2.length,
@@ -457,7 +460,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
       return _message(Icons.filter_alt_off_outlined, 'Таких столов сейчас нет', 'Выберите другой фильтр сверху.');
     }
     Widget card(TableModel t) => _card(t, calls, reservations);
-    const grid = _cardGrid;
+    final grid = _cardGridOf(context);
     // «Все зоны» — столы по зонам с заголовками, а не подписью на каждой
     // карточке (на телефоне она всё равно обрезалась).
     final sections = <String, List<TableModel>>{};

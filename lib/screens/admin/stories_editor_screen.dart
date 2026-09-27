@@ -5,6 +5,7 @@ import '../../models/story_model.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Лента заведения: карточки, которые видит гость в «Colibri Lounge».
 ///
@@ -41,31 +42,35 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
         onPressed: () => _edit(null),
         child: const Icon(Icons.add),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: AppScope.col('stories').orderBy('createdAt', descending: true).snapshots(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          // Порядок ровно тот же, что видит гость в ленте: иначе
-          // администратор переставляет карточки вслепую — у него они идут
-          // по времени создания, а у гостя по полю order.
-          final stories = snap.data!.docs.map(StoryCard.fromDoc).toList()
-            ..sort((a, b) {
-              final byOrder = a.order.compareTo(b.order);
-              return byOrder != 0 ? byOrder : b.createdAt.compareTo(a.createdAt);
-            });
-          if (stories.isEmpty) {
-            return const Center(
-              child: Text('Карточек нет — создайте вручную или попросите ИИ',
-                  style: TextStyle(color: AppColors.textMuted)),
+      body: CenteredBody(
+        maxWidth: 760,
+        child: StreamBuilder<QuerySnapshot>(
+          stream: AppScope.col('stories').orderBy('createdAt', descending: true).snapshots(),
+          builder: (context, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            // Порядок ровно тот же, что видит гость в ленте: иначе
+            // администратор переставляет карточки вслепую — у него они идут
+            // по времени создания, а у гостя по полю order.
+            final stories = snap.data!.docs.map(StoryCard.fromDoc).toList()
+              ..sort((a, b) {
+                final byOrder = a.order.compareTo(b.order);
+                return byOrder != 0 ? byOrder : b.createdAt.compareTo(a.createdAt);
+              });
+            if (stories.isEmpty) {
+              return const Center(
+                child: Text('Карточек нет — создайте вручную или попросите ИИ',
+                    style: TextStyle(color: AppColors.textMuted)),
+              );
+            }
+            return ListView.separated(
+              // Снизу — место под кнопку «+», чтобы она не закрывала последнюю строку.
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+              itemCount: stories.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, i) => _tile(stories[i], i, stories),
             );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: stories.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _tile(stories[i], i, stories),
-          );
-        },
+          },
+        ),
       ),
     );
   }

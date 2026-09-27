@@ -115,6 +115,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         backgroundColor: KolibriColors.surface,
         title: const Text('Сменить заведение сети'),
         content: Text(
@@ -141,6 +142,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         backgroundColor: KolibriColors.surface,
         title: const Text('Готово'),
         content: const Text('Закройте и снова откройте приложение, чтобы выбрать заведение.'),
@@ -191,6 +193,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить мои данные?'),
         content: const Text('Мы удалим ваше имя, номер телефона и день рождения из профиля, '
             'броней и заказов, а бонусы сгорят. Запрос обработают в течение 30 дней.'),
@@ -253,6 +256,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           await showDialog(
             context: context,
             builder: (_) => AlertDialog(
+              scrollable: true,
               title: const Text('Номер уже зарегистрирован'),
               // Про чужой профиль не рассказываем ничего — ни имени, ни
               // баланса: раньше здесь показывался бонусный счёт другого

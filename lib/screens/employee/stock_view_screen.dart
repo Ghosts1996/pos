@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 
 /// Остатки склада — только для просмотра. Сотрудник видит те же позиции
 /// и количества, что и админ на вкладке «Остатки», но без возможности
@@ -23,63 +24,66 @@ class _StockViewScreenState extends State<StockViewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Остатки склада')),
-      body: StreamBuilder<List<InventoryItem>>(
-        stream: _fs.inventoryItemsStream(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final all = snap.data!.where((i) => i.active).toList();
-          if (all.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Позиций склада пока нет.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
-              ),
-            );
-          }
-
-          final lowCount = all.where((i) => i.isLow).length;
-          final categories = all.map((i) => i.category).toSet().toList()
-            ..sort((a, b) => a.compareTo(b));
-
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 24),
-            children: [
-              if (lowCount > 0)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Мало на складе: $lowCount',
-                        style: const TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                    ],
+      body: CenteredBody(
+        maxWidth: 760,
+        child: StreamBuilder<List<InventoryItem>>(
+          stream: _fs.inventoryItemsStream(),
+          builder: (context, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final all = snap.data!.where((i) => i.active).toList();
+            if (all.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Позиций склада пока нет.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted),
                   ),
                 ),
-              for (final cat in categories) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Text(
-                    cat.isEmpty ? 'Без категории' : cat,
-                    style: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
+              );
+            }
+
+            final lowCount = all.where((i) => i.isLow).length;
+            final categories = all.map((i) => i.category).toSet().toList()
+              ..sort((a, b) => a.compareTo(b));
+
+            return ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: [
+                if (lowCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Мало на складе: $lowCount',
+                          style: const TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                ...all.where((i) => i.category == cat).map((item) => _ItemTile(item: item)),
+                for (final cat in categories) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Text(
+                      cat.isEmpty ? 'Без категории' : cat,
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ),
+                  ...all.where((i) => i.category == cat).map((item) => _ItemTile(item: item)),
+                ],
               ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

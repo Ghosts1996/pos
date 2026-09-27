@@ -5,6 +5,7 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
+import '../../utils/adaptive.dart';
 
 /// Табель личных смен сотрудников — учёт отработанного времени для расчёта
 /// зарплаты (см. PayrollScreen и PayrollCalculator). Это НЕ кассовая смена
@@ -247,6 +248,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить запись?'),
         content: Text(
             'Смена «${shift.employeeName}» ${_fmtDateTime(shift.startedAt)} будет удалена без возможности восстановить.'),
@@ -280,89 +282,92 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
         onPressed: _employees.isEmpty ? null : () => _editShift(null),
         child: const Icon(Icons.add),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ActionChip(label: const Text('Сегодня'), onPressed: _setToday),
-                ActionChip(label: const Text('Этот месяц'), onPressed: _setThisMonth),
-                ActionChip(label: const Text('Прошлый месяц'), onPressed: _setLastMonth),
-                ActionChip(
-                  avatar: const Icon(Icons.date_range, size: 16),
-                  label: Text(
-                      '${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
-                  onPressed: _pickCustomRange,
-                ),
-              ],
-            ),
-          ),
-          StreamBuilder<List<StaffShiftModel>>(
-            stream: _fs.openStaffShiftsStream(),
-            builder: (context, snap) {
-              // Только смены, начавшиеся до конца выбранного периода —
-              // иначе баннер пугал бы "не закрыто смен" из-за открытой
-              // смены, которая к этому периоду вообще не относится.
-              final open =
-                  (snap.data ?? []).where((s) => s.startedAt.isBefore(_rangeEnd)).toList();
-              if (open.isEmpty) return const SizedBox.shrink();
-              return Container(
-                width: double.infinity,
-                color: Colors.orange.withValues(alpha: 0.12),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Не закрыто смен: ${open.length} — их часы не войдут в зарплату, пока не закрыть',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
-                    ...open.map((s) => ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(s.employeeName),
-                          subtitle: Text('Начата ${_fmtDateTime(s.startedAt)}'),
-                          trailing: TextButton(
-                            onPressed: () => _forceClose(s),
-                            child: const Text('Закрыть'),
-                          ),
-                        )),
-                  ],
-                ),
-              );
-            },
-          ),
-          if (_employees.length > 1)
+      body: CenteredBody(
+        maxWidth: 900,
+        child: Column(
+          children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Row(
+              padding: const EdgeInsets.all(8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  const Text('Сотрудник: '),
-                  DropdownButton<String?>(
-                    value: _employeeFilter,
-                    hint: const Text('Все'),
-                    items: [
-                      const DropdownMenuItem<String?>(value: null, child: Text('Все')),
-                      ..._employees
-                          .map((e) => DropdownMenuItem<String?>(value: e.id, child: Text(e.name))),
-                    ],
-                    onChanged: (v) => setState(() => _employeeFilter = v),
+                  ActionChip(label: const Text('Сегодня'), onPressed: _setToday),
+                  ActionChip(label: const Text('Этот месяц'), onPressed: _setThisMonth),
+                  ActionChip(label: const Text('Прошлый месяц'), onPressed: _setLastMonth),
+                  ActionChip(
+                    avatar: const Icon(Icons.date_range, size: 16),
+                    label: Text(
+                        '${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
+                    onPressed: _pickCustomRange,
                   ),
                 ],
               ),
             ),
-          const Divider(height: 1),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(child: Text(_error!, textAlign: TextAlign.center))
-                    : _buildList(),
-          ),
-        ],
+            StreamBuilder<List<StaffShiftModel>>(
+              stream: _fs.openStaffShiftsStream(),
+              builder: (context, snap) {
+                // Только смены, начавшиеся до конца выбранного периода —
+                // иначе баннер пугал бы "не закрыто смен" из-за открытой
+                // смены, которая к этому периоду вообще не относится.
+                final open =
+                    (snap.data ?? []).where((s) => s.startedAt.isBefore(_rangeEnd)).toList();
+                if (open.isEmpty) return const SizedBox.shrink();
+                return Container(
+                  width: double.infinity,
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Не закрыто смен: ${open.length} — их часы не войдут в зарплату, пока не закрыть',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      ...open.map((s) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(s.employeeName),
+                            subtitle: Text('Начата ${_fmtDateTime(s.startedAt)}'),
+                            trailing: TextButton(
+                              onPressed: () => _forceClose(s),
+                              child: const Text('Закрыть'),
+                            ),
+                          )),
+                    ],
+                  ),
+                );
+              },
+            ),
+            if (_employees.length > 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: Row(
+                  children: [
+                    const Text('Сотрудник: '),
+                    DropdownButton<String?>(
+                      value: _employeeFilter,
+                      hint: const Text('Все'),
+                      items: [
+                        const DropdownMenuItem<String?>(value: null, child: Text('Все')),
+                        ..._employees
+                            .map((e) => DropdownMenuItem<String?>(value: e.id, child: Text(e.name))),
+                      ],
+                      onChanged: (v) => setState(() => _employeeFilter = v),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 1),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Center(child: Text(_error!, textAlign: TextAlign.center))
+                      : _buildList(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -387,6 +392,8 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
         ),
         Expanded(
           child: ListView.builder(
+            // Снизу — место под кнопку добавления смены.
+            padding: const EdgeInsets.only(bottom: 96),
             itemCount: filtered.length,
             itemBuilder: (context, i) {
               final s = filtered[i];

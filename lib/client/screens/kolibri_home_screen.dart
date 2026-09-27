@@ -276,21 +276,29 @@ class KolibriHomeScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Бонусный счёт',
-                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
-              const SizedBox(height: 6),
-              Text(rub(bonus),
-                  style: TextStyle(
-                      fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
-              const SizedBox(height: 4),
-              Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
-                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
-            ],
+          // Expanded, а не Spacer: на узком телефоне с крупным шрифтом
+          // строка уровня переносится, а не вылезает за карточку.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Бонусный счёт',
+                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+                const SizedBox(height: 6),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(rub(bonus),
+                      style: TextStyle(
+                          fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
+                ),
+                const SizedBox(height: 4),
+                Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
+                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+              ],
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 12),
           Icon(Icons.card_giftcard, color: tierColor, size: 36),
         ],
       ),

@@ -3,6 +3,7 @@ import '../../models/client_models.dart';
 import '../../models/employee.dart';
 import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 
@@ -24,13 +25,16 @@ class KdsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Очередь заказов'),
+        // Имя сотрудника — только когда есть место: на телефоне оно
+        // съедало заголовок до «Оче…».
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Center(
-              child: Text(employee.name, style: const TextStyle(color: AppColors.textMuted)),
+          if (context.isTabletWidth)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: Text(employee.name, style: const TextStyle(color: AppColors.textMuted)),
+              ),
             ),
-          ),
         ],
       ),
       body: StreamBuilder<List<GuestOrder>>(
@@ -55,12 +59,16 @@ class KdsScreen extends StatelessWidget {
                 );
               }
 
-              return GridView.count(
+              // Карточки не уже ~300 dp: на телефоне — одна колонка, на
+              // планшете — две-три. Высота растёт с системным шрифтом.
+              return GridView(
                 padding: const EdgeInsets.all(16),
-                crossAxisCount: MediaQuery.of(context).size.width > 900 ? 3 : 2,
-                childAspectRatio: 1.35,
-                mainAxisSpacing: 14,
-                crossAxisSpacing: 14,
+                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 420,
+                  mainAxisExtent: context.scaledExtent(230, textPart: 110),
+                  mainAxisSpacing: 14,
+                  crossAxisSpacing: 14,
+                ),
                 children: [
                   ...calls.map((c) => _callCard(context, service, c)),
                   ...orders.map((o) => _orderCard(context, service, o)),

@@ -4,6 +4,7 @@ import '../../models/employee.dart';
 import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 
 /// Экран одного прохода инвентаризации: список позиций, зафиксированных на
 /// момент старта, с полем для фактически посчитанного количества по
@@ -132,53 +133,56 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
                 ),
               ),
             ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _StatBlock(label: 'Посчитано', value: '$countedNow/${entries.length}'),
-                  _StatBlock(
-                    label: 'Расхождений',
-                    value: '$discrepanciesNow',
-                    color: discrepanciesNow > 0 ? AppColors.warning : AppColors.success,
-                  ),
-                  if (widget.readOnly)
+      body: CenteredBody(
+        maxWidth: 900,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _StatBlock(label: 'Посчитано', value: '$countedNow/${entries.length}'),
                     _StatBlock(
-                      label: 'Статус',
-                      value: count.status == 'completed' ? 'Завершена' : 'Отменена',
+                      label: 'Расхождений',
+                      value: '$discrepanciesNow',
+                      color: discrepanciesNow > 0 ? AppColors.warning : AppColors.success,
                     ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          for (final cat in categories) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
-              child: Text(
-                cat.isEmpty ? 'Без категории' : cat,
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.4,
+                    if (widget.readOnly)
+                      _StatBlock(
+                        label: 'Статус',
+                        value: count.status == 'completed' ? 'Завершена' : 'Отменена',
+                      ),
+                  ],
                 ),
               ),
             ),
-            ...entries.where((e) => e.category == cat).map((e) => _CountRow(
-                  entry: e,
-                  controller: _controllers[e.itemId]!,
-                  readOnly: widget.readOnly,
-                  onChanged: () => _onChanged(e.itemId),
-                  localCounted: _localCounted(e),
-                )),
+            const SizedBox(height: 8),
+            for (final cat in categories) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
+                child: Text(
+                  cat.isEmpty ? 'Без категории' : cat,
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+              ...entries.where((e) => e.category == cat).map((e) => _CountRow(
+                    entry: e,
+                    controller: _controllers[e.itemId]!,
+                    readOnly: widget.readOnly,
+                    onChanged: () => _onChanged(e.itemId),
+                    localCounted: _localCounted(e),
+                  )),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -193,6 +197,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Завершить инвентаризацию?'),
         content: Text(message),
         actions: [
@@ -223,6 +228,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Отменить инвентаризацию?'),
         content: const Text('Введённые значения не будут применены к остаткам склада.'),
         actions: [

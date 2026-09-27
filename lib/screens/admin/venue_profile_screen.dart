@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/venue_models.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 
 /// Профиль заведения: часы, адрес, правила, FAQ и «счастливые часы».
 ///
@@ -106,234 +107,237 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
         title: const Text('Профиль заведения'),
         actions: [IconButton(onPressed: _save, tooltip: 'Сохранить', icon: const Icon(Icons.save))],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(controller: _name, decoration: const InputDecoration(labelText: 'Название')),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _venueType,
-            decoration: const InputDecoration(
-              labelText: 'Тип заведения',
-              helperText: 'От него зависят слова в приложении гостя («позвать '
-                  'кальянщика» или «позвать официанта») и кнопки вызова за столом.',
-              helperMaxLines: 3,
-            ),
-            items: [
-              for (final t in VenueTerms.types)
-                DropdownMenuItem(value: t, child: Text(VenueTerms.typeLabel(t))),
-            ],
-            onChanged: (v) => setState(() => _venueType = v ?? VenueTerms.hookah),
-          ),
-          const SizedBox(height: 12),
-          TextField(controller: _address, decoration: const InputDecoration(labelText: 'Адрес')),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _phone,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'Телефон'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _about,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'О заведении',
-              helperText: 'Пара предложений для приложения гостя и для ИИ',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _rules,
-            maxLines: 5,
-            decoration: const InputDecoration(
-              labelText: 'Правила заведения',
-              hintText: 'Вход с 18 лет\n'
-                  'Депозит на компанию от 6 человек\n'
-                  'Со своим алкоголем нельзя',
-              helperText: 'Каждое правило с новой строки. Гость видит их в '
-                  'приложении на вкладке «Мой стол» — изменения появляются '
-                  'сразу, как сохраните.',
-              helperMaxLines: 3,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _lat,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                  decoration: const InputDecoration(labelText: 'Широта (lat)', hintText: '55.7558'),
-                ),
+      body: CenteredBody(
+        maxWidth: Breakpoints.form,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TextField(controller: _name, decoration: const InputDecoration(labelText: 'Название')),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _venueType,
+              decoration: const InputDecoration(
+                labelText: 'Тип заведения',
+                helperText: 'От него зависят слова в приложении гостя («позвать '
+                    'кальянщика» или «позвать официанта») и кнопки вызова за столом.',
+                helperMaxLines: 3,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _lon,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                  decoration: const InputDecoration(labelText: 'Долгота (lon)', hintText: '37.6173'),
-                ),
+              items: [
+                for (final t in VenueTerms.types)
+                  DropdownMenuItem(value: t, child: Text(VenueTerms.typeLabel(t))),
+              ],
+              onChanged: (v) => setState(() => _venueType = v ?? VenueTerms.hookah),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: _address, decoration: const InputDecoration(labelText: 'Адрес')),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'Телефон'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _about,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'О заведении',
+                helperText: 'Пара предложений для приложения гостя и для ИИ',
               ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Координаты заведения — по ним ИИ-сомелье и консьерж смотрят погоду '
-            'и учитывают её в подборе микса. Найдите точку на Яндекс.Картах или '
-            'Google Maps: координаты показаны при долгом нажатии на точку.',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-          ),
-
-          const Divider(height: 32),
-          const Text('Чаевые', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _tipsEnabled,
-            onChanged: (v) => setState(() => _tipsEnabled = v),
-            title: const Text('Гости оставляют чаевые в приложении'),
-            subtitle: const Text(
-              'Гость выбирает, кому из смены оставить чаевые, и добавляет их к '
-              'счёту — касса возьмёт их вместе с оплатой. В выручку и чек они не '
-              'входят, а в «Зарплате» видны у каждого сотрудника. Список смены — '
-              'те, кто нажал «Начать смену».',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _rules,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: 'Правила заведения',
+                hintText: 'Вход с 18 лет\n'
+                    'Депозит на компанию от 6 человек\n'
+                    'Со своим алкоголем нельзя',
+                helperText: 'Каждое правило с новой строки. Гость видит их в '
+                    'приложении на вкладке «Мой стол» — изменения появляются '
+                    'сразу, как сохраните.',
+                helperMaxLines: 3,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _lat,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                    decoration: const InputDecoration(labelText: 'Широта (lat)', hintText: '55.7558'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _lon,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                    decoration: const InputDecoration(labelText: 'Долгота (lon)', hintText: '37.6173'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Координаты заведения — по ним ИИ-сомелье и консьерж смотрят погоду '
+              'и учитывают её в подборе микса. Найдите точку на Яндекс.Картах или '
+              'Google Maps: координаты показаны при долгом нажатии на точку.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
-          ),
-          if (_tipsEnabled)
+
+            const Divider(height: 32),
+            const Text('Чаевые', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              value: _tipsTeamEnabled,
-              onChanged: (v) => setState(() => _tipsTeamEnabled = v),
-              title: const Text('Вариант «Всей смене»'),
+              value: _tipsEnabled,
+              onChanged: (v) => setState(() => _tipsEnabled = v),
+              title: const Text('Гости оставляют чаевые в приложении'),
               subtitle: const Text(
-                'Сумма делится поровну между всеми, кто был на смене, — включая '
-                'кухню и бар.',
+                'Гость выбирает, кому из смены оставить чаевые, и добавляет их к '
+                'счёту — касса возьмёт их вместе с оплатой. В выручку и чек они не '
+                'входят, а в «Зарплате» видны у каждого сотрудника. Список смены — '
+                'те, кто нажал «Начать смену».',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+            ),
+            if (_tipsEnabled)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _tipsTeamEnabled,
+                onChanged: (v) => setState(() => _tipsTeamEnabled = v),
+                title: const Text('Вариант «Всей смене»'),
+                subtitle: const Text(
+                  'Сумма делится поровну между всеми, кто был на смене, — включая '
+                  'кухню и бар.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
+
+            const Divider(height: 32),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _cloudFunctions,
+              onChanged: (v) => setState(() => _cloudFunctions = v),
+              title: const Text('Cloud Functions подключены (тариф Blaze)'),
+              subtitle: const Text(
+                'Выключено — приложение работает полностью само: POS ведёт '
+                'фоновые задания (снимает брони без гостя, поздравляет '
+                'именинников), а гость получает локальные уведомления вместо '
+                'push. Включайте ТОЛЬКО после «firebase deploy --only '
+                'functions», иначе гость получит по два одинаковых '
+                'уведомления, а очередь push будет копиться впустую.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             ),
 
-          const Divider(height: 32),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _cloudFunctions,
-            onChanged: (v) => setState(() => _cloudFunctions = v),
-            title: const Text('Cloud Functions подключены (тариф Blaze)'),
-            subtitle: const Text(
-              'Выключено — приложение работает полностью само: POS ведёт '
-              'фоновые задания (снимает брони без гостя, поздравляет '
-              'именинников), а гость получает локальные уведомления вместо '
-              'push. Включайте ТОЛЬКО после «firebase deploy --only '
-              'functions», иначе гость получит по два одинаковых '
-              'уведомления, а очередь push будет копиться впустую.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-            ),
-          ),
-
-          const Divider(height: 32),
-          const Text('Часы работы', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
-          const Text('Формат 14:00-02:00, пусто — выходной',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-          const SizedBox(height: 12),
-          for (var i = 1; i <= 7; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  SizedBox(width: 40, child: Text(_days[i - 1])),
-                  Expanded(
-                    child: TextField(
-                      controller: _hours[i],
-                      decoration: const InputDecoration(isDense: true, hintText: '14:00-02:00'),
+            const Divider(height: 32),
+            const Text('Часы работы', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            const Text('Формат 14:00-02:00, пусто — выходной',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 12),
+            for (var i = 1; i <= 7; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    SizedBox(width: 40, child: Text(_days[i - 1])),
+                    Expanded(
+                      child: TextField(
+                        controller: _hours[i],
+                        decoration: const InputDecoration(isDense: true, hintText: '14:00-02:00'),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+
+            const Divider(height: 32),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('Частые вопросы',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                  onPressed: _addFaq,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Вопрос'),
+                ),
+              ],
             ),
+            if (_profile.faq.isEmpty)
+              const Text('Пока пусто — ИИ-консьерж будет отвечать только по меню',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13))
+            else
+              ..._profile.faq.map((f) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(f.question),
+                    subtitle: Text(f.answer, style: const TextStyle(fontSize: 13)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                      onPressed: () async {
+                        final faq = List<VenueFaq>.from(_profile.faq)..remove(f);
+                        _profile = _profile.copyWith(faq: faq);
+                        await _service.save(_profile);
+                        setState(() {});
+                      },
+                    ),
+                  )),
 
-          const Divider(height: 32),
-          Row(
-            children: [
-              const Expanded(
-                child: Text('Частые вопросы',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
-                onPressed: _addFaq,
-                icon: const Icon(Icons.add),
-                label: const Text('Вопрос'),
-              ),
-            ],
-          ),
-          if (_profile.faq.isEmpty)
-            const Text('Пока пусто — ИИ-консьерж будет отвечать только по меню',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13))
-          else
-            ..._profile.faq.map((f) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(f.question),
-                  subtitle: Text(f.answer, style: const TextStyle(fontSize: 13)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline, color: AppColors.danger),
-                    onPressed: () async {
-                      final faq = List<VenueFaq>.from(_profile.faq)..remove(f);
-                      _profile = _profile.copyWith(faq: faq);
-                      await _service.save(_profile);
-                      setState(() {});
-                    },
-                  ),
-                )),
-
-          const Divider(height: 32),
-          Row(
-            children: [
-              const Expanded(
-                child: Text('Счастливые часы',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
-                onPressed: _addHappyHour,
-                icon: const Icon(Icons.add),
-                label: const Text('Акция'),
-              ),
-            ],
-          ),
-          const Text('Скидка действует автоматически при открытии чека в это время',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-          const SizedBox(height: 8),
-          StreamBuilder<List<HappyHour>>(
-            stream: _service.happyHoursStream(),
-            builder: (context, snap) {
-              final list = snap.data ?? const <HappyHour>[];
-              if (list.isEmpty) {
-                return const Text('Акций нет',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 13));
-              }
-              return Column(
-                children: list
-                    .map((h) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.local_offer,
-                              color: h.active ? AppColors.success : AppColors.disabled),
-                          title: Text('${h.title} · −${h.discountPercent.toStringAsFixed(0)}%'),
-                          subtitle: Text(
-                            '${h.window} · ${h.weekdays.map((d) => _days[d - 1]).join(', ')}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline, color: AppColors.danger),
-                            onPressed: () => _service.deleteHappyHour(h.id),
-                          ),
-                        ))
-                    .toList(),
-              );
-            },
-          ),
-          const SizedBox(height: 32),
-        ],
+            const Divider(height: 32),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('Счастливые часы',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                  onPressed: _addHappyHour,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Акция'),
+                ),
+              ],
+            ),
+            const Text('Скидка действует автоматически при открытии чека в это время',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 8),
+            StreamBuilder<List<HappyHour>>(
+              stream: _service.happyHoursStream(),
+              builder: (context, snap) {
+                final list = snap.data ?? const <HappyHour>[];
+                if (list.isEmpty) {
+                  return const Text('Акций нет',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 13));
+                }
+                return Column(
+                  children: list
+                      .map((h) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.local_offer,
+                                color: h.active ? AppColors.success : AppColors.disabled),
+                            title: Text('${h.title} · −${h.discountPercent.toStringAsFixed(0)}%'),
+                            subtitle: Text(
+                              '${h.window} · ${h.weekdays.map((d) => _days[d - 1]).join(', ')}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                              onPressed: () => _service.deleteHappyHour(h.id),
+                            ),
+                          ))
+                      .toList(),
+                );
+              },
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
       ),
     );
   }
@@ -344,6 +348,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Вопрос и ответ'),
         content: Column(
           mainAxisSize: MainAxisSize.min,

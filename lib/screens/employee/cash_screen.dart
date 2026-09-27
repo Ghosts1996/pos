@@ -13,6 +13,7 @@ import '../../utils/money.dart';
 import '../../widgets/cash_drawer_card.dart';
 import '../../widgets/shift_flow.dart';
 import '../../widgets/shift_open_dialog.dart';
+import '../../utils/adaptive.dart';
 
 /// «Касса» — наличные в ящике отдельно от X-отчёта: сколько должно лежать
 /// сейчас и из чего это складывается, инкассация, внесение и выплата,
@@ -106,30 +107,33 @@ class _CashScreenState extends State<CashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Касса')),
-      body: RefreshIndicator(
-        onRefresh: _pullToRefresh,
-        child: StreamBuilder<ShiftModel?>(
-          stream: _fs.openShiftStream(),
-          builder: (context, shiftSnap) {
-            if (shiftSnap.connectionState == ConnectionState.waiting && !shiftSnap.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final shift = shiftSnap.data;
-            _shift = shift;
-            if (shift != null && _sessionsShiftId != shift.id) {
-              _sessionsShiftId = shift.id;
-              _sessions = _fs.closedSessionsForShift(shift);
-            }
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-              children: [
-                if (shift == null) _closedCard() else _currentCash(shift),
-                const SizedBox(height: 24),
-                _historySection(),
-              ],
-            );
-          },
+      body: CenteredBody(
+        maxWidth: 760,
+        child: RefreshIndicator(
+          onRefresh: _pullToRefresh,
+          child: StreamBuilder<ShiftModel?>(
+            stream: _fs.openShiftStream(),
+            builder: (context, shiftSnap) {
+              if (shiftSnap.connectionState == ConnectionState.waiting && !shiftSnap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final shift = shiftSnap.data;
+              _shift = shift;
+              if (shift != null && _sessionsShiftId != shift.id) {
+                _sessionsShiftId = shift.id;
+                _sessions = _fs.closedSessionsForShift(shift);
+              }
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                children: [
+                  if (shift == null) _closedCard() else _currentCash(shift),
+                  const SizedBox(height: 24),
+                  _historySection(),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

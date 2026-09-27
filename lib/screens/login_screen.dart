@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/employee.dart';
@@ -232,84 +233,113 @@ class _LoginScreenState extends State<LoginScreen> {
     final appName = branding?.appName ?? 'Hookah POS';
     final logoUrl = branding?.logoUrl ?? '';
 
+    final header = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        logoUrl.isNotEmpty
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.network(
+                  logoUrl,
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Image.asset('assets/icon/icon.png', width: 56, height: 56),
+                ),
+              )
+            : Image.asset('assets/icon/icon.png', width: 56, height: 56),
+        const SizedBox(height: 12),
+        Text(appName,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        // Сотрудник — режим по умолчанию (частый вход в течение
+        // смены, PIN короче), администратор выбирается явно отдельным
+        // тапом: пока не знаем, сколько цифр наберут, автовход после
+        // последней цифры не может сработать сам по себе.
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: const Text('Сотрудник'),
+              selected: !_adminMode,
+              onSelected: _loading ? null : (_) => _setAdminMode(false),
+            ),
+            ChoiceChip(
+              label: const Text('Администратор'),
+              selected: _adminMode,
+              onSelected: _loading ? null : (_) => _setAdminMode(true),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(_requiredPinLength, (i) {
+            final filled = i < _pin.length;
+            return Container(
+              margin: const EdgeInsets.all(6),
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: filled ? Colors.purpleAccent : Colors.white24,
+              ),
+            );
+          }),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent)),
+        ],
+      ],
+    );
+
     return Scaffold(
       backgroundColor: const Color(0xFF1B1B1F),
       body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              logoUrl.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Image.network(
-                        logoUrl,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            Image.asset('assets/icon/icon.png', width: 56, height: 56),
-                      ),
+        child: LayoutBuilder(builder: (context, box) {
+          // Невысокий широкий экран (планшет или окно Windows в альбомной
+          // ориентации, телефон на боку) — шапка слева, цифры справа, иначе
+          // клавиатура уходит за нижний край. Кнопки клавиатуры — квадраты
+          // в три колонки: ширина подбирается под высоту экрана.
+          final side = box.maxWidth > box.maxHeight && box.maxHeight < 600;
+          final maxKeypad = math.max(160.0, math.min(300.0, box.maxWidth - 32));
+          final keypadWidth = side
+              ? ((box.maxHeight - 32) * 3 / 4).clamp(math.min(180.0, maxKeypad), maxKeypad).toDouble()
+              : ((box.maxHeight - 290) * 3 / 4).clamp(math.min(210.0, maxKeypad), maxKeypad).toDouble();
+          final keypad = _loading
+              ? const Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())
+              : _buildKeypad(keypadWidth);
+          return Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: side
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 320), child: header)),
+                        const SizedBox(width: 40),
+                        keypad,
+                      ],
                     )
-                  : Image.asset('assets/icon/icon.png', width: 56, height: 56),
-              const SizedBox(height: 12),
-              Text(appName,
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              // Сотрудник — режим по умолчанию (частый вход в течение
-              // смены, PIN короче), администратор выбирается явно отдельным
-              // тапом: пока не знаем, сколько цифр наберут, автовход после
-              // последней цифры не может сработать сам по себе.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ChoiceChip(
-                    label: const Text('Сотрудник'),
-                    selected: !_adminMode,
-                    onSelected: _loading ? null : (_) => _setAdminMode(false),
-                  ),
-                  const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: const Text('Администратор'),
-                    selected: _adminMode,
-                    onSelected: _loading ? null : (_) => _setAdminMode(true),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_requiredPinLength, (i) {
-                  final filled = i < _pin.length;
-                  return Container(
-                    margin: const EdgeInsets.all(6),
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: filled ? Colors.purpleAccent : Colors.white24,
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [header, const SizedBox(height: 24), keypad],
                     ),
-                  );
-                }),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(_error!, style: const TextStyle(color: Colors.redAccent)),
-              ],
-              const SizedBox(height: 24),
-              if (_loading) const CircularProgressIndicator(),
-              if (!_loading) _buildKeypad(),
-            ],
-          ),
-        ),
+            ),
+          );
+        }),
       ),
     );
   }
 
-  Widget _buildKeypad() {
+  Widget _buildKeypad(double width) {
     final keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
     return SizedBox(
-      width: 260,
+      width: width,
       child: GridView.count(
         crossAxisCount: 3,
         shrinkWrap: true,
@@ -325,7 +355,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 customBorder: const CircleBorder(),
                 onTap: () => k == '⌫' ? _backspace() : _tap(k),
                 child: Center(
-                  child: Text(k, style: const TextStyle(color: Colors.white, fontSize: 20)),
+                  child: Text(k, style: TextStyle(color: Colors.white, fontSize: width >= 260 ? 22 : 20)),
                 ),
               ),
             ),

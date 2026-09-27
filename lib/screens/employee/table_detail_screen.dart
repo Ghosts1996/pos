@@ -106,6 +106,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Кто за столом?'),
         content: TextField(
           controller: ctrl,
@@ -137,6 +138,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
+        scrollable: true,
         title: const Text('Перезабивка'),
         content: Text(unlimited
             // Стол без ограничения времени: таймер не трогаем — только
@@ -187,6 +189,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final choice = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (_) => _TimeAdjustSheet(plannedEnd: session.plannedEnd, startTime: session.startTime),
     );
     if (choice == null) return;
@@ -220,6 +223,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final number = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
+        scrollable: true,
         title: const Text('Скидочная карта'),
         content: TextField(
           controller: controller,
@@ -254,6 +258,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final tag = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
+        scrollable: true,
         title: const Text('Кто сидит за столом'),
         content: TextField(
           controller: controller,
@@ -929,21 +934,28 @@ class _TotalBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Итого', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(_money(session.totalWithDiscount),
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-                    if (discounted) ...[
-                      const SizedBox(width: 8),
-                      Text(_money(session.orderTotal),
-                          style: const TextStyle(
-                            color: AppColors.textMuted,
-                            decoration: TextDecoration.lineThrough,
-                          )),
+                // Крупная сумма на узком телефоне с крупным шрифтом
+                // уменьшается, а не вылезает под кнопку.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(_money(session.totalWithDiscount),
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                      if (discounted) ...[
+                        const SizedBox(width: 8),
+                        Text(_money(session.orderTotal),
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              decoration: TextDecoration.lineThrough,
+                            )),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -954,7 +966,7 @@ class _TotalBar extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.success,
                 foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 22),
+                padding: EdgeInsets.symmetric(horizontal: MediaQuery.sizeOf(context).width < 360 ? 14 : 22),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               onPressed: onPay,
@@ -1037,39 +1049,42 @@ class _CheckPickerSheet extends StatelessWidget {
         stream: fs.activeSessionsStream(table.id),
         builder: (context, snap) {
           final sessions = snap.data ?? [];
-          return Wrap(
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text('Чеки за столом', style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-              if (!snap.hasData)
+          // Много чеков на низком экране — список прокручивается.
+          return SingleChildScrollView(
+            child: Wrap(
+              children: [
                 const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
+                  padding: EdgeInsets.all(12),
+                  child: Text('Чеки за столом', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
-              ...sessions.asMap().entries.map((e) {
-                final index = e.key;
-                final s = e.value;
-                final isCurrent = s.id == currentId;
-                final title = s.guestTag.isEmpty
-                    ? 'Чек ${index + 1} · ${s.employeeName}'
-                    : 'Чек ${index + 1} · ${s.guestTag}';
-                return ListTile(
-                  leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
-                  title: Text(title),
-                  subtitle: Text(
-                      '${s.employeeName} · ${rub(s.totalWithDiscount)}'),
-                  onTap: () => Navigator.pop(context, s.id),
-                );
-              }),
-              if (table.activeSessionIds.length < table.maxOpenSessions)
-                ListTile(
-                  leading: const Icon(Icons.add_circle_outline),
-                  title: const Text('Открыть новый чек'),
-                  onTap: () => Navigator.pop(context, '__new__'),
-                ),
-            ],
+                if (!snap.hasData)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ...sessions.asMap().entries.map((e) {
+                  final index = e.key;
+                  final s = e.value;
+                  final isCurrent = s.id == currentId;
+                  final title = s.guestTag.isEmpty
+                      ? 'Чек ${index + 1} · ${s.employeeName}'
+                      : 'Чек ${index + 1} · ${s.guestTag}';
+                  return ListTile(
+                    leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
+                    title: Text(title),
+                    subtitle: Text(
+                        '${s.employeeName} · ${rub(s.totalWithDiscount)}'),
+                    onTap: () => Navigator.pop(context, s.id),
+                  );
+                }),
+                if (table.activeSessionIds.length < table.maxOpenSessions)
+                  ListTile(
+                    leading: const Icon(Icons.add_circle_outline),
+                    title: const Text('Открыть новый чек'),
+                    onTap: () => Navigator.pop(context, '__new__'),
+                  ),
+              ],
+            ),
           );
         },
       ),
@@ -1138,8 +1153,10 @@ class _TimeAdjustSheet extends StatelessWidget {
             ]),
           ],
         );
+    // Прокрутка — на низком экране (телефон на боку, окно Windows) обе
+    // строки кнопок не помещались.
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,

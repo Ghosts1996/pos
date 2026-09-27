@@ -6,6 +6,7 @@ import '../../services/app_scope.dart';
 import '../../services/gift_card_service.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 
 /// Подарочные сертификаты — коды на бонусы.
 ///
@@ -37,37 +38,41 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
         icon: const Icon(Icons.add_card),
         label: const Text('Выпустить'),
       ),
-      body: Column(
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              'Выпустите код, опубликуйте его в канале — и гости активируют '
-              'его в приложении. Каждому успевшему начисляется вся сумма.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Выпустите код, опубликуйте его в канале — и гости активируют '
+                'его в приложении. Каждому успевшему начисляется вся сумма.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              ),
             ),
-          ),
-          Expanded(
-            child: StreamBuilder<List<GiftCard>>(
-              stream: _service.activeCardsStream(),
-              builder: (context, snap) {
-                if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-                final cards = snap.data!;
-                if (cards.isEmpty) {
-                  return const Center(
-                    child: Text('Сертификатов нет',
-                        style: TextStyle(color: AppColors.textMuted)),
+            Expanded(
+              child: StreamBuilder<List<GiftCard>>(
+                stream: _service.activeCardsStream(),
+                builder: (context, snap) {
+                  if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                  final cards = snap.data!;
+                  if (cards.isEmpty) {
+                    return const Center(
+                      child: Text('Сертификатов нет',
+                          style: TextStyle(color: AppColors.textMuted)),
+                    );
+                  }
+                  return ListView.builder(
+                    // Снизу — место под кнопку «+».
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                    itemCount: cards.length,
+                    itemBuilder: (_, i) => _cardTile(cards[i]),
                   );
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: cards.length,
-                  itemBuilder: (_, i) => _cardTile(cards[i]),
-                );
-              },
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -116,6 +121,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Остановить сертификат?'),
         content: Text('Код ${c.code} перестанет активироваться. '
             'Уже начисленные бонусы у гостей останутся.'),

@@ -7,6 +7,7 @@ import '../../services/tips_service.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Расчёт зарплаты сотрудников за выбранный период: часы и смены (ставка
 /// за час или оклад за смену + переработка) — из «Смены сотрудников»,
@@ -199,89 +200,92 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Зарплата')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ActionChip(label: const Text('Пол-месяца'), onPressed: _setHalfMonth),
-                ActionChip(label: const Text('Этот месяц'), onPressed: _setThisMonth),
-                ActionChip(label: const Text('Прошлый месяц'), onPressed: _setLastMonth),
-                ActionChip(
-                  avatar: const Icon(Icons.date_range, size: 16),
-                  label: Text(
-                      '${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
-                  onPressed: _pickCustomRange,
-                ),
-              ],
+      body: CenteredBody(
+        maxWidth: 900,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ActionChip(label: const Text('Пол-месяца'), onPressed: _setHalfMonth),
+                  ActionChip(label: const Text('Этот месяц'), onPressed: _setThisMonth),
+                  ActionChip(label: const Text('Прошлый месяц'), onPressed: _setLastMonth),
+                  ActionChip(
+                    avatar: const Icon(Icons.date_range, size: 16),
+                    label: Text(
+                        '${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
+                    onPressed: _pickCustomRange,
+                  ),
+                ],
+              ),
             ),
-          ),
-          StreamBuilder<List<StaffShiftModel>>(
-            stream: _fs.openStaffShiftsStream(),
-            builder: (context, snap) {
-              // Только смены, начавшиеся до конца ВЫБРАННОГО периода — иначе
-              // баннер пугал бы "не закрыто смен" из-за открытой смены,
-              // которая к этому отчёту вообще не относится (например, смена
-              // началась сегодня, а отчёт строится за прошлый месяц).
-              final open = (snap.data ?? [])
-                  .where((s) => s.startedAt.isBefore(_rangeEnd))
-                  .toList();
-              if (open.isEmpty) return const SizedBox.shrink();
-              return Container(
-                width: double.infinity,
-                color: Colors.orange.withValues(alpha: 0.12),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                child: Text(
-                  'Не закрыто смен: ${open.length} (${open.map((s) => s.employeeName).toSet().join(", ")}) — '
-                  'их часы не войдут в расчёт, пока смена не закрыта. Закрыть можно в "Смены сотрудников".',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              );
-            },
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(child: Text(_error!, textAlign: TextAlign.center))
-                    : _results.isEmpty
-                    ? Center(
-                        child: Text(_unconfigured.isEmpty
-                            ? 'Нет сотрудников'
-                            : 'Ни у одного сотрудника не настроена зарплата.\n'
-                                'Откройте карточку сотрудника → «Зарплата».'),
-                      )
-                    : ListView(
-                        children: [
-                          _totalsCard(),
-                          if (_unassignedTips > 0.5)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                              child: Text(
-                                'Чаевые без получателя: ${_rub(_unassignedTips)}'
-                                ' — «всей смене», когда никто не отмечал '
-                                'начало смены, или сотрудникам, которых уже нет в списке. '
-                                'Поделите их вручную.',
-                                style: const TextStyle(fontSize: 12),
+            StreamBuilder<List<StaffShiftModel>>(
+              stream: _fs.openStaffShiftsStream(),
+              builder: (context, snap) {
+                // Только смены, начавшиеся до конца ВЫБРАННОГО периода — иначе
+                // баннер пугал бы "не закрыто смен" из-за открытой смены,
+                // которая к этому отчёту вообще не относится (например, смена
+                // началась сегодня, а отчёт строится за прошлый месяц).
+                final open = (snap.data ?? [])
+                    .where((s) => s.startedAt.isBefore(_rangeEnd))
+                    .toList();
+                if (open.isEmpty) return const SizedBox.shrink();
+                return Container(
+                  width: double.infinity,
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Text(
+                    'Не закрыто смен: ${open.length} (${open.map((s) => s.employeeName).toSet().join(", ")}) — '
+                    'их часы не войдут в расчёт, пока смена не закрыта. Закрыть можно в "Смены сотрудников".',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Center(child: Text(_error!, textAlign: TextAlign.center))
+                      : _results.isEmpty
+                      ? Center(
+                          child: Text(_unconfigured.isEmpty
+                              ? 'Нет сотрудников'
+                              : 'Ни у одного сотрудника не настроена зарплата.\n'
+                                  'Откройте карточку сотрудника → «Зарплата».'),
+                        )
+                      : ListView(
+                          children: [
+                            _totalsCard(),
+                            if (_unassignedTips > 0.5)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                                child: Text(
+                                  'Чаевые без получателя: ${_rub(_unassignedTips)}'
+                                  ' — «всей смене», когда никто не отмечал '
+                                  'начало смены, или сотрудникам, которых уже нет в списке. '
+                                  'Поделите их вручную.',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ),
-                            ),
-                          ..._results.map(_employeeCard),
-                          if (_unconfigured.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Text(
-                                'Без настроенной зарплаты: ${_unconfigured.map((e) => e.name).join(", ")}',
-                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ..._results.map(_employeeCard),
+                            if (_unconfigured.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  'Без настроенной зарплаты: ${_unconfigured.map((e) => e.name).join(", ")}',
+                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
-          ),
-        ],
+                          ],
+                        ),
+            ),
+          ],
+        ),
       ),
     );
   }

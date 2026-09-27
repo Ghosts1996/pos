@@ -8,6 +8,7 @@ import '../../utils/bill_split.dart';
 import '../../utils/constants.dart';
 import 'employee_edit_screen.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
@@ -33,41 +34,44 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         icon: const Icon(Icons.person_add_alt_1),
         label: const Text('Добавить'),
       ),
-      body: StreamBuilder<List<Employee>>(
-        stream: _employees,
-        builder: (context, snap) {
-          if (snap.hasError) {
-            return const Center(child: Text('Не удалось загрузить сотрудников — проверьте интернет'));
-          }
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final employees = [...snap.data!]
-            ..sort((a, b) {
-              // Сначала администраторы, дальше по имени.
-              final r = (b.role == AppConstants.roleAdmin ? 1 : 0) - (a.role == AppConstants.roleAdmin ? 1 : 0);
-              return r != 0 ? r : a.name.toLowerCase().compareTo(b.name.toLowerCase());
-            });
-          if (employees.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Сотрудников пока нет.\nДобавьте первого — он будет входить по своему PIN-коду.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted),
+      body: CenteredBody(
+        maxWidth: 760,
+        child: StreamBuilder<List<Employee>>(
+          stream: _employees,
+          builder: (context, snap) {
+            if (snap.hasError) {
+              return const Center(child: Text('Не удалось загрузить сотрудников — проверьте интернет'));
+            }
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final employees = [...snap.data!]
+              ..sort((a, b) {
+                // Сначала администраторы, дальше по имени.
+                final r = (b.role == AppConstants.roleAdmin ? 1 : 0) - (a.role == AppConstants.roleAdmin ? 1 : 0);
+                return r != 0 ? r : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+              });
+            if (employees.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text(
+                    'Сотрудников пока нет.\nДобавьте первого — он будет входить по своему PIN-коду.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted),
+                  ),
                 ),
-              ),
-            );
-          }
-          return LayoutBuilder(builder: (context, box) {
-            final side = box.maxWidth > 752 ? (box.maxWidth - 720) / 2 : 12.0;
-            return ListView.separated(
-              padding: EdgeInsets.fromLTRB(side, 12, side, 96),
-              itemCount: employees.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, i) => _card(employees[i]),
-            );
-          });
-        },
+              );
+            }
+            return LayoutBuilder(builder: (context, box) {
+              final side = box.maxWidth > 752 ? (box.maxWidth - 720) / 2 : 12.0;
+              return ListView.separated(
+                padding: EdgeInsets.fromLTRB(side, 12, side, 96),
+                itemCount: employees.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, i) => _card(employees[i]),
+              );
+            });
+          },
+        ),
       ),
     );
   }
@@ -161,7 +165,12 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, size: 13, color: AppColors.textMuted),
           const SizedBox(width: 4),
-          Text(text, style: TextStyle(fontSize: 12, color: muted ? AppColors.textMuted : AppColors.textPrimary)),
+          Flexible(
+            child: Text(text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: muted ? AppColors.textMuted : AppColors.textPrimary)),
+          ),
         ]),
       );
 
@@ -201,6 +210,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить сотрудника?'),
         content: Text('«${e.name}» больше не сможет войти по своему PIN-коду. '
             'Его смены и продажи останутся в отчётах.'),

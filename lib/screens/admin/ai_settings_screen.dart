@@ -6,6 +6,7 @@ import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Админский экран подключения ИИ: провайдер (Tooken Club, DarkAPI,
 /// Google Gemini или свой шлюз), ключи, модели, резервный провайдер,
@@ -164,255 +165,258 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Настройки ИИ')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: ListTile(
-              leading: Icon(AiSettingsStore.instance.isChainShared ? Icons.hub_outlined : Icons.key_outlined),
-              title: Text(AiSettingsStore.instance.isChainShared
-                  ? 'Общие настройки для всей сети'
-                  : 'Ключи ИИ этого заведения'),
-              subtitle: Text(AiSettingsStore.instance.isChainShared
-                  ? 'Ключ провайдера покупается один раз и работает во всех точках сети. '
-                      'Изменения здесь сразу применятся во всех точках.'
-                  : 'Заведение подключает свой ключ провайдера — оплата ИИ идёт напрямую провайдеру, '
-                      'платформа ключи не выдаёт.'),
-            ),
-          ),
-          SwitchListTile(
-            value: _settings.enabled,
-            onChanged: (v) => setState(() => _settings = _settings.copyWith(enabled: v)),
-            title: const Text('Включить ИИ-агентов'),
-            subtitle: const Text('Выключено — приложение работает без единого запроса к ИИ'),
-          ),
-          const Divider(),
-          _section('Провайдер'),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: AiVendors.all.map((v) {
-              final selected = v.id == _editing;
-              final mark = v.id == _settings.vendor
-                  ? ' · основной'
-                  : v.id == _settings.fallbackVendor
-                      ? ' · резервный'
-                      : '';
-              return ChoiceChip(
-                selected: selected,
-                label: Text('${v.title}${_hasKey(v.id) ? ' ✓' : ''}$mark'),
-                onSelected: (_) => _switchEditing(v.id),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 6),
-          const Text('✓ — ключ сохранён. Ключ каждого провайдера хранится отдельно.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _apiKey,
-            obscureText: _obscureKey,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: 'API-ключ ${vendor.title}',
-              helperText: vendor.keyHint,
-              suffixIcon: IconButton(
-                icon: Icon(_obscureKey ? Icons.visibility : Icons.visibility_off),
-                onPressed: () => setState(() => _obscureKey = !_obscureKey),
+      body: CenteredBody(
+        maxWidth: Breakpoints.form,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              child: ListTile(
+                leading: Icon(AiSettingsStore.instance.isChainShared ? Icons.hub_outlined : Icons.key_outlined),
+                title: Text(AiSettingsStore.instance.isChainShared
+                    ? 'Общие настройки для всей сети'
+                    : 'Ключи ИИ этого заведения'),
+                subtitle: Text(AiSettingsStore.instance.isChainShared
+                    ? 'Ключ провайдера покупается один раз и работает во всех точках сети. '
+                        'Изменения здесь сразу применятся во всех точках.'
+                    : 'Заведение подключает свой ключ провайдера — оплата ИИ идёт напрямую провайдеру, '
+                        'платформа ключи не выдаёт.'),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _baseUrl,
-            decoration: InputDecoration(
-              labelText: 'Адрес API',
-              helperText: vendor.id == AiVendors.custom.id
-                  ? 'Адрес шлюза из личного кабинета (без /chat/completions)'
-                  : 'Менять не нужно, если провайдер не дал другой адрес или вы не ходите через прокси',
+            SwitchListTile(
+              value: _settings.enabled,
+              onChanged: (v) => setState(() => _settings = _settings.copyWith(enabled: v)),
+              title: const Text('Включить ИИ-агентов'),
+              subtitle: const Text('Выключено — приложение работает без единого запроса к ИИ'),
             ),
-          ),
-          if (vendor.id == AiVendors.custom.id) ...[
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: ['auto', 'openai', 'anthropic'].contains(_settings.configFor(_editing).format)
-                  ? _settings.configFor(_editing).format
-                  : 'auto',
-              decoration: const InputDecoration(
-                labelText: 'Формат API',
-                helperText: 'Не знаете — оставьте «Определить автоматически»',
-              ),
-              items: const [
-                DropdownMenuItem(value: 'auto', child: Text('Определить автоматически')),
-                DropdownMenuItem(value: 'openai', child: Text('OpenAI-совместимый')),
-                DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)')),
-              ],
-              onChanged: (v) => setState(() => _settings = _settings.withVendorConfig(
-                  _editing, _settings.configFor(_editing).copyWith(format: v ?? 'auto'))),
-            ),
-          ],
-          if (vendor.note.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-              ),
-              child: Text(vendor.note, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _model,
-                  decoration: const InputDecoration(
-                    labelText: 'Основная модель',
-                    helperText: 'Быстрые агенты: подсказки, чат',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _analyticsModel,
-                  decoration: const InputDecoration(
-                    labelText: 'Модель для аналитики',
-                    helperText: 'Отчёты, закупки, отзывы',
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (suggested.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            const Text('Нажмите — подставится в «Основная модель», долгое нажатие — в «Модель для аналитики»:',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-            const SizedBox(height: 6),
+            const Divider(),
+            _section('Провайдер'),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: suggested
-                  .map((m) => GestureDetector(
-                        onLongPress: () => setState(() => _analyticsModel.text = m),
-                        child: ActionChip(
-                          label: Text(m, style: const TextStyle(fontSize: 12)),
-                          onPressed: () => setState(() => _model.text = m),
-                        ),
-                      ))
-                  .toList(),
+              children: AiVendors.all.map((v) {
+                final selected = v.id == _editing;
+                final mark = v.id == _settings.vendor
+                    ? ' · основной'
+                    : v.id == _settings.fallbackVendor
+                        ? ' · резервный'
+                        : '';
+                return ChoiceChip(
+                  selected: selected,
+                  label: Text('${v.title}${_hasKey(v.id) ? ' ✓' : ''}$mark'),
+                  onSelected: (_) => _switchEditing(v.id),
+                );
+              }).toList(),
             ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _saving ? null : _ping,
-                icon: const Icon(Icons.wifi_tethering),
-                label: const Text('Проверить связь'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _saving ? null : _loadModels,
-                icon: const Icon(Icons.list),
-                label: const Text('Загрузить модели'),
-              ),
-            ],
-          ),
-          if (_pingResult != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                _pingResult!,
-                style: TextStyle(
-                  color: _pingResult!.startsWith('Ошибка')
-                      ? AppColors.danger
-                      : _pingOk
-                          ? AppColors.success
-                          : AppColors.textMuted,
+            const SizedBox(height: 6),
+            const Text('✓ — ключ сохранён. Ключ каждого провайдера хранится отдельно.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _apiKey,
+              obscureText: _obscureKey,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'API-ключ ${vendor.title}',
+                helperText: vendor.keyHint,
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureKey ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscureKey = !_obscureKey),
                 ),
               ),
             ),
-          const Divider(height: 32),
-          _section('Какой провайдер использовать'),
-          DropdownButtonFormField<String>(
-            initialValue: _settings.vendor,
-            decoration: const InputDecoration(labelText: 'Основной провайдер'),
-            items: AiVendors.all
-                .map((v) => DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}')))
-                .toList(),
-            onChanged: (v) => setState(() {
-              _settings = _settings.copyWith(
-                vendor: v ?? _settings.vendor,
-                fallbackVendor: _settings.fallbackVendor == v ? '' : _settings.fallbackVendor,
-              );
-            }),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _settings.fallbackVendor,
-            decoration: const InputDecoration(
-              labelText: 'Резервный провайдер',
-              helperText: 'Если основной не ответит (нет связи, ключ, баланс, регион) — ИИ переключится сам',
+            const SizedBox(height: 12),
+            TextField(
+              controller: _baseUrl,
+              decoration: InputDecoration(
+                labelText: 'Адрес API',
+                helperText: vendor.id == AiVendors.custom.id
+                    ? 'Адрес шлюза из личного кабинета (без /chat/completions)'
+                    : 'Менять не нужно, если провайдер не дал другой адрес или вы не ходите через прокси',
+              ),
             ),
-            items: [
-              const DropdownMenuItem(value: '', child: Text('Не использовать')),
-              ...AiVendors.all.where((v) => v.id != _settings.vendor).map((v) =>
-                  DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}'))),
+            if (vendor.id == AiVendors.custom.id) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: ['auto', 'openai', 'anthropic'].contains(_settings.configFor(_editing).format)
+                    ? _settings.configFor(_editing).format
+                    : 'auto',
+                decoration: const InputDecoration(
+                  labelText: 'Формат API',
+                  helperText: 'Не знаете — оставьте «Определить автоматически»',
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'auto', child: Text('Определить автоматически')),
+                  DropdownMenuItem(value: 'openai', child: Text('OpenAI-совместимый')),
+                  DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)')),
+                ],
+                onChanged: (v) => setState(() => _settings = _settings.withVendorConfig(
+                    _editing, _settings.configFor(_editing).copyWith(format: v ?? 'auto'))),
+              ),
             ],
-            onChanged: (v) => setState(() => _settings = _settings.copyWith(fallbackVendor: v ?? '')),
-          ),
-          const Divider(height: 32),
-          _section('Параметры генерации'),
-          _slider(
-            'Температура (креативность)',
-            _settings.temperature,
-            0,
-            1,
-            (v) => setState(() => _settings = _settings.copyWith(temperature: v)),
-          ),
-          _slider(
-            'Лимит ответа (токенов)',
-            _settings.maxTokens.toDouble(),
-            200,
-            4000,
-            (v) => setState(() => _settings = _settings.copyWith(maxTokens: v.round())),
-            divisions: 38,
-            labelFormat: (v) => v.round().toString(),
-          ),
-          const Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-          const Divider(height: 32),
-          _section('Агенты'),
-          ...AiAgents.all.map(
-            (a) => SwitchListTile(
-              value: _settings.agents[a.id] ?? true,
-              onChanged: (v) {
-                final map = Map<String, bool>.from(_settings.agents)..[a.id] = v;
-                setState(() => _settings = _settings.copyWith(agents: map));
-              },
-              title: Text(a.title),
-              subtitle: Text(a.description, style: const TextStyle(fontSize: 12)),
-              secondary: Icon(a.heavy ? Icons.query_stats : Icons.bolt,
-                  color: a.heavy ? AppColors.warning : AppColors.primary),
+            if (vendor.note.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+                ),
+                child: Text(vendor.note, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _model,
+                    decoration: const InputDecoration(
+                      labelText: 'Основная модель',
+                      helperText: 'Быстрые агенты: подсказки, чат',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _analyticsModel,
+                    decoration: const InputDecoration(
+                      labelText: 'Модель для аналитики',
+                      helperText: 'Отчёты, закупки, отзывы',
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const Divider(height: 32),
-          _section('Расход токенов'),
-          _usage(),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Сохранить'),
-          ),
-          const SizedBox(height: 32),
-        ],
+            if (suggested.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('Нажмите — подставится в «Основная модель», долгое нажатие — в «Модель для аналитики»:',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: suggested
+                    .map((m) => GestureDetector(
+                          onLongPress: () => setState(() => _analyticsModel.text = m),
+                          child: ActionChip(
+                            label: Text(m, style: const TextStyle(fontSize: 12)),
+                            onPressed: () => setState(() => _model.text = m),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : _ping,
+                  icon: const Icon(Icons.wifi_tethering),
+                  label: const Text('Проверить связь'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : _loadModels,
+                  icon: const Icon(Icons.list),
+                  label: const Text('Загрузить модели'),
+                ),
+              ],
+            ),
+            if (_pingResult != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  _pingResult!,
+                  style: TextStyle(
+                    color: _pingResult!.startsWith('Ошибка')
+                        ? AppColors.danger
+                        : _pingOk
+                            ? AppColors.success
+                            : AppColors.textMuted,
+                  ),
+                ),
+              ),
+            const Divider(height: 32),
+            _section('Какой провайдер использовать'),
+            DropdownButtonFormField<String>(
+              initialValue: _settings.vendor,
+              decoration: const InputDecoration(labelText: 'Основной провайдер'),
+              items: AiVendors.all
+                  .map((v) => DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}')))
+                  .toList(),
+              onChanged: (v) => setState(() {
+                _settings = _settings.copyWith(
+                  vendor: v ?? _settings.vendor,
+                  fallbackVendor: _settings.fallbackVendor == v ? '' : _settings.fallbackVendor,
+                );
+              }),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _settings.fallbackVendor,
+              decoration: const InputDecoration(
+                labelText: 'Резервный провайдер',
+                helperText: 'Если основной не ответит (нет связи, ключ, баланс, регион) — ИИ переключится сам',
+              ),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('Не использовать')),
+                ...AiVendors.all.where((v) => v.id != _settings.vendor).map((v) =>
+                    DropdownMenuItem(value: v.id, child: Text('${v.title}${_hasKey(v.id) ? '' : ' (нет ключа)'}'))),
+              ],
+              onChanged: (v) => setState(() => _settings = _settings.copyWith(fallbackVendor: v ?? '')),
+            ),
+            const Divider(height: 32),
+            _section('Параметры генерации'),
+            _slider(
+              'Температура (креативность)',
+              _settings.temperature,
+              0,
+              1,
+              (v) => setState(() => _settings = _settings.copyWith(temperature: v)),
+            ),
+            _slider(
+              'Лимит ответа (токенов)',
+              _settings.maxTokens.toDouble(),
+              200,
+              4000,
+              (v) => setState(() => _settings = _settings.copyWith(maxTokens: v.round())),
+              divisions: 38,
+              labelFormat: (v) => v.round().toString(),
+            ),
+            const Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const Divider(height: 32),
+            _section('Агенты'),
+            ...AiAgents.all.map(
+              (a) => SwitchListTile(
+                value: _settings.agents[a.id] ?? true,
+                onChanged: (v) {
+                  final map = Map<String, bool>.from(_settings.agents)..[a.id] = v;
+                  setState(() => _settings = _settings.copyWith(agents: map));
+                },
+                title: Text(a.title),
+                subtitle: Text(a.description, style: const TextStyle(fontSize: 12)),
+                secondary: Icon(a.heavy ? Icons.query_stats : Icons.bolt,
+                    color: a.heavy ? AppColors.warning : AppColors.primary),
+              ),
+            ),
+            const Divider(height: 32),
+            _section('Расход токенов'),
+            _usage(),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Сохранить'),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
       ),
     );
   }
