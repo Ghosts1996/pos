@@ -51,6 +51,10 @@ class Employee {
   /// будет пустым (не ошибка, но стоит показать подсказку в интерфейсе).
   bool get payrollConfigured => hourlyRateEnabled || salesPercentEnabled;
 
+  /// «Перезабивка» и напоминания про угли — см. AppConstants.handlesHookah.
+  bool handlesHookah({required bool hookahVenue}) =>
+      AppConstants.handlesHookah(position: position, role: role, hookahVenue: hookahVenue);
+
   factory Employee.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     return Employee(

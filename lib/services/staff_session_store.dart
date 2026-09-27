@@ -41,9 +41,13 @@ class StaffSessionStore {
   }
 
   /// Кто входил в прошлый раз. Пусто — спрашиваем PIN.
-  Future<String> savedEmployeeId() async {
+  ///
+  /// [fresh] — перечитать с диска: фоновая служба живёт в своём изоляте, и
+  /// без этого не увидела бы, что на экране вошёл другой сотрудник.
+  Future<String> savedEmployeeId({bool fresh = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (fresh) await prefs.reload();
       return prefs.getString(_key) ?? '';
     } catch (_) {
       return '';

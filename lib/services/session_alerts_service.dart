@@ -61,6 +61,23 @@ class SessionAlertsService {
   /// [_myEmployeeId]. Универсал (значение по умолчанию, пока владелец
   /// никого не специализировал) видит все вызовы, ровно как было раньше.
   String _myPosition = AppConstants.positionUniversal;
+  String _myRole = AppConstants.roleEmployee;
+
+  /// Подписка на карточку вошедшего: админ поменял специализацию —
+  /// напоминания про угли включаются или выключаются сразу, без
+  /// перезапуска планшета.
+  StreamSubscription? _me;
+
+  /// Запасная проверка «кто вошёл на этом устройстве» — на случай, если
+  /// сообщение о смене сотрудника до фоновой службы не дошло.
+  Timer? _identityTimer;
+
+  /// Угли — дело того, кто ведёт кальяны: см. AppConstants.handlesHookah.
+  bool get _hookahDuty => AppConstants.handlesHookah(
+        position: _myPosition,
+        role: _myRole,
+        hookahVenue: VenueService.instance.terms.isHookah,
+      );
 
   /// Показывать ли уведомления на этом устройстве.
   ///
@@ -115,12 +132,14 @@ class SessionAlertsService {
     if (_myEmployeeId.isNotEmpty) {
       try {
         final doc = await AppScope.col('employees').doc(_myEmployeeId).get();
-        _myPosition = AppConstants.normalizePosition(doc.data()?['position'] as String?);
+        _applyMe(doc.data());
       } catch (_) {
         // Не удалось прочитать специализацию — считаем универсалом:
         // безопасный дефолт, при котором ничего не потеряется.
       }
     }
+    _watchMe();
+    _identityTimer = Timer.periodic(const Duration(minutes: 2), (_) => refreshIdentity());
     _watchShift();
 
     // Тип заведения решает, нужны ли напоминания про угли: в ресторане их
@@ -134,6 +153,41 @@ class SessionAlertsService {
     _watchSessions();
     _watchReservations();
     _watchCalls();
+  }
+
+  void _applyMe(Map<String, dynamic>? data) {
+    _myPosition = AppConstants.normalizePosition(data?['position'] as String?);
+    _myRole = (data?['role'] as String?) ?? AppConstants.roleEmployee;
+  }
+
+  void _watchMe() {
+    _me?.cancel();
+    _me = null;
+    if (_myEmployeeId.isEmpty) return;
+    _me = AppScope.col('employees').doc(_myEmployeeId).snapshots().listen((d) {
+      final before = '$_myPosition/$_myRole';
+      _applyMe(d.data());
+      if (before != '$_myPosition/$_myRole') unawaited(_replanSessions());
+    }, onError: (_) {});
+  }
+
+  /// На этом устройстве вошёл другой сотрудник («Сменить сотрудника»):
+  /// вызовы и напоминания про угли теперь по его специализации. Зовут
+  /// экран входа (сообщением в фоновую службу) и запасной таймер.
+  Future<void> refreshIdentity() async {
+    if (!_running) return;
+    final id = await StaffSessionStore.instance.savedEmployeeId(fresh: true);
+    if (id == _myEmployeeId) return;
+    _myEmployeeId = id;
+    if (id.isEmpty) {
+      _applyMe(null);
+    } else {
+      try {
+        _applyMe((await AppScope.col('employees').doc(id).get()).data());
+      } catch (_) {}
+    }
+    _watchMe();
+    await _replanSessions();
   }
 
   void _watchShift() {
@@ -205,6 +259,10 @@ class SessionAlertsService {
   Future<void> stop() async {
     await _shift?.cancel();
     _shift = null;
+    await _me?.cancel();
+    _me = null;
+    _identityTimer?.cancel();
+    _identityTimer = null;
     await _sessions?.cancel();
     await _reservations?.cancel();
     await _calls?.cancel();
@@ -262,8 +320,9 @@ class SessionAlertsService {
     // должны сработать на уже чужом столе.
     if (!_mine) return;
 
-    // Угли — только в кальянной.
-    if (VenueService.instance.terms.isHookah) {
+    // Угли — только тому, кто ведёт кальяны: кальянщику, а в кальянной
+    // ещё универсалу и админу. Официанту и бармену они ни к чему.
+    if (_hookahDuty) {
       await _notify.scheduleAt(
         id: coalId,
         when: coalFrom.add(coalAfter),

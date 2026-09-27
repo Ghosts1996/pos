@@ -122,6 +122,20 @@ class AppConstants {
   static String normalizePosition(String? raw) =>
       employeePositions.contains(raw) ? raw! : positionUniversal;
 
+  /// Кальянные обязанности — кнопка «Перезабивка» на экране стола и
+  /// напоминания про угли. Кальянщику — всегда (кальяны бывают и в
+  /// ресторане); универсалу и администратору — если заведение кальянная.
+  /// Официант, бармен, повар и хостес их не видят и не получают.
+  static bool handlesHookah({
+    required String position,
+    String role = roleEmployee,
+    required bool hookahVenue,
+  }) {
+    final p = normalizePosition(position);
+    if (p == positionHookahMaster) return true;
+    return hookahVenue && (p == positionUniversal || role == roleAdmin);
+  }
+
   static String positionLabel(String position) {
     switch (position) {
       case positionWaiter:

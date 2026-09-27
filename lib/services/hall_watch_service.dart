@@ -38,6 +38,17 @@ class HallWatchService {
 
   bool _started = false;
 
+  /// На этом устройстве вошёл другой сотрудник — пусть фоновая служба
+  /// перечитает, кто это, и переставит напоминания (угли — только тем,
+  /// кто ведёт кальяны). Если служба не запущена и за залом следит само
+  /// приложение — обновляем его напрямую.
+  Future<void> identityChanged() async {
+    try {
+      FlutterForegroundTask.sendDataToTask('identity');
+    } catch (_) {}
+    await SessionAlertsService.instance.refreshIdentity();
+  }
+
   /// Возвращает true, если служба поднялась. Вызывающий по ответу решает,
   /// вести ли слежение самому: если служба не запустилась, за залом
   /// придётся следить основному приложению — хуже, но лучше, чем ничего.
@@ -186,6 +197,11 @@ class _HallWatchHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  void onReceiveData(Object data) {
+    if (data == 'identity') SessionAlertsService.instance.refreshIdentity();
+  }
 
   @override
   Future<void> onDestroy(DateTime timestamp) async {
