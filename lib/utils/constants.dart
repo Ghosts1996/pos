@@ -153,6 +153,39 @@ class AppConstants {
     }
   }
 
+  /// Короткое название — для чипов выбора и списка сотрудников.
+  static String positionShortLabel(String position) {
+    switch (position) {
+      case positionHost:
+        return 'Хостес';
+      case positionUniversal:
+        return 'Универсал';
+      default:
+        return positionLabel(position);
+    }
+  }
+
+  /// Что эта специализация даёт — подсказка под выбором в карточке
+  /// сотрудника. [hookahVenue] — заведение кальянная.
+  static String positionHint(String position, {required bool hookahVenue}) {
+    switch (normalizePosition(position)) {
+      case positionWaiter:
+        return 'Получает вызовы официанта и просьбы принести счёт.';
+      case positionHookahMaster:
+        return 'Получает вызовы на угли и кальян, видит «Перезабивку» и напоминания про угли.';
+      case positionBartender:
+        return 'Получает вызовы к бару.';
+      case positionCook:
+        return 'Вызовов из-за стола не получает, но гость может оставить ему чаевые.';
+      case positionHost:
+        return 'Встречает гостей и ведёт брони. Вызовов из-за стола не получает, чаевые — может.';
+      default:
+        return hookahVenue
+            ? 'Получает все вызовы гостей, видит «Перезабивку» и напоминания про угли.'
+            : 'Получает все вызовы гостей.';
+    }
+  }
+
   /// Подпись должности для гостя (в выборе, кому оставить чаевые).
   /// У универсала подписи нет — гость видит просто имя.
   static String positionGuestLabel(String position) {

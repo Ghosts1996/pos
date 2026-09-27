@@ -33,6 +33,26 @@ class FirestoreService {
     return AppScope.col('tables').doc(table.id).update(table.toMap());
   }
 
+  /// Настройки стола из редактора зала — ТОЛЬКО свои поля. Раньше
+  /// редактор писал стол целиком из своего снимка, и если в этот момент
+  /// кто-то открыл счёт, список открытых чеков стола затирался старым.
+  Future<void> updateTableSettings(
+    String tableId, {
+    required String name,
+    required int seats,
+    required String shape,
+    required int maxOpenSessions,
+    required String zone,
+  }) {
+    return AppScope.col('tables').doc(tableId).update({
+      'name': name,
+      'seats': seats,
+      'shape': shape,
+      'maxOpenSessions': maxOpenSessions,
+      'zone': zone,
+    });
+  }
+
   Future<void> updateTablePosition(String tableId, double x, double y) {
     return AppScope.col('tables').doc(tableId).update({'x': x, 'y': y});
   }

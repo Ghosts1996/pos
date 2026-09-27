@@ -1,10 +1,12 @@
-import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
+
 import '../../models/employee.dart';
 import '../../services/firestore_service.dart';
-import '../../utils/constants.dart';
 import '../../services/tips_service.dart';
-import '../../services/venue_service.dart';
+import '../../theme/app_colors.dart';
+import '../../utils/bill_split.dart';
+import '../../utils/constants.dart';
+import 'employee_edit_screen.dart';
 
 class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
@@ -16,397 +18,225 @@ class EmployeesScreen extends StatefulWidget {
 class _EmployeesScreenState extends State<EmployeesScreen> {
   final _fs = FirestoreService();
   late final Stream<List<Employee>> _employees = _fs.employeesStream();
-  // PIN-коды по умолчанию скрыты звёздочками — их видно только сотруднику,
+  // PIN-коды по умолчанию скрыты точками — их видно только сотруднику,
   // который вводит свой PIN на входе. Чтобы посмотреть чужой PIN в
-  // админке, нужно осознанно нажать на значок глаза для конкретной строки.
+  // админке, нужно осознанно нажать на значок глаза у конкретной строки.
   final Set<String> _revealed = {};
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Сотрудники')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _editEmployee(context, _fs, null),
-        child: const Icon(Icons.add),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _edit(null),
+        icon: const Icon(Icons.person_add_alt_1),
+        label: const Text('Добавить'),
       ),
       body: StreamBuilder<List<Employee>>(
         stream: _employees,
         builder: (context, snap) {
+          if (snap.hasError) {
+            return const Center(child: Text('Не удалось загрузить сотрудников — проверьте интернет'));
+          }
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final employees = snap.data!;
-          if (employees.isEmpty) return const Center(child: Text('Добавьте первого сотрудника'));
-          return ListView(
-            children: employees.map((e) {
-              final revealed = _revealed.contains(e.id);
-              return ListTile(
-                leading: Icon(e.role == AppConstants.roleAdmin ? Icons.admin_panel_settings : Icons.person),
-                title: Text(e.name),
-                subtitle: Row(
-                  children: [
-                    Text('${e.role == AppConstants.roleAdmin ? "Администратор" : "Сотрудник"} · PIN '),
-                    Text(revealed ? e.pinCode : '•' * AppConstants.pinLengthForRole(e.role)),
-                    InkWell(
-                      onTap: () => setState(() {
-                        revealed ? _revealed.remove(e.id) : _revealed.add(e.id);
-                      }),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Icon(revealed ? Icons.visibility_off : Icons.visibility, size: 16),
-                      ),
-                    ),
-                    if (e.payrollConfigured)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Icon(Icons.payments_outlined, size: 14, color: Colors.green),
-                      ),
-                    if (e.position != AppConstants.positionUniversal)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Text('· ${AppConstants.positionLabel(e.position)}'),
-                      ),
-                  ],
+          final employees = [...snap.data!]
+            ..sort((a, b) {
+              // Сначала администраторы, дальше по имени.
+              final r = (b.role == AppConstants.roleAdmin ? 1 : 0) - (a.role == AppConstants.roleAdmin ? 1 : 0);
+              return r != 0 ? r : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            });
+          if (employees.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  'Сотрудников пока нет.\nДобавьте первого — он будет входить по своему PIN-коду.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.textMuted),
                 ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () async {
-                    final confirm = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text('Удалить сотрудника?'),
-                        content: Text('«${e.name}» больше не сможет войти по своему PIN-коду.'),
-                        actions: [
-                          TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('Отмена')),
-                          FilledButton(
-                            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: const Text('Удалить'),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (confirm == true) await _fs.deleteEmployee(e.id);
-                  },
-                ),
-                onTap: () => _editEmployee(context, _fs, e),
-              );
-            }).toList(),
-          );
+              ),
+            );
+          }
+          return LayoutBuilder(builder: (context, box) {
+            final side = box.maxWidth > 752 ? (box.maxWidth - 720) / 2 : 12.0;
+            return ListView.separated(
+              padding: EdgeInsets.fromLTRB(side, 12, side, 96),
+              itemCount: employees.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) => _card(employees[i]),
+            );
+          });
         },
       ),
     );
   }
 
-  static String _numStr(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
-
-  static double _parseNum(String s, double fallback) =>
-      double.tryParse(s.replaceAll(',', '.').trim()) ?? fallback;
-
-  Future<void> _editEmployee(BuildContext context, FirestoreService fs, Employee? emp) async {
-    final nameCtrl = TextEditingController(text: emp?.name ?? '');
-    final pinCtrl = TextEditingController(text: emp?.pinCode ?? '');
-    String role = emp?.role ?? AppConstants.roleEmployee;
-    String position = emp?.position ?? AppConstants.positionUniversal;
-
-    bool hourlyRateEnabled = emp?.hourlyRateEnabled ?? false;
-    final hourlyRateCtrl = TextEditingController(text: _numStr(emp?.hourlyRate ?? 0));
-    bool overtimeEnabled = emp?.overtimeEnabled ?? false;
-    final overtimeThresholdCtrl =
-        TextEditingController(text: _numStr(emp?.overtimeThresholdHours ?? 8));
-    final overtimeMultiplierCtrl =
-        TextEditingController(text: _numStr(emp?.overtimeMultiplier ?? 1.5));
-    bool salesPercentEnabled = emp?.salesPercentEnabled ?? false;
-    final salesPercentCtrl = TextEditingController(text: _numStr(emp?.salesPercentRate ?? 0));
-    final tipsLinkCtrl = TextEditingController(text: emp?.tipsLink ?? '');
-    // «Кальянщик» в списке нужен только кальянной — в ресторане он лишь
-    // путает. Но если он уже назначен, пункт оставляем, чтобы не потерять.
-    final positions = AppConstants.employeePositions
-        .where((p) =>
-            p != AppConstants.positionHookahMaster ||
-            VenueService.instance.terms.isHookah ||
-            emp?.position == p)
-        .toList();
-    String? error;
-    bool saving = false;
-
-    final newEmp = await showDialog<Employee>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
-        return AlertDialog(
-          title: Text(emp == null ? 'Новый сотрудник' : 'Редактировать'),
-          content: SizedBox(
-            width: 360,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (error != null) ...[
-                    Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-                    const SizedBox(height: 8),
-                  ],
-                  TextField(
-                      controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя')),
-                  TextField(
-                    controller: pinCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'PIN-код (${AppConstants.pinLengthForRole(role)} ${role == AppConstants.roleAdmin ? "цифр" : "цифры"})',
-                    ),
-                    keyboardType: TextInputType.number,
-                    maxLength: AppConstants.pinLengthForRole(role),
-                    obscureText: true,
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Сотрудник'),
-                        selected: role == AppConstants.roleEmployee,
-                        // Разная длина PIN у ролей — переключение роли чистит
-                        // поле, а не оставляет, например, 6 цифр под 4-значный
-                        // код: иначе сохранение упадёт на проверке длины, а
-                        // владельцу будет непонятно, что именно не так.
-                        onSelected: (_) => setSt(() {
-                          role = AppConstants.roleEmployee;
-                          pinCtrl.clear();
-                        }),
-                      ),
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('Администратор'),
-                        selected: role == AppConstants.roleAdmin,
-                        onSelected: (_) => setSt(() {
-                          role = AppConstants.roleAdmin;
-                          pinCtrl.clear();
-                        }),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: position,
-                    decoration: const InputDecoration(labelText: 'Специализация'),
-                    items: positions
-                        .map((p) => DropdownMenuItem(
-                              value: p,
-                              child: Text(AppConstants.positionLabel(p)),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setSt(() => position = v ?? AppConstants.positionUniversal),
-                  ),
-                  const Text(
-                    'Определяет, какие вызовы гостя из-за стола придут этому '
-                    'сотруднику (например, официант не будет получать вызов '
-                    'кальянщика на угли). Универсал получает все вызовы. '
-                    'Кальянщику и универсалу доступна «Перезабивка» и приходят '
-                    'напоминания про угли. Повар и хостес вызовов не получают, '
-                    'но им тоже можно оставить чаевые.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: tipsLinkCtrl,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(
-                      labelText: 'Ссылка для чаевых (необязательно)',
-                      hintText: 'https://…',
-                      helperText: 'Личная страница чаевых (Нетмонет, CloudTips, банк). '
-                          'Гость сможет перевести напрямую. Имя и должность гость '
-                          'видит, пока сотрудник на смене.',
-                      helperMaxLines: 3,
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  Text('Зарплата', style: Theme.of(ctx).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Можно включить несколько способов сразу — они суммируются.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: const Text('Оклад (почасовая ставка)'),
-                    value: hourlyRateEnabled,
-                    onChanged: (v) => setSt(() => hourlyRateEnabled = v),
-                  ),
-                  if (hourlyRateEnabled) ...[
-                    TextField(
-                      controller: hourlyRateCtrl,
-                      decoration: const InputDecoration(labelText: 'Ставка, ₽/час'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      title: const Text('Переработка сверх нормы часов'),
-                      value: overtimeEnabled,
-                      onChanged: (v) => setSt(() => overtimeEnabled = v),
+  Widget _card(Employee e) {
+    final revealed = _revealed.contains(e.id);
+    final admin = e.role == AppConstants.roleAdmin;
+    final pay = payrollSummary(e);
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _edit(e),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: admin ? AppColors.selectionStrong : AppColors.selection,
+                child: Text(_initials(e.name), style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        _tag(admin ? 'Администратор' : AppConstants.positionShortLabel(e.position),
+                            admin ? Icons.admin_panel_settings_outlined : Icons.work_outline),
+                        if (admin && e.position != AppConstants.positionUniversal)
+                          _tag(AppConstants.positionShortLabel(e.position), Icons.work_outline),
+                        _tag(pay.isEmpty ? 'Зарплата не настроена' : pay, Icons.payments_outlined,
+                            muted: pay.isEmpty),
+                      ],
                     ),
                   ],
-                  if (hourlyRateEnabled && overtimeEnabled) ...[
-                    TextField(
-                      controller: overtimeThresholdCtrl,
-                      decoration:
-                          const InputDecoration(labelText: 'Порог, часов за одну смену'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: overtimeMultiplierCtrl,
-                      decoration:
-                          const InputDecoration(labelText: 'Множитель ставки (напр. 1.5)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: const Text('Процент с продаж'),
-                    value: salesPercentEnabled,
-                    onChanged: (v) => setSt(() => salesPercentEnabled = v),
-                  ),
-                  if (salesPercentEnabled)
-                    TextField(
-                      controller: salesPercentCtrl,
-                      decoration: const InputDecoration(labelText: 'Процент, %'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    ),
+                ),
+              ),
+              // PIN — по нажатию на глаз.
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => setState(() => revealed ? _revealed.remove(e.id) : _revealed.add(e.id)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(revealed ? e.pinCode : '•' * AppConstants.pinLengthForRole(e.role),
+                        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()], color: AppColors.textMuted)),
+                    const SizedBox(width: 4),
+                    Icon(revealed ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                        size: 18, color: AppColors.textMuted),
+                  ]),
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Ещё',
+                onSelected: (v) {
+                  if (v == 'edit') _edit(e);
+                  if (v == 'delete') _delete(e);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Изменить')),
+                  PopupMenuItem(value: 'delete', child: Text('Удалить', style: TextStyle(color: AppColors.danger))),
                 ],
               ),
-            ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: saving ? null : () => Navigator.pop(ctx),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              // Раньше валидация (PIN, ставка > 0 и т.п.) шла ПОСЛЕ того, как
-              // диалог уже закрывался по нажатию "Сохранить" — при ошибке
-              // диалог был уже закрыт, показывался только SnackBar с причиной,
-              // а весь ввод (в т.ч. настроенная зарплата) терялся. Выглядело
-              // как "нажал сохранить — ничего не сохранилось". Теперь и
-              // валидация, и сам PIN-запрос идут ДО закрытия диалога: при
-              // ошибке диалог остаётся открытым с сообщением внутри, ввод не
-              // пропадает.
-              onPressed: saving
-                  ? null
-                  : () async {
-                      final name = nameCtrl.text.trim();
-                      if (name.isEmpty) {
-                        setSt(() => error = 'Введите имя сотрудника');
-                        return;
-                      }
-                      final pin = pinCtrl.text.trim();
-                      final requiredLength = AppConstants.pinLengthForRole(role);
-                      if (pin.length != requiredLength || int.tryParse(pin) == null) {
-                        setSt(() => error = role == AppConstants.roleAdmin
-                            ? 'PIN администратора должен состоять ровно из $requiredLength цифр'
-                            : 'PIN сотрудника должен состоять ровно из $requiredLength цифр');
-                        return;
-                      }
-                      final hourlyRate = _parseNum(hourlyRateCtrl.text, 0);
-                      final overtimeThreshold = _parseNum(overtimeThresholdCtrl.text, 8);
-                      final overtimeMultiplier = _parseNum(overtimeMultiplierCtrl.text, 1.5);
-                      final salesPercentRate = _parseNum(salesPercentCtrl.text, 0);
-                      // Эти три проверки — НЕЗАВИСИМО от состояния тумблера:
-                      // иначе некорректное число может тихо сохраниться,
-                      // пока опция выключена, а потом "ожить", когда её
-                      // включат обратно, не трогая само поле.
-                      if (hourlyRate < 0) {
-                        setSt(() => error = 'Ставка не может быть отрицательной');
-                        return;
-                      }
-                      if (overtimeMultiplier < 1) {
-                        setSt(() => error =
-                            'Множитель переработки должен быть не меньше 1 — иначе час переработки будет стоить дешевле обычного');
-                        return;
-                      }
-                      if (salesPercentRate < 0 || salesPercentRate > 100) {
-                        setSt(() => error = 'Процент с продаж — число от 0 до 100');
-                        return;
-                      }
-                      if (hourlyRateEnabled && hourlyRate <= 0) {
-                        setSt(() => error = 'Укажите ставку больше нуля или выключите оклад');
-                        return;
-                      }
-                      if (hourlyRateEnabled && overtimeEnabled && overtimeThreshold <= 0) {
-                        setSt(() => error = 'Порог переработки должен быть больше нуля часов');
-                        return;
-                      }
-                      if (salesPercentEnabled && salesPercentRate <= 0) {
-                        setSt(() => error = 'Укажите процент больше нуля или выключите его');
-                        return;
-                      }
-                      final tipsLink = tipsLinkCtrl.text.trim();
-                      if (tipsLink.isNotEmpty &&
-                          !(Uri.tryParse(tipsLink)?.isAbsolute == true && tipsLink.startsWith('https://'))) {
-                        setSt(() => error = 'Ссылка для чаевых должна начинаться с https://');
-                        return;
-                      }
-                      setSt(() {
-                        saving = true;
-                        error = null;
-                      });
-                      final taken = await fs.isPinTaken(pin, excludeId: emp?.id);
-                      if (taken) {
-                        setSt(() {
-                          saving = false;
-                          error = 'Этот PIN-код уже занят другим сотрудником';
-                        });
-                        return;
-                      }
-                      if (ctx.mounted) {
-                        Navigator.pop(
-                          ctx,
-                          Employee(
-                            id: emp?.id ?? '',
-                            name: name,
-                            pinCode: pin,
-                            role: role,
-                            position: position,
-                            hourlyRateEnabled: hourlyRateEnabled,
-                            hourlyRate: hourlyRate,
-                            overtimeEnabled: overtimeEnabled,
-                            overtimeThresholdHours: overtimeThreshold,
-                            overtimeMultiplier: overtimeMultiplier,
-                            salesPercentEnabled: salesPercentEnabled,
-                            salesPercentRate: salesPercentRate,
-                            tipsLink: tipsLink,
-                          ),
-                        );
-                      }
-                    },
-              child: saving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Сохранить'),
-            ),
-          ],
-        );
-      }),
+        ),
+      ),
     );
-    if (newEmp == null) return;
+  }
+
+  Widget _tag(String text, IconData icon, {bool muted = false}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: muted ? Colors.transparent : AppColors.selection,
+          borderRadius: BorderRadius.circular(999),
+          border: muted ? Border.all(color: AppColors.border) : null,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: AppColors.textMuted),
+          const SizedBox(width: 4),
+          Text(text, style: TextStyle(fontSize: 12, color: muted ? AppColors.textMuted : AppColors.textPrimary)),
+        ]),
+      );
+
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.characters.first.toUpperCase();
+    return (parts[0].characters.first + parts[1].characters.first).toUpperCase();
+  }
+
+  Future<void> _edit(Employee? emp) async {
+    final result = await Navigator.of(context).push<Employee>(
+      MaterialPageRoute(builder: (_) => EmployeeEditScreen(employee: emp)),
+    );
+    if (result == null) return;
     try {
       if (emp == null) {
-        await fs.addEmployee(newEmp);
+        await _fs.addEmployee(result);
       } else {
-        await fs.updateEmployee(newEmp);
+        await _fs.updateEmployee(result);
         // Если он сейчас на смене — гость сразу увидит новое имя и ссылку.
-        TipsService.instance.refreshMember(newEmp).catchError((_) {});
+        TipsService.instance.refreshMember(result).catchError((_) {});
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(emp == null ? 'Сотрудник «${result.name}» добавлен' : 'Сохранено')));
       }
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Не удалось сохранить сотрудника: $e')));
       }
     }
   }
+
+  Future<void> _delete(Employee e) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить сотрудника?'),
+        content: Text('«${e.name}» больше не сможет войти по своему PIN-коду. '
+            'Его смены и продажи останутся в отчётах.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await _fs.deleteEmployee(e.id);
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось удалить: $err')));
+      }
+    }
+  }
+}
+
+/// «3 000 ₽ за смену + переработка · 5% с продаж» — коротко о зарплате
+/// сотрудника для списка. Пусто — зарплата не настроена.
+String payrollSummary(Employee e) {
+  String rub(double v) => formatKopecks((v * 100).round());
+  final parts = <String>[];
+  if (e.shiftRateEnabled && e.shiftRate > 0) {
+    parts.add('${rub(e.shiftRate)} за смену${e.overtimeEnabled ? ' + переработка' : ''}');
+  } else if (e.hourlyRateEnabled && e.hourlyRate > 0) {
+    parts.add('${rub(e.hourlyRate)} в час${e.overtimeEnabled ? ' + переработка' : ''}');
+  }
+  if (e.salesPercentEnabled && e.salesPercentRate > 0) {
+    final p = e.salesPercentRate;
+    parts.add('${p == p.roundToDouble() ? p.toInt() : p.toString().replaceAll('.', ',')}% с продаж');
+  }
+  return parts.join(' · ');
 }

@@ -3,7 +3,9 @@ import '../../services/venue_service.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
+import '../../widgets/hall_plan_view.dart';
 
 /// Карта зала для гостя — та же схема столов, что видит кальянщик на POS,
 /// в реальном времени. Только просмотр занятости.
@@ -16,20 +18,30 @@ import '../../utils/table_label.dart';
 /// стол сразу привязывало гостя к чужому счёту без физического
 /// присутствия — счёт можно было «занять» удалённо. Единственный способ
 /// сесть за стол — отсканировать QR-код, наклеенный физически на столе.
-class KolibriHallMapScreen extends StatelessWidget {
+class KolibriHallMapScreen extends StatefulWidget {
   /// true — режим выбора стола (для брони): возвращает выбранный стол.
   final bool pickMode;
 
   const KolibriHallMapScreen({super.key, this.pickMode = false});
 
   @override
-  Widget build(BuildContext context) {
-    final fs = FirestoreService();
+  State<KolibriHallMapScreen> createState() => _KolibriHallMapScreenState();
+}
 
+class _KolibriHallMapScreenState extends State<KolibriHallMapScreen> {
+  late final Stream<List<TableModel>> _tables = FirestoreService().tablesStream();
+
+  /// Выбранная зона зала (терраса, VIP…): у каждой зоны своя схема.
+  String? _zone;
+
+  bool get pickMode => widget.pickMode;
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(pickMode ? 'Выберите стол' : 'Карта зала')),
       body: StreamBuilder<List<TableModel>>(
-        stream: fs.tablesStream(),
+        stream: _tables,
         builder: (context, snap) {
           if (snap.hasError) {
             return Center(
@@ -44,18 +56,41 @@ class KolibriHallMapScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final tables = snap.data!;
-          if (tables.isEmpty) {
+          final all = snap.data!;
+          if (all.isEmpty) {
             return Center(
               child: Text('Столы ещё не добавлены',
                   style: TextStyle(color: KolibriColors.textMuted)),
             );
           }
 
+          final zones = hallZones(all);
+          final zoneKeys = [...zones, if (zones.isNotEmpty && all.any((t) => t.zone.isEmpty)) ''];
+          final zone = zoneKeys.isEmpty ? null : (zoneKeys.contains(_zone) ? _zone! : zoneKeys.first);
+          final tables = zone == null ? all : all.where((t) => t.zone == zone).toList();
           final free = tables.where((t) => t.activeSessionIds.isEmpty).length;
 
           return Column(
             children: [
+              if (zoneKeys.isNotEmpty)
+                SizedBox(
+                  height: 50,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    children: [
+                      for (final z in zoneKeys)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(z.isEmpty ? kNoZoneLabel : z),
+                            selected: z == zone,
+                            onSelected: (_) => setState(() => _zone = z),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
@@ -69,21 +104,14 @@ class KolibriHallMapScreen extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Координаты столов хранятся долями от 0 до 1 — та же
-                    // раскладка, что в редакторе зала на POS, поэтому карта
-                    // совпадает с реальным залом на любом размере экрана.
-                    return Stack(
-                      children: tables
-                          .map((t) => Positioned(
-                                left: t.x * (constraints.maxWidth - 96),
-                                top: t.y * (constraints.maxHeight - 96),
-                                child: _tableTile(context, t),
-                              ))
-                          .toList(),
-                    );
-                  },
+                // Та же схема, что расставил администратор на кассе, — на
+                // одном логическом холсте для всех экранов (см.
+                // hall_layout.dart): на телефоне её можно двигать пальцем.
+                child: HallPlanView(
+                  tables: tables,
+                  floorColor: KolibriColors.surface,
+                  lineColor: KolibriColors.border,
+                  tileBuilder: (t) => _tableTile(context, t),
                 ),
               ),
             ],
@@ -117,8 +145,8 @@ class KolibriHallMapScreen extends StatelessWidget {
       borderRadius: radius,
       onTap: () => _onTap(context, table, busy),
       child: Container(
-        width: 92,
-        height: 92,
+        width: kHallTile,
+        height: kHallTile,
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.15),
           borderRadius: radius,

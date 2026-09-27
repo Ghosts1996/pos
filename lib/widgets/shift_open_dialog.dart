@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/employee.dart';
 import '../services/firestore_service.dart';
 import '../services/staff_session_store.dart';
+import '../services/venue_service.dart';
 
 /// Спрашивает, кто выходит на смену, и открывает её.
 ///
@@ -117,12 +118,14 @@ class _WhoIsOnShiftDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
               child: Text(
-                'Вызовы гостей, брони и напоминания об углях будут приходить '
-                'тому, кого выберете.',
-                style: TextStyle(fontSize: 13),
+                VenueService.instance.terms.isHookah
+                    ? 'Вызовы гостей, брони и напоминания об углях будут приходить '
+                        'тому, кого выберете.'
+                    : 'Вызовы гостей и брони будут приходить тому, кого выберете.',
+                style: const TextStyle(fontSize: 13),
               ),
             ),
             Flexible(
