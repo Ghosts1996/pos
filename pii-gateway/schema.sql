@@ -24,3 +24,19 @@ CREATE TABLE IF NOT EXISTS guest_profiles (
 -- будущее — Phase 2 может захотеть искать по телефону и на этой стороне.
 CREATE INDEX IF NOT EXISTS guest_profiles_phone_idx
   ON guest_profiles (tenant_id, phone) WHERE phone <> '';
+
+-- Первичная запись контактов из броней и листа ожидания (имя, телефон).
+-- Касса и гостевое приложение сначала пишут сюда (РФ) и только после
+-- успешного ответа создают документ брони/очереди в Firestore — так
+-- соблюдается требование ст. 18 ч. 5 152-ФЗ о первичной записи в РФ.
+CREATE TABLE IF NOT EXISTS contact_records (
+  tenant_id   TEXT NOT NULL,
+  kind        TEXT NOT NULL,               -- 'reservation' | 'waitlist'
+  record_id   TEXT NOT NULL,               -- id документа в Firestore
+  name        TEXT NOT NULL DEFAULT '',
+  phone       TEXT NOT NULL DEFAULT '',
+  created_by  TEXT NOT NULL DEFAULT '',    -- uid, от чьего имени записано
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, kind, record_id)
+);

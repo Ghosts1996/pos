@@ -5,6 +5,7 @@ import '../models/venue_models.dart';
 import 'reservation_service.dart';
 import 'push_service.dart';
 import '../utils/table_label.dart';
+import 'pii_gateway_service.dart';
 
 /// Лист ожидания: что делать, когда мест нет.
 ///
@@ -61,7 +62,11 @@ class WaitlistService {
     final minutes = await estimateWait(
         guestsCount: guestsCount, position: position == 0 ? 1 : position);
 
-    final ref = await _col.add(WaitlistEntry(
+    final ref = _col.doc();
+    // Имя и телефон — сначала в базу в РФ, затем в Firestore (152-ФЗ).
+    await PiiGatewayService().recordContact(
+        kind: 'waitlist', id: ref.id, name: guestName, phone: phone);
+    await ref.set(WaitlistEntry(
       id: '',
       guestName: guestName.isEmpty ? 'Гость' : guestName,
       phone: phone,

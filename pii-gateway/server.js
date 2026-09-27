@@ -117,14 +117,7 @@ function readBody(req) {
   });
 }
 
-async function handleRegisterGuestProfile(req, res) {
-  let body;
-  try {
-    const raw = await readBody(req);
-    body = JSON.parse(raw || "{}");
-  } catch (e) {
-    return sendJson(res, 400, { error: "invalid JSON body" });
-  }
+async function handleRegisterGuestProfile(req, res, body) {
 
   const { tenantId, uid, name, phone } = body;
   if (!uid || typeof uid !== "string") {
@@ -236,14 +229,68 @@ async function handleRegisterGuestProfile(req, res) {
   return sendJson(res, 200, { ok: true });
 }
 
+// Первичная запись контакта брони/листа ожидания (имя, телефон) в РФ-базу.
+// Тот же адрес, что и профиль гостя (различаем по полю kind в теле) — чтобы
+// не трогать конфиг nginx. Документ в Firestore клиент создаёт сам, только
+// после ответа 200 отсюда. Писать может любой вошедший пользователь проекта
+// (сотрудник на кассе или гость в приложении) — в реальное заведение.
+async function handleRecordContact(req, res, body) {
+  const { tenantId, kind, id, name, phone } = body;
+  const idOk = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+  if (!idOk(tenantId) || !idOk(id) || !["reservation", "waitlist"].includes(kind)) {
+    return sendJson(res, 400, { error: "некорректные tenantId/kind/id" });
+  }
+  const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
+  const idToken = (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+  if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
+  const fbApp = getSaasApp();
+  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  let decoded;
+  try {
+    decoded = await fbApp.auth().verifyIdToken(idToken);
+  } catch (e) {
+    return sendJson(res, 401, { error: "невалидный токен" });
+  }
+  try {
+    const t = await admin.firestore(fbApp).doc(`tenants/${tenantId}`).get();
+    if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
+  } catch (e) {
+    return sendJson(res, 502, { error: "не удалось прочитать заведение" });
+  }
+  try {
+    await getPool().query(
+      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, created_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (tenant_id, kind, record_id)
+       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = now()`,
+      [tenantId, kind, id, str(name, 200), str(phone, 40), decoded.uid]
+    );
+  } catch (e) {
+    return sendJson(res, 500, { error: "не удалось сохранить в первичной базе" });
+  }
+  return sendJson(res, 200, { ok: true });
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
   if (req.method === "GET" && req.url === "/health") return sendJson(res, 200, { ok: true });
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
 
-  handleRegisterGuestProfile(req, res).catch((e) => {
-    sendJson(res, 500, { error: "internal error: " + (e?.message || e) });
-  });
+  const fail = (e) => sendJson(res, 500, { error: "internal error: " + (e?.message || e) });
+  // Тело читаем один раз и по полю kind решаем, что это: контакт брони /
+  // листа ожидания или профиль гостя (как раньше).
+  readBody(req)
+    .then((raw) => {
+      let body;
+      try {
+        body = JSON.parse(raw || "{}");
+      } catch (_) {
+        return sendJson(res, 400, { error: "invalid JSON body" });
+      }
+      if (body && body.kind) return handleRecordContact(req, res, body);
+      return handleRegisterGuestProfile(req, res, body);
+    })
+    .catch(fail);
 });
 
 const port = Number(process.env.PORT || 8080);

@@ -7,6 +7,7 @@ import 'venue_service.dart';
 import 'firestore_service.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
+import 'pii_gateway_service.dart';
 
 /// Работа с бронями. Один и тот же сервис используется и в POS
 /// (подтверждение/посадка), и в клиентском приложении «Colibri Lounge»
@@ -475,6 +476,9 @@ class ReservationService {
     }
 
     final ref = _col.doc();
+    // Имя и телефон гостя — сначала в базу в РФ, затем в Firestore (152-ФЗ).
+    await PiiGatewayService().recordContact(
+        kind: 'reservation', id: ref.id, name: reservation.guestName, phone: reservation.phone);
     await ref.set(reservation.toMap());
     await _writeSlot(
       reservationId: ref.id,
