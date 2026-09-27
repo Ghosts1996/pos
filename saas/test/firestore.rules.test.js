@@ -1164,3 +1164,73 @@ describe("Реквизиты платформы (platformConfig)", () => {
     await assertFails(setDoc(doc(ctxFor("ownerA"), "platformConfig/legal"), { inn: "000" }));
   });
 });
+
+describe("Чаевые: гость выбирает, кому из смены, касса отмечает оплату", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+      await setDoc(doc(db, "tenants/tenantA/meta/tipsTeam"), {
+        members: { e1: { name: "Анна", position: "waiter", tipsLink: "" } },
+      });
+      await setDoc(doc(db, "tenants/tenantA/tips/paid1"), {
+        amount: 300, clientUid: "guestA", status: "paid", sessionId: "sess1",
+      });
+    });
+  });
+
+  const tip = (over = {}) => ({
+    amount: 300, target: "employee", employeeId: "e1", employeeName: "Анна",
+    sessionId: "sess1", clientUid: "guestA", method: "bill", status: "pending", ...over,
+  });
+
+  it("гость видит, кто на смене в своём заведении, но не в чужом и не может править список", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(g, "tenants/tenantA/meta/tipsTeam")));
+    await assertFails(getDoc(doc(g, "tenants/tenantB/meta/tipsTeam")));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/meta/tipsTeam"), { members: {} }));
+    await assertSucceeds(setDoc(doc(ctxFor("empA"), "tenants/tenantA/meta/tipsTeam"), { members: {} }));
+  });
+
+  it("гость оставляет чаевые только от своего имени, в ожидании оплаты и в разумных пределах", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/tips/t1"), tip()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/tips/t2"), tip({ status: "paid" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/tips/t3"), tip({ clientUid: "someoneElse" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/tips/t4"), tip({ amount: 0 })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/tips/t5"), tip({ amount: 500000 })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/tips/t6"), tip({ amount: "300" })));
+    await assertFails(setDoc(doc(ctxFor("guestB"), "tenants/tenantA/tips/t7"), tip({ clientUid: "guestB" })));
+  });
+
+  it("гость может отменить свои неоплаченные чаевые, но не оплатить их и не тронуть оплаченные", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/tips/t1"), tip()));
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/tips/t1"), { status: "paid" }));
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/tips/t1"), { status: "cancelled", amount: 1 }));
+    await assertSucceeds(updateDoc(doc(g, "tenants/tenantA/tips/t1"), { status: "cancelled", cancelledAt: new Date() }));
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/tips/paid1"), { status: "cancelled" }));
+  });
+
+  it("профиль заведения (тип, чаевые) сохраняет планшет кассы, гость — только читает", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("empA"), "tenants/tenantA/meta/venueProfile"),
+      { venueType: "restaurant", tipsEnabled: true }, { merge: true }));
+    await assertSucceeds(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/meta/venueProfile")));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/meta/venueProfile"), { tipsEnabled: false }, { merge: true }));
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/meta/venueProfile"), { name: "x" }, { merge: true }));
+  });
+
+  it("гость читает только свои чаевые к чеку; касса — все и отмечает оплату", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(getDocs(query(collection(g, "tenants/tenantA/tips"),
+      where("sessionId", "==", "sess1"), where("clientUid", "==", "guestA"))));
+    await assertFails(getDocs(query(collection(g, "tenants/tenantA/tips"), where("sessionId", "==", "sess1"))));
+    const emp = ctxFor("empA");
+    await assertSucceeds(getDocs(query(collection(emp, "tenants/tenantA/tips"), where("sessionId", "==", "sess1"))));
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/tips/pos1"), tip({ clientUid: "", source: "pos" })));
+    await assertSucceeds(updateDoc(doc(emp, "tenants/tenantA/tips/pos1"), { status: "paid", paidVia: "cash" }));
+  });
+});

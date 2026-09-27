@@ -1,4 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/venue_terms.dart';
+
+export '../utils/venue_terms.dart';
 
 // ---------------------------------------------------------------- заведение
 
@@ -45,6 +48,20 @@ class VenueProfile {
   /// уведомления на каждое событие — от функции и от приложения.
   final bool cloudFunctionsEnabled;
 
+  /// Тип заведения: 'hookah' | 'restaurant' | 'cafe' | 'bar' (см.
+  /// VenueTerms). От него зависят слова в приложении гостя («позовите
+  /// кальянщика» или «позовите официанта») и кнопки вызова за столом: угли и
+  /// перезабивка нужны только кальянной. Документы, заведённые до появления
+  /// поля, считаются кальянной — так продукт работал раньше.
+  final String venueType;
+
+  /// Гость может оставить чаевые из приложения.
+  final bool tipsEnabled;
+
+  /// Кроме конкретного сотрудника, гостю доступен вариант «Всей смене» —
+  /// сумма делится поровну между теми, кто был на смене в этот момент.
+  final bool tipsTeamEnabled;
+
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
     // нельзя — оно уходило в чек и в ИИ. См. VenueService.displayNameOf.
@@ -60,6 +77,9 @@ class VenueProfile {
     this.lat = 0,
     this.lon = 0,
     this.cloudFunctionsEnabled = false,
+    this.venueType = VenueTerms.hookah,
+    this.tipsEnabled = true,
+    this.tipsTeamEnabled = true,
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -82,6 +102,9 @@ class VenueProfile {
       lat: (data['lat'] ?? 0).toDouble(),
       lon: (data['lon'] ?? 0).toDouble(),
       cloudFunctionsEnabled: data['cloudFunctionsEnabled'] == true,
+      venueType: VenueTerms.normalize(data['venueType'] as String?),
+      tipsEnabled: data['tipsEnabled'] != false,
+      tipsTeamEnabled: data['tipsTeamEnabled'] != false,
     );
   }
 
@@ -98,7 +121,12 @@ class VenueProfile {
         'lat': lat,
         'lon': lon,
         'cloudFunctionsEnabled': cloudFunctionsEnabled,
+        'venueType': venueType,
+        'tipsEnabled': tipsEnabled,
+        'tipsTeamEnabled': tipsTeamEnabled,
       };
+
+  VenueTerms get terms => VenueTerms(venueType);
 
   /// Часы работы на сегодня — строкой, как их показывают гостю.
   String get todayHours => workingHours[DateTime.now().weekday] ?? 'выходной';
@@ -116,6 +144,9 @@ class VenueProfile {
     double? lat,
     double? lon,
     bool? cloudFunctionsEnabled,
+    String? venueType,
+    bool? tipsEnabled,
+    bool? tipsTeamEnabled,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -130,6 +161,9 @@ class VenueProfile {
         lat: lat ?? this.lat,
         lon: lon ?? this.lon,
         cloudFunctionsEnabled: cloudFunctionsEnabled ?? this.cloudFunctionsEnabled,
+        venueType: venueType ?? this.venueType,
+        tipsEnabled: tipsEnabled ?? this.tipsEnabled,
+        tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
       );
 }
 

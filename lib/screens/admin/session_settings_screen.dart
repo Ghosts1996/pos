@@ -122,7 +122,9 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Без ограничений'),
-                  subtitle: const Text('Таймер не считает время — стол занят, пока его не закроют вручную'),
+                  subtitle: const Text('Таймер не считает время — стол занят, пока его не закроют '
+                      'вручную. Удобно ресторану, кафе и бару: если здесь ничего не '
+                      'настроено, у них так и работает.'),
                   value: _unlimited,
                   onChanged: (v) => setState(() => _unlimited = v),
                 ),

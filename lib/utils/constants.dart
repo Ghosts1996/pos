@@ -1,4 +1,5 @@
 import '../services/app_scope.dart';
+import '../services/venue_service.dart';
 
 /// Общие константы приложения
 class AppConstants {
@@ -99,11 +100,18 @@ class AppConstants {
   static const String positionWaiter = 'waiter';
   static const String positionHookahMaster = 'hookah_master';
   static const String positionBartender = 'bartender';
+  // Кухня и встреча гостей: вызовов из-за стола не получают (ни один
+  // GuestCallType на них не адресован), но стоят в смене — им тоже можно
+  // оставить чаевые, и они входят в «чаевые всей смене».
+  static const String positionCook = 'cook';
+  static const String positionHost = 'host';
   static const List<String> employeePositions = [
     positionUniversal,
     positionWaiter,
     positionHookahMaster,
     positionBartender,
+    positionCook,
+    positionHost,
   ];
   /// Приводит "сырое" значение позиции (из Firestore, где угодно битое —
   /// пустая строка, опечатка, поле от версии до этой фичи) к одному из
@@ -123,8 +131,31 @@ class AppConstants {
         return 'Кальянщик';
       case positionBartender:
         return 'Бармен';
+      case positionCook:
+        return 'Повар';
+      case positionHost:
+        return 'Хостес / администратор зала';
       default:
         return 'Универсал (видит все вызовы)';
+    }
+  }
+
+  /// Подпись должности для гостя (в выборе, кому оставить чаевые).
+  /// У универсала подписи нет — гость видит просто имя.
+  static String positionGuestLabel(String position) {
+    switch (position) {
+      case positionWaiter:
+        return 'Официант';
+      case positionHookahMaster:
+        return 'Кальянщик';
+      case positionBartender:
+        return 'Бармен';
+      case positionCook:
+        return 'Повар';
+      case positionHost:
+        return 'Хостес';
+      default:
+        return '';
     }
   }
 }
@@ -139,7 +170,15 @@ Future<void> loadSessionDurationSettings() async {
   try {
     final doc = await AppScope.col('settings').doc('sessionDuration').get();
     final data = doc.data();
-    if (data == null) return;
+    if (data == null) {
+      // Владелец длительность не настраивал. Ресторану, кафе и бару таймер
+      // на полтора часа не нужен — стол занят, пока его не закроют.
+      final venue = await VenueService.instance.load();
+      if (!venue.terms.isHookah) {
+        AppConstants.sessionMinutes = AppConstants.unlimitedSessionMinutes;
+      }
+      return;
+    }
     final unlimited = data['unlimited'] as bool? ?? false;
     if (unlimited) {
       AppConstants.sessionMinutes = AppConstants.unlimitedSessionMinutes;

@@ -89,6 +89,12 @@ class SessionModel {
   final bool receiptPrinted;
   final bool fiscalReceiptPrinted;
 
+  // ---- Чаевые, принятые вместе с оплатой ----
+  // Не выручка: в paymentCash/paymentCard их нет, в фискальный чек они не
+  // идут. Хранятся отдельно, чтобы X-отчёт сходился с наличными в кассе.
+  final double tipsCash;
+  final double tipsCard; // картой и с терминала
+
   // ---- Возврат чека (раздел "История чеков и возврат" у сотрудника) ----
   final bool refunded;
   final DateTime? refundedAt;
@@ -117,6 +123,8 @@ class SessionModel {
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
     this.fiscalReceiptPrinted = false,
+    this.tipsCash = 0,
+    this.tipsCard = 0,
     this.refunded = false,
     this.refundedAt,
   });
@@ -154,6 +162,8 @@ class SessionModel {
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
       fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
+      tipsCash: (data['tipsCash'] ?? 0).toDouble(),
+      tipsCard: (data['tipsCard'] ?? 0).toDouble(),
       refunded: data['refunded'] ?? false,
       refundedAt: data['refundedAt'] != null ? (data['refundedAt'] as Timestamp).toDate() : null,
     );
@@ -183,6 +193,8 @@ class SessionModel {
       'closedWithoutPayment': closedWithoutPayment,
       'receiptPrinted': receiptPrinted,
       'fiscalReceiptPrinted': fiscalReceiptPrinted,
+      'tipsCash': tipsCash,
+      'tipsCard': tipsCard,
       'refunded': refunded,
       'refundedAt': refundedAt != null ? Timestamp.fromDate(refundedAt!) : null,
     };

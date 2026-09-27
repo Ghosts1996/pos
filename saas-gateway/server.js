@@ -561,6 +561,8 @@ async function handlePublicGuestApk(req, res) {
  * "hasRole(tenantId,['owner','admin'])" для одиночного заведения, просто
  * на уровне сети.
  */
+const VENUE_TYPES = ["hookah", "restaurant", "cafe", "bar"];
+
 async function handleCreateTenant(req, res) {
   const decoded = await verifyAuth(req);
   if (!decoded.email_verified) {
@@ -570,6 +572,9 @@ async function handleCreateTenant(req, res) {
 
   const body = await parseJsonBody(req);
   const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
+  // Тип заведения (кальянная/ресторан/кафе/бар) — от него зависят слова
+  // в приложении гостя. Неизвестное значение — кальянная, как раньше.
+  const venueType = VENUE_TYPES.includes(body.venueType) ? body.venueType : "hookah";
   if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
     throw new HttpError(400, "Название заведения: от 2 до 80 символов");
   }
@@ -658,7 +663,7 @@ async function handleCreateTenant(req, res) {
   // Профиль заведения с его названием — сразу: его берут чек, ИИ-консьерж и
   // экран «Профиль заведения» на кассе. Часы работы владелец заполняет сам
   // (касса и приложение гостя напомнят, пока они пустые).
-  batch.set(tenantRef.collection("meta").doc("venueProfile"), { name: name.trim() }, { merge: true });
+  batch.set(tenantRef.collection("meta").doc("venueProfile"), { name: name.trim(), venueType }, { merge: true });
   // Собственная подписка есть только у одиночного заведения — у точки сети
   // биллинг общий, на chains/{chainId} (см. handleCreateChain).
   if (!chainId) {

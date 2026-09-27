@@ -29,6 +29,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
 
   bool _loading = true;
   bool _cloudFunctions = false;
+  String _venueType = VenueTerms.hookah;
+  bool _tipsEnabled = true;
+  bool _tipsTeamEnabled = true;
 
   static const _days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -49,6 +52,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _lat.text = p.lat == 0 ? '' : p.lat.toString();
     _lon.text = p.lon == 0 ? '' : p.lon.toString();
     _cloudFunctions = p.cloudFunctionsEnabled;
+    _venueType = p.venueType;
+    _tipsEnabled = p.tipsEnabled;
+    _tipsTeamEnabled = p.tipsTeamEnabled;
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -65,12 +71,25 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       lat: double.tryParse(_lat.text.trim().replaceAll(',', '.')) ?? 0,
       lon: double.tryParse(_lon.text.trim().replaceAll(',', '.')) ?? 0,
       cloudFunctionsEnabled: _cloudFunctions,
+      venueType: _venueType,
+      tipsEnabled: _tipsEnabled,
+      tipsTeamEnabled: _tipsTeamEnabled,
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
       },
     );
-    await _service.save(updated);
+    try {
+      await _service.save(updated);
+    } catch (_) {
+      // Раньше ошибка сохранения молча терялась — казалось, что всё
+      // сохранилось, а гость продолжал видеть старое.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось сохранить — проверьте интернет')));
+      }
+      return;
+    }
     _profile = updated;
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -85,12 +104,27 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Профиль заведения'),
-        actions: [IconButton(onPressed: _save, icon: const Icon(Icons.save))],
+        actions: [IconButton(onPressed: _save, tooltip: 'Сохранить', icon: const Icon(Icons.save))],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextField(controller: _name, decoration: const InputDecoration(labelText: 'Название')),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _venueType,
+            decoration: const InputDecoration(
+              labelText: 'Тип заведения',
+              helperText: 'От него зависят слова в приложении гостя («позвать '
+                  'кальянщика» или «позвать официанта») и кнопки вызова за столом.',
+              helperMaxLines: 3,
+            ),
+            items: [
+              for (final t in VenueTerms.types)
+                DropdownMenuItem(value: t, child: Text(VenueTerms.typeLabel(t))),
+            ],
+            onChanged: (v) => setState(() => _venueType = v ?? VenueTerms.hookah),
+          ),
           const SizedBox(height: 12),
           TextField(controller: _address, decoration: const InputDecoration(labelText: 'Адрес')),
           const SizedBox(height: 12),
@@ -114,9 +148,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
             maxLines: 5,
             decoration: const InputDecoration(
               labelText: 'Правила заведения',
-              hintText: 'Один кальян рассчитан на 3 гостей, 1,5 часа\n'
-                  'Вход с 18 лет\n'
-                  'Со своим табаком нельзя',
+              hintText: 'Вход с 18 лет\n'
+                  'Депозит на компанию от 6 человек\n'
+                  'Со своим алкоголем нельзя',
               helperText: 'Каждое правило с новой строки. Гость видит их в '
                   'приложении на вкладке «Мой стол» — изменения появляются '
                   'сразу, как сохраните.',
@@ -150,6 +184,34 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
             'Google Maps: координаты показаны при долгом нажатии на точку.',
             style: TextStyle(color: AppColors.textMuted, fontSize: 12),
           ),
+
+          const Divider(height: 32),
+          const Text('Чаевые', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _tipsEnabled,
+            onChanged: (v) => setState(() => _tipsEnabled = v),
+            title: const Text('Гости оставляют чаевые в приложении'),
+            subtitle: const Text(
+              'Гость выбирает, кому из смены оставить чаевые, и добавляет их к '
+              'счёту — касса возьмёт их вместе с оплатой. В выручку и чек они не '
+              'входят, а в «Зарплате» видны у каждого сотрудника. Список смены — '
+              'те, кто нажал «Начать смену».',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+          ),
+          if (_tipsEnabled)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _tipsTeamEnabled,
+              onChanged: (v) => setState(() => _tipsTeamEnabled = v),
+              title: const Text('Вариант «Всей смене»'),
+              subtitle: const Text(
+                'Сумма делится поровну между всеми, кто был на смене, — включая '
+                'кухню и бар.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+            ),
 
           const Divider(height: 32),
           SwitchListTile(

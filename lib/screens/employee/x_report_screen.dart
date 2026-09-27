@@ -370,6 +370,14 @@ class _XReportScreenState extends State<XReportScreen> {
                     _totalRow('Оплачено наличными', data.paymentCash),
                     _totalRow('Оплачено с терминала', data.paymentTerminal),
                     _totalRow('За счёт заведения', data.paymentComp),
+                    if (data.tipsCash + data.tipsCard > 0) ...[
+                      const Divider(height: 24),
+                      // Не выручка: деньги сотрудников. Наличные чаевые
+                      // лежат в той же кассе — без этой строки пересчёт
+                      // кассы показывал бы «излишек».
+                      _totalRow('Чаевые наличными (в кассе)', data.tipsCash),
+                      _totalRow('Чаевые картой', data.tipsCard),
+                    ],
                     if (data.unpaidCount > 0) ...[
                       const Divider(height: 24),
                       Row(
@@ -571,6 +579,10 @@ class _XReportScreenState extends State<XReportScreen> {
         'Оплачено с терминала: ${data.paymentTerminal.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
     buf.writeln(
         'За счёт заведения: ${data.paymentComp.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    if (data.tipsCash + data.tipsCard > 0) {
+      buf.writeln('Чаевые (не выручка): наличными ${data.tipsCash.toStringAsFixed(0)}, '
+          'картой ${data.tipsCard.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    }
     if (refundsCount > 0) buf.writeln('Возвратов: $refundsCount');
     Clipboard.setData(ClipboardData(text: buf.toString()));
     ScaffoldMessenger.of(context)
@@ -594,6 +606,8 @@ class _XReportData {
   final double paymentCard;
   final double paymentTerminal;
   final double paymentComp;
+  final double tipsCash;
+  final double tipsCard;
 
   /// Сумма чеков, закрытых «без оплаты» — денег по ним не поступало.
   final double unpaidAmount;
@@ -607,6 +621,8 @@ class _XReportData {
     required this.paymentCard,
     required this.paymentTerminal,
     required this.paymentComp,
+    required this.tipsCash,
+    required this.tipsCard,
     required this.unpaidAmount,
     required this.unpaidCount,
   });
@@ -619,6 +635,8 @@ class _XReportData {
     double card = 0;
     double terminal = 0;
     double comp = 0;
+    double tipsCash = 0;
+    double tipsCard = 0;
     double unpaidAmount = 0;
     var unpaidCount = 0;
     for (final s in sessions) {
@@ -637,6 +655,8 @@ class _XReportData {
       card += s.paymentCard;
       terminal += s.paymentTerminal;
       comp += s.paymentComp;
+      tipsCash += s.tipsCash;
+      tipsCard += s.tipsCard;
       for (final item in s.orderItems) {
         final key = '${item.menuItemId.isNotEmpty ? item.menuItemId : item.name}_${item.price}';
         final stat = byItem.putIfAbsent(key, () => _XItemStat(item.name, item.price));
@@ -652,6 +672,8 @@ class _XReportData {
       paymentCard: card,
       paymentTerminal: terminal,
       paymentComp: comp,
+      tipsCash: tipsCash,
+      tipsCard: tipsCard,
       unpaidAmount: unpaidAmount,
       unpaidCount: unpaidCount,
     );

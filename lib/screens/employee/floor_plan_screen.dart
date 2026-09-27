@@ -20,8 +20,12 @@ class FloorPlanScreen extends StatelessWidget {
   final Employee employee;
   const FloorPlanScreen({super.key, required this.employee});
 
+  // Зал — корневой экран кассы: под ним только заставка запуска, и
+  // системная «Назад» уводила на пустой экран с логотипом.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PopScope(canPop: false, child: _page(context));
+
+  Widget _page(BuildContext context) {
     final fs = FirestoreService();
 
     return Scaffold(

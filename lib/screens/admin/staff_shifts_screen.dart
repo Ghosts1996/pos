@@ -42,7 +42,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       _error = null;
     });
     try {
-      final employees = await _fs.employeesStream().first;
+      final employees = await _fs.employeesOnce();
       final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
       if (!mounted) return;
       setState(() {

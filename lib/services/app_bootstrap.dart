@@ -11,6 +11,7 @@ import 'chestny_znak_api_service.dart';
 import 'push_service.dart';
 import 'gift_card_service.dart';
 import 'venue_service.dart';
+import 'firestore_service.dart';
 import 'auto_stoplist_service.dart';
 import 'session_alerts_service.dart';
 import 'ai/ai_settings.dart';
@@ -67,6 +68,10 @@ void startBackgroundServices() {
     if (!ok) unawaited(SessionAlertsService.instance.start());
   }));
   VenueService.instance.watch();
+
+  // Кто сейчас на смене — для выбора «кому чаевые» у гостя. Чинит смены,
+  // открытые до появления этого списка, и дозакрытые вручную в табеле.
+  unawaited(FirestoreService().syncTipsTeam().catchError((_) {}));
 
   // Сертификаты из Telegram-канала: гость вводит код у себя, а
   // начисляет бонусы касса — сам себе гость их начислить не может, и

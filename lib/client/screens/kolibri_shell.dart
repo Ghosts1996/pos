@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/venue_service.dart';
+import '../../models/venue_models.dart';
 import '../services/kolibri_auth_service.dart';
 import '../services/kolibri_deep_links.dart';
 import '../services/kolibri_image_cache.dart';
@@ -127,6 +129,15 @@ class _KolibriShellState extends State<KolibriShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Профиль заведения (тип: кальянная/ресторан…) приходит асинхронно —
+    // вкладки и главная перерисуются, когда он придёт.
+    return ValueListenableBuilder<VenueProfile>(
+      valueListenable: VenueService.instance.notifier,
+      builder: (context, venue, _) => _shell(venue.terms.isHookah),
+    );
+  }
+
+  Widget _shell(bool hookah) {
     return StreamBuilder<ClientProfile?>(
       stream: _profileStream,
       builder: (context, snap) {
@@ -179,9 +190,9 @@ class _KolibriShellState extends State<KolibriShell> {
                 icon: Badge(
                   isLabelVisible: atTable,
                   backgroundColor: KolibriColors.accent,
-                  child: const Icon(Icons.local_fire_department_outlined),
+                  child: Icon(hookah ? Icons.local_fire_department_outlined : Icons.table_restaurant_outlined),
                 ),
-                selectedIcon: const Icon(Icons.local_fire_department),
+                selectedIcon: Icon(hookah ? Icons.local_fire_department : Icons.table_restaurant),
                 label: 'Мой стол',
               ),
               const NavigationDestination(

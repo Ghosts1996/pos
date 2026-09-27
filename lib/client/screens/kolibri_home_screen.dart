@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../utils/constants.dart';
+import '../../services/venue_service.dart';
+import '../../models/venue_models.dart';
 import '../widgets/booking_soon_card.dart';
 import '../../models/client_models.dart';
 import '../../models/reservation_model.dart';
@@ -50,7 +53,13 @@ class KolibriHomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.local_fire_department, color: KolibriColors.gold, size: 32),
+            ValueListenableBuilder<VenueProfile>(
+              valueListenable: VenueService.instance.notifier,
+              builder: (context, venue, _) => Icon(
+                  venue.terms.isHookah ? Icons.local_fire_department : Icons.restaurant,
+                  color: KolibriColors.gold,
+                  size: 32),
+            ),
           ],
         ),
         const SizedBox(height: 20),
@@ -68,6 +77,11 @@ class KolibriHomeScreen extends StatelessWidget {
               final s = snap.data;
               if (s == null || s.status != 'active') return const SizedBox.shrink();
               final left = s.remaining.inMinutes;
+              // Таймер сеанса — только кальянной и только если время
+              // ограничено; иначе просто сумма счёта (со скидкой).
+              final terms = VenueService.instance.terms;
+              final timed = terms.isHookah && !AppConstants.isUnlimitedRemaining(s.remaining);
+              final bill = 'счёт ${s.totalWithDiscount.toStringAsFixed(0)} ₽';
               return Card(
                 child: InkWell(
                   borderRadius: BorderRadius.circular(18),
@@ -79,7 +93,7 @@ class KolibriHomeScreen extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.local_fire_department,
+                            Icon(terms.isHookah ? Icons.local_fire_department : Icons.table_restaurant,
                                 color: KolibriColors.accent, size: 20),
                             const SizedBox(width: 8),
                             Text('Вы за столом: ${tableLabel(s.tableName)}',
@@ -89,11 +103,13 @@ class KolibriHomeScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          left > 0
-                              ? 'До конца сеанса $left мин · счёт ${s.orderTotal.toStringAsFixed(0)} ₽'
-                              : 'Время сеанса вышло · счёт ${s.orderTotal.toStringAsFixed(0)} ₽',
+                          !timed
+                              ? 'Ваш $bill'
+                              : left > 0
+                                  ? 'До конца сеанса $left мин · $bill'
+                                  : 'Время сеанса вышло · $bill',
                           style: TextStyle(
-                            color: left > 15 ? KolibriColors.textMuted : KolibriColors.warning,
+                            color: !timed || left > 15 ? KolibriColors.textMuted : KolibriColors.warning,
                           ),
                         ),
                       ],
@@ -186,18 +202,35 @@ class KolibriHomeScreen extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
+            // Кальянный сомелье — только в кальянной; в ресторане, кафе и
+            // баре тот же ИИ советует, что взять из меню.
             Expanded(
-              child: _action(
-                icon: Icons.auto_awesome,
-                title: 'Подбор кальяна',
-                subtitle: 'ИИ-сомелье',
-                color: KolibriColors.gold,
-                onTap: () => KolibriAiChat.show(
-                  context,
-                  guestUid: auth.uid,
-                  sommelierMode: true,
-                  initialQuestion: 'Подбери мне кальян на сегодня.',
-                ),
+              child: ValueListenableBuilder<VenueProfile>(
+                valueListenable: VenueService.instance.notifier,
+                builder: (context, venue, _) => venue.terms.isHookah
+                  ? _action(
+                      icon: Icons.auto_awesome,
+                      title: 'Подбор кальяна',
+                      subtitle: 'ИИ-сомелье',
+                      color: KolibriColors.gold,
+                      onTap: () => KolibriAiChat.show(
+                        context,
+                        guestUid: auth.uid,
+                        sommelierMode: true,
+                        initialQuestion: 'Подбери мне кальян на сегодня.',
+                      ),
+                    )
+                  : _action(
+                      icon: Icons.auto_awesome,
+                      title: 'Что выбрать?',
+                      subtitle: 'ИИ-консьерж',
+                      color: KolibriColors.gold,
+                      onTap: () => KolibriAiChat.show(
+                        context,
+                        guestUid: auth.uid,
+                        initialQuestion: 'Посоветуй, что взять сегодня из меню.',
+                      ),
+                    ),
               ),
             ),
             const SizedBox(width: 12),
