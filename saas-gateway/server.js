@@ -2057,13 +2057,19 @@ async function handleCompleteBuildJob(req, res) {
   const jobDoc = await jobRef.get();
   if (!jobDoc.exists) throw new HttpError(404, "job not found");
 
+  // Номер запуска workflow — он же versionCode APK и BUILD_NUMBER внутри
+  // приложения (см. saas-on-demand-build.yml): по нему приложение решает,
+  // что вышла новая версия (handleAppUpdate ниже).
+  const buildNumber = Number(body.buildNumber);
   await jobRef.update({
     status,
     completedAt: admin.firestore.FieldValue.serverTimestamp(),
     downloadPath: status === "success" ? (downloadPath || null) : null,
     runUrl: runUrl || null,
     errorMessage: status === "failed" ? (errorMessage || "неизвестная ошибка сборки") : null,
+    buildNumber: status === "success" && Number.isInteger(buildNumber) && buildNumber > 0 ? buildNumber : null,
   });
+  appUpdateCache.delete(jobDoc.data().tenantId);
   sendJson(res, 200, { ok: true });
 }
 
@@ -2191,6 +2197,117 @@ async function handleDownloadBuild(req, res) {
     "X-Accel-Redirect": `/internal-tenant-builds/${job.tenantId}/${jobId}.apk`,
   });
   res.end();
+}
+
+// --------------------------------------------------------- appUpdate
+
+/**
+ * «Вышла ли новая версия?» — касса и гостевое приложение спрашивают сами
+ * (на старте, при возврате в приложение и раз в полчаса, см.
+ * lib/services/app_update_service.dart) и, если да, показывают плашку
+ * «Обновить»: файл качается прямо в приложении с полосой загрузки и
+ * ставится поверх старой версии — данные на устройстве остаются (та же
+ * подпись, versionCode больше, см. saas-on-demand-build.yml).
+ *
+ * Версия — buildNumber сборки (номер запуска workflow, его присылает
+ * completeBuildJob); приложение знает свой из --dart-define=BUILD_NUMBER.
+ * У сборок, собранных до этого поля, номера нет — им обновление не
+ * предлагается.
+ *
+ * Доступ:
+ *  - гостевое приложение (app: "guest") — без входа, как и
+ *    handlePublicGuestApk: этот APK и так раздаётся всем по QR стола;
+ *  - касса (app: "pos") — только активному участнику заведения, любая роль
+ *    (планшет кассы входит как employee): в кассовую сборку запечён код
+ *    приглашения устройства, посторонним её отдавать нельзя.
+ * Ссылка на файл — та же подписанная минутная, что и в консоли
+ * (signDownloadToken → handleDownloadBuild); приложение берёт свежую прямо
+ * перед загрузкой.
+ *
+ * Гостевых телефонов у заведения сотни, и каждый спрашивает — поэтому
+ * список сборок заведения кэшируется в памяти (APP_UPDATE_CACHE_TTL_MS) и
+ * сбрасывается, как только completeBuildJob отметил новую сборку: новая
+ * версия видна сразу, а Firestore не читается на каждый вопрос.
+ */
+const APP_UPDATE_TYPES = { pos: "pos", guest: "guest" };
+const APP_UPDATE_PLATFORMS = ["android", "windows"];
+const APP_UPDATE_CACHE_TTL_MS = 30 * 60 * 1000;
+const appUpdateCache = new Map(); // tenantId -> { at, jobs: [{ id, type, platform, buildNumber, completedAt }] | null }
+
+async function latestTenantBuilds(tenantId) {
+  const cached = appUpdateCache.get(tenantId);
+  if (cached && Date.now() - cached.at < APP_UPDATE_CACHE_TTL_MS) return cached.jobs;
+
+  const firestore = db();
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  let jobs = null;
+  if (tenantDoc.exists && tenantDoc.data().status !== "deleted") {
+    // Тот же запрос, что и в handlePublicGuestApk: индекс только на
+    // tenantId+createdAt, одно нажатие «Собрать APK» — три сборки.
+    const snap = await firestore
+      .collection("buildJobs")
+      .where("tenantId", "==", tenantId)
+      .orderBy("createdAt", "desc")
+      .limit(20)
+      .get();
+    jobs = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((j) => j.status === "success")
+      .map((j) => ({
+        id: j.id,
+        type: j.type,
+        platform: j.platform || "android",
+        buildNumber: Number.isInteger(j.buildNumber) ? j.buildNumber : 0,
+        completedAt: j.completedAt && typeof j.completedAt.toDate === "function" ? j.completedAt.toDate().toISOString() : null,
+      }));
+  }
+  if (appUpdateCache.size > 5000) appUpdateCache.clear();
+  appUpdateCache.set(tenantId, { at: Date.now(), jobs });
+  return jobs;
+}
+
+async function handleAppUpdate(req, res) {
+  const body = await parseJsonBody(req);
+  const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
+  const type = APP_UPDATE_TYPES[body.app];
+  const platform = body.platform === undefined ? "android" : body.platform;
+  const current = Number(body.current);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "некорректный tenantId");
+  if (!type) throw new HttpError(400, "app должен быть pos или guest");
+  // Гостевое приложение собирается только под Android (см. handleCreateBuildJob).
+  if (!APP_UPDATE_PLATFORMS.includes(platform) || (type === "guest" && platform !== "android")) {
+    throw new HttpError(400, "некорректная платформа");
+  }
+  if (!Number.isInteger(current) || current < 0) throw new HttpError(400, "некорректный номер сборки");
+
+  if (type === "pos") {
+    const decoded = await verifyAuth(req);
+    await requireTenantRole(tenantId, decoded.uid, ["owner", "admin", "manager", "employee"]);
+  }
+
+  const jobs = await latestTenantBuilds(tenantId);
+  if (jobs === null) throw new HttpError(404, "Заведение не найдено");
+  const latest = jobs.find((j) => j.type === type && j.platform === platform);
+  const buildNumber = latest ? latest.buildNumber : 0;
+  if (!latest || buildNumber <= current) return sendJson(res, 200, { update: false, buildNumber });
+
+  let sizeBytes;
+  try {
+    sizeBytes = (await fs.promises.stat(path.join(TENANT_BUILDS_DIR, tenantId, `${latest.id}.apk`))).size;
+  } catch (_) {
+    // Файла на сервере нет (удалили, переносили диск) — предлагать нечего.
+    return sendJson(res, 200, { update: false, buildNumber });
+  }
+  const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
+  const token = signDownloadToken(latest.id, expiresAt);
+  sendJson(res, 200, {
+    update: true,
+    buildNumber,
+    jobId: latest.id,
+    sizeBytes,
+    builtAt: latest.completedAt,
+    url: `/downloadBuild?jobId=${encodeURIComponent(latest.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`,
+  });
 }
 
 // ---------------------------------------------------- uploadBrandingLogo
@@ -4150,6 +4267,9 @@ const ROUTES = {
   "/grantBonusPeriod": handleGrantBonusPeriod,
   "/deleteDemoTenant": handleDeleteDemoTenant,
   "/getDownloadUrl": handleGetDownloadUrl,
+  // Касса и гостевое приложение спрашивают сами, вышла ли новая версия (см.
+  // docstring handleAppUpdate): гостю — без входа, кассе — участнику заведения.
+  "/appUpdate": handleAppUpdate,
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
   "/uploadMenuImage": handleUploadMenuImage,

@@ -109,6 +109,24 @@ async function main() {
     check("POST /completeBuildJob с неверным секретом -> 403", r.status === 403);
   }
   {
+    // Проверка обновлений: касса — только участнику заведения, гостю — без
+    // входа, но с корректными полями (всё отваливается до Firestore).
+    const r = await request("POST", "/appUpdate", { body: { tenantId: "t1", app: "pos", platform: "android", current: 5 } });
+    check("POST /appUpdate кассы без токена -> 401", r.status === 401);
+  }
+  for (const [name, body] of [
+    ["без tenantId", { app: "guest", current: 1 }],
+    ["с tenantId-путём", { tenantId: "../x", app: "guest", current: 1 }],
+    ["с неизвестным app", { tenantId: "t1", app: "admin", current: 1 }],
+    ["гостевое под Windows", { tenantId: "t1", app: "guest", platform: "windows", current: 1 }],
+    ["с неизвестной платформой", { tenantId: "t1", app: "pos", platform: "ios", current: 1 }],
+    ["без номера сборки", { tenantId: "t1", app: "guest" }],
+    ["с дробным номером сборки", { tenantId: "t1", app: "guest", current: 1.5 }],
+  ]) {
+    const r = await request("POST", "/appUpdate", { body });
+    check(`POST /appUpdate ${name} -> 400`, r.status === 400);
+  }
+  {
     const r = await request("POST", "/resolveTenantBySlug", { body: { slug: "Some Bad Slug!" } });
     check("POST /resolveTenantBySlug с недопустимым slug -> 400", r.status === 400);
   }

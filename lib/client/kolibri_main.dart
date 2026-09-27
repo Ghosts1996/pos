@@ -11,8 +11,10 @@ import '../models/tenant_models.dart';
 import '../services/ai/ai_settings.dart';
 import '../services/ai/tooken_client.dart';
 import '../services/app_scope.dart';
+import '../services/app_update_service.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
+import '../widgets/app_update_banner.dart';
 import 'screens/kolibri_shell.dart';
 import 'screens/kolibri_venue_picker_screen.dart';
 import 'services/kolibri_auth_service.dart';
@@ -119,6 +121,9 @@ void main() async {
       startupError = e.toString();
     }
   }
+
+  // Обновления изнутри — только у сборок из «Собрать APK» (см. AppUpdateService).
+  if (ready) AppUpdateService.start(app: 'guest');
 
   runApp(KolibriApp(ready: ready, startupError: startupError, title: appTitle));
 }
@@ -357,6 +362,8 @@ class KolibriApp extends StatelessWidget {
       darkTheme: KolibriTheme.dark,
       themeMode: ThemeMode.dark,
       home: ready ? const KolibriShell() : _StartupError(details: startupError),
+      // Плашка «Вышла новая версия» поверх любого экрана гостя.
+      builder: (context, child) => AppUpdateBanner(child: child ?? const SizedBox.shrink()),
     );
   }
 }
