@@ -11,7 +11,18 @@ import 'clock_ticker.dart';
 class TimerDisplay extends StatelessWidget {
   final DateTime plannedEnd;
   final double fontSize;
-  const TimerDisplay({super.key, required this.plannedEnd, this.fontSize = 40});
+
+  /// Начало сеанса. Если задано, стол «без ограничений» показывает не
+  /// бессмысленное «∞», а сколько гости уже сидят.
+  final DateTime? startTime;
+  const TimerDisplay({super.key, required this.plannedEnd, this.fontSize = 40, this.startTime});
+
+  /// «23 мин», «1 ч 05 мин» — сколько гости за столом.
+  static String formatSat(Duration d) {
+    final m = d.inMinutes < 0 ? 0 : d.inMinutes;
+    if (m < 60) return '$m мин';
+    return '${m ~/ 60} ч ${(m % 60).toString().padLeft(2, '0')} мин';
+  }
 
   /// Отформатированный остаток: «-05:12», «01:23:45».
   static String formatRemaining(Duration remaining) {
@@ -43,6 +54,17 @@ class TimerDisplay extends StatelessWidget {
         // маленькой плитке зала (fontSize: 13) полная фраза не влезает —
         // там компактный "∞", полный текст только на крупном экране стола.
         if (AppConstants.isUnlimitedRemaining(remaining)) {
+          if (startTime != null) {
+            return Text(
+              formatSat(now.difference(startTime!)),
+              style: TextStyle(
+                fontSize: fontSize,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            );
+          }
           final compact = fontSize <= 20;
           return Text(
             compact ? '∞' : 'Без ограничений',
