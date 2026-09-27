@@ -268,6 +268,11 @@ function clearScreen() {
 function sub(off) { state.screenSubs.push(off); }
 
 function pad(n) { return String(n).padStart(2, '0'); }
+/** Время последнего движения по обращению — для сортировки «новые сверху». */
+function ticketTime(t) {
+  const ts = t.updatedAt || t.createdAt;
+  return ts && typeof ts.toMillis === 'function' ? ts.toMillis() : 0;
+}
 function fmtDate(ts) {
   const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
   if (!d) return '—';
@@ -2126,6 +2131,10 @@ function watchDashboardData(tenantId) {
   // тянуть переписку по всем сразу незачем, а список тикетов и так лёгкий
   // (без вложенных сообщений).
   let supportTickets = null;
+  // Не удалось загрузить список обращений — показываем ошибку, а не «пусто»:
+  // раньше любая ошибка запроса выглядела как «Обращений пока не было», и
+  // владелец не видел ответов поддержки.
+  let supportTicketsError = '';
   let selectedTicketId = null;
   let ticketMessages = null;
   let unsubTicketMessages = null;
@@ -2171,6 +2180,11 @@ function watchDashboardData(tenantId) {
         query(collection(state.db, 'supportTickets', ticketId, 'messages'), orderBy('createdAt', 'asc')),
         (snap) => {
           ticketMessages = snap.docs.map((d) => d.data());
+          draw();
+        },
+        (e) => {
+          ticketMessages = [];
+          toast(`Не удалось загрузить переписку: ${e?.message || e}`);
           draw();
         }
       );
@@ -2255,6 +2269,12 @@ function watchDashboardData(tenantId) {
     }
     if ((buildJobs || [])[0]?.status === 'failed') {
       attentionItems.push({ tab: 'devices', text: 'Последняя сборка APK не удалась — попробуйте собрать снова или напишите в поддержку' });
+    }
+    // Ответ поддержки — чтобы владелец не пропустил его, не заходя в раздел.
+    for (const t of supportTickets || []) {
+      if (t.lastAuthorRole === 'super_admin' && t.status !== 'closed') {
+        attentionItems.push({ tab: 'support', text: `Поддержка ответила на обращение «${t.subject || 'без темы'}»` });
+      }
     }
     // Недостача при пересчёте кассы — владелец узнаёт сразу, а не из
     // X-отчёта, который открывают на кассе. Копейки округления не в счёт.
@@ -2798,7 +2818,7 @@ function watchDashboardData(tenantId) {
     const selectedTicket = (supportTickets || []).find((t) => t.id === selectedTicketId) || null;
 
     const ticketThreadHtml = () => `
-      <button class="btn-link f-ticket-back" style="width:auto;margin-bottom:10px">← Все обращения</button>
+      <button class="btn-link f-ticket-back" id="f-ticket-back" style="width:auto;margin-bottom:10px">← Все обращения</button>
       <div class="card">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div style="font-weight:700">${esc(selectedTicket.subject || '')}</div>
@@ -2814,7 +2834,7 @@ function watchDashboardData(tenantId) {
         </div>
         <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ..." style="width:100%;resize:vertical;margin-top:10px"></textarea>
         <button class="btn btn-primary" id="f-ticket-reply-send" style="margin-top:8px">Отправить</button>
-        <button class="btn-link f-ticket-toggle-status" data-status="${esc(selectedTicket.status)}" style="width:auto;margin-top:8px">
+        <button class="btn-link f-ticket-toggle-status" id="f-ticket-toggle-status" data-status="${esc(selectedTicket.status)}" style="width:auto;margin-top:8px">
           ${selectedTicket.status === 'closed' ? 'Переоткрыть обращение' : 'Обращение решено'}
         </button>
       </div>
@@ -2837,9 +2857,13 @@ function watchDashboardData(tenantId) {
             <b>${esc(t.subject || '')}</b>
             <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
           </div>
-          <div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>
+          ${t.lastAuthorRole === 'super_admin' && t.status !== 'closed'
+            ? '<div class="small" style="color:var(--success);font-weight:700;white-space:nowrap">Есть ответ</div>'
+            : `<div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>`}
         </div>
-      `).join('')}</div>` : '<p class="small muted">Обращений пока не было.</p>'}
+      `).join('')}</div>` : (supportTicketsError
+        ? `<p class="small" style="color:var(--danger)">Не удалось загрузить обращения: ${esc(supportTicketsError)}</p>`
+        : '<p class="small muted">Обращений пока не было.</p>')}
       <p class="small center muted">Что-то не открывается вообще? Сначала проверьте <a href="#/status">статус системы</a>.</p>
     `;
 
@@ -3080,6 +3104,7 @@ function watchDashboardData(tenantId) {
           const now = Timestamp.fromDate(new Date());
           const ticketRef = await addDoc(collection(state.db, 'supportTickets'), {
             tenantId, subject, status: 'open', createdBy: state.uid, createdAt: now, updatedAt: now,
+            lastAuthorRole: 'owner',
           });
           await addDoc(collection(state.db, 'supportTickets', ticketRef.id, 'messages'), {
             text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
@@ -3109,6 +3134,7 @@ function watchDashboardData(tenantId) {
           });
           await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
             updatedAt: now,
+            lastAuthorRole: 'owner',
             status: selectedTicket.status === 'closed' ? 'open' : selectedTicket.status,
           }, { merge: true });
           replyEl.value = '';
@@ -3585,11 +3611,18 @@ function watchDashboardData(tenantId) {
     broadcasts = [];
     draw();
   }));
-  sub(onSnapshot(query(collection(state.db, 'supportTickets'), where('tenantId', '==', tenantId), orderBy('updatedAt', 'desc'), limit(50)), (snap) => {
-    supportTickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Только фильтр по заведению, без orderBy: сортировка по другому полю
+  // требовала составного индекса, и пока он не развёрнут в проекте, запрос
+  // падал — владелец видел «Обращений пока не было» и не видел ответов.
+  // Обращений у одного заведения единицы — отсортировать на месте проще.
+  sub(onSnapshot(query(collection(state.db, 'supportTickets'), where('tenantId', '==', tenantId), limit(200)), (snap) => {
+    supportTickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ticketTime(b) - ticketTime(a));
+    supportTicketsError = '';
     draw();
-  }, () => {
+  }, (e) => {
     supportTickets = [];
+    supportTicketsError = e?.message || String(e);
     draw();
   }));
   sub(onSnapshot(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId)), (snap) => {
@@ -4185,7 +4218,8 @@ function watchAdminSupportTickets() {
     if (expandedId) {
       unsubMessages = onSnapshot(
         query(collection(state.db, 'supportTickets', expandedId, 'messages'), orderBy('createdAt', 'asc')),
-        (snap) => { messages = snap.docs.map((d) => d.data()); draw(); }
+        (snap) => { messages = snap.docs.map((d) => d.data()); draw(); },
+        (e) => { messages = []; toast(`Не удалось загрузить переписку: ${e?.message || e}`); draw(); }
       );
     }
     draw();
@@ -4210,7 +4244,9 @@ function watchAdminSupportTickets() {
             <b>${esc(t.subject || '')}</b> · ${esc(tenantNames.get(t.tenantId) || t.tenantId)}
             <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
           </div>
-          <div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>
+          ${t.status !== 'closed' && t.lastAuthorRole !== 'super_admin'
+            ? '<div class="small" style="color:var(--warning);font-weight:700;white-space:nowrap">Ждёт ответа</div>'
+            : `<div class="small muted">${t.status === 'closed' ? 'Решено' : 'Ответили'}</div>`}
         </div>
         ${expandedId === t.id ? `
           <div style="margin-top:10px">
@@ -4245,7 +4281,7 @@ function watchAdminSupportTickets() {
           await addDoc(collection(state.db, 'supportTickets', ticketId, 'messages'), {
             text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now,
           });
-          await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now }, { merge: true });
+          await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now, lastAuthorRole: 'super_admin' }, { merge: true });
           textEl.value = '';
         } catch (e) {
           toast(`Не удалось отправить: ${e?.message || e}`);
