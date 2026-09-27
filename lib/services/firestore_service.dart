@@ -248,6 +248,80 @@ class FirestoreService {
     return sessionRef.id;
   }
 
+  /// Разделить счёт: выбранные позиции уходят в новый отдельный чек за тем
+  /// же столом — гости платят каждый за своё.
+  ///
+  /// [moveQty] — сколько штук каждой строки перенести; ключ строки —
+  /// [splitKey] (позиция, название и цена: одна и та же позиция меню могла
+  /// попасть в чек по разной цене). Всё в одной транзакции: позиции не
+  /// могут ни потеряться, ни задвоиться, а лимит чеков на стол
+  /// (maxOpenSessions) проверяется по свежим данным. Время и скидка у
+  /// нового чека — как у исходного: компания та же.
+  Future<String> splitOffItems({
+    required String sessionId,
+    required String tableId,
+    required Map<String, int> moveQty,
+    required String employeeName,
+    String employeeId = '',
+    String guestTag = '',
+  }) async {
+    final fromRef = AppScope.col('sessions').doc(sessionId);
+    final tableRef = AppScope.col('tables').doc(tableId);
+    final newRef = AppScope.col('sessions').doc();
+
+    await _db.runTransaction((tx) async {
+      final fromSnap = await tx.get(fromRef);
+      final tableSnap = await tx.get(tableRef);
+      if (!fromSnap.exists) throw StateError('Чек не найден');
+      final from = SessionModel.fromDoc(fromSnap);
+      if (from.status != 'active') throw StateError('Этот чек уже закрыт');
+
+      final tdata = tableSnap.data() ?? const <String, dynamic>{};
+      final ids = ((tdata['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList();
+      final maxOpen = (tdata['maxOpenSessions'] as num?)?.toInt() ?? 2;
+      if (ids.length >= maxOpen) throw TableFullException(maxOpen);
+
+      final left = Map<String, int>.from(moveQty);
+      final keep = <OrderItem>[];
+      final moved = <OrderItem>[];
+      for (final item in from.orderItems) {
+        final key = splitKey(item);
+        final want = left[key] ?? 0;
+        final take = want <= 0 ? 0 : (want >= item.qty ? item.qty : want);
+        if (take > 0) {
+          moved.add(item.copyWith(qty: take));
+          left[key] = want - take;
+        }
+        if (item.qty - take > 0) keep.add(item.copyWith(qty: item.qty - take));
+      }
+      if (moved.isEmpty) throw StateError('Нечего переносить — заказ уже изменился');
+
+      final split = SessionModel(
+        id: newRef.id,
+        tableId: from.tableId,
+        tableName: from.tableName,
+        employeeName: employeeName,
+        employeeId: employeeId,
+        guestTag: guestTag,
+        startTime: from.startTime,
+        plannedEnd: from.plannedEnd,
+        discountCardId: from.discountCardId,
+        discountPercent: from.discountPercent,
+        orderItems: moved,
+      );
+      tx.set(newRef, split.toMap());
+      tx.update(fromRef, {'orderItems': keep.map((e) => e.toMap()).toList()});
+      ids.add(newRef.id);
+      tx.update(tableRef, {'activeSessionIds': ids, 'status': 'occupied'});
+    });
+
+    await syncTableBusyUntil(tableId);
+    return newRef.id;
+  }
+
+  /// Ключ строки заказа для [splitOffItems].
+  static String splitKey(OrderItem i) => '${i.menuItemId}|${i.name}|${i.price}';
+
   /// Перезабивка — сброс таймера на новые 1.5ч (или заданную длительность).
   /// [tableId] нужен, чтобы обновить денормализованную занятость стола —
   /// см. [syncTableBusyUntil].

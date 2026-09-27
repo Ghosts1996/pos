@@ -9,6 +9,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import 'menu_selection_screen.dart';
 import 'payment_screen.dart';
+import 'split_bill_screen.dart';
 import '../../utils/table_label.dart';
 import '../../services/venue_service.dart';
 
@@ -109,17 +110,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     return result;
   }
 
-  Future<void> _refill(SessionModel session, bool unlimited) async {
+  Future<void> _refill(SessionModel session) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Перезабивка'),
-        content: Text(unlimited
-            // Без ограничения времени таймер сбрасывать нечего — перезабивка
-            // отмечается в счётчике и перезапускает напоминание про угли.
-            ? 'Отметить перезабивку? Напоминание про угли начнётся заново.'
-            : 'Сбросить таймер и начать новые '
-                '${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
+        content: Text('Сбросить таймер и начать новые '
+            '${AppConstants.formatSessionDuration(AppConstants.sessionMinutes)}?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Перезабить')),
@@ -128,15 +125,31 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
     if (confirm == true) {
       try {
-        // Стол без ограничения времени таким и остаётся — даже если по
-        // умолчанию в заведении сеанс ограничен.
         await _fs.refillSession(session.id,
-            tableId: session.tableId,
-            durationMinutes: unlimited ? AppConstants.unlimitedSessionMinutes : AppConstants.sessionMinutes);
+            tableId: session.tableId, durationMinutes: AppConstants.sessionMinutes);
       } catch (e) {
-        _showError('Не удалось отметить перезабивку — проверьте интернет');
+        _showError('Не удалось обновить таймер — проверьте интернет');
       }
     }
+  }
+
+  /// Разделить счёт — см. SplitBillScreen. Перенесли позиции в новый чек —
+  /// предлагаем сразу к нему перейти.
+  Future<void> _splitBill(TableModel t, SessionModel session) async {
+    if (session.orderItems.isEmpty) {
+      _showError('Сначала добавьте позиции в заказ');
+      return;
+    }
+    final newId = await Navigator.of(context).push<String>(MaterialPageRoute(
+      builder: (_) => SplitBillScreen(session: session, table: t, employee: widget.employee),
+    ));
+    if (newId == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Счёт разделён — создан отдельный чек'),
+      action: SnackBarAction(label: 'Открыть', onPressed: () {
+        if (mounted) setState(() => _sessionId = newId);
+      }),
+    ));
   }
 
   Future<void> _extend(String sessionId, DateTime plannedEnd, String tableId) async {
@@ -433,14 +446,24 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final canAddMore = t.activeSessionIds.length < t.maxOpenSessions;
     final discounted = session.discountPercent > 0;
 
+    final split = _TableAction(
+      icon: Icons.call_split_rounded,
+      label: 'Разделить',
+      hint: 'счёт на части',
+      // У стола без ограничения времени «Перезабивки» нет (это тот же
+      // сброс таймера) — главное место занимает раздел счёта.
+      accent: !hookah || unlimited,
+      onTap: () => _splitBill(t, session),
+    );
     final actions = <_TableAction>[
-      if (hookah)
+      if (hookah && !unlimited)
         _TableAction(
           icon: Icons.refresh_rounded,
           label: 'Перезабивка',
           accent: true,
-          onTap: () => _refill(session, unlimited),
+          onTap: () => _refill(session),
         ),
+      if (!hookah || unlimited) split,
       if (!unlimited)
         _TableAction(
           icon: Icons.more_time_rounded,
@@ -466,6 +489,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         hint: 'за другой стол',
         onTap: () => _moveTable(session, t),
       ),
+      if (hookah && !unlimited) split,
       if (hasOtherChecks || canAddMore)
         _TableAction(
           icon: Icons.receipt_long_outlined,
@@ -487,7 +511,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             child: ListView(
               padding: EdgeInsets.fromLTRB(side, 12, side, 24),
               children: [
-                _SessionStatusCard(session: session, hookah: hookah, unlimited: unlimited),
+                _SessionStatusCard(session: session, showRefills: hookah && !unlimited, unlimited: unlimited),
                 const SizedBox(height: 12),
                 _ActionGrid(actions: actions),
                 const SizedBox(height: 24),
@@ -632,9 +656,9 @@ String _sat(Duration d) => TimerDisplay.formatSat(d);
 /// время не ограничено), кто открыл, подпись, перезабивки, скидка.
 class _SessionStatusCard extends StatelessWidget {
   final SessionModel session;
-  final bool hookah;
+  final bool showRefills;
   final bool unlimited;
-  const _SessionStatusCard({required this.session, required this.hookah, required this.unlimited});
+  const _SessionStatusCard({required this.session, required this.showRefills, required this.unlimited});
 
   @override
   Widget build(BuildContext context) {
@@ -693,7 +717,7 @@ class _SessionStatusCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               _InfoChip(icon: Icons.person_outline, text: session.employeeName.isEmpty ? '—' : session.employeeName),
-              if (hookah)
+              if (showRefills)
                 _InfoChip(
                   icon: Icons.refresh_rounded,
                   text: session.refillCount == 0
