@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import '../utils/shared_stream.dart';
+import '../utils/shift_crew.dart';
 import 'package:uuid/uuid.dart';
 import '../models/table_model.dart';
 import '../models/session_model.dart';
@@ -1020,7 +1021,13 @@ class FirestoreService {
       // "Начать смену" молча ничего не делала бы вечно.
       if (currentOpenId != null && currentOpenId.isNotEmpty) {
         final referencedDoc = await tx.get(AppScope.col('staffShifts').doc(currentOpenId));
-        if (referencedDoc.exists && referencedDoc.data()?['status'] == 'open') {
+        final started = (referencedDoc.data()?['startedAt'] as Timestamp?)?.toDate();
+        // Забытую со вчера смену не продолжаем — иначе в зарплату попадут
+        // сутки. Она остаётся открытой, пока сотрудник или админ не укажет
+        // время ухода (меню сотрудника и табель это подсказывают).
+        if (referencedDoc.exists &&
+            referencedDoc.data()?['status'] == 'open' &&
+            (started == null || !isStaleShift(started))) {
           return currentOpenId;
         }
       }
@@ -1136,6 +1143,13 @@ class FirestoreService {
           .where('status', isEqualTo: 'open')
           .snapshots()
           .map((snap) => snap.docs.map(StaffShiftModel.fromDoc).toList()));
+
+  /// Открытые личные смены разово — кто сейчас на смене, перед тем как
+  /// закончить свою смену или закрыть смену заведения.
+  Future<List<StaffShiftModel>> openStaffShiftsOnce() async {
+    final snap = await AppScope.col('staffShifts').where('status', isEqualTo: 'open').get();
+    return snap.docs.map(StaffShiftModel.fromDoc).toList();
+  }
 
   /// Закрытые личные смены за период [start; end) — фильтр по времени
   /// ЗАКРЫТИЯ (endedAt), тем же приёмом, что и closedSessionsInRange для
@@ -1283,10 +1297,15 @@ class FirestoreService {
   }
 
   // ---------- СОТРУДНИКИ ----------
-  Stream<List<Employee>> employeesStream() {
-    return AppScope.col('employees').snapshots().map(
-        (snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList());
-  }
+  static final _employeesS = SharedStreams<List<Employee>>();
+
+  /// Общая подписка: меню сотрудника, X-отчёт и «кто на смене» читают
+  /// одну и ту же, а не открывают каждый свою.
+  Stream<List<Employee>> employeesStream() => _employeesS.get(
+      _k(),
+      () => AppScope.col('employees')
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList()));
 
   /// Список сотрудников разово — для отчётов. Не `employeesStream().first`:
   /// первый снимок подписки отдаётся из локального кэша, и сотрудник,
