@@ -99,6 +99,11 @@ class SessionModel {
   final bool refunded;
   final DateTime? refundedAt;
 
+  /// Деньги за возвращённый чек выданы из кассы наличными — записан
+  /// расход «Возврат наличными» (см. CashOp). У старых возвратов признака
+  /// нет: они не считаются ни в приход, ни в расход наличных.
+  final bool refundCashOut;
+
   SessionModel({
     required this.id,
     required this.tableId,
@@ -127,6 +132,7 @@ class SessionModel {
     this.tipsCard = 0,
     this.refunded = false,
     this.refundedAt,
+    this.refundCashOut = false,
   });
 
   factory SessionModel.fromDoc(DocumentSnapshot doc) {
@@ -166,6 +172,7 @@ class SessionModel {
       tipsCard: (data['tipsCard'] ?? 0).toDouble(),
       refunded: data['refunded'] ?? false,
       refundedAt: data['refundedAt'] != null ? (data['refundedAt'] as Timestamp).toDate() : null,
+      refundCashOut: data['refundCashOut'] == true,
     );
   }
 
@@ -197,6 +204,7 @@ class SessionModel {
       'tipsCard': tipsCard,
       'refunded': refunded,
       'refundedAt': refundedAt != null ? Timestamp.fromDate(refundedAt!) : null,
+      'refundCashOut': refundCashOut,
     };
   }
 
