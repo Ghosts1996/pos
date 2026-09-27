@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../utils/shared_stream.dart';
 import 'package:uuid/uuid.dart';
 import '../models/table_model.dart';
 import '../models/session_model.dart';
@@ -19,11 +20,29 @@ class FirestoreService {
   final _db = FirebaseFirestore.instance;
   final _uuid = const Uuid();
 
+  // Подписки, которые экраны берут прямо в build, — общие (см.
+  // SharedStreams): одна и та же ссылка на поток, пока он кому-то нужен,
+  // поэтому перерисовка экрана не переподписывается на базу.
+  static final _tablesS = SharedStreams<List<TableModel>>();
+  static final _tableS = SharedStreams<TableModel?>();
+  static final _sessionS = SharedStreams<SessionModel?>();
+  static final _activeSessionsS = SharedStreams<List<SessionModel>>();
+  static final _openShiftS = SharedStreams<ShiftModel?>();
+  static final _openStaffShiftS = SharedStreams<StaffShiftModel?>();
+  static final _openStaffShiftsS = SharedStreams<List<StaffShiftModel>>();
+  static final _inventoryItemsS = SharedStreams<List<InventoryItem>>();
+  static final _inventoryItemS = SharedStreams<InventoryItem?>();
+  static final _openInventoryCountS = SharedStreams<InventoryCount?>();
+
+  /// Ключ общей подписки — с заведением: у другого заведения другие данные.
+  static String _k([String id = '']) => '${AppScope.tenantId ?? '-'}|$id';
+
   // ---------- СТОЛЫ ----------
-  Stream<List<TableModel>> tablesStream() {
-    return AppScope.col('tables').snapshots().map(
-        (snap) => snap.docs.map((d) => TableModel.fromDoc(d)).toList());
-  }
+  Stream<List<TableModel>> tablesStream() => _tablesS.get(
+      _k(),
+      () => AppScope.col('tables')
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => TableModel.fromDoc(d)).toList()));
 
   Future<void> addTable(TableModel table) {
     return AppScope.col('tables').doc(table.id).set(table.toMap());
@@ -65,12 +84,12 @@ class FirestoreService {
   /// коллекцию столов — используется на экране конкретного стола, чтобы
   /// открытие/изменение любого другого стола в зале не вызывало лишних
   /// перестроений и сетевого трафика на этом экране.
-  Stream<TableModel?> tableStream(String tableId) {
-    return AppScope.col('tables')
-        .doc(tableId)
-        .snapshots()
-        .map((doc) => doc.exists ? TableModel.fromDoc(doc) : null);
-  }
+  Stream<TableModel?> tableStream(String tableId) => _tableS.get(
+      _k(tableId),
+      () => AppScope.col('tables')
+          .doc(tableId)
+          .snapshots()
+          .map((doc) => doc.exists ? TableModel.fromDoc(doc) : null));
 
   String newTableId() => _uuid.v4();
 
@@ -187,26 +206,28 @@ class FirestoreService {
   }
 
   // ---------- СЕССИИ (ЧЕКИ) ----------
-  Stream<SessionModel?> sessionStream(String sessionId) {
-    return AppScope.col('sessions').doc(sessionId).snapshots().map(
-        (doc) => doc.exists ? SessionModel.fromDoc(doc) : null);
-  }
+  Stream<SessionModel?> sessionStream(String sessionId) => _sessionS.get(
+      _k(sessionId),
+      () => AppScope.col('sessions')
+          .doc(sessionId)
+          .snapshots()
+          .map((doc) => doc.exists ? SessionModel.fromDoc(doc) : null));
 
   /// Все сейчас открытые чеки конкретного стола, отсортированные по времени
   /// открытия. Запрос состоит из двух равенств (tableId, status) — Firestore
   /// умеет объединять такие простые условия без ручного составного
   /// индекса, поэтому сортировку делаем на клиенте, а не в самом запросе.
-  Stream<List<SessionModel>> activeSessionsStream(String tableId) {
-    return AppScope.col('sessions')
-        .where('tableId', isEqualTo: tableId)
-        .where('status', isEqualTo: 'active')
-        .snapshots()
-        .map((snap) {
-      final list = snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
-      list.sort((a, b) => a.startTime.compareTo(b.startTime));
-      return list;
-    });
-  }
+  Stream<List<SessionModel>> activeSessionsStream(String tableId) => _activeSessionsS.get(
+      _k(tableId),
+      () => AppScope.col('sessions')
+              .where('tableId', isEqualTo: tableId)
+              .where('status', isEqualTo: 'active')
+              .snapshots()
+              .map((snap) {
+            final list = snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+            list.sort((a, b) => a.startTime.compareTo(b.startTime));
+            return list;
+          }));
 
   /// Открыть новый чек за столом (Старт / доп. чек / Перезабивка после
   /// закрытия). Обёрнуто в транзакцию: читает актуальный список открытых
@@ -704,18 +725,20 @@ class FirestoreService {
     // См. комментарий в currentOpenShift() — без orderBy, чтобы не требовать
     // составной индекс, из-за отсутствия которого стрим падал в ошибку
     // сразу после открытия смены и переставал обновляться.
-    return AppScope.col('shifts')
-        .where('status', isEqualTo: 'open')
-        .limit(1)
-        .snapshots()
-        .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first))
-        .handleError((_) {
-          // Не даём одиночной ошибке (например, временная проблема сети)
-          // намертво "заморозить" последнее состояние — считаем смену
-          // неизвестной/закрытой, и следующее изменение в базе снова
-          // разбудит стрим.
-          return null;
-        });
+    return _openShiftS.get(
+        _k(),
+        () => AppScope.col('shifts')
+                .where('status', isEqualTo: 'open')
+                .limit(1)
+                .snapshots()
+                .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first))
+                .handleError((_) {
+              // Не даём одиночной ошибке (например, временная проблема сети)
+              // намертво "заморозить" последнее состояние — считаем смену
+              // неизвестной/закрытой, и следующее изменение в базе снова
+              // разбудит стрим.
+              return null;
+            }));
   }
 
   /// Открывает новую смену, если сейчас нет открытой. Вызывается при входе
@@ -961,25 +984,25 @@ class FirestoreService {
   /// Стрим текущей открытой личной смены ОДНОГО сотрудника — для
   /// переключателя "Моя смена" в меню сотрудника. Два равенства (employeeId +
   /// status), без orderBy по другому полю — составной индекс не требуется.
-  Stream<StaffShiftModel?> openStaffShiftStream(String employeeId) {
-    return AppScope.col('staffShifts')
-        .where('employeeId', isEqualTo: employeeId)
-        .where('status', isEqualTo: 'open')
-        .limit(1)
-        .snapshots()
-        .map((snap) => snap.docs.isEmpty ? null : StaffShiftModel.fromDoc(snap.docs.first))
-        .handleError((_) => null);
-  }
+  Stream<StaffShiftModel?> openStaffShiftStream(String employeeId) => _openStaffShiftS.get(
+      _k(employeeId),
+      () => AppScope.col('staffShifts')
+          .where('employeeId', isEqualTo: employeeId)
+          .where('status', isEqualTo: 'open')
+          .limit(1)
+          .snapshots()
+          .map((snap) => snap.docs.isEmpty ? null : StaffShiftModel.fromDoc(snap.docs.first))
+          .handleError((_) => null));
 
   /// Все сейчас открытые личные смены (по всем сотрудникам) — для
   /// предупреждения в "Смены сотрудников"/"Зарплата": пока смена не закрыта,
   /// в расчёт зарплаты её часы не попадают.
-  Stream<List<StaffShiftModel>> openStaffShiftsStream() {
-    return AppScope.col('staffShifts')
-        .where('status', isEqualTo: 'open')
-        .snapshots()
-        .map((snap) => snap.docs.map(StaffShiftModel.fromDoc).toList());
-  }
+  Stream<List<StaffShiftModel>> openStaffShiftsStream() => _openStaffShiftsS.get(
+      _k(),
+      () => AppScope.col('staffShifts')
+          .where('status', isEqualTo: 'open')
+          .snapshots()
+          .map((snap) => snap.docs.map(StaffShiftModel.fromDoc).toList()));
 
   /// Закрытые личные смены за период [start; end) — фильтр по времени
   /// ЗАКРЫТИЯ (endedAt), тем же приёмом, что и closedSessionsInRange для
@@ -1216,17 +1239,18 @@ class FirestoreService {
   // подсобке (граммы табака, литры сиропа, банки пива, угли и т.п.).
   // Список позиций полностью произвольный и настраивается админом.
 
-  Stream<List<InventoryItem>> inventoryItemsStream() {
-    return AppScope.col('inventoryItems').snapshots().map(
-        (snap) => snap.docs.map((d) => InventoryItem.fromDoc(d)).toList());
-  }
+  Stream<List<InventoryItem>> inventoryItemsStream() => _inventoryItemsS.get(
+      _k(),
+      () => AppScope.col('inventoryItems')
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => InventoryItem.fromDoc(d)).toList()));
 
-  Stream<InventoryItem?> inventoryItemStream(String id) {
-    return AppScope.col('inventoryItems')
-        .doc(id)
-        .snapshots()
-        .map((doc) => doc.exists ? InventoryItem.fromDoc(doc) : null);
-  }
+  Stream<InventoryItem?> inventoryItemStream(String id) => _inventoryItemS.get(
+      _k(id),
+      () => AppScope.col('inventoryItems')
+          .doc(id)
+          .snapshots()
+          .map((doc) => doc.exists ? InventoryItem.fromDoc(doc) : null));
 
   Future<String> addInventoryItem(InventoryItem item) async {
     final ref = await AppScope.col('inventoryItems').add(item.toMap());
@@ -1390,13 +1414,13 @@ class FirestoreService {
 
   /// Стрим текущей незавершённой инвентаризации, если она есть — чтобы при
   /// заходе на экран сразу продолжить, а не потерять уже введённые цифры.
-  Stream<InventoryCount?> openInventoryCountStream() {
-    return AppScope.col('inventoryCounts')
-        .where('status', isEqualTo: 'in_progress')
-        .limit(1)
-        .snapshots()
-        .map((snap) => snap.docs.isEmpty ? null : InventoryCount.fromDoc(snap.docs.first));
-  }
+  Stream<InventoryCount?> openInventoryCountStream() => _openInventoryCountS.get(
+      _k(),
+      () => AppScope.col('inventoryCounts')
+          .where('status', isEqualTo: 'in_progress')
+          .limit(1)
+          .snapshots()
+          .map((snap) => snap.docs.isEmpty ? null : InventoryCount.fromDoc(snap.docs.first)));
 
   Future<InventoryCount?> currentOpenInventoryCount() async {
     final snap = await AppScope.col('inventoryCounts')

@@ -9,6 +9,7 @@ import '../../services/subscription_gate.dart';
 import '../../services/tenant_config_service.dart';
 import '../../theme/app_colors.dart';
 import '../image_preload_screen.dart';
+import '../../utils/human_error.dart';
 
 /// Присоединение планшета к заведению SaaS-платформы — SaaS-аналог
 /// [StaffDeviceSetupScreen] из одно-арендной версии. Отличие: вместо
@@ -86,7 +87,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
         // с уже подставленными значениями, а не держим владельца на вечной
         // загрузке без объяснений.
         _autoJoining = false;
-        _error = 'Не удалось присоединиться: $e';
+        _error = 'Не удалось присоединиться: ${humanError(e, lower: true)}';
       });
     }
   }
@@ -118,7 +119,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'Не удалось запустить демо: $e';
+        _error = 'Не удалось запустить демо: ${humanError(e, lower: true)}';
       });
     }
   }

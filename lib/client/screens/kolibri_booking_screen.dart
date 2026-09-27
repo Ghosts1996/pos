@@ -13,6 +13,9 @@ import '../../services/venue_service.dart';
 import '../../widgets/table_picker_map.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_menu_screen.dart';
+import '../../utils/human_error.dart';
+import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// Бронирование стола гостем. Слоты считаются по реальной занятости:
 /// учитываются и другие брони, и открытые прямо сейчас чеки на POS,
@@ -382,7 +385,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
             icon: const Icon(Icons.table_restaurant),
             label: Text(_pickedTable == null
                 ? 'Стол подберём автоматически — выбрать на карте'
-                : 'Выбран: ${_pickedTable!.name} (${_pickedTable!.seats} мест)'),
+                : 'Выбран: ${_pickedTable!.name} (${seatsLabel(_pickedTable!.seats)})'),
           ),
         ],
 
@@ -427,7 +430,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           label: Text(_preOrder.isEmpty
               ? 'Добавить предзаказ (необязательно)'
               : 'Предзаказ: ${_preOrder.length} поз. на '
-                  '${_preOrder.fold<double>(0, (s, i) => s + i.total).toStringAsFixed(0)} ₽'),
+                  '${rub(_preOrder.fold<double>(0, (s, i) => s + i.total))}'),
         ),
 
         if ((_venue?.rules ?? '').isNotEmpty) ...[
@@ -638,7 +641,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       );
     } on ReservationTimeException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
         _loadSlots();
       }
     } on NoTablesAvailableException {
@@ -650,7 +653,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
     if (mounted) setState(() => _sending = false);

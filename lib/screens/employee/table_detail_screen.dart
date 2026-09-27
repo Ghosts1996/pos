@@ -12,6 +12,8 @@ import 'payment_screen.dart';
 import 'split_bill_screen.dart';
 import '../../utils/table_label.dart';
 import '../../services/venue_service.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
@@ -158,38 +160,29 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     ));
   }
 
-  Future<void> _extend(String sessionId, DateTime plannedEnd, String tableId) async {
+  /// «Время»: добавить или убавить минуты к сеансу. Одно нажатие —
+  /// сразу применяется, в подсказке видно, до скольки теперь стол.
+  Future<void> _extend(SessionModel session) async {
     final choice = await showModalBottomSheet<int>(
       context: context,
-      builder: (_) => SafeArea(
-        child: Wrap(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Text('Обновить таймер', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            ...AppConstants.extendOptions.map((m) => ListTile(
-                  leading: const Icon(Icons.add_alarm),
-                  title: Text('+ $m мин'),
-                  onTap: () => Navigator.pop(context, m),
-                )),
-            ListTile(
-              leading: const Icon(Icons.remove_circle_outline),
-              title: const Text('- 15 мин'),
-              onTap: () => Navigator.pop(context, -15),
-            ),
-          ],
-        ),
-      ),
+      showDragHandle: true,
+      builder: (_) => _TimeAdjustSheet(plannedEnd: session.plannedEnd, startTime: session.startTime),
     );
-    if (choice != null) {
-      try {
-        await _fs.extendSession(sessionId, plannedEnd, choice, tableId: tableId);
-      } catch (e) {
-        _showError('Не удалось обновить таймер — проверьте интернет');
-      }
+    if (choice == null) return;
+    try {
+      await _fs.extendSession(session.id, session.plannedEnd, choice, tableId: session.tableId);
+      if (!mounted) return;
+      final end = session.plannedEnd.add(Duration(minutes: choice));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${choice > 0 ? '+$choice' : '−${-choice}'} мин · стол до ${_hhmm(end)}'),
+        duration: const Duration(seconds: 2),
+      ));
+    } catch (e) {
+      _showError('Не удалось изменить время — проверьте интернет');
     }
   }
+
+  static String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   /// Раньше здесь стол закрывался напрямую, без экрана оплаты гостя. Теперь
   /// нажатие "Закрыть стол" открывает PaymentScreen (наличные/карта/за счёт
@@ -335,7 +328,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         builder: (context, tablesSnap) {
           if (tablesSnap.hasError) {
             return Center(
-              child: Text('Ошибка соединения: ${tablesSnap.error}',
+              child: Text('Ошибка соединения: ${humanError(tablesSnap.error, lower: true)}',
                   style: const TextStyle(color: AppColors.danger)),
             );
           }
@@ -360,7 +353,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             builder: (context, sessSnap) {
               if (sessSnap.hasError) {
                 return Center(
-                  child: Text('Ошибка соединения: ${sessSnap.error}',
+                  child: Text('Ошибка соединения: ${humanError(sessSnap.error, lower: true)}',
                       style: const TextStyle(color: AppColors.danger)),
                 );
               }
@@ -478,8 +471,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         _TableAction(
           icon: Icons.more_time_rounded,
           label: 'Время',
-          hint: '+15 · +30 · +60',
-          onTap: () => _extend(session.id, session.plannedEnd, session.tableId),
+          hint: '± 5 · 10 · 30 мин',
+          onTap: () => _extend(session),
         ),
       _TableAction(
         icon: Icons.local_offer_outlined,
@@ -656,7 +649,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   }
 }
 
-String _money(double v) => '${v.toStringAsFixed(0)} ${AppConstants.currencySymbol}';
+String _money(double v) => rub(v);
 
 String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
@@ -1045,7 +1038,7 @@ class _CheckPickerSheet extends StatelessWidget {
                   leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
                   title: Text(title),
                   subtitle: Text(
-                      '${s.employeeName} · ${s.totalWithDiscount.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+                      '${s.employeeName} · ${rub(s.totalWithDiscount)}'),
                   onTap: () => Navigator.pop(context, s.id),
                 );
               }),
@@ -1058,6 +1051,89 @@ class _CheckPickerSheet extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Нижняя панель «Время»: +5/+10/+30 и −5/−10/−30 минут. Убавить так,
+/// чтобы конец сеанса оказался раньше его начала, нельзя — такие кнопки
+/// неактивны.
+class _TimeAdjustSheet extends StatelessWidget {
+  final DateTime plannedEnd;
+  final DateTime startTime;
+  const _TimeAdjustSheet({required this.plannedEnd, required this.startTime});
+
+  static String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+  /// «+10» крупно и «мин» под ним — в узкой кнопке на телефоне не
+  /// переносится на две строки.
+  static Widget _label(String value) => Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, height: 1.1)),
+        const Text('мин', style: TextStyle(fontSize: 12, height: 1.1)),
+      ]);
+
+  @override
+  Widget build(BuildContext context) {
+    final left = plannedEnd.difference(DateTime.now());
+    final leftText = left.isNegative
+        ? 'время вышло ${TimerDisplay.formatSat(-left)} назад'
+        : 'осталось ${TimerDisplay.formatSat(left)}';
+    Widget row(String title, IconData icon, bool add) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, size: 18, color: add ? AppColors.success : AppColors.warning),
+              const SizedBox(width: 6),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [
+              for (final m in AppConstants.extendOptions) ...[
+                if (m != AppConstants.extendOptions.first) const SizedBox(width: 10),
+                Expanded(
+                  child: SizedBox(
+                    height: 64,
+                    child: add
+                        ? FilledButton.tonal(
+                            style: FilledButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                            onPressed: () => Navigator.pop(context, m),
+                            child: _label('+$m'),
+                          )
+                        : OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                            onPressed: plannedEnd.subtract(Duration(minutes: m)).isAfter(startTime)
+                                ? () => Navigator.pop(context, -m)
+                                : null,
+                            child: _label('−$m'),
+                          ),
+                  ),
+                ),
+              ],
+            ]),
+          ],
+        );
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Время стола', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text('Сейчас до ${_hhmm(plannedEnd)} · $leftText',
+                style: const TextStyle(color: AppColors.textMuted)),
+            const SizedBox(height: 20),
+            row('Добавить', Icons.add_circle_outline, true),
+            const SizedBox(height: 18),
+            row('Убавить', Icons.remove_circle_outline, false),
+          ],
+        ),
       ),
     );
   }

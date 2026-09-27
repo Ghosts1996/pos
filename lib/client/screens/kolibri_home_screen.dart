@@ -14,6 +14,7 @@ import '../widgets/kolibri_ai_chat.dart';
 import 'kolibri_qr_scan_screen.dart';
 import 'kolibri_stories_screen.dart';
 import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// Главный экран гостя: бонусы, текущий визит, ближайшая бронь и быстрые
 /// действия. Все блоки живые — данные те же, что видит кассир на POS.
@@ -81,7 +82,7 @@ class KolibriHomeScreen extends StatelessWidget {
               // ограничено; иначе просто сумма счёта (со скидкой).
               final terms = VenueService.instance.terms;
               final timed = terms.isHookah && !AppConstants.isUnlimitedRemaining(s.remaining);
-              final bill = 'счёт ${s.totalWithDiscount.toStringAsFixed(0)} ₽';
+              final bill = 'счёт ${rub(s.totalWithDiscount)}';
               return Card(
                 child: InkWell(
                   borderRadius: BorderRadius.circular(18),
@@ -281,7 +282,7 @@ class KolibriHomeScreen extends StatelessWidget {
               Text('Бонусный счёт',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
               const SizedBox(height: 6),
-              Text('${bonus.toStringAsFixed(0)} ₽',
+              Text(rub(bonus),
                   style: TextStyle(
                       fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
               const SizedBox(height: 4),

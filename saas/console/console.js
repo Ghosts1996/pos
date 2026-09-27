@@ -302,6 +302,15 @@ function pluralDays(n) {
   return 'дней';
 }
 
+/// Общее склонение по числу: plural(3, 'стол', 'стола', 'столов') → «стола».
+function plural(n, one, few, many) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last === 1) return one;
+  if (!teen && last >= 2 && last <= 4) return few;
+  return many;
+}
+
 /// «1 человек», «2 человека», «5 человек» — «человек» неправильное
 /// существительное, родительный падеж множественного числа совпадает с
 /// именительным единственного, поэтому это не то же самое, что pluralDays.
@@ -798,8 +807,8 @@ function landingPlanCardHtml(p, selected, popular) {
     ? `${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год${yearlyDiscountPercent > 0 ? ` (−${yearlyDiscountPercent}%)` : ''}`
     : null;
   const limits = [
-    p.maxEmployees ? `до ${p.maxEmployees} сотрудников` : 'сотрудников без лимита',
-    p.maxTables ? `до ${p.maxTables} столов` : 'столов без лимита',
+    p.maxEmployees ? `до ${p.maxEmployees} ${plural(p.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')}` : 'сотрудников без лимита',
+    p.maxTables ? `до ${p.maxTables} ${plural(p.maxTables, 'стола', 'столов', 'столов')}` : 'столов без лимита',
     p.maxDevices ? `до ${p.maxDevices} устройств` : 'устройств без лимита',
   ];
   const perks = [];
@@ -840,8 +849,8 @@ function landingChainPlanCardHtml(p, selected) {
     ? `+ ${additionalPriceRub.toLocaleString('ru-RU')} ₽/мес за каждую следующую точку`
     : null;
   const limits = [
-    p.maxEmployees ? `до ${p.maxEmployees} сотрудников на точку` : 'сотрудников без лимита',
-    p.maxTables ? `до ${p.maxTables} столов на точку` : 'столов без лимита',
+    p.maxEmployees ? `до ${p.maxEmployees} ${plural(p.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')} на точку` : 'сотрудников без лимита',
+    p.maxTables ? `до ${p.maxTables} ${plural(p.maxTables, 'стола', 'столов', 'столов')} на точку` : 'столов без лимита',
     p.maxDevices ? `до ${p.maxDevices} устройств на точку` : 'устройств без лимита',
   ];
   const perks = [];
@@ -1935,7 +1944,7 @@ const TIMEZONE_OPTIONS = [
 // этапе выбора и подключения (честно про фискализацию: её из коробки нет,
 // это же написано и в самом приложении, см. корневой README.md).
 const FAQ_ITEMS = [
-  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока триал не закончится. Длительность зависит от тарифа, обычно 7 дней.' },
+  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока пробный период не закончится. Длительность зависит от тарифа, обычно 7 дней.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
   { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
   { q: 'Можно ли сменить тариф позже?', a: 'Да, в любой момент в разделе «Тарифы» — повышение и понижение доступны в один клик, без обращения в поддержку.' },
@@ -4609,7 +4618,7 @@ function watchAllTenants() {
             <div class="small muted">
               тариф: ${esc(planName(plans, t.subscription?.planId) || t.subscription?.planId || '—')} ·
               подписка: ${esc(SUB_STATUS_LABELS[t.subscription?.status] || t.subscription?.status || '—')}
-              ${t.subscription?.status === 'trial' && t.subscription?.trialEndsAt ? ` · триал до ${fmtDate(t.subscription.trialEndsAt)}` : ''}
+              ${t.subscription?.status === 'trial' && t.subscription?.trialEndsAt ? ` · пробный период до ${fmtDate(t.subscription.trialEndsAt)}` : ''}
               ${t.subscription?.status === 'active' && t.subscription?.currentPeriodEnd ? ` · оплачено до ${fmtDate(t.subscription.currentPeriodEnd)}` : ''}
               ${t.subscription?.cancelAtPeriodEnd ? ' · автопродление отключено владельцем' : ''}
             </div>
@@ -5968,7 +5977,7 @@ const SECURITY_EVENT_LABELS = {
 function securityEventDetails(e) {
   const m = e.metadata || {};
   const tenant = m.tenantName ? `«${m.tenantName}»${m.tenantSlug ? ` (${m.tenantSlug})` : ''}` : '';
-  const subLine = (x) => (x ? `${SUB_STATUS_LABELS[x.status] || x.status || '—'}${x.currentPeriodEnd ? `, оплачено до ${x.currentPeriodEnd}` : ''}${x.trialEndsAt ? `, триал до ${x.trialEndsAt}` : ''}` : '—');
+  const subLine = (x) => (x ? `${SUB_STATUS_LABELS[x.status] || x.status || '—'}${x.currentPeriodEnd ? `, оплачено до ${x.currentPeriodEnd}` : ''}${x.trialEndsAt ? `, пробный период до ${x.trialEndsAt}` : ''}` : '—');
   switch (e.action) {
     case 'superAdminGranted':
     case 'superAdminRevoked':

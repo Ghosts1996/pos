@@ -9,7 +9,8 @@ import '../../services/firestore_service.dart';
 import '../../services/scanner_service.dart';
 import '../../services/chestny_znak_service.dart';
 import '../../services/chestny_znak_api_service.dart';
-import '../../utils/constants.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
 ///
@@ -81,7 +82,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           // Не блокируем продажу из-за сбоя связи с «Честным знаком» —
           // локальной проверки выше достаточно, чтобы не продать код
           // дважды с этой же кассы; просто предупреждаем.
-          _showSnack('Честный знак: онлайн-проверка недоступна ($e), код принят по локальной проверке');
+          _showSnack('Честный знак: онлайн-проверка недоступна (${humanError(e, lower: true)}), код принят по локальной проверке');
         }
       }
 
@@ -107,7 +108,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
         );
       }
     } catch (e) {
-      _showSnack('Ошибка сканирования: $e');
+      _showSnack('Ошибка сканирования: ${humanError(e, lower: true)}');
     } finally {
       _scanBusy = false;
     }
@@ -437,7 +438,7 @@ class _MenuItemCard extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '${item.price.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                    rub(item.price),
                     style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                   ),
                   const Spacer(),
@@ -504,7 +505,7 @@ class _SearchResultsList extends StatelessWidget {
               ),
             ),
             title: Text(item.name),
-            subtitle: Text('${item.price.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+            subtitle: Text(rub(item.price)),
             trailing: const Icon(Icons.add_circle_outline),
             onTap: () => onAdd(item),
           ),

@@ -5,6 +5,7 @@ import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
 
 /// Админский экран подключения ИИ: провайдер (Tooken Club, DarkAPI,
 /// Google Gemini или свой шлюз), ключи, модели, резервный провайдер,
@@ -106,7 +107,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось сохранить: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось сохранить: ${humanError(e, lower: true)}')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -128,7 +129,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     } catch (e) {
       setState(() {
         _pingOk = false;
-        _pingResult = 'Ошибка: $e';
+        _pingResult = 'Ошибка: ${humanError(e, lower: true)}';
       });
     }
   }
@@ -145,7 +146,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
   }

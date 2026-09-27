@@ -7,6 +7,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/constants.dart';
 import 'employee_edit_screen.dart';
+import '../../utils/human_error.dart';
 
 class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
@@ -191,7 +192,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось сохранить сотрудника: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось сохранить сотрудника: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -218,7 +219,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
       await _fs.deleteEmployee(e.id);
     } catch (err) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось удалить: $err')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось удалить: ${humanError(err, lower: true)}')));
       }
     }
   }

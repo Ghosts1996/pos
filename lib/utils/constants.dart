@@ -65,7 +65,8 @@ class AppConstants {
   static const int warningThresholdMinutes = 15;
 
   // Быстрые варианты продления таймера (в минутах)
-  static const List<int> extendOptions = [15, 30, 60];
+  /// «Время» на экране стола: на сколько минут добавить или убавить.
+  static const List<int> extendOptions = [5, 10, 30];
 
   // Роли
   static const String roleAdmin = 'admin';

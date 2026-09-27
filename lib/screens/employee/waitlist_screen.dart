@@ -3,6 +3,7 @@ import '../../models/employee.dart';
 import '../../models/venue_models.dart';
 import '../../services/waitlist_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
 
 /// Лист ожидания: очередь гостей, когда все столы заняты.
 ///
@@ -158,7 +159,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
       }
     } catch (err) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$err')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(err))));
       }
     }
   }
