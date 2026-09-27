@@ -1317,6 +1317,15 @@ const GRACE_PERIOD_DAYS = 10;
  *  (checkout/webhook/автопродление), а не только в одном месте: раньше
  *  "любое не yearly" молча схлопывалось в monthly, из-за чего добавление
  *  нового периода потребовало бы искать все места по отдельности. */
+/** «1 точка», «2 точки», «5 точек» — для описания платежа сети. */
+function pointsWord(n) {
+  const last = n % 10;
+  const teen = n % 100 >= 11 && n % 100 <= 14;
+  if (!teen && last === 1) return "точка";
+  if (!teen && last >= 2 && last <= 4) return "точки";
+  return "точек";
+}
+
 function normalizeBillingPeriod(raw) {
   if (raw === "yearly") return "yearly";
   if (raw === "semiannual") return "semiannual";
@@ -1475,7 +1484,7 @@ async function handleCreateCheckoutSession(req, res) {
   const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
   const description = isChain
-    ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} точек`
+    ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
     : `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
   const payment = await yookassaRequest("payments", {
     method: "POST",
@@ -1780,7 +1789,7 @@ async function runChargeRecurringSubscriptions() {
           payment_method_id: sub.paymentMethodId,
           receipt,
           description: isChain
-            ? `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} точек`
+            ? `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} ${pointsWord(locationCount)}`
             : `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
           metadata: {
             tenantId: isChain ? null : targetId,

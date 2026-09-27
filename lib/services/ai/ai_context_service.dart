@@ -6,6 +6,7 @@ import '../../models/menu_models.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
+import '../../utils/table_label.dart';
 
 /// Сборка компактного текстового контекста для ИИ-агентов.
 ///
@@ -85,12 +86,12 @@ class AiContextService {
     for (final t in tables) {
       final list = byTable[t.id] ?? const [];
       if (list.isEmpty) {
-        buf.writeln('- ${t.name} (${t.seats} мест): свободен');
+        buf.writeln('- ${t.name} (${seatsLabel(t.seats)}): свободен');
       } else {
         for (final s in list) {
           final left = s.remaining.inMinutes;
           buf.writeln(
-            '- ${t.name} (${t.seats} мест): занят, счёт ${money(s.orderTotal)}, '
+            '- ${t.name} (${seatsLabel(t.seats)}): занят, счёт ${money(s.orderTotal)}, '
             'до конца $left мин, перезабивок ${s.refillCount}'
             '${s.guestTag.isNotEmpty ? ', гость: ${s.guestTag}' : ''}',
           );

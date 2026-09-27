@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../models/story_model.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
 
 /// Лента заведения: карточки, которые видит гость в «Colibri Lounge».
 ///
@@ -210,7 +211,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
     if (mounted) setState(() => _busy = false);

@@ -7,6 +7,7 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// «Разделить счёт» — компания платит не одним чеком.
 ///
@@ -193,7 +194,8 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
               ),
               if (full)
                 Text(
-                  'За столом уже ${widget.table.activeSessionIds.length} из ${widget.table.maxOpenSessions} чеков — '
+                  'За столом уже ${widget.table.activeSessionIds.length} из ${widget.table.maxOpenSessions} '
+                  '${pluralRu(widget.table.maxOpenSessions, 'чека', 'чеков', 'чеков')} — '
                   'сначала закройте один или увеличьте лимит стола в «Карте зала».',
                   style: const TextStyle(color: AppColors.warning),
                 ),
@@ -259,7 +261,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: m > 0 ? AppColors.success : AppColors.textPrimary)),
-                Text('${item.price.toStringAsFixed(0)} ₽ · в чеке ${item.qty}',
+                Text('${rub(item.price)} · в чеке ${item.qty}',
                     style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
               ],
             ),

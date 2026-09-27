@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/staff_device_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/human_error.dart';
 
 /// Регистрация планшета как рабочего устройства заведения.
 ///
@@ -72,7 +73,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'Не удалось зарегистрировать: $e';
+        _error = 'Не удалось зарегистрировать: ${humanError(e, lower: true)}';
       });
     }
   }

@@ -7,6 +7,8 @@ import '../../models/shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shift_open_dialog.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 enum _Period { shift, pastShift, custom }
 
@@ -157,7 +159,7 @@ class _XReportScreenState extends State<XReportScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось открыть смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось открыть смену: ${humanError(e, lower: true)}')));
       }
     }
     if (!mounted) return;
@@ -191,7 +193,7 @@ class _XReportScreenState extends State<XReportScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: ${humanError(e, lower: true)}')));
       }
     }
     if (!mounted) return;
@@ -280,7 +282,7 @@ class _XReportScreenState extends State<XReportScreen> {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text('Не удалось загрузить отчёт: ${snap.error}',
+                      child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
                           textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
                     ),
                   );
@@ -350,12 +352,12 @@ class _XReportScreenState extends State<XReportScreen> {
                                 Expanded(
                                     flex: 2,
                                     child: Text(
-                                        '${i.price.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                                        rub(i.price),
                                         textAlign: TextAlign.right)),
                                 Expanded(
                                     flex: 2,
                                     child: Text(
-                                        '${i.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                                        rub(i.revenue),
                                         textAlign: TextAlign.right,
                                         style: const TextStyle(fontWeight: FontWeight.bold))),
                               ],
@@ -503,7 +505,7 @@ class _XReportScreenState extends State<XReportScreen> {
         children: [
           Text(label, style: TextStyle(fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
           Text(
-            '${value.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+            rub(value),
             style: TextStyle(
                 fontWeight: bold ? FontWeight.bold : FontWeight.normal,
                 fontSize: bold ? 18 : 14),
@@ -562,26 +564,26 @@ class _XReportScreenState extends State<XReportScreen> {
     buf.writeln('');
     for (final i in data.items) {
       buf.writeln(
-          '${i.name}  —  ${i.qty} шт. × ${i.price.toStringAsFixed(0)} = ${i.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+          '${i.name}  —  ${i.qty} шт. × ${i.price.toStringAsFixed(0)} = ${rub(i.revenue)}');
     }
     buf.writeln('');
-    buf.writeln('Итого: ${data.orderTotal.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    buf.writeln('Итого: ${rub(data.orderTotal)}');
     if (data.unpaidCount > 0) {
       buf.writeln('Закрыто без оплаты: ${data.unpaidCount} на сумму '
-          '${data.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (вне выручки)');
+          '${rub(data.unpaidAmount)} (вне выручки)');
     }
-    buf.writeln('К оплате: ${data.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    buf.writeln('К оплате: ${rub(data.revenue)}');
     buf.writeln(
-        'Оплачено картой: ${data.paymentCard.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+        'Оплачено картой: ${rub(data.paymentCard)}');
     buf.writeln(
-        'Оплачено наличными: ${data.paymentCash.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+        'Оплачено наличными: ${rub(data.paymentCash)}');
     buf.writeln(
-        'Оплачено с терминала: ${data.paymentTerminal.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+        'Оплачено с терминала: ${rub(data.paymentTerminal)}');
     buf.writeln(
-        'За счёт заведения: ${data.paymentComp.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+        'За счёт заведения: ${rub(data.paymentComp)}');
     if (data.tipsCash + data.tipsCard > 0) {
       buf.writeln('Чаевые (не выручка): наличными ${data.tipsCash.toStringAsFixed(0)}, '
-          'картой ${data.tipsCard.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+          'картой ${rub(data.tipsCard)}');
     }
     if (refundsCount > 0) buf.writeln('Возвратов: $refundsCount');
     Clipboard.setData(ClipboardData(text: buf.toString()));

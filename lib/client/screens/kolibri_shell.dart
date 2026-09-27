@@ -16,6 +16,7 @@ import 'kolibri_home_screen.dart';
 import 'kolibri_menu_screen.dart';
 import 'kolibri_profile_screen.dart';
 import 'kolibri_visit_screen.dart';
+import '../../utils/human_error.dart';
 
 /// Корневой каркас «Colibri Lounge»: 5 вкладок + плавающая кнопка
 /// ИИ-консьержа снизу справа, доступная с любого экрана.
@@ -92,7 +93,7 @@ class _KolibriShellState extends State<KolibriShell> {
         } on SessionTakenException catch (e) {
           if (!mounted) return;
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('$e')));
+              .showSnackBar(SnackBar(content: Text(humanError(e))));
           return;
         }
         if (!mounted) return;

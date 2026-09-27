@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../utils/shared_stream.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'venue_service.dart';
@@ -18,9 +19,17 @@ class ReservationService {
   // ---------- ЧТЕНИЕ ----------
 
   /// Брони на конкретный день (для экрана хостес на POS).
+  static final _dayS = SharedStreams<List<ReservationModel>>();
+
   Stream<List<ReservationModel>> dayStream(DateTime day) {
     final from = DateTime(day.year, day.month, day.day);
     final to = from.add(const Duration(days: 1));
+    // Общая подписка на день (см. SharedStreams): экран броней берёт её в
+    // build и не переподписывается на каждую перерисовку.
+    return _dayS.get('${AppScope.tenantId ?? '-'}|${from.toIso8601String()}', () => _dayQuery(from, to));
+  }
+
+  Stream<List<ReservationModel>> _dayQuery(DateTime from, DateTime to) {
     return _col
         .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
         .where('startTime', isLessThan: Timestamp.fromDate(to))

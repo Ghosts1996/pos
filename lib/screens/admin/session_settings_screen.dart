@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/app_scope.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
+import '../../utils/human_error.dart';
 
 /// Настройка длительности сеанса кальяна — у каждого заведения на платформе
 /// своё правило (где-то 1 час, где-то 2, где-то вообще без таймера), а
@@ -67,7 +68,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
         });
       }
     } catch (e) {
-      _error = 'Не удалось загрузить: $e';
+      _error = 'Не удалось загрузить: ${humanError(e, lower: true)}';
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -102,7 +103,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
             .showSnackBar(const SnackBar(content: Text('Сохранено')));
       }
     } catch (e) {
-      if (mounted) setState(() => _error = 'Не удалось сохранить: $e');
+      if (mounted) setState(() => _error = 'Не удалось сохранить: ${humanError(e, lower: true)}');
     } finally {
       if (mounted) setState(() => _saving = false);
     }

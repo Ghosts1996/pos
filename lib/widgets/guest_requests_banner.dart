@@ -3,6 +3,8 @@ import '../models/client_models.dart';
 import '../models/employee.dart';
 import '../services/guest_link_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/human_error.dart';
+import '../utils/money.dart';
 
 /// Компактная полоса обращений гостей над картой зала.
 ///
@@ -234,7 +236,7 @@ class GuestRequestsBanner extends StatelessWidget {
                 Text(
                   '${o.tableName.isEmpty ? 'Стол' : o.tableName} · '
                   '${o.items.map((i) => '${i.name}×${i.qty}').join(', ')} · '
-                  '${o.total.toStringAsFixed(0)} ₽',
+                  '${rub(o.total)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -262,7 +264,7 @@ class GuestRequestsBanner extends StatelessWidget {
                 }
               } catch (e) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
                 }
               }
             },

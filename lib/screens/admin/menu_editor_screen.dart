@@ -8,6 +8,8 @@ import '../../models/menu_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../utils/table_label.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Админ-редактор меню: категории, позиции и загрузка фото для них.
 /// Фото загружается через системный выбор (галерея/камера) и хранится в
@@ -165,7 +167,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   }
 
   String _buildItemSubtitle(MenuItem item) {
-    final priceStr = '${item.price.toStringAsFixed(0)} ₽';
+    final priceStr = rub(item.price);
     if (item.isComposite) {
       // Составная позиция: показываем суммарный вес всех компонентов
       final totalWeight = item.components.fold<double>(0, (sum, c) => sum + c.weight);
@@ -191,7 +193,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось загрузить фото: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось загрузить фото: ${humanError(e, lower: true)}')));
       }
     } finally {
       if (mounted) setState(() => _uploadingIds.remove(cat.id));
@@ -210,7 +212,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось загрузить фото: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось загрузить фото: ${humanError(e, lower: true)}')));
       }
     } finally {
       if (mounted) setState(() => _uploadingIds.remove(item.id));

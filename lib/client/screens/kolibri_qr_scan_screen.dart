@@ -6,6 +6,7 @@ import '../widgets/check_picker_sheet.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_profile_screen.dart';
+import '../../utils/human_error.dart';
 
 /// Сканер QR-кода стола.
 ///
@@ -111,7 +112,7 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
           if (!mounted) return;
           setState(() {
             _handling = false;
-            _error = '$e';
+            _error = humanError(e);
           });
           return;
         }
@@ -124,7 +125,7 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
       if (mounted) {
         setState(() {
           _handling = false;
-          _error = '$e';
+          _error = humanError(e);
         });
       }
     }

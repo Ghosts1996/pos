@@ -8,6 +8,7 @@ import '../models/table_model.dart';
 import '../utils/phone_utils.dart';
 import 'pii_gateway_service.dart';
 import 'push_service.dart';
+import '../utils/shared_stream.dart';
 
 /// Мост между POS и клиентским приложением «Colibri Lounge»:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -623,11 +624,17 @@ class GuestLinkService {
 
 
   /// Все открытые вызовы — баннер и подсветка столов на POS.
-  Stream<List<WaiterCall>> openCallsStream() => _calls
-      .where('status', isEqualTo: 'new')
-      .snapshots()
-      .map((s) => s.docs.map(WaiterCall.fromDoc).toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
+  /// Общие подписки (см. SharedStreams): баннер вызовов, плитки зала и
+  /// очередь заказов берут их в build — ссылка одна, переподписок нет.
+  static final _openCallsS = SharedStreams<List<WaiterCall>>();
+  static final _openOrdersS = SharedStreams<List<GuestOrder>>();
+
+  Stream<List<WaiterCall>> openCallsStream() => _openCallsS.get(
+      AppScope.tenantId ?? '-',
+      () => _calls
+          .where('status', isEqualTo: 'new')
+          .snapshots()
+          .map((s) => s.docs.map(WaiterCall.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt))));
 
   /// Вызовы конкретного гостя — для его же экрана «Мой стол».
   /// Вызовы гостя, ожидающие кальянщика.
@@ -693,11 +700,12 @@ class GuestLinkService {
   }
 
   /// Заказы, требующие внимания персонала: новые и те, что уже готовятся.
-  Stream<List<GuestOrder>> openGuestOrdersStream() => _orders
-      .where('status', whereIn: ['new', 'preparing'])
-      .snapshots()
-      .map((s) => s.docs.map(GuestOrder.fromDoc).toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
+  Stream<List<GuestOrder>> openGuestOrdersStream() => _openOrdersS.get(
+      AppScope.tenantId ?? '-',
+      () => _orders
+          .where('status', whereIn: ['new', 'preparing'])
+          .snapshots()
+          .map((s) => s.docs.map(GuestOrder.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt))));
 
   Stream<List<GuestOrder>> clientOrdersStream(String clientUid) => _orders
       .where('clientUid', isEqualTo: clientUid)

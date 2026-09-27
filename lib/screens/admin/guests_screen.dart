@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Справочник гостей «Colibri Lounge» для администратора: уровень
 /// лояльности, кешбэк, число визитов, сумма трат и бонусный баланс —
@@ -51,7 +53,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
         content: Text(
           'Профиль, номер телефона и история визитов гостя будут удалены '
           'безвозвратно.${profile.bonusBalance > 0 ? '\n\nНа счету ещё '
-              '${profile.bonusBalance.toStringAsFixed(0)} ₽ бонусов — они '
+              '${rub(profile.bonusBalance)} бонусов — они '
               'сгорят вместе с профилем.' : ''}'
           '${profile.activeSessionId.isNotEmpty ? '\n\nВНИМАНИЕ: гость сейчас '
               'сидит за столом — удаление профиля не закроет его чек, но '
@@ -78,7 +80,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось удалить: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось удалить: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -170,7 +172,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось объединить: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось объединить: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -235,8 +237,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                       subtitle: Text(
                         '${g.phone.isEmpty ? 'без телефона' : g.phone} · '
                         'уровень «${g.tier}» (${g.cashbackPercent.toStringAsFixed(0)}% кешбэк)\n'
-                        'Визитов: ${g.visits} · потрачено ${g.totalSpent.toStringAsFixed(0)} ₽ · '
-                        'бонусов ${g.bonusBalance.toStringAsFixed(0)} ₽',
+                        'Визитов: ${g.visits} · потрачено ${rub(g.totalSpent)} · '
+                        'бонусов ${rub(g.bonusBalance)}',
                       ),
                       isThreeLine: true,
                       trailing: PopupMenuButton<String>(

@@ -14,6 +14,7 @@ import 'kolibri_hall_map_screen.dart';
 import 'kolibri_qr_scan_screen.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// «Мой стол»: живой счёт гостя.
 ///
@@ -287,7 +288,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                       child: Row(
                         children: [
                           Expanded(child: Text('${i.name} ×${i.qty}')),
-                          Text('${i.total.toStringAsFixed(0)} ₽',
+                          Text(rub(i.total),
                               style: TextStyle(color: KolibriColors.textMuted)),
                         ],
                       ),
@@ -301,7 +302,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                             style: TextStyle(color: KolibriColors.gold)),
                       ),
                       Text(
-                        '−${(s.orderTotal - s.totalWithDiscount).toStringAsFixed(0)} ₽',
+                        '−${rub((s.orderTotal - s.totalWithDiscount))}',
                         style: TextStyle(color: KolibriColors.gold),
                       ),
                     ],
@@ -313,14 +314,14 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                       child: Text('Итого',
                           style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                     ),
-                    Text('${s.totalWithDiscount.toStringAsFixed(0)} ₽',
+                    Text(rub(s.totalWithDiscount),
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                   ],
                 ),
                 if ((widget.profile?.bonusBalance ?? 0) > 0) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'Доступно бонусов: ${widget.profile!.bonusBalance.toStringAsFixed(0)} ₽ — '
+                    'Доступно бонусов: ${rub(widget.profile!.bonusBalance)} — '
                     'скажите ${VenueService.instance.terms.staffDat}, чтобы списать при оплате',
                     style: TextStyle(color: KolibriColors.gold, fontSize: 12),
                   ),
@@ -531,7 +532,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text('Счёт (${tableLabel(tableName)}) закрыт на '
-              '${total.toStringAsFixed(0)} ₽.',
+              '${rub(total)}.',
               style: TextStyle(color: KolibriColors.textMuted)),
           if (bonusEarned > 0) ...[
             const SizedBox(height: 6),
@@ -676,7 +677,7 @@ class _TipsTotalLineState extends State<_TipsTotalLine> {
           final onBill = (snap.data ?? const <TipModel>[]).where((t) => t.onBill);
           final sum = onBill.fold<double>(0, (a, t) => a + t.amount);
           if (sum <= 0) return const SizedBox.shrink();
-          return Text('Чаевые к счёту: ${sum.toStringAsFixed(0)} ₽ — возьмём вместе с оплатой',
+          return Text('Чаевые к счёту: ${rub(sum)} — возьмём вместе с оплатой',
               style: const TextStyle(color: KolibriColors.success, fontSize: 13));
         },
       );

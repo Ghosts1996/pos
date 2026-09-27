@@ -18,6 +18,7 @@ import '../services/guest_link_service.dart';
 import '../services/ai/ai_agents.dart';
 import '../models/client_models.dart';
 import 'ai_assistant_sheet.dart';
+import '../utils/human_error.dart';
 
 /// Меню сотрудника — боковая панель: зал, брони, очередь заказов, лист
 /// ожидания, смена, X-отчёт, история чеков, склад и ассистент зала.
@@ -47,7 +48,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось открыть смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось открыть смену: ${humanError(e, lower: true)}')));
       }
     }
     if (mounted) setState(() => _busy = false);
@@ -80,7 +81,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось закрыть смену: ${humanError(e, lower: true)}')));
       }
     }
     if (mounted) setState(() => _busy = false);
@@ -104,7 +105,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось начать смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось начать смену: ${humanError(e, lower: true)}')));
       }
     }
     if (mounted) setState(() => _myShiftBusy = false);
@@ -121,7 +122,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось закончить смену: $e')));
+            .showSnackBar(SnackBar(content: Text('Не удалось закончить смену: ${humanError(e, lower: true)}')));
       }
     }
     if (mounted) setState(() => _myShiftBusy = false);

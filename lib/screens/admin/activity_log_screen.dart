@@ -5,6 +5,8 @@ import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_scheduler.dart';
 import '../../services/audit_log_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 /// Три ленты в одном экране:
 ///  • «Сводки ИИ» — что фоновые агенты нашли и предложили;
@@ -195,7 +197,7 @@ class _AuditTabState extends State<_AuditTab> {
                           );
                           if (mounted) setState(() => _aiResult = text);
                         } catch (e) {
-                          if (mounted) setState(() => _aiResult = 'Ошибка: $e');
+                          if (mounted) setState(() => _aiResult = 'Ошибка: ${humanError(e, lower: true)}');
                         }
                         if (mounted) setState(() => _busy = false);
                       },
@@ -239,7 +241,7 @@ class _AuditTabState extends State<_AuditTab> {
                     ),
                     trailing: amount == 0
                         ? null
-                        : Text('${amount.toStringAsFixed(0)} ₽',
+                        : Text(rub(amount),
                             style: const TextStyle(color: AppColors.textMuted)),
                   );
                 },

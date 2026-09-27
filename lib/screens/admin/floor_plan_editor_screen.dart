@@ -7,6 +7,7 @@ import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
 import '../../widgets/hall_plan_view.dart';
 import '../../widgets/table_tile.dart';
+import '../../utils/human_error.dart';
 
 /// Редактор карты зала: зоны, расстановка столов перетаскиванием,
 /// добавление, переименование и удаление.
@@ -80,7 +81,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
       ));
       if (result.zone != _zone) setState(() => _zone = result.zone);
     } catch (e) {
-      _snack('Не удалось добавить стол: $e');
+      _snack('Не удалось добавить стол: ${humanError(e, lower: true)}');
     }
   }
 
@@ -109,7 +110,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
       } on TableOccupiedDeleteException catch (e) {
         _snack(e.toString());
       } catch (e) {
-        _snack('Не удалось удалить стол: $e');
+        _snack('Не удалось удалить стол: ${humanError(e, lower: true)}');
       }
       return;
     }
@@ -126,7 +127,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         _snack('«${result.name}» перенесён в зону «${result.zone.isEmpty ? kNoZoneLabel : result.zone}»');
       }
     } catch (e) {
-      _snack('Не удалось сохранить стол: $e');
+      _snack('Не удалось сохранить стол: ${humanError(e, lower: true)}');
     }
   }
 
@@ -276,7 +277,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     double snap(double v) => (v / 20).round() * 20.0;
     final f = hallFractionForCenter(snap(local.dx), snap(local.dy));
     setState(() => _moved[t.id] = f);
-    _fs.updateTablePosition(t.id, f.x, f.y).catchError((e) => _snack('Не удалось переставить стол: $e'));
+    _fs.updateTablePosition(t.id, f.x, f.y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
   }
 
   @override

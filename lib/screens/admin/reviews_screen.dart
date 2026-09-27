@@ -4,6 +4,7 @@ import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/phone_utils.dart';
+import '../../utils/human_error.dart';
 
 /// Отзывы гостей — кто, когда и что поставил.
 ///
@@ -61,7 +62,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         stream: _link.recentReviewsStream(limit: 100),
         builder: (context, snap) {
           if (snap.hasError) {
-            return Center(child: Text('Ошибка: ${snap.error}'));
+            return Center(child: Text('Ошибка: ${humanError(snap.error, lower: true)}'));
           }
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/client_models.dart';
 import '../services/guest_link_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/human_error.dart';
+import '../utils/money.dart';
 
 /// Панель списания бонусов на экране оплаты.
 ///
@@ -130,7 +132,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '$e';
+          _error = humanError(e);
         });
       }
     }
@@ -155,7 +157,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '$e';
+          _error = humanError(e);
         });
       }
     }
@@ -181,7 +183,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                   style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
               const Spacer(),
               if (_applied > 0)
-                Text('Списано ${_applied.toStringAsFixed(0)} ₽',
+                Text('Списано ${rub(_applied)}',
                     style: const TextStyle(color: AppColors.success)),
             ],
           ),
@@ -227,7 +229,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                             color: AppColors.textPrimary, fontSize: 13),
                       ),
                       Text(
-                        'Баланс ${_profile!.bonusBalance.toStringAsFixed(0)} ₽'
+                        'Баланс ${rub(_profile!.bonusBalance)}'
                         '${_profile!.phone.isEmpty ? '' : ' · ${_profile!.phone}'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -246,7 +248,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
             const SizedBox(height: 10),
             if (_applied == 0) ...[
               Text(
-                'Можно списать до ${_limit.toStringAsFixed(0)} ₽ '
+                'Можно списать до ${rub(_limit)} '
                 '(не более ${(widget.maxShare * 100).round()}% чека)',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
@@ -260,7 +262,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                     OutlinedButton(onPressed: _busy ? null : () => _redeem(500), child: const Text('500 ₽')),
                   FilledButton(
                     onPressed: _busy || _limit <= 0 ? null : () => _redeem(_limit),
-                    child: Text('Списать ${_limit.toStringAsFixed(0)} ₽'),
+                    child: Text('Списать ${rub(_limit)}'),
                   ),
                 ],
               ),

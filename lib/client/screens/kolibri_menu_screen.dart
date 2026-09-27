@@ -6,6 +6,9 @@ import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/human_error.dart';
+import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// Живое меню заведения для гостя.
 ///
@@ -241,7 +244,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.price.toStringAsFixed(0)} ₽'
+                  '${rub(item.price)}'
                   '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.name}' : ''}',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                 ),
@@ -313,9 +316,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${_cart.length} позиции',
+                  Text('${_cart.length} ${pluralRu(_cart.length, 'позиция', 'позиции', 'позиций')}',
                       style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
-                  Text('${_cartTotal.toStringAsFixed(0)} ₽',
+                  Text(rub(_cartTotal),
                       style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 ],
               ),
@@ -366,7 +369,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
     }
     if (mounted) setState(() => _sending = false);

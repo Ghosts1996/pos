@@ -3,6 +3,8 @@ import '../../models/employee.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
+import '../../utils/table_label.dart';
 
 /// Табель личных смен сотрудников — учёт отработанного времени для расчёта
 /// зарплаты (см. PayrollScreen и PayrollCalculator). Это НЕ кассовая смена
@@ -55,7 +57,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       // спиннер крутиться вечно без единого объяснения.
       if (!mounted) return;
       setState(() {
-        _error = 'Не удалось загрузить: $e';
+        _error = 'Не удалось загрузить: ${humanError(e, lower: true)}';
         _loading = false;
       });
     }
@@ -380,7 +382,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Text('Всего: ${filtered.length} смен, ${totalHours.toStringAsFixed(1)} ч',
+          child: Text('Всего: ${filtered.length} ${pluralRu(filtered.length, 'смена', 'смены', 'смен')}, ${totalHours.toStringAsFixed(1).replaceAll('.', ',')} ч',
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
         Expanded(
@@ -394,7 +396,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
                 title: Text(s.employeeName),
                 subtitle: Text(
                   '${_fmtDateTime(s.startedAt)} — ${s.endedAt != null ? _fmtDateTime(s.endedAt!) : "…"}'
-                  ' · ${hours.toStringAsFixed(1)} ч${s.manual ? " · вручную" : ""}',
+                  ' · ${hours.toStringAsFixed(1).replaceAll('.', ',')} ч${s.manual ? " · вручную" : ""}',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,

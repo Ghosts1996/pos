@@ -18,6 +18,7 @@ import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
 import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
+import '../../utils/money.dart';
 
 /// Профиль гостя: имя, телефон, бонусы, история операций.
 ///
@@ -379,7 +380,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               const SizedBox(height: 6),
               Text(
                 'Визитов: ${p?.visits ?? 0} · потрачено '
-                '${(p?.totalSpent ?? 0).toStringAsFixed(0)} ₽ · кешбэк '
+                '${rub((p?.totalSpent ?? 0))} · кешбэк '
                 '${(p?.cashbackPercent ?? 3).toStringAsFixed(0)}%',
                 style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
               ),
@@ -402,7 +403,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   p.nextTier == null
                       ? 'Максимальный уровень — спасибо, что вы с нами'
                       : 'До уровня «${p.nextTier!.name}» осталось '
-                          '${p.toNextTier.toStringAsFixed(0)} ₽ '
+                          '${rub(p.toNextTier)} '
                           '(кешбэк вырастет до ${p.nextTier!.cashback.toStringAsFixed(0)}%)',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
                 ),
@@ -576,7 +577,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                     '${date.month.toString().padLeft(2, '0')}.${date.year}',
                     style: const TextStyle(fontSize: 12),
                   ),
-                  trailing: Text('${amount.toStringAsFixed(0)} ₽'),
+                  trailing: Text(rub(amount)),
                 );
               }).toList(),
             );
@@ -685,7 +686,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                 ),
               ),
-              Text('${v.total.toStringAsFixed(0)} ₽',
+              Text(rub(v.total),
                   style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
             ],
           ),
@@ -701,7 +702,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             Text(
               [
                 if (v.bonusEarned > 0) '+${bonusesLabel(v.bonusEarned)}',
-                if (v.bonusSpent > 0) 'списано ${v.bonusSpent.toStringAsFixed(0)} ₽ бонусами',
+                if (v.bonusSpent > 0) 'списано ${rub(v.bonusSpent)} бонусами',
               ].join(' · '),
               style: const TextStyle(color: KolibriColors.success, fontSize: 12),
             ),

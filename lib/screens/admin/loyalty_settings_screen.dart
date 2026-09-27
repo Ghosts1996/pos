@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/app_scope.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/human_error.dart';
 
 /// Настройка порогов и процента кешбека программы лояльности гостя —
 /// те же 5 уровней (Бронза/Серебро/Золото/Платина/Алмаз), что показаны
@@ -73,7 +74,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
         }
       }
     } catch (e) {
-      _error = 'Не удалось загрузить: $e';
+      _error = 'Не удалось загрузить: ${humanError(e, lower: true)}';
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -90,7 +91,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
       }
       final cashback = double.tryParse(r.cashback.text.replaceAll(',', '.').trim());
       if (cashback == null || cashback < 0 || cashback > 100) {
-        setState(() => _error = 'Кешбек уровня «${r.name}» должен быть от 0 до 100%');
+        setState(() => _error = 'Кешбэк уровня «${r.name}» должен быть от 0 до 100%');
         return;
       }
       parsed.add((name: r.name, from: from, cashback: cashback));
@@ -120,7 +121,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
             .showSnackBar(const SnackBar(content: Text('Сохранено')));
       }
     } catch (e) {
-      if (mounted) setState(() => _error = 'Не удалось сохранить: $e');
+      if (mounted) setState(() => _error = 'Не удалось сохранить: ${humanError(e, lower: true)}');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -137,7 +138,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
               children: [
                 const Text(
                   'Уровень гостя считается по сумме ВСЕХ его закрытых чеков за всё '
-                  'время. Процент кешбека начисляется бонусами при оплате — '
+                  'время. Процент кешбэка начисляется бонусами при оплате — '
                   '1 бонус = 1 ₽.',
                   style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                 ),
@@ -159,7 +160,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
                         child: TextField(
                           controller: r.cashback,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'Кешбек, %'),
+                          decoration: const InputDecoration(labelText: 'Кешбэк, %'),
                         ),
                       ),
                     ],

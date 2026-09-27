@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import '../../models/table_model.dart';
 import '../../services/guest_link_service.dart';
 import 'kolibri_auth_service.dart';
+import '../../utils/human_error.dart';
 
 /// Обработка ссылок вида `kolibri://table/{tableId}`.
 ///
@@ -79,9 +80,9 @@ class KolibriDeepLinks {
       }
       onTableBound?.call(result.sessionId!);
     } on SessionTakenException catch (e) {
-      onFailed?.call('$e');
+      onFailed?.call(humanError(e));
     } catch (e) {
-      onFailed?.call('Не удалось открыть стол: $e');
+      onFailed?.call('Не удалось открыть стол: ${humanError(e, lower: true)}');
     }
   }
 

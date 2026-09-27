@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'push_service.dart';
+import '../utils/table_label.dart';
 
 /// Дни рождения гостей.
 ///
@@ -99,7 +100,7 @@ class BirthdayService {
     if (list.isNotEmpty) {
       await AppScope.col('staffNotes').add({
         'title': 'Именинники',
-        'text': 'Через $daysBefore дня отмечают: ${list.map((e) => e.name).join(', ')}. '
+        'text': 'Через $daysBefore ${pluralRu(daysBefore, 'день', 'дня', 'дней')} отмечают: ${list.map((e) => e.name).join(', ')}. '
             'Подарочные бонусы начислены.',
         'priority': 'info',
         'source': 'birthday',

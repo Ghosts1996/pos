@@ -10,6 +10,7 @@ import '../../services/chestny_znak_api_service.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
 import '../../models/fiscal_receipt.dart';
+import '../../utils/human_error.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
 /// ЕГАИС. Значения хранятся в Firestore (settings/integrations), чтобы не
@@ -214,7 +215,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     try {
       devices = await BluetoothReceiptPrinter.pairedDevices();
     } catch (e) {
-      _showSnack('Не удалось получить список Bluetooth-устройств: $e');
+      _showSnack('Не удалось получить список Bluetooth-устройств: ${humanError(e, lower: true)}');
       return;
     }
     if (!mounted) return;
@@ -271,7 +272,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       ));
       setState(() => _testResult = 'Чек отправлен на печать');
     } catch (e) {
-      setState(() => _testResult = 'Ошибка печати: $e');
+      setState(() => _testResult = 'Ошибка печати: ${humanError(e, lower: true)}');
     } finally {
       setState(() => _testing = false);
     }
@@ -425,7 +426,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 : 'Код найден и не продан — можно продавать');
       }
     } catch (e) {
-      setState(() => _czTestResult = 'Ошибка: $e');
+      setState(() => _czTestResult = 'Ошибка: ${humanError(e, lower: true)}');
     } finally {
       if (mounted) setState(() => _czTesting = false);
     }

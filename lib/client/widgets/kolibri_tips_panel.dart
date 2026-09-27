@@ -8,6 +8,7 @@ import '../../services/tips_service.dart';
 import '../../services/venue_service.dart';
 import '../../utils/constants.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/money.dart';
 
 /// Чаевые из приложения гостя.
 ///
@@ -136,7 +137,7 @@ class _KolibriTipsPanelState extends State<KolibriTipsPanel> {
             if (bill > 0)
               for (final p in _percents)
                 _chip(
-                  label: '$p% · ${tipFromPercent(bill, p).toStringAsFixed(0)} ₽',
+                  label: '$p% · ${rub(tipFromPercent(bill, p))}',
                   selected: preset == p,
                   onTap: () => setState(() => _preset = p),
                 )
@@ -175,7 +176,7 @@ class _KolibriTipsPanelState extends State<KolibriTipsPanel> {
                 ? null
                 : () => _leave(amount, selected, team, session, method: 'bill'),
             child: Text(amount > 0
-                ? 'Добавить к счёту · ${amount.toStringAsFixed(0)} ₽'
+                ? 'Добавить к счёту · ${rub(amount)}'
                 : 'Добавить к счёту'),
           ),
         ),
@@ -279,7 +280,7 @@ class _KolibriTipsPanelState extends State<KolibriTipsPanel> {
       _custom.clear();
       _snack(method == 'link'
           ? 'Спасибо! ${to?.name ?? 'Сотрудник'} увидит, что вы перевели чаевые'
-          : 'Спасибо! ${amount.toStringAsFixed(0)} ₽ добавим к счёту — '
+          : 'Спасибо! ${rub(amount)} добавим к счёту — '
               '${VenueService.instance.terms.staff} возьмёт их при оплате');
     } catch (_) {
       _snack('Не удалось отправить — проверьте связь');
@@ -306,7 +307,7 @@ class _KolibriTipsPanelState extends State<KolibriTipsPanel> {
                       children: [
                         Expanded(
                           child: Text(
-                            '${t.amount.toStringAsFixed(0)} ₽ — ${t.recipientLabel} · ${_status(t)}',
+                            '${rub(t.amount)} — ${t.recipientLabel} · ${_status(t)}',
                             style: TextStyle(
                               fontSize: 13,
                               color: t.status == 'paid' ? KolibriColors.success : KolibriColors.textPrimary,

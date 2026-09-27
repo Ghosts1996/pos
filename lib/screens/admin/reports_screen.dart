@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
-import '../../utils/constants.dart';
 import '../../utils/table_label.dart';
+import '../../utils/human_error.dart';
+import '../../utils/money.dart';
 
 enum _Period { today, week, month, custom }
 
@@ -158,7 +159,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text('Не удалось загрузить отчёт: ${snap.error}',
+                      child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
                           textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
                     ),
                   );
@@ -182,7 +183,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               title: Text(e.key),
                               subtitle: Text('${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')}'),
                               trailing: Text(
-                                '${e.value.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                                rub(e.value.revenue),
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
@@ -195,7 +196,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               title: Text(i.name),
                               subtitle: Text('${i.qty} шт.'),
                               trailing: Text(
-                                '${i.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}',
+                                rub(i.revenue),
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
@@ -208,7 +209,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             leading: const Icon(Icons.card_giftcard),
                             title: Text('Применено ${stats.cardsUsed} раз'),
                             subtitle: Text(
-                                'Скидок на сумму ${stats.totalDiscountGiven.toStringAsFixed(0)} ${AppConstants.currencySymbol}'),
+                                'Скидок на сумму ${rub(stats.totalDiscountGiven)}'),
                           ),
                         ),
                       ],
@@ -218,9 +219,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         Card(
                           child: ListTile(
                             leading: const Icon(Icons.money_off, color: Colors.orange),
-                            title: Text('${stats.unpaidClosed} чек(ов)'),
+                            title: Text('${stats.unpaidClosed} ${pluralRu(stats.unpaidClosed, 'чек', 'чека', 'чеков')}'),
                             subtitle: Text(
-                                'На сумму ${stats.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (не входит в выручку)'),
+                                'На сумму ${rub(stats.unpaidAmount)} (не входит в выручку)'),
                           ),
                         ),
                       ],
@@ -232,7 +233,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             leading: const Icon(Icons.undo, color: Colors.orange),
                             title: Text('${stats.refunds} возвратов'),
                             subtitle: Text(
-                                'На сумму ${stats.refundedAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol} (не входит в выручку)'),
+                                'На сумму ${rub(stats.refundedAmount)} (не входит в выручку)'),
                           ),
                         ),
                       ],
@@ -262,9 +263,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Widget _summaryGrid(_ReportStats stats) {
     final cards = [
-      _statCard('Выручка', '${stats.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}', Icons.payments_outlined),
+      _statCard('Выручка', rub(stats.revenue), Icons.payments_outlined),
       _statCard('Визитов', '${stats.visits}', Icons.event_seat_outlined),
-      _statCard('Средний чек', '${stats.averageCheck.toStringAsFixed(0)} ${AppConstants.currencySymbol}', Icons.receipt_long_outlined),
+      _statCard('Средний чек', rub(stats.averageCheck), Icons.receipt_long_outlined),
       _statCard('Перезабивок', '${stats.refills}', Icons.refresh),
     ];
     return GridView.count(
@@ -312,28 +313,28 @@ class _ReportsScreenState extends State<ReportsScreen> {
   void _copyReport(_ReportStats stats, DateTimeRange range) {
     final buf = StringBuffer();
     buf.writeln('Отчёт: ${_formatRange(range)}');
-    buf.writeln('Выручка: ${stats.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    buf.writeln('Выручка: ${rub(stats.revenue)}');
     buf.writeln('Визитов: ${stats.visits}');
-    buf.writeln('Средний чек: ${stats.averageCheck.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+    buf.writeln('Средний чек: ${rub(stats.averageCheck)}');
     buf.writeln('Перезабивок: ${stats.refills}');
     if (stats.refunds > 0) {
       buf.writeln(
-          'Возвратов: ${stats.refunds} на сумму ${stats.refundedAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+          'Возвратов: ${stats.refunds} на сумму ${rub(stats.refundedAmount)}');
     }
     if (stats.unpaidClosed > 0) {
       buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed} на сумму '
-          '${stats.unpaidAmount.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+          '${rub(stats.unpaidAmount)}');
     }
     if (stats.byEmployee.isNotEmpty) {
       buf.writeln('\nПо сотрудникам:');
       for (final e in stats.byEmployee.entries) {
-        buf.writeln('  ${e.key}: ${e.value.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol} (${e.value.visits} визитов)');
+        buf.writeln('  ${e.key}: ${rub(e.value.revenue)} (${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')})');
       }
     }
     if (stats.topItems.isNotEmpty) {
       buf.writeln('\nПопулярные позиции:');
       for (final i in stats.topItems) {
-        buf.writeln('  ${i.name}: ${i.qty} шт. — ${i.revenue.toStringAsFixed(0)} ${AppConstants.currencySymbol}');
+        buf.writeln('  ${i.name}: ${i.qty} шт. — ${rub(i.revenue)}');
       }
     }
     Clipboard.setData(ClipboardData(text: buf.toString()));
