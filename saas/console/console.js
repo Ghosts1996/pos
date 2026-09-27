@@ -2385,7 +2385,10 @@ function watchDashboardData(tenantId) {
       <div class="dash-greeting">${esc(greetingLine())} 👋</div>
       <div class="card">
         <div class="muted small">Заведение</div>
-        <div style="font-size:20px;font-weight:700;margin:4px 0">${esc(tenant.name || '')}</div>
+        <div class="row" style="align-items:center;gap:8px;margin:4px 0">
+          <div style="font-size:20px;font-weight:700">${esc(tenant.name || '')}</div>
+          ${role === 'owner' || role === 'admin' ? '<button type="button" class="btn-link small" id="f-tenant-rename">Переименовать</button>' : ''}
+        </div>
         <div class="small muted">
           Код: <code>${esc(tenant.slug || '')}</code> ·
           статус: ${esc(TENANT_STATUS_LABELS[tenant.status] || tenant.status || '—')} ·
@@ -3013,6 +3016,22 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    // Название заведения — то, что видно в шапке кабинета и в панели
+    // платформы. Название в приложениях гостя и кассы задаётся отдельно,
+    // в «Брендинге». Правила разрешают владельцу/админу менять только name.
+    const renameBtn = $('f-tenant-rename');
+    if (renameBtn) renameBtn.onclick = async () => {
+      const next = (window.prompt('Новое название заведения', tenant.name || '') || '').trim();
+      if (!next || next === tenant.name) return;
+      if (next.length > 80) { alert('Слишком длинное название — не больше 80 символов'); return; }
+      try {
+        await updateDoc(doc(state.db, 'tenants', tenantId), { name: next, updatedAt: Timestamp.now() });
+        tenant.name = next;
+        draw();
+      } catch (e) {
+        alert('Не удалось переименовать: ' + (e?.message || e));
+      }
+    };
     document.querySelectorAll('.f-chain-location-switch').forEach((el) => {
       el.onclick = () => { state.activeTenantId = el.dataset.id; route(); };
     });
