@@ -48,18 +48,17 @@ class AppConstants {
     return 'часов';
   }
 
-  /// «1.5 часа» / «2 часа» / «45 мин» / «без ограничений» — для кнопки
-  /// "Начать сеанс" и диалога перезабивки.
+  /// «1,5 часа» / «2 часа» / «45 мин» / «1 ч 40 мин» / «без ограничений» —
+  /// для экрана стола и диалога перезабивки. Десятичная запятая, как
+  /// принято по-русски; некруглые значения — часами и минутами, а не
+  /// «1.7 часа».
   static String formatSessionDuration(int minutes) {
     if (isUnlimitedMinutes(minutes)) return 'без ограничений';
     if (minutes < 60) return '$minutes мин';
-    if (minutes % 60 == 0) {
-      final h = minutes ~/ 60;
-      return '$h ${_pluralHours(h)}';
-    }
-    final h = minutes / 60;
-    final hStr = h == h.roundToDouble() ? h.toStringAsFixed(0) : h.toStringAsFixed(1);
-    return '$hStr часа';
+    final h = minutes ~/ 60;
+    if (minutes % 60 == 0) return '$h ${_pluralHours(h)}';
+    if (minutes % 60 == 30) return '$h,5 часа';
+    return '$h ч ${minutes % 60} мин';
   }
 
   // Пороговое время (в минутах), после которого стол подсвечивается жёлтым

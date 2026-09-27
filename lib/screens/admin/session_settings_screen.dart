@@ -44,7 +44,13 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
     super.dispose();
   }
 
-  static String _numStr(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+  static String _numStr(double v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toString().replaceAll('.', ',');
+
+  int? get _currentMinutes {
+    final h = double.tryParse(_hoursCtrl.text.replaceAll(',', '.').trim());
+    return h == null ? null : (h * 60).round();
+  }
 
   Future<void> _load() async {
     try {
@@ -130,12 +136,27 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
                 ),
                 if (!_unlimited) ...[
                   const SizedBox(height: 8),
+                  // Частые варианты — одним нажатием; своё значение — в поле ниже.
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final m in const [60, 90, 120, 180])
+                        ChoiceChip(
+                          label: Text(AppConstants.formatSessionDuration(m)),
+                          selected: _currentMinutes == m,
+                          onSelected: (_) => setState(() => _hoursCtrl.text = _numStr(m / 60)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _hoursCtrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
-                      labelText: 'Длительность, часов',
-                      hintText: 'Например, 1.5',
+                      labelText: 'Своя длительность, часов',
+                      hintText: 'Например, 1,5',
                     ),
                   ),
                 ],

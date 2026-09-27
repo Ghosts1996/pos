@@ -1197,7 +1197,8 @@ void main() {
     test('formatSessionDuration — целые и дробные часы, минуты, "без ограничений"', () {
       expect(AppConstants.formatSessionDuration(45), '45 мин');
       expect(AppConstants.formatSessionDuration(60), '1 час');
-      expect(AppConstants.formatSessionDuration(90), '1.5 часа');
+      expect(AppConstants.formatSessionDuration(90), '1,5 часа');
+      expect(AppConstants.formatSessionDuration(100), '1 ч 40 мин');
       expect(AppConstants.formatSessionDuration(120), '2 часа');
       expect(AppConstants.formatSessionDuration(300), '5 часов');
       expect(AppConstants.formatSessionDuration(AppConstants.unlimitedSessionMinutes),
