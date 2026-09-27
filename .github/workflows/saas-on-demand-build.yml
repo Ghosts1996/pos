@@ -254,6 +254,10 @@ jobs:
           add_permission "android.permission.FOREGROUND_SERVICE"
           add_permission "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
           add_permission "android.permission.WAKE_LOCK"
+          # Обновление изнутри приложения (AppUpdateService): скачанный APK
+          # новой версии открывается системным установщиком — без этого
+          # разрешения Android молча отказывается его ставить.
+          add_permission "android.permission.REQUEST_INSTALL_PACKAGES"
 
           # Касса ходит к УТМ ЕГАИС по http:// в локальной сети заведения
           # (УТМ не умеет HTTPS) — Android 9+ без этого флага молча
@@ -564,10 +568,19 @@ jobs:
           # гостю, в отличие от кассы, код приглашения не нужен вообще), так
           # что проще передавать одинаково в обе, чем городить matrix-условие
           # только ради одной лишней переменной окружения без эффекта.
+          # --build-number — versionCode APK. Номер запуска растёт с каждой
+          # сборкой, поэтому новая версия ставится ПОВЕРХ старой (Android не
+          # даёт поставить версию с меньшим versionCode), а IN_APP_UPDATES
+          # включает в приложении плашку «Вышла новая версия» — см.
+          # lib/services/app_update_service.dart и handleAppUpdate в
+          # saas-gateway/server.js. Обновление поверх требует ещё и той же
+          # подписи — см. шаг "Configure release signing" выше.
           flutter build apk --release \
             -t ${{ matrix.entrypoint }} \
+            --build-number=${{ github.run_number }} \
             --dart-define=SAAS_MODE=true \
             --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=IN_APP_UPDATES=true \
             --dart-define=SAAS_FIREBASE_API_KEY="$SAAS_FIREBASE_API_KEY" \
             --dart-define=SAAS_FIREBASE_APP_ID="$SAAS_FIREBASE_APP_ID" \
             --dart-define=SAAS_FIREBASE_MESSAGING_SENDER_ID="$SAAS_FIREBASE_MESSAGING_SENDER_ID" \
@@ -664,7 +677,7 @@ jobs:
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ steps.jobid.outputs.value }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"success\",\"buildNumber\":${{ github.run_number }},\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ steps.jobid.outputs.value }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
       - name: Report failure to buildJobs
         if: failure()
@@ -776,8 +789,10 @@ jobs:
           fi
           flutter build windows --release \
             -t lib/main.dart \
+            --build-number=${{ github.run_number }} \
             --dart-define=SAAS_MODE=true \
             --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=IN_APP_UPDATES=true \
             --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
             --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL" \
             --dart-define=SAAS_PRESET_SLUG="$TENANT_SLUG" \
@@ -869,7 +884,7 @@ jobs:
           curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
-            -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"success\",\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id_pos_windows }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"success\",\"buildNumber\":${{ github.run_number }},\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id_pos_windows }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
       - name: Report failure to buildJobs
         if: failure()

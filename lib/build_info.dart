@@ -24,6 +24,13 @@ const String kBuildNumber = String.fromEnvironment(
 /// собираемые сейчас APK ведут себя ровно как до появления SaaS-режима.
 const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
 
+/// true — сборка из конвейера «Собрать APK» (saas-on-demand-build.yml,
+/// `--dart-define=IN_APP_UPDATES=true`): приложение само узнаёт о новой
+/// версии своего заведения и ставит её поверх (см. AppUpdateService).
+/// У публичной универсальной сборки и одно-арендных APK номера сборок идут
+/// из других workflow и между собой не сравнимы — там выключено.
+const bool kInAppUpdates = bool.fromEnvironment('IN_APP_UPDATES');
+
 /// URL шлюза первичной записи персональных данных гостей (имя/телефон) —
 /// см. `pii-gateway/README.md`. Задаётся в CI:
 /// `--dart-define=PII_GATEWAY_URL=https://...`.

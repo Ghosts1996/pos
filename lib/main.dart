@@ -10,6 +10,7 @@ import 'firebase_options.dart';
 import 'models/tenant_models.dart';
 import 'services/app_bootstrap.dart';
 import 'services/app_scope.dart';
+import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
@@ -18,6 +19,7 @@ import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
+import 'widgets/app_update_banner.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
 // Используется ТОЛЬКО для хранения фото меню (Storage) — anon key публичный
@@ -116,6 +118,9 @@ void main() async {
     }
   }
 
+  // Обновления изнутри — только у сборок из «Собрать APK» (см. AppUpdateService).
+  AppUpdateService.start(app: 'pos');
+
   runApp(HookahPosApp(
     ready: ready,
     needsPairing: needsPairing,
@@ -172,10 +177,15 @@ class HookahPosApp extends StatelessWidget {
       // false навсегда) — builder оборачивает ЛЮБОЙ текущий экран, а не
       // только "домашний": перекрывает происходящее посреди смены, а не
       // только при запуске.
-      builder: (context, child) => ValueListenableBuilder<bool>(
-        valueListenable: SubscriptionGate.blocked,
-        builder: (context, isBlocked, _) =>
-            isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+      //
+      // Поверх — плашка «Вышла новая версия» (AppUpdateBanner): видна на
+      // любом экране, обновление качается и ставится прямо из кассы.
+      builder: (context, child) => AppUpdateBanner(
+        child: ValueListenableBuilder<bool>(
+          valueListenable: SubscriptionGate.blocked,
+          builder: (context, isBlocked, _) =>
+              isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+        ),
       ),
     );
   }
