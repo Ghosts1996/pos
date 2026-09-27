@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/app_scope.dart';
 import '../utils/constants.dart';
+import '../utils/promo_policy.dart';
 import 'session_model.dart';
 import 'table_model.dart';
 
@@ -588,6 +589,7 @@ Future<void> loadLoyaltyTierSettings() async {
     final doc = await AppScope.col('settings').doc('loyalty').get();
     final raw = doc.data()?['tiers'];
     if (raw is List) ClientProfile.applyTiers(raw);
+    PromoPolicy.apply(doc.data());
   } catch (_) {
     // Нет сети/документа/прав — работаем с дефолтными порогами.
   }

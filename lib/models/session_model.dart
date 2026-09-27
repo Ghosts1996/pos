@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../utils/promo_policy.dart';
+
 class OrderItem {
   // Id позиции меню, из которой добавлена эта строка заказа.
   // Нужен, чтобы при повторном добавлении той же позиции увеличивалось
@@ -9,11 +11,16 @@ class OrderItem {
   final double price;
   final int qty;
 
+  /// Табачная/никотиновая позиция (кальян) — без скидок и бонусов, см.
+  /// PromoPolicy. Ставится при добавлении по названию позиции и категории.
+  final bool noPromo;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
     required this.price,
     required this.qty,
+    this.noPromo = false,
   });
 
   factory OrderItem.fromMap(Map<String, dynamic> m) => OrderItem(
@@ -21,16 +28,23 @@ class OrderItem {
         name: m['name'] ?? '',
         price: (m['price'] ?? 0).toDouble(),
         qty: m['qty'] ?? 1,
+        noPromo: m['noPromo'] == true,
       );
 
-  Map<String, dynamic> toMap() =>
-      {'menuItemId': menuItemId, 'name': name, 'price': price, 'qty': qty};
+  Map<String, dynamic> toMap() => {
+        'menuItemId': menuItemId,
+        'name': name,
+        'price': price,
+        'qty': qty,
+        if (noPromo) 'noPromo': true,
+      };
 
   OrderItem copyWith({int? qty}) => OrderItem(
         menuItemId: menuItemId,
         name: name,
         price: price,
         qty: qty ?? this.qty,
+        noPromo: noPromo,
       );
 
   double get total => price * qty;
@@ -210,7 +224,10 @@ class SessionModel {
 
   double get orderTotal => orderItems.fold(0.0, (acc, item) => acc + item.total);
 
-  double get totalWithDiscount => orderTotal * (1 - discountPercent / 100);
+  /// Скидка — только на позиции, которые можно удешевлять (кальяны по
+  /// умолчанию нет, см. PromoPolicy).
+  double get promoBase => PromoPolicy.promoBase(orderItems);
+  double get totalWithDiscount => orderTotal - promoBase * discountPercent / 100;
 
   /// Сумма, фактически принятая при оплате (нал + карта + терминал + за счёт заведения)
   double get paymentTotal => paymentCash + paymentCard + paymentTerminal + paymentComp;
