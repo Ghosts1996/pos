@@ -288,6 +288,8 @@ class KolibriTheme {
           TextStyle(fontSize: 12, color: KolibriColors.textMuted),
         ),
       ),
+      // Поля по бокам 20 вместо 40 — на узком телефоне окнам не хватало ширины.
+      dialogTheme: const DialogThemeData(insetPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 24)),
       dividerColor: KolibriColors.border,
       textTheme: base.textTheme.apply(
         bodyColor: KolibriColors.textPrimary,

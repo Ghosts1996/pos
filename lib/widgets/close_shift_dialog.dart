@@ -98,6 +98,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
       builder: (context, snap) {
         if (snap.hasError) {
           return AlertDialog(
+            scrollable: true,
             title: const Text('Закрыть смену?'),
             content: Text('Не удалось посчитать наличные: ${humanError(snap.error, lower: true)}.\n'
                 'Можно закрыть смену без пересчёта кассы.'),

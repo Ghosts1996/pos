@@ -10,6 +10,7 @@ import '../../services/storage_service.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/adaptive.dart';
 
 /// Админ-редактор меню: категории, позиции и загрузка фото для них.
 /// Фото загружается через системный выбор (галерея/камера) и хранится в
@@ -66,102 +67,105 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<List<MenuCategory>>(
-        stream: _categories,
-        builder: (context, catSnap) {
-          if (!catSnap.hasData) return const Center(child: CircularProgressIndicator());
-          final categories = catSnap.data!;
-          return StreamBuilder<List<MenuItem>>(
-            stream: _items,
-            builder: (context, itemSnap) {
-              final items = itemSnap.data ?? [];
-              if (categories.isEmpty) {
-                return const Center(child: Text('Добавьте первую категорию (значок папки вверху)'));
-              }
-              return ListView(
-                children: categories.map((cat) {
-                  final catItems = items.where((i) => i.categoryId == cat.id).toList();
-                  return ExpansionTile(
-                    leading: _EditableThumb(
-                      imageUrl: cat.imageUrl,
-                      uploading: _uploadingIds.contains(cat.id),
-                      icon: Icons.restaurant_menu,
-                      onTap: () => _pickAndUploadCategoryImage(cat),
-                    ),
-                    title: Text(cat.name),
-                    subtitle: Text('${catItems.length} ${pluralRu(catItems.length, 'позиция', 'позиции', 'позиций')}'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
+      body: CenteredBody(
+        maxWidth: 900,
+        child: StreamBuilder<List<MenuCategory>>(
+          stream: _categories,
+          builder: (context, catSnap) {
+            if (!catSnap.hasData) return const Center(child: CircularProgressIndicator());
+            final categories = catSnap.data!;
+            return StreamBuilder<List<MenuItem>>(
+              stream: _items,
+              builder: (context, itemSnap) {
+                final items = itemSnap.data ?? [];
+                if (categories.isEmpty) {
+                  return const Center(child: Text('Добавьте первую категорию (значок папки вверху)'));
+                }
+                return ListView(
+                  children: categories.map((cat) {
+                    final catItems = items.where((i) => i.categoryId == cat.id).toList();
+                    return ExpansionTile(
+                      leading: _EditableThumb(
+                        imageUrl: cat.imageUrl,
+                        uploading: _uploadingIds.contains(cat.id),
+                        icon: Icons.restaurant_menu,
+                        onTap: () => _pickAndUploadCategoryImage(cat),
+                      ),
+                      title: Text(cat.name),
+                      subtitle: Text('${catItems.length} ${pluralRu(catItems.length, 'позиция', 'позиции', 'позиций')}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined, size: 20),
+                            tooltip: 'Переименовать',
+                            onPressed: () async {
+                              final name = await _promptText(
+                                  context, 'Переименовать категорию', 'Название',
+                                  initial: cat.name);
+                              if (name != null && name.isNotEmpty) {
+                                await _fs.renameCategory(cat.id, name);
+                              }
+                            },
+                          ),
+                          const Icon(Icons.expand_more),
+                        ],
+                      ),
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit_outlined, size: 20),
-                          tooltip: 'Переименовать',
-                          onPressed: () async {
-                            final name = await _promptText(
-                                context, 'Переименовать категорию', 'Название',
-                                initial: cat.name);
-                            if (name != null && name.isNotEmpty) {
-                              await _fs.renameCategory(cat.id, name);
-                            }
-                          },
-                        ),
-                        const Icon(Icons.expand_more),
-                      ],
-                    ),
-                    children: [
-                      ...catItems.map((item) => ListTile(
-                            leading: _EditableThumb(
-                              imageUrl: item.imageUrl,
-                              uploading: _uploadingIds.contains(item.id),
-                              icon: Icons.fastfood_outlined,
-                              onTap: () => _pickAndUploadItemImage(item),
-                            ),
-                            title: Text(item.name),
-                            subtitle: Text(_buildItemSubtitle(item)),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Switch(
-                                  value: item.available,
-                                  onChanged: (v) => _fs.updateMenuItem(item.copyWith(available: v)),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: () => _confirmDelete(
-                                    context,
-                                    title: 'Удалить позицию?',
-                                    message: '«${item.name}» будет удалена без возможности отмены.',
-                                    onConfirm: () => _fs.deleteMenuItem(item.id),
+                        ...catItems.map((item) => ListTile(
+                              leading: _EditableThumb(
+                                imageUrl: item.imageUrl,
+                                uploading: _uploadingIds.contains(item.id),
+                                icon: Icons.fastfood_outlined,
+                                onTap: () => _pickAndUploadItemImage(item),
+                              ),
+                              title: Text(item.name),
+                              subtitle: Text(_buildItemSubtitle(item)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Switch(
+                                    value: item.available,
+                                    onChanged: (v) => _fs.updateMenuItem(item.copyWith(available: v)),
                                   ),
-                                ),
-                              ],
-                            ),
-                            onTap: () => _editItem(context, item, categoryId: cat.id),
-                          )),
-                      ListTile(
-                        leading: const Icon(Icons.add),
-                        title: const Text('Добавить позицию'),
-                        onTap: () => _editItem(context, null, categoryId: cat.id),
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.delete_forever, color: AppColors.danger),
-                        title: const Text('Удалить категорию', style: TextStyle(color: AppColors.danger)),
-                        onTap: () => _confirmDelete(
-                          context,
-                          title: 'Удалить категорию?',
-                          message: catItems.isEmpty
-                              ? 'Категория «${cat.name}» будет удалена.'
-                              : 'Категория «${cat.name}» и все её позиции (${catItems.length} шт.) будут удалены без возможности отмены.',
-                          onConfirm: () => _fs.deleteCategoryCascade(cat.id),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () => _confirmDelete(
+                                      context,
+                                      title: 'Удалить позицию?',
+                                      message: '«${item.name}» будет удалена без возможности отмены.',
+                                      onConfirm: () => _fs.deleteMenuItem(item.id),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              onTap: () => _editItem(context, item, categoryId: cat.id),
+                            )),
+                        ListTile(
+                          leading: const Icon(Icons.add),
+                          title: const Text('Добавить позицию'),
+                          onTap: () => _editItem(context, null, categoryId: cat.id),
                         ),
-                      ),
-                    ],
-                  );
-                }).toList(),
-              );
-            },
-          );
-        },
+                        ListTile(
+                          leading: const Icon(Icons.delete_forever, color: AppColors.danger),
+                          title: const Text('Удалить категорию', style: TextStyle(color: AppColors.danger)),
+                          onTap: () => _confirmDelete(
+                            context,
+                            title: 'Удалить категорию?',
+                            message: catItems.isEmpty
+                                ? 'Категория «${cat.name}» будет удалена.'
+                                : 'Категория «${cat.name}» и все её позиции (${catItems.length} шт.) будут удалены без возможности отмены.',
+                            onConfirm: () => _fs.deleteCategoryCascade(cat.id),
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -303,8 +307,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 // ---- Переключатель простая / составная ----
                 Row(
                   children: [
-                    const Text('Составная позиция (микс)', style: TextStyle(fontSize: 13)),
-                    const Spacer(),
+                    const Expanded(child: Text('Составная позиция (микс)', style: TextStyle(fontSize: 13))),
                     Switch(
                       value: isComposite,
                       onChanged: (v) => setDialogState(() {
@@ -584,6 +587,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text(title),
         content: Text(message),
         actions: [
@@ -604,6 +608,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text(title),
         content: TextField(controller: ctrl, decoration: InputDecoration(labelText: label), autofocus: true),
         actions: [

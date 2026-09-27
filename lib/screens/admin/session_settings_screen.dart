@@ -3,6 +3,7 @@ import '../../services/app_scope.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Настройка длительности сеанса кальяна — у каждого заведения на платформе
 /// своё правило (где-то 1 час, где-то 2, где-то вообще без таймера), а
@@ -113,71 +114,74 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Длительность сеанса')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const Text(
-                  'Это время ставится таймером при нажатии «Начать сеанс» и '
-                  'при «Перезабивке». Сотрудник в любой момент может вручную '
-                  'продлить или сократить таймер конкретного стола — эта '
-                  'настройка влияет только на значение по умолчанию.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 16),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Без ограничений'),
-                  subtitle: const Text('Таймер не считает время — стол занят, пока его не закроют '
-                      'вручную. Удобно ресторану, кафе и бару: если здесь ничего не '
-                      'настроено, у них так и работает.'),
-                  value: _unlimited,
-                  onChanged: (v) => setState(() => _unlimited = v),
-                ),
-                if (!_unlimited) ...[
-                  const SizedBox(height: 8),
-                  // Частые варианты — одним нажатием; своё значение — в поле ниже.
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final m in const [60, 90, 120, 180])
-                        ChoiceChip(
-                          label: Text(AppConstants.formatSessionDuration(m)),
-                          selected: _currentMinutes == m,
-                          onSelected: (_) => setState(() => _hoursCtrl.text = _numStr(m / 60)),
-                        ),
-                    ],
+      body: CenteredBody(
+        maxWidth: Breakpoints.form,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Это время ставится таймером при нажатии «Начать сеанс» и '
+                    'при «Перезабивке». Сотрудник в любой момент может вручную '
+                    'продлить или сократить таймер конкретного стола — эта '
+                    'настройка влияет только на значение по умолчанию.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _hoursCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Своя длительность, часов',
-                      hintText: 'Например, 1,5',
+                  const SizedBox(height: 16),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Без ограничений'),
+                    subtitle: const Text('Таймер не считает время — стол занят, пока его не закроют '
+                        'вручную. Удобно ресторану, кафе и бару: если здесь ничего не '
+                        'настроено, у них так и работает.'),
+                    value: _unlimited,
+                    onChanged: (v) => setState(() => _unlimited = v),
+                  ),
+                  if (!_unlimited) ...[
+                    const SizedBox(height: 8),
+                    // Частые варианты — одним нажатием; своё значение — в поле ниже.
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final m in const [60, 90, 120, 180])
+                          ChoiceChip(
+                            label: Text(AppConstants.formatSessionDuration(m)),
+                            selected: _currentMinutes == m,
+                            onSelected: (_) => setState(() => _hoursCtrl.text = _numStr(m / 60)),
+                          ),
+                      ],
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _hoursCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Своя длительность, часов',
+                        hintText: 'Например, 1,5',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  if (_error != null) ...[
+                    Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                    const SizedBox(height: 12),
+                  ],
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Сохранить'),
                   ),
                 ],
-                const SizedBox(height: 20),
-                if (_error != null) ...[
-                  Text(_error!, style: const TextStyle(color: AppColors.danger)),
-                  const SizedBox(height: 12),
-                ],
-                FilledButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Сохранить'),
-                ),
-              ],
-            ),
+              ),
+      ),
     );
   }
 }

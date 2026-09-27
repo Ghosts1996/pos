@@ -65,8 +65,9 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
           child: ShiftCrewBuilder(
             builder: (ctx, crew) => Column(
@@ -149,243 +150,236 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
 
   static String _lowerFirst(String s) => s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
 
-  String _formatTime(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  String _formatTime(DateTime dt) => '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
+    final top = <Widget>[
+      DrawerHeader(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Icon(Icons.person, size: 36),
+            const SizedBox(height: 8),
+            Text(widget.employee.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const Text('Сотрудник', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      ),
+
+      // «Моя смена» — первой: это то, что нужно каждому сотруднику
+      // (пришёл — начал, уходит домой — закончил).
+      StreamBuilder<StaffShiftModel?>(
+        stream: _fs.openStaffShiftStream(widget.employee.id),
+        builder: (context, snapshot) {
+          final mine = snapshot.data;
+          final isOpen = mine != null && mine.isOpen;
+          final stale = isOpen && isStaleShift(mine.startedAt);
+          final subtitle = !isOpen
+              ? 'Нажмите, когда пришли на работу'
+              : stale
+                  ? 'Идёт ${shiftTimeLabel(mine.startedAt)} — вы не закончили прошлую смену'
+                  : 'С ${_formatTime(mine.startedAt)} · нажмите, когда уходите';
+          return ListTile(
+            enabled: !_myShiftBusy,
+            leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
+                color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.grey)),
+            title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
+            subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
+            trailing: _myShiftBusy
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
+            onTap: _myShiftBusy ? null : () => isOpen ? _endMine(mine) : _startMine(),
+          );
+        },
+      ),
+
+      // Смена заведения — касса и X-отчёт, одна на всех. Видно, кто
+      // сейчас работает; закрыть — через карточку, с предупреждением.
+      StreamBuilder<ShiftModel?>(
+        stream: _fs.openShiftStream(),
+        builder: (context, snapshot) {
+          final shift = snapshot.data;
+          final isOpen = shift != null && shift.isOpen;
+          return ShiftCrewBuilder(builder: (context, crew) {
+            final stale = isOpen && isStaleShift(shift.openedAt);
+            final subtitle = !isOpen
+                ? 'Нажмите, чтобы открыть смену'
+                : [
+                    stale
+                        ? 'Открыта ${shiftTimeLabel(shift.openedAt)} — не закрыта с прошлого раза'
+                        : 'С ${_formatTime(shift.openedAt)}',
+                    if (crew != null) _lowerFirst(crew.summary()),
+                  ].join(' · ');
+            return ListTile(
+              enabled: !_busy,
+              leading: Icon(isOpen ? Icons.storefront_outlined : Icons.lock_outline,
+                  color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.redAccent)),
+              title: Text(isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта'),
+              subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
+              trailing: _busy
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.chevron_right),
+              onTap: _busy ? null : () => isOpen ? _venueSheet(shift) : _openShift(),
+            );
+          });
+        },
+      ),
+      const Divider(height: 1),
+
+      ListTile(
+        leading: const Icon(Icons.table_bar_outlined),
+        title: const Text('Зал'),
+        onTap: () {
+          Navigator.pop(context);
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => FloorPlanScreen(employee: widget.employee)),
+            (route) => false,
+          );
+        },
+      ),
+
+      // Очередь заказов и вызовов — со счётчиком обращений.
+      StreamBuilder<List<GuestOrder>>(
+        stream: _link.openGuestOrdersStream(),
+        builder: (context, orders) => StreamBuilder<List<WaiterCall>>(
+          stream: _link.openCallsStream(),
+          builder: (context, calls) {
+            final count = (orders.data?.length ?? 0) + (calls.data?.length ?? 0);
+            return ListTile(
+              leading: const Icon(Icons.room_service_outlined),
+              title: const Text('Очередь заказов'),
+              subtitle: const Text('Заказы и вызовы из приложения гостей', style: TextStyle(fontSize: 11)),
+              trailing: count == 0
+                  ? null
+                  : CircleAvatar(
+                      radius: 12,
+                      backgroundColor: Colors.redAccent,
+                      child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.white)),
+                    ),
+              onTap: () => _go(KdsScreen(employee: widget.employee)),
+            );
+          },
+        ),
+      ),
+
+      ListTile(
+        leading: const Icon(Icons.event_seat_outlined),
+        title: const Text('Брони'),
+        subtitle: const Text('Подтверждение и посадка гостей', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(ReservationsScreen(employee: widget.employee)),
+      ),
+      ListTile(
+        leading: const Icon(Icons.hourglass_bottom),
+        title: const Text('Лист ожидания'),
+        subtitle: const Text('Когда все столы заняты', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(WaitlistScreen(employee: widget.employee)),
+      ),
+      const Divider(height: 1),
+
+      ListTile(
+        leading: const Icon(Icons.receipt_long_outlined),
+        title: const Text('X-отчёт (текущая смена)'),
+        subtitle: const Text('Продажи и оплаты без закрытия смены', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(XReportScreen(employee: widget.employee)),
+      ),
+      ListTile(
+        leading: const Icon(Icons.point_of_sale_outlined),
+        title: const Text('Касса'),
+        subtitle: const Text('Наличные, инкассация, внесение и выплата'),
+        onTap: () => _go(CashScreen(employee: widget.employee)),
+      ),
+      ListTile(
+        leading: const Icon(Icons.history),
+        title: const Text('История чеков'),
+        subtitle: const Text('Просмотр и возврат закрытых чеков', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(ReceiptsHistoryScreen(employee: widget.employee)),
+      ),
+      const Divider(height: 1),
+
+      ListTile(
+        leading: const Icon(Icons.inventory_2_outlined),
+        title: const Text('Остатки склада'),
+        subtitle: const Text('Просмотр текущих количеств', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(const StockViewScreen()),
+      ),
+      ListTile(
+        leading: const Icon(Icons.fact_check_outlined),
+        title: const Text('Инвентаризация'),
+        subtitle: const Text('Пересчёт фактических остатков склада', style: TextStyle(fontSize: 11)),
+        onTap: () => _go(InventoryCountEntryScreen(employee: widget.employee)),
+      ),
+      const Divider(height: 1),
+
+      ListTile(
+        leading: const Icon(Icons.auto_awesome, color: Colors.lightBlueAccent),
+        title: const Text('Ассистент зала'),
+        subtitle: const Text('Спросить про столы, брони и остатки', style: TextStyle(fontSize: 11)),
+        onTap: () {
+          Navigator.pop(context);
+          AiAssistantSheet.show(
+            context,
+            agent: AiAgents.hall,
+            // Данные зала кладём в промпт заранее: иначе ассистент
+            // отвечает «данных нет», если шлюз не умеет инструменты.
+            asyncContextBuilder: AiService.instance.hallContext,
+            quickPrompts: const [
+              'Какие столы освободятся через час?',
+              'Что предложить гостям сегодня?',
+              'Что заканчивается на складе?',
+            ],
+          );
+        },
+      ),
+    ];
+    final bottom = <Widget>[
+      const Divider(height: 1),
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.system_update_alt),
+        title: const Text('Обновления'),
+        subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
+        onTap: () => showAboutAppDialog(context),
+      ),
+      ListTile(
+        leading: const Icon(Icons.logout),
+        title: const Text('Сменить сотрудника'),
+        // Забываем сохранённый вход — иначе экран PIN тут же
+        // вернул бы в приложение того же сотрудника.
+        onTap: () async {
+          await StaffSessionStore.instance.forget();
+          if (!context.mounted) return;
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (_) => false,
+          );
+        },
+      ),
+      const SizedBox(height: 8),
+    ];
+
     return Drawer(
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            DrawerHeader(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  const Icon(Icons.person, size: 36),
-                  const SizedBox(height: 8),
-                  Text(widget.employee.name,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                  const Text('Сотрудник', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-            ),
-
-            // «Моя смена» — первой: это то, что нужно каждому сотруднику
-            // (пришёл — начал, уходит домой — закончил).
-            StreamBuilder<StaffShiftModel?>(
-              stream: _fs.openStaffShiftStream(widget.employee.id),
-              builder: (context, snapshot) {
-                final mine = snapshot.data;
-                final isOpen = mine != null && mine.isOpen;
-                final stale = isOpen && isStaleShift(mine.startedAt);
-                final subtitle = !isOpen
-                    ? 'Нажмите, когда пришли на работу'
-                    : stale
-                        ? 'Идёт ${shiftTimeLabel(mine.startedAt)} — вы не закончили прошлую смену'
-                        : 'С ${_formatTime(mine.startedAt)} · нажмите, когда уходите';
-                return ListTile(
-                  enabled: !_myShiftBusy,
-                  leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
-                      color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.grey)),
-                  title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
-                  subtitle: Text(subtitle,
-                      style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
-                  trailing: _myShiftBusy
-                      ? const SizedBox(
-                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : null,
-                  onTap: _myShiftBusy ? null : () => isOpen ? _endMine(mine) : _startMine(),
-                );
-              },
-            ),
-
-            // Смена заведения — касса и X-отчёт, одна на всех. Видно, кто
-            // сейчас работает; закрыть — через карточку, с предупреждением.
-            StreamBuilder<ShiftModel?>(
-              stream: _fs.openShiftStream(),
-              builder: (context, snapshot) {
-                final shift = snapshot.data;
-                final isOpen = shift != null && shift.isOpen;
-                return ShiftCrewBuilder(builder: (context, crew) {
-                  final stale = isOpen && isStaleShift(shift.openedAt);
-                  final subtitle = !isOpen
-                      ? 'Нажмите, чтобы открыть смену'
-                      : [
-                          stale
-                              ? 'Открыта ${shiftTimeLabel(shift.openedAt)} — не закрыта с прошлого раза'
-                              : 'С ${_formatTime(shift.openedAt)}',
-                          if (crew != null) _lowerFirst(crew.summary()),
-                        ].join(' · ');
-                  return ListTile(
-                    enabled: !_busy,
-                    leading: Icon(isOpen ? Icons.storefront_outlined : Icons.lock_outline,
-                        color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.redAccent)),
-                    title: Text(isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта'),
-                    subtitle: Text(subtitle,
-                        style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
-                    trailing: _busy
-                        ? const SizedBox(
-                            width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.chevron_right),
-                    onTap: _busy ? null : () => isOpen ? _venueSheet(shift) : _openShift(),
-                  );
-                });
-              },
-            ),
-            const Divider(height: 1),
-
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.table_bar_outlined),
-                    title: const Text('Зал'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                            builder: (_) => FloorPlanScreen(employee: widget.employee)),
-                        (route) => false,
-                      );
-                    },
-                  ),
-
-                  // Очередь заказов и вызовов — со счётчиком обращений.
-                  StreamBuilder<List<GuestOrder>>(
-                    stream: _link.openGuestOrdersStream(),
-                    builder: (context, orders) => StreamBuilder<List<WaiterCall>>(
-                      stream: _link.openCallsStream(),
-                      builder: (context, calls) {
-                        final count =
-                            (orders.data?.length ?? 0) + (calls.data?.length ?? 0);
-                        return ListTile(
-                          leading: const Icon(Icons.room_service_outlined),
-                          title: const Text('Очередь заказов'),
-                          subtitle: const Text('Заказы и вызовы из приложения гостей',
-                              style: TextStyle(fontSize: 11)),
-                          trailing: count == 0
-                              ? null
-                              : CircleAvatar(
-                                  radius: 12,
-                                  backgroundColor: Colors.redAccent,
-                                  child: Text('$count',
-                                      style: const TextStyle(fontSize: 12, color: Colors.white)),
-                                ),
-                          onTap: () => _go(KdsScreen(employee: widget.employee)),
-                        );
-                      },
-                    ),
-                  ),
-
-                  ListTile(
-                    leading: const Icon(Icons.event_seat_outlined),
-                    title: const Text('Брони'),
-                    subtitle: const Text('Подтверждение и посадка гостей',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(ReservationsScreen(employee: widget.employee)),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.hourglass_bottom),
-                    title: const Text('Лист ожидания'),
-                    subtitle: const Text('Когда все столы заняты', style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(WaitlistScreen(employee: widget.employee)),
-                  ),
-                  const Divider(height: 1),
-
-                  ListTile(
-                    leading: const Icon(Icons.receipt_long_outlined),
-                    title: const Text('X-отчёт (текущая смена)'),
-                    subtitle: const Text('Продажи и оплаты без закрытия смены',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(XReportScreen(employee: widget.employee)),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.point_of_sale_outlined),
-                    title: const Text('Касса'),
-                    subtitle: const Text('Наличные, инкассация, внесение и выплата'),
-                    onTap: () => _go(CashScreen(employee: widget.employee)),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.history),
-                    title: const Text('История чеков'),
-                    subtitle: const Text('Просмотр и возврат закрытых чеков',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(ReceiptsHistoryScreen(employee: widget.employee)),
-                  ),
-                  const Divider(height: 1),
-
-                  ListTile(
-                    leading: const Icon(Icons.inventory_2_outlined),
-                    title: const Text('Остатки склада'),
-                    subtitle:
-                        const Text('Просмотр текущих количеств', style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(const StockViewScreen()),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.fact_check_outlined),
-                    title: const Text('Инвентаризация'),
-                    subtitle: const Text('Пересчёт фактических остатков склада',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: () => _go(InventoryCountEntryScreen(employee: widget.employee)),
-                  ),
-                  const Divider(height: 1),
-
-                  ListTile(
-                    leading: const Icon(Icons.auto_awesome, color: Colors.lightBlueAccent),
-                    title: const Text('Ассистент зала'),
-                    subtitle: const Text('Спросить про столы, брони и остатки',
-                        style: TextStyle(fontSize: 11)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      AiAssistantSheet.show(
-                        context,
-                        agent: AiAgents.hall,
-                        // Данные зала кладём в промпт заранее: иначе ассистент
-                        // отвечает «данных нет», если шлюз не умеет инструменты.
-                        asyncContextBuilder: AiService.instance.hallContext,
-                        quickPrompts: const [
-                          'Какие столы освободятся через час?',
-                          'Что предложить гостям сегодня?',
-                          'Что заканчивается на складе?',
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const Divider(height: 1),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.system_update_alt),
-              title: const Text('Обновления'),
-              subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
-              onTap: () => showAboutAppDialog(context),
-            ),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Сменить сотрудника'),
-              // Забываем сохранённый вход — иначе экран PIN тут же
-              // вернул бы в приложение того же сотрудника.
-              onTap: () async {
-                await StaffSessionStore.instance.forget();
-                if (!context.mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (_) => false,
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+        child: LayoutBuilder(
+          builder: (context, box) {
+            // Низкий экран (телефон на боку, крупный шрифт) — меню
+            // прокручивается целиком, иначе шапка и смены вытесняли пункты.
+            // Высокий — «Обновления» и «Сменить сотрудника» прижаты к низу.
+            if (box.maxHeight < 560) {
+              return ListView(padding: EdgeInsets.zero, children: [...top, ...bottom]);
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: ListView(padding: EdgeInsets.zero, children: top)),
+                ...bottom,
+              ],
+            );
+          },
         ),
       ),
     );

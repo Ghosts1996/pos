@@ -118,6 +118,7 @@ Future<bool?> _offerCloseStaleVenueShift(BuildContext context, ShiftModel venue,
   final choice = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
+      scrollable: true,
       title: const Text('Прошлая смена не закрыта'),
       content: Text(
         'Смена заведения открыта ${shiftTimeLabel(venue.openedAt)}'
@@ -227,6 +228,7 @@ Future<void> _fixForgottenShift(BuildContext context, Employee me, StaffShiftMod
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
+      scrollable: true,
       title: const Text('Прошлая смена не закончена'),
       content: Text(
         'Ваша смена идёт с ${shiftTimeLabel(mine.startedAt)} — похоже, вчера вы забыли её закончить. '
@@ -410,6 +412,7 @@ Future<bool> joinOpenVenueShift(BuildContext context, {required Employee me, req
   final start = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
+      scrollable: true,
       title: const Text('Начать вашу смену?'),
       content: SizedBox(
         width: 400,

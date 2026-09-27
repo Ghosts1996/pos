@@ -199,8 +199,12 @@ class _HallPlanViewState extends State<HallPlanView> {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(Icons.pinch_outlined, size: 16, color: AppColors.textMuted),
                         SizedBox(width: 6),
-                        Text('Схему можно двигать и приближать',
-                            style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                        Flexible(
+                          child: Text('Схему можно двигать и приближать',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                        ),
                       ]),
                     ),
                   ),

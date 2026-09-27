@@ -4,6 +4,7 @@ import '../../models/venue_models.dart';
 import '../../services/waitlist_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Лист ожидания: очередь гостей, когда все столы заняты.
 ///
@@ -30,24 +31,28 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
         icon: const Icon(Icons.person_add_alt),
         label: const Text('Записать гостя'),
       ),
-      body: StreamBuilder<List<WaitlistEntry>>(
-        stream: _service.openStream(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final list = snap.data!;
-          if (list.isEmpty) {
-            return const Center(
-              child: Text('Очереди нет — столы есть',
-                  style: TextStyle(color: AppColors.textMuted)),
+      body: CenteredBody(
+        maxWidth: 760,
+        child: StreamBuilder<List<WaitlistEntry>>(
+          stream: _service.openStream(),
+          builder: (context, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final list = snap.data!;
+            if (list.isEmpty) {
+              return const Center(
+                child: Text('Очереди нет — столы есть',
+                    style: TextStyle(color: AppColors.textMuted)),
+              );
+            }
+            return ListView.separated(
+              // Снизу — место под кнопку «Записать гостя».
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, i) => _tile(list[i], i + 1),
             );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: list.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _tile(list[i], i + 1),
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -173,6 +178,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
+          scrollable: true,
           title: const Text('Записать в очередь'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

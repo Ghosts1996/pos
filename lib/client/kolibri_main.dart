@@ -14,6 +14,7 @@ import '../services/app_scope.dart';
 import '../services/app_update_service.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
+import '../utils/adaptive.dart';
 import '../widgets/app_update_banner.dart';
 import 'screens/kolibri_shell.dart';
 import 'screens/kolibri_venue_picker_screen.dart';
@@ -330,6 +331,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
       darkTheme: KolibriTheme.dark,
       themeMode: ThemeMode.dark,
       home: home,
+      builder: (context, child) => AdaptiveAppFrame(child: child ?? const SizedBox.shrink()),
     );
   }
 }
@@ -363,7 +365,8 @@ class KolibriApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       home: ready ? const KolibriShell() : _StartupError(details: startupError),
       // Плашка «Вышла новая версия» поверх любого экрана гостя.
-      builder: (context, child) => AppUpdateBanner(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) =>
+          AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink())),
     );
   }
 }

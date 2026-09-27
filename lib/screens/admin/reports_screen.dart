@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
@@ -97,161 +98,164 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final range = _rangeFor(_period);
     return Scaffold(
       appBar: AppBar(title: const Text('Отчёты')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Сегодня'),
-                  selected: _period == _Period.today,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.today);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('7 дней'),
-                  selected: _period == _Period.week,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.week);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('30 дней'),
-                  selected: _period == _Period.month,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.month);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('Свой период'),
-                  selected: _period == _Period.custom,
-                  onSelected: (_) => _pickCustomRange(),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _formatRange(range),
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+      body: CenteredBody(
+        maxWidth: 900,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Сегодня'),
+                    selected: _period == _Period.today,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.today);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('7 дней'),
+                    selected: _period == _Period.week,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.week);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('30 дней'),
+                    selected: _period == _Period.month,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.month);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('Свой период'),
+                    selected: _period == _Period.custom,
+                    onSelected: (_) => _pickCustomRange(),
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Expanded(
-            child: FutureBuilder<List<SessionModel>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
-                          textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _formatRange(range),
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: FutureBuilder<List<SessionModel>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
+                            textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+                      ),
+                    );
+                  }
+                  final sessions = snap.data ?? [];
+                  if (sessions.isEmpty) {
+                    return const Center(child: Text('За этот период закрытых счетов нет'));
+                  }
+                  final stats = _ReportStats.fromSessions(sessions);
+                  return RefreshIndicator(
+                    onRefresh: () async => _load(),
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                      children: [
+                        _summaryGrid(stats),
+                        const SizedBox(height: 8),
+                        _sectionTitle('По сотрудникам'),
+                        ...stats.byEmployee.entries.map((e) => Card(
+                              child: ListTile(
+                                leading: const Icon(Icons.person_outline),
+                                title: Text(e.key),
+                                subtitle: Text('${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')}'),
+                                trailing: Text(
+                                  rub(e.value.revenue),
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            )),
+                        const SizedBox(height: 8),
+                        _sectionTitle('Популярные позиции меню'),
+                        ...stats.topItems.map((i) => Card(
+                              child: ListTile(
+                                leading: const Icon(Icons.local_cafe_outlined),
+                                title: Text(i.name),
+                                subtitle: Text('${i.qty} шт.'),
+                                trailing: Text(
+                                  rub(i.revenue),
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            )),
+                        if (stats.cardsUsed > 0) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('Скидочные карты'),
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.card_giftcard),
+                              title: Text('Применено ${stats.cardsUsed} раз'),
+                              subtitle: Text(
+                                  'Скидок на сумму ${rub(stats.totalDiscountGiven)}'),
+                            ),
+                          ),
+                        ],
+                        if (stats.unpaidClosed > 0) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('Закрыто без оплаты'),
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.money_off, color: Colors.orange),
+                              title: Text('${stats.unpaidClosed} ${pluralRu(stats.unpaidClosed, 'чек', 'чека', 'чеков')}'),
+                              subtitle: Text(
+                                  'На сумму ${rub(stats.unpaidAmount)} (не входит в выручку)'),
+                            ),
+                          ),
+                        ],
+                        if (stats.refunds > 0) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('Возвраты'),
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.undo, color: Colors.orange),
+                              title: Text('${stats.refunds} возвратов'),
+                              subtitle: Text(
+                                  'На сумму ${rub(stats.refundedAmount)} (не входит в выручку)'),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Center(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _copyReport(stats, range),
+                            icon: const Icon(Icons.copy, size: 16),
+                            label: const Text('Копировать отчёт текстом'),
+                          ),
+                        ),
+                      ],
                     ),
                   );
-                }
-                final sessions = snap.data ?? [];
-                if (sessions.isEmpty) {
-                  return const Center(child: Text('За этот период закрытых счетов нет'));
-                }
-                final stats = _ReportStats.fromSessions(sessions);
-                return RefreshIndicator(
-                  onRefresh: () async => _load(),
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                    children: [
-                      _summaryGrid(stats),
-                      const SizedBox(height: 8),
-                      _sectionTitle('По сотрудникам'),
-                      ...stats.byEmployee.entries.map((e) => Card(
-                            child: ListTile(
-                              leading: const Icon(Icons.person_outline),
-                              title: Text(e.key),
-                              subtitle: Text('${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')}'),
-                              trailing: Text(
-                                rub(e.value.revenue),
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          )),
-                      const SizedBox(height: 8),
-                      _sectionTitle('Популярные позиции меню'),
-                      ...stats.topItems.map((i) => Card(
-                            child: ListTile(
-                              leading: const Icon(Icons.local_cafe_outlined),
-                              title: Text(i.name),
-                              subtitle: Text('${i.qty} шт.'),
-                              trailing: Text(
-                                rub(i.revenue),
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          )),
-                      if (stats.cardsUsed > 0) ...[
-                        const SizedBox(height: 8),
-                        _sectionTitle('Скидочные карты'),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.card_giftcard),
-                            title: Text('Применено ${stats.cardsUsed} раз'),
-                            subtitle: Text(
-                                'Скидок на сумму ${rub(stats.totalDiscountGiven)}'),
-                          ),
-                        ),
-                      ],
-                      if (stats.unpaidClosed > 0) ...[
-                        const SizedBox(height: 8),
-                        _sectionTitle('Закрыто без оплаты'),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.money_off, color: Colors.orange),
-                            title: Text('${stats.unpaidClosed} ${pluralRu(stats.unpaidClosed, 'чек', 'чека', 'чеков')}'),
-                            subtitle: Text(
-                                'На сумму ${rub(stats.unpaidAmount)} (не входит в выручку)'),
-                          ),
-                        ),
-                      ],
-                      if (stats.refunds > 0) ...[
-                        const SizedBox(height: 8),
-                        _sectionTitle('Возвраты'),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.undo, color: Colors.orange),
-                            title: Text('${stats.refunds} возвратов'),
-                            subtitle: Text(
-                                'На сумму ${rub(stats.refundedAmount)} (не входит в выручку)'),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      Center(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _copyReport(stats, range),
-                          icon: const Icon(Icons.copy, size: 16),
-                          label: const Text('Копировать отчёт текстом'),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -268,13 +272,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
       _statCard('Средний чек', rub(stats.averageCheck), Icons.receipt_long_outlined),
       _statCard('Перезабивок', '${stats.refills}', Icons.refresh),
     ];
-    return GridView.count(
-      crossAxisCount: 2,
+    // По ширине карточки, а не по числу колонок: на телефоне две, на
+    // планшете — все четыре в ряд; высота растёт с системным шрифтом.
+    return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 8,
-      crossAxisSpacing: 8,
-      childAspectRatio: 2.2,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 280,
+        mainAxisExtent: context.scaledExtent(72, textPart: 38),
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+      ),
       children: cards,
     );
   }
@@ -292,8 +300,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                  Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(value, maxLines: 1, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  ),
+                  Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
                 ],
               ),
             ),

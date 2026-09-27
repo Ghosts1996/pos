@@ -11,6 +11,7 @@ import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../utils/human_error.dart';
+import '../../utils/adaptive.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
 /// ЕГАИС. Значения хранятся в Firestore (settings/integrations), чтобы не
@@ -481,453 +482,456 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     }
     return Scaffold(
       appBar: AppBar(title: const Text('Интеграции')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text('Чековый принтер', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          const Text(
-            'Печатается информационный чек (не фискальный). Для фискального '
-            'чека по 54-ФЗ нужна отдельная онлайн-касса — см. README проекта.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 12),
-          RadioGroup<String>(
-            groupValue: _printerType,
-            onChanged: (v) => setState(() => _printerType = v!),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const RadioListTile<String>(
-                  title: Text('Не подключён'),
-                  value: 'none',
-                ),
-                // Кнопка выбора устройства стоит ОТДЕЛЬНОЙ строкой, а не в
-                // secondary у самой плитки. В secondary она забирала себе всю
-                // нужную ей ширину, а заголовку с подписью не оставалось почти
-                // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
-                // печатались по одной букве в строку.
-                //
-                // На Windows этого варианта нет вовсе (не серая недоступная
-                // плитка, а полностью скрыт) — print_bluetooth_thermal там
-                // работает через BLE, а не classic-SPP, на котором держится
-                // подавляющее большинство дешёвых принтеров: выбор без
-                // объяснений привёл бы к "принтер как будто подключён, но
-                // не печатает". См. _applyActivePrinter/loadSavedPrinterSettings.
-                if (!Platform.isWindows) ...[
-                  RadioListTile<String>(
-                    title: const Text('Bluetooth'),
-                    subtitle: Text(
-                      _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    value: 'bluetooth',
+      body: CenteredBody(
+        maxWidth: Breakpoints.form,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text('Чековый принтер', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text(
+              'Печатается информационный чек (не фискальный). Для фискального '
+              'чека по 54-ФЗ нужна отдельная онлайн-касса — см. README проекта.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            RadioGroup<String>(
+              groupValue: _printerType,
+              onChanged: (v) => setState(() => _printerType = v!),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const RadioListTile<String>(
+                    title: Text('Не подключён'),
+                    value: 'none',
                   ),
-                  if (_printerType == 'bluetooth')
+                  // Кнопка выбора устройства стоит ОТДЕЛЬНОЙ строкой, а не в
+                  // secondary у самой плитки. В secondary она забирала себе всю
+                  // нужную ей ширину, а заголовку с подписью не оставалось почти
+                  // ничего — на телефоне «Bluetooth» и «Устройство не выбрано»
+                  // печатались по одной букве в строку.
+                  //
+                  // На Windows этого варианта нет вовсе (не серая недоступная
+                  // плитка, а полностью скрыт) — print_bluetooth_thermal там
+                  // работает через BLE, а не classic-SPP, на котором держится
+                  // подавляющее большинство дешёвых принтеров: выбор без
+                  // объяснений привёл бы к "принтер как будто подключён, но
+                  // не печатает". См. _applyActivePrinter/loadSavedPrinterSettings.
+                  if (!Platform.isWindows) ...[
+                    RadioListTile<String>(
+                      title: const Text('Bluetooth'),
+                      subtitle: Text(
+                        _btMac.isEmpty ? 'Устройство не выбрано' : _btMac,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      value: 'bluetooth',
+                    ),
+                    if (_printerType == 'bluetooth')
+                      Padding(
+                        padding: const EdgeInsets.only(left: 16, bottom: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed: _pickBluetoothDevice,
+                            icon: const Icon(Icons.bluetooth_searching, size: 18),
+                            label: const Text('Выбрать устройство'),
+                          ),
+                        ),
+                      ),
+                  ],
+                  const RadioListTile<String>(
+                    title: Text('Wi-Fi / LAN (порт 9100)'),
+                    value: 'network',
+                  ),
+                  if (_printerType == 'network')
                     Padding(
                       padding: const EdgeInsets.only(left: 16, bottom: 8),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: OutlinedButton.icon(
-                          onPressed: _pickBluetoothDevice,
-                          icon: const Icon(Icons.bluetooth_searching, size: 18),
-                          label: const Text('Выбрать устройство'),
-                        ),
+                      child: TextField(
+                        controller: _networkIpCtrl,
+                        decoration: const InputDecoration(labelText: 'IP-адрес принтера', hintText: '192.168.1.100'),
                       ),
                     ),
                 ],
-                const RadioListTile<String>(
-                  title: Text('Wi-Fi / LAN (порт 9100)'),
-                  value: 'network',
-                ),
-                if (_printerType == 'network')
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16, bottom: 8),
-                    child: TextField(
-                      controller: _networkIpCtrl,
-                      decoration: const InputDecoration(labelText: 'IP-адрес принтера', hintText: '192.168.1.100'),
-                    ),
-                  ),
-              ],
+              ),
             ),
-          ),
-          OutlinedButton.icon(
-            onPressed: _testing ? null : _testPrinter,
-            icon: const Icon(Icons.print),
-            label: const Text('Тестовая печать'),
-          ),
-          const Divider(height: 40),
-          const Text('ЕГАИС (алкоголь)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _egaisEnabled,
-            onChanged: (v) => setState(() => _egaisEnabled = v),
-            title: const Text('В заведении продаётся алкоголь (включая пиво)'),
-            subtitle: const Text('Без алкоголя ЕГАИС не нужен — оставьте выключенным.'),
-          ),
-          if (_egaisEnabled) ...[
+            OutlinedButton.icon(
+              onPressed: _testing ? null : _testPrinter,
+              icon: const Icon(Icons.print),
+              label: const Text('Тестовая печать'),
+            ),
+            const Divider(height: 40),
+            const Text('ЕГАИС (алкоголь)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _egaisEnabled,
+              onChanged: (v) => setState(() => _egaisEnabled = v),
+              title: const Text('В заведении продаётся алкоголь (включая пиво)'),
+              subtitle: const Text('Без алкоголя ЕГАИС не нужен — оставьте выключенным.'),
+            ),
+            if (_egaisEnabled) ...[
+              const Text(
+                'Общепит не отправляет в ЕГАИС каждую продажу: принимает накладные поставщиков, '
+                'переводит продукцию в торговый зал и в день вскрытия бутылки крепкого алкоголя '
+                'отмечает её в ЕГАИС. Документы подписываются крипто-ключом в УТМ на компьютере '
+                'заведения. Здесь — связь с УТМ и входящие документы: касса покажет, что пришла '
+                'новая накладная. Приём накладных и вскрытие тары оформляются в УТМ/программе ЕГАИС.',
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _fsrarIdCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'ФСРАР ИД организации', hintText: '030000000000'),
+              ),
+              TextField(
+                controller: _utmHostCtrl,
+                decoration: const InputDecoration(labelText: 'IP компьютера с УТМ', hintText: '192.168.1.50'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _testing ? null : _testUtm,
+                icon: const Icon(Icons.wifi_tethering),
+                label: const Text('Проверить связь и входящие документы'),
+              ),
+              if (_testResult != null) ...[
+                const SizedBox(height: 12),
+                Text(_testResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+              ],
+              if (_egaisDocs != null && _egaisDocs!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ..._egaisDocs!.take(20).map((d) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(d.isWaybill ? Icons.local_shipping_outlined : Icons.description_outlined,
+                          color: d.isWaybill ? Colors.orange : null),
+                      title: Text(d.label),
+                      subtitle: Text(d.type, style: const TextStyle(fontSize: 11)),
+                    )),
+              ],
+            ],
+            const Divider(height: 40),
+            const Text('Честный ЗНАК (маркировка)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
             const Text(
-              'Общепит не отправляет в ЕГАИС каждую продажу: принимает накладные поставщиков, '
-              'переводит продукцию в торговый зал и в день вскрытия бутылки крепкого алкоголя '
-              'отмечает её в ЕГАИС. Документы подписываются крипто-ключом в УТМ на компьютере '
-              'заведения. Здесь — связь с УТМ и входящие документы: касса покажет, что пришла '
-              'новая накладная. Приём накладных и вскрытие тары оформляются в УТМ/программе ЕГАИС.',
+              'Онлайн-проверка кода при сканировании (подлинность и статус выбытия '
+              'напрямую в ИС МП) — дополнительно к локальной защите от повторной '
+              'продажи, которая работает уже сейчас и без токена. Официальное '
+              'списание кода при продаже всё равно происходит через онлайн-кассу '
+              '(тег ОФД 1162) — см. раздел «Онлайн-касса» ниже.',
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _fsrarIdCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'ФСРАР ИД организации', hintText: '030000000000'),
-            ),
-            TextField(
-              controller: _utmHostCtrl,
-              decoration: const InputDecoration(labelText: 'IP компьютера с УТМ', hintText: '192.168.1.50'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _testing ? null : _testUtm,
-              icon: const Icon(Icons.wifi_tethering),
-              label: const Text('Проверить связь и входящие документы'),
-            ),
-            if (_testResult != null) ...[
-              const SizedBox(height: 12),
-              Text(_testResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
-            ],
-            if (_egaisDocs != null && _egaisDocs!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ..._egaisDocs!.take(20).map((d) => ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(d.isWaybill ? Icons.local_shipping_outlined : Icons.description_outlined,
-                        color: d.isWaybill ? Colors.orange : null),
-                    title: Text(d.label),
-                    subtitle: Text(d.type, style: const TextStyle(fontSize: 11)),
-                  )),
-            ],
-          ],
-          const Divider(height: 40),
-          const Text('Честный ЗНАК (маркировка)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          const Text(
-            'Онлайн-проверка кода при сканировании (подлинность и статус выбытия '
-            'напрямую в ИС МП) — дополнительно к локальной защите от повторной '
-            'продажи, которая работает уже сейчас и без токена. Официальное '
-            'списание кода при продаже всё равно происходит через онлайн-кассу '
-            '(тег ОФД 1162) — см. раздел «Онлайн-касса» ниже.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          RadioGroup<String>(
-            groupValue: _czCircuit,
-            onChanged: (v) => setState(() => _czCircuit = v!),
-            child: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                RadioListTile<String>(
-                  title: Text('Пилот (тестовый контур)'),
-                  subtitle: Text('markirovka.sandbox.crptech.ru — начните с него'),
-                  value: 'pilot',
-                ),
-                RadioListTile<String>(
-                  title: Text('Боевой (продуктивный контур)'),
-                  subtitle: Text('markirovka.crpt.ru'),
-                  value: 'prod',
-                ),
-              ],
-            ),
-          ),
-          TextField(
-            controller: _czTokenCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Токен для ККТ',
-              hintText: 'из личного кабинета честныйзнак.рф → профиль',
-            ),
-            obscureText: true,
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _czTestCodeCtrl,
-            decoration: InputDecoration(
-              labelText: 'Код для проверки (необязательно)',
-              hintText: 'отсканированный DataMatrix целиком',
-              // На Windows нет камеры для сканера — поле по-прежнему
-              // принимает HID-сканер ("пистолет") и ручной ввод, см.
-              // комментарий у _scanTestCode.
-              suffixIcon: Platform.isWindows
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.camera_alt),
-                      tooltip: 'Сканировать камерой',
-                      onPressed: _scanTestCode,
-                    ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _czTesting ? null : _testChestnyZnak,
-            icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Проверить код'),
-          ),
-          if (_czTestResult != null) ...[
-            const SizedBox(height: 12),
-            Text(_czTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
-          ],
-          const Divider(height: 40),
-          const Text('Онлайн-касса (54-ФЗ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          const Text(
-            'Без подключённого провайдера чек фискализируется имитационно '
-            '(в налоговую ничего не уходит) — этого достаточно, чтобы '
-            'проверить весь сценарий, но не заменяет настоящую кассу. Ниже — '
-            'два реально работающих протокола: подключаются сразу, как '
-            'только заключён договор с провайдером и с ОФД и получены '
-            'реквизиты — дописывать код не нужно.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          RadioGroup<String>(
-            groupValue: _kassaType,
-            onChanged: (v) => setState(() => _kassaType = v!),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const RadioListTile<String>(
-                  title: Text('Тестовый режим (имитация)'),
-                  value: 'mock',
-                ),
-                const RadioListTile<String>(
-                  title: Text('Облачная касса — протокол «АТОЛ Онлайн»'),
-                  subtitle: Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
-                  value: 'atol_cloud',
-                ),
-                if (_kassaType == 'atol_cloud') ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _kassaBaseUrlCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Адрес API провайдера (необязательно)',
-                            hintText: 'https://online.atol.ru',
-                            helperText: 'Пусто — АТОЛ Онлайн. Тестовый контур: https://testonline.atol.ru',
-                          ),
-                        ),
-                        TextField(
-                          controller: _kassaGroupCodeCtrl,
-                          decoration: const InputDecoration(labelText: 'Group code'),
-                        ),
-                        TextField(
-                          controller: _kassaLoginCtrl,
-                          decoration: const InputDecoration(labelText: 'Логин'),
-                        ),
-                        TextField(
-                          controller: _kassaPasswordCtrl,
-                          decoration: const InputDecoration(labelText: 'Пароль'),
-                          obscureText: true,
-                        ),
-                        DropdownButtonFormField<String>(
-                          initialValue: _kassaApiVersion,
-                          decoration: const InputDecoration(labelText: 'Протокол'),
-                          items: const [
-                            DropdownMenuItem(value: 'v5', child: Text('v5 — ФФД 1.2 (рекомендуется, нужен для маркировки)')),
-                            DropdownMenuItem(value: 'v4', child: Text('v4 — ФФД 1.05 (старые кассы)')),
-                          ],
-                          onChanged: (v) => setState(() => _kassaApiVersion = v ?? 'v5'),
-                        ),
-                        TextField(
-                          controller: _kassaEmailCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'E-mail продавца (для чека)',
-                            helperText: 'Если гость не оставил контакт, электронный чек уйдёт на этот адрес',
-                          ),
-                        ),
-                        TextField(
-                          controller: _kassaPaymentAddressCtrl,
-                          decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                ],
-                const RadioListTile<String>(
-                  title: Text('Облачная касса — OrangeData'),
-                  subtitle: Text('Отдельный протокол (mTLS + подпись запроса), ФФД 1.2 — с маркированными товарами'),
-                  value: 'orange_data',
-                ),
-                if (_kassaType == 'orange_data') ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _kassaBaseUrlCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Адрес API (необязательно)',
-                            hintText: OrangeDataKassaService.defaultBaseUrl,
-                            helperText: 'Пусто — боевой контур. Тестовый: ${OrangeDataKassaService.testBaseUrl}',
-                          ),
-                        ),
-                        TextField(
-                          controller: _kassaGroupCodeCtrl,
-                          decoration: const InputDecoration(labelText: 'Группа устройств (group)'),
-                        ),
-                        TextField(
-                          controller: _kassaOrangeKeyNameCtrl,
-                          decoration: const InputDecoration(labelText: 'Имя ключа подписи (key, необязательно)'),
-                        ),
-                        TextField(
-                          controller: _kassaOrangeCertPemCtrl,
-                          decoration: const InputDecoration(labelText: 'Клиентский сертификат (client.crt)'),
-                          maxLines: 4,
-                        ),
-                        TextField(
-                          controller: _kassaOrangeKeyPemCtrl,
-                          decoration: const InputDecoration(labelText: 'Ключ сертификата (client.key)'),
-                          maxLines: 4,
-                        ),
-                        TextField(
-                          controller: _kassaOrangeKeyPassCtrl,
-                          decoration: const InputDecoration(labelText: 'Пароль ключа сертификата (если есть)'),
-                          obscureText: true,
-                        ),
-                        TextField(
-                          controller: _kassaOrangeSignKeyPemCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Ключ подписи запросов (private_key.pem)',
-                            helperText: 'Отдельный от client.key; его открытую часть загружают в ЛК OrangeData',
-                          ),
-                          maxLines: 4,
-                        ),
-                        TextField(
-                          controller: _kassaOrangeCaPemCtrl,
-                          decoration: const InputDecoration(labelText: 'Корневой сертификат OrangeData (cacert.pem)'),
-                          maxLines: 4,
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                ],
-                if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _kassaInnCtrl,
-                          decoration: const InputDecoration(labelText: 'ИНН организации'),
-                        ),
-                        DropdownButtonFormField<String>(
-                          initialValue: _kassaSno,
-                          decoration: const InputDecoration(labelText: 'Система налогообложения'),
-                          items: const [
-                            DropdownMenuItem(value: 'osn', child: Text('ОСН')),
-                            DropdownMenuItem(value: 'usn_income', child: Text('УСН доход')),
-                            DropdownMenuItem(value: 'usn_income_outcome', child: Text('УСН доход − расход')),
-                            DropdownMenuItem(value: 'envd', child: Text('ЕНВД')),
-                            DropdownMenuItem(value: 'esn', child: Text('ЕСН')),
-                            DropdownMenuItem(value: 'patent', child: Text('Патент')),
-                          ],
-                          onChanged: (v) => setState(() => _kassaSno = v!),
-                        ),
-                        DropdownButtonFormField<String>(
-                          initialValue: _kassaVat,
-                          decoration: const InputDecoration(
-                            labelText: 'Ставка НДС по умолчанию',
-                            helperText: 'Для позиций меню без своей ставки (её можно задать в редакторе меню)',
-                          ),
-                          items: FiscalVatRate.values
-                              .map((v) => DropdownMenuItem(value: v.id, child: Text(v.label)))
-                              .toList(),
-                          onChanged: (v) => setState(() => _kassaVat = v ?? 'none'),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                const RadioListTile<String>(
-                  title: Text('CloudKassir'),
-                  subtitle: Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
-                  value: 'cloud_kassir',
-                ),
-              ],
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: _testing ? null : _testKassa,
-            icon: const Icon(Icons.receipt_long),
-            label: const Text('Тестовый чек'),
-          ),
-          const Divider(height: 40),
-          const Text('Терминал оплаты', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          const Text(
-            'Ручной терминал работает уже сейчас с ЛЮБЫМ банком и ЛЮБЫМ '
-            'физическим терминалом (Ingenico, Verifone, mPOS, фирменный '
-            'терминал банка) — приложение просто спрашивает у сотрудника, '
-            'прошла ли оплата на самом терминале. Т-Банк по QR СБП вообще '
-            'обходится без терминала: гость платит сам со своего телефона. '
-            'Остальные банки ниже — это заготовки настроек: сама интеграция '
-            'ждёт технической документации по вашему договору эквайринга '
-            '(у каждого банка свой протокол, угадывать его нельзя).',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          RadioGroup<TerminalProvider>(
-            groupValue: _terminalProvider,
-            onChanged: (v) => setState(() => _terminalProvider = v!),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
-                    (p) => RadioListTile<TerminalProvider>(
-                      title: Text(p.label),
-                      value: p,
-                    ),
-                  ).toList(),
-            ),
-          ),
-          if (_terminalFields(_terminalProvider).first != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Column(
+            RadioGroup<String>(
+              groupValue: _czCircuit,
+              onChanged: (v) => setState(() => _czCircuit = v!),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: _terminalLoginCtrl,
-                    decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).first),
+                  RadioListTile<String>(
+                    title: Text('Пилот (тестовый контур)'),
+                    subtitle: Text('markirovka.sandbox.crptech.ru — начните с него'),
+                    value: 'pilot',
                   ),
-                  if (_terminalFields(_terminalProvider).second != null)
-                    TextField(
-                      controller: _terminalPasswordCtrl,
-                      decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).second),
-                      obscureText: true,
-                    ),
-                  const SizedBox(height: 8),
+                  RadioListTile<String>(
+                    title: Text('Боевой (продуктивный контур)'),
+                    subtitle: Text('markirovka.crpt.ru'),
+                    value: 'prod',
+                  ),
                 ],
               ),
             ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _terminalTesting ? null : _testTerminal,
-            icon: const Icon(Icons.point_of_sale),
-            label: Text(_terminalProvider == TerminalProvider.tinkoffSbp
-                ? 'Тест: показать QR на 1 ₽'
-                : 'Проверить'),
-          ),
-          if (_terminalTestResult != null) ...[
-            const SizedBox(height: 12),
-            Text(_terminalTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+            TextField(
+              controller: _czTokenCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Токен для ККТ',
+                hintText: 'из личного кабинета честныйзнак.рф → профиль',
+              ),
+              obscureText: true,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _czTestCodeCtrl,
+              decoration: InputDecoration(
+                labelText: 'Код для проверки (необязательно)',
+                hintText: 'отсканированный DataMatrix целиком',
+                // На Windows нет камеры для сканера — поле по-прежнему
+                // принимает HID-сканер ("пистолет") и ручной ввод, см.
+                // комментарий у _scanTestCode.
+                suffixIcon: Platform.isWindows
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.camera_alt),
+                        tooltip: 'Сканировать камерой',
+                        onPressed: _scanTestCode,
+                      ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _czTesting ? null : _testChestnyZnak,
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Проверить код'),
+            ),
+            if (_czTestResult != null) ...[
+              const SizedBox(height: 12),
+              Text(_czTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ],
+            const Divider(height: 40),
+            const Text('Онлайн-касса (54-ФЗ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text(
+              'Без подключённого провайдера чек фискализируется имитационно '
+              '(в налоговую ничего не уходит) — этого достаточно, чтобы '
+              'проверить весь сценарий, но не заменяет настоящую кассу. Ниже — '
+              'два реально работающих протокола: подключаются сразу, как '
+              'только заключён договор с провайдером и с ОФД и получены '
+              'реквизиты — дописывать код не нужно.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            RadioGroup<String>(
+              groupValue: _kassaType,
+              onChanged: (v) => setState(() => _kassaType = v!),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const RadioListTile<String>(
+                    title: Text('Тестовый режим (имитация)'),
+                    value: 'mock',
+                  ),
+                  const RadioListTile<String>(
+                    title: Text('Облачная касса — протокол «АТОЛ Онлайн»'),
+                    subtitle: Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
+                    value: 'atol_cloud',
+                  ),
+                  if (_kassaType == 'atol_cloud') ...[
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _kassaBaseUrlCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Адрес API провайдера (необязательно)',
+                              hintText: 'https://online.atol.ru',
+                              helperText: 'Пусто — АТОЛ Онлайн. Тестовый контур: https://testonline.atol.ru',
+                            ),
+                          ),
+                          TextField(
+                            controller: _kassaGroupCodeCtrl,
+                            decoration: const InputDecoration(labelText: 'Group code'),
+                          ),
+                          TextField(
+                            controller: _kassaLoginCtrl,
+                            decoration: const InputDecoration(labelText: 'Логин'),
+                          ),
+                          TextField(
+                            controller: _kassaPasswordCtrl,
+                            decoration: const InputDecoration(labelText: 'Пароль'),
+                            obscureText: true,
+                          ),
+                          DropdownButtonFormField<String>(
+                            initialValue: _kassaApiVersion,
+                            decoration: const InputDecoration(labelText: 'Протокол'),
+                            items: const [
+                              DropdownMenuItem(value: 'v5', child: Text('v5 — ФФД 1.2 (рекомендуется, нужен для маркировки)')),
+                              DropdownMenuItem(value: 'v4', child: Text('v4 — ФФД 1.05 (старые кассы)')),
+                            ],
+                            onChanged: (v) => setState(() => _kassaApiVersion = v ?? 'v5'),
+                          ),
+                          TextField(
+                            controller: _kassaEmailCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'E-mail продавца (для чека)',
+                              helperText: 'Если гость не оставил контакт, электронный чек уйдёт на этот адрес',
+                            ),
+                          ),
+                          TextField(
+                            controller: _kassaPaymentAddressCtrl,
+                            decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const RadioListTile<String>(
+                    title: Text('Облачная касса — OrangeData'),
+                    subtitle: Text('Отдельный протокол (mTLS + подпись запроса), ФФД 1.2 — с маркированными товарами'),
+                    value: 'orange_data',
+                  ),
+                  if (_kassaType == 'orange_data') ...[
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _kassaBaseUrlCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Адрес API (необязательно)',
+                              hintText: OrangeDataKassaService.defaultBaseUrl,
+                              helperText: 'Пусто — боевой контур. Тестовый: ${OrangeDataKassaService.testBaseUrl}',
+                            ),
+                          ),
+                          TextField(
+                            controller: _kassaGroupCodeCtrl,
+                            decoration: const InputDecoration(labelText: 'Группа устройств (group)'),
+                          ),
+                          TextField(
+                            controller: _kassaOrangeKeyNameCtrl,
+                            decoration: const InputDecoration(labelText: 'Имя ключа подписи (key, необязательно)'),
+                          ),
+                          TextField(
+                            controller: _kassaOrangeCertPemCtrl,
+                            decoration: const InputDecoration(labelText: 'Клиентский сертификат (client.crt)'),
+                            maxLines: 4,
+                          ),
+                          TextField(
+                            controller: _kassaOrangeKeyPemCtrl,
+                            decoration: const InputDecoration(labelText: 'Ключ сертификата (client.key)'),
+                            maxLines: 4,
+                          ),
+                          TextField(
+                            controller: _kassaOrangeKeyPassCtrl,
+                            decoration: const InputDecoration(labelText: 'Пароль ключа сертификата (если есть)'),
+                            obscureText: true,
+                          ),
+                          TextField(
+                            controller: _kassaOrangeSignKeyPemCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Ключ подписи запросов (private_key.pem)',
+                              helperText: 'Отдельный от client.key; его открытую часть загружают в ЛК OrangeData',
+                            ),
+                            maxLines: 4,
+                          ),
+                          TextField(
+                            controller: _kassaOrangeCaPemCtrl,
+                            decoration: const InputDecoration(labelText: 'Корневой сертификат OrangeData (cacert.pem)'),
+                            maxLines: 4,
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _kassaInnCtrl,
+                            decoration: const InputDecoration(labelText: 'ИНН организации'),
+                          ),
+                          DropdownButtonFormField<String>(
+                            initialValue: _kassaSno,
+                            decoration: const InputDecoration(labelText: 'Система налогообложения'),
+                            items: const [
+                              DropdownMenuItem(value: 'osn', child: Text('ОСН')),
+                              DropdownMenuItem(value: 'usn_income', child: Text('УСН доход')),
+                              DropdownMenuItem(value: 'usn_income_outcome', child: Text('УСН доход − расход')),
+                              DropdownMenuItem(value: 'envd', child: Text('ЕНВД')),
+                              DropdownMenuItem(value: 'esn', child: Text('ЕСН')),
+                              DropdownMenuItem(value: 'patent', child: Text('Патент')),
+                            ],
+                            onChanged: (v) => setState(() => _kassaSno = v!),
+                          ),
+                          DropdownButtonFormField<String>(
+                            initialValue: _kassaVat,
+                            decoration: const InputDecoration(
+                              labelText: 'Ставка НДС по умолчанию',
+                              helperText: 'Для позиций меню без своей ставки (её можно задать в редакторе меню)',
+                            ),
+                            items: FiscalVatRate.values
+                                .map((v) => DropdownMenuItem(value: v.id, child: Text(v.label)))
+                                .toList(),
+                            onChanged: (v) => setState(() => _kassaVat = v ?? 'none'),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  const RadioListTile<String>(
+                    title: Text('CloudKassir'),
+                    subtitle: Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
+                    value: 'cloud_kassir',
+                  ),
+                ],
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _testing ? null : _testKassa,
+              icon: const Icon(Icons.receipt_long),
+              label: const Text('Тестовый чек'),
+            ),
+            const Divider(height: 40),
+            const Text('Терминал оплаты', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text(
+              'Ручной терминал работает уже сейчас с ЛЮБЫМ банком и ЛЮБЫМ '
+              'физическим терминалом (Ingenico, Verifone, mPOS, фирменный '
+              'терминал банка) — приложение просто спрашивает у сотрудника, '
+              'прошла ли оплата на самом терминале. Т-Банк по QR СБП вообще '
+              'обходится без терминала: гость платит сам со своего телефона. '
+              'Остальные банки ниже — это заготовки настроек: сама интеграция '
+              'ждёт технической документации по вашему договору эквайринга '
+              '(у каждого банка свой протокол, угадывать его нельзя).',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            RadioGroup<TerminalProvider>(
+              groupValue: _terminalProvider,
+              onChanged: (v) => setState(() => _terminalProvider = v!),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
+                      (p) => RadioListTile<TerminalProvider>(
+                        title: Text(p.label),
+                        value: p,
+                      ),
+                    ).toList(),
+              ),
+            ),
+            if (_terminalFields(_terminalProvider).first != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _terminalLoginCtrl,
+                      decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).first),
+                    ),
+                    if (_terminalFields(_terminalProvider).second != null)
+                      TextField(
+                        controller: _terminalPasswordCtrl,
+                        decoration: InputDecoration(labelText: _terminalFields(_terminalProvider).second),
+                        obscureText: true,
+                      ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _terminalTesting ? null : _testTerminal,
+              icon: const Icon(Icons.point_of_sale),
+              label: Text(_terminalProvider == TerminalProvider.tinkoffSbp
+                  ? 'Тест: показать QR на 1 ₽'
+                  : 'Проверить'),
+            ),
+            if (_terminalTestResult != null) ...[
+              const SizedBox(height: 12),
+              Text(_terminalTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ],
+            const SizedBox(height: 32),
+            FilledButton(onPressed: _save, child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('Сохранить'),
+            )),
           ],
-          const SizedBox(height: 32),
-          FilledButton(onPressed: _save, child: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text('Сохранить'),
-          )),
-        ],
+        ),
       ),
     );
   }

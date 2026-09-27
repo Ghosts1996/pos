@@ -321,6 +321,7 @@ Future<String?> _showManualEntryDialog(BuildContext context) {
   return showDialog<String>(
     context: context,
     builder: (dialogContext) => AlertDialog(
+      scrollable: true,
       title: const Text('Ввести код вручную'),
       content: TextField(
         controller: controller,

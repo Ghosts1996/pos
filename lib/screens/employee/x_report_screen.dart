@@ -14,6 +14,7 @@ import '../../services/printer_service.dart';
 import '../../services/venue_service.dart';
 import 'cash_screen.dart';
 import '../../widgets/shift_flow.dart';
+import '../../utils/adaptive.dart';
 
 enum _Period { shift, pastShift, custom }
 
@@ -209,189 +210,192 @@ class _XReportScreenState extends State<XReportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('X-отчёт')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Текущая смена'),
-                  selected: _period == _Period.shift,
-                  onSelected: (_) {
-                    setState(() => _period = _Period.shift);
-                    _load();
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('Прошлые смены'),
-                  selected: _period == _Period.pastShift,
-                  onSelected: (_) => _pickPastShift(),
-                ),
-                ChoiceChip(
-                  label: const Text('По дате и времени'),
-                  selected: _period == _Period.custom,
-                  onSelected: (_) => _pickCustomRange(),
-                ),
-              ],
+      body: CenteredBody(
+        maxWidth: 760,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Текущая смена'),
+                    selected: _period == _Period.shift,
+                    onSelected: (_) {
+                      setState(() => _period = _Period.shift);
+                      _load();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('Прошлые смены'),
+                    selected: _period == _Period.pastShift,
+                    onSelected: (_) => _pickPastShift(),
+                  ),
+                  ChoiceChip(
+                    label: const Text('По дате и времени'),
+                    selected: _period == _Period.custom,
+                    onSelected: (_) => _pickCustomRange(),
+                  ),
+                ],
+              ),
             ),
-          ),
-          _buildShiftHeader(),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(_formatSelectedRange(),
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
-                ),
-                StreamBuilder<List<Employee>>(
-                  stream: _employees,
-                  builder: (context, snap) {
-                    final names = <String>[
-                      'Все официанты',
-                      ...(snap.data ?? [])
-                          .where((e) => e.role == AppConstants.roleEmployee)
-                          .map((e) => e.name),
-                    ];
-                    if (!names.contains(_employeeFilter)) _employeeFilter = 'Все официанты';
-                    return DropdownButton<String>(
-                      value: _employeeFilter,
-                      underline: const SizedBox.shrink(),
-                      items: names
-                          .map((n) => DropdownMenuItem(
-                              value: n, child: Text(n, style: const TextStyle(fontSize: 13))))
-                          .toList(),
-                      onChanged: (v) => setState(() => _employeeFilter = v ?? 'Все официанты'),
+            _buildShiftHeader(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_formatSelectedRange(),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  ),
+                  StreamBuilder<List<Employee>>(
+                    stream: _employees,
+                    builder: (context, snap) {
+                      final names = <String>[
+                        'Все официанты',
+                        ...(snap.data ?? [])
+                            .where((e) => e.role == AppConstants.roleEmployee)
+                            .map((e) => e.name),
+                      ];
+                      if (!names.contains(_employeeFilter)) _employeeFilter = 'Все официанты';
+                      return DropdownButton<String>(
+                        value: _employeeFilter,
+                        underline: const SizedBox.shrink(),
+                        items: names
+                            .map((n) => DropdownMenuItem(
+                                value: n, child: Text(n, style: const TextStyle(fontSize: 13))))
+                            .toList(),
+                        onChanged: (v) => setState(() => _employeeFilter = v ?? 'Все официанты'),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: FutureBuilder<List<SessionModel>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
+                            textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
+                      ),
                     );
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Expanded(
-            child: FutureBuilder<List<SessionModel>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
-                          textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
-                    ),
-                  );
-                }
-                final all = snap.data ?? [];
-                var sessions = all;
-                if (_employeeFilter != 'Все официанты') {
-                  sessions = sessions.where((s) => s.employeeName == _employeeFilter).toList();
-                }
-                final paid = sessions.where((s) => !s.refunded).toList();
-                final refunded = sessions.where((s) => s.refunded).toList();
-                final data = _XReportData.fromSessions(paid);
-                return _cashScope(
-                  sessions: all,
-                  builder: (cash) {
-                    if (paid.isEmpty && refunded.isEmpty && (cash == null || cash.ops.isEmpty) && _period != _Period.shift) {
+                  }
+                  final all = snap.data ?? [];
+                  var sessions = all;
+                  if (_employeeFilter != 'Все официанты') {
+                    sessions = sessions.where((s) => s.employeeName == _employeeFilter).toList();
+                  }
+                  final paid = sessions.where((s) => !s.refunded).toList();
+                  final refunded = sessions.where((s) => s.refunded).toList();
+                  final data = _XReportData.fromSessions(paid);
+                  return _cashScope(
+                    sessions: all,
+                    builder: (cash) {
+                      if (paid.isEmpty && refunded.isEmpty && (cash == null || cash.ops.isEmpty) && _period != _Period.shift) {
+                        return ListView(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                          children: [
+                            const SizedBox(height: 40),
+                            Center(child: Text(_emptyMessage())),
+                          ],
+                        );
+                      }
                       return ListView(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
                         children: [
-                          const SizedBox(height: 40),
-                          Center(child: Text(_emptyMessage())),
+                          if (paid.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: Text(_emptyMessage(), style: const TextStyle(color: AppColors.textMuted)),
+                            ),
+                          if (data.items.isNotEmpty) ..._itemsTable(data),
+                          const Divider(height: 24),
+                          _totalRow('Итого', data.orderTotal),
+                          _totalRow('К оплате', data.revenue, bold: true),
+                          const SizedBox(height: 8),
+                          _totalRow('Оплачено картой', data.paymentCard),
+                          _totalRow('Оплачено наличными', data.paymentCash),
+                          _totalRow('Оплачено терминалом', data.paymentTerminal),
+                          _totalRow('За счёт заведения', data.paymentComp),
+                          if (cash != null) ...[
+                            _totalRow('Инкассация', cash.summary.collections),
+                            if (!cash.rangeOnly) _totalRow('Наличные в кассе', cash.summary.expected, bold: true),
+                          ],
+                          if (data.tipsCash + data.tipsCard > 0) ...[
+                            const Divider(height: 24),
+                            // Не выручка: деньги сотрудников. Наличные чаевые
+                            // лежат в той же кассе и входят в «Наличные в кассе».
+                            _totalRow('Чаевые наличными (в кассе)', data.tipsCash),
+                            _totalRow('Чаевые картой', data.tipsCard),
+                          ],
+                          if (data.unpaidCount > 0) ...[
+                            const Divider(height: 24),
+                            _countRow('Закрыто без оплаты', data.unpaidCount),
+                            _totalRow('На сумму (вне выручки)', data.unpaidAmount),
+                          ],
+                          if (refunded.isNotEmpty) ...[
+                            const Divider(height: 24),
+                            _countRow('Возвратов за период', refunded.length),
+                            _totalRow('Сумма возвратов', refunded.fold(0.0, (s, e) => s + e.totalWithDiscount)),
+                          ],
+                          // Сама касса — инкассация, внесение, выплата,
+                          // операции и пересчёты — на отдельном экране «Касса».
+                          if (cash != null && !cash.rangeOnly && cash.live)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => Navigator.of(context).push(
+                                    MaterialPageRoute(builder: (_) => CashScreen(employee: widget.employee))),
+                                icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+                                label: const Text('Касса: инкассация, внесение, выплата'),
+                              ),
+                            ),
+                          const SizedBox(height: 20),
+                          Row(children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 52,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _printReport(data, refunded.length, cash),
+                                  icon: const Icon(Icons.print_outlined, size: 20),
+                                  label: const Text('Распечатать'),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: SizedBox(
+                                height: 52,
+                                child: FilledButton.tonalIcon(
+                                  onPressed: () => _copyTotals(data, cash),
+                                  icon: const Icon(Icons.copy_rounded, size: 20),
+                                  label: const Text('Скопировать'),
+                                ),
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 12),
+                          _buildShiftActions(centered: true),
                         ],
                       );
-                    }
-                    return ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                      children: [
-                        if (paid.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Text(_emptyMessage(), style: const TextStyle(color: AppColors.textMuted)),
-                          ),
-                        if (data.items.isNotEmpty) ..._itemsTable(data),
-                        const Divider(height: 24),
-                        _totalRow('Итого', data.orderTotal),
-                        _totalRow('К оплате', data.revenue, bold: true),
-                        const SizedBox(height: 8),
-                        _totalRow('Оплачено картой', data.paymentCard),
-                        _totalRow('Оплачено наличными', data.paymentCash),
-                        _totalRow('Оплачено терминалом', data.paymentTerminal),
-                        _totalRow('За счёт заведения', data.paymentComp),
-                        if (cash != null) ...[
-                          _totalRow('Инкассация', cash.summary.collections),
-                          if (!cash.rangeOnly) _totalRow('Наличные в кассе', cash.summary.expected, bold: true),
-                        ],
-                        if (data.tipsCash + data.tipsCard > 0) ...[
-                          const Divider(height: 24),
-                          // Не выручка: деньги сотрудников. Наличные чаевые
-                          // лежат в той же кассе и входят в «Наличные в кассе».
-                          _totalRow('Чаевые наличными (в кассе)', data.tipsCash),
-                          _totalRow('Чаевые картой', data.tipsCard),
-                        ],
-                        if (data.unpaidCount > 0) ...[
-                          const Divider(height: 24),
-                          _countRow('Закрыто без оплаты', data.unpaidCount),
-                          _totalRow('На сумму (вне выручки)', data.unpaidAmount),
-                        ],
-                        if (refunded.isNotEmpty) ...[
-                          const Divider(height: 24),
-                          _countRow('Возвратов за период', refunded.length),
-                          _totalRow('Сумма возвратов', refunded.fold(0.0, (s, e) => s + e.totalWithDiscount)),
-                        ],
-                        // Сама касса — инкассация, внесение, выплата,
-                        // операции и пересчёты — на отдельном экране «Касса».
-                        if (cash != null && !cash.rangeOnly && cash.live)
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton.icon(
-                              onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute(builder: (_) => CashScreen(employee: widget.employee))),
-                              icon: const Icon(Icons.point_of_sale_outlined, size: 18),
-                              label: const Text('Касса: инкассация, внесение, выплата'),
-                            ),
-                          ),
-                        const SizedBox(height: 20),
-                        Row(children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 52,
-                              child: OutlinedButton.icon(
-                                onPressed: () => _printReport(data, refunded.length, cash),
-                                icon: const Icon(Icons.print_outlined, size: 20),
-                                label: const Text('Распечатать'),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: SizedBox(
-                              height: 52,
-                              child: FilledButton.tonalIcon(
-                                onPressed: () => _copyTotals(data, cash),
-                                icon: const Icon(Icons.copy_rounded, size: 20),
-                                label: const Text('Скопировать'),
-                              ),
-                            ),
-                          ),
-                        ]),
-                        const SizedBox(height: 12),
-                        _buildShiftActions(centered: true),
-                      ],
-                    );
-                  },
-                );
-              },
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -702,6 +706,7 @@ class _XReportScreenState extends State<XReportScreen> {
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
+          scrollable: true,
           title: const Text('Принтер не подключён'),
           content: const Text('Чековый принтер подключается в разделе «Интеграции» (Bluetooth или Wi‑Fi). '
               'Пока отчёт скопирован целиком — его можно вставить в мессенджер.'),

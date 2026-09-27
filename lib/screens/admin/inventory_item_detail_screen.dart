@@ -3,6 +3,7 @@ import '../../models/employee.dart';
 import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 
 /// Карточка одной позиции склада: текущий остаток, быстрые действия
 /// (приход / списание / ручная корректировка на точное значение),
@@ -17,165 +18,168 @@ class InventoryItemDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final fs = FirestoreService();
     return Scaffold(
-      body: StreamBuilder<InventoryItem?>(
-        stream: fs.inventoryItemStream(itemId),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final item = snap.data;
-          if (item == null) {
-            return const Center(child: Text('Позиция удалена'));
-          }
-          return CustomScrollView(
-            slivers: [
-              SliverAppBar(
-                title: Text(item.name),
-                floating: true,
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.edit_outlined),
-                    tooltip: 'Редактировать',
-                    onPressed: () => _editItem(context, fs, item),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Удалить',
-                    onPressed: () => _confirmDelete(context, fs, item),
-                  ),
-                ],
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      item.category.isEmpty ? 'Без категории' : item.category,
-                                      style: const TextStyle(color: AppColors.textMuted),
+      body: CenteredBody(
+        maxWidth: 900,
+        child: StreamBuilder<InventoryItem?>(
+          stream: fs.inventoryItemStream(itemId),
+          builder: (context, snap) {
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final item = snap.data;
+            if (item == null) {
+              return const Center(child: Text('Позиция удалена'));
+            }
+            return CustomScrollView(
+              slivers: [
+                SliverAppBar(
+                  title: Text(item.name),
+                  floating: true,
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: 'Редактировать',
+                      onPressed: () => _editItem(context, fs, item),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Удалить',
+                      onPressed: () => _confirmDelete(context, fs, item),
+                    ),
+                  ],
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        item.category.isEmpty ? 'Без категории' : item.category,
+                                        style: const TextStyle(color: AppColors.textMuted),
+                                      ),
+                                    ),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          item.active ? 'Отслеживается' : 'Отключена',
+                                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                                        ),
+                                        Switch(
+                                          value: item.active,
+                                          onChanged: (v) => fs.setInventoryItemActive(item.id, v),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  item.unit.formatWithLabel(item.quantity),
+                                  style: TextStyle(
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.w800,
+                                    color: item.isLow ? AppColors.danger : AppColors.textPrimary,
+                                  ),
+                                ),
+                                if (item.isLow)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                                        const SizedBox(width: 6),
+                                        Text('Мало на складе (порог ${item.unit.formatWithLabel(item.minQuantity)})',
+                                            style: const TextStyle(color: AppColors.warning, fontSize: 13)),
+                                      ],
                                     ),
                                   ),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        item.active ? 'Отслеживается' : 'Отключена',
-                                        style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-                                      ),
-                                      Switch(
-                                        value: item.active,
-                                        onChanged: (v) => fs.setInventoryItemActive(item.id, v),
-                                      ),
-                                    ],
-                                  ),
+                                if (item.note.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  Text(item.note, style: const TextStyle(color: AppColors.textMuted)),
                                 ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                item.unit.formatWithLabel(item.quantity),
-                                style: TextStyle(
-                                  fontSize: 36,
-                                  fontWeight: FontWeight.w800,
-                                  color: item.isLow ? AppColors.danger : AppColors.textPrimary,
-                                ),
-                              ),
-                              if (item.isLow)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
-                                      const SizedBox(width: 6),
-                                      Text('Мало на складе (порог ${item.unit.formatWithLabel(item.minQuantity)})',
-                                          style: const TextStyle(color: AppColors.warning, fontSize: 13)),
-                                    ],
-                                  ),
-                                ),
-                              if (item.note.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                Text(item.note, style: const TextStyle(color: AppColors.textMuted)),
                               ],
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.add, color: AppColors.success),
-                              label: const Text('Приход'),
-                              onPressed: () => _adjustDialog(context, fs, item, type: 'receipt'),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.remove, color: AppColors.danger),
-                              label: const Text('Списание'),
-                              onPressed: () => _adjustDialog(context, fs, item, type: 'writeoff'),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: TextButton.icon(
-                          icon: const Icon(Icons.tune),
-                          label: const Text('Скорректировать остаток вручную'),
-                          onPressed: () => _correctionDialog(context, fs, item),
                         ),
-                      ),
-                      const SizedBox(height: 24),
-                      const Text('История движений',
-                          style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
-                    ],
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.add, color: AppColors.success),
+                                label: const Text('Приход'),
+                                onPressed: () => _adjustDialog(context, fs, item, type: 'receipt'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.remove, color: AppColors.danger),
+                                label: const Text('Списание'),
+                                onPressed: () => _adjustDialog(context, fs, item, type: 'writeoff'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.tune),
+                            label: const Text('Скорректировать остаток вручную'),
+                            onPressed: () => _correctionDialog(context, fs, item),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        const Text('История движений',
+                            style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              StreamBuilder<List<InventoryMovement>>(
-                stream: fs.inventoryMovementsStream(item.id),
-                builder: (context, moveSnap) {
-                  final moves = moveSnap.data ?? [];
-                  if (!moveSnap.hasData) {
-                    return const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: CircularProgressIndicator()),
+                StreamBuilder<List<InventoryMovement>>(
+                  stream: fs.inventoryMovementsStream(item.id),
+                  builder: (context, moveSnap) {
+                    final moves = moveSnap.data ?? [];
+                    if (!moveSnap.hasData) {
+                      return const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                      );
+                    }
+                    if (moves.isEmpty) {
+                      return const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          child: Text('Движений пока не было', style: TextStyle(color: AppColors.textMuted)),
+                        ),
+                      );
+                    }
+                    return SliverPadding(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, i) => _MovementTile(move: moves[i]),
+                          childCount: moves.length,
+                        ),
                       ),
                     );
-                  }
-                  if (moves.isEmpty) {
-                    return const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        child: Text('Движений пока не было', style: TextStyle(color: AppColors.textMuted)),
-                      ),
-                    );
-                  }
-                  return SliverPadding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, i) => _MovementTile(move: moves[i]),
-                        childCount: moves.length,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          );
-        },
+                  },
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -192,6 +196,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text(isReceipt ? 'Приход: ${item.name}' : 'Списание: ${item.name}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -244,6 +249,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text('Скорректировать остаток: ${item.name}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -368,6 +374,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить позицию?'),
         content: Text(
             '«${item.name}» и её остаток будут удалены. История движений останется в базе, но больше не будет привязана к позиции. Это действие нельзя отменить.'),

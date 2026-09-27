@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/table_model.dart';
@@ -108,14 +110,24 @@ class TableQrScreen extends StatelessWidget {
                   style: TextStyle(color: AppColors.textMuted)),
             );
           }
-          return GridView.count(
-            padding: const EdgeInsets.all(16),
-            crossAxisCount: MediaQuery.of(context).size.width > 800 ? 4 : 2,
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            childAspectRatio: 0.78,
-            children: tables.map(_qrCard).toList(),
-          );
+          // Колонки по ширине экрана (карточка ~240 dp), высота — QR во всю
+          // ширину карточки плюс подписи с поправкой на системный шрифт:
+          // раньше на узком телефоне с крупным шрифтом подписи вылезали.
+          return LayoutBuilder(builder: (context, box) {
+            const pad = 16.0, gap = 16.0;
+            final cols = math.max(2, ((box.maxWidth - 2 * pad + gap) / (240 + gap)).floor());
+            final cellWidth = (box.maxWidth - 2 * pad - gap * (cols - 1)) / cols;
+            return GridView(
+              padding: const EdgeInsets.all(pad),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: cols,
+                mainAxisSpacing: gap,
+                crossAxisSpacing: gap,
+                mainAxisExtent: cellWidth + MediaQuery.textScalerOf(context).scale(96),
+              ),
+              children: tables.map(_qrCard).toList(),
+            );
+          });
         },
       ),
     );
@@ -134,6 +146,8 @@ class TableQrScreen extends StatelessWidget {
                 AppScope.isSaasMode
                     ? (AppScope.branding?.appName ?? 'Colibri Lounge')
                     : 'Colibri Lounge',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                     color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13)),
             const SizedBox(height: 8),
@@ -146,10 +160,14 @@ class TableQrScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(table.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                     color: Colors.black, fontSize: 18, fontWeight: FontWeight.w700)),
             const Text('Наведите камеру — откроется приложение',
                 textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: Colors.black54, fontSize: 11)),
           ],
         ),

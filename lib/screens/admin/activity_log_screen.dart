@@ -7,6 +7,7 @@ import '../../services/audit_log_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/adaptive.dart';
 
 /// Три ленты в одном экране:
 ///  • «Сводки ИИ» — что фоновые агенты нашли и предложили;
@@ -32,8 +33,11 @@ class ActivityLogScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [_NotesTab(), _AiActionsTab(), _AuditTab()],
+        body: const CenteredBody(
+          maxWidth: 900,
+          child: TabBarView(
+            children: [_NotesTab(), _AiActionsTab(), _AuditTab()],
+          ),
         ),
       ),
     );
