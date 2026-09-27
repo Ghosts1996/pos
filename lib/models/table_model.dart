@@ -10,6 +10,11 @@ class TableModel {
   final String shape; // 'rect' или 'circle'
   final String status; // 'free' | 'occupied'
 
+  /// Зона зала: «Основной зал», «Терраса», «VIP», «Бар»… Пусто — без зоны
+  /// (одна общая схема, как было раньше). У каждой зоны своя схема: x/y
+  /// стола — доли внутри схемы ЕГО зоны.
+  final String zone;
+
   /// Id всех сейчас открытых чеков за этим столом. Раньше был единственный
   /// currentSessionId (String?) — на стол можно было открыть только один
   /// счёт. Теперь это список: на стол можно открыть несколько отдельных
@@ -44,6 +49,7 @@ class TableModel {
     this.seats = 4,
     this.shape = 'rect',
     this.status = 'free',
+    this.zone = '',
     this.activeSessionIds = const [],
     this.maxOpenSessions = 2,
     this.busyUntil,
@@ -72,6 +78,7 @@ class TableModel {
       seats: data['seats'] ?? 4,
       shape: data['shape'] ?? 'rect',
       status: data['status'] ?? 'free',
+      zone: (data['zone'] ?? '').toString().trim(),
       activeSessionIds: ids,
       maxOpenSessions: ((data['maxOpenSessions'] as num?)?.toInt()) ?? 2,
       busyUntil: data['busyUntil'] is Timestamp
@@ -91,6 +98,7 @@ class TableModel {
       'seats': seats,
       'shape': shape,
       'status': status,
+      'zone': zone,
       'activeSessionIds': activeSessionIds,
       'maxOpenSessions': maxOpenSessions,
       'busyUntil': busyUntil == null ? null : Timestamp.fromDate(busyUntil!),
@@ -108,6 +116,7 @@ class TableModel {
     int? seats,
     String? shape,
     String? status,
+    String? zone,
     List<String>? activeSessionIds,
     int? maxOpenSessions,
     DateTime? busyUntil,
@@ -121,6 +130,7 @@ class TableModel {
       seats: seats ?? this.seats,
       shape: shape ?? this.shape,
       status: status ?? this.status,
+      zone: zone ?? this.zone,
       activeSessionIds: activeSessionIds ?? this.activeSessionIds,
       maxOpenSessions: maxOpenSessions ?? this.maxOpenSessions,
       busyUntil: busyUntil ?? this.busyUntil,

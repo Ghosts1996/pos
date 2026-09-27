@@ -1,24 +1,116 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../models/client_models.dart';
 import '../../models/employee.dart';
-import '../../models/table_model.dart';
+import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
-import '../../services/firestore_service.dart';
+import '../../models/table_model.dart';
 import '../../services/ai/ai_agents.dart';
+import '../../services/firestore_service.dart';
+import '../../services/guest_link_service.dart';
+import '../../services/reservation_service.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/table_tile.dart';
+import '../../utils/hall_layout.dart';
+import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/employee_drawer.dart';
 import '../../widgets/guest_requests_banner.dart';
-import '../../widgets/ai_assistant_sheet.dart';
+import '../../widgets/hall_plan_view.dart';
+import '../../widgets/table_tile.dart';
 import 'table_detail_screen.dart';
 
-/// Карта зала для сотрудника.
+/// Какие столы показывать.
+enum _HallFilter { all, free, busy, ending, reserved }
+
+/// Зал для сотрудника: сводка по столам, фильтры, зоны и два вида —
+/// «Список» (удобно на телефоне) и «Схема» (как расставил администратор).
 ///
-/// Сверху — живая панель обращений гостей из «Colibri Lounge» (вызовы и
-/// заказы). Панель схлопывается в ноль, когда обращений нет, поэтому в
-/// спокойное время карта зала занимает весь экран, как раньше.
-class FloorPlanScreen extends StatelessWidget {
+/// Сверху — полоса обращений гостей (вызовы и заказы из приложения гостя).
+class FloorPlanScreen extends StatefulWidget {
   final Employee employee;
   const FloorPlanScreen({super.key, required this.employee});
+
+  @override
+  State<FloorPlanScreen> createState() => _FloorPlanScreenState();
+}
+
+class _FloorPlanScreenState extends State<FloorPlanScreen> {
+  static const _viewKey = 'hall_view_mode_v1';
+  final _fs = FirestoreService();
+
+  // Стримы создаются один раз: StreamBuilder сравнивает стримы по ссылке, и
+  // стрим, созданный прямо в build, переподписывался бы на каждый кадр.
+  late final Stream<List<TableModel>> _tables = _fs.tablesStream();
+  late final Stream<List<WaiterCall>> _calls = GuestLinkService().openCallsStream();
+  late final Stream<List<ReservationModel>> _reservations = ReservationService().upcomingStream(hours: 3);
+
+  bool? _planMode; // null — ещё не прочитали настройку
+  _HallFilter _filter = _HallFilter.all;
+  String? _zone; // null — все зоны
+  DateTime _now = DateTime.now();
+  Timer? _minute;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadViewMode();
+    // Сводка («скоро освободятся», брони) зависит от времени — пересчёт раз
+    // в полминуты; секундные таймеры на плитках идут сами.
+    _minute = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _minute?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadViewMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_viewKey);
+      if (v != null && mounted) setState(() => _planMode = v == 'plan');
+    } catch (_) {}
+  }
+
+  Future<void> _setPlanMode(bool plan) async {
+    setState(() => _planMode = plan);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_viewKey, plan ? 'plan' : 'grid');
+    } catch (_) {}
+  }
+
+  void _openTable(TableModel t) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TableDetailScreen(
+        table: t,
+        employee: widget.employee,
+        // Если на столе уже есть открытые чеки — сразу открываем первый;
+        // переключиться можно внутри самого экрана стола.
+        sessionId: t.activeSessionIds.isNotEmpty ? t.activeSessionIds.first : null,
+      ),
+    ));
+  }
+
+  bool _matches(TableState s) {
+    switch (_filter) {
+      case _HallFilter.all:
+        return true;
+      case _HallFilter.free:
+        return s == TableState.free || s == TableState.reserved;
+      case _HallFilter.busy:
+        return s.isBusy;
+      case _HallFilter.ending:
+        return s == TableState.ending || s == TableState.overdue;
+      case _HallFilter.reserved:
+        return s == TableState.reserved;
+    }
+  }
 
   // Зал — корневой экран кассы: под ним только заставка запуска, и
   // системная «Назад» уводила на пустой экран с логотипом.
@@ -26,12 +118,28 @@ class FloorPlanScreen extends StatelessWidget {
   Widget build(BuildContext context) => PopScope(canPop: false, child: _page(context));
 
   Widget _page(BuildContext context) {
-    final fs = FirestoreService();
-
     return Scaffold(
       appBar: AppBar(
-        title: Text('Зал · ${employee.name}'),
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Зал'),
+            Text(widget.employee.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted, fontWeight: FontWeight.w400)),
+          ],
+        ),
         actions: [
+          LayoutBuilder(builder: (context, _) {
+            final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
+            return IconButton(
+              tooltip: plan ? 'Показать списком' : 'Показать схемой',
+              icon: Icon(plan ? Icons.grid_view_rounded : Icons.map_outlined),
+              onPressed: () => _setPlanMode(!plan),
+            );
+          }),
           IconButton(
             tooltip: 'Ассистент зала',
             icon: const Icon(Icons.auto_awesome),
@@ -50,18 +158,18 @@ class FloorPlanScreen extends StatelessWidget {
           ),
         ],
       ),
-      drawer: EmployeeDrawer(employee: employee),
+      drawer: EmployeeDrawer(employee: widget.employee),
       body: Column(
         children: [
           GuestRequestsBanner(
-            employee: employee,
+            employee: widget.employee,
             onOpenTable: (tableId, sessionId) async {
-              final table = await fs.tableStream(tableId).first;
+              final table = await _fs.tableStream(tableId).first;
               if (table == null || !context.mounted) return;
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => TableDetailScreen(
                   table: table,
-                  employee: employee,
+                  employee: widget.employee,
                   sessionId: sessionId.isEmpty ? null : sessionId,
                 ),
               ));
@@ -69,52 +177,29 @@ class FloorPlanScreen extends StatelessWidget {
           ),
           Expanded(
             child: StreamBuilder<List<TableModel>>(
-              stream: fs.tablesStream(),
+              stream: _tables,
               builder: (context, snap) {
                 if (snap.hasError) {
-                  return Center(
-                    child: Text('Ошибка загрузки зала: ${snap.error}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.danger)),
-                  );
+                  return _message(Icons.cloud_off_outlined, 'Не удалось загрузить зал',
+                      'Проверьте интернет — столы появятся, как только связь вернётся.');
                 }
                 if (!snap.hasData) return const Center(child: CircularProgressIndicator());
                 final tables = snap.data!;
                 if (tables.isEmpty) {
-                  return const Center(child: Text('Столы ещё не добавлены администратором'));
+                  return _message(Icons.table_restaurant_outlined, 'Столов пока нет',
+                      'Администратор добавляет их в «Карта зала» — там же расставляет по схеме.');
                 }
-                return LayoutBuilder(builder: (context, constraints) {
-                  // x/y хранятся как доли 0..1, а плитка имеет реальный
-                  // размер: умножать долю на полную ширину нельзя — на
-                  // узком экране правый и нижний ряд столов уезжали за
-                  // границу и обрезались. Раскладываем по свободному месту.
-                  final spanX = (constraints.maxWidth - TableTile.size).clamp(0.0, double.infinity);
-                  final spanY = (constraints.maxHeight - TableTile.size).clamp(0.0, double.infinity);
-                  return Stack(
-                    children: tables.map((t) {
-                      return Positioned(
-                        key: ValueKey(t.id),
-                        left: t.x * spanX,
-                        top: t.y * spanY,
-                        child: _TableWithTimer(
-                          table: t,
-                          employee: employee,
-                          onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                              builder: (_) => TableDetailScreen(
-                                    table: t,
-                                    employee: employee,
-                                    // Если на столе уже есть открытые чеки —
-                                    // сразу открываем первый; переключиться
-                                    // можно внутри самого экрана стола.
-                                    sessionId: t.activeSessionIds.isNotEmpty
-                                        ? t.activeSessionIds.first
-                                        : null,
-                                  ))),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                });
+                return StreamBuilder<List<WaiterCall>>(
+                  stream: _calls,
+                  builder: (context, callsSnap) => StreamBuilder<List<ReservationModel>>(
+                    stream: _reservations,
+                    builder: (context, resSnap) => _hall(
+                      tables,
+                      callTables: {for (final c in callsSnap.data ?? const <WaiterCall>[]) c.tableId},
+                      reservations: nextReservationsByTable(resSnap.data ?? const [], now: _now),
+                    ),
+                  ),
+                );
               },
             ),
           ),
@@ -122,56 +207,237 @@ class FloorPlanScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _hall(List<TableModel> all, {required Set<String> callTables, required Map<String, ReservationModel> reservations}) {
+    final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
+    final zones = hallZones(all);
+    final hasNoZone = zones.isNotEmpty && all.any((t) => t.zone.isEmpty);
+    final zoneKeys = [...zones, if (hasNoZone) ''];
+    // Выбранная зона пропала (переименовали) — показываем все.
+    var zone = _zone != null && zoneKeys.contains(_zone) ? _zone : null;
+    // На схеме у каждой зоны своя раскладка — «все сразу» наложились бы.
+    if (plan && zone == null && zoneKeys.isNotEmpty) zone = zoneKeys.first;
+    final inZone = zone == null ? all : all.where((t) => t.zone == zone).toList();
+
+    TableState stateOf(TableModel t) => tableStateOf(t, now: _now, reservation: reservations[t.id]);
+    final states = {for (final t in inZone) t.id: stateOf(t)};
+    int count(bool Function(TableState) f) => states.values.where(f).length;
+
+    final chips = <Widget>[
+      _filterChip(_HallFilter.all, 'Все', inZone.length, AppColors.textMuted),
+      _filterChip(_HallFilter.free, 'Свободны', count((s) => s == TableState.free || s == TableState.reserved),
+          TableStateColors.free),
+      _filterChip(_HallFilter.busy, 'Заняты', count((s) => s.isBusy), TableStateColors.occupied),
+      if (count((s) => s == TableState.ending || s == TableState.overdue) > 0 || _filter == _HallFilter.ending)
+        _filterChip(_HallFilter.ending, 'Скоро освободятся',
+            count((s) => s == TableState.ending || s == TableState.overdue), TableStateColors.ending),
+      if (count((s) => s == TableState.reserved) > 0 || _filter == _HallFilter.reserved)
+        _filterChip(_HallFilter.reserved, 'Бронь', count((s) => s == TableState.reserved), TableStateColors.reserved),
+    ];
+
+    final free = count((s) => s == TableState.free || s == TableState.reserved);
+
+    return Column(
+      children: [
+        if (zoneKeys.isNotEmpty)
+          SizedBox(
+            height: 48,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              children: [
+                if (!plan) _zoneChip(null, 'Все зоны', zone),
+                for (final z in zoneKeys) _zoneChip(z, z.isEmpty ? kNoZoneLabel : z, zone),
+              ],
+            ),
+          ),
+        SizedBox(
+          height: 52,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            children: chips,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              free == 0 ? 'Свободных столов нет' : 'Свободно $free из ${inZone.length}',
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+            ),
+          ),
+        ),
+        Expanded(child: plan ? _plan(inZone, states, callTables, reservations) : _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
+      ],
+    );
+  }
+
+  Widget _plan(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
+      Map<String, ReservationModel> reservations) {
+    return HallPlanView(
+      tables: tables,
+      tileBuilder: (t) => _SessionBuilder(
+        table: t,
+        builder: (s) => TableTile(
+          table: t,
+          plannedEnd: s?.plannedEnd,
+          startTime: s?.startTime,
+          guestTag: s?.guestTag,
+          billTotal: s?.totalWithDiscount,
+          checkCount: t.activeSessionIds.length,
+          reservation: reservations[t.id],
+          hasCall: calls.contains(t.id),
+          dimmed: !_matches(states[t.id]!),
+          onTap: () => _openTable(t),
+        ),
+      ),
+    );
+  }
+
+  Widget _grid(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
+      Map<String, ReservationModel> reservations,
+      {required bool showZone}) {
+    final shown = tables.where((t) => _matches(states[t.id]!)).toList()
+      ..sort((a, b) {
+        // Сначала столы, где гость зовёт, дальше — по номеру.
+        final c = (calls.contains(b.id) ? 1 : 0) - (calls.contains(a.id) ? 1 : 0);
+        return c != 0 ? c : compareTables(a, b);
+      });
+    if (shown.isEmpty) {
+      return _message(Icons.filter_alt_off_outlined, 'Таких столов сейчас нет', 'Выберите другой фильтр сверху.');
+    }
+    Widget card(TableModel t) => _SessionBuilder(
+          key: ValueKey(t.id),
+          table: t,
+          builder: (s) => TableCard(
+            table: t,
+            plannedEnd: s?.plannedEnd,
+            startTime: s?.startTime,
+            guestTag: s?.guestTag,
+            billTotal: s?.totalWithDiscount,
+            checkCount: t.activeSessionIds.length,
+            reservation: reservations[t.id],
+            hasCall: calls.contains(t.id),
+            onTap: () => _openTable(t),
+          ),
+        );
+    const grid = SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: 240,
+      mainAxisExtent: 116,
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 10,
+    );
+    // «Все зоны» — столы по зонам с заголовками, а не подписью на каждой
+    // карточке (на телефоне она всё равно обрезалась).
+    final sections = <String, List<TableModel>>{};
+    if (showZone) {
+      final order = hallZones(tables);
+      for (final z in [...order, '']) {
+        final list = shown.where((t) => t.zone == z).toList();
+        if (list.isNotEmpty) sections[z] = list;
+      }
+    } else {
+      sections[''] = shown;
+    }
+    return CustomScrollView(
+      slivers: [
+        for (final e in sections.entries) ...[
+          if (showZone)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              sliver: SliverToBoxAdapter(
+                child: Text(
+                  '${e.key.isEmpty ? kNoZoneLabel : e.key} · ${e.value.length}',
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 0.2),
+                ),
+              ),
+            ),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(12, showZone ? 0 : 6, 12, 8),
+            sliver: SliverGrid(
+              gridDelegate: grid,
+              delegate: SliverChildBuilderDelegate((context, i) => card(e.value[i]), childCount: e.value.length),
+            ),
+          ),
+        ],
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+      ],
+    );
+  }
+
+  Widget _filterChip(_HallFilter f, String label, int n, Color color) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          showCheckmark: false,
+          avatar: f == _HallFilter.all
+              ? null
+              : Container(width: 9, height: 9, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          label: Text('$label  $n'),
+          selected: _filter == f,
+          onSelected: (_) => setState(() => _filter = _filter == f ? _HallFilter.all : f),
+        ),
+      );
+
+  Widget _zoneChip(String? z, String label, String? selected) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          label: Text(label),
+          selected: selected == z,
+          onSelected: (_) => setState(() => _zone = z),
+        ),
+      );
+
+  Widget _message(IconData icon, String title, String text) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 44, color: AppColors.textMuted),
+            const SizedBox(height: 12),
+            Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Text(text, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textMuted)),
+          ]),
+        ),
+      );
 }
 
-/// Подписывается на первый открытый чек стола, чтобы показать живой таймер
-/// и бейдж количества чеков прямо на плитке. Дополнительно подсвечивает
-/// стол, от которого поступил вызов гостя.
+/// Подписывается на первый открытый чек стола — для таймера, подписи и
+/// суммы на плитке.
 ///
-/// Стрим чека кэшируется и пересоздаётся ТОЛЬКО при смене id чека. Раньше
-/// виджет был stateless и создавал `fs.sessionStream(...)` прямо в build:
-/// StreamBuilder сравнивает стримы по ссылке, поэтому на каждый ребилд
-/// карты зала (а он происходит при любом изменении любого стола) все
-/// подписки на чеки отписывались и подписывались заново. Отсюда и лишний
-/// трафик к Firestore, и мигание таймеров — плитка на кадр теряла данные
-/// чека и показывалась «свободной».
-class _TableWithTimer extends StatefulWidget {
+/// Стрим чека кэшируется и пересоздаётся ТОЛЬКО при смене id чека:
+/// StreamBuilder сравнивает стримы по ссылке, и стрим, созданный прямо в
+/// build, на каждое изменение любого стола отписывался и подписывался
+/// заново — лишний трафик к Firestore и мигание таймеров.
+class _SessionBuilder extends StatefulWidget {
   final TableModel table;
-  final Employee employee;
-  final VoidCallback onTap;
-
-  const _TableWithTimer({
-    required this.table,
-    required this.employee,
-    required this.onTap,
-  });
+  final Widget Function(SessionModel? session) builder;
+  const _SessionBuilder({super.key, required this.table, required this.builder});
 
   @override
-  State<_TableWithTimer> createState() => _TableWithTimerState();
+  State<_SessionBuilder> createState() => _SessionBuilderState();
 }
 
-class _TableWithTimerState extends State<_TableWithTimer> {
+class _SessionBuilderState extends State<_SessionBuilder> {
   static final _fs = FirestoreService();
-
   String? _sessionId;
   Stream<SessionModel?>? _stream;
 
   @override
   void initState() {
     super.initState();
-    _syncStream();
+    _sync();
   }
 
   @override
-  void didUpdateWidget(covariant _TableWithTimer oldWidget) {
+  void didUpdateWidget(covariant _SessionBuilder oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncStream();
+    _sync();
   }
 
-  void _syncStream() {
-    final id = widget.table.activeSessionIds.isEmpty
-        ? null
-        : widget.table.activeSessionIds.first;
+  void _sync() {
+    final id = widget.table.activeSessionIds.isEmpty ? null : widget.table.activeSessionIds.first;
     if (id == _sessionId) return;
     _sessionId = id;
     _stream = id == null ? null : _fs.sessionStream(id);
@@ -180,22 +446,10 @@ class _TableWithTimerState extends State<_TableWithTimer> {
   @override
   Widget build(BuildContext context) {
     final stream = _stream;
-    if (stream == null) {
-      return TableTile(table: widget.table, onTap: widget.onTap);
-    }
+    if (stream == null) return widget.builder(null);
     return StreamBuilder<SessionModel?>(
       stream: stream,
-      builder: (context, snap) {
-        final session = snap.data;
-        return TableTile(
-          table: widget.table,
-          plannedEnd: session?.plannedEnd,
-          startTime: session?.startTime,
-          checkCount: widget.table.activeSessionIds.length,
-          guestTag: session?.guestTag,
-          onTap: widget.onTap,
-        );
-      },
+      builder: (context, snap) => widget.builder(snap.data),
     );
   }
 }
