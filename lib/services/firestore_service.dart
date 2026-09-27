@@ -16,6 +16,7 @@ import '../utils/constants.dart';
 import 'venue_service.dart';
 import 'tips_service.dart';
 import '../utils/shift_time.dart';
+import '../utils/promo_policy.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -415,6 +416,15 @@ class FirestoreService {
   /// перезаписали друг друга.
   Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
+    // Кальян/табак — по названию позиции или её категории («Кальяны»):
+    // на такие позиции не действуют скидки и бонусы (PromoPolicy).
+    var noPromo = PromoPolicy.looksTobacco(menuItem.name);
+    if (!noPromo && menuItem.categoryId.isNotEmpty) {
+      try {
+        final cat = await AppScope.col('menuCategories').doc(menuItem.categoryId).get();
+        noPromo = PromoPolicy.looksTobacco((cat.data()?['name'] ?? '') as String);
+      } catch (_) {}
+    }
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -431,6 +441,7 @@ class FirestoreService {
           name: menuItem.name,
           price: menuItem.price,
           qty: qty,
+          noPromo: noPromo,
         ));
       }
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});

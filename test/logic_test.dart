@@ -117,12 +117,20 @@ void main() {
       expect(s.orderTotal, 3300);
     });
 
-    test('скидка применяется ко всему чеку', () {
+    test('скидка применяется ко всему чеку, кроме кальянов', () {
       final s = session(
-        items: [OrderItem(name: 'Кальян', price: 1000, qty: 1)],
+        items: [OrderItem(name: 'Лимонад', price: 1000, qty: 1)],
         discountPercent: 15,
       );
       expect(s.totalWithDiscount, 850);
+      final withHookah = session(
+        items: [
+          OrderItem(name: 'Лимонад', price: 1000, qty: 1),
+          OrderItem(name: 'Кальян', price: 1000, qty: 1),
+        ],
+        discountPercent: 15,
+      );
+      expect(withHookah.totalWithDiscount, 1850);
     });
 
     test('итог оплаты — сумма всех способов', () {
@@ -135,7 +143,7 @@ void main() {
       // paymentComp, поэтому сумма способов оплаты обязана совпасть с
       // суммой чека после скидки — иначе X-отчёт покажет недостачу.
       final s = session(
-        items: [OrderItem(name: 'Кальян', price: 2000, qty: 1)],
+        items: [OrderItem(name: 'Лимонад', price: 2000, qty: 1)],
         discountPercent: 10,
         cash: 1300,
         comp: 500, // 500 списано бонусами
