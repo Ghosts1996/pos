@@ -23,6 +23,7 @@ import '../utils/human_error.dart';
 import '../theme/app_colors.dart';
 import '../utils/shift_crew.dart';
 import 'shift_flow.dart';
+import 'about_app_dialog.dart';
 
 /// Меню сотрудника — боковая панель: зал, брони, очередь заказов, лист
 /// ожидания, смена, X-отчёт, история чеков, склад и ассистент зала.
@@ -362,6 +363,13 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
             ),
 
             const Divider(height: 1),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.system_update_alt),
+              title: const Text('Обновления'),
+              subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
+              onTap: () => showAboutAppDialog(context),
+            ),
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Сменить сотрудника'),

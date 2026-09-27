@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/about_app_dialog.dart';
 import '../../services/staff_session_store.dart';
 import '../../models/employee.dart';
 import 'floor_plan_editor_screen.dart';
@@ -81,6 +82,11 @@ class AdminHomeScreen extends StatelessWidget {
         automaticallyImplyLeading: false,
         title: Text('Админ · ${employee.name}'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update_alt),
+            tooltip: 'Обновления',
+            onPressed: () => showAboutAppDialog(context),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',

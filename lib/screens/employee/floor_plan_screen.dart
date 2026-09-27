@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -274,11 +275,10 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
     );
   }
 
-  Widget _plan(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
-      Map<String, ReservationModel> reservations) {
-    return HallPlanView(
-      tables: tables,
-      tileBuilder: (t) => _SessionBuilder(
+  /// Плитка стола на схеме.
+  Widget _tile(TableModel t, Map<String, TableState> states, Set<String> calls,
+          Map<String, ReservationModel> reservations) =>
+      _SessionBuilder(
         table: t,
         builder: (s) => TableTile(
           table: t,
@@ -292,8 +292,156 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
           dimmed: !_matches(states[t.id]!),
           onTap: () => _openTable(t),
         ),
-      ),
+      );
+
+  /// Карточка стола в списке (как в виде «Список»).
+  Widget _card(TableModel t, Set<String> calls, Map<String, ReservationModel> reservations) => _SessionBuilder(
+        key: ValueKey(t.id),
+        table: t,
+        builder: (s) => TableCard(
+          table: t,
+          plannedEnd: s?.plannedEnd,
+          startTime: s?.startTime,
+          guestTag: s?.guestTag,
+          billTotal: s?.totalWithDiscount,
+          checkCount: t.activeSessionIds.length,
+          reservation: reservations[t.id],
+          hasCall: calls.contains(t.id),
+          onTap: () => _openTable(t),
+        ),
+      );
+
+  static const _cardGrid = SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: 240,
+    mainAxisExtent: 116,
+    crossAxisSpacing: 10,
+    mainAxisSpacing: 10,
+  );
+
+  /// Схема в рамке: скруглённая «площадка» зала.
+  Widget _mapFrame(Widget map) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.surface.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: ClipRRect(borderRadius: BorderRadius.circular(21), child: map),
+      );
+
+  /// Вид «Схема». Показывается та часть зала, где стоят столы (без пустых
+  /// полей), её можно двигать и приближать. На телефоне схема занимает
+  /// столько высоты, сколько нужно столам, а ниже — «Сейчас в зале»:
+  /// занятые столы по срочности (время вышло, скоро освободятся…) с
+  /// таймером и суммой. Раньше под схемой оставалась половина пустого
+  /// экрана.
+  Widget _plan(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
+      Map<String, ReservationModel> reservations) {
+    final map = HallPlanView(
+      tables: tables,
+      fitToTables: true,
+      showHint: false,
+      tileBuilder: (t) => _tile(t, states, calls, reservations),
     );
+    return LayoutBuilder(builder: (context, box) {
+      if (box.maxWidth >= 600) {
+        return Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 12), child: _mapFrame(map));
+      }
+      final all = _filter == _HallFilter.all;
+      bool busyOrCall(TableModel t) => states[t.id]!.isBusy || calls.contains(t.id);
+      // «Все»: сначала те, кто в зале (по срочности), ниже — свободные (с
+      // бронью выше), чтобы и посадить гостей можно было прямо из списка.
+      // Другой фильтр — один раздел с его столами.
+      final sections = <(String, List<TableModel>)>[
+        if (all) ...[
+          ('Сейчас в зале', tablesByUrgency(tables.where(busyOrCall).toList(), states, calls: calls, reservations: reservations)),
+          ('Свободны', tablesByUrgency(tables.where((t) => !busyOrCall(t)).toList(), states, reservations: reservations)),
+        ] else
+          (_filterTitle(_filter), tablesByUrgency(tables.where((t) => _matches(states[t.id]!)).toList(), states,
+              calls: calls, reservations: reservations)),
+      ];
+      // Пустой раздел оставляем только первым — с подсказкой, что делать.
+      sections.removeWhere((e) => e.$2.isEmpty && !identical(e, sections.first));
+      final listedCount = sections.fold<int>(0, (n, e) => n + e.$2.length);
+      // Высота схемы — по столам: вписываем их область в ширину экрана.
+      const side = 12.0;
+      final content = hallContentRect(tables);
+      final scale = HallPlanView.fitScale(content, Size(box.maxWidth - side * 2, double.infinity));
+      final want = content.height * scale + 24 + 4;
+      final cap = box.maxHeight * (listedCount == 0 ? 0.75 : 0.56);
+      final mapHeight = want.clamp(200.0, math.max(200.0, cap)).toDouble();
+
+      Widget header(String title, int n, {bool hint = false}) => Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+            child: Row(children: [
+              Text(n == 0 ? title : '$title · $n', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+              const Spacer(),
+              if (hint) ...[
+                const Icon(Icons.pinch_outlined, size: 15, color: AppColors.textMuted),
+                const SizedBox(width: 4),
+                const Text('схему можно двигать', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+              ],
+            ]),
+          );
+
+      return Column(
+        children: [
+          SizedBox(
+            height: mapHeight,
+            child: Padding(padding: const EdgeInsets.fromLTRB(side, 4, side, 0), child: _mapFrame(map)),
+          ),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                for (var i = 0; i < sections.length; i++) ...[
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: side),
+                    sliver: SliverToBoxAdapter(child: header(sections[i].$1, sections[i].$2.length, hint: i == 0)),
+                  ),
+                  if (sections[i].$2.isEmpty)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      sliver: SliverToBoxAdapter(
+                        child: Text(
+                            all
+                                ? 'Гостей пока нет — нажмите на свободный стол, чтобы посадить гостей.'
+                                : 'Таких столов сейчас нет.',
+                            style: const TextStyle(color: AppColors.textMuted)),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(side, 0, side, 8),
+                      sliver: SliverGrid(
+                        gridDelegate: _cardGrid,
+                        delegate: SliverChildBuilderDelegate(
+                          (context, j) => _card(sections[i].$2[j], calls, reservations),
+                          childCount: sections[i].$2.length,
+                        ),
+                      ),
+                    ),
+                ],
+                const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              ],
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  static String _filterTitle(_HallFilter f) {
+    switch (f) {
+      case _HallFilter.all:
+        return 'Сейчас в зале';
+      case _HallFilter.free:
+        return 'Свободны';
+      case _HallFilter.busy:
+        return 'Заняты';
+      case _HallFilter.ending:
+        return 'Скоро освободятся';
+      case _HallFilter.reserved:
+        return 'Бронь';
+    }
   }
 
   Widget _grid(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
@@ -308,27 +456,8 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
     if (shown.isEmpty) {
       return _message(Icons.filter_alt_off_outlined, 'Таких столов сейчас нет', 'Выберите другой фильтр сверху.');
     }
-    Widget card(TableModel t) => _SessionBuilder(
-          key: ValueKey(t.id),
-          table: t,
-          builder: (s) => TableCard(
-            table: t,
-            plannedEnd: s?.plannedEnd,
-            startTime: s?.startTime,
-            guestTag: s?.guestTag,
-            billTotal: s?.totalWithDiscount,
-            checkCount: t.activeSessionIds.length,
-            reservation: reservations[t.id],
-            hasCall: calls.contains(t.id),
-            onTap: () => _openTable(t),
-          ),
-        );
-    const grid = SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: 240,
-      mainAxisExtent: 116,
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-    );
+    Widget card(TableModel t) => _card(t, calls, reservations);
+    const grid = _cardGrid;
     // «Все зоны» — столы по зонам с заголовками, а не подписью на каждой
     // карточке (на телефоне она всё равно обрезалась).
     final sections = <String, List<TableModel>>{};
