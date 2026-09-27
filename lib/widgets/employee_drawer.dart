@@ -6,6 +6,7 @@ import 'shift_open_dialog.dart';
 import '../screens/login_screen.dart';
 import '../screens/employee/floor_plan_screen.dart';
 import '../screens/employee/x_report_screen.dart';
+import '../screens/employee/cash_screen.dart';
 import '../screens/employee/receipts_history_screen.dart';
 import '../screens/employee/inventory_count_entry_screen.dart';
 import '../screens/employee/stock_view_screen.dart';
@@ -303,6 +304,12 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                     subtitle: const Text('Продажи и оплаты без закрытия смены',
                         style: TextStyle(fontSize: 11)),
                     onTap: () => _go(XReportScreen(employee: widget.employee)),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.point_of_sale_outlined),
+                    title: const Text('Касса'),
+                    subtitle: const Text('Наличные, инкассация, внесение и выплата'),
+                    onTap: () => _go(CashScreen(employee: widget.employee)),
                   ),
                   ListTile(
                     leading: const Icon(Icons.history),
