@@ -58,6 +58,71 @@ abstract class ReceiptPrinter {
   Future<bool> connect();
   Future<void> disconnect();
   Future<void> printReceipt(ReceiptData data);
+
+  /// Отправить готовые ESC/POS-байты — для отчётов (см. [ReportPrint]).
+  Future<void> printBytes(List<int> bytes);
+
+  /// Напечатать отчёт (X-отчёт смены и т. п.).
+  Future<void> printReport(ReportPrint report) async => printBytes(await buildReportBytes(report));
+}
+
+/// Строка отчёта для печати: слева подпись, справа сумма. [separator] —
+/// горизонтальная черта вместо строки.
+class ReportLine {
+  final String left;
+  final String right;
+  final bool bold;
+  final bool separator;
+  const ReportLine(this.left, {this.right = '', this.bold = false}) : separator = false;
+  const ReportLine.separator()
+      : left = '',
+        right = '',
+        bold = false,
+        separator = true;
+}
+
+/// Отчёт для чекового принтера: заголовок, пара строк под ним и строки.
+class ReportPrint {
+  final String title;
+  final List<String> subtitle;
+  final List<ReportLine> lines;
+  final String footer;
+  const ReportPrint({required this.title, this.subtitle = const [], required this.lines, this.footer = ''});
+}
+
+/// ESC/POS-байты отчёта — для 58-мм бумаги (на 80-мм печатается так же,
+/// просто с полями).
+Future<List<int>> buildReportBytes(ReportPrint r, {PaperSize paper = PaperSize.mm58}) async {
+  final profile = await CapabilityProfile.load();
+  final g = Generator(paper, profile, codec: const Cp866Codec());
+  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  bytes.addAll(g.text(r.title,
+      styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2)));
+  for (final line in r.subtitle) {
+    bytes.addAll(g.text(line, styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  }
+  bytes.addAll(g.hr());
+  for (final l in r.lines) {
+    if (l.separator) {
+      bytes.addAll(g.hr());
+      continue;
+    }
+    if (l.right.isEmpty) {
+      bytes.addAll(g.text(l.left, styles: PosStyles(bold: l.bold)));
+      continue;
+    }
+    bytes.addAll(g.row([
+      PosColumn(text: l.left, width: 7, styles: PosStyles(bold: l.bold)),
+      PosColumn(text: l.right, width: 5, styles: PosStyles(align: PosAlign.right, bold: l.bold)),
+    ]));
+  }
+  if (r.footer.isNotEmpty) {
+    bytes.addAll(g.hr());
+    bytes.addAll(g.text(r.footer, styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  }
+  bytes.addAll(g.feed(2));
+  bytes.addAll(g.cut());
+  return bytes;
 }
 
 /// Общая сборка ESC/POS-байтов из [ReceiptData] — не зависит от способа
@@ -183,7 +248,7 @@ class _Cp866Decoder extends Converter<List<int>, String> {
       }));
 }
 
-class BluetoothReceiptPrinter implements ReceiptPrinter {
+class BluetoothReceiptPrinter extends ReceiptPrinter {
   /// MAC-адрес принтера — выбирается пользователем один раз на экране
   /// настроек из списка сопряжённых Bluetooth-устройств
   /// ([PrintBluetoothThermal.pairedBluetooths]) и сохраняется.
@@ -219,7 +284,10 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
   }
 
   @override
-  Future<void> printReceipt(ReceiptData data) async {
+  Future<void> printReceipt(ReceiptData data) async => printBytes(await _buildReceiptBytes(data));
+
+  @override
+  Future<void> printBytes(List<int> bytes) async {
     await ensurePermission();
     final connected = await PrintBluetoothThermal.connectionStatus;
     if (!connected) {
@@ -228,7 +296,6 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
         throw PrinterException('Не удалось подключиться к принтеру по Bluetooth ($macAddress)');
       }
     }
-    final bytes = await _buildReceiptBytes(data);
     final ok = await PrintBluetoothThermal.writeBytes(bytes);
     if (!ok) throw PrinterException('Принтер ($macAddress) не принял данные — проверьте, что он включён и рядом');
   }
@@ -245,7 +312,7 @@ class BluetoothReceiptPrinter implements ReceiptPrinter {
 /// Сетевой принтер (Wi-Fi/LAN), сырой ESC/POS по TCP на порт 9100 —
 /// стандартный "RAW/JetDirect" порт, которым пользуется большинство
 /// сетевых чековых принтеров.
-class NetworkReceiptPrinter implements ReceiptPrinter {
+class NetworkReceiptPrinter extends ReceiptPrinter {
   final String ip;
   final int port;
   Socket? _socket;
@@ -273,8 +340,10 @@ class NetworkReceiptPrinter implements ReceiptPrinter {
   }
 
   @override
-  Future<void> printReceipt(ReceiptData data) async {
-    final bytes = await _buildReceiptBytes(data);
+  Future<void> printReceipt(ReceiptData data) async => printBytes(await _buildReceiptBytes(data));
+
+  @override
+  Future<void> printBytes(List<int> bytes) async {
     try {
       final socket = _socket ?? await Socket.connect(ip, port, timeout: const Duration(seconds: 5));
       socket.add(bytes);

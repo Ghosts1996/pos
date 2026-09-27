@@ -20,6 +20,17 @@ class ShiftModel {
   final String? closedBy;
   final String status; // 'open' | 'closed'
 
+  // ---- Наличные (см. CashDrawerSummary) ----
+  /// Размен на начало смены — сколько оставили в кассе в конце прошлой.
+  final double openingCash;
+
+  /// Пересчёт кассы при закрытии: сколько должно было быть, сколько
+  /// насчитали, сколько инкассировали и сколько оставили на размен.
+  final double? closingExpectedCash;
+  final double? closingCountedCash;
+  final double? closingCollected;
+  final double? closingLeftCash;
+
   ShiftModel({
     required this.id,
     required this.openedAt,
@@ -28,7 +39,16 @@ class ShiftModel {
     this.openedById = '',
     this.closedBy,
     this.status = 'open',
+    this.openingCash = 0,
+    this.closingExpectedCash,
+    this.closingCountedCash,
+    this.closingCollected,
+    this.closingLeftCash,
   });
+
+  /// Недостача (<0) или излишек (>0) при пересчёте, если он был.
+  double? get closingDiff =>
+      closingCountedCash == null || closingExpectedCash == null ? null : closingCountedCash! - closingExpectedCash!;
 
   bool get isOpen => status == 'open';
 
@@ -44,6 +64,11 @@ class ShiftModel {
       openedById: data['openedById'] ?? '',
       closedBy: data['closedBy'],
       status: data['status'] ?? 'open',
+      openingCash: ((data['openingCash'] ?? 0) as num).toDouble(),
+      closingExpectedCash: (data['closingExpectedCash'] as num?)?.toDouble(),
+      closingCountedCash: (data['closingCountedCash'] as num?)?.toDouble(),
+      closingCollected: (data['closingCollected'] as num?)?.toDouble(),
+      closingLeftCash: (data['closingLeftCash'] as num?)?.toDouble(),
     );
   }
 
@@ -59,6 +84,7 @@ class ShiftModel {
       'openedById': openedById,
       'closedBy': closedBy,
       'status': status,
+      'openingCash': openingCash,
     };
   }
 }

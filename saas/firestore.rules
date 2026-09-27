@@ -990,6 +990,25 @@ service cloud.firestore {
     match /tenants/{tenantId}/meta/shiftState {
       allow read, write: if isStaff(tenantId);
     }
+    // Наличные в кассе: инкассации, внесения, выплаты, возвраты (см.
+    // lib/models/cash_op.dart). Операции не удаляются и не правятся —
+    // ошибочную только отменяют флагом, и она остаётся в истории.
+    match /tenants/{tenantId}/cashOps/{opId} {
+      allow read: if isStaff(tenantId);
+      allow create: if isStaff(tenantId)
+        && request.resource.data.type in ['collection', 'deposit', 'payout', 'refund']
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.amount < 100000000
+        && request.resource.data.cancelled == false
+        && request.resource.data.shiftId is string;
+      allow update: if isStaff(tenantId)
+        && resource.data.cancelled == false
+        && request.resource.data.cancelled == true
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['cancelled', 'cancelledBy', 'cancelledAt']);
+      allow delete: if false;
+    }
     match /tenants/{tenantId}/meta/staffShiftState {
       allow read, write: if isStaff(tenantId);
     }
