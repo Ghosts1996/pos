@@ -13,6 +13,7 @@ import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/promo_policy.dart';
 import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/referral_service.dart';
@@ -113,6 +114,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   /// Всего взять с гостя: счёт + чаевые.
   double get _due => _total + _tipsTotal;
+
+  /// Сколько ещё можно оплатить бонусами: только позиции без табака.
+  double get _bonusLimit {
+    final s = widget.session;
+    final base = s.promoBase * (1 - s.discountPercent / 100) - _bonusPaid;
+    return base < 0 ? 0 : base;
+  }
 
   /// Чаевые берутся из живых денег — наличных, карты, терминала. «За счёт
   /// заведения» чаевые оплатить не может: это не деньги гостя.
@@ -499,8 +507,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // неправильный документ. Скидка процентная, поэтому достаточно
       // умножить цену каждой позиции — сумма сойдётся копейка в копейку.
       final discountK = 1 - widget.session.discountPercent / 100;
-      double priceOf(OrderItem line) =>
-          double.parse((line.price * discountK).toStringAsFixed(2));
+      // Кальяны скидку не получают (PromoPolicy) — их цена в чеке полная.
+      double priceOf(OrderItem line) => PromoPolicy.restricted(line)
+          ? line.price
+          : double.parse((line.price * discountK).toStringAsFixed(2));
 
       final items = <FiscalReceiptItem>[];
       for (final line in widget.session.orderItems) {
@@ -644,7 +654,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (!_closeWithoutPayment) ...[
                 BonusRedeemPanel(
                   sessionId: widget.session.id,
-                  billTotal: _total,
+                  // Бонусами можно оплатить только то, что не кальяны.
+                  billTotal: _bonusLimit,
                   onApplied: (applied, profile) {
                     setState(() {
                       _bonusPaid += applied;

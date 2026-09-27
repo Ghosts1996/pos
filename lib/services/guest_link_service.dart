@@ -9,6 +9,7 @@ import '../utils/phone_utils.dart';
 import 'pii_gateway_service.dart';
 import 'push_service.dart';
 import '../utils/shared_stream.dart';
+import '../utils/promo_policy.dart';
 
 /// Мост между POS и клиентским приложением «Colibri Lounge»:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -822,7 +823,11 @@ class GuestLinkService {
       if (data['bonusAccruedFor'] == sessionId) return;
 
       final profile = ClientProfile.fromDoc(snap);
-      bonus = (paidAmount * profile.cashbackPercent / 100).roundToDouble();
+      // Кешбэк — только с той доли чека, что не приходится на кальяны
+      // (табак нельзя стимулировать бонусами, см. PromoPolicy).
+      final all = items.fold(0.0, (a, i) => a + i.total);
+      final share = all > 0 ? PromoPolicy.promoBase(items) / all : 1.0;
+      bonus = (paidAmount * share * profile.cashbackPercent / 100).roundToDouble();
       counted = true;
 
       tx.update(ref, {

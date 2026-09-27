@@ -1,4 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
+import '../../utils/promo_policy.dart';
 import '../../models/client_models.dart';
 import '../../services/app_scope.dart';
 import '../../theme/app_colors.dart';
@@ -23,6 +26,19 @@ class LoyaltySettingsScreen extends StatefulWidget {
 
 class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
   final _doc = AppScope.col('settings').doc('loyalty');
+  bool _excludeTobacco = PromoPolicy.excludeTobacco;
+
+  Future<void> _setExcludeTobacco(bool v) async {
+    setState(() => _excludeTobacco = v);
+    try {
+      await PromoPolicy.save(v);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _excludeTobacco = !v);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Не удалось сохранить: ${humanError(e, lower: true)}')));
+    }
+  }
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -62,6 +78,8 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
   Future<void> _load() async {
     try {
       final snap = await _doc.get();
+      PromoPolicy.apply(snap.data());
+      if (mounted) setState(() => _excludeTobacco = PromoPolicy.excludeTobacco);
       final raw = snap.data()?['tiers'];
       if (raw is List) {
         for (final item in raw) {
@@ -113,7 +131,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
       final tiersMap = parsed
           .map((t) => {'name': t.name, 'from': t.from, 'cashback': t.cashback})
           .toList();
-      await _doc.set({'tiers': tiersMap});
+      await _doc.set({'tiers': tiersMap}, SetOptions(merge: true));
       // Применяем сразу — без этого касса начислила бы бонус по старым
       // цифрам вплоть до перезапуска приложения.
       ClientProfile.applyTiers(tiersMap);
@@ -144,6 +162,22 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
                     'время. Процент кешбэка начисляется бонусами при оплате — '
                     '1 бонус = 1 ₽.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _excludeTobacco,
+                    onChanged: _setExcludeTobacco,
+                    title: const Text('Без скидок и бонусов на кальяны'),
+                    subtitle: Text(
+                      _excludeTobacco
+                          ? 'Кальяны и табак не получают скидку по картам и акциям, на них не '
+                              'начисляются и ими не оплачиваются бонусы — так требует закон о '
+                              'запрете стимулирования продажи табака (ст. 16 № 15-ФЗ).'
+                          : 'Выключено: скидки и бонусы действуют и на кальяны. Допустимо, только '
+                              'если в них нет табака и никотина — ответственность на заведении.',
+                      style: TextStyle(fontSize: 12, color: _excludeTobacco ? AppColors.textMuted : AppColors.warning),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   for (final r in _rows) ...[
