@@ -156,7 +156,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                             dense: true,
                             title: Text(i.name),
                             trailing: Text(
-                                '${i.qty} × ${i.price.toStringAsFixed(0)} = ${rub(i.total)}'),
+                                '${i.qty} × ${rub(i.price)} = ${rub(i.total)}'),
                           ))
                       .toList(),
                 ),
@@ -171,7 +171,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 ],
               ),
               Text(
-                'Карта: ${s.paymentCard.toStringAsFixed(0)} · Наличные: ${s.paymentCash.toStringAsFixed(0)} · Терминал: ${s.paymentTerminal.toStringAsFixed(0)} · За счёт заведения: ${s.paymentComp.toStringAsFixed(0)}',
+                'Карта ${rub(s.paymentCard)} · Наличные ${rub(s.paymentCash)} · Терминал ${rub(s.paymentTerminal)} · За счёт заведения ${rub(s.paymentComp)}',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),

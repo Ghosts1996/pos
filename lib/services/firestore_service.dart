@@ -864,8 +864,16 @@ class FirestoreService {
     final now = DateTime.now();
     final shiftRef = AppScope.col('shifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('shiftState');
-    await _db.runTransaction((tx) async {
+    final closed = await _db.runTransaction<bool>((tx) async {
+      final shiftDoc = await tx.get(shiftRef);
       final stateDoc = await tx.get(stateRef);
+      // Смену уже закрыли с другого устройства (или повторное нажатие) —
+      // второй раз не закрываем: иначе инкассация записалась бы дважды,
+      // а размен следующей смены затёрся бы. Ошибку бросаем уже после
+      // транзакции: в вебе исключение изнутри неё теряет свой текст.
+      if (!shiftDoc.exists || (shiftDoc.data()?['status'] ?? 'open') != 'open') {
+        return false;
+      }
       tx.update(shiftRef, {
         'status': 'closed',
         'closedAt': Timestamp.fromDate(now),
@@ -901,7 +909,9 @@ class FirestoreService {
             if (cash != null) 'cashLeft': cash.leave,
           },
           SetOptions(merge: true));
+      return true;
     });
+    if (!closed) throw StateError('Смена уже закрыта на другом устройстве');
   }
 
   // ---------- НАЛИЧНЫЕ В КАССЕ ----------
