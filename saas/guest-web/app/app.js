@@ -37,6 +37,19 @@ import {
 // (SAAS_GATEWAY_URL) и консоль владельца. Нужен только для resolveTenantBySlug
 // (публичный POST, без Auth — см. его docstring в saas-gateway/server.js).
 const GATEWAY = 'https://pii.hookahpos.su/saas';
+// Первичное хранилище персональных данных в РФ (pii-gateway, 152-ФЗ):
+// имя и телефон гостя пишутся сюда ДО Firestore.
+const PII_URL = 'https://pii.hookahpos.su/';
+
+async function piiPost(body) {
+  const token = await state.auth.currentUser.getIdToken();
+  const resp = await fetch(PII_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error('pii ' + resp.status);
+}
 
 // ---------- СОСТОЯНИЕ ----------
 
@@ -1721,7 +1734,10 @@ async function sendBooking() {
       table = { id: free[0].id, name: free[0].name || '' };
     }
 
-    const ref = await addDoc(collection(state.root, 'reservations'), {
+    // Имя и телефон — сначала на сервер в РФ, потом документ брони.
+    const ref = doc(collection(state.root, 'reservations'));
+    await piiPost({ tenantId: state.tenantId, kind: 'reservation', id: ref.id, name, phone });
+    await setDoc(ref, {
       clientUid: state.uid,
       guestName: name,
       phone,
@@ -1775,7 +1791,13 @@ async function sendBooking() {
         } catch (_) {}
       }
     }
-    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), patch, { merge: true });
+    // Профиль гостя (имя/телефон) пишет сервер в РФ и сам зеркалит в
+    // Firestore — напрямую в базу за рубежом эти поля не пишем.
+    try {
+      await piiPost({ tenantId: state.tenantId, uid: state.uid, ...patch });
+    } catch (_) {
+      // Бронь уже сохранена; профиль обновится при следующем визите.
+    }
     pickedTable = null;
     bookingDraft.time = '';
     toast('Заявка отправлена — скоро подтвердим');
@@ -2772,7 +2794,10 @@ async function joinQueue(guests, btn) {
   try {
     const minutes = await estimateWait(guests);
     const p = state.profile || {};
-    await addDoc(collection(state.root, 'waitlist'), {
+    // Имя и телефон — сначала на сервер в РФ (152-ФЗ), потом очередь.
+    const ref = doc(collection(state.root, 'waitlist'));
+    await piiPost({ tenantId: state.tenantId, kind: 'waitlist', id: ref.id, name: (p.name || '').trim(), phone: p.phone || '' });
+    await setDoc(ref, {
       guestName: (p.name || '').trim() || 'Гость',
       phone: p.phone || '',
       clientUid: state.uid,

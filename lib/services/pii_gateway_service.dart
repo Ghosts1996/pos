@@ -107,6 +107,44 @@ class PiiGatewayService {
   }
 }
 
+/// Первичная запись контакта брони или листа ожидания (имя, телефон) на
+/// сервере в РФ — ДО создания документа в Firestore (ст. 18 ч. 5 152-ФЗ).
+/// [kind] — 'reservation' или 'waitlist', [id] — id будущего документа.
+/// Без PII_GATEWAY_URL (разработка, одно-арендная сборка) — ничего не
+/// делает; ошибку сети пробрасывает: без первичной записи бронь не создаём.
+extension PiiContactRecords on PiiGatewayService {
+  Future<void> recordContact({
+    required String kind,
+    required String id,
+    required String name,
+    required String phone,
+  }) async {
+    final tenant = AppScope.tenantId ?? '';
+    if (baseUrl.isEmpty || tenant.isEmpty) return;
+    if (name.trim().isEmpty && phone.trim().isEmpty) return;
+    final user = FirebaseAuth.instance.currentUser;
+    final idToken = await user?.getIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      throw PiiGatewayException('Нет активной сессии — войдите заново.');
+    }
+    http.Response resp;
+    try {
+      resp = await http
+          .post(
+            Uri.parse(baseUrl),
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
+            body: jsonEncode({'tenantId': tenant, 'kind': kind, 'id': id, 'name': name, 'phone': phone}),
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (e) {
+      throw PiiGatewayException('Нет связи с сервером — проверьте интернет и попробуйте снова.');
+    }
+    if (resp.statusCode != 200) {
+      throw PiiGatewayException('Сервер не сохранил контакт (${resp.statusCode}) — попробуйте ещё раз.');
+    }
+  }
+}
+
 class PiiGatewayException implements Exception {
   final String message;
   PiiGatewayException(this.message);
