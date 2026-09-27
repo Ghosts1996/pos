@@ -16,6 +16,8 @@ import '../../widgets/table_picker_map.dart';
 import 'table_detail_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/shift_crew.dart';
+import '../../widgets/shift_flow.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
 /// Сюда мгновенно прилетают брони из клиентского приложения
@@ -71,15 +73,29 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     } catch (_) {}
   }
 
+  /// Кому сейчас идут уведомления о бронях и вызовах — тем, кто на смене
+  /// (см. alertsForThisDevice). Если не этому устройству — говорим, кому.
   Future<void> _checkShift() async {
-    final shift = await _fs.currentOpenShift();
-    final myId = await StaffSessionStore.instance.savedEmployeeId();
-    if (!mounted) return;
-    setState(() {
-      _onShift = shift?.openedBy ?? '';
-      final ownerId = shift?.openedById ?? '';
-      _shiftIsMine = ownerId.isEmpty || myId.isEmpty || ownerId == myId;
-    });
+    try {
+      final shift = await _fs.currentOpenShift();
+      final crew = await loadShiftCrew();
+      final myId = await StaffSessionStore.instance.savedEmployeeId();
+      final deviceOwnerId = await StaffSessionStore.instance.savedShiftOwnerId();
+      if (!mounted) return;
+      setState(() {
+        _onShift = crew.isEmpty
+            ? (shift?.openedBy ?? '')
+            : ShiftCrew.shortNames(crew.shifts.map(crew.nameOf).toList());
+        _shiftIsMine = alertsForThisDevice(
+          onShift: {for (final s in crew.shifts) s.employeeId},
+          myId: myId,
+          deviceOwnerId: deviceOwnerId,
+          shiftOpenerId: shift?.openedById ?? '',
+        );
+      });
+    } catch (_) {
+      // Не удалось проверить — просто не показываем подсказку.
+    }
   }
 
   Future<void> _checkNotifications() async {
@@ -184,8 +200,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'На смене $_onShift — вызовы гостей и новые брони '
-                        'приходят уведомлениями ему',
+                        'Вы не на смене — вызовы гостей и новые брони приходят '
+                        'уведомлениями тем, кто на смене: $_onShift',
                         style: const TextStyle(fontSize: 13),
                       ),
                     ),

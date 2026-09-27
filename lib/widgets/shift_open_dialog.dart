@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/employee.dart';
+import '../models/shift_model.dart';
 import '../services/firestore_service.dart';
 import '../services/staff_session_store.dart';
 import '../services/venue_service.dart';
+import 'shift_flow.dart';
 
 /// Спрашивает, кто выходит на смену, и открывает её.
 ///
@@ -24,10 +26,21 @@ Future<bool> ensureShiftOpen(BuildContext context, {required Employee me}) async
   // Смена уже открыта — спрашивать нечего. Ошибку сети здесь глотаем
   // намеренно: не смогли проверить — не мешаем человеку работать, смену
   // всегда можно открыть из бокового меню.
+  await fixMyForgottenShiftIfAny(context, me);
+  if (!context.mounted) return false;
+
+  ShiftModel? open;
   try {
-    if (await fs.currentOpenShift() != null) return true;
+    open = await fs.currentOpenShift();
   } catch (_) {
     return false;
+  }
+  // Смена заведения уже идёт — вошедший к ней присоединяется (начинает
+  // свою смену). Если это была вчерашняя незакрытая смена и её сейчас
+  // закрыли — открываем новую как обычно, ниже.
+  if (open != null) {
+    if (!context.mounted) return true;
+    if (await joinOpenVenueShift(context, me: me, venue: open)) return true;
   }
 
   List<Employee> staff;

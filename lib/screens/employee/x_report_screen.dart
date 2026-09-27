@@ -13,7 +13,7 @@ import '../../models/cash_op.dart';
 import '../../services/printer_service.dart';
 import '../../services/venue_service.dart';
 import '../../widgets/cash_drawer_card.dart';
-import '../../widgets/close_shift_dialog.dart';
+import '../../widgets/shift_flow.dart';
 
 enum _Period { shift, pastShift, custom }
 
@@ -192,10 +192,11 @@ class _XReportScreenState extends State<XReportScreen> {
     _reloadShiftInfo();
   }
 
-  /// Закрытие смены с пересчётом кассы (см. closeShiftWithCashCount).
+  /// Закрытие смены заведения: предупреждение, если в зале ещё кто-то
+  /// работает, и пересчёт кассы (см. closeVenueShift).
   Future<void> _closeShift(ShiftModel shift) async {
     setState(() => _busy = true);
-    await closeShiftWithCashCount(context, shift: shift, employee: widget.employee);
+    await closeVenueShift(context, shift: shift, me: widget.employee);
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -513,11 +514,32 @@ class _XReportScreenState extends State<XReportScreen> {
                     color: shift == null ? AppColors.danger : AppColors.textMuted),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    shift == null
-                        ? 'Смена сейчас не открыта'
-                        : 'Смена открыта ${_formatDateTime(shift.openedAt)} · ${shift.openedBy}',
-                    style: const TextStyle(fontSize: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        shift == null
+                            ? 'Смена заведения сейчас не открыта'
+                            : 'Смена заведения открыта ${_formatDateTime(shift.openedAt)} · ${shift.openedBy}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      // Кто сейчас работает: ушёл кальянщик — смена и этот
+                      // отчёт продолжаются у остальных.
+                      if (shift != null)
+                        ShiftCrewBuilder(
+                          builder: (context, crew) => crew == null
+                              ? const SizedBox.shrink()
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    crew.isEmpty
+                                        ? 'Никто не отметил начало своей смены'
+                                        : 'Сейчас на смене: ${crew.shifts.map(crew.labelOf).join(', ')}',
+                                    style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                                  ),
+                                ),
+                        ),
+                    ],
                   ),
                 ),
               ],
@@ -550,7 +572,7 @@ class _XReportScreenState extends State<XReportScreen> {
                 onPressed: _busy ? null : () => _closeShift(shift),
                 style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
                 icon: const Icon(Icons.lock_outline, size: 18),
-                label: const Text('Закрыть смену'),
+                label: const Text('Закрыть смену заведения'),
               );
         return centered ? Center(child: child) : child;
       },

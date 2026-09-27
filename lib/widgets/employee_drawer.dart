@@ -19,7 +19,9 @@ import '../services/ai/ai_agents.dart';
 import '../models/client_models.dart';
 import 'ai_assistant_sheet.dart';
 import '../utils/human_error.dart';
-import 'close_shift_dialog.dart';
+import '../theme/app_colors.dart';
+import '../utils/shift_crew.dart';
+import 'shift_flow.dart';
 
 /// Меню сотрудника — боковая панель: зал, брони, очередь заказов, лист
 /// ожидания, смена, X-отчёт, история чеков, склад и ассистент зала.
@@ -55,51 +57,86 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     if (mounted) setState(() => _busy = false);
   }
 
-  /// Закрытие кассовой смены — с пересчётом наличных, как в X-отчёте.
-  Future<void> _closeShift(ShiftModel shift) async {
+  /// Смена заведения открыта — показываем, кто на смене, и даём закрыть
+  /// её (с предупреждением, если в зале ещё кто-то работает).
+  Future<void> _venueSheet(ShiftModel shift) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: ShiftCrewBuilder(
+            builder: (ctx, crew) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('Смена заведения', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(
+                  'Открыта ${shiftTimeLabel(shift.openedAt)}'
+                  '${shift.openedBy.isNotEmpty ? ' · открыл(а) ${shift.openedBy}' : ''}',
+                  style: const TextStyle(color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 16),
+                if (crew == null)
+                  const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
+                else if (crew.isEmpty)
+                  const Text('Никто не отметил начало своей смены.', style: TextStyle(color: AppColors.textMuted))
+                else ...[
+                  Text('Сейчас на смене · ${crew.count}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  crewList(crew, crew.shifts),
+                ],
+                const SizedBox(height: 12),
+                const Text(
+                  'Уходите домой — нажмите «Моя смена» в меню: смена заведения продолжится у остальных. '
+                  'Закрывает смену заведения последний, с пересчётом кассы.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(ctx, 'report'),
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: const Text('X-отчёт'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
+                  onPressed: () => Navigator.pop(ctx, 'close'),
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('Закрыть смену заведения'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'report') {
+      _go(XReportScreen(employee: widget.employee));
+      return;
+    }
     setState(() => _busy = true);
-    await closeShiftWithCashCount(context, shift: shift, employee: widget.employee);
+    await closeVenueShift(context, shift: shift, me: widget.employee);
     if (mounted) setState(() => _busy = false);
   }
 
   bool _myShiftBusy = false;
 
-  // "Моя смена" — личный учёт рабочего времени для расчёта зарплаты. Не
-  // путать с кассовой сменой выше: та одна на всё заведение, эта — только
-  // у этого сотрудника, и не связана с кассовой ни открытием, ни закрытием
-  // (иначе случайный повторный вход по PIN дробил бы одну смену на
-  // несколько, а зарплата считалась бы неверно).
-  Future<void> _clockIn() async {
+  // «Моя смена» — начал и закончил работу. Смена заведения (касса, X-отчёт)
+  // от этого не закрывается, пока в зале кто-то есть: кальянщик ушёл домой
+  // — официант и бармен продолжают работать в той же смене. См. shift_flow.
+  Future<void> _startMine() async {
     setState(() => _myShiftBusy = true);
-    try {
-      await _fs.clockIn(widget.employee);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Смена начата')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось начать смену: ${humanError(e, lower: true)}')));
-      }
-    }
+    await startMyShift(context, widget.employee);
     if (mounted) setState(() => _myShiftBusy = false);
   }
 
-  Future<void> _clockOut(StaffShiftModel shift) async {
+  Future<void> _endMine(StaffShiftModel shift) async {
     setState(() => _myShiftBusy = true);
-    try {
-      await _fs.clockOut(shift.id, widget.employee.id);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Смена закончена')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Не удалось закончить смену: ${humanError(e, lower: true)}')));
-      }
-    }
+    await endMyShift(context, widget.employee, shift);
     if (mounted) setState(() => _myShiftBusy = false);
   }
 
@@ -107,6 +144,8 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     Navigator.pop(context);
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
+
+  static String _lowerFirst(String s) => s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
 
   String _formatTime(DateTime dt) =>
       '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
@@ -135,53 +174,66 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
               ),
             ),
 
-            // Кнопка "Открыть смену" / "Закрыть смену" — сама определяет,
-            // открыта сейчас смена или нет, и подписывает себя по-русски.
+            // «Моя смена» — первой: это то, что нужно каждому сотруднику
+            // (пришёл — начал, уходит домой — закончил).
+            StreamBuilder<StaffShiftModel?>(
+              stream: _fs.openStaffShiftStream(widget.employee.id),
+              builder: (context, snapshot) {
+                final mine = snapshot.data;
+                final isOpen = mine != null && mine.isOpen;
+                final stale = isOpen && isStaleShift(mine.startedAt);
+                final subtitle = !isOpen
+                    ? 'Нажмите, когда пришли на работу'
+                    : stale
+                        ? 'Идёт ${shiftTimeLabel(mine.startedAt)} — вы не закончили прошлую смену'
+                        : 'С ${_formatTime(mine.startedAt)} · нажмите, когда уходите';
+                return ListTile(
+                  enabled: !_myShiftBusy,
+                  leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
+                      color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.grey)),
+                  title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
+                  subtitle: Text(subtitle,
+                      style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
+                  trailing: _myShiftBusy
+                      ? const SizedBox(
+                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : null,
+                  onTap: _myShiftBusy ? null : () => isOpen ? _endMine(mine) : _startMine(),
+                );
+              },
+            ),
+
+            // Смена заведения — касса и X-отчёт, одна на всех. Видно, кто
+            // сейчас работает; закрыть — через карточку, с предупреждением.
             StreamBuilder<ShiftModel?>(
               stream: _fs.openShiftStream(),
               builder: (context, snapshot) {
                 final shift = snapshot.data;
                 final isOpen = shift != null && shift.isOpen;
-                return ListTile(
-                  enabled: !_busy,
-                  leading: Icon(isOpen ? Icons.lock_open : Icons.lock_outline,
-                      color: isOpen ? Colors.green : Colors.redAccent),
-                  title: Text(isOpen ? 'Смена открыта' : 'Смена закрыта'),
-                  subtitle: Text(
-                    isOpen ? 'Нажмите, чтобы закрыть смену' : 'Нажмите, чтобы открыть смену',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  trailing: _busy
-                      ? const SizedBox(
-                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : null,
-                  onTap: _busy ? null : () => isOpen ? _closeShift(shift) : _openShift(),
-                );
-              },
-            ),
-
-            // Личная смена сотрудника (для зарплаты) — отдельно от кассовой
-            // выше: кассовая смена одна на всё заведение, эта — только его.
-            StreamBuilder<StaffShiftModel?>(
-              stream: _fs.openStaffShiftStream(widget.employee.id),
-              builder: (context, snapshot) {
-                final myShift = snapshot.data;
-                final isOpen = myShift != null && myShift.isOpen;
-                final subtitle = isOpen
-                    ? 'Началась в ${_formatTime(myShift.startedAt)} · нажмите, чтобы закончить'
-                    : 'Нажмите, чтобы начать учёт рабочего времени';
-                return ListTile(
-                  enabled: !_myShiftBusy,
-                  leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
-                      color: isOpen ? Colors.green : Colors.grey),
-                  title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
-                  subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
-                  trailing: _myShiftBusy
-                      ? const SizedBox(
-                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : null,
-                  onTap: _myShiftBusy ? null : () => isOpen ? _clockOut(myShift) : _clockIn(),
-                );
+                return ShiftCrewBuilder(builder: (context, crew) {
+                  final stale = isOpen && isStaleShift(shift.openedAt);
+                  final subtitle = !isOpen
+                      ? 'Нажмите, чтобы открыть смену'
+                      : [
+                          stale
+                              ? 'Открыта ${shiftTimeLabel(shift.openedAt)} — не закрыта с прошлого раза'
+                              : 'С ${_formatTime(shift.openedAt)}',
+                          if (crew != null) _lowerFirst(crew.summary()),
+                        ].join(' · ');
+                  return ListTile(
+                    enabled: !_busy,
+                    leading: Icon(isOpen ? Icons.storefront_outlined : Icons.lock_outline,
+                        color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.redAccent)),
+                    title: Text(isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта'),
+                    subtitle: Text(subtitle,
+                        style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
+                    trailing: _busy
+                        ? const SizedBox(
+                            width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.chevron_right),
+                    onTap: _busy ? null : () => isOpen ? _venueSheet(shift) : _openShift(),
+                  );
+                });
               },
             ),
             const Divider(height: 1),
