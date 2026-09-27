@@ -9,6 +9,7 @@ import '../services/push_service.dart';
 import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
 import '../services/staff_session_store.dart';
+import '../services/hall_watch_service.dart';
 import '../utils/constants.dart';
 import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
@@ -145,7 +146,11 @@ class _LoginScreenState extends State<LoginScreen> {
     final loggedInEmployee = employee;
     // Запоминаем вошедшего на этом устройстве — при следующем запуске PIN
     // спрашиваться не будет. Хранится только id, сам PIN — нет.
-    unawaited(_session.remember(loggedInEmployee.id));
+    // Запомнили, кто вошёл, — и сразу сообщили фоновой службе: вызовы и
+    // напоминания про угли теперь по специализации этого сотрудника.
+    unawaited(_session
+        .remember(loggedInEmployee.id)
+        .then((_) => HallWatchService.instance.identityChanged()));
     // Смену открывает _enter(): там спрашиваем, кто именно выходит в зал.
     // Разовая достройка обезличенного зеркала занятости столов — нужна
     // заведениям, которые обновились с версии без reservationSlots.
