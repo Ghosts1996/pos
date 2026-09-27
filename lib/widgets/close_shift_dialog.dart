@@ -21,17 +21,18 @@ import '../utils/money.dart';
 /// Возвращает true, если смену закрыли.
 Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel shift, required Employee employee}) async {
   final fs = FirestoreService();
-  final result = await showDialog<ShiftCashClose>(
+  final choice = await showDialog<_CloseChoice>(
     context: context,
     builder: (_) => _CloseShiftDialog(shift: shift, fs: fs),
   );
-  if (result == null) return false;
+  if (choice == null) return false;
+  final cash = choice.cash;
   try {
-    await fs.closeShift(shift.id, employee.name, employeeId: employee.id, cash: result);
+    await fs.closeShift(shift.id, employee.name, employeeId: employee.id, cash: cash);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(result.collect > 0
-            ? 'Смена закрыта · инкассация ${rub(result.collect)}, на размен ${rub(result.leave)}'
+        content: Text(cash != null && cash.collect > 0
+            ? 'Смена закрыта · инкассация ${rub(cash.collect)}, на размен ${rub(cash.leave)}'
             : 'Смена закрыта'),
       ));
     }
@@ -43,6 +44,14 @@ Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel 
     }
     return false;
   }
+}
+
+/// Итог диалога: [cash] == null — закрыть без пересчёта кассы (когда
+/// посчитать наличные не удалось); пересчёт тогда не записывается вовсе,
+/// а не «насчитали 0 ₽».
+class _CloseChoice {
+  final ShiftCashClose? cash;
+  const _CloseChoice(this.cash);
 }
 
 class _CloseShiftDialog extends StatefulWidget {
@@ -95,7 +104,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
             actions: [
               TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
               FilledButton(
-                onPressed: () => Navigator.pop(context, const ShiftCashClose(expected: 0, counted: 0, collect: 0, leave: 0)),
+                onPressed: () => Navigator.pop(context, const _CloseChoice(null)),
                 child: const Text('Закрыть без пересчёта'),
               ),
             ],
@@ -214,7 +223,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                   ? null
                   : () => Navigator.pop(
                         context,
-                        ShiftCashClose(expected: expected, counted: counted!, collect: collect, leave: leave),
+                        _CloseChoice(ShiftCashClose(expected: expected, counted: counted!, collect: collect, leave: leave)),
                       ),
               child: const Text('Закрыть смену'),
             ),

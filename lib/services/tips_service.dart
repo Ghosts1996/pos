@@ -4,6 +4,7 @@ import '../models/employee.dart';
 import '../models/tip_model.dart';
 import 'app_scope.dart';
 import 'push_service.dart';
+import '../utils/money.dart';
 
 export '../models/tip_model.dart';
 
@@ -106,7 +107,7 @@ class TipsService {
         await PushService.instance.enqueue(
           topic: 'staff',
           title: 'Чаевые',
-          body: '${to?.name ?? 'Всей смене'} — ${amount.toStringAsFixed(0)} ₽'
+          body: '${to?.name ?? 'Всей смене'} — ${rub(amount)}'
               '${method == 'link' ? ' (перевод по ссылке)' : ' — добавить к счёту'}',
         );
       } catch (_) {

@@ -2140,6 +2140,9 @@ function watchDashboardData(tenantId) {
   let liveOnShift = null;
   let todayRevenue = null;
   let todayChecksCount = null;
+  // Кассовые смены, закрытые за последние 7 дней, — для недостачи
+  // наличных в «Требует внимания» (пересчёт при закрытии в кассе).
+  let recentClosedShifts = null;
   let devicesCount = null;
   // Сотрудники с PIN-входом в кассу (tenants/{id}/employees) — отдельно от
   // members выше: то доступ к ЭТОЙ веб-панели (email+пароль), это доступ к
@@ -2253,6 +2256,20 @@ function watchDashboardData(tenantId) {
     if ((buildJobs || [])[0]?.status === 'failed') {
       attentionItems.push({ tab: 'devices', text: 'Последняя сборка APK не удалась — попробуйте собрать снова или напишите в поддержку' });
     }
+    // Недостача при пересчёте кассы — владелец узнаёт сразу, а не из
+    // X-отчёта, который открывают на кассе. Копейки округления не в счёт.
+    for (const sh of recentClosedShifts || []) {
+      const expected = Number(sh.closingExpectedCash);
+      const counted = Number(sh.closingCountedCash);
+      if (!Number.isFinite(expected) || !Number.isFinite(counted)) continue;
+      const shortage = Math.round((expected - counted) * 100) / 100;
+      if (shortage < 1) continue;
+      const when = sh.closedAt ? fmtDateTime(sh.closedAt) : '';
+      attentionItems.push({
+        tab: null,
+        text: `Недостача ${shortage.toLocaleString('ru-RU')} ₽ при закрытии смены${when ? ` ${when}` : ''}${sh.closedBy ? ` — закрыл(а) ${sh.closedBy}` : ''}. Подробности — в X-отчёте кассы, «Прошлые смены»`,
+      });
+    }
 
     // Что видит владелец на "Обзоре" про саму подписку — название тарифа
     // (а не только статус, который и так был виден строкой выше) и сколько
@@ -2355,7 +2372,7 @@ function watchDashboardData(tenantId) {
             <div class="checklist-item">
               <div class="checklist-check" style="border-color:var(--warning);color:var(--warning)">!</div>
               <div class="checklist-label">${esc(it.text)}</div>
-              <button class="btn-link f-dash-tab" data-tab="${it.tab}" style="width:auto">Перейти</button>
+              ${it.tab ? `<button class="btn-link f-dash-tab" data-tab="${it.tab}" style="width:auto">Перейти</button>` : ''}
             </div>
           `).join('')}
         </div>
@@ -3638,6 +3655,21 @@ function watchDashboardData(tenantId) {
     (snap) => { liveOnShift = snap.size; draw(); },
     () => { liveOnShift = 0; draw(); },
   ));
+  {
+    // Одно неравенство по closedAt — хватает встроенного индекса; открытые
+    // смены (closedAt == null) в выборку не попадают.
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    sub(onSnapshot(
+      query(
+        collection(state.db, 'tenants', tenantId, 'shifts'),
+        where('closedAt', '>=', Timestamp.fromDate(weekAgo)),
+        orderBy('closedAt', 'desc'),
+        limit(20),
+      ),
+      (snap) => { recentClosedShifts = snap.docs.map((d) => d.data()); draw(); },
+      () => { recentClosedShifts = []; draw(); },
+    ));
+  }
   sub(onSnapshot(collection(state.db, 'tenants', tenantId, 'devices'), (snap) => {
     devicesCount = snap.size;
     draw();
@@ -3655,6 +3687,8 @@ function watchDashboardData(tenantId) {
         todayChecksCount = snap.size;
         todayRevenue = snap.docs.reduce((sum, d) => {
           const s = d.data();
+          // Возвращённый чек не выручка — так же считает X-отчёт кассы.
+          if (s.refunded === true) return sum;
           return sum + (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
             (Number(s.paymentTerminal) || 0) + (Number(s.paymentComp) || 0);
         }, 0);

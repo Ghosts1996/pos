@@ -51,7 +51,7 @@ class CashDrawerCard extends StatelessWidget {
                   child: Icon(Icons.edit_outlined, size: 16, color: AppColors.textMuted),
                 ),
               ),
-            Text('$sign${rub(v)}'),
+            Text(v.abs() < 0.005 ? rub(0) : '$sign${rub(v)}'),
           ]),
         );
 
@@ -91,7 +91,7 @@ class CashDrawerCard extends StatelessWidget {
           line('Наличные за чеки', summary.cashSales, sign: '+ '),
           if (summary.cashTips > 0) line('Чаевые наличными', summary.cashTips, sign: '+ '),
           if (summary.deposits > 0) line('Внесения', summary.deposits, sign: '+ '),
-          line('Инкассации', summary.collections, sign: '− '),
+          if (summary.collections > 0) line('Инкассации', summary.collections, sign: '− '),
           if (summary.payouts > 0) line('Выплаты', summary.payouts, sign: '− '),
           if (summary.refunds > 0) line('Возвраты наличными', summary.refunds, sign: '− '),
           if (summary.countDiff.abs() >= 0.01)
