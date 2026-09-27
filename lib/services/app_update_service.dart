@@ -236,7 +236,7 @@ class AppUpdateService {
           )
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
-        if (strict) throw _UpdateError('сервер обновлений ответил ${resp.statusCode}');
+        if (strict) throw _UpdateError(_serverReason(resp.statusCode, resp.body));
         return null;
       }
       final json = jsonDecode(resp.body);
@@ -244,6 +244,42 @@ class AppUpdateService {
       return AppUpdateInfo.fromJson(json, current: currentBuild);
     } finally {
       client.close();
+    }
+  }
+
+  /// Понятная причина отказа сервера для ручной проверки.
+  static String _serverReason(int status, String body) {
+    String error = '';
+    try {
+      final json = jsonDecode(body);
+      if (json is Map && json['error'] is String) error = json['error'] as String;
+    } catch (_) {}
+    // Маршрута нет — на сервере старая версия saas-gateway без /appUpdate.
+    if (status == 404 && (error.isEmpty || error == 'not found')) {
+      return 'сервер ещё не умеет раздавать обновления — обновите saas-gateway на сервере';
+    }
+    if (status == 401 || status == 403) return 'нет доступа — войдите в кассу заново';
+    return error.isNotEmpty ? error : 'сервер обновлений ответил $status';
+  }
+
+  /// «Проверить обновления» из меню — та же проверка, что и фоновая, но с
+  /// ответом человеку: последняя ли у него версия, что нашлось или почему
+  /// спросить не удалось (фоновая проверка ошибки молча пропускает).
+  Future<String> checkManually() async {
+    final tenantId = _tenantId();
+    if (tenantId == null || tenantId.isEmpty) return 'Устройство ещё не привязано к заведению';
+    try {
+      final info = await _ask(strict: true);
+      _lastCheck = DateTime.now();
+      if (info == null) return 'У вас последняя версия (сборка $currentBuild)';
+      hiddenUntil.value = null; // «Позже» больше не прячет плашку
+      await checkNow();
+      return 'Вышла новая версия — сборка ${info.buildNumber} (у вас $currentBuild). '
+          'Нажмите «Обновить» на плашке вверху экрана.';
+    } on _UpdateError catch (e) {
+      return 'Не удалось проверить: ${e.message}';
+    } catch (_) {
+      return 'Не удалось проверить: нет связи с сервером — проверьте интернет';
     }
   }
 

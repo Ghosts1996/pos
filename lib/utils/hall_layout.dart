@@ -1,4 +1,5 @@
-import 'dart:ui' show Size;
+import 'dart:math' as math;
+import 'dart:ui' show Rect, Size;
 
 import '../models/reservation_model.dart';
 import '../models/table_model.dart';
@@ -26,6 +27,91 @@ const double kHallTile = 104;
       x: ((cx - kHallTile / 2) / (kHallCanvas.width - kHallTile)).clamp(0.0, 1.0),
       y: ((cy - kHallTile / 2) / (kHallCanvas.height - kHallTile)).clamp(0.0, 1.0),
     );
+
+/// Часть холста, где стоят столы, с полями вокруг — её и показываем на
+/// экране. Раньше показывался весь холст: если столы стоят в одном углу,
+/// на телефоне они получались мелкими, а половина экрана — пустой.
+/// Не меньше [minSize], чтобы два-три стола не раздувались на весь экран.
+Rect hallContentRect(
+  List<TableModel> tables, {
+  double margin = 36,
+  Size minSize = const Size(kHallTile * 3.2, kHallTile * 2.4),
+}) {
+  if (tables.isEmpty) return kHallCanvasRect;
+  var l = double.infinity, t = double.infinity, r = -double.infinity, b = -double.infinity;
+  for (final x in tables) {
+    final o = hallTileOffset(x);
+    l = math.min(l, o.left);
+    t = math.min(t, o.top);
+    r = math.max(r, o.left + kHallTile);
+    b = math.max(b, o.top + kHallTile);
+  }
+  l -= margin;
+  t -= margin;
+  r += margin;
+  b += margin;
+  // Расширяем до минимального размера вокруг центра, не выходя за холст.
+  final gx = math.max(0.0, minSize.width - (r - l)) / 2;
+  final gy = math.max(0.0, minSize.height - (b - t)) / 2;
+  l -= gx;
+  r += gx;
+  t -= gy;
+  b += gy;
+  // Сдвигаем внутрь холста, сохраняя размер.
+  if (l < 0) {
+    r -= l;
+    l = 0;
+  }
+  if (t < 0) {
+    b -= t;
+    t = 0;
+  }
+  if (r > kHallCanvas.width) {
+    l -= r - kHallCanvas.width;
+    r = kHallCanvas.width;
+  }
+  if (b > kHallCanvas.height) {
+    t -= b - kHallCanvas.height;
+    b = kHallCanvas.height;
+  }
+  return Rect.fromLTRB(math.max(0, l), math.max(0, t), r, b);
+}
+
+/// Весь холст — для пустого зала.
+final Rect kHallCanvasRect = Rect.fromLTWH(0, 0, kHallCanvas.width, kHallCanvas.height);
+
+/// Столы по срочности: где гость зовёт, потом время вышло (дольше всех
+/// первыми), скоро освободятся, заняты (кто раньше освободится — выше),
+/// бронь (ближайшая выше), свободные — по номеру.
+List<TableModel> tablesByUrgency(
+  List<TableModel> tables,
+  Map<String, TableState> states, {
+  Set<String> calls = const {},
+  Map<String, ReservationModel> reservations = const {},
+}) {
+  int rank(TableState s) => switch (s) {
+        TableState.overdue => 0,
+        TableState.ending => 1,
+        TableState.occupied => 2,
+        TableState.reserved => 3,
+        TableState.free => 4,
+      };
+  DateTime key(TableModel t) {
+    final s = states[t.id] ?? TableState.free;
+    if (s == TableState.reserved) return reservations[t.id]?.startTime ?? DateTime(9999);
+    return t.busyUntil ?? DateTime(9999);
+  }
+
+  return [...tables]..sort((a, b) {
+      final call = (calls.contains(b.id) ? 1 : 0) - (calls.contains(a.id) ? 1 : 0);
+      if (call != 0) return call;
+      final ra = rank(states[a.id] ?? TableState.free), rb = rank(states[b.id] ?? TableState.free);
+      if (ra != rb) return ra.compareTo(rb);
+      if (ra == 4) return compareTables(a, b);
+      final k = key(a).compareTo(key(b));
+      return k != 0 ? k : compareTables(a, b);
+    });
+}
 
 /// Зоны зала в порядке «как завёл администратор»: по первому появлению в
 /// отсортированном по имени списке столов. Столы без зоны — ''.
