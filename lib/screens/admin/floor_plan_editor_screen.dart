@@ -248,7 +248,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                       padding: EdgeInsets.only(top: 6),
                       child: Text(
                           'Повернуть можно и прямо на схеме кнопкой ⟳. Ставьте столы вплотную — '
-                          'из длинных и треугольных собираются большие и угловые.',
+                          'из длинных и угловых собираются столы буквой Г и П.',
                           style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
                     ),
                   ],
@@ -471,8 +471,8 @@ IconData _shapeIcon(String shape) {
       return Icons.crop_16_9;
     case 'oval':
       return Icons.panorama_wide_angle_outlined;
-    case 'triangle':
-      return Icons.change_history;
+    case 'corner':
+      return Icons.rounded_corner;
     case 'bar':
       return Icons.local_bar_outlined;
     default:
