@@ -75,9 +75,27 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+    const err = new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return { data: json };
+}
+
+/** Письмо входа, смены пароля или подтверждения почты — в оформлении ZalPOS,
+ *  с сервера платформы (см. handleSendAuthEmail в saas-gateway/server.js).
+ *  Шаблон письма Firebase в его консоли не редактируется. Если сервер не
+ *  отправил (почта на нём не настроена, недоступен) — отправляет Firebase,
+ *  как раньше: [fallback]. Упор в лимит (429) не обходим. */
+async function sendAuthEmail(type, email, fallback) {
+  try {
+    await callSaasGateway('sendAuthEmail', {
+      type, email, continueUrl: `${location.origin}${location.pathname}#/`,
+    });
+  } catch (e) {
+    if (e?.status === 429) throw e;
+    await fallback();
+  }
 }
 
 /** Загружает логотип заведения в saas-gateway (см. handleUploadBrandingLogo
@@ -1138,10 +1156,10 @@ function screenLanding() {
     if (!$('f-landing-agree')?.checked) { errEl.textContent = 'Нужно принять условия оферты и согласие на обработку персональных данных'; return; }
     $('f-landing-start').disabled = true;
     try {
-      await sendSignInLinkToEmail(state.auth, email, {
+      await sendAuthEmail('signIn', email, () => sendSignInLinkToEmail(state.auth, email, {
         url: `${location.origin}${location.pathname}#/`,
         handleCodeInApp: true,
-      });
+      }));
       window.localStorage.setItem('emailForSignIn', email);
       window.localStorage.setItem('offerAcceptedAt', new Date().toISOString());
       if (selectedPlanId) window.localStorage.setItem('selectedPlanId', selectedPlanId);
@@ -1619,7 +1637,7 @@ function screenAuth() {
         return;
       }
       try {
-        await sendPasswordResetEmail(state.auth, email);
+        await sendAuthEmail('passwordReset', email, () => sendPasswordResetEmail(state.auth, email));
         errEl.style.color = 'var(--primary)';
         errEl.textContent = `Письмо со ссылкой для сброса пароля отправлено на ${email}`;
       } catch (e2) {
@@ -1655,11 +1673,11 @@ function screenAuth() {
         // Письмо с подтверждением — до него владелец не может создать
         // заведение (см. screenOnboarding и createTenant на сервере), это
         // и есть защита от регистрации на случайный/чужой email.
-        try { await sendEmailVerification(cred.user); } catch (_) {}
+        try { await sendAuthEmail('verifyEmail', cred.user.email, () => sendEmailVerification(cred.user)); } catch (_) {}
         // Пароль сгенерирован выше и нигде не показывается — второе письмо
         // (та же механика, что и "Забыли пароль?" выше) даёт владельцу
         // способ задать СВОЙ пароль, которым он потом сможет входить.
-        try { await sendPasswordResetEmail(state.auth, email); } catch (_) {}
+        try { await sendAuthEmail('passwordReset', email, () => sendPasswordResetEmail(state.auth, email)); } catch (_) {}
       }
       // Дальше подхватит onAuthStateChanged — свой экран он покажет сам
       // (screenVerifyEmail расскажет и про письмо для пароля тоже).
@@ -1717,7 +1735,8 @@ function screenVerifyEmail() {
     const msgEl = $('f-verify-msg');
     $('f-verify-resend').disabled = true;
     try {
-      await sendEmailVerification(state.auth.currentUser);
+      await sendAuthEmail('verifyEmail', state.auth.currentUser.email,
+        () => sendEmailVerification(state.auth.currentUser));
       msgEl.textContent = 'Письмо отправлено ещё раз.';
     } catch (e) {
       msgEl.textContent = `Не удалось отправить: ${e?.message || e}`;
