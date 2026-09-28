@@ -10,6 +10,7 @@ import '../../services/storage_service.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/promo_policy.dart';
 import '../../utils/adaptive.dart';
 
 /// Админ-редактор меню: категории, позиции и загрузка фото для них.
@@ -117,7 +118,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                                 imageUrl: item.imageUrl,
                                 uploading: _uploadingIds.contains(item.id),
                                 icon: Icons.fastfood_outlined,
-                                onTap: () => _pickAndUploadItemImage(item),
+                                onTap: () => _pickAndUploadItemImage(item, cat.name),
                               ),
                               title: Text(item.name),
                               subtitle: Text(_buildItemSubtitle(item)),
@@ -204,7 +205,11 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     }
   }
 
-  Future<void> _pickAndUploadItemImage(MenuItem item) async {
+  Future<void> _pickAndUploadItemImage(MenuItem item, String categoryName) async {
+    // Табак, кальяны и принадлежности гостю можно показывать только списком
+    // без изображений (ст. 19 закона № 15-ФЗ), фото — лишь для персонала.
+    if (PromoPolicy.menuTobacco(item, categoryName) && !await _confirmTobaccoPhoto()) return;
+    if (!mounted) return;
     final source = await _pickSource(context);
     if (source == null) return;
     final file = await _storage.pickImage(source: source);
@@ -221,6 +226,26 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     } finally {
       if (mounted) setState(() => _uploadingIds.remove(item.id));
     }
+  }
+
+  Future<bool> _confirmTobaccoPhoto() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Фото табачной позиции'),
+        content: const Text(
+          'Фото увидят только сотрудники в кассе. Гостям закон разрешает показывать табак, '
+          'кальяны, чаши и другие принадлежности только списком — названием и ценой, без '
+          'изображений (ст. 19 закона № 15-ФЗ), поэтому в меню гостя фото не появится. '
+          'За нарушение штрафуют заведение.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Понятно, загрузить')),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   Future<ImageSource?> _pickSource(BuildContext context) {
