@@ -53,8 +53,11 @@ class _KolibriShellState extends State<KolibriShell> {
     // телефонным либо заменяется существующим). Без этой подписки оболочка
     // продолжала бы слушать профиль старого аккаунта, а уведомления
     // приходили бы не тому гостю.
-    _authSub = _auth.authStateChanges().listen((_) {
+    _authSub = _auth.authStateChanges().listen((user) {
       if (mounted) setState(_syncAccount);
+      // Сессия пропала на ходу (аккаунт недоступен на сервере) — вернуть
+      // прежний аккаунт по ключу восстановления или завести новый.
+      if (user == null) unawaited(_auth.ensureGuest().then((_) {}, onError: (_) {}));
     });
 
     // QR со стола, отсканированный обычной камерой телефона, открывает
