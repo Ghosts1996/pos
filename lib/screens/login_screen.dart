@@ -230,7 +230,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // именно это единственное, что тянем из AppScope.branding. В
     // одно-арендной сборке branding всегда null — экран не меняется.
     final branding = AppScope.branding;
-    final appName = branding?.appName ?? 'Hookah POS';
+    final appName = branding?.appName ?? 'ZalPOS';
     final logoUrl = branding?.logoUrl ?? '';
 
     final header = Column(

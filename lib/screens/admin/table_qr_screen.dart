@@ -36,11 +36,11 @@ class TableQrScreen extends StatelessWidget {
   static const hostingDomain = 'https://colibri-lounge.web.app';
 
   /// Домен платформы для SaaS: у каждого заведения свой поддомен
-  /// `{slug}.hookahpos.su` (wildcard DNS + wildcard SSL на сервере, см.
+  /// `{slug}.zalpos.ru` (wildcard DNS + wildcard SSL на сервере, см.
   /// saas/README.md) — отдаёт SaaS-версию страницы-прослойки и веб-гостя с
   /// брендингом именно этого заведения (раздел «Брендинг» в личном
   /// кабинете), а не общий "Colibri Lounge".
-  static const saasDomain = 'hookahpos.su';
+  static const saasDomain = 'zalpos.ru';
 
   /// Ссылка для НОВЫХ наклеек — через страницу-прослойку. В SaaS-режиме
   /// без AppScope.slug (например демо-заведение без человекочитаемого кода)

@@ -1,4 +1,4 @@
-# Hookah POS SaaS — фундамент, онбординг, биллинг и APK-конвейер
+# ZalPOS SaaS — фундамент, онбординг, биллинг и APK-конвейер
 
 Эта папка — НЕ часть одно-арендного приложения в корне репозитория (то,
 что обслуживает ваше живое заведение, продолжает работать без изменений
@@ -216,7 +216,7 @@
   (например `LoginScreen` — исторически рисует всё литеральными
   `Color(...)`, в обход темы), всё равно могли показать имя и логотип
   заведения. Экран входа персонала теперь показывает `branding.appName` и
-  `branding.logoUrl` вместо жёстко зашитого «Hookah POS» — именно то место,
+  `branding.logoUrl` вместо жёстко зашитого «ZalPOS» — именно то место,
   которое ТЗ называет «имя приложения на экране входа» (§17/§18).
 - **Консоль**: карточка «Брендинг» — имя приложения, логотип (загрузка в
   Firebase Storage, `tenants/{tenantId}/branding/`, путь уже был разрешён
@@ -402,10 +402,10 @@ Actions → New repository secret):
 | `SAAS_FIREBASE_MESSAGING_SENDER_ID` | sender id (общий) | Там же, `project_number` / `messagingSenderId` |
 | `SAAS_FIREBASE_PROJECT_ID` | id проекта | id вашего SaaS-проекта (тот же, что в `saas/.firebaserc`) |
 | `SAAS_FIREBASE_STORAGE_BUCKET` | бакет Storage (используется только для `--dart-define` в самом приложении, НЕ для доставки APK — см. ниже) | Firebase Console → Project settings → General → Storage bucket |
-| `SAAS_COMPLETE_BUILD_JOB_URL` | `https://pii.hookahpos.su/saas/completeBuildJob` | `saas-gateway/server.js` (не Cloud Function — Blaze недоступен), см. `saas-gateway/README.md` |
+| `SAAS_COMPLETE_BUILD_JOB_URL` | `https://pii.zalpos.ru/saas/completeBuildJob` | `saas-gateway/server.js` (не Cloud Function — Blaze недоступен), см. `saas-gateway/README.md` |
 | `BUILD_CALLBACK_SECRET` | тот же секрет, что в `/etc/saas-gateway.env` на сервере | Скопировать то же значение |
 | `DEPLOY_SSH_KEY_TENANT` | приватный SSH-ключ для доставки ЛИЧНЫХ сборок на сервер | Генерируется на сервере, см. шаг 8 ниже («Настройка доставки личных сборок») |
-| `DEPLOY_SSH_HOST` | `pii.hookahpos.su` | Тот же секрет, что уже заведён для публичного APK (см. 8b) — общий для обоих |
+| `DEPLOY_SSH_HOST` | `pii.zalpos.ru` | Тот же секрет, что уже заведён для публичного APK (см. 8b) — общий для обоих |
 | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | подпись APK | Если уже настроены для `build-apk.yml` — используются как есть, ничего нового заводить не нужно |
 
 **Важно про то, что я (модель) не могу сделать за вас**: создание
@@ -565,7 +565,7 @@ Firebase Storage (тот же Blaze-блокер) — он доставляет�
 
 **Брендинг (раздел «Брендинг» в личном кабинете) применяется ТОЛЬКО к
 гостевому приложению.** Касса всегда выглядит и называется одинаково у
-всех арендаторов платформы («Hookah POS», своя иконка) — это инструмент
+всех арендаторов платформы («ZalPOS», своя иконка) — это инструмент
 персонала, а не витрина конкретного заведения. Гостевое приложение,
 наоборот, полностью принимает бренд заведения:
 - **Имя приложения** (то, что владелец вводит в «Брендинге») — становится
@@ -616,7 +616,7 @@ Firebase Console → Authentication → Sign-in method для SaaS-проект�
      ГОСТЕВОГО приложения (другое значение — перепутать эти два секрета
      местами значит получить на телефоне гостя APK, который не может
      достучаться до Firebase).
-   - `SAAS_COMPLETE_BUILD_JOB_URL` — `https://pii.hookahpos.su/saas/completeBuildJob`
+   - `SAAS_COMPLETE_BUILD_JOB_URL` — `https://pii.zalpos.ru/saas/completeBuildJob`
      (см. `saas-gateway/README.md`, раздел «Секреты репозитория»).
    - `BUILD_CALLBACK_SECRET` — то же значение, что в `/etc/saas-gateway.env`
      на сервере.
@@ -684,7 +684,7 @@ cat /root/.ssh/github_deploy_tenant_key   # скопировать в секре
 ```
 
 `DEPLOY_SSH_HOST` — тот же секрет, что уже заведён для публичного APK
-(`pii.hookahpos.su`), заново создавать не нужно.
+(`pii.zalpos.ru`), заново создавать не нужно.
 
 **Раздача файла — через nginx (`X-Accel-Redirect`), не напрямую из Node.**
 Сначала пробовали отдавать файл прямо из `saas-gateway`
@@ -762,7 +762,7 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/tenant-builds
 
 Кнопка «Скачать приложение кассы» на публичном лендинге (доступна кому
 угодно, даже незарегистрированному) ведёт на статический файл на
-собственном сервере владельца платформы — `https://pii.hookahpos.su/downloads/
+собственном сервере владельца платформы — `https://pii.zalpos.ru/downloads/
 hookah-pos-public.apk`, отдаётся напрямую через nginx (`location /downloads/`
 в том же конфиге, что и pii-gateway/saas-gateway).
 
@@ -823,7 +823,7 @@ cat /root/.ssh/github_deploy_key   # скопировать в секрет DEPL
 `command="...",restrict` в `authorized_keys` — ключ может ТОЛЬКО запустить
 этот скрипт (приняв файл на stdin), обычный shell по нему не открыть, даже
 если ключ утечёт. Секреты репозитория: `DEPLOY_SSH_KEY` (приватный ключ
-целиком) и `DEPLOY_SSH_HOST` (`pii.hookahpos.su`).
+целиком) и `DEPLOY_SSH_HOST` (`pii.zalpos.ru`).
 
 Путь на сайте (`saas/console/console.js`, константа `PUBLIC_APK_URL`) не
 меняется — обновлять код и деплоить консоль заново для новой версии APK
@@ -838,31 +838,31 @@ cat /root/.ssh/github_deploy_key   # скопировать в секрет DEPL
 ### 8c. Веб-версия гостя и QR стола на поддомене заведения
 
 У каждого заведения, кроме APK кассы и гостя, есть ещё веб-версия гостя —
-на своём поддомене `{slug}.hookahpos.su`, в тех же цветах и с тем же
+на своём поддомене `{slug}.zalpos.ru`, в тех же цветах и с тем же
 названием, что в разделе «Брендинг» (см. `saas/guest-web/` — форк
 `public/app/`+`public/table.html`, той же логике, что у одноарендной
 версии, только `state.db` заменён на `state.root` и заведение резолвится
 по поддомену, см. докстринг в начале `saas/guest-web/app/app.js`).
 
 QR-код стола в кассе (`TableQrScreen`) в SaaS-режиме уже сам строит адрес
-`https://{slug}.hookahpos.su/table/{id}` — ничего вручную указывать не
+`https://{slug}.zalpos.ru/table/{id}` — ничего вручную указывать не
 нужно, но ЭТУ часть нужно один раз настроить на сервере.
 
 **Почему НЕ единый wildcard-сертификат.** Обычный способ для
-`*.hookahpos.su` — DNS-01 challenge (TXT-запись), а он требует API вашего
+`*.zalpos.ru` — DNS-01 challenge (TXT-запись), а он требует API вашего
 DNS-провайдера, поддерживаемого certbot (Cloudflare и т.п.). Если DNS
 хостится у регистратора без такого API (как сейчас) — DNS-01 пришлось бы
 продлевать вручную каждые ~60 дней. Вместо этого — обычный HTTP-01 (не
 требует вообще никакого DNS API, только чтобы поддомен резолвился на этот
-сервер — а он и так резолвится, DNS-запись `*.hookahpos.su → IP сервера`
+сервер — а он и так резолвится, DNS-запись `*.zalpos.ru → IP сервера`
 заведена один раз и навсегда, см. ниже) на КАЖДЫЙ поддомен заведения
 отдельно — зато полностью автоматически и на выпуск, и на будущее
-продление (тот же таймер certbot, что уже продлевает pii.hookahpos.su).
+продление (тот же таймер certbot, что уже продлевает pii.zalpos.ru).
 
 **1. DNS (один раз, у вашего регистратора):**
 
 ```
-*.hookahpos.su.   A   <IP этого сервера>
+*.zalpos.ru.   A   <IP этого сервера>
 ```
 
 **2. Разложить статику веб-гостя:**
@@ -882,7 +882,7 @@ cat > /etc/nginx/conf.d/saas-guest-wildcard-http.conf << 'NGINXEOF'
 server {
     listen 80;
     listen [::]:80;
-    server_name ~^(?<tenant_slug>.+)\.hookahpos\.su$;
+    server_name ~^(?<tenant_slug>.+)\.zalpos\.ru$;
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -909,7 +909,7 @@ set -euo pipefail
 SLUG="${1:-}"
 [[ "$SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || { echo "bad slug: $SLUG" >&2; exit 1; }
 
-DOMAIN="$SLUG.hookahpos.su"
+DOMAIN="$SLUG.zalpos.ru"
 CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
 CONF="/etc/nginx/conf.d/tenant-$SLUG.conf"
 
@@ -924,7 +924,7 @@ if [[ ! -d "$CERT_DIR" ]]; then
   certbot certonly --webroot -w /var/www/certbot \
     -d "$DOMAIN" \
     --non-interactive --agree-tos \
-    -m admin@hookahpos.su \
+    -m admin@zalpos.ru \
     --keep-until-expiring
 fi
 
@@ -998,9 +998,9 @@ systemctl restart saas-gateway
 /usr/local/bin/provision-tenant-domain.sh bhggf
 ```
 
-**Проверка:** `https://<slug>.hookahpos.su/table/anything` должна открыть
+**Проверка:** `https://<slug>.zalpos.ru/table/anything` должна открыть
 страницу-прослойку (на устройстве без приложения — сразу экран «Приложение
-не установлено» со скачиванием/веб-версией), `https://<slug>.hookahpos.su/app/`
+не установлено» со скачиванием/веб-версией), `https://<slug>.zalpos.ru/app/`
 — саму веб-версию гостя.
 
 **Известное ограничение общей архитектуры сборки** (не баг этой страницы):
@@ -1010,6 +1010,36 @@ systemctl restart saas-gateway
 гостевое приложение ДРУГОГО заведения этой же платформы, deep-link со
 страницы-прослойки откроет именно его, а не предложит поставить
 приложение текущего заведения.
+
+### 8d. Переезд с hookahpos.su на zalpos.ru
+
+Платформа называется ZalPOS и живёт на `zalpos.ru`. Сервер переводится
+одним скриптом (повторный запуск безопасен):
+
+```bash
+cd /root/pos-deploy && git pull --no-rebase --no-edit origin claude/dazzling-babbage-n65p6l
+bash saas-gateway/migrate-domain.sh
+```
+
+Перед запуском у регистратора `zalpos.ru` должны быть A-записи `pii` и `*`
+на IP сервера. Скрипт подключает `pii.zalpos.ru` к тому же сервису (тот же
+сертификат расширяется на оба имени), выпускает `{slug}.zalpos.ru` каждому
+заведению, со старых `{slug}.hookahpos.su` ставит перенаправление, обновляет
+веб-версию гостя и `saas-gateway`. Скрипт выпуска поддомена теперь лежит в
+репозитории: `saas-gateway/provision-tenant-domain.sh`.
+
+Старый домен не отключать, пока продлевается: через `pii.hookahpos.su`
+работают уже установленные приложения, а на столах наклеены QR-коды со
+старым адресом.
+
+Консоль (Firebase Hosting): в Firebase Console → Hosting добавить домен
+`zalpos.ru`, в Authentication → Settings → Authorized domains добавить
+`zalpos.ru`. Консоль на `hookahpos.su` сама переводит на `zalpos.ru`, как
+только тот открывается.
+
+Адреса сервера для сборок (`PII_GATEWAY_URL`, `SAAS_GATEWAY_URL`, адрес
+`completeBuildJob`) теперь прописаны прямо в `saas-on-demand-build.yml` и
+`public-apk-release.yml` — секреты с этими именами им больше не нужны.
 
 ### 9. Перенос вашего текущего заведения (когда будете готовы)
 

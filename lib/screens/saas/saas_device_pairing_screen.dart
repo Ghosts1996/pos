@@ -210,7 +210,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
                       labelText: 'Код заведения',
-                      hintText: 'hookah-lounge-riga',
+                      hintText: 'kafe-leto',
                     ),
                     onSubmitted: (_) => _busy ? null : _join(),
                   ),

@@ -2,7 +2,7 @@
   "name": "saas-gateway",
   "version": "1.0.0",
   "private": true,
-  "description": "Онбординг SaaS-платформы Hookah POS (createTenant/createBuildJob/resolveTenantBySlug/completeBuildJob/createDemoTenant) без Cloud Functions/Blaze",
+  "description": "Онбординг SaaS-платформы ZalPOS (createTenant/createBuildJob/resolveTenantBySlug/completeBuildJob/createDemoTenant) без Cloud Functions/Blaze",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

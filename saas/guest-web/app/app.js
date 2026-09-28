@@ -17,7 +17,7 @@
 //     документа, поэтому ни один вызов ниже переписывать не пришлось —
 //     только сам state.db в них заменён на state.root.
 //  2. resolveTenant() + applyBranding() ниже — определяют ЧЬЁ это
-//     заведение (по поддомену {slug}.hookahpos.su) и накладывают его
+//     заведение (по поддомену {slug}.zalpos.ru) и накладывают его
 //     цвета/название вместо жёстко зашитых "Colibri Lounge".
 //
 // Чего здесь намеренно нет: сканера QR (он не нужен — номер стола уже в
@@ -36,10 +36,10 @@ import {
 // Шлюз платформы (saas-gateway) — тот же, что использует Flutter-приложение
 // (SAAS_GATEWAY_URL) и консоль владельца. Нужен только для resolveTenantBySlug
 // (публичный POST, без Auth — см. его docstring в saas-gateway/server.js).
-const GATEWAY = 'https://pii.hookahpos.su/saas';
+const GATEWAY = 'https://pii.zalpos.ru/saas';
 // Первичное хранилище персональных данных в РФ (pii-gateway, 152-ФЗ):
 // имя и телефон гостя пишутся сюда ДО Firestore.
-const PII_URL = 'https://pii.hookahpos.su/';
+const PII_URL = 'https://pii.zalpos.ru/';
 
 async function piiPost(body) {
   const token = await state.auth.currentUser.getIdToken();
@@ -187,7 +187,7 @@ const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
 
 // ---------- ЗАПУСК ----------
 
-/// Заведение этой сборки определяется поддоменом — {slug}.hookahpos.su
+/// Заведение этой сборки определяется поддоменом — {slug}.zalpos.ru
 /// (wildcard DNS+SSL на сервере, см. saas/README.md), а не зашито в сборку,
 /// как у Flutter-приложения (там на каждое заведение своя APK). Здесь
 /// сборка ОДНА на всех — статика раздаётся один раз, слуг читается уже в
@@ -266,7 +266,7 @@ function renderVenuePicker(chain) {
 /// владелец его не задавал, имя из профиля заведения, и только если совсем
 /// ничего не настроено — нейтральное имя платформы, а не чужой бренд.
 function brandDisplayName() {
-  return state.brandAppName || (state.venue && state.venue.name) || 'Hookah POS';
+  return state.brandAppName || (state.venue && state.venue.name) || 'ZalPOS';
 }
 
 /// Брендинг заведения (имя, цвета — раздел «Брендинг» в личном кабинете
@@ -287,7 +287,9 @@ async function applyBranding() {
     if (!snap.exists()) return;
     const b = snap.data();
     window.applyBrandPalette(b);
-    if (b.appName) state.brandAppName = b.appName;
+    // «Hookah POS» — прежнее название платформы, сохранённое по умолчанию,
+    // а не имя заведения: тогда показываем название самого заведения.
+    if (b.appName && !['Hookah POS', 'Hoocah POS', 'HookahPOS'].includes(b.appName)) state.brandAppName = b.appName;
 
     // В кэш — index.html применяет его СРАЗУ при следующем заходе, ещё до
     // сети (см. комментарий там же), чтобы страница не мелькала дефолтной
@@ -320,11 +322,11 @@ async function boot() {
   // двух подряд, короче время до первого раскрашенного в реальный бренд
   // кадра (тот же приём и в saas/guest-web/table.html).
   const tenantPromise = resolveTenant();
-  // НЕ hookahpos.su/__/firebase/init.json: тот путь — приём Firebase
+  // НЕ zalpos.ru/__/firebase/init.json: тот путь — приём Firebase
   // Hosting для страниц, размещённых НА НЁМ САМОМ (см. как его читает
   // saas/console/console.js — релятивным путём, тот же origin). Эта
-  // раздача живёт на поддомене {slug}.hookahpos.su — ЧУЖОЙ origin для
-  // hookahpos.su, а тот путь не отдаёт CORS для чужого origin: живьём
+  // раздача живёт на поддомене {slug}.zalpos.ru — ЧУЖОЙ origin для
+  // zalpos.ru, а тот путь не отдаёт CORS для чужого origin: живьём
   // подтверждено, что fetch падает с "Failed to fetch" ещё до какого-либо
   // ответа сервера. Вместо этого — тот же saas-gateway, что и
   // resolveTenant() выше (уже проверенно работает с этого origin).

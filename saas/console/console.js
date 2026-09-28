@@ -1,4 +1,4 @@
-// Консоль владельца заведения — веб-приложение SaaS-платформы Hookah POS.
+// Консоль владельца заведения — веб-приложение SaaS-платформы ZalPOS.
 //
 // Отдельный сайт от гостевого public/app: тот открывает гость по ссылке на
 // столе, этот — владелец заведения, чтобы завести заведение, посмотреть код
@@ -36,7 +36,20 @@ const FUNCTIONS_REGION = 'europe-west1';
 // Functions без тарифа Blaze у этого проекта. Тот же сервер и сертификат,
 // что и у pii-gateway (см. saas-gateway/README.md, раздел про nginx) —
 // отдельный путь /saas/, а не отдельный домен.
-const SAAS_GATEWAY_URL = 'https://pii.hookahpos.su/saas';
+const SAAS_GATEWAY_URL = 'https://pii.zalpos.ru/saas';
+
+// Прежние названия платформы. Их сохраняла форма «Брендинг» по умолчанию,
+// поэтому в базе они означают «название не задано», а не имя заведения.
+const LEGACY_PLATFORM_NAMES = ['Hookah POS', 'Hoocah POS', 'HookahPOS'];
+
+// Платформа переехала с hookahpos.su на zalpos.ru. Старый адрес ведёт на
+// новый — но только когда новый уже открывается (домен подключён к
+// хостингу и выпущен сертификат), иначе консоль осталась бы недоступной.
+if (/(^|\.)hookahpos\.su$/.test(location.hostname)) {
+  fetch('https://zalpos.ru/', { method: 'HEAD', mode: 'no-cors', cache: 'no-store' })
+    .then(() => location.replace(`https://zalpos.ru${location.pathname}${location.search}${location.hash}`))
+    .catch(() => {});
+}
 
 /** Вызывает saas-gateway тем же способом, каким httpsCallable вызывал бы
  *  Cloud Function — с ID-токеном текущего пользователя в заголовке и JSON
@@ -570,7 +583,7 @@ async function boot() {
     if (!config || !config.projectId) throw new Error('пусто');
   } catch (_) {
     screenEl().innerHTML = `
-      <div class="brand">Hookah POS</div>
+      <div class="brand">ZalPOS</div>
       <h1>Почти готово</h1>
       <p class="muted">Осталось один раз зарегистрировать веб-приложение в
       Firebase: консоль → Project settings → Your apps → значок
@@ -787,7 +800,7 @@ boot();
 // ---------- ЛЕНДИНГ ----------
 
 // Реальные возможности приложения (см. корневой README.md, разделы
-// "Hookah POS — возможности сотрудника/администратора") — сокращённо, для
+// "ZalPOS — возможности сотрудника/администратора") — сокращённо, для
 // человека, который видит систему первый раз, а не для того, кто уже читал
 // техническую документацию.
 const LANDING_FEATURES = [
@@ -906,7 +919,7 @@ function screenLanding() {
   screenEl().innerHTML = `
     <nav class="landing-nav">
       <div class="landing-inner landing-nav-inner">
-        <div class="landing-logo">◆ Hookah POS</div>
+        <div class="landing-logo">◆ ZalPOS</div>
         <div class="landing-nav-links">
           <button type="button" data-scroll="landing-features">Возможности</button>
           <button type="button" data-scroll="landing-pricing">Тарифы</button>
@@ -1013,7 +1026,7 @@ function screenLanding() {
             <div class="small" style="padding:6px 0">Отчёт по смене — вручную, полчаса и дольше</div>
           </div>
           <div class="card compare-card good">
-            <div style="font-weight:700;margin-bottom:10px">✅ С Hookah POS</div>
+            <div style="font-weight:700;margin-bottom:10px">✅ С ZalPOS</div>
             <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Касса сама считает чек, скидки и бонусы применяются автоматически</div>
             <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Склад обновляется при каждой продаже, инвентаризация — с историей расхождений</div>
             <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони из гостевого приложения сразу попадают в общий календарь зала</div>
@@ -1133,7 +1146,7 @@ function screenLanding() {
       window.localStorage.setItem('offerAcceptedAt', new Date().toISOString());
       if (selectedPlanId) window.localStorage.setItem('selectedPlanId', selectedPlanId);
       screenEl().innerHTML = `
-        <div class="brand">Hookah POS</div>
+        <div class="brand">ZalPOS</div>
         <h1>Проверьте почту</h1>
         <p class="muted">Отправили ссылку для входа на <b>${esc(email)}</b>.
         Откройте письмо на этом же телефоне и перейдите по ссылке — она
@@ -1371,7 +1384,7 @@ async function fillLegalRequisites() {
 
 function publicPageWrapHtml(title, bodyHtml) {
   return `
-    <div class="brand">Hookah POS</div>
+    <div class="brand">ZalPOS</div>
     <h1>${esc(title)}</h1>
     ${bodyHtml}
     <p class="small center muted" style="margin-top:24px"><a href="#/">← На главную</a></p>
@@ -1387,10 +1400,10 @@ const LEGAL_EDITION = 'Редакция от 27 сентября 2026 г.';
 
 function screenLegalOffer() {
   screenEl().innerHTML = publicPageWrapHtml('Публичная оферта', `
-    <p class="small muted">${LEGAL_EDITION} Договор-оферта на предоставление права использования программного комплекса Hookah POS (ст. 435, 437 ГК РФ).</p>
+    <p class="small muted">${LEGAL_EDITION} Договор-оферта на предоставление права использования программного комплекса ZalPOS (ст. 435, 437 ГК РФ).</p>
     <div class="card">
       ${legalSection('1. Термины', [
-        '<b>Исполнитель</b> — индивидуальный предприниматель, правообладатель и оператор Платформы (реквизиты — раздел 14). <b>Платформа</b> — программный комплекс Hookah POS: личный кабинет, кассовое приложение для Android и Windows, гостевое приложение и веб-страницы заведений. <b>Заказчик</b> — юридическое лицо или индивидуальный предприниматель, акцептовавший оферту. <b>Заведение</b> — объект общественного питания Заказчика (кафе, ресторан, бар, лаунж и т. п.), созданный в личном кабинете. <b>Тариф</b> — объём функций, лимиты и стоимость, опубликованные в личном кабинете. <b>Гость</b> — посетитель Заведения, пользующийся гостевым приложением или чьи данные вносит персонал Заказчика.',
+        '<b>Исполнитель</b> — индивидуальный предприниматель, правообладатель и оператор Платформы (реквизиты — раздел 14). <b>Платформа</b> — программный комплекс ZalPOS: личный кабинет, кассовое приложение для Android и Windows, гостевое приложение и веб-страницы заведений. <b>Заказчик</b> — юридическое лицо или индивидуальный предприниматель, акцептовавший оферту. <b>Заведение</b> — объект общественного питания Заказчика (кафе, ресторан, бар, лаунж и т. п.), созданный в личном кабинете. <b>Тариф</b> — объём функций, лимиты и стоимость, опубликованные в личном кабинете. <b>Гость</b> — посетитель Заведения, пользующийся гостевым приложением или чьи данные вносит персонал Заказчика.',
       ])}
       ${legalSection('2. Акцепт и заключение договора', [
         'Оферта адресована лицам, использующим Платформу для предпринимательской деятельности. Акцептом является регистрация личного кабинета с отметкой о согласии с офертой и Политикой обработки персональных данных. Договор заключён с момента акцепта и действует до расторжения (раздел 11).',
@@ -1427,7 +1440,7 @@ function screenLegalOffer() {
         'Обработка персональных данных самого Заказчика и его представителей осуществляется по Политике обработки персональных данных, опубликованной на сайте.',
       ])}
       ${legalSection('8. Интеллектуальная собственность и данные Заказчика', [
-        'Исключительные права на Платформу, её программный код, интерфейс и обозначение Hookah POS принадлежат Исполнителю. Данные, внесённые Заказчиком (меню, склад, продажи, гости и т. д.), принадлежат Заказчику; Исполнитель использует их только для исполнения договора. До удаления данных Заказчик вправе запросить их выгрузку через поддержку.',
+        'Исключительные права на Платформу, её программный код, интерфейс и обозначение ZalPOS принадлежат Исполнителю. Данные, внесённые Заказчиком (меню, склад, продажи, гости и т. д.), принадлежат Заказчику; Исполнитель использует их только для исполнения договора. До удаления данных Заказчик вправе запросить их выгрузку через поддержку.',
       ])}
     </div>
     <div class="card">
@@ -1459,10 +1472,10 @@ function screenLegalOffer() {
 
 function screenLegalPrivacy() {
   screenEl().innerHTML = publicPageWrapHtml('Политика обработки персональных данных', `
-    <p class="small muted">${LEGAL_EDITION} Политика разработана во исполнение ст. 18.1 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки и меры защиты персональных данных при использовании Платформы Hookah POS.</p>
+    <p class="small muted">${LEGAL_EDITION} Политика разработана во исполнение ст. 18.1 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки и меры защиты персональных данных при использовании Платформы ZalPOS.</p>
     <div class="card">
       ${legalSection('1. Оператор', [
-        'Оператор — индивидуальный предприниматель, правообладатель Платформы Hookah POS (реквизиты — раздел 12). В отношении данных Гостей и работников заведений оператором является владелец заведения (Заказчик), а Оператор обрабатывает их по его поручению на основании договора-оферты.',
+        'Оператор — индивидуальный предприниматель, правообладатель Платформы ZalPOS (реквизиты — раздел 12). В отношении данных Гостей и работников заведений оператором является владелец заведения (Заказчик), а Оператор обрабатывает их по его поручению на основании договора-оферты.',
       ])}
       ${legalSection('2. Субъекты и состав данных', [
         '<b>Пользователи личного кабинета</b> (владельцы и представители заведений): email, имя, роль, сведения об оплатах, журнал действий в кабинете.',
@@ -1554,7 +1567,7 @@ let authMode = 'login'; // 'login' | 'signup' — держим отдельно 
 
 function screenAuth() {
   screenEl().innerHTML = `
-    <div class="brand">Hookah POS</div>
+    <div class="brand">ZalPOS</div>
     <h1>${authMode === 'login' ? 'Вход в консоль' : 'Регистрация владельца'}</h1>
     <p class="muted">Личный кабинет владельца заведения: подписка, код
     приглашения устройств, фирменный цвет приложения кассы.</p>
@@ -1660,7 +1673,7 @@ function screenAuth() {
 }
 
 function screenLoading() {
-  screenEl().innerHTML = `<div class="brand">Hookah POS</div><div class="spinner"></div>`;
+  screenEl().innerHTML = `<div class="brand">ZalPOS</div><div class="spinner"></div>`;
 }
 
 // ---------- ПОДТВЕРЖДЕНИЕ ПОЧТЫ ----------
@@ -1668,7 +1681,7 @@ function screenLoading() {
 function screenVerifyEmail() {
   const email = state.auth.currentUser?.email || '';
   screenEl().innerHTML = `
-    <div class="brand">Hookah POS</div>
+    <div class="brand">ZalPOS</div>
     <h1>Подтвердите почту</h1>
     <p class="muted">Мы отправили письмо со ссылкой на <b>${esc(email)}</b>.
     Перейдите по ней, потом вернитесь сюда и нажмите «Проверить» —
@@ -1732,7 +1745,7 @@ function screenOnboarding() {
 
   screenEl().innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-      <div class="brand">Hookah POS</div>
+      <div class="brand">ZalPOS</div>
       ${state.isSuperAdmin ? '<a href="#/admin" class="btn-link">Платформа</a>' : ''}
     </div>
     <h1>Новое заведение</h1>
@@ -1745,19 +1758,19 @@ function screenOnboarding() {
       </label>
       <div id="f-chain-fields" style="display:none">
         <label class="field"><span>Название сети</span>
-          <input id="f-chain-name" placeholder="Hookah Lounge">
+          <input id="f-chain-name" placeholder="Сеть «Лето»">
         </label>
         <label class="field"><span>Код сети</span>
-          <input id="f-chain-slug" placeholder="hookah-lounge">
+          <input id="f-chain-slug" placeholder="leto">
         </label>
         <div class="small muted" style="margin:-6px 0 14px">Ниже — первая точка сети. Ещё точки можно
         добавить позже из личного кабинета кнопкой «Добавить точку сети».</div>
       </div>
       <label class="field"><span id="f-name-label">Название заведения</span>
-        <input id="f-name" placeholder="Hookah Lounge Riga">
+        <input id="f-name" placeholder="Кафе «Лето»">
       </label>
       <label class="field"><span id="f-slug-label">Код заведения</span>
-        <input id="f-slug" placeholder="hookah-lounge-riga">
+        <input id="f-slug" placeholder="kafe-leto">
       </label>
       <label class="field"><span>Тип заведения</span>
         <select id="f-venue-type">
@@ -2090,13 +2103,13 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
     <div class="dash-topbar">
       <button class="hamburger-btn" id="f-nav-open">☰</button>
       <div class="dash-topbar-title">
-        <div class="dash-topbar-tenant">${esc(tenantName || 'Hookah POS')}</div>
+        <div class="dash-topbar-tenant">${esc(tenantName || 'ZalPOS')}</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
     </div>
     <div class="nav-backdrop" id="nav-backdrop"></div>
     <div class="nav-drawer" id="nav-drawer">
-      <div class="nav-drawer-brand">Hookah POS</div>
+      <div class="nav-drawer-brand">ZalPOS</div>
       ${state.tenants.length > 1 ? `
         <label class="field"><span>Заведение</span>
           <select id="f-nav-tenant-pick">
@@ -2247,7 +2260,10 @@ function watchDashboardData(tenantId) {
     // (createTenant) и lib/models/tenant_models.dart (BrandingConfig) —
     // заведение без кастомного брендинга выглядит как проверенный продукт,
     // а не какой-то другой палитрой по умолчанию.
-    const brandName = existingName ?? (branding?.appName || tenant.name || 'Hookah POS');
+    // Старое название платформы, сохранённое по умолчанию, — не имя
+    // заведения: показываем вместо него название самого заведения.
+    const savedName = LEGACY_PLATFORM_NAMES.includes(branding?.appName) ? '' : branding?.appName;
+    const brandName = existingName ?? (savedName || tenant.name || 'ZalPOS');
     const logoUrl = pendingLogoUrl ?? (branding?.logoUrl || '');
     const primaryColor = existingColor('f-color-primary') ?? (branding?.primaryColor || '#0B5ED7');
     const secondaryColor = existingColor('f-color-secondary') ?? (branding?.secondaryColor || '#162A4A');
@@ -3926,7 +3942,7 @@ function updateBrandPreview() {
   const bg = $('f-color-bg')?.value || '#02050B';
   const text = $('f-color-text')?.value || '#F8FAFC';
   const button = $('f-color-button')?.value || '#0B5ED7';
-  const name = $('f-brand-name')?.value || 'Hookah POS';
+  const name = $('f-brand-name')?.value || 'ZalPOS';
 
   preview.style.background = bg;
   title.style.color = text;
@@ -3972,13 +3988,13 @@ function adminNavHtml(activeTab) {
     <div class="dash-topbar">
       <button class="hamburger-btn" id="f-admin-nav-open">☰</button>
       <div class="dash-topbar-title">
-        <div class="dash-topbar-tenant">Hookah POS · платформа</div>
+        <div class="dash-topbar-tenant">ZalPOS · платформа</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
     </div>
     <div class="nav-backdrop" id="admin-nav-backdrop"></div>
     <div class="nav-drawer" id="admin-nav-drawer">
-      <div class="nav-drawer-brand">Hookah POS</div>
+      <div class="nav-drawer-brand">ZalPOS</div>
       <div class="nav-drawer-tenant">Панель платформы</div>
       ${ADMIN_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-admin-tab" data-tab="${t.id}">
@@ -4900,7 +4916,7 @@ function watchAllTenants() {
           fmtDate(t.createdAt),
         ]);
       });
-      downloadCsv(`hookah-pos-заведения-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+      downloadCsv(`zalpos-заведения-${new Date().toISOString().slice(0, 10)}.csv`, rows);
     };
   }
 }
@@ -5323,7 +5339,7 @@ async function exportPaymentsCsv() {
       const e = d.data();
       rows.push([fmtDateTime(e.receivedAt), e.tenantId || '—', SUB_STATUS_LABELS[e.status] || e.status || '—', e.purpose || '—', Number(e.amount) || 0]);
     });
-    downloadCsv(`hookah-pos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    downloadCsv(`zalpos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   } catch (e) {
     toast(`Не удалось выгрузить платежи: ${e?.message || e}`);
   } finally {
@@ -5907,7 +5923,7 @@ async function loadSecurityPlatform() {
     !wh.lastReceivedAt ? 'unknown' : whAge > 45 * DAY ? 'warn' : 'ok',
     !wh.lastReceivedAt ? 'Уведомлений от ЮKassa ещё не было' : whAge > 45 * DAY ? 'ЮKassa давно не присылала уведомлений' : 'Уведомления об оплатах от ЮKassa доходят',
     `${wh.lastReceivedAt ? `Последнее: ${fmtMs(wh.lastReceivedAt)}${wh.lastEvent ? ` (${esc(wh.lastEvent)})` : ''}. ` : ''}${wh.lastPaymentAt ? `Последний платёж: ${fmtMs(wh.lastPaymentAt)}. ` : ''}`
-      + 'Если оплаты есть, а уведомлений нет — проверьте адрес уведомлений в кабинете ЮKassa: <code>https://pii.hookahpos.su/saas/billingWebhook</code>.'));
+      + 'Если оплаты есть, а уведомлений нет — проверьте адрес уведомлений в кабинете ЮKassa: <code>https://pii.zalpos.ru/saas/billingWebhook</code>.'));
 
   // Сертификаты
   const c = st.certificates;
@@ -5921,7 +5937,7 @@ async function loadSecurityPlatform() {
       problems.length ? `Проблемы с сертификатами HTTPS: ${problems.length} из ${c.total}` : `Сертификаты HTTPS в порядке (${c.total})`,
       `Проверено: ${fmtMs(c.checkedAt)}.${soon ? ` Ближайший срок: ${esc(soon.host)} — через ${soon.daysLeft} ${pluralDays(soon.daysLeft)}.` : ''}`
         + (problems.length ? '<br>' + problems.map((p) => `${esc(p.host)} — ${p.error ? esc(p.error) : `истекает через ${p.daysLeft} ${pluralDays(p.daysLeft)}`}`
-          + (p.host !== 'pii.hookahpos.su' ? ` <button type="button" class="btn-link sec-inline-link f-sec-reprovision" data-host="${esc(p.host)}">выпустить заново</button>` : '')).join('<br>') : '')
+          + (!String(p.host).startsWith('pii.') ? ` <button type="button" class="btn-link sec-inline-link f-sec-reprovision" data-host="${esc(p.host)}">выпустить заново</button>` : '')).join('<br>') : '')
         + '<br>certbot продлевает сертификаты сам; предупреждение значит, что продление не сработало.',
       '<button type="button" class="btn btn-ghost f-sec-certs" style="width:auto">Проверить сейчас</button>'));
   }
@@ -6361,7 +6377,7 @@ async function requestBuild(tenantId) {
 // Универсальная сборка кассы для кнопки "Скачать" на лендинге — не привязана
 // ни к одному заведению (кто угодно, даже не зарегистрированный, должен
 // суметь её скачать). Лежит на собственном сервере владельца платформы
-// (том же, что pii-gateway/saas-gateway — pii.hookahpos.su), статикой через
+// (том же, что pii-gateway/saas-gateway — pii.zalpos.ru), статикой через
 // nginx (location /downloads/, см. saas/README.md, раздел «Публичный APK»).
 //
 // НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze, которого
@@ -6370,7 +6386,7 @@ async function requestBuild(tenantId) {
 // objects.githubusercontent.com/Amazon S3 нестабильна), при этом с
 // обычного сервера (в том числе с этого же сервера) тот же файл скачивался
 // полностью и без проблем — поэтому раздача переехала туда же.
-const PUBLIC_APK_URL = 'https://pii.hookahpos.su/downloads/hookah-pos-public.apk';
+const PUBLIC_APK_URL = 'https://pii.zalpos.ru/downloads/zalpos.apk';
 
 function downloadPublicApk() {
   window.open(PUBLIC_APK_URL, '_blank', 'noopener');

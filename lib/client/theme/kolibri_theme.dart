@@ -88,7 +88,7 @@ class KolibriColors {
   /// экран гостю.
   static void applyBranding(BrandingConfig branding) {
     // branding.appName по умолчанию (когда документ пуст/не найден) — общий
-    // для всего приложения дефолт BrandingConfig ("Hookah POS", бренд
+    // для всего приложения дефолт BrandingConfig ("ZalPOS", бренд
     // кассы) — гостю его показывать нельзя, поэтому здесь свой дефолт, а не
     // прямое присваивание.
     final name = branding.appName.trim();

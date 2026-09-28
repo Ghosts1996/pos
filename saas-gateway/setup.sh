@@ -49,8 +49,8 @@ echo
 echo
 echo "Публичный веб-конфиг Firebase проекта saas-3bdc8 (НЕ секрет — те же"
 echo "ключи видны в исходнике любой веб-страницы с Firebase) — нужен, чтобы"
-echo "веб-версия гостя (saas/guest-web/) на поддоменах {slug}.hookahpos.su"
-echo "могла инициализировать Firebase: hookahpos.su/__/firebase/init.json"
+echo "веб-версия гостя (saas/guest-web/) на поддоменах {slug}.zalpos.ru"
+echo "могла инициализировать Firebase: zalpos.ru/__/firebase/init.json"
 echo "для чужого поддомена не отдаёт CORS, поэтому раздаём его сами отсюда."
 echo "Получить: Firebase Console -> saas-3bdc8 -> Project settings -> General"
 echo "-> Your apps -> веб-приложение (</>) -> SDK setup and configuration ->"

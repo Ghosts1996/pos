@@ -16,7 +16,7 @@ on:
         description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
         required: true
       app_label:
-        description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "Hookah POS"; пусто = дефолт "Colibri Lounge"'
+        description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "ZalPOS"; пусто = дефолт "Colibri Lounge"'
         required: false
       logo_url:
         description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = общая иконка "Colibri Lounge"'
@@ -56,7 +56,7 @@ on:
 #
 # ВАЖНО про бренд: app_label/logo_url (брендинг заведения) применяются
 # ТОЛЬКО к гостевому приложению — касса жёстко остаётся брендом платформы
-# ("Hookah POS", своя иконка), не арендатора (см. env: у шагов "Ensure
+# ("ZalPOS", своя иконка), не арендатора (см. env: у шагов "Ensure
 # required permissions..."/"Generate app launcher icon" ниже — там же и
 # почему). Раньше касса тоже подхватывала лейбл/иконку заведения — это
 # было ошибкой: касса не витрина арендатора, а инструмент персонала,
@@ -103,7 +103,7 @@ jobs:
             appid_secret: SAAS_FIREBASE_APP_ID
             default_icon: assets/icon/icon.png
             default_adaptive_icon: assets/icon/icon_foreground.png
-            default_label: 'Hookah POS'
+            default_label: 'ZalPOS'
             artifact_prefix: hookah-pos-saas
           - app: kolibri
             entrypoint: lib/client/kolibri_main.dart
@@ -244,7 +244,7 @@ jobs:
         env:
           # Каждый арендатор настраивает бренд СВОЕГО гостевого приложения в
           # разделе «Брендинг» (имя, лого, цвета) — касса ЖЁСТКО остаётся
-          # брендом платформы (Hookah POS), не арендатора, поэтому для
+          # брендом платформы (ZalPOS), не арендатора, поэтому для
           # matrix.app == pos ниже APP_LABEL принудительно очищается, а не
           # приходит из inputs.app_label вообще.
           #
@@ -335,7 +335,7 @@ jobs:
 
           # Лейбл под иконкой на телефоне — для matrix.app == pos APP_LABEL
           # приходит уже принудительно пустым (см. env: этого шага) — касса
-          # всегда "Hookah POS", бренд платформы, не арендатора. Для
+          # всегда "ZalPOS", бренд платформы, не арендатора. Для
           # гостевого приложения — из branding.appName заведения
           # (createBuildJob подставляет его сюда, см. saas-gateway/server.js).
           # Санитизация тут, а не только на сервере, — потому что
@@ -345,7 +345,7 @@ jobs:
           label = (os.environ.get('APP_LABEL') or '').strip()
           label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
           if not label:
-              label = os.environ.get('DEFAULT_LABEL') or 'Hookah POS'
+              label = os.environ.get('DEFAULT_LABEL') or 'ZalPOS'
           label = (label.replace('&', '&amp;').replace('<', '&lt;')
                         .replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;'))
           xml = open(path, encoding='utf-8').read()
@@ -570,8 +570,8 @@ jobs:
           SAAS_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.SAAS_FIREBASE_MESSAGING_SENDER_ID }}
           SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
-          PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
-          SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
+          PII_GATEWAY_URL: https://pii.zalpos.ru/
+          SAAS_GATEWAY_URL: https://pii.zalpos.ru/saas
           # env:, не прямая интерполяция ${{ }} в run: — inputs.* приходят от
           # вызывающего (обычно saas-gateway, но workflow_dispatch technically
           # можно дёрнуть и напрямую), доверять им как части shell-команды
@@ -652,7 +652,7 @@ jobs:
 
       # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
       # этому репозиторию (не владельцу заведения) — реальная точка выдачи
-      # APK владельцу это собственный сервер платформы (pii.hookahpos.su),
+      # APK владельцу это собственный сервер платформы (pii.zalpos.ru),
       # НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze,
       # которого нет (та же причина, что и у публичного APK — см. её же
       # комментарий в public-apk-release.yml и PUBLIC_APK_URL в
@@ -671,7 +671,7 @@ jobs:
       # (см. тот же комментарий у шага "Build APK" выше); сервер тоже
       # проверяет их формат перед использованием в пути (см. saas/README.md,
       # раздел «APK-конвейер»).
-      - name: Deploy APK to own server (pii.hookahpos.su)
+      - name: Deploy APK to own server (pii.zalpos.ru)
         if: success()
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
@@ -693,7 +693,7 @@ jobs:
 
       # SAAS_COMPLETE_BUILD_JOB_URL — полный url эндпоинта completeBuildJob
       # своего сервиса (см. saas-gateway/README.md), например
-      # https://pii.hookahpos.su/saas/completeBuildJob — не Cloud Function
+      # https://pii.zalpos.ru/saas/completeBuildJob — не Cloud Function
       # (Blaze для неё сейчас недоступен, см. docstring в saas-gateway/server.js).
       # downloadPath тут уже не путь в Storage, а просто пометка для
       # истории/отладки — саму раздачу handleDownloadBuild строит из
@@ -701,7 +701,7 @@ jobs:
       - name: Report success to buildJobs
         if: success()
         run: |
-          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+          curl -sS -X POST "https://pii.zalpos.ru/saas/completeBuildJob" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"success\",\"buildNumber\":${{ github.run_number }},\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ steps.jobid.outputs.value }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
@@ -709,7 +709,7 @@ jobs:
       - name: Report failure to buildJobs
         if: failure()
         run: |
-          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+          curl -sS -X POST "https://pii.zalpos.ru/saas/completeBuildJob" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска (${{ matrix.app }}).\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
@@ -782,6 +782,13 @@ jobs:
           flutter create . --platforms=windows
           test -d windows && echo "windows/ готова" || (echo "не удалось создать windows/" && exit 1)
 
+          # Заголовок окна и название в свойствах файла — бренд платформы, а
+          # не имя пакета. Имя exe (hookah_pos.exe) не меняем: обновление
+          # ставится поверх старой папки, и ярлыки указывают на него.
+          sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          sed -i -E 's/(VALUE "(FileDescription|ProductName)", )"hookah_pos"/\1"ZalPOS"/' windows/runner/Runner.rc
+          grep -n 'ZalPOS' windows/runner/main.cpp windows/runner/Runner.rc || echo "::warning::заголовок окна не заменён"
+
           # Тот же трюк, что и у Android-сборки выше (см. её же комментарий):
           # flutter create кладёт в test/ свой шаблонный widget_test.dart
           # поверх уже существующих настоящих тестов проекта — валит шаг
@@ -799,8 +806,8 @@ jobs:
       - name: Build Windows (release, SaaS mode)
         shell: bash
         env:
-          PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
-          SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
+          PII_GATEWAY_URL: https://pii.zalpos.ru/
+          SAAS_GATEWAY_URL: https://pii.zalpos.ru/saas
           # env:, не прямая интерполяция ${{ }} в run: — та же причина, что
           # и у Android-сборки выше: inputs.* нельзя доверять как части
           # shell-команды (workflow_dispatch technically можно дёрнуть и не
@@ -907,11 +914,11 @@ jobs:
           $iss = @"
           [Setup]
           AppId={{6F1C2A9E-3B7D-4E5A-9C41-5A7D3E2B9C10}
-          AppName=Hookah POS
+          AppName=ZalPOS
           AppVersion=1.0.${{ github.run_number }}
-          AppPublisher=Hookah POS
-          DefaultDirName={autopf}\Hookah POS
-          DefaultGroupName=Hookah POS
+          AppPublisher=ZalPOS
+          DefaultDirName={autopf}\ZalPOS
+          DefaultGroupName=ZalPOS
           DisableProgramGroupPage=yes
           PrivilegesRequired=lowest
           OutputDir=$dist
@@ -931,12 +938,18 @@ jobs:
           [Files]
           Source: "$out\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+          ; Платформа раньше называлась «Hookah POS» — при обновлении убираем
+          ; старые ярлыки, чтобы не было двух одинаковых значков.
+          [InstallDelete]
+          Type: files; Name: "{group}\Hookah POS.lnk"
+          Type: files; Name: "{autodesktop}\Hookah POS.lnk"
+
           [Icons]
-          Name: "{group}\Hookah POS"; Filename: "{app}\$exe"
-          Name: "{autodesktop}\Hookah POS"; Filename: "{app}\$exe"; Tasks: desktopicon
+          Name: "{group}\ZalPOS"; Filename: "{app}\$exe"
+          Name: "{autodesktop}\ZalPOS"; Filename: "{app}\$exe"; Tasks: desktopicon
 
           [Run]
-          Filename: "{app}\$exe"; Description: "Запустить Hookah POS"; Flags: nowait postinstall skipifsilent
+          Filename: "{app}\$exe"; Description: "Запустить ZalPOS"; Flags: nowait postinstall skipifsilent
           ; Тихая установка — это обновление изнутри кассы: запускаем её снова.
           Filename: "{app}\$exe"; Flags: nowait; Check: WizardSilent
           "@
@@ -968,7 +981,7 @@ jobs:
       # для скачивающего браузера определяет Content-Type/Content-Disposition
       # того ответа, а не расширение на диске) — трогать сам скрипт ради
       # Windows не нужно.
-      - name: Deploy Windows build to own server (pii.hookahpos.su)
+      - name: Deploy Windows build to own server (pii.zalpos.ru)
         if: success()
         shell: bash
         env:
@@ -993,7 +1006,7 @@ jobs:
         if: success()
         shell: bash
         run: |
-          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+          curl -sS -X POST "https://pii.zalpos.ru/saas/completeBuildJob" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{\"jobId\":\"${{ inputs.job_id_pos_windows }}\",\"status\":\"success\",\"buildNumber\":${{ github.run_number }},\"downloadPath\":\"tenant-builds/${{ inputs.tenant_id }}/${{ inputs.job_id_pos_windows }}.apk\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
@@ -1008,7 +1021,7 @@ jobs:
           cat > report.json <<JSON
           {"jobId":"${{ inputs.job_id_pos_windows }}","status":"failed","errorMessage":"Windows-сборка кассы не удалась — подробности в логе запуска.","runUrl":"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
           JSON
-          curl -sS -X POST "${{ secrets.SAAS_COMPLETE_BUILD_JOB_URL }}" \
+          curl -sS -X POST "https://pii.zalpos.ru/saas/completeBuildJob" \
             -H "Content-Type: application/json; charset=utf-8" \
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             --data-binary @report.json
