@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/notification_service.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/pii_gateway_service.dart';
 import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
@@ -48,6 +49,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   /// Номер уже привязан — редактировать его гость не может.
   bool get _phoneLocked => (widget.profile?.phone ?? '').isNotEmpty;
   bool _saving = false;
+  bool _deleting = false;
 
   /// Разрешены ли уведомления на уровне системы.
   ///
@@ -190,39 +192,52 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     super.dispose();
   }
 
-  Future<void> _requestDataDeletion() async {
+  /// Гость удаляет свои данные сам и сразу (152-ФЗ): сначала первичная
+  /// база в РФ, потом облако. Сервер удаляет и анонимный аккаунт — после
+  /// этого начинаем с чистого профиля.
+  Future<void> _deleteMyData() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         scrollable: true,
         title: const Text('Удалить мои данные?'),
-        content: const Text('Мы удалим ваше имя, номер телефона и день рождения из профиля, '
-            'броней и заказов, а бонусы сгорят. Запрос обработают в течение 30 дней.'),
+        content: const Text('Ваше имя, номер телефона и день рождения сразу удалятся из профиля, '
+            'броней и заказов, а бонусы сгорят. Отменить это нельзя.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Отправить запрос')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: KolibriColors.danger),
+            child: const Text('Удалить мои данные'),
+          ),
         ],
       ),
     );
     if (ok != true) return;
+    setState(() => _deleting = true);
     try {
+      await PiiGatewayService().deleteGuestData();
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       final resp = await http
           .post(
-            Uri.parse('$kSaasGatewayUrl/requestGuestDataDeletion'),
+            Uri.parse('$kSaasGatewayUrl/deleteGuestData'),
             headers: {'Content-Type': 'application/json', if (token != null) 'Authorization': 'Bearer $token'},
             body: jsonEncode({'tenantId': AppScope.tenantId}),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
-      if (resp.statusCode != 200) throw StateError((json['error'] as String?) ?? 'ошибка ${resp.statusCode}');
-      final due = DateTime.fromMillisecondsSinceEpoch((json['dueAt'] as num).toInt());
-      final dueText = '${due.day.toString().padLeft(2, '0')}.${due.month.toString().padLeft(2, '0')}.${due.year}';
-      _snack(json['existing'] == true
-          ? 'Запрос уже отправлен — данные удалят не позднее $dueText'
-          : 'Запрос принят — данные удалят не позднее $dueText');
-    } catch (e) {
-      _snack('Не удалось отправить запрос: проверьте интернет и попробуйте снова');
+      if (resp.statusCode != 200) throw PiiGatewayException((json['error'] as String?) ?? 'ошибка ${resp.statusCode}');
+      await FirebaseAuth.instance.signOut();
+      await _auth.ensureGuest();
+      _name.clear();
+      _phone.clear();
+      _snack('Ваши данные удалены');
+    } on PiiGatewayException catch (e) {
+      _snack(e.message);
+    } catch (_) {
+      _snack('Не удалось удалить данные: проверьте интернет и попробуйте снова');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
     }
   }
 
@@ -610,13 +625,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             ),
           ),
 
-        // Право гостя потребовать удаления своих данных (152-ФЗ) — запрос
-        // уходит в реестр платформы (saas-gateway /requestGuestDataDeletion),
-        // обрабатывается вручную в течение 30 дней.
+        // Гость удаляет свои данные сам и сразу (152-ФЗ): _deleteMyData.
         if (AppScope.isSaasMode && kSaasGatewayUrl.isNotEmpty)
           Center(
             child: TextButton(
-              onPressed: _requestDataDeletion,
+              onPressed: _deleting ? null : _deleteMyData,
               child: Text('Удалить мои данные', style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
             ),
           ),
