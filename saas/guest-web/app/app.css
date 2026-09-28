@@ -245,6 +245,16 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
    надёжнее 50% на не-квадратной коробке. См. тот же приём в
    lib/widgets/table_tile.dart и lib/client/screens/kolibri_hall_map_screen.dart. */
 .table-dot.round { border-radius: 999px; }
+/* Треугольный стол (shape:'triangle') — прямоугольный треугольник, прямой
+   угол по повороту: 0 — левый нижний, дальше по часовой. Подпись — у
+   прямого угла, где больше места. См. lib/widgets/table_shape.dart. */
+.table-dot.tri { border-radius: 0; padding: 7%; font-size: clamp(8px, 2.4vw, 11px); }
+.table-dot.tri small { display: none; }
+.table-dot.tri-r0 { clip-path: polygon(0 0, 0 100%, 100% 100%); justify-content: flex-end; align-items: flex-start; text-align: left; }
+.table-dot.tri-r1 { clip-path: polygon(0 0, 100% 0, 0 100%); justify-content: flex-start; align-items: flex-start; text-align: left; }
+.table-dot.tri-r2 { clip-path: polygon(0 0, 100% 0, 100% 100%); justify-content: flex-start; align-items: flex-end; text-align: right; }
+.table-dot.tri-r3 { clip-path: polygon(100% 0, 100% 100%, 0 100%); justify-content: flex-end; align-items: flex-end; text-align: right; }
+.table-dot.tri.chosen { background: var(--gold); color: #241A05; }
 .table-dot.pick { cursor: pointer; }
 .table-dot.chosen { outline: 3px solid var(--gold); outline-offset: -3px; }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; margin-top: 12px; }

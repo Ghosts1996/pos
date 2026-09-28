@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
 import '../../widgets/hall_plan_view.dart';
+import '../../widgets/table_shape.dart';
 import '../../widgets/table_tile.dart';
 import '../../utils/human_error.dart';
 
@@ -76,6 +77,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         y: pos.y,
         seats: result.seats,
         shape: result.shape,
+        rotation: result.rotation,
         maxOpenSessions: result.maxOpenSessions,
         zone: result.zone,
       ));
@@ -121,9 +123,20 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         name: result.name,
         seats: result.seats,
         shape: result.shape,
+        rotation: result.rotation,
         maxOpenSessions: result.maxOpenSessions,
         zone: result.zone,
       );
+      // Длинный стол повернули — у плитки другой размер. Держим на месте
+      // левый верхний угол, чтобы стол не «уехал» от соседних.
+      final updated = table.copyWith(shape: result.shape, rotation: result.rotation);
+      final before = hallTileSize(table), after = hallTileSize(updated);
+      if (before != after && mounted) {
+        final o = hallTileOffset(table);
+        final f = hallFractionForCenter(o.left + after.width / 2, o.top + after.height / 2, after);
+        setState(() => _moved[table.id] = f);
+        await _fs.updateTablePosition(table.id, f.x, f.y);
+      }
       if (result.zone != _zone) {
         _snack('«${result.name}» перенесён в зону «${result.zone.isEmpty ? kNoZoneLabel : result.zone}»');
       }
@@ -140,7 +153,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   Future<_TableForm?> _showTableDialog({TableModel? existing}) async {
     final nameCtrl = TextEditingController(text: existing?.name ?? _suggestName());
     var seats = existing?.seats ?? 4;
-    var shape = existing?.shape ?? 'rect';
+    var shape = kTableShapes.contains(existing?.shape) ? existing!.shape : 'rect';
+    var rotation = existing?.rotation ?? 0;
     var maxOpenSessions = existing?.maxOpenSessions ?? 2;
     final zoneCtrl = TextEditingController(text: existing?.zone ?? _zone);
     final zones = hallZones(_tables);
@@ -191,14 +205,36 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     child: Text('Несколько чеков — когда компания платит раздельно.',
                         style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
                   ),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'rect', icon: Icon(Icons.crop_square_rounded), label: Text('Квадратный')),
-                      ButtonSegment(value: 'circle', icon: Icon(Icons.circle_outlined), label: Text('Круглый')),
-                    ],
-                    selected: {shape},
-                    onSelectionChanged: (v) => setSt(() => shape = v.first),
-                  ),
+                  const Text('Форма', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 6, runSpacing: 6, children: [
+                    for (final s in kTableShapes)
+                      ChoiceChip(
+                        avatar: Icon(_shapeIcon(s), size: 18),
+                        label: Text(tableShapeLabel(s)),
+                        selected: shape == s,
+                        onSelected: (_) => setSt(() => shape = s),
+                      ),
+                  ]),
+                  if (shape == 'long' || shape == 'triangle') ...[
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      _ShapePreview(shape: shape, rotation: rotation),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => setSt(() => rotation = (rotation + 1) % 4),
+                          icon: const Icon(Icons.rotate_right),
+                          label: const Text('Повернуть'),
+                        ),
+                      ),
+                    ]),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text('Ставьте столы вплотную — из длинных и треугольных собираются большие и угловые.',
+                          style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   TextField(
                     controller: zoneCtrl,
@@ -253,6 +289,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     name: name,
                     seats: seats,
                     shape: shape,
+                    rotation: shape == 'long' || shape == 'triangle' ? rotation : 0,
                     maxOpenSessions: maxOpenSessions,
                     zone: zoneCtrl.text.trim(),
                   ),
@@ -273,10 +310,15 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(globalPointer);
-    // Привязка к сетке пола (шаг 20): столы встают ровными рядами, а не
-    // «на глаз» с разницей в пару пикселей.
-    double snap(double v) => (v / 20).round() * 20.0;
-    final f = hallFractionForCenter(snap(local.dx), snap(local.dy));
+    // Привязка края стола к сетке в четверть плитки: столы встают ровными
+    // рядами и вплотную друг к другу — так из длинных и треугольных
+    // собираются большие и угловые столы.
+    const step = kHallTile / 4;
+    double snap(double v) => (v / step).round() * step;
+    final s = hallTileSize(t);
+    final left = snap(local.dx - s.width / 2).clamp(0.0, kHallCanvas.width - s.width);
+    final top = snap(local.dy - s.height / 2).clamp(0.0, kHallCanvas.height - s.height);
+    final f = hallFractionForCenter(left + s.width / 2, top + s.height / 2, s);
     setState(() => _moved[t.id] = f);
     _fs.updateTablePosition(t.id, f.x, f.y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
   }
@@ -403,10 +445,52 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   }
 }
 
+IconData _shapeIcon(String shape) {
+  switch (shape) {
+    case 'circle':
+      return Icons.circle_outlined;
+    case 'long':
+      return Icons.crop_16_9;
+    case 'triangle':
+      return Icons.change_history;
+    default:
+      return Icons.crop_square_rounded;
+  }
+}
+
+/// Маленький образец формы в диалоге — видно, куда смотрит стол после
+/// поворота.
+class _ShapePreview extends StatelessWidget {
+  final String shape;
+  final int rotation;
+  const _ShapePreview({required this.shape, required this.rotation});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = TableModel(id: '', name: '', x: 0, y: 0, shape: shape, rotation: rotation);
+    final s = hallTileSize(t) * (36 / kHallTile);
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: Center(
+        child: TableShapeBox(
+          table: t,
+          size: s,
+          fill: AppColors.surface,
+          borderColor: AppColors.textMuted,
+          cornerRadius: 6,
+          child: const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+}
+
 class _TableForm {
   final String name;
   final int seats;
   final String shape;
+  final int rotation;
   final int maxOpenSessions;
   final String zone;
   final bool delete;
@@ -415,6 +499,7 @@ class _TableForm {
     required this.name,
     required this.seats,
     required this.shape,
+    required this.rotation,
     required this.maxOpenSessions,
     required this.zone,
   }) : delete = false;
@@ -423,6 +508,7 @@ class _TableForm {
       : name = '',
         seats = 0,
         shape = '',
+        rotation = 0,
         maxOpenSessions = 0,
         zone = '',
         delete = true;
