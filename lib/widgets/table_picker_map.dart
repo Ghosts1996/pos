@@ -3,6 +3,7 @@ import '../models/table_model.dart';
 import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
 import 'hall_plan_view.dart';
+import 'table_shape.dart';
 
 /// Занятый интервал стола для подписи на карте выбора.
 ///
@@ -121,16 +122,15 @@ class _TablePickerMapState extends State<TablePickerMap> {
                   : (free ? TablePickerMap._freeColor : TablePickerMap._busyColor);
               return GestureDetector(
                 onTap: () => _openInfo(context, t, free),
-                child: Container(
-                  width: kHallTile,
-                  height: kHallTile,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.18),
-                    border: Border.all(color: color, width: selected ? 3 : 2),
-                    borderRadius: t.shape == 'circle' ? BorderRadius.circular(kHallTile) : BorderRadius.circular(16),
-                  ),
+                child: TableShapeBox(
+                  table: t,
+                  size: hallTileSize(t),
+                  fill: color.withValues(alpha: 0.18),
+                  borderColor: color,
+                  borderWidth: selected ? 3 : 2,
+                  cornerRadius: 16,
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(selected ? Icons.check_circle : Icons.table_restaurant, color: color, size: 22),
                       const SizedBox(height: 4),

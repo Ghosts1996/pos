@@ -7,7 +7,14 @@ class TableModel {
   final double x; // Позиция X на карте (0..1, относительно ширины)
   final double y; // Позиция Y на карте (0..1, относительно высоты)
   final int seats; // Количество мест
-  final String shape; // 'rect' или 'circle'
+  /// Форма: 'rect' (квадрат), 'circle', 'long' (длинный, 2×1),
+  /// 'triangle' (прямоугольный треугольник — угловой элемент конструктора).
+  final String shape;
+
+  /// Поворот на четверти оборота (0..3): у длинного стола 0/2 — вдоль,
+  /// 1/3 — поперёк; у треугольного — в какой угол смотрит прямой угол
+  /// (0 — левый нижний, дальше по часовой стрелке).
+  final int rotation;
   final String status; // 'free' | 'occupied'
 
   /// Зона зала: «Основной зал», «Терраса», «VIP», «Бар»… Пусто — без зоны
@@ -48,6 +55,7 @@ class TableModel {
     required this.y,
     this.seats = 4,
     this.shape = 'rect',
+    this.rotation = 0,
     this.status = 'free',
     this.zone = '',
     this.activeSessionIds = const [],
@@ -77,6 +85,7 @@ class TableModel {
       y: (data['y'] ?? 0.1).toDouble(),
       seats: data['seats'] ?? 4,
       shape: data['shape'] ?? 'rect',
+      rotation: (((data['rotation'] as num?)?.toInt() ?? 0) % 4 + 4) % 4,
       status: data['status'] ?? 'free',
       zone: (data['zone'] ?? '').toString().trim(),
       activeSessionIds: ids,
@@ -97,6 +106,7 @@ class TableModel {
       'y': y,
       'seats': seats,
       'shape': shape,
+      'rotation': rotation,
       'status': status,
       'zone': zone,
       'activeSessionIds': activeSessionIds,
@@ -115,6 +125,7 @@ class TableModel {
     double? y,
     int? seats,
     String? shape,
+    int? rotation,
     String? status,
     String? zone,
     List<String>? activeSessionIds,
@@ -129,6 +140,7 @@ class TableModel {
       y: y ?? this.y,
       seats: seats ?? this.seats,
       shape: shape ?? this.shape,
+      rotation: rotation ?? this.rotation,
       status: status ?? this.status,
       zone: zone ?? this.zone,
       activeSessionIds: activeSessionIds ?? this.activeSessionIds,
