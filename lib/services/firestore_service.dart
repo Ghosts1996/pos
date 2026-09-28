@@ -81,6 +81,11 @@ class FirestoreService {
     return AppScope.col('tables').doc(tableId).update({'x': x, 'y': y});
   }
 
+  /// Поворот стола вместе с новым положением (центр остаётся на месте).
+  Future<void> updateTableLayout(String tableId, {required int rotation, required double x, required double y}) {
+    return AppScope.col('tables').doc(tableId).update({'rotation': rotation, 'x': x, 'y': y});
+  }
+
   Future<void> deleteTable(String tableId) {
     return AppScope.col('tables').doc(tableId).delete();
   }

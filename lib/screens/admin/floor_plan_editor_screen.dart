@@ -35,24 +35,38 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
 
   /// Только что перетащенный стол — показываем на новом месте сразу, не
   /// дожидаясь ответа базы (иначе плитка на миг прыгала обратно).
-  final Map<String, ({double x, double y})> _moved = {};
+  final Map<String, ({double x, double y, int rotation})> _moved = {};
 
   List<TableModel> get _inZone => _tables.where((t) => t.zone == _zone).toList();
 
   /// Новый стол — в первую свободную ячейку сетки своей зоны, а не всегда
   /// в одну точку: иначе столы ложились друг на друга, и казалось, что
   /// «больше одного стола не добавить».
-  ({double x, double y}) _nextFreePosition() {
-    const cols = 6, rows = 4;
-    final taken = _inZone.map((t) => (t.x, t.y)).toList();
-    for (var r = 0; r < rows; r++) {
-      for (var c = 0; c < cols; c++) {
-        final x = c / (cols - 1), y = r / (rows - 1);
-        final busy = taken.any((p) => (p.$1 - x).abs() < 0.12 && (p.$2 - y).abs() < 0.2);
-        if (!busy) return (x: x, y: y);
+  ({double x, double y}) _nextFreePosition(String zone, Size size) {
+    final taken = [
+      for (final t in _tables.where((t) => t.zone == zone))
+        Rect.fromLTWH(hallTileOffset(t).left, hallTileOffset(t).top, hallTileSize(t).width, hallTileSize(t).height)
+            .inflate(12),
+    ];
+    const step = kHallTile / 2;
+    for (var top = 16.0; top + size.height <= kHallCanvas.height; top += step) {
+      for (var left = 16.0; left + size.width <= kHallCanvas.width; left += step) {
+        final r = Rect.fromLTWH(left, top, size.width, size.height);
+        if (!taken.any((o) => o.overlaps(r))) return hallFractionForTopLeft(left, top, size);
       }
     }
     return (x: 0.5, y: 0.5);
+  }
+
+  /// Кнопка «Повернуть» на плитке: четверть оборота по часовой, на месте.
+  Future<void> _rotate(TableModel t) async {
+    final r = hallRotated(t);
+    setState(() => _moved[t.id] = (x: r.x, y: r.y, rotation: r.rotation));
+    try {
+      await _fs.updateTableLayout(t.id, rotation: r.rotation, x: r.x, y: r.y);
+    } catch (e) {
+      _snack('Не удалось повернуть стол: ${humanError(e, lower: true)}');
+    }
   }
 
   String _suggestName() {
@@ -68,7 +82,10 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   Future<void> _addTable() async {
     final result = await _showTableDialog();
     if (result == null) return;
-    final pos = _nextFreePosition();
+    final pos = _nextFreePosition(
+      result.zone,
+      hallTileSize(TableModel(id: '', name: '', x: 0, y: 0, shape: result.shape, rotation: result.rotation)),
+    );
     try {
       await _fs.addTable(TableModel(
         id: _fs.newTableId(),
@@ -127,14 +144,12 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         maxOpenSessions: result.maxOpenSessions,
         zone: result.zone,
       );
-      // Длинный стол повернули — у плитки другой размер. Держим на месте
-      // левый верхний угол, чтобы стол не «уехал» от соседних.
+      // Поменялась форма или поворот — у плитки другой размер. Центр
+      // оставляем на месте, чтобы стол не «уехал» от соседних.
       final updated = table.copyWith(shape: result.shape, rotation: result.rotation);
-      final before = hallTileSize(table), after = hallTileSize(updated);
-      if (before != after && mounted) {
-        final o = hallTileOffset(table);
-        final f = hallFractionForCenter(o.left + after.width / 2, o.top + after.height / 2, after);
-        setState(() => _moved[table.id] = f);
+      if (hallTileSize(table) != hallTileSize(updated) && mounted) {
+        final f = hallRefit(table, updated);
+        setState(() => _moved[table.id] = (x: f.x, y: f.y, rotation: f.rotation));
         await _fs.updateTablePosition(table.id, f.x, f.y);
       }
       if (result.zone != _zone) {
@@ -216,7 +231,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                         onSelected: (_) => setSt(() => shape = s),
                       ),
                   ]),
-                  if (shape == 'long' || shape == 'triangle') ...[
+                  if (tableShapeRotates(shape)) ...[
                     const SizedBox(height: 10),
                     Row(children: [
                       _ShapePreview(shape: shape, rotation: rotation),
@@ -231,7 +246,9 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     ]),
                     const Padding(
                       padding: EdgeInsets.only(top: 6),
-                      child: Text('Ставьте столы вплотную — из длинных и треугольных собираются большие и угловые.',
+                      child: Text(
+                          'Повернуть можно и прямо на схеме кнопкой ⟳. Ставьте столы вплотную — '
+                          'из длинных и треугольных собираются большие и угловые.',
                           style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
                     ),
                   ],
@@ -289,7 +306,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     name: name,
                     seats: seats,
                     shape: shape,
-                    rotation: shape == 'long' || shape == 'triangle' ? rotation : 0,
+                    rotation: tableShapeRotates(shape) ? rotation : 0,
                     maxOpenSessions: maxOpenSessions,
                     zone: zoneCtrl.text.trim(),
                   ),
@@ -313,13 +330,9 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     // Привязка края стола к сетке в четверть плитки: столы встают ровными
     // рядами и вплотную друг к другу — так из длинных и треугольных
     // собираются большие и угловые столы.
-    const step = kHallTile / 4;
-    double snap(double v) => (v / step).round() * step;
     final s = hallTileSize(t);
-    final left = snap(local.dx - s.width / 2).clamp(0.0, kHallCanvas.width - s.width);
-    final top = snap(local.dy - s.height / 2).clamp(0.0, kHallCanvas.height - s.height);
-    final f = hallFractionForCenter(left + s.width / 2, top + s.height / 2, s);
-    setState(() => _moved[t.id] = f);
+    final f = hallFractionForTopLeft(local.dx - s.width / 2, local.dy - s.height / 2, s);
+    setState(() => _moved[t.id] = (x: f.x, y: f.y, rotation: t.rotation));
     _fs.updateTablePosition(t.id, f.x, f.y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
   }
 
@@ -343,11 +356,11 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             final m = _moved[t.id];
             if (m == null) return t;
             // База догнала — локальная поправка больше не нужна.
-            if ((t.x - m.x).abs() < 0.001 && (t.y - m.y).abs() < 0.001) {
+            if ((t.x - m.x).abs() < 0.001 && (t.y - m.y).abs() < 0.001 && t.rotation == m.rotation) {
               _moved.remove(t.id);
               return t;
             }
-            return t.copyWith(x: m.x, y: m.y);
+            return t.copyWith(x: m.x, y: m.y, rotation: m.rotation);
           }).toList();
           final zones = hallZones(_tables);
           final hasNoZone = _tables.any((t) => t.zone.isEmpty);
@@ -385,8 +398,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     child: Text(
                       _tables.isEmpty
                           ? 'Добавьте первый стол кнопкой «Стол» внизу.'
-                          : '${narrow ? 'Удерживайте' : 'Перетащите'} стол, чтобы переставить; нажмите — изменить. '
-                              'Зоны (терраса, VIP) задаются в настройках стола.',
+                          : '${narrow ? 'Удерживайте' : 'Перетащите'} стол, чтобы переставить; ⟳ — повернуть; '
+                              'нажмите — изменить. Зоны (терраса, VIP) задаются в настройках стола.',
                       style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                     ),
                   ),
@@ -397,7 +410,12 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   canvasKey: _canvasKey,
                   tables: _inZone,
                   tileBuilder: (t) {
-                    final tile = TableTile(table: t, editorMode: true, onTap: () => _editTable(t));
+                    final tile = TableTile(
+                      table: t,
+                      editorMode: true,
+                      onTap: () => _editTable(t),
+                      onRotate: () => _rotate(t),
+                    );
                     Widget feedback() => Material(
                           color: Colors.transparent,
                           child: FractionalTranslation(
@@ -451,8 +469,12 @@ IconData _shapeIcon(String shape) {
       return Icons.circle_outlined;
     case 'long':
       return Icons.crop_16_9;
+    case 'oval':
+      return Icons.panorama_wide_angle_outlined;
     case 'triangle':
       return Icons.change_history;
+    case 'bar':
+      return Icons.local_bar_outlined;
     default:
       return Icons.crop_square_rounded;
   }
@@ -468,7 +490,8 @@ class _ShapePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = TableModel(id: '', name: '', x: 0, y: 0, shape: shape, rotation: rotation);
-    final s = hallTileSize(t) * (36 / kHallTile);
+    final cell = (72 / tableShapeCells(shape)).clamp(0.0, 36.0);
+    final s = hallTileSize(t) * (cell / kHallTile);
     return SizedBox(
       width: 72,
       height: 72,

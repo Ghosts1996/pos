@@ -3158,13 +3158,16 @@ function screenHall(pickMode) {
       // на узких экранах подписи обрезались.
       const x = Math.max(0, Math.min(1, Number(t.x) || 0.1));
       const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
-      // Форма как в редакторе зала на кассе: длинный стол — две клетки
-      // вдоль или поперёк (поворот), треугольный — угловой элемент.
+      // Форма как в редакторе зала на кассе (lib/utils/hall_layout.dart):
+      // длинный и овальный — две клетки, барная стойка — три, вдоль или
+      // поперёк (поворот); треугольный — угловой элемент.
       const rot = (((Number(t.rotation) || 0) % 4) + 4) % 4;
-      const shape = t.shape === 'circle' ? 'round'
-          : t.shape === 'triangle' ? `tri tri-r${rot}` : '';
-      const wm = t.shape === 'long' && rot % 2 === 0 ? 2 : 1;
-      const hm = t.shape === 'long' && rot % 2 === 1 ? 2 : 1;
+      const shape = t.shape === 'circle' || t.shape === 'oval' ? 'round'
+          : t.shape === 'triangle' ? `tri tri-r${rot}`
+          : t.shape === 'bar' ? `bar bar-r${rot}` : '';
+      const cells = t.shape === 'bar' ? 3 : (t.shape === 'long' || t.shape === 'oval') ? 2 : 1;
+      const wm = rot % 2 === 0 ? cells : 1;
+      const hm = rot % 2 === 1 ? cells : 1;
       // Нажатие по недоступному столу объясняет, почему он недоступен:
       // молчащая плитка выглядит как сломанная кнопка.
       const why = tooSmall
@@ -3182,7 +3185,7 @@ function screenHall(pickMode) {
              style="width:calc(var(--tile-w) * ${wm}); height:calc(var(--tile-h) * ${hm});
                     left:calc(${x} * (100% - var(--tile-w) * ${wm}));
                     top:calc(${y} * (100% - var(--tile-h) * ${hm}))">
-          ${esc(t.name || '')}
+          <span class="tn">${esc(t.name || '')}</span>
           <small>${Number(t.seats) || 0} ${plural(Number(t.seats) || 0, 'место', 'места', 'мест')}${tooSmall ? ' · мало' : ''}</small>
         </div>`;
     }).join('');
