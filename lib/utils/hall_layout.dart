@@ -16,7 +16,7 @@ const Size kHallCanvas = Size(1000, 640);
 const double kHallTile = 104;
 
 /// Формы столов для конструктора зала.
-const kTableShapes = ['rect', 'circle', 'long', 'oval', 'triangle', 'bar'];
+const kTableShapes = ['rect', 'circle', 'long', 'oval', 'corner', 'bar'];
 
 /// Шаг сетки редактора: четверть плитки. Размеры всех столов кратны
 /// плитке, поэтому края встают вплотную друг к другу.
@@ -25,9 +25,10 @@ const double kHallGridStep = kHallTile / 4;
 /// Форму можно поворачивать: у квадрата и круга поворот ничего не меняет.
 bool tableShapeRotates(String shape) => shape != 'rect' && shape != 'circle';
 
-/// Сколько клеток в длину: длинный и овальный — две, барная стойка — три.
+/// Сколько клеток в длину: длинный, овальный и угловой (2×2 буквой «Г») —
+/// две, барная стойка — три.
 int tableShapeCells(String shape) => switch (shape) {
-      'long' || 'oval' => 2,
+      'long' || 'oval' || 'corner' => 2,
       'bar' => 3,
       _ => 1,
     };
@@ -37,6 +38,7 @@ int tableShapeCells(String shape) => switch (shape) {
 /// сеткой редактора, поэтому столы можно ставить вплотную и собирать из
 /// них длинные и угловые конструкции.
 Size hallTileSize(TableModel t) {
+  if (t.shape == 'corner') return const Size(kHallTile * 2, kHallTile * 2);
   final n = tableShapeCells(t.shape);
   if (n == 1) return const Size(kHallTile, kHallTile);
   return t.rotation.isOdd ? Size(kHallTile, kHallTile * n) : Size(kHallTile * n, kHallTile);

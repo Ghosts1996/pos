@@ -3162,14 +3162,18 @@ function screenHall(pickMode) {
       const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
       // Форма как в редакторе зала на кассе (lib/utils/hall_layout.dart):
       // длинный и овальный — две клетки, барная стойка — три, вдоль или
-      // поперёк (поворот); треугольный — угловой элемент.
+      // поперёк (поворот); угловой — буква «Г» на 2×2 клетки, поворот
+      // выбирает угол сгиба. 'triangle' — прежнее название углового.
       const rot = (((Number(t.rotation) || 0) % 4) + 4) % 4;
-      const shape = t.shape === 'circle' || t.shape === 'oval' ? 'round'
-          : t.shape === 'triangle' ? `tri tri-r${rot}`
-          : t.shape === 'bar' ? `bar bar-r${rot}` : '';
-      const cells = t.shape === 'bar' ? 3 : (t.shape === 'long' || t.shape === 'oval') ? 2 : 1;
-      const wm = rot % 2 === 0 ? cells : 1;
-      const hm = rot % 2 === 1 ? cells : 1;
+      const kind = t.shape === 'triangle' ? 'corner' : t.shape;
+      const shape = kind === 'circle' || kind === 'oval' ? 'round'
+          : kind === 'corner' ? `corner corner-r${rot}`
+          : kind === 'bar' ? `bar bar-r${rot}` : '';
+      const cells = kind === 'bar' ? 3 : (kind === 'long' || kind === 'oval' || kind === 'corner') ? 2 : 1;
+      const wm = kind === 'corner' || rot % 2 === 0 ? cells : 1;
+      const hm = kind === 'corner' || rot % 2 === 1 ? cells : 1;
+      const label = `<span class="tn">${esc(t.name || '')}</span>
+          <small>${Number(t.seats) || 0} ${plural(Number(t.seats) || 0, 'место', 'места', 'мест')}${tooSmall ? ' · мало' : ''}</small>`;
       // Нажатие по недоступному столу объясняет, почему он недоступен:
       // молчащая плитка выглядит как сломанная кнопка.
       const why = tooSmall
@@ -3187,8 +3191,7 @@ function screenHall(pickMode) {
              style="width:calc(var(--tile-w) * ${wm}); height:calc(var(--tile-h) * ${hm});
                     left:calc(${x} * (100% - var(--tile-w) * ${wm}));
                     top:calc(${y} * (100% - var(--tile-h) * ${hm}))">
-          <span class="tn">${esc(t.name || '')}</span>
-          <small>${Number(t.seats) || 0} ${plural(Number(t.seats) || 0, 'место', 'места', 'мест')}${tooSmall ? ' · мало' : ''}</small>
+          ${kind === 'corner' ? `<span class="cl">${label}</span>` : label}
         </div>`;
     }).join('');
 

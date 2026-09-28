@@ -11,7 +11,7 @@ void main() {
   test('длинный стол — две клетки вдоль или поперёк', () {
     expect(hallTileSize(_t('long')), const Size(kHallTile * 2, kHallTile));
     expect(hallTileSize(_t('long', rotation: 1)), const Size(kHallTile, kHallTile * 2));
-    expect(hallTileSize(_t('triangle', rotation: 3)), const Size(kHallTile, kHallTile));
+    expect(hallTileSize(_t('corner', rotation: 3)), const Size(kHallTile * 2, kHallTile * 2));
   });
 
   test('овальный — две клетки, барная стойка — три', () {
@@ -65,14 +65,21 @@ void main() {
     expect(o.top + s.height / 2, closeTo(320, 1e-9));
   });
 
-  test('прямой угол треугольника поворачивается по часовой', () {
+  test('угловой стол — буква «Г»: сгиб поворачивается по часовой, напротив пусто', () {
     const s = Size(100, 100);
-    // Точка у прямого угла внутри, у противоположного — снаружи.
-    expect(trianglePath(s, 0).contains(const Offset(5, 95)), isTrue);
-    expect(trianglePath(s, 0).contains(const Offset(95, 5)), isFalse);
-    expect(trianglePath(s, 1).contains(const Offset(5, 5)), isTrue);
-    expect(trianglePath(s, 2).contains(const Offset(95, 5)), isTrue);
-    expect(trianglePath(s, 3).contains(const Offset(95, 95)), isTrue);
+    const lb = Offset(25, 75), lt = Offset(25, 25), rt = Offset(75, 25), rb = Offset(75, 75);
+    // Поворот 0: сгиб слева внизу, пусто справа вверху.
+    expect([lb, lt, rb].every(cornerPath(s, 0).contains), isTrue);
+    expect(cornerPath(s, 0).contains(rt), isFalse);
+    expect(cornerPath(s, 1).contains(rb), isFalse);
+    expect(cornerPath(s, 2).contains(lb), isFalse);
+    expect(cornerPath(s, 3).contains(lt), isFalse);
+    expect(cornerElbowRect(s, 2), const Rect.fromLTWH(50, 0, 50, 50));
+  });
+
+  test('угловой стол поворачивается на месте и остаётся 2×2', () {
+    expect(hallRotated(_t('corner')).rotation, 1);
+    expect(hallTileSize(hallRotated(_t('corner'))), const Size(kHallTile * 2, kHallTile * 2));
   });
 
   testWidgets('все формы рисуются без ошибок', (tester) async {
@@ -93,7 +100,7 @@ void main() {
     expect(find.text('Стол 1'), findsNWidgets(kTableShapes.length * 4));
   });
 
-  testWidgets('пустая половина треугольного стола не перехватывает нажатия', (tester) async {
+  testWidgets('пустая клетка углового стола не перехватывает нажатия', (tester) async {
     var taps = 0;
     await tester.pumpWidget(MaterialApp(
       home: Align(
@@ -101,7 +108,7 @@ void main() {
         child: GestureDetector(
           onTap: () => taps++,
           child: TableShapeBox(
-            table: _t('triangle'),
+            table: _t('corner'),
             size: const Size(100, 100),
             fill: Colors.black,
             borderColor: Colors.white,
@@ -110,9 +117,9 @@ void main() {
         ),
       ),
     ));
-    await tester.tapAt(const Offset(90, 10)); // снаружи: у прямого угла напротив
+    await tester.tapAt(const Offset(80, 20)); // пустая клетка напротив сгиба
     expect(taps, 0);
-    await tester.tapAt(const Offset(15, 85)); // внутри, у прямого угла
+    await tester.tapAt(const Offset(25, 75)); // клетка на сгибе
     expect(taps, 1);
   });
 }

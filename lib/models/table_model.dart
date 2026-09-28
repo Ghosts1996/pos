@@ -7,13 +7,14 @@ class TableModel {
   final double x; // Позиция X на карте (0..1, относительно ширины)
   final double y; // Позиция Y на карте (0..1, относительно высоты)
   final int seats; // Количество мест
-  /// Форма: 'rect' (квадрат), 'circle', 'long' (длинный, 2×1),
-  /// 'triangle' (прямоугольный треугольник — угловой элемент конструктора).
+  /// Форма: 'rect' (квадрат), 'circle', 'long' (длинный, 2×1), 'oval'
+  /// (2×1), 'corner' (угловой буквой «Г», 2×2 без одной клетки), 'bar'
+  /// (барная стойка, 3×1).
   final String shape;
 
   /// Поворот на четверти оборота (0..3): у длинного стола 0/2 — вдоль,
-  /// 1/3 — поперёк; у треугольного — в какой угол смотрит прямой угол
-  /// (0 — левый нижний, дальше по часовой стрелке).
+  /// 1/3 — поперёк; у углового — где сгиб (0 — левый нижний угол, дальше по
+  /// часовой стрелке); у барной стойки — сторона бармена.
   final int rotation;
   final String status; // 'free' | 'occupied'
 
@@ -84,7 +85,8 @@ class TableModel {
       x: (data['x'] ?? 0.1).toDouble(),
       y: (data['y'] ?? 0.1).toDouble(),
       seats: data['seats'] ?? 4,
-      shape: data['shape'] ?? 'rect',
+      // 'triangle' — прежний угловой элемент, теперь это угловой стол.
+      shape: data['shape'] == 'triangle' ? 'corner' : (data['shape'] ?? 'rect'),
       rotation: (((data['rotation'] as num?)?.toInt() ?? 0) % 4 + 4) % 4,
       status: data['status'] ?? 'free',
       zone: (data['zone'] ?? '').toString().trim(),
