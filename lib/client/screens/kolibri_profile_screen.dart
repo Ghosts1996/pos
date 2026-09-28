@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import '../../services/app_scope.dart';
+import '../../services/app_update_service.dart';
 import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -242,6 +243,16 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     } finally {
       if (mounted) setState(() => _deleting = false);
     }
+  }
+
+  Future<void> _checkUpdate() async {
+    final service = AppUpdateService.instance;
+    if (service == null) return;
+    _snack('Проверяем обновления…');
+    final result = await service.checkManually();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    _snack(result);
   }
 
   void _snack(String text) {
@@ -639,11 +650,19 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
 
         const SizedBox(height: 8),
         // Номер сборки: приложение ставится файлом, и без него нельзя
-        // понять, свежая ли версия стоит на конкретном телефоне.
-        Text(
-          '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+        // понять, свежая ли версия стоит на конкретном телефоне. Нажатие —
+        // проверить обновление сейчас (плашка с загрузкой появится сверху).
+        GestureDetector(
+          onTap: _checkUpdate,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber'
+              '${AppUpdateService.instance != null ? '\nНажмите, чтобы проверить обновления' : ''}',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: KolibriColors.textMuted, fontSize: 12, height: 1.4),
+            ),
+          ),
         ),
       ],
     );
