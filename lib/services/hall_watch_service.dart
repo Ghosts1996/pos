@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter/painting.dart' show Color;
 
 import '../firebase_options.dart';
 import 'auth_service.dart';
@@ -133,11 +134,22 @@ class HallWatchService {
         ),
       );
 
-      if (await FlutterForegroundTask.isRunningService) return true;
+      // Служба, запущенная прежней версией, после обновления поднимается
+      // сама (autoRunOnMyPackageReplaced) со старым заголовком и значком —
+      // поэтому уже запущенную тоже обновляем.
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.updateService(
+          notificationTitle: _title,
+          notificationText: _text,
+          notificationIcon: _icon,
+        );
+        return true;
+      }
 
       await FlutterForegroundTask.startService(
-        notificationTitle: 'ZalPOS',
-        notificationText: 'Служебная запись — не выключайте',
+        notificationTitle: _title,
+        notificationText: _text,
+        notificationIcon: _icon,
         callback: hallWatchCallback,
       );
       return true;
@@ -145,6 +157,17 @@ class HallWatchService {
       return false;
     }
   }
+
+  static const _title = 'ZalPOS';
+  static const _text = 'Касса на связи — вызовы гостей приходят и в фоне';
+
+  /// Белый силуэт терминала (drawable/ic_notification, meta-data
+  /// com.zalpos.notification_icon — добавляет сборка APK). Без него служба
+  /// брала цветную иконку приложения, и в шторке было мутное пятно.
+  static const _icon = NotificationIcon(
+    metaDataName: 'com.zalpos.notification_icon',
+    backgroundColor: Color(0xFF2F5BEA),
+  );
 
   Future<void> stop() async {
     _started = false;
