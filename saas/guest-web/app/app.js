@@ -737,7 +737,9 @@ function screenMenu() {
           <div class="item">
             ${i.imageUrl && !tobacco(i) ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
             <div class="grow">
-              <div style="font-weight:600">${esc(i.name)}</div>
+              <div style="font-weight:600">${esc(i.name)}${Number(i.popularRank) > 0 && Number(i.popularRank) <= 5 && !tobacco(i)
+                ? ' <span class="hit">Хит</span>' : ''}</div>
+              ${i.description ? `<div class="small muted" style="margin:2px 0">${esc(i.description)}</div>` : ''}
               <div class="small muted">${money(i.price)}${activeCat === 'all'
                 ? ' · ' + esc(catName(i.categoryId))
                 : ''}</div>
