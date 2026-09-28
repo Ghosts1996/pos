@@ -10,6 +10,7 @@ const tls = require("tls");
 const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
+const { authEmailLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
 
 /**
  * Онбординг SaaS-платформы ZalPOS БЕЗ Cloud Functions.
@@ -4349,6 +4350,93 @@ function scheduleAiSecretsMigration() {
   setTimeout(() => migrateAiSecrets().catch((e) => console.error("перенос ключей ИИ:", e.message || e)), delay);
 }
 
+// ------------------------------------------------------- письма входа
+
+/**
+ * Письмо входа по ссылке, смены пароля или подтверждения почты — в
+ * оформлении ZalPOS (см. auth-email.js), а не шаблоном Firebase. Ссылку
+ * делает Firebase Admin, письмо уходит через SMTP платформы. Почта не
+ * настроена — 503, и консоль отправляет письмо через Firebase, как раньше.
+ *
+ * Вход и смена пароля — без авторизации (человек ещё не вошёл), поэтому
+ * лимиты: с одного IP и на один адрес. Подтверждение почты — только своей,
+ * с токеном. Есть ли такой пользователь, наружу не сообщаем: иначе по
+ * ответу можно было бы перебирать, чьи адреса зарегистрированы.
+ */
+const CONSOLE_URL = process.env.CONSOLE_URL || `https://${GUEST_BASE_DOMAIN}/`;
+const CONSOLE_HOSTS = new Set([
+  GUEST_BASE_DOMAIN, `www.${GUEST_BASE_DOMAIN}`,
+  ...String(process.env.CONSOLE_HOSTS || "saas-3bdc8.web.app,saas-3bdc8.firebaseapp.com")
+    .split(",").map((h) => h.trim()).filter(Boolean),
+]);
+const AUTH_EMAIL_IP_MAX = 10;
+const AUTH_EMAIL_ADDRESS_MAX = 5;
+const AUTH_EMAIL_WINDOW_MS = 60 * 60 * 1000;
+const authEmailHits = new Map();
+let authMailer;
+
+function hitAuthEmailLimit(key, max) {
+  const now = Date.now();
+  const entry = authEmailHits.get(key);
+  if (!entry || entry.resetAt <= now) {
+    authEmailHits.set(key, { count: 1, resetAt: now + AUTH_EMAIL_WINDOW_MS });
+    if (authEmailHits.size > 20000) {
+      for (const [k, v] of authEmailHits) if (v.resetAt <= now) authEmailHits.delete(k);
+    }
+    return;
+  }
+  if (entry.count >= max) {
+    throw new HttpError(429, "Слишком много писем подряд — попробуйте через час");
+  }
+  entry.count += 1;
+}
+
+/** Куда вернуть человека после ссылки: только на сам кабинет платформы. */
+function authContinueUrl(raw) {
+  try {
+    const u = new URL(String(raw || ""));
+    if (u.protocol === "https:" && CONSOLE_HOSTS.has(u.hostname)) return u.toString();
+  } catch (_) { /* кривой адрес — берём адрес по умолчанию */ }
+  return `${CONSOLE_URL}#/`;
+}
+
+async function handleSendAuthEmail(req, res) {
+  const body = await parseJsonBody(req);
+  const type = String(body.type || "");
+  if (!AUTH_EMAIL_TYPES.includes(type)) throw new HttpError(400, "Неизвестный тип письма");
+  const email = String(body.email || "").trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    throw new HttpError(400, "Проверьте адрес почты");
+  }
+  if (authMailer === undefined) authMailer = createMailer();
+  if (!authMailer) throw new HttpError(503, "Почта платформы не настроена");
+  if (type === "verifyEmail") {
+    const decoded = await verifyAuth(req);
+    if (String(decoded.email || "").toLowerCase() !== email) {
+      throw new HttpError(403, "Подтвердить можно только свою почту");
+    }
+  }
+  hitAuthEmailLimit(`ip:${clientIp(req)}`, AUTH_EMAIL_IP_MAX);
+  hitAuthEmailLimit(`to:${email}`, AUTH_EMAIL_ADDRESS_MAX);
+
+  const url = authContinueUrl(body.continueUrl);
+  const auth = getFirebaseApp().auth();
+  let link;
+  try {
+    if (type === "signIn") link = await auth.generateSignInWithEmailLink(email, { url, handleCodeInApp: true });
+    else if (type === "passwordReset") link = await auth.generatePasswordResetLink(email, { url });
+    else link = await auth.generateEmailVerificationLink(email, { url });
+  } catch (e) {
+    if (e && (e.code === "auth/user-not-found" || e.code === "auth/email-not-found")) {
+      return sendJson(res, 200, { ok: true });
+    }
+    throw e;
+  }
+  const letter = authEmailLetter(type, link, { siteUrl: CONSOLE_URL });
+  await authMailer.send({ to: email, ...letter });
+  sendJson(res, 200, { ok: true });
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -4361,6 +4449,8 @@ const ROUTES = {
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
   "/createDemoTenant": handleCreateDemoTenant,
+  // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
+  "/sendAuthEmail": handleSendAuthEmail,
   "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
   "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
   "/disableTenant": handleDisableTenant,

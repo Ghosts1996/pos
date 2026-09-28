@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "firebase-admin": "^12.6.0"
+    "firebase-admin": "^12.6.0",
+    "nodemailer": "^10.0.12"
   }
 }
