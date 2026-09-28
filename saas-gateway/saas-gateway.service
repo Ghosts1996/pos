@@ -1,5 +1,5 @@
 [Unit]
-Description=Hookah POS SaaS onboarding gateway (createTenant/createBuildJob without Blaze)
+Description=ZalPOS SaaS onboarding gateway (createTenant/createBuildJob without Blaze)
 After=network.target
 
 [Service]

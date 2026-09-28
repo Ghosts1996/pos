@@ -1,5 +1,5 @@
 /**
- * Cloud Functions платформы Hookah POS SaaS.
+ * Cloud Functions платформы ZalPOS SaaS.
  *
  * Отдельный проект/деплой от functions/ в корне репозитория (те
  * обслуживают одно живое заведение и не должны меняться). Здесь живут
@@ -509,7 +509,7 @@ exports.createCheckoutSession = onCall(
         capture: true,
         save_payment_method: true,
         confirmation: { type: "redirect", return_url: returnUrl },
-        description: `Hookah POS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+        description: `ZalPOS — тариф «${plan.name || planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
         metadata: { tenantId, planId, billingPeriod, purpose: "subscription" },
       },
     });
@@ -686,7 +686,7 @@ exports.chargeRecurringSubscriptions = onSchedule(
             amount: { value: price.toFixed(2), currency: "RUB" },
             capture: true,
             payment_method_id: sub.paymentMethodId,
-            description: `Hookah POS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
+            description: `ZalPOS — продление тарифа «${sub.planId}» (${billingPeriod === "yearly" ? "год" : "месяц"}), заведение ${tenantId}`,
             metadata: { tenantId, planId: sub.planId, billingPeriod, purpose: "renewal" },
           },
         });
@@ -874,7 +874,7 @@ exports.createBuildJob = onCall({ region: REGION, secrets: [GITHUB_PAT] }, async
   // арендаторов платформы. workflow сам ещё раз санитизирует это значение
   // перед записью в AndroidManifest (см. saas-on-demand-build.yml) — здесь
   // просто разумный fallback, если брендинг почему-то не задан.
-  let appLabel = "Hookah POS (SaaS)";
+  let appLabel = "ZalPOS (SaaS)";
   try {
     const branding = await db.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
     if (branding.exists) {

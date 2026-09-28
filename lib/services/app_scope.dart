@@ -53,8 +53,8 @@ class AppScope {
   /// Код заведения (tenants/{id}.slug, тот же, что владелец видит в личном
   /// кабинете) — задаётся вместе с [enterTenant]. Нужен там, где адрес
   /// должен быть человекочитаемым, а не голым tenantId: например, QR-код
-  /// стола в SaaS-режиме ведёт на поддомен `{slug}.hookahpos.su`, а не на
-  /// `{tenantId}.hookahpos.su` (см. TableQrScreen). null в одно-арендном
+  /// стола в SaaS-режиме ведёт на поддомен `{slug}.zalpos.ru`, а не на
+  /// `{tenantId}.zalpos.ru` (см. TableQrScreen). null в одно-арендном
   /// режиме.
   static String? get slug => _slug;
 

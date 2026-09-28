@@ -9,7 +9,7 @@
   заведения владельца платформы, и НЕ меняется этим файлом).
 
   Раздаётся ОДНА копия на всех: заведение узнаётся по поддомену
-  {slug}.hookahpos.su (wildcard DNS+SSL, см. saas/README.md), а не по
+  {slug}.zalpos.ru (wildcard DNS+SSL, см. saas/README.md), а не по
   отдельному деплою на каждое. Логика точь-в-точь как в одно-арендной
   версии (см. её же комментарий) — отличия только в двух местах:
     1. Ссылки на скачивание APK/веб-версию строятся от поддомена, а не от
@@ -160,7 +160,7 @@
 
 <script>
 (function () {
-  var GATEWAY = 'https://pii.hookahpos.su/saas';
+  var GATEWAY = 'https://pii.zalpos.ru/saas';
   var slug = (location.hostname.split('.')[0] || '').trim();
 
   // Id стола берём из адреса: /table/{id}
@@ -274,7 +274,7 @@
   import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
   (async function () {
-    var GATEWAY = 'https://pii.hookahpos.su/saas';
+    var GATEWAY = 'https://pii.zalpos.ru/saas';
     var slug = window.__tableSlug;
     if (!slug) return;
     try {
