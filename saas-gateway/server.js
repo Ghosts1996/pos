@@ -4798,6 +4798,72 @@ async function handleDeleteGuestData(req, res) {
   sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
 }
 
+// ------------------------------------------------ восстановление входа гостя
+//
+// Гость входит анонимно, и его профиль (номер, бонусы) держится только на
+// сессии Firebase на телефоне. Если сессия пропала (слетела после
+// обновления, аккаунт пропал на сервере), приложение раньше заводило новый
+// пустой профиль. Теперь при первом входе оно создаёт случайный ключ,
+// хранит его у себя и присылает сюда — храним только его sha256. Потеряв
+// сессию, приложение предъявляет uid и ключ и получает custom token на тот
+// же uid (lib/client/services/kolibri_auth_service.dart).
+const GUEST_RECOVERY_LIMIT = 30; // попыток восстановления с одного IP в час
+const guestRecoveryHits = new Map(); // ip -> [ms]
+const RECOVERY_SECRET_RE = /^[A-Za-z0-9_-]{43,128}$/;
+const sha256hex = (v) => crypto.createHash("sha256").update(String(v)).digest("hex");
+
+function guestRecoveryLimited(ip) {
+  const now = Date.now();
+  const list = (guestRecoveryHits.get(ip) || []).filter((t) => now - t < 3600000);
+  list.push(now);
+  guestRecoveryHits.set(ip, list);
+  if (guestRecoveryHits.size > 10000) guestRecoveryHits.clear();
+  return list.length > GUEST_RECOVERY_LIMIT;
+}
+
+async function handleRegisterGuestRecovery(req, res) {
+  const decoded = await verifyAuth(req);
+  const { secret } = await parseJsonBody(req);
+  if (typeof secret !== "string" || !RECOVERY_SECRET_RE.test(secret)) throw new HttpError(400, "Некорректный ключ");
+  const user = await getFirebaseApp().auth().getUser(decoded.uid);
+  // Только гостевые аккаунты: у владельцев и сотрудников свой вход.
+  if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
+  await db().collection("guestRecovery").doc(decoded.uid).set({
+    hash: sha256hex(secret),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleRestoreGuestSession(req, res) {
+  if (guestRecoveryLimited(clientIp(req))) throw new HttpError(429, "Слишком много попыток — попробуйте позже");
+  const { uid, secret } = await parseJsonBody(req);
+  if (typeof uid !== "string" || !/^[A-Za-z0-9]{10,128}$/.test(uid)
+      || typeof secret !== "string" || !RECOVERY_SECRET_RE.test(secret)) {
+    throw new HttpError(400, "Некорректный запрос");
+  }
+  const ref = db().collection("guestRecovery").doc(uid);
+  const snap = await ref.get();
+  const stored = snap.exists ? String(snap.data().hash || "") : "";
+  const given = sha256hex(secret);
+  if (stored.length !== given.length || !crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(given))) {
+    throw new HttpError(403, "Не удалось восстановить вход");
+  }
+  try {
+    const user = await getFirebaseApp().auth().getUser(uid);
+    if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
+  } catch (e) {
+    // Аккаунта нет в Firebase — custom token создаст его заново с тем же uid.
+    if (e instanceof HttpError) throw e;
+  }
+  const token = await getFirebaseApp().auth().createCustomToken(uid);
+  await ref.set({
+    restoredAt: admin.firestore.FieldValue.serverTimestamp(),
+    restoreCount: admin.firestore.FieldValue.increment(1),
+  }, { merge: true });
+  sendJson(res, 200, { token });
+}
+
 /** Общая часть обезличивания гостя (супер-админ и сам гость). */
 async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
   const firestore = db();
@@ -4845,6 +4911,10 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
       scrubbed += snap.size;
     }
   }
+
+  // Ключ восстановления входа (guestRecovery) — иначе приложение вернуло бы
+  // удалённый аккаунт при следующем запуске.
+  await firestore.collection("guestRecovery").doc(clientUid).delete().catch(() => {});
 
   // Анонимный аккаунт гостя (у владельцев/сотрудников с почтой не трогаем)
   let accountDeleted = false;
@@ -5261,6 +5331,8 @@ const ROUTES = {
   "/findGuest": handleFindGuest,
   "/anonymizeGuest": handleAnonymizeGuest,
   "/deleteGuestData": handleDeleteGuestData,
+  "/registerGuestRecovery": handleRegisterGuestRecovery,
+  "/restoreGuestSession": handleRestoreGuestSession,
   "/aiProxy": handleAiProxy,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,

@@ -128,6 +128,11 @@ async function main() {
     check("GET /robokassaSuccess без счёта -> 302", r2.status === 302);
   }
   {
+    // Восстановление входа гостя: без uid и ключа — 400 до обращения к базе.
+    const r = await request("POST", "/restoreGuestSession", { body: "{}", headers: { "Content-Type": "application/json" } });
+    check("POST /restoreGuestSession без ключа -> 400", r.status === 400);
+  }
+  {
     // Проверка обновлений: касса — только участнику заведения, гостю — без
     // входа, но с корректными полями (всё отваливается до Firestore).
     const r = await request("POST", "/appUpdate", { body: { tenantId: "t1", app: "pos", platform: "android", current: 5 } });
@@ -173,7 +178,7 @@ async function main() {
     const r = await request("POST", "/createDemoTenant", { body: {}, headers: { "X-Forwarded-For": "203.0.113.77, 127.0.0.1" } });
     check("POST /createDemoTenant: поддельный X-Forwarded-For не обходит лимит -> 429", r.status === 429);
   }
-  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal"]) {
+  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/registerGuestRecovery", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal"]) {
     const r = await request("POST", path, { body: {} });
     check(`POST ${path} без токена -> 401`, r.status === 401);
   }
