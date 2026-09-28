@@ -722,9 +722,22 @@ function screenMenu() {
     const known = visibleCats.map((c) => c.id);
     if (activeCat !== 'all' && (!activeCat || !known.includes(activeCat))) activeCat = 'all';
 
-    const shown = activeCat === 'all'
+    const inCat = activeCat === 'all'
       ? visible
       : visible.filter((i) => i.categoryId === activeCat);
+    // Табак, кальяны и принадлежности — отдельным строгим перечнем
+    // (ст. 19 закона № 15-ФЗ): чёрные буквы одного размера на белом, по
+    // алфавиту, с ценой, без изображений — кнопки заказа тоже текстом.
+    const shown = inCat.filter((i) => !tobacco(i));
+    const tobaccoItems = inCat.filter(tobacco)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+    const qtyControls = (i) => `
+              <div class="qty">
+                ${state.cart[i.id] ? `
+                  <button data-minus="${esc(i.id)}">−</button>
+                  <span>${state.cart[i.id]}</span>` : ''}
+                <button data-plus="${esc(i.id)}">+</button>
+              </div>`;
 
     box.innerHTML = `
       <div>
@@ -736,26 +749,28 @@ function screenMenu() {
       <div class="card">
         ${shown.length ? shown.map((i) => `
           <div class="item">
-            ${tobacco(i) ? '<div class="age18" role="img" aria-label="Только для совершеннолетних">18+</div>'
-              : i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+            ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
             <div class="grow">
-              <div style="font-weight:600">${esc(i.name)}${Number(i.popularRank) > 0 && Number(i.popularRank) <= 5 && !tobacco(i)
+              <div style="font-weight:600">${esc(i.name)}${Number(i.popularRank) > 0 && Number(i.popularRank) <= 5
                 ? ' <span class="hit">Хит</span>' : ''}</div>
               ${i.description ? `<div class="small muted" style="margin:2px 0">${esc(i.description)}</div>` : ''}
               <div class="small muted">${money(i.price)}${activeCat === 'all'
                 ? ' · ' + esc(catName(i.categoryId))
                 : ''}</div>
             </div>
-            ${atTable ? `
-              <div class="qty">
-                ${state.cart[i.id] ? `
-                  <button data-minus="${esc(i.id)}">−</button>
-                  <span>${state.cart[i.id]}</span>` : ''}
-                <button data-plus="${esc(i.id)}">+</button>
-              </div>` : ''}
+            ${atTable ? qtyControls(i) : ''}
           </div>
-        `).join('') : `<p class="muted small">В этой категории пока пусто.</p>`}
+        `).join('') : tobaccoItems.length ? '' : `<p class="muted small">В этой категории пока пусто.</p>`}
       </div>
+      ${tobaccoItems.length ? `
+        <div class="tobacco-list">
+          <p>Табачная и никотинсодержащая продукция, кальяны. Продажа лицам младше 18 лет запрещена.</p>
+          ${tobaccoItems.map((i) => `
+            <div class="tobacco-row">
+              <span class="name">${esc(i.name)} — <span class="nowrap">${money(i.price)}</span></span>
+              ${qtyControls(i)}
+            </div>`).join('')}
+        </div>` : ''}
       ${hidden ? `<p class="small muted">Часть позиций (18+) видна только в заведении,
         когда вы за столом.</p>` : ''}
 
