@@ -179,10 +179,12 @@ class AppUpdateService {
   http.Client? _downloadClient;
   bool _cancelled = false;
 
-  /// Касса проверяет чаще: планшет в зале работает сутками и не
-  /// перезапускается, а гостевое приложение открывают на время визита.
-  Duration get _interval => app == 'pos' ? const Duration(minutes: 30) : const Duration(hours: 3);
-  Duration get _resumeGap => app == 'pos' ? const Duration(minutes: 10) : const Duration(hours: 1);
+  /// Касса работает сутками — проверяем раз в полчаса. Гостевое приложение
+  /// открывают на время визита и держат свёрнутым: раньше оно спрашивало
+  /// раз в 3 часа и при открытии не чаще раза в час, и гость подолгу сидел
+  /// на старой сборке. Проверка — один маленький запрос, поэтому часто.
+  Duration get _interval => app == 'pos' ? const Duration(minutes: 30) : const Duration(hours: 1);
+  Duration get _resumeGap => const Duration(minutes: 10);
 
   void _begin() {
     // Первый раз — не в самый старт: там и так грузятся меню, смены, фото.
