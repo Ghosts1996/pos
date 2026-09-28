@@ -149,9 +149,16 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
 .item { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .item:last-child { border-bottom: none; }
 .item img { width: 54px; height: 54px; border-radius: 12px; object-fit: cover; flex: none; background: var(--surface-2); }
-/* Табак и кальяны: вместо фото только знак возраста (ст. 19 закона № 15-ФЗ). */
-.item .age18 { width: 54px; height: 54px; border-radius: 12px; flex: none; background: var(--surface-2);
-  display: grid; place-items: center; color: var(--muted); font-weight: 800; font-size: 16px; }
+/* Перечень табака и кальянов (ст. 19 закона № 15-ФЗ): чёрные буквы одного
+   размера на белом фоне, без изображений — цвета темы сюда не применяются. */
+.tobacco-list { background: #fff; color: #000; padding: 12px 8px 12px 14px; margin: 12px 0;
+  font-size: 15px; font-weight: 400; line-height: 1.35; }
+.tobacco-list p { margin: 0 0 6px; }
+.tobacco-row { display: flex; align-items: center; gap: 8px; }
+.tobacco-row .name { flex: 1; }
+.tobacco-list .nowrap { white-space: nowrap; }
+.tobacco-list .qty button { background: none; border: none; color: #000; font: inherit; min-width: 40px; min-height: 40px; }
+.tobacco-list .qty span { font: inherit; color: #000; }
 .qty { display: flex; align-items: center; gap: 10px; }
 .qty button { width: 32px; height: 32px; padding: 0; border-radius: 10px; background: var(--surface-2); color: var(--text); }
 
