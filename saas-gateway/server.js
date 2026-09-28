@@ -4145,12 +4145,13 @@ const BILLING_SECRETS = {
 const RULES_FEATURE_MARKERS = ["adminSessionFresh", "inventoryItems", "aiSecrets", "platformConfig"];
 
 // Реквизиты владельца платформы для оферты, политики конфиденциальности и
-// подвала сайта (их требует и модерация ЮKassa). Хранятся в
+// подвала сайта (их требует и модерация платёжного сервиса). Хранятся в
 // platformConfig/legal — публичное чтение, запись только здесь.
 const LEGAL_FIELDS = {
   fullName: "ФИО ИП / название организации", ogrnip: "ОГРНИП / ОГРН", inn: "ИНН", address: "Адрес",
   bankAccount: "Расчётный счёт", bankName: "Банк", bik: "БИК", corrAccount: "Корр. счёт",
   email: "E-mail для претензий и обращений", phone: "Телефон", rknNumber: "Номер в реестре операторов ПДн",
+  taxRegime: "Налоговый режим",
 };
 const LEGAL_REQUIRED = ["fullName", "ogrnip", "inn", "address", "email"];
 
@@ -4175,6 +4176,7 @@ async function handleSavePlatformLegal(req, res) {
   if (out.bankAccount && !/^\d{20}$/.test(out.bankAccount)) throw new HttpError(400, "Расчётный счёт — 20 цифр");
   if (out.corrAccount && !/^\d{20}$/.test(out.corrAccount)) throw new HttpError(400, "Корр. счёт — 20 цифр");
   if (out.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(out.email)) throw new HttpError(400, "Проверьте e-mail");
+  if (!["", "npd"].includes(out.taxRegime)) throw new HttpError(400, "Неизвестный налоговый режим");
   await db().collection("platformConfig").doc("legal").set({
     ...out, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: decoded.uid,
   });
