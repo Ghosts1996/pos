@@ -177,6 +177,19 @@ sleep 3
 systemctl is-active --quiet saas-gateway || die "saas-gateway не запустился — посмотрите: journalctl -u saas-gateway -n 50"
 echo "ok"
 
+# pii-gateway (данные в РФ): код, схема базы (новые таблицы — IF NOT EXISTS)
+if [[ -d /opt/pii-gateway ]]; then
+  echo "pii-gateway: обновляю код и схему базы"
+  rsync -a --exclude node_modules "$REPO/pii-gateway/" /opt/pii-gateway/
+  (cd /opt/pii-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
+  chown -R pii-gateway:pii-gateway /opt/pii-gateway
+  sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d pii_gateway -f /opt/pii-gateway/schema.sql
+  systemctl restart pii-gateway
+  sleep 2
+  systemctl is-active --quiet pii-gateway || die "pii-gateway не запустился — посмотрите: journalctl -u pii-gateway -n 50"
+  echo "ok"
+fi
+
 say "9/9 Рекламная страница https://$OLD"
 PROMO_HOSTS=()
 for h in "$OLD" "www.$OLD"; do

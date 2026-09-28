@@ -37,6 +37,43 @@ const FUNCTIONS_REGION = 'europe-west1';
 // что и у pii-gateway (см. saas-gateway/README.md, раздел про nginx) —
 // отдельный путь /saas/, а не отдельный домен.
 const SAAS_GATEWAY_URL = 'https://pii.zalpos.ru/saas';
+// pii-gateway — первичное хранилище персональных данных в РФ (PostgreSQL на
+// сервере платформы), см. recordOwnerInRussia.
+const PII_GATEWAY_URL = 'https://pii.zalpos.ru/';
+
+/** Первичная запись владельца в РФ (ч. 5 ст. 18 152-ФЗ): email и моменты
+ *  принятия оферты и согласия попадают в базу на сервере в России ДО
+ *  регистрации в Firebase Auth (Google). Не получилось — регистрацию не
+ *  продолжаем: иначе email первично окажется за рубежом. */
+async function recordOwnerInRussia(email) {
+  let res;
+  try {
+    res = await fetch(PII_GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'owner', email, offer: true, pdConsent: true, edition: LEGAL_EDITION }),
+    });
+  } catch (_) {
+    throw new Error('Сервер регистрации недоступен — проверьте интернет и попробуйте ещё раз');
+  }
+  if (!res.ok) {
+    let msg = '';
+    try { msg = (await res.json()).error || ''; } catch (_) {}
+    throw new Error(msg || `Сервер регистрации ответил ${res.status} — попробуйте через минуту`);
+  }
+}
+
+/** После первого входа — привязать запись в РФ к аккаунту (не критично). */
+async function linkOwnerInRussia(user) {
+  try {
+    const token = await user.getIdToken();
+    await fetch(PII_GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ kind: 'owner_link' }),
+    });
+  } catch (_) { /* привяжется при следующем входе */ }
+}
 
 // Прежние названия платформы. Их сохраняла форма «Брендинг» по умолчанию,
 // поэтому в базе они означают «название не задано», а не имя заведения.
@@ -700,6 +737,7 @@ async function boot() {
             pdConsentAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
             pdConsentEdition: LEGAL_EDITION,
           });
+          linkOwnerInRussia(cred.user);
           // Новый владелец входил только по ссылке — пароля у него нет, а
           // «Войти по паролю» и смена пароля в настройках без него не
           // работают. Создаём сразу и показываем (и шлём на почту, если она
@@ -1226,6 +1264,7 @@ function screenLanding() {
     if (!$('f-landing-pd')?.checked) { errEl.textContent = 'Нужно согласие на обработку персональных данных — без него мы не сможем создать личный кабинет'; return; }
     $('f-landing-start').disabled = true;
     try {
+      await recordOwnerInRussia(email);
       await sendAuthEmail('signIn', email, () => sendSignInLinkToEmail(state.auth, email, {
         url: `${location.origin}${location.pathname}#/`,
         handleCodeInApp: true,
@@ -1676,7 +1715,7 @@ function screenLegalPrivacy() {
         `При оплате тарифа email плательщика и сведения о платеже передаются платёжному сервису ${PAYMENT_SERVICE} для приёма оплаты и отправки чека; данные банковской карты вводятся на странице платёжного сервиса и Оператору не передаются.`,
       ])}
       ${legalSection('6. Место хранения и трансграничная передача', [
-        'Имена и телефоны Гостей (профили, бронирования, лист ожидания) первично записываются в базу данных на сервере Оператора, расположенном на территории Российской Федерации (ч. 5 ст. 18 Федерального закона № 152-ФЗ).',
+        'Имена и телефоны Гостей (профили, бронирования, лист ожидания), а также email пользователей личного кабинета и сведения об их согласии первично записываются в базу данных на сервере Оператора, расположенном на территории Российской Федерации (ч. 5 ст. 18 Федерального закона № 152-ФЗ).',
         'Для синхронизации данных между устройствами, резервного копирования и авторизации пользователей используется облачная инфраструктура Google (Google LLC, США; Google Ireland Limited, Ирландия). Трансграничная передача осуществляется с согласия субъекта и после уведомления Роскомнадзора в порядке ст. 12 Федерального закона № 152-ФЗ; получатель обеспечивает защиту данных (шифрование при хранении и передаче, сертификация ISO/IEC 27001, 27017, 27018).',
       ])}
       ${legalSection('7. Сроки обработки и хранения', [
@@ -1834,6 +1873,7 @@ function screenAuth() {
       if (authMode === 'login') {
         await signInWithEmailAndPassword(state.auth, email, pass);
       } else {
+        await recordOwnerInRussia(email);
         const cred = await createUserWithEmailAndPassword(state.auth, email, pass);
         await setDoc(doc(state.db, 'users', cred.user.uid), {
           email, createdAt: Timestamp.fromDate(new Date()),
@@ -1841,6 +1881,7 @@ function screenAuth() {
           pdConsentAt: Timestamp.fromDate(new Date()),
           pdConsentEdition: LEGAL_EDITION,
         }, { merge: true });
+        linkOwnerInRussia(cred.user);
         // Письмо с подтверждением — до него владелец не может создать
         // заведение (см. screenOnboarding и createTenant на сервере), это
         // и есть защита от регистрации на случайный/чужой email.

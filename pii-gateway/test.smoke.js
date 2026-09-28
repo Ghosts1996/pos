@@ -86,6 +86,16 @@ async function run() {
     assert.match(JSON.parse(res.body).error, /SAAS_FIREBASE_SERVICE_ACCOUNT_B64/);
   }
 
+  {
+    // Владелец: без согласий и с кривым email — 400 до обращения к базе.
+    const noConsent = await request("POST", "/", { body: JSON.stringify({ kind: "owner", email: "o@x.ru", offer: true }) });
+    assert.strictEqual(noConsent.statusCode, 400);
+    const badEmail = await request("POST", "/", { body: JSON.stringify({ kind: "owner", email: "nope", offer: true, pdConsent: true }) });
+    assert.strictEqual(badEmail.statusCode, 400);
+    const noToken = await request("POST", "/", { body: JSON.stringify({ kind: "owner_link" }) });
+    assert.strictEqual(noToken.statusCode, 401);
+  }
+
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
   server.close(() => process.exit(0));
 }
