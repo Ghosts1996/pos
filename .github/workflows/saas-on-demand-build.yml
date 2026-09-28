@@ -16,10 +16,10 @@ on:
         description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
         required: true
       app_label:
-        description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "ZalPOS"; пусто = дефолт "Colibri Lounge"'
+        description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "ZalPOS"; пусто = название заведения'
         required: false
       logo_url:
-        description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = общая иконка "Colibri Lounge"'
+        description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = фирменный знак ZalPOS «◆»'
         required: false
       tenant_slug:
         description: 'Код заведения (tenants.slug) — если задан вместе с invite_code, собранный APK сам присоединится к этому заведению при первом запуске, без ручного ввода кодов'
@@ -103,6 +103,7 @@ jobs:
             appid_secret: SAAS_FIREBASE_APP_ID
             default_icon: assets/icon/icon.png
             default_adaptive_icon: assets/icon/icon_foreground.png
+            default_adaptive_bg: assets/icon/icon_background.png
             default_label: 'ZalPOS'
             artifact_prefix: hookah-pos-saas
           - app: kolibri
@@ -112,14 +113,13 @@ jobs:
             gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
             appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
             # По умолчанию (владелец не загрузил свой логотип в «Брендинге»)
-            # гостевое приложение берёт ту же иконку, что и касса, а не
-            # отдельный колибри — так гость сразу видит фирменный знак
-            # платформы, а не логотип, который выглядит как чей-то чужой
-            # бренд, а не "ещё не настроено". Свой логотип владельца, если
-            # загружен (branding.logoUrl), по-прежнему полностью заменяет её
-            # — см. шаг "Generate app launcher icon" ниже.
-            default_icon: assets/icon/icon.png
-            default_adaptive_icon: assets/icon/icon_foreground.png
+            # гостевое приложение — с фирменным знаком платформы «◆»
+            # (сапфир), а не с кассой: гостю касса ни о чём не говорит. Свой
+            # логотип владельца, если загружен (branding.logoUrl), полностью
+            # заменяет его — см. шаг "Generate app launcher icon" ниже.
+            default_icon: assets/icon/guest_icon.png
+            default_adaptive_icon: assets/icon/guest_icon_foreground.png
+            default_adaptive_bg: assets/icon/icon_background.png
             default_label: 'Colibri Lounge'
             artifact_prefix: colibri-lounge-saas
     name: Build ${{ matrix.app }}
@@ -537,21 +537,24 @@ jobs:
           LOGO_URL: ${{ matrix.app == 'kolibri' && inputs.logo_url || '' }}
           DEFAULT_ICON: ${{ matrix.default_icon }}
           DEFAULT_ADAPTIVE_ICON: ${{ matrix.default_adaptive_icon }}
+          DEFAULT_ADAPTIVE_BG: ${{ matrix.default_adaptive_bg }}
         run: |
           use_default_icon() {
             sed -i -E "s|image_path: \".*\"|image_path: \"$DEFAULT_ICON\"|" pubspec.yaml
             sed -i -E "s|adaptive_icon_foreground: \".*\"|adaptive_icon_foreground: \"$DEFAULT_ADAPTIVE_ICON\"|" pubspec.yaml
+            sed -i -E "s|adaptive_icon_background: \".*\"|adaptive_icon_background: \"$DEFAULT_ADAPTIVE_BG\"|" pubspec.yaml
             dart run flutter_launcher_icons
           }
           # Логотип заведения (branding.logoUrl, загружается владельцем в
           # разделе «Брендинг») — если задан и реально скачивается, иконка
           # гостевого приложения генерируется из него. Любая неудача (нет
           # логотипа, битый файл, сеть) откатывается на общую иконку
-          # "Colibri Lounge" — сборка не должна падать из-за проблемы с
+          # ZalPOS «◆» — сборка не должна падать из-за проблемы с
           # картинкой, которую владелец когда-то неудачно загрузил.
           if [ -n "$LOGO_URL" ] && curl -fsSL --max-time 20 "$LOGO_URL" -o /tmp/tenant_logo.png && [ -s /tmp/tenant_logo.png ]; then
             sed -i -E 's|image_path: ".*"|image_path: "/tmp/tenant_logo.png"|' pubspec.yaml
             sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "/tmp/tenant_logo.png"|' pubspec.yaml
+            sed -i -E 's|adaptive_icon_background: ".*"|adaptive_icon_background: "#000000"|' pubspec.yaml
             if ! dart run flutter_launcher_icons; then
               echo "::warning::Не удалось собрать иконку из логотипа заведения — используется общая иконка"
               use_default_icon
@@ -788,6 +791,8 @@ jobs:
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
           sed -i -E 's/(VALUE "(FileDescription|ProductName)", )"hookah_pos"/\1"ZalPOS"/' windows/runner/Runner.rc
           grep -n 'ZalPOS' windows/runner/main.cpp windows/runner/Runner.rc || echo "::warning::заголовок окна не заменён"
+          # Иконка кассы вместо стандартной иконки Flutter (exe, панель задач, ярлыки).
+          cp assets/icon/app_icon.ico windows/runner/resources/app_icon.ico
 
           # Тот же трюк, что и у Android-сборки выше (см. её же комментарий):
           # flutter create кладёт в test/ свой шаблонный widget_test.dart
@@ -910,6 +915,7 @@ jobs:
           if (-not (Test-Path $iscc)) { Write-Error "Inno Setup не установлен"; exit 1 }
 
           $dist = (New-Item -ItemType Directory -Force -Path "build/windows/installer").FullName
+          $setupIcon = (Resolve-Path "assets/icon/app_icon.ico").Path
           $name = "${{ inputs.job_id_pos_windows }}"
           $iss = @"
           [Setup]
@@ -927,6 +933,7 @@ jobs:
           SolidCompression=yes
           WizardStyle=modern
           UninstallDisplayIcon={app}\$exe
+          SetupIconFile=$setupIcon
           CloseApplications=yes
 
           [Languages]
