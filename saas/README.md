@@ -1030,7 +1030,7 @@ bash saas-gateway/migrate-domain.sh
 
 `hookahpos.su` — рекламная страница для кальянных и лаунж-баров
 (`saas/promo-hookahpos/`), все кнопки ведут на `zalpos.ru`. Её поднимает тот
-же скрипт (шаг 8), когда A-записи `@` и `www` домена `hookahpos.su` указывают
+же скрипт (шаг 9), когда A-записи `@` и `www` домена `hookahpos.su` указывают
 на сервер (домен при этом убрать из Firebase Hosting). Поддомены
 `hookahpos.su` остаются служебными: `pii.hookahpos.su` — для ещё не
 обновлённых приложений, `{slug}.hookahpos.su` — перенаправление с

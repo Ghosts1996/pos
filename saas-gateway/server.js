@@ -1218,12 +1218,17 @@ async function handleCreateBuildJob(req, res) {
   // создания заведения (обрезка до 12 символов), который не обновляется,
   // если владелец потом переименует заведение в «Брендинге» — appName как
   // раз то самое, живое поле «Имя приложения».
-  let appLabel = "Colibri Lounge";
+  // Без брендинга — название самого заведения (раньше здесь стояло имя
+  // первого заведения платформы, и гость видел под иконкой чужой бренд).
+  let appLabel = (tenantDoc.exists && String(tenantDoc.data().name || "").trim()) || "Меню заведения";
   let logoUrl = "";
   try {
     const branding = await firestore.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
     if (branding.exists) {
-      appLabel = branding.data().appName || branding.data().shortName || appLabel;
+      const saved = [branding.data().appName, branding.data().shortName]
+        .map((v) => String(v || "").trim())
+        .find((v) => v && !["Hookah POS", "Hoocah POS", "HookahPOS", "ZalPOS"].includes(v));
+      appLabel = saved || appLabel;
       logoUrl = branding.data().logoUrl || "";
     }
   } catch (_) {

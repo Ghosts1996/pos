@@ -144,7 +144,7 @@ class TableQrScreen extends StatelessWidget {
           children: [
             Text(
                 AppScope.isSaasMode
-                    ? (AppScope.branding?.appName ?? 'Colibri Lounge')
+                    ? (AppScope.branding?.appName ?? 'ZalPOS')
                     : 'Colibri Lounge',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

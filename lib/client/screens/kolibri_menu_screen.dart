@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../services/venue_service.dart';
 import 'package:flutter/material.dart';
+import '../../models/client_models.dart';
 import '../../models/menu_models.dart';
 import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
@@ -9,6 +10,7 @@ import '../theme/kolibri_theme.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
+import '../../utils/promo_policy.dart';
 
 /// Живое меню заведения для гостя.
 ///
@@ -16,6 +18,10 @@ import '../../utils/money.dart';
 /// вперемешку читать невозможно. Категории, которых нет в справочнике
 /// (позиция без categoryId или с удалённой категорией), собираются в
 /// блок «Прочее», а не теряются.
+///
+/// Табак по закону № 15-ФЗ нельзя рекламировать и продавать дистанционно,
+/// а в месте продажи его показывают списком без изображений. Поэтому
+/// табачные позиции видны только гостю за столом и всегда без фото.
 class KolibriMenuScreen extends StatefulWidget {
   /// Режим предзаказа: корзина отдаётся наружу (экран брони), а не
   /// отправляется на кухню.
@@ -39,15 +45,26 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   // setState, и подписка в build() переоткрывалась бы на каждое нажатие.
   late final Stream<List<MenuCategory>> _categories = _link.publicCategoriesStream();
   late final Stream<List<MenuItem>> _menu = _link.publicMenuStream();
+  late final Stream<ClientProfile?> _profile = _link.profileStream(_auth.uid);
 
   double get _cartTotal => _cart.values.fold(0.0, (s, i) => s + i.total);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => StreamBuilder<ClientProfile?>(
+        stream: _profile,
+        // Предзаказ к брони — заказ не из заведения: табак в него нельзя.
+        builder: (context, snap) => _menuBody(
+            atTable: !widget.preOrderMode && (snap.data?.activeSessionId.isNotEmpty ?? false)),
+      );
+
+  Widget _menuBody({required bool atTable}) {
     return StreamBuilder<List<MenuCategory>>(
       stream: _categories,
       builder: (context, catSnap) {
-        final categories = catSnap.data ?? const <MenuCategory>[];
+        final allCategories = catSnap.data ?? const <MenuCategory>[];
+        final catNames = {for (final c in allCategories) c.id: c.name};
+        bool tobacco(MenuItem i) =>
+            PromoPolicy.looksTobacco(i.name) || PromoPolicy.looksTobacco(catNames[i.categoryId] ?? '');
 
         return StreamBuilder<List<MenuItem>>(
           stream: _menu,
@@ -66,9 +83,15 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final all = itemSnap.data!;
+            final all = atTable ? itemSnap.data! : itemSnap.data!.where((i) => !tobacco(i)).toList();
+            final hidden = itemSnap.data!.length - all.length;
+            final categories = atTable
+                ? allCategories
+                : allCategories.where((c) =>
+                    !PromoPolicy.looksTobacco(c.name) && all.any((i) => i.categoryId == c.id)).toList();
+            final categoryId = categories.any((c) => c.id == _categoryId) ? _categoryId : '';
             final filtered = all.where((i) {
-              final okCat = _categoryId.isEmpty || i.categoryId == _categoryId;
+              final okCat = categoryId.isEmpty || i.categoryId == categoryId;
               final okSearch =
                   _search.isEmpty || i.name.toLowerCase().contains(_search.toLowerCase());
               return okCat && okSearch;
@@ -91,7 +114,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             return Column(
               children: [
                 _searchBar(),
-                if (categories.isNotEmpty) _categoryChips(categories),
+                if (categories.isNotEmpty) _categoryChips(categories, categoryId),
                 Expanded(
                   child: sections.isEmpty
                       ? Center(
@@ -99,8 +122,16 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                               style: TextStyle(color: KolibriColors.textMuted)))
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
-                          itemCount: sections.length,
+                          itemCount: sections.length + (hidden > 0 ? 1 : 0),
                           itemBuilder: (_, s) {
+                            if (s == sections.length) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 18),
+                                child: Text(
+                                    'Часть позиций (18+) видна только в заведении, когда вы за столом.',
+                                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+                              );
+                            }
                             final section = sections[s];
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -132,7 +163,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                                 ),
                                 ...section.items.map((item) => Padding(
                                       padding: const EdgeInsets.only(bottom: 10),
-                                      child: _itemTile(item),
+                                      child: _itemTile(item, noImage: tobacco(item)),
                                     )),
                               ],
                             );
@@ -165,15 +196,15 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         ),
       );
 
-  Widget _categoryChips(List<MenuCategory> categories) => SizedBox(
+  Widget _categoryChips(List<MenuCategory> categories, String categoryId) => SizedBox(
         height: 44,
         child: ListView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           children: [
-            _chip('Всё', _categoryId.isEmpty, () => setState(() => _categoryId = '')),
+            _chip('Всё', categoryId.isEmpty, () => setState(() => _categoryId = '')),
             ...categories.map((c) =>
-                _chip(c.name, _categoryId == c.id, () => setState(() => _categoryId = c.id))),
+                _chip(c.name, categoryId == c.id, () => setState(() => _categoryId = c.id))),
           ],
         ),
       );
@@ -190,7 +221,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         ),
       );
 
-  Widget _itemTile(MenuItem item) {
+  Widget _itemTile(MenuItem item, {bool noImage = false}) {
     final inCart = _cart[item.id]?.qty ?? 0;
 
     return Container(
@@ -209,7 +240,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             child: SizedBox(
               width: 72,
               height: 72,
-              child: item.imageUrl.isEmpty
+              child: item.imageUrl.isEmpty || noImage
                   ? Container(
                       color: KolibriColors.surfaceElevated,
                       child: Icon(

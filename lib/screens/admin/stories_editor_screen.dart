@@ -6,6 +6,7 @@ import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/promo_policy.dart';
 
 /// Лента заведения: карточки, которые видит гость в «Colibri Lounge».
 ///
@@ -192,7 +193,11 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       // заголовок попадала разметка вместе со служебными подписями —
       // «**Сторис 3 — Ночной формат**», а в текст «Заголовок: … Текст: …
       // Призыв: …» одной строкой.
-      final drafts = await AiService.instance.storyDrafts(count: 3);
+      // Черновик про кальян или табак — реклама табака (ст. 16 № 15-ФЗ),
+      // такие не сохраняем, даже если модель нарушила инструкцию.
+      final drafts = (await AiService.instance.storyDrafts(count: 3))
+          .where((d) => !PromoPolicy.looksTobacco('${d.title} ${d.text} ${d.cta}'))
+          .toList();
       for (final d in drafts) {
         await AppScope.col('stories').add(StoryCard(
               id: '',
@@ -295,6 +300,22 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
     );
 
     if (ok != true) return;
+    if (PromoPolicy.looksTobacco('${title.text} ${body.text} ${label.text}') && mounted) {
+      final keep = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Похоже на рекламу табака'),
+          content: const Text('В карточке упоминаются кальян, табак или никотин. Реклама '
+              'табачной продукции запрещена (ст. 16 закона № 15-ФЗ), за неё штрафуют '
+              'заведение. Лучше рассказать о кухне, напитках, атмосфере или событии.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Не сохранять')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Всё равно сохранить')),
+          ],
+        ),
+      );
+      if (keep != true) return;
+    }
     final data = {
       'title': title.text.trim(),
       'text': body.text.trim(),
