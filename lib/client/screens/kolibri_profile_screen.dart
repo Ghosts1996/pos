@@ -227,6 +227,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           .timeout(const Duration(seconds: 30));
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       if (resp.statusCode != 200) throw PiiGatewayException((json['error'] as String?) ?? 'ошибка ${resp.statusCode}');
+      // Ключ восстановления тоже забываем — иначе приложение вернуло бы
+      // удалённый аккаунт.
+      await _auth.forgetDevice();
       await FirebaseAuth.instance.signOut();
       await _auth.ensureGuest();
       _name.clear();
