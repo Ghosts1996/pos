@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../build_info.dart';
 import '../../models/tenant_models.dart';
 
 /// Палитра клиентского приложения «Colibri Lounge».
@@ -29,7 +30,9 @@ class KolibriColors {
   static const _defaultGold = Color(0xFFE0B354);
   static const _defaultAccent = Color(0xFFE0559B);
   static const _defaultTextPrimary = Color(0xFFF2F7F4);
-  static const _defaultAppName = 'Colibri Lounge';
+  /// Название, когда у заведения нет своего: в SaaS — бренд платформы (не
+  /// имя чужого заведения), в одно-арендной сборке — само заведение.
+  static String get _defaultAppName => kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
 
   static Color background = _defaultBackground;
   static Color surface = _mix(_defaultBackground, Colors.white, 0.06);

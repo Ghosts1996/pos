@@ -75,7 +75,7 @@ void main() async {
 
   String? startupError;
   var ready = false;
-  var appTitle = 'Colibri Lounge';
+  var appTitle = kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
 
   if (DefaultFirebaseOptions.isConfigured) {
     try {
@@ -226,7 +226,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   _ChainBootPhase _phase = _ChainBootPhase.loading;
   String? _error;
   ChainDirectory? _directory;
-  String _appTitle = 'Colibri Lounge';
+  String _appTitle = kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
   bool _picking = false;
 
   @override
@@ -345,7 +345,7 @@ class KolibriApp extends StatelessWidget {
     super.key,
     required this.ready,
     this.startupError,
-    this.title = 'Colibri Lounge',
+    this.title = kSaasMode ? 'ZalPOS' : 'Colibri Lounge',
   });
 
   @override
