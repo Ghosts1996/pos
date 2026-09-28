@@ -63,8 +63,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       builder: (context, catSnap) {
         final allCategories = catSnap.data ?? const <MenuCategory>[];
         final catNames = {for (final c in allCategories) c.id: c.name};
-        bool tobacco(MenuItem i) =>
-            PromoPolicy.looksTobacco(i.name) || PromoPolicy.looksTobacco(catNames[i.categoryId] ?? '');
+        bool tobacco(MenuItem i) => PromoPolicy.menuTobacco(i, catNames[i.categoryId] ?? '');
 
         return StreamBuilder<List<MenuItem>>(
           stream: _menu,

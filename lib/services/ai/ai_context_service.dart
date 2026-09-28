@@ -6,6 +6,7 @@ import '../../models/menu_models.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
+import '../../utils/promo_policy.dart';
 import '../../utils/table_label.dart';
 
 /// Сборка компактного текстового контекста для ИИ-агентов.
@@ -16,6 +17,24 @@ import '../../utils/table_label.dart';
 class AiContextService {
 
   String money(num v) => '${v.toStringAsFixed(0)} ₽';
+
+  /// Вместо имени гостя — только первая буква: ИИ-шлюз находится у
+  /// стороннего провайдера (часто за рубежом), а имя с временем брони —
+  /// уже персональные данные (152-ФЗ). Для рассадки буквы достаточно.
+  static String guestAlias(String name) {
+    final t = name.trim();
+    if (t.isEmpty) return 'гость';
+    return 'гость ${String.fromCharCode(t.runes.first).toUpperCase()}.';
+  }
+
+  static final _phoneLike = RegExp(r'\+?\d(?:[\s\-()]*\d){5,}');
+  static final _emailLike = RegExp(r'[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+');
+
+  /// Комментарии к броням пишут гости и персонал — там бывают телефоны
+  /// и почта. Перед отправкой в ИИ вырезаем их.
+  static String scrubContacts(String text) => text
+      .replaceAll(_emailLike, '[почта скрыта]')
+      .replaceAll(_phoneLike, '[телефон скрыт]');
 
   // ---------- МЕНЮ ----------
 
@@ -43,7 +62,11 @@ class AiContextService {
       for (final i in list) {
         if (count++ >= limit) break;
         final weight = i.weight > 0 ? ', ${i.weight.toStringAsFixed(0)} ${i.weightUnit.name}' : '';
-        final hit = i.popularRank > 0 ? ', хит продаж №${i.popularRank}' : '';
+        // Табак помечаем, чтобы ИИ не советовал его сам и не называл хитом.
+        final tobacco = PromoPolicy.menuTobacco(i, cat.name);
+        final hit = tobacco
+            ? ', табак — только по вопросу гостя'
+            : (i.popularRank > 0 ? ', хит продаж №${i.popularRank}' : '');
         final desc = i.description.isNotEmpty ? '. Состав: ${i.description}' : '';
         buf.writeln('- ${i.name} — ${money(i.price)}$weight$hit [id:${i.id}]$desc');
       }
@@ -108,7 +131,7 @@ class AiContextService {
           buf.writeln(
             '- ${t.name} (${seatsLabel(t.seats)}): занят, счёт ${money(s.orderTotal)}, '
             'до конца $left мин, перезабивок ${s.refillCount}'
-            '${s.guestTag.isNotEmpty ? ', гость: ${s.guestTag}' : ''}',
+            '${s.guestTag.isNotEmpty ? ', ${guestAlias(s.guestTag)}' : ''}',
           );
         }
       }
@@ -132,10 +155,10 @@ class AiContextService {
     final buf = StringBuffer();
     for (final r in list) {
       buf.writeln(
-        '- ${r.startTime.hour.toString().padLeft(2, '0')}:'
+        '- [id ${r.id}] ${r.startTime.hour.toString().padLeft(2, '0')}:'
         '${r.startTime.minute.toString().padLeft(2, '0')} '
-        '${r.guestName}, ${r.guestsCount} чел, стол ${r.tableName.isEmpty ? '—' : r.tableName}, '
-        '${r.status.label}${r.comment.isNotEmpty ? ', «${r.comment}»' : ''}',
+        '${guestAlias(r.guestName)}, ${r.guestsCount} чел, стол ${r.tableName.isEmpty ? '—' : r.tableName}, '
+        '${r.status.label}${r.comment.isNotEmpty ? ', «${scrubContacts(r.comment)}»' : ''}',
       );
     }
     return buf.toString();
@@ -258,7 +281,7 @@ class AiContextService {
     final buf = StringBuffer();
     for (final d in snap.docs) {
       final r = GuestReview.fromDoc(d);
-      buf.writeln('- ${r.rating}/5: ${r.text.isEmpty ? '(без текста)' : r.text}');
+      buf.writeln('- ${r.rating}/5: ${r.text.isEmpty ? '(без текста)' : scrubContacts(r.text)}');
     }
     return buf.toString();
   }

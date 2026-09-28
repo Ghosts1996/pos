@@ -119,6 +119,12 @@ class MenuItem {
   /// меню гостя, по нему ИИ-помощник рассказывает, что входит в блюдо.
   final String description;
 
+  /// Табачная или никотинсодержащая позиция (кальян, табак, вейп) — ставит
+  /// владелец. Такие позиции не получают скидок, бонусов и бейджа «Хит»,
+  /// не видны гостю вне заведения (ст. 16 и 19 закона № 15-ФЗ). Помимо
+  /// флага табак узнаётся по названию позиции/категории (PromoPolicy).
+  final bool tobacco;
+
   /// Место в топе продаж за 30 дней (1 — самая популярная), 0 — не в топе.
   /// Считает сервер раз в сутки (saas-gateway, runMenuPopularity); в
   /// toMap() намеренно не пишется — правка позиции его не сотрёт.
@@ -138,6 +144,7 @@ class MenuItem {
     this.vat = '',
     this.fiscalSubject = 'commodity',
     this.description = '',
+    this.tobacco = false,
     this.popularRank = 0,
   });
 
@@ -172,12 +179,14 @@ class MenuItem {
       vat: (data['vat'] as String?) ?? '',
       fiscalSubject: (data['fiscalSubject'] as String?) ?? 'commodity',
       description: (data['description'] as String?) ?? '',
+      tobacco: data['tobacco'] == true,
       popularRank: (data['popularRank'] as num?)?.toInt() ?? 0,
     );
   }
 
   Map<String, dynamic> toMap() => {
         'description': description,
+        'tobacco': tobacco,
         'vat': vat,
         'fiscalSubject': fiscalSubject,
         'categoryId': categoryId,
@@ -204,10 +213,12 @@ class MenuItem {
     String? vat,
     String? fiscalSubject,
     String? description,
+    bool? tobacco,
   }) =>
       MenuItem(
         id: id,
         description: description ?? this.description,
+        tobacco: tobacco ?? this.tobacco,
         popularRank: popularRank,
         vat: vat ?? this.vat,
         fiscalSubject: fiscalSubject ?? this.fiscalSubject,

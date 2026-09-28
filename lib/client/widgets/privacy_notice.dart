@@ -27,7 +27,8 @@ class PrivacyNotice extends StatelessWidget {
       child: Wrap(
         children: [
           Text('Нажимая «$action», вы соглашаетесь, что заведение обработает ваше имя и телефон '
-              'для брони и бонусной программы. Данные хранятся на серверах в России. ',
+              'для брони и бонусной программы. Данные сначала записываются на сервер в России, '
+              'копия хранится в облаке Google для работы приложения. ',
               style: style),
           GestureDetector(
             onTap: () => launchUrl(Uri.parse(policyUrl), mode: LaunchMode.externalApplication),
