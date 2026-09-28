@@ -127,10 +127,14 @@ function imageMatchesType(buffer, ext) {
 }
 
 // Тот же список, что и RESERVED_SLUGS в saas/functions/index.js, плюс
-// "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса.
+// "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса,
+// и служебные поддомены домена платформы: код заведения становится
+// поддоменом, и заведение с кодом "pii" перехватило бы адрес самого сервера.
 const RESERVED_SLUGS = new Set([
   "admin", "api", "app", "www", "download", "support", "billing",
   "docs", "static", "assets", "cdn", "mail", "status", "help", "demo", "saas",
+  "pii", "ftp", "smtp", "imap", "pop", "pop3", "webmail", "ns1", "ns2", "ns3", "ns4",
+  "autoconfig", "autodiscover", "dns-check",
 ]);
 
 // Полный список вложенных коллекций заведения — см. TENANT_SUBCOLLECTIONS в
