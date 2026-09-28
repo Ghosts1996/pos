@@ -85,8 +85,11 @@ class AppUpdateState {
 ///  1. приложение спрашивает POST /appUpdate — на старте, при возврате в
 ///     приложение и по таймеру; сравнивается номер сборки (BUILD_NUMBER,
 ///     он же versionCode APK) с последней успешной сборкой заведения;
-///  2. есть новее — плашка «Вышла новая версия · Обновить»;
-///  3. «Обновить» — файл качается прямо в приложении, с полосой загрузки;
+///  2. есть новее — файл сразу качается в фоне, с полосой загрузки на
+///     плашке (владелец и гость ничего не нажимают; новые версии сервер
+///     собирает сам после каждого обновления платформы — см. rollout в
+///     saas-gateway/server.js);
+///  3. скачалось — плашка «Обновление загружено · Установить»;
 ///  4. Android: открывается системное «Обновить приложение?» — одно
 ///     касание «Установить» (без него Android не ставит приложения не из
 ///     магазина — обойти нельзя, и это правильно). Новая версия ставится
@@ -113,6 +116,9 @@ class AppUpdateService {
   final String? Function() _tenantId;
   final bool Function() _isForeground;
 
+  /// Качать новую версию сразу, как нашлась, не дожидаясь «Обновить».
+  final bool autoDownload;
+
   AppUpdateService({
     required this.app,
     required this.platform,
@@ -123,6 +129,7 @@ class AppUpdateService {
     Future<String?> Function()? authToken,
     String? Function()? tenantId,
     bool Function()? isForeground,
+    this.autoDownload = false,
   })  : _clientFactory = clientFactory ?? http.Client.new,
         _isForeground = isForeground ?? _appInForeground,
         _dirProvider = dirProvider ?? _defaultDir,
@@ -160,7 +167,8 @@ class AppUpdateService {
     // Гостевая сборка «сеть целиком» в конвейере не собирается — её
     // нельзя обновлять сборкой отдельной точки.
     if (app == 'guest' && kSaasPresetChainSlug.isNotEmpty) return;
-    _instance = AppUpdateService(app: app, platform: platform, currentBuild: build, gatewayUrl: kSaasGatewayUrl)
+    _instance = AppUpdateService(
+        app: app, platform: platform, currentBuild: build, gatewayUrl: kSaasGatewayUrl, autoDownload: true)
       .._begin();
   }
 
@@ -196,6 +204,10 @@ class AppUpdateService {
   }
 
   bool _autoInstallPending = false;
+
+  /// Сборки, которые уже пробовали скачать сами: отменили или не вышло —
+  /// второй раз сами не начинаем, остаётся кнопка на плашке.
+  final Set<int> _autoTried = {};
 
   @visibleForTesting
   void dispose() {
@@ -275,7 +287,7 @@ class AppUpdateService {
       hiddenUntil.value = null; // «Позже» больше не прячет плашку
       await checkNow();
       return 'Вышла новая версия — сборка ${info.buildNumber} (у вас $currentBuild). '
-          'Нажмите «Обновить» на плашке вверху экрана.';
+          '${autoDownload ? 'Она уже загружается — когда загрузится, нажмите «Установить» на плашке вверху экрана.' : 'Нажмите «Обновить» на плашке вверху экрана.'}';
     } on _UpdateError catch (e) {
       return 'Не удалось проверить: ${e.message}';
     } catch (_) {
@@ -308,6 +320,11 @@ class AppUpdateService {
         if (now != AppUpdatePhase.ready || !sameBuild) state.value = AppUpdateState(AppUpdatePhase.ready, info: info);
       } else if (now != AppUpdatePhase.failed || !sameBuild) {
         state.value = AppUpdateState(AppUpdatePhase.available, info: info);
+        // Установщик сами не открываем: касса может быть посреди заказа —
+        // к установке остаётся одно касание «Установить».
+        if (autoDownload && _autoTried.add(info.buildNumber)) {
+          unawaited(download(openInstaller: false));
+        }
       }
     } catch (_) {
       // Нет сети — спросим в следующий раз.
@@ -337,8 +354,9 @@ class AppUpdateService {
     }
   }
 
-  /// Скачать новую версию с полосой загрузки; скачалось — сразу к установке.
-  Future<void> download() async {
+  /// Скачать новую версию с полосой загрузки; скачалось — сразу к установке
+  /// (при [openInstaller], то есть когда человек сам нажал «Обновить»).
+  Future<void> download({bool openInstaller = true}) async {
     final phase = state.value.phase;
     if (phase == AppUpdatePhase.downloading || phase == AppUpdatePhase.installing) return;
     hiddenUntil.value = null;
@@ -412,6 +430,7 @@ class AppUpdateService {
       }
       await part.rename(dest.path);
       state.value = AppUpdateState(AppUpdatePhase.ready, info: info);
+      if (!openInstaller) return;
       if (_isForeground()) {
         await install();
       } else {

@@ -1149,7 +1149,16 @@ async function handleCreateBuildJob(req, res) {
   if (!(await isSuperAdmin(decoded))) {
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
   }
+  sendJson(res, 200, await startTenantBuild(tenantId, { requestedBy: decoded.uid }));
+}
 
+/**
+ * Запуск сборки всех приложений заведения — и по кнопке «Собрать APK»
+ * (handleCreateBuildJob), и автообновлением после выхода новой версии
+ * платформы (runAppRolloutTick, [rolloutSha] — коммит, ради которого
+ * собираем). Проверки прав — на вызывающем.
+ */
+async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
   const firestore = db();
   // Точка сети не имеет своей subscriptions/{tenantId} — биллинг общий, на
   // subscriptions/{chainId} (см. handleCreateChain) — без этого resolve'а
@@ -1172,10 +1181,24 @@ async function handleCreateBuildJob(req, res) {
     .collection("buildJobs")
     .where("tenantId", "==", tenantId)
     .where("status", "==", "queued")
-    .limit(1)
     .get();
-  if (!pending.empty) {
+  // Сборка, не отчитавшаяся за APP_ROLLOUT_STALE_MS (запуск отменили в
+  // GitHub, раннер пропал), — потерялась: закрываем её, иначе ни кнопка,
+  // ни автообновление этому заведению больше ничего не соберут.
+  const isStale = (d) => {
+    const at = d.data().createdAt;
+    return at && typeof at.toMillis === "function" && Date.now() - at.toMillis() > APP_ROLLOUT_STALE_MS;
+  };
+  if (pending.docs.some((d) => !isStale(d))) {
     throw new HttpError(409, "Сборка уже запущена — дождитесь её завершения, прежде чем запускать новую");
+  }
+  for (const d of pending.docs) {
+    await d.ref.update({
+      status: "failed",
+      rolloutSha: null,
+      errorMessage: "Сборка не отчиталась вовремя — запущена заново",
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
   }
 
   // Одно нажатие «Собрать APK» — три приложения (см. build-apk.yml, откуда
@@ -1198,12 +1221,13 @@ async function handleCreateBuildJob(req, res) {
   const baseJob = {
     tenantId,
     status: "queued",
-    requestedBy: decoded.uid,
+    requestedBy,
     createdAt: firestoreNow,
     completedAt: null,
     downloadPath: null,
     runUrl: null,
     errorMessage: null,
+    rolloutSha,
   };
   const createBatch = firestore.batch();
   createBatch.set(jobRefPos, { ...baseJob, type: "pos", platform: "android" });
@@ -1267,13 +1291,24 @@ async function handleCreateBuildJob(req, res) {
     throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. записи в buildJobs");
   }
 
+  // Отметка «приложения этого заведения собраны с такой-то версией
+  // платформы» — по ней автообновление решает, кого пересобирать (и не
+  // трогает заведения, которые приложений ещё не собирали). Ручная сборка
+  // берёт последнюю версию ветки, то есть уже содержит текущий коммит.
+  let sha = rolloutSha;
+  if (!sha) {
+    sha = (await firestore.collection("platformStatus").doc("appRollout").get().catch(() => null))?.data()?.sha || "manual";
+  }
+  await firestore.collection("tenants").doc(tenantId)
+    .set({ appBuild: { sha, at: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
+
   await writeAuditLog({
     tenantId,
-    actorId: decoded.uid,
-    action: "buildJobRequested",
-    metadata: { jobIdPos, jobIdKolibri },
+    actorId: requestedBy,
+    action: rolloutSha ? "buildJobAutoUpdate" : "buildJobRequested",
+    metadata: { jobIdPos, jobIdKolibri, ...(rolloutSha ? { sha: rolloutSha } : {}) },
   });
-  sendJson(res, 200, { jobIdPos, jobIdKolibri });
+  return { jobIdPos, jobIdKolibri };
 }
 
 // -------------------------------------------- cancelSubscription/resume
@@ -2111,8 +2146,270 @@ async function handleCompleteBuildJob(req, res) {
     errorMessage: status === "failed" ? (errorMessage || "неизвестная ошибка сборки") : null,
     buildNumber: status === "success" && Number.isInteger(buildNumber) && buildNumber > 0 ? buildNumber : null,
   });
-  appUpdateCache.delete(jobDoc.data().tenantId);
+  const job = jobDoc.data();
+  appUpdateCache.delete(job.tenantId);
+  if (status === "success") {
+    await supersedeOldBuilds(job.tenantId).catch((e) => console.error("saas-gateway: чистка старых сборок:", e.message || e));
+  } else if (job.rolloutSha) {
+    // Автообновление не собралось — заведение остаётся в очереди
+    // (appBuild.sha ≠ текущему коммиту), а сама раскатка встаёт на паузу
+    // (см. runAppRolloutTick), чтобы не собирать всем заведомо битую версию.
+    await db().collection("tenants").doc(job.tenantId)
+      .set({ appBuild: { sha: "failed" } }, { merge: true })
+      .catch(() => {});
+  }
   sendJson(res, 200, { ok: true });
+}
+
+// ------------------------------------------- хранение сборок на диске
+
+/**
+ * На сервере у заведения лежит только ПОСЛЕДНЯЯ готовая сборка каждого
+ * приложения (касса Android, касса Windows, гостевое): приложения на
+ * устройствах обновляются до неё сами (handleAppUpdate), старые файлы
+ * никому не нужны, а место на диске они съедают быстро — каждое
+ * обновление платформы пересобирает приложения всех заведений.
+ * Предыдущие сборки помечаются "superseded" (в консоли — без «Скачать»),
+ * их файлы удаляются.
+ */
+async function supersedeOldBuilds(tenantId) {
+  const snap = await db()
+    .collection("buildJobs")
+    .where("tenantId", "==", tenantId)
+    .orderBy("createdAt", "desc")
+    .limit(60)
+    .get();
+  const newest = new Map(); // "type/platform" -> самая свежая готовая
+  const rank = (j) => (Number.isInteger(j.buildNumber) ? j.buildNumber : 0);
+  const done = snap.docs.filter((d) => d.data().status === "success");
+  for (const d of done) {
+    const key = `${d.data().type}/${d.data().platform || "android"}`;
+    const cur = newest.get(key);
+    if (!cur || rank(d.data()) > rank(cur.data())) newest.set(key, d);
+  }
+  const keep = new Set([...newest.values()].map((d) => d.id));
+  const old = done.filter((d) => !keep.has(d.id));
+  for (const d of old) {
+    await d.ref.update({ status: "superseded", downloadPath: null });
+    await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId, `${d.id}.apk`), { force: true }).catch(() => {});
+  }
+  if (old.length) appUpdateCache.delete(tenantId);
+  return old.length;
+}
+
+/**
+ * Раз в сутки — порядок на диске, даже если что-то прошло мимо
+ * supersedeOldBuilds (сбой посреди чистки, файл без записи в buildJobs,
+ * удалённое заведение): в tenant-builds остаются только файлы готовых и
+ * ещё идущих сборок живых заведений. Свежие файлы (моложе 3 часов) не
+ * трогаем — сборка могла только что загрузиться и ещё не отчитаться.
+ * Заодно удаляются записи buildJobs старше 60 дней без файла (ошибки и
+ * заменённые версии) — список сборок не растёт бесконечно.
+ */
+const BUILD_FILE_GRACE_MS = 3 * 3600 * 1000;
+const BUILD_JOB_HISTORY_DAYS = 60;
+
+async function sweepTenantBuilds() {
+  let removedFiles = 0;
+  let freedBytes = 0;
+  const firestore = db();
+  const dirs = await fs.promises.readdir(TENANT_BUILDS_DIR, { withFileTypes: true }).catch(() => []);
+  for (const dirent of dirs) {
+    if (!dirent.isDirectory() || !/^[A-Za-z0-9_-]+$/.test(dirent.name)) continue;
+    const tenantId = dirent.name;
+    const dir = path.join(TENANT_BUILDS_DIR, tenantId);
+    const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists || tenantDoc.data().status === "deleted") {
+      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      continue;
+    }
+    await supersedeOldBuilds(tenantId);
+    const snap = await firestore
+      .collection("buildJobs")
+      .where("tenantId", "==", tenantId)
+      .orderBy("createdAt", "desc")
+      .limit(60)
+      .get();
+    const keep = new Set(snap.docs.filter((d) => ["success", "queued"].includes(d.data().status)).map((d) => d.id));
+    for (const name of await fs.promises.readdir(dir).catch(() => [])) {
+      const m = /^([A-Za-z0-9]+)\.apk$/.exec(name);
+      if (m && keep.has(m[1])) continue;
+      const file = path.join(dir, name);
+      const st = await fs.promises.stat(file).catch(() => null);
+      if (!st || !st.isFile() || Date.now() - st.mtimeMs < BUILD_FILE_GRACE_MS) continue;
+      await fs.promises.rm(file, { force: true }).catch(() => {});
+      removedFiles++;
+      freedBytes += st.size;
+    }
+  }
+
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - BUILD_JOB_HISTORY_DAYS * 86400 * 1000);
+  for (const status of ["failed", "superseded"]) {
+    const old = await firestore.collection("buildJobs").where("status", "==", status).limit(400).get();
+    const stale = old.docs.filter((d) => {
+      const at = d.data().createdAt;
+      return at && typeof at.toMillis === "function" && at.toMillis() < cutoff.toMillis();
+    });
+    if (stale.length) {
+      const batch = firestore.batch();
+      stale.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+  }
+  if (removedFiles) console.log(`saas-gateway: удалено старых сборок: ${removedFiles}, освобождено ${Math.round(freedBytes / 1048576)} МБ`);
+  return { removedFiles, freedBytes };
+}
+
+function scheduleBuildsSweep() {
+  scheduleDailyJob("buildsSweep", 24 * 3600 * 1000, sweepTenantBuilds, 25 * 60 * 1000);
+}
+
+// ------------------------------------------------- автообновление
+
+/**
+ * Автообновление приложений всех заведений. Когда меняется код
+ * приложений, GitHub Actions (.github/workflows/saas-rollout.yml) сообщает
+ * сюда коммит — дальше сервер сам, по очереди, пересобирает кассу и
+ * гостевое приложение каждому заведению, у которого приложения уже
+ * собирались (tenants.appBuild — ставит startTenantBuild). Приложения на
+ * устройствах находят новую версию и скачивают её сами (handleAppUpdate,
+ * lib/services/app_update_service.dart) — владельцу ничего нажимать не нужно.
+ *
+ * Очередь — в Firestore (platformStatus/appRollout + tenants.appBuild.sha),
+ * поэтому переживает перезапуск сервера. Несколько обновлений подряд
+ * склеиваются: сборка начинается через APP_ROLLOUT_DELAY_MS после
+ * последнего. Одновременно собирается не больше APP_ROLLOUT_CONCURRENCY
+ * заведений. Если сборка какого-то заведения упала — раскатка встаёт на
+ * паузу (битую версию всем не собираем); продолжит следующее обновление
+ * или кнопка в панели платформы.
+ */
+const APP_ROLLOUT_DELAY_MS = 5 * 60 * 1000;
+const APP_ROLLOUT_CONCURRENCY = 2;
+const APP_ROLLOUT_STALE_MS = 90 * 60 * 1000; // «в очереди» дольше — сборка потерялась, место не держит
+const appRolloutRef = () => db().collection("platformStatus").doc("appRollout");
+
+async function handleRolloutApps(req, res) {
+  const body = await parseJsonBody(req);
+  const expected = process.env.BUILD_CALLBACK_SECRET || "";
+  let sha;
+  let by;
+  if (req.headers["x-callback-secret"] !== undefined) {
+    // Из GitHub Actions — тот же общий секрет, что у completeBuildJob.
+    if (!expected || !secretsEqual(req.headers["x-callback-secret"], expected)) throw new HttpError(403, "forbidden");
+    sha = typeof body.sha === "string" && /^[0-9a-f]{7,40}$/.test(body.sha) ? body.sha : "";
+    if (!sha) throw new HttpError(400, "bad request");
+    by = "github";
+  } else {
+    // Кнопка «Обновить приложения всем» в панели платформы.
+    const decoded = await verifyAuth(req);
+    if (!(await isSuperAdmin(decoded))) throw new HttpError(403, "Только для администратора платформы");
+    sha = `manual-${Date.now()}`;
+    by = decoded.uid;
+  }
+  await backfillAppBuildMarks();
+  const now = Date.now();
+  await appRolloutRef().set({
+    sha,
+    requestedBy: by,
+    requestedAt: admin.firestore.Timestamp.fromMillis(now),
+    // Из панели — сразу, из GitHub — после паузы: вдруг следом ещё push.
+    startAfter: admin.firestore.Timestamp.fromMillis(by === "github" ? now + APP_ROLLOUT_DELAY_MS : now),
+    state: "waiting",
+    pausedReason: null,
+    finishedAt: null,
+  });
+  sendJson(res, 200, { ok: true, sha });
+}
+
+/** Заведения, собиравшие приложения до появления tenants.appBuild, —
+ *  тоже в раскатку: у них уже стоят приложения, которые надо обновлять. */
+async function backfillAppBuildMarks() {
+  const firestore = db();
+  const snap = await firestore.collection("buildJobs").where("status", "==", "success").select("tenantId").get();
+  const ids = [...new Set(snap.docs.map((d) => d.data().tenantId).filter(Boolean))];
+  for (const id of ids) {
+    const ref = firestore.collection("tenants").doc(id);
+    const t = await ref.get();
+    if (t.exists && !t.data().appBuild) await ref.set({ appBuild: { sha: "legacy" } }, { merge: true });
+  }
+}
+
+let appRolloutRunning = false;
+
+async function runAppRolloutTick() {
+  if (appRolloutRunning) return;
+  appRolloutRunning = true;
+  try {
+    const firestore = db();
+    const r = (await appRolloutRef().get()).data();
+    if (!r || !r.sha || r.state === "done" || r.state === "paused") return;
+    if (r.startAfter && Date.now() < r.startAfter.toMillis()) return;
+
+    // Сборка этой версии у кого-то упала — дальше не раскатываем.
+    const failed = await firestore.collection("buildJobs")
+      .where("rolloutSha", "==", r.sha).where("status", "==", "failed").limit(1).get();
+    if (!failed.empty) {
+      const f = failed.docs[0].data();
+      await appRolloutRef().set({
+        state: "paused",
+        pausedReason: `Сборка не удалась (заведение ${f.tenantId}): ${String(f.errorMessage || "").slice(0, 200)}`,
+      }, { merge: true });
+      return;
+    }
+
+    const queued = await firestore.collection("buildJobs").where("status", "==", "queued").get();
+    const busy = new Set(queued.docs
+      .filter((d) => {
+        const at = d.data().createdAt;
+        return at && typeof at.toMillis === "function" && Date.now() - at.toMillis() < APP_ROLLOUT_STALE_MS;
+      })
+      .map((d) => d.data().tenantId));
+    let slots = APP_ROLLOUT_CONCURRENCY - busy.size;
+
+    // "!=" не находит заведения без appBuild — те, что приложений ещё не
+    // собирали, раскатка не трогает.
+    const todo = await firestore.collection("tenants").where("appBuild.sha", "!=", r.sha).limit(50).get();
+    if (todo.empty) {
+      if (busy.size === 0) await appRolloutRef().set({ state: "done", finishedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      return;
+    }
+    if (r.state !== "running") await appRolloutRef().set({ state: "running" }, { merge: true });
+    for (const doc of todo.docs) {
+      if (slots <= 0) break;
+      if (busy.has(doc.id)) continue;
+      const t = doc.data();
+      if (t.status === "deleted" || t.demo) {
+        await doc.ref.set({ appBuild: { sha: r.sha, skipped: "deleted" } }, { merge: true });
+        continue;
+      }
+      try {
+        await startTenantBuild(doc.id, { requestedBy: "platform", rolloutSha: r.sha });
+        slots--;
+      } catch (e) {
+        if (e.status === 412) {
+          // Подписка неактивна — пропускаем; оплатит и нажмёт «Собрать APK»
+          // или получит следующее обновление.
+          await doc.ref.set({ appBuild: { sha: r.sha, skipped: "subscription" } }, { merge: true });
+        } else if (e.status !== 409) {
+          // GitHub недоступен, кончился токен и т. п. — не долбим каждую
+          // минуту, пробуем через полчаса.
+          await appRolloutRef().set({
+            startAfter: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 60 * 1000),
+            lastError: String(e.message || e).slice(0, 300),
+          }, { merge: true });
+          return;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("saas-gateway: автообновление приложений:", e.message || e);
+  } finally {
+    appRolloutRunning = false;
+  }
+}
+
+function scheduleAppRollout() {
+  setInterval(runAppRolloutTick, 60 * 1000);
 }
 
 // ----------------------------------------------------- downloadBuild
@@ -2471,6 +2768,7 @@ async function handleUploadMenuImage(req, res) {
 /** Логотип и фото меню удалённого заведения — вместе с его данными. */
 async function removeTenantUploads(tenantId) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) return;
+  await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId), { recursive: true, force: true }).catch(() => {});
   await fs.promises.rm(path.join(BRANDING_UPLOADS_DIR, tenantId), { recursive: true, force: true }).catch(() => {});
 }
 
@@ -4462,6 +4760,7 @@ const ROUTES = {
   "/inviteTenantMember": handleInviteTenantMember,
   "/createBuildJob": handleCreateBuildJob,
   "/completeBuildJob": handleCompleteBuildJob,
+  "/rolloutApps": handleRolloutApps,
   "/createDemoTenant": handleCreateDemoTenant,
   // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
   "/sendAuthEmail": handleSendAuthEmail,
@@ -4554,6 +4853,8 @@ schedulePlatformMetricsCron();
 scheduleCertificateCheck();
 scheduleFirestoreBackup();
 scheduleAiSecretsMigration();
+scheduleBuildsSweep();
+scheduleAppRollout();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
