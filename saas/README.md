@@ -1028,9 +1028,13 @@ bash saas-gateway/migrate-domain.sh
 веб-версию гостя и `saas-gateway`. Скрипт выпуска поддомена теперь лежит в
 репозитории: `saas-gateway/provision-tenant-domain.sh`.
 
-Старый домен не отключать, пока продлевается: через `pii.hookahpos.su`
-работают уже установленные приложения, а на столах наклеены QR-коды со
-старым адресом.
+`hookahpos.su` — рекламная страница для кальянных и лаунж-баров
+(`saas/promo-hookahpos/`), все кнопки ведут на `zalpos.ru`. Её поднимает тот
+же скрипт (шаг 8), когда A-записи `@` и `www` домена `hookahpos.su` указывают
+на сервер (домен при этом убрать из Firebase Hosting). Поддомены
+`hookahpos.su` остаются служебными: `pii.hookahpos.su` — для ещё не
+обновлённых приложений, `{slug}.hookahpos.su` — перенаправление с
+наклеенных QR-кодов. Поэтому домен нужно продлевать.
 
 Консоль (Firebase Hosting): в Firebase Console → Hosting добавить домен
 `zalpos.ru`, в Authentication → Settings → Authorized domains добавить
@@ -1039,7 +1043,8 @@ bash saas-gateway/migrate-domain.sh
 
 Адреса сервера для сборок (`PII_GATEWAY_URL`, `SAAS_GATEWAY_URL`, адрес
 `completeBuildJob`) теперь прописаны прямо в `saas-on-demand-build.yml` и
-`public-apk-release.yml` — секреты с этими именами им больше не нужны.
+`public-apk-release.yml`, адрес сервера для доставки сборок (`pii.zalpos.ru`)
+тоже — секреты с этими именами им больше не нужны (кроме `DEPLOY_SSH_KEY`).
 
 ### 9. Перенос вашего текущего заведения (когда будете готовы)
 
