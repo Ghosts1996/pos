@@ -96,6 +96,14 @@ async function run() {
     assert.strictEqual(noToken.statusCode, 401);
   }
 
+  {
+    // Гость удаляет свои данные: без заведения — 400, без токена — 401.
+    const noTenant = await request("POST", "/", { body: JSON.stringify({ kind: "guest_delete" }) });
+    assert.strictEqual(noTenant.statusCode, 400);
+    const noToken = await request("POST", "/", { body: JSON.stringify({ kind: "guest_delete", tenantId: "t1" }) });
+    assert.strictEqual(noToken.statusCode, 401);
+  }
+
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
   server.close(() => process.exit(0));
 }

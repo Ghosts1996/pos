@@ -349,6 +349,72 @@ async function handleRecordContact(req, res, body) {
   return sendJson(res, 200, { ok: true });
 }
 
+/**
+ * Гость удаляет свои данные сам (кнопка «Удалить мои данные» в профиле):
+ * стираем его имя и телефон в первичной базе в РФ — профиль и контакты его
+ * броней и листа ожидания во всех точках заведения/сети. Брони, которые
+ * завёл персонал, находим по clientUid в Firestore. Потом приложение
+ * обезличивает Firestore через saas-gateway (/deleteGuestData).
+ */
+async function handleDeleteGuest(req, res, body) {
+  const { tenantId } = body;
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) {
+    return sendJson(res, 400, { error: "некорректный tenantId" });
+  }
+  const idToken = (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+  if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
+  const fbApp = getSaasApp();
+  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  let decoded;
+  try {
+    decoded = await fbApp.auth().verifyIdToken(idToken);
+  } catch (e) {
+    return sendJson(res, 401, { error: "невалидный токен" });
+  }
+  const uid = decoded.uid;
+  let tenantIds;
+  let storeKey;
+  const recordIds = { reservation: [], waitlist: [] };
+  try {
+    const fs = admin.firestore(fbApp);
+    const t = await fs.doc(`tenants/${tenantId}`).get();
+    if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
+    const chainId = String(t.data().chainId || "");
+    storeKey = chainId ? `chain:${chainId}` : tenantId;
+    tenantIds = chainId
+      ? (await fs.collection("tenants").where("chainId", "==", chainId).get()).docs.map((d) => d.id)
+      : [tenantId];
+    for (const tid of tenantIds) {
+      for (const [kind, col] of [["reservation", "reservations"], ["waitlist", "waitlist"]]) {
+        const snap = await fs.collection(`tenants/${tid}/${col}`).where("clientUid", "==", uid).get();
+        recordIds[kind].push(...snap.docs.map((d) => d.id));
+      }
+    }
+  } catch (e) {
+    return sendJson(res, 502, { error: "не удалось прочитать данные заведения" });
+  }
+  const where = `tenant_id = ANY($1) AND (created_by = $2
+      OR (kind = 'reservation' AND record_id = ANY($3))
+      OR (kind = 'waitlist' AND record_id = ANY($4)))`;
+  const args = [tenantIds, uid, recordIds.reservation, recordIds.waitlist];
+  try {
+    const pool = getPool();
+    try {
+      await pool.query("DELETE FROM guest_profiles WHERE tenant_id = $1 AND uid = $2", [storeKey, uid]);
+      await pool.query(`DELETE FROM contact_records WHERE ${where}`, args);
+    } catch (e) {
+      // Схема ещё без права DELETE (не применён свежий schema.sql) —
+      // затираем значения: данные всё равно уничтожены.
+      if (e && e.code !== "42501") throw e;
+      await pool.query("UPDATE guest_profiles SET name = '', phone = '', updated_at = now() WHERE tenant_id = $1 AND uid = $2", [storeKey, uid]);
+      await pool.query(`UPDATE contact_records SET name = '', phone = '', updated_at = now() WHERE ${where}`, args);
+    }
+  } catch (e) {
+    return sendJson(res, 500, { error: "не удалось удалить данные в первичной базе" });
+  }
+  return sendJson(res, 200, { ok: true });
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
   if (req.method === "GET" && req.url === "/health") return sendJson(res, 200, { ok: true });
@@ -367,6 +433,7 @@ const server = http.createServer((req, res) => {
       }
       if (body && body.kind === "owner") return handleRegisterOwner(req, res, body);
       if (body && body.kind === "owner_link") return handleLinkOwner(req, res);
+      if (body && body.kind === "guest_delete") return handleDeleteGuest(req, res, body);
       if (body && body.kind) return handleRecordContact(req, res, body);
       return handleRegisterGuestProfile(req, res, body);
     })

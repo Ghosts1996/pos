@@ -63,6 +63,8 @@ DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'pii_gateway') THEN
     GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations TO pii_gateway;
+    -- Гость удаляет свои данные сам (kind "guest_delete" в server.js).
+    GRANT DELETE ON guest_profiles, contact_records TO pii_gateway;
   END IF;
 END
 $$;

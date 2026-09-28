@@ -4717,11 +4717,91 @@ async function handleAnonymizeGuest(req, res) {
   const root = firestore.collection(scope === "chain" ? "chains" : "tenants").doc(rootId);
   const rootDoc = await root.get();
   if (!rootDoc.exists) throw new HttpError(404, "Заведение или сеть не найдены");
-  const clientRef = root.collection("clients").doc(clientUid);
-  const clientSnap = await clientRef.get();
+  const clientSnap = await root.collection("clients").doc(clientUid).get();
   if (!clientSnap.exists) throw new HttpError(404, "Профиль гостя не найден");
   const c = clientSnap.data();
+  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c });
 
+  if (typeof body.requestId === "string" && body.requestId) {
+    await firestore.collection("dataRequests").doc(body.requestId).set({
+      status: "done",
+      resolution: "Гость обезличен",
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolvedBy: decoded.uid, resolvedByEmail: decoded.email || null,
+    }, { merge: true });
+  }
+  await writeSecurityEvent(req, decoded, "guestAnonymized", {
+    tenantId: scope === "tenant" ? rootId : null,
+    targetUid: clientUid,
+    metadata: {
+      scope, rootId, rootName: rootDoc.data().name || null,
+      guestName: c.name || null, phone: c.phone || null,
+      scrubbedRecords: scrubbed, accountDeleted, requestId: body.requestId || null,
+    },
+  });
+  sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
+}
+
+/**
+ * Гость сам удаляет свои данные кнопкой «Удалить мои данные» в профиле —
+ * сразу, без очереди запросов. Приложение перед этим стирает имя и
+ * телефон в первичной базе в РФ (pii-gateway, kind "guest_delete"), здесь —
+ * то же обезличивание, что делает супер-админ (anonymizeGuestData). В
+ * реестр dataRequests пишется уже выполненный запрос — без имени и
+ * телефона, только факт удаления.
+ */
+async function handleDeleteGuestData(req, res) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const tenantId = typeof body.tenantId === "string" && body.tenantId ? body.tenantId : null;
+  if (!tenantId) throw new HttpError(400, "Не указано заведение");
+  const firestore = db();
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenantDoc.data().chainId || null;
+  const scope = chainId ? "chain" : "tenant";
+  const rootId = chainId || tenantId;
+  const root = firestore.collection(chainId ? "chains" : "tenants").doc(rootId);
+  const clientUid = decoded.uid;
+  const clientSnap = await root.collection("clients").doc(clientUid).get();
+  if (!clientSnap.exists) throw new HttpError(404, "Профиль гостя не найден");
+  const c = clientSnap.data();
+  if (c.anonymized === true) {
+    sendJson(res, 200, { ok: true, alreadyDeleted: true });
+    return;
+  }
+  // За столом открыт счёт — бонусы и заказ привязаны к профилю; удаляем
+  // после закрытия счёта, чтобы не сломать гостю и персоналу расчёт.
+  if (c.activeSessionId) {
+    throw new HttpError(409, "У вас открыт счёт за столом — удалить данные можно после его закрытия");
+  }
+  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c });
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const open = await firestore.collection("dataRequests").where("clientUid", "==", clientUid).get();
+  for (const d of open.docs) {
+    if (d.data().status === "new") {
+      await d.ref.set({ status: "done", resolution: "Гость удалил данные сам", resolvedAt: now, contact: "данные удалены", guestName: null }, { merge: true });
+    }
+  }
+  await firestore.collection("dataRequests").add({
+    subjectType: "guest", kind: "delete", contact: "данные удалены",
+    clientUid, tenantId, chainId, source: "guest-self",
+    status: "done", resolution: "Гость удалил данные сам",
+    createdAt: now, resolvedAt: now,
+  });
+  await writeSecurityEvent(req, decoded, "guestSelfDeleted", {
+    tenantId: chainId ? null : tenantId,
+    targetUid: clientUid,
+    metadata: { scope, rootId, rootName: tenantDoc.data().name || null, scrubbedRecords: scrubbed, accountDeleted },
+  });
+  sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
+}
+
+/** Общая часть обезличивания гостя (супер-админ и сам гость). */
+async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
+  const firestore = db();
+  const clientRef = root.collection("clients").doc(clientUid);
   // Указатели на гостя
   if (c.phone) {
     const idx = root.collection("phoneIndex").doc(String(c.phone));
@@ -4775,25 +4855,7 @@ async function handleAnonymizeGuest(req, res) {
       accountDeleted = true;
     }
   } catch (_) {}
-
-  if (typeof body.requestId === "string" && body.requestId) {
-    await firestore.collection("dataRequests").doc(body.requestId).set({
-      status: "done",
-      resolution: "Гость обезличен",
-      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-      resolvedBy: decoded.uid, resolvedByEmail: decoded.email || null,
-    }, { merge: true });
-  }
-  await writeSecurityEvent(req, decoded, "guestAnonymized", {
-    tenantId: scope === "tenant" ? rootId : null,
-    targetUid: clientUid,
-    metadata: {
-      scope, rootId, rootName: rootDoc.data().name || null,
-      guestName: c.name || null, phone: c.phone || null,
-      scrubbedRecords: scrubbed, accountDeleted, requestId: body.requestId || null,
-    },
-  });
-  sendJson(res, 200, { ok: true, scrubbedRecords: scrubbed, accountDeleted });
+  return { scrubbed, accountDeleted };
 }
 
 // ------------------------------------------------------------ ИИ: прокси
@@ -5198,6 +5260,7 @@ const ROUTES = {
   "/resolveDataRequest": handleResolveDataRequest,
   "/findGuest": handleFindGuest,
   "/anonymizeGuest": handleAnonymizeGuest,
+  "/deleteGuestData": handleDeleteGuestData,
   "/aiProxy": handleAiProxy,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,

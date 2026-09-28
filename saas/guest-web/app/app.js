@@ -26,7 +26,7 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
+  getAuth, signInAnonymously, onAuthStateChanged, signOut,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
@@ -2111,7 +2111,7 @@ function screenProfile() {
       ${esc(brandDisplayName())} · веб-версия</p>`;
 
   $('pSave').onclick = saveProfile;
-  $('deleteDataBtn').onclick = requestDataDeletion;
+  $('deleteDataBtn').onclick = deleteMyData;
   state.profileDirty = false;
   ['pName', 'pPhone'].forEach((id) => {
     const el = $(id);
@@ -2279,28 +2279,34 @@ async function saveProfile() {
   }
 }
 
-/// Право гостя потребовать удаления своих данных (152-ФЗ): запрос уходит
-/// в реестр платформы (saas-gateway /requestGuestDataDeletion) и
-/// обрабатывается вручную в течение 30 дней.
-async function requestDataDeletion() {
-  const ok = confirm('Удалить мои данные?\n\nМы удалим ваше имя, номер телефона и день рождения '
-    + 'из профиля, броней и заказов, а бонусы сгорят. Запрос обработают в течение 30 дней.');
+/// Гость удаляет свои данные сам и сразу (152-ФЗ): сначала первичная база
+/// в РФ (pii-gateway), потом облако (saas-gateway /deleteGuestData). Сервер
+/// удаляет и анонимный аккаунт — выходим, и onAuthStateChanged заводит новый.
+async function deleteMyData() {
+  const ok = confirm('Удалить мои данные?\n\nВаше имя, номер телефона и день рождения сразу удалятся '
+    + 'из профиля, броней и заказов, а бонусы сгорят. Отменить это нельзя.');
   if (!ok) return;
+  const btn = $('deleteDataBtn');
+  if (btn) btn.disabled = true;
   try {
+    await piiPost({ tenantId: state.tenantId, kind: 'guest_delete' });
     const token = await state.auth.currentUser.getIdToken();
-    const res = await fetch(`${GATEWAY}/requestGuestDataDeletion`, {
+    const res = await fetch(`${GATEWAY}/deleteGuestData`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tenantId: state.tenantId }),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json.error || String(res.status));
-    const d = new Date(json.dueAt);
-    const due = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
-    toast(json.existing ? `Запрос уже отправлен — данные удалят не позднее ${due}`
-      : `Запрос принят — данные удалят не позднее ${due}`);
+    if (!res.ok) {
+      toast(json.error || 'Не удалось удалить данные — попробуйте ещё раз');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    await signOut(state.auth);
+    toast('Ваши данные удалены');
   } catch (_) {
-    toast('Не удалось отправить запрос: проверьте интернет и попробуйте снова');
+    toast('Не удалось удалить данные: проверьте интернет и попробуйте снова');
+    if (btn) btn.disabled = false;
   }
 }
 
