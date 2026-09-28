@@ -71,6 +71,10 @@ class TableTile extends StatelessWidget {
   /// Режим редактора: показываем только форму, имя и места.
   final bool editorMode;
 
+  /// Редактор: кнопка «Повернуть» прямо на плитке (для форм, у которых
+  /// поворот что-то меняет).
+  final VoidCallback? onRotate;
+
   const TableTile({
     super.key,
     required this.table,
@@ -85,6 +89,7 @@ class TableTile extends StatelessWidget {
     this.hasCall = false,
     this.dimmed = false,
     this.editorMode = false,
+    this.onRotate,
   });
 
   @override
@@ -155,10 +160,12 @@ class TableTile extends StatelessWidget {
           offset: const Offset(0, 2),
         ),
       ],
+      // Ширина подписей — по тексту (не больше плитки): у треугольного
+      // стола так они уменьшаются меньше и остаются читаемыми.
       child: FittedBox(
         fit: BoxFit.scaleDown,
-        child: SizedBox(
-          width: size - (circle ? 28 : 16),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: size - (circle ? 28 : 16)),
           child: Column(mainAxisSize: MainAxisSize.min, children: lines),
         ),
       ),
@@ -184,6 +191,31 @@ class TableTile extends StatelessWidget {
                   left: -6,
                   top: -6,
                   child: _Badge(text: '$checkCount', color: AppColors.surfaceElevated),
+                ),
+              if (onRotate != null && tableShapeRotates(table.shape))
+                Positioned.fill(
+                  child: Align(
+                    alignment: tableFreeCorner(table),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Tooltip(
+                        message: 'Повернуть',
+                        child: GestureDetector(
+                          onTap: onRotate,
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceElevated,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: const Icon(Icons.rotate_right, size: 20, color: AppColors.textPrimary),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
             ],
           ),
