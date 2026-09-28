@@ -96,17 +96,23 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               return okCat && okSearch;
             }).toList();
 
+            // Табак, кальяны и принадлежности — отдельным строгим перечнем
+            // (ст. 19 закона № 15-ФЗ), не карточками с фото.
+            final tobaccoItems = filtered.where(tobacco).toList()
+              ..sort((a, b) => _alphaKey(a.name).compareTo(_alphaKey(b.name)));
+            final regular = filtered.where((i) => !tobacco(i)).toList();
+
             // Группируем по категориям в порядке справочника, остаток — в «Прочее».
             final sections = <({String title, List<MenuItem> items})>[];
             final used = <String>{};
             for (final c in categories) {
-              final items = filtered.where((i) => i.categoryId == c.id).toList()
+              final items = regular.where((i) => i.categoryId == c.id).toList()
                 ..sort((a, b) => a.name.compareTo(b.name));
               if (items.isEmpty) continue;
               used.add(c.id);
               sections.add((title: c.name, items: items));
             }
-            final rest = filtered.where((i) => !used.contains(i.categoryId)).toList()
+            final rest = regular.where((i) => !used.contains(i.categoryId)).toList()
               ..sort((a, b) => a.name.compareTo(b.name));
             if (rest.isNotEmpty) sections.add((title: 'Прочее', items: rest));
 
@@ -115,15 +121,18 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 _searchBar(),
                 if (categories.isNotEmpty) _categoryChips(categories, categoryId),
                 Expanded(
-                  child: sections.isEmpty
+                  child: sections.isEmpty && tobaccoItems.isEmpty
                       ? Center(
                           child: Text('Ничего не найдено',
                               style: TextStyle(color: KolibriColors.textMuted)))
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
-                          itemCount: sections.length + (hidden > 0 ? 1 : 0),
+                          itemCount: sections.length + (tobaccoItems.isNotEmpty ? 1 : 0) + (hidden > 0 ? 1 : 0),
                           itemBuilder: (_, s) {
-                            if (s == sections.length) {
+                            if (s == sections.length && tobaccoItems.isNotEmpty) {
+                              return _tobaccoList(tobaccoItems, first: sections.isEmpty);
+                            }
+                            if (s >= sections.length) {
                               return Padding(
                                 padding: const EdgeInsets.only(top: 18),
                                 child: Text(
@@ -162,7 +171,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                                 ),
                                 ...section.items.map((item) => Padding(
                                       padding: const EdgeInsets.only(bottom: 10),
-                                      child: _itemTile(item, tobacco: tobacco(item)),
+                                      child: _itemTile(item),
                                     )),
                               ],
                             );
@@ -220,9 +229,58 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         ),
       );
 
-  /// [tobacco] — табак, кальян или принадлежности: вместо фото нейтральная
-  /// плашка «18+» (ст. 19 закона № 15-ФЗ — без изображений продукции).
-  Widget _itemTile(MenuItem item, {bool tobacco = false}) {
+  /// Алфавитный порядок для перечня табака: без учёта регистра, «ё» как «е».
+  static String _alphaKey(String s) => s.toLowerCase().replaceAll('ё', 'е');
+
+  /// Перечень табака, кальянов и принадлежностей по ст. 19 закона № 15-ФЗ:
+  /// буквы одного размера, чёрные на белом, по алфавиту, с ценой и без
+  /// изображений — даже кнопки заказа здесь текстом, без иконок.
+  Widget _tobaccoList(List<MenuItem> items, {required bool first}) {
+    const style = TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w400, height: 1.35);
+    return Container(
+      margin: EdgeInsets.only(top: first ? 4 : 22),
+      padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
+      color: Colors.white,
+      child: DefaultTextStyle(
+        style: style,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(right: 10, bottom: 6),
+              child: Text('Табачная и никотинсодержащая продукция, кальяны. '
+                  'Продажа лицам младше 18 лет запрещена.'),
+            ),
+            for (final item in items) _tobaccoRow(item, style),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tobaccoRow(MenuItem item, TextStyle style) {
+    final inCart = _cart[item.id]?.qty ?? 0;
+    Widget button(String label, VoidCallback onTap) => TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            foregroundColor: Colors.black,
+            textStyle: style,
+            minimumSize: const Size(44, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          child: Text(label),
+        );
+    return Row(
+      children: [
+        // Неразрывные пробелы — цена не рвётся на «1 200» и «₽».
+        Expanded(child: Text('${item.name} — ${rub(item.price).replaceAll(' ', '\u00A0')}')),
+        if (inCart > 0) ...[button('−', () => _remove(item)), Text('$inCart')],
+        button(inCart > 0 ? '+' : 'Добавить', () => _add(item)),
+      ],
+    );
+  }
+
+  Widget _itemTile(MenuItem item) {
     final inCart = _cart[item.id]?.qty ?? 0;
 
     return Container(
@@ -241,16 +299,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             child: SizedBox(
               width: 72,
               height: 72,
-              child: tobacco
-                  ? Container(
-                      color: KolibriColors.surfaceElevated,
-                      alignment: Alignment.center,
-                      child: Text('18+',
-                          semanticsLabel: 'Только для совершеннолетних',
-                          style: TextStyle(
-                              color: KolibriColors.textMuted, fontSize: 20, fontWeight: FontWeight.w800)),
-                    )
-                  : item.imageUrl.isEmpty
+              child: item.imageUrl.isEmpty
                   ? Container(
                       color: KolibriColors.surfaceElevated,
                       child: Icon(
@@ -287,7 +336,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                   ),
                   // «Хит» — топ продаж за 30 дней (сервер не ставит его табаку).
-                  if (item.isHit && !tobacco) ...[
+                  if (item.isHit) ...[
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
