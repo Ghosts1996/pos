@@ -4770,7 +4770,7 @@ function watchAllTenants() {
         </div>
 
         <div style="margin-top:14px">
-          <div class="small muted" style="margin-bottom:6px">Ручное управление подпиской (оплата вне ЮKassa — перевод, наличные)</div>
+          <div class="small muted" style="margin-bottom:6px">Ручное управление подпиской (оплата мимо платёжного сервиса — перевод, наличные)</div>
           <select class="f-sub-status" data-id="${esc(t.id)}">
             ${Object.keys(SUB_STATUS_LABELS).map((s) => `<option value="${s}" ${t.subscription?.status === s ? 'selected' : ''}>${esc(SUB_STATUS_LABELS[s])}</option>`).join('')}
           </select>
@@ -5413,7 +5413,7 @@ function watchAnalytics() {
       </div>
       <p class="small muted" style="margin-top:10px">
         Разбивка по статусам: ${Object.entries(byStatus).map(([s, n]) => `${esc(TENANT_STATUS_LABELS[s] || s)} — ${n}`).join(', ') || '—'}.
-        Выручка — сумма последних ${revenueEvents.length} обработанных платежей ЮKassa, не весь исторический архив.
+        Выручка — сумма последних ${revenueEvents.length} обработанных платежей, не весь исторический архив.
       </p>
       <div class="card" style="margin-top:14px">
         <div class="small muted">Регистрации по дням (последние ${REGS_TREND_DAYS} дней)</div>
@@ -6059,14 +6059,23 @@ async function loadSecurityPlatform() {
     ? checkRowHtml('ok', 'Сервер видит настоящие IP посетителей', 'nginx передаёт заголовок X-Real-IP — журнал входов и лимиты по IP работают.')
     : checkRowHtml('warn', 'nginx не передаёт настоящий IP', 'В журнале входов будет 127.0.0.1, а лимиты по IP сработают на всех сразу. Добавьте в <code>location /saas/</code>: <code>proxy_set_header X-Real-IP $remote_addr;</code>'));
 
-  // ЮKassa
+  // Платёжный сервис: Робокасса (Result URL) или ЮKassa (webhook)
   const wh = st.billingWebhook || {};
   const whAge = wh.lastReceivedAt ? Date.now() - wh.lastReceivedAt : null;
+  const rk = st.billingProvider === 'robokassa';
+  const payName = rk ? 'Робокассы' : 'ЮKassa';
+  const payHint = rk
+    ? 'Если оплаты есть, а уведомлений нет — проверьте в «Технических настройках» Робокассы Result URL: <code>https://pii.zalpos.ru/saas/robokassaResult</code> (метод POST) и алгоритм подписи (ROBOKASSA_HASH на сервере).'
+    : 'Если оплаты есть, а уведомлений нет — проверьте адрес уведомлений в кабинете ЮKassa: <code>https://pii.zalpos.ru/saas/billingWebhook</code>.';
   rows.push(checkRowHtml(
     !wh.lastReceivedAt ? 'unknown' : whAge > 45 * DAY ? 'warn' : 'ok',
-    !wh.lastReceivedAt ? 'Уведомлений от ЮKassa ещё не было' : whAge > 45 * DAY ? 'ЮKassa давно не присылала уведомлений' : 'Уведомления об оплатах от ЮKassa доходят',
+    !wh.lastReceivedAt ? `Уведомлений от ${payName} ещё не было` : whAge > 45 * DAY ? `От ${payName} давно не было уведомлений` : `Уведомления об оплатах от ${payName} доходят`,
     `${wh.lastReceivedAt ? `Последнее: ${fmtMs(wh.lastReceivedAt)}${wh.lastEvent ? ` (${esc(wh.lastEvent)})` : ''}. ` : ''}${wh.lastPaymentAt ? `Последний платёж: ${fmtMs(wh.lastPaymentAt)}. ` : ''}`
-      + 'Если оплаты есть, а уведомлений нет — проверьте адрес уведомлений в кабинете ЮKassa: <code>https://pii.zalpos.ru/saas/billingWebhook</code>.'));
+      + payHint));
+  if (rk && st.robokassaTest) {
+    rows.push(checkRowHtml('warn', 'Робокасса в тестовом режиме',
+      'Платежи тестовые, деньги не списываются. После активации магазина уберите <code>ROBOKASSA_TEST=1</code> и впишите боевые пароли №1 и №2 в <code>/etc/saas-gateway.env</code>.'));
+  }
 
   // Сертификаты
   const c = st.certificates;
@@ -6113,7 +6122,7 @@ async function loadSecurityPlatform() {
   rows.push(checkRowHtml(lgMissing.length ? 'bad' : 'ok',
     lgMissing.length ? 'Не заполнены реквизиты для оферты и сайта' : 'Реквизиты платформы заполнены',
     lgMissing.length
-      ? `Без них нельзя принимать оплату (54-ФЗ, модерация ЮKassa): в оферте и политике сейчас «[указать]». Не хватает: ${esc(lgMissing.join(', '))}.`
+      ? `Без них нельзя принимать оплату (модерация платёжного сервиса): в оферте и политике сейчас «[указать]». Не хватает: ${esc(lgMissing.join(', '))}.`
       : 'Подставляются в оферту, политику конфиденциальности и подвал сайта.',
     '<button type="button" class="btn btn-ghost" id="f-sec-legal-edit" style="width:auto">Реквизиты</button>'));
   rows.push('<div id="sec-legal-form" style="display:none"></div>');
@@ -6425,7 +6434,7 @@ async function startCheckout(tenantId, planId, billingPeriod, chainId) {
     const res = await callSaasGateway('createCheckoutSession', {
       tenantId, chainId, planId,
       billingPeriod: billingPeriod === 'yearly' ? 'yearly' : billingPeriod === 'semiannual' ? 'semiannual' : 'monthly',
-      // После оплаты ЮKassa вернёт сюда же — на этот дашборд, где статус
+      // После оплаты платёжный сервис вернёт сюда же — на этот дашборд, где статус
       // подписки обновится сам по snapshot-подписке, как только придёт
       // webhook (обычно за секунды, но платёжная форма может быть и
       // быстрее самого webhook'а — поэтому это просто "куда вернуться",
@@ -6436,7 +6445,7 @@ async function startCheckout(tenantId, planId, billingPeriod, chainId) {
       location.href = res.data.confirmationUrl;
       return true;
     }
-    throw new Error('ЮKassa не вернула ссылку на оплату');
+    throw new Error('Платёжный сервис не вернул ссылку на оплату');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось начать оплату: ${e?.message || e}`;
     return false;

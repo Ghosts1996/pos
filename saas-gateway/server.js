@@ -83,6 +83,11 @@ const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = requ
  *     переноса нужно один раз поменять URL webhook'а в личном кабинете
  *     ЮKassa на https://<ваш-домен>/saas/billingWebhook — см. README.md,
  *     раздел «Биллинг».
+ *   ROBOKASSA_LOGIN / ROBOKASSA_PASSWORD1 / ROBOKASSA_PASSWORD2 — магазин
+ *     Робокассы (идентификатор и пароли №1 и №2 из «Технических настроек»).
+ *     Если заданы, оплата подписок идёт через Робокассу, а не ЮKassa (или
+ *     явно: BILLING_PROVIDER=robokassa|yookassa). Остальное — в секции
+ *     "billing (Робокасса)" ниже и в README.md, раздел «Робокасса».
  */
 
 const GITHUB_OWNER = "Ghosts1996";
@@ -1554,6 +1559,23 @@ async function handleCreateCheckoutSession(req, res) {
   const description = isChain
     ? `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
     : `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
+  const email = decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId);
+
+  if (billingProvider() === "robokassa") {
+    const invoice = await createRobokassaInvoice({
+      tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
+      planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
+      locationCount: isChain ? locationCount : null, requestedBy: decoded.uid,
+    });
+    const url = robokassaPaymentUrl({
+      invId: invoice.invId, outSum: invoice.outSum,
+      description: `ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`,
+      email, recurring: robokassaConfig().recurring,
+    });
+    sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId) });
+    return;
+  }
+
   const payment = await yookassaRequest("payments", {
     method: "POST",
     idempotenceKey: crypto.randomUUID(),
@@ -1563,8 +1585,7 @@ async function handleCreateCheckoutSession(req, res) {
       save_payment_method: true,
       confirmation: { type: "redirect", return_url: returnUrl },
       description,
-      receipt: yookassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price,
-        decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId)),
+      receipt: yookassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price, email),
       metadata: {
         tenantId: isChain ? null : tenantId,
         chainId: isChain ? chainId : null,
@@ -1575,6 +1596,260 @@ async function handleCreateCheckoutSession(req, res) {
   });
 
   sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id });
+}
+
+// ------------------------------------------------------------ billing (Робокасса)
+
+/**
+ * Оплата подписок через Робокассу (владелец платформы — самозанятый: чек
+ * в «Мой налог» Робокасса формирует сама, передавать его не нужно).
+ *
+ * Как устроено:
+ *  1. createCheckoutSession заводит счёт billingInvoices/{InvId} (номер —
+ *     из счётчика platformStatus/robokassa) и отдаёт консоли ссылку на
+ *     платёжную форму с подписью (пароль №1).
+ *  2. После оплаты Робокасса вызывает Result URL — /robokassaResult с
+ *     подписью по паролю №2. Только здесь подписка продлевается
+ *     (applySubscriptionPayment, идемпотентно); ответ — «OK<InvId>».
+ *  3. Success/Fail URL (/robokassaSuccess, /robokassaFail) лишь возвращают
+ *     владельца в личный кабинет, ничего не меняя.
+ *  4. Автопродление (ROBOKASSA_RECURRING=1, после того как Робокасса
+ *     включит магазину периодические платежи): первая оплата идёт с
+ *     Recurring=true, её номер сохраняется в подписке
+ *     (robokassaParentInvId), продление — POST на Merchant/Recurring с
+ *     PreviousInvoiceID; результат приходит на тот же Result URL.
+ *
+ * Переменные: ROBOKASSA_LOGIN, ROBOKASSA_PASSWORD1, ROBOKASSA_PASSWORD2,
+ * ROBOKASSA_HASH (алгоритм подписи из «Технических настроек», по
+ * умолчанию md5), ROBOKASSA_TEST=1 (тестовые платежи — и тестовые пароли),
+ * ROBOKASSA_RECURRING=1, ROBOKASSA_RECEIPTS=1 + ROBOKASSA_SNO/ROBOKASSA_TAX
+ * (только для фискализации «Робочеки», не для самозанятых).
+ */
+const ROBOKASSA_PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx";
+const ROBOKASSA_RECURRING_URL = "https://auth.robokassa.ru/Merchant/Recurring";
+const ROBOKASSA_HASHES = ["md5", "sha1", "sha256", "sha384", "sha512"];
+
+/** Какой провайдер принимает оплату: явно BILLING_PROVIDER, иначе
+ *  Робокасса, если заданы её реквизиты, иначе ЮKassa. */
+function billingProvider() {
+  const p = String(process.env.BILLING_PROVIDER || "").trim().toLowerCase();
+  if (p === "robokassa" || p === "yookassa") return p;
+  return process.env.ROBOKASSA_LOGIN ? "robokassa" : "yookassa";
+}
+
+function robokassaConfig() {
+  const login = String(process.env.ROBOKASSA_LOGIN || "").trim();
+  const password1 = String(process.env.ROBOKASSA_PASSWORD1 || "");
+  const password2 = String(process.env.ROBOKASSA_PASSWORD2 || "");
+  if (!login || !password1 || !password2) {
+    throw new Error("ROBOKASSA_LOGIN/ROBOKASSA_PASSWORD1/ROBOKASSA_PASSWORD2 не настроены на сервере");
+  }
+  const algo = String(process.env.ROBOKASSA_HASH || "md5").trim().toLowerCase();
+  if (!ROBOKASSA_HASHES.includes(algo)) throw new Error(`ROBOKASSA_HASH: неизвестный алгоритм ${algo}`);
+  return {
+    login, password1, password2, algo,
+    test: process.env.ROBOKASSA_TEST === "1",
+    recurring: process.env.ROBOKASSA_RECURRING === "1",
+  };
+}
+
+function robokassaHash(algo, str) {
+  return crypto.createHash(algo).update(str, "utf8").digest("hex");
+}
+
+/** Shp_-параметры для подписи: «Shp_x=значение», по алфавиту. */
+function robokassaShpPart(params) {
+  const pairs = Object.keys(params).filter((k) => /^shp_/i.test(k)).sort().map((k) => `${k}=${params[k]}`);
+  return pairs.length ? `:${pairs.join(":")}` : "";
+}
+
+/** Чек для «Робочеков» (54-ФЗ) — уже URL-кодированный, в этом виде он и
+ *  входит в подпись. Самозанятым не нужен: null. */
+function robokassaReceipt(name, price) {
+  if (process.env.ROBOKASSA_RECEIPTS !== "1") return null;
+  const receipt = {
+    items: [{
+      name: String(name).slice(0, 128), quantity: 1, sum: Number(price.toFixed(2)),
+      payment_method: "full_payment", payment_object: "service",
+      tax: process.env.ROBOKASSA_TAX || "none",
+    }],
+  };
+  if (process.env.ROBOKASSA_SNO) receipt.sno = process.env.ROBOKASSA_SNO;
+  return encodeURIComponent(JSON.stringify(receipt));
+}
+
+/** Следующий номер счёта (InvId — целое до 2^31). */
+async function nextRobokassaInvId() {
+  const ref = db().collection("platformStatus").doc("robokassa");
+  return db().runTransaction(async (tx) => {
+    const last = Number((await tx.get(ref)).data()?.lastInvId) || 100000;
+    const next = last + 1;
+    tx.set(ref, { lastInvId: next, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return next;
+  });
+}
+
+/** Адрес возврата после оплаты — только в свой личный кабинет. */
+const BILLING_RETURN_HOSTS = ["zalpos.ru", "www.zalpos.ru", "hookahpos.su", "saas-3bdc8.web.app", "saas-3bdc8.firebaseapp.com"];
+function safeReturnUrl(raw) {
+  try {
+    const u = new URL(String(raw || ""));
+    if (u.protocol === "https:" && BILLING_RETURN_HOSTS.includes(u.hostname)) return u.toString();
+  } catch (_) {}
+  return "https://zalpos.ru/#/";
+}
+
+async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null }) {
+  const invId = await nextRobokassaInvId();
+  const outSum = amount.toFixed(2);
+  await db().collection("billingInvoices").doc(String(invId)).set({
+    provider: "robokassa", invId, tenantId, chainId, planId, billingPeriod, purpose,
+    amount, outSum, email: email || null, returnUrl: safeReturnUrl(returnUrl),
+    locationCount, parentInvId, requestedBy,
+    status: "pending", createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { invId, outSum };
+}
+
+/** Ссылка на платёжную форму. Подпись: MerchantLogin:OutSum:InvId[:Receipt]:Пароль№1. */
+function robokassaPaymentUrl({ invId, outSum, description, email, recurring, receipt = null }) {
+  const c = robokassaConfig();
+  const sig = robokassaHash(c.algo, [c.login, outSum, String(invId), ...(receipt ? [receipt] : []), c.password1].join(":"));
+  const params = new URLSearchParams({
+    MerchantLogin: c.login,
+    OutSum: outSum,
+    InvId: String(invId),
+    // Описание у Робокассы — до 100 символов.
+    Description: String(description).slice(0, 100),
+    SignatureValue: sig,
+    Culture: "ru",
+    Encoding: "utf-8",
+  });
+  if (email) params.set("Email", email);
+  // URLSearchParams кодирует ещё раз: в ссылке Receipt закодирован дважды,
+  // в подписи — один раз (так требует Робокасса).
+  if (receipt) params.set("Receipt", receipt);
+  if (recurring) params.set("Recurring", "true");
+  if (c.test) params.set("IsTest", "1");
+  return `${ROBOKASSA_PAY_URL}?${params.toString()}`;
+}
+
+/** Параметры запроса Робокассы: GET — из адреса, POST — из формы. */
+async function readRobokassaParams(req) {
+  const params = Object.fromEntries(new URL(req.url, "http://localhost").searchParams);
+  if (req.method === "POST") {
+    const raw = (await readRawBody(req, 64 * 1024)).toString("utf8");
+    const type = String(req.headers["content-type"] || "");
+    if (type.includes("application/json")) {
+      try { Object.assign(params, JSON.parse(raw)); } catch (_) {}
+    } else {
+      Object.assign(params, Object.fromEntries(new URLSearchParams(raw)));
+    }
+  }
+  return params;
+}
+
+function sendPlain(res, status, text) {
+  res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end(text);
+}
+
+/**
+ * Result URL Робокассы — оплата прошла. Подпись:
+ * OutSum:InvId:Пароль№2[:Shp_…]. Ответ «OK<InvId>», иначе Робокасса
+ * будет повторять уведомление.
+ */
+async function handleRobokassaResult(req, res) {
+  const p = await readRobokassaParams(req);
+  const outSum = String(p.OutSum || "");
+  const invId = String(p.InvId || "");
+  const given = String(p.SignatureValue || "").toLowerCase();
+  if (!outSum || !/^\d{1,10}$/.test(invId) || !given) return sendPlain(res, 400, "bad request");
+  const c = robokassaConfig();
+  const expected = robokassaHash(c.algo, `${outSum}:${invId}:${c.password2}${robokassaShpPart(p)}`);
+  if (!secretsEqual(given, expected)) return sendPlain(res, 400, "bad sign");
+
+  db().collection("platformStatus").doc("billingWebhook").set({
+    lastReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastEvent: "robokassa.result",
+  }, { merge: true }).catch((e) => console.error("platformStatus/billingWebhook:", e.message || e));
+
+  const invRef = db().collection("billingInvoices").doc(invId);
+  const inv = (await invRef.get()).data();
+  if (!inv) {
+    // Подпись наша, а счёта нет — записываем и отвечаем OK, чтобы Робокасса
+    // не повторяла уведомление, которое всё равно нечем применить.
+    await writeAuditLog({ tenantId: null, actorId: null, action: "billingUnknownInvoice", metadata: { invId, outSum } });
+    return sendPlain(res, 200, `OK${invId}`);
+  }
+  if (Math.abs(Number(outSum) - Number(inv.amount)) > 0.009) {
+    await writeAuditLog({ tenantId: inv.tenantId, actorId: null, action: "billingAmountMismatch", metadata: { invId, outSum, expected: inv.amount } });
+    return sendPlain(res, 200, `OK${invId}`);
+  }
+
+  // Первая оплата с Recurring=true — «родитель» будущих автосписаний.
+  const parent = inv.parentInvId || (c.recurring && inv.purpose === "subscription" ? Number(invId) : null);
+  await applySubscriptionPayment({
+    eventId: `robokassa_${invId}`,
+    provider: "robokassa",
+    status: "succeeded",
+    tenantId: inv.tenantId, chainId: inv.chainId, planId: inv.planId,
+    billingPeriod: normalizeBillingPeriod(inv.billingPeriod),
+    amount: Number(inv.amount) || 0,
+    purpose: inv.purpose || "subscription",
+    extra: parent ? { robokassaParentInvId: parent } : {},
+  });
+  await invRef.set({
+    status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
+    paymentMethod: p.PaymentMethod || null, fee: p.Fee || null,
+  }, { merge: true });
+  sendPlain(res, 200, `OK${invId}`);
+}
+
+/** Success/Fail URL — вернуть владельца в личный кабинет. Подписку здесь
+ *  не трогаем: оплату подтверждает только Result URL. */
+async function handleRobokassaReturn(req, res) {
+  const p = await readRobokassaParams(req);
+  const invId = String(p.InvId || "");
+  let target = "https://zalpos.ru/#/";
+  if (/^\d{1,10}$/.test(invId)) {
+    const inv = (await db().collection("billingInvoices").doc(invId).get().catch(() => null))?.data();
+    if (inv?.returnUrl) target = safeReturnUrl(inv.returnUrl);
+  }
+  res.writeHead(302, { Location: target });
+  res.end();
+}
+
+/** Автосписание очередного периода по родительскому платежу. Возвращает
+ *  номер нового счёта; результат придёт на Result URL. */
+async function robokassaCharge({ sub, targetId, isChain, price, billingPeriod, description, locationCount }) {
+  const c = robokassaConfig();
+  if (c.test) throw new Error("у Робокассы нет тестового режима для автосписаний (ROBOKASSA_TEST=1)");
+  const invoice = await createRobokassaInvoice({
+    tenantId: isChain ? null : targetId, chainId: isChain ? targetId : null,
+    planId: sub.planId, billingPeriod, purpose: "renewal", amount: price,
+    email: await billingOwnerEmail(isChain, targetId), returnUrl: null,
+    locationCount: isChain ? locationCount : null, parentInvId: sub.robokassaParentInvId,
+  });
+  const receipt = robokassaReceipt(description, price);
+  const sig = robokassaHash(c.algo, [c.login, invoice.outSum, String(invoice.invId), ...(receipt ? [receipt] : []), c.password1].join(":"));
+  const form = new URLSearchParams({
+    MerchantLogin: c.login,
+    InvoiceID: String(invoice.invId),
+    PreviousInvoiceID: String(sub.robokassaParentInvId),
+    OutSum: invoice.outSum,
+    Description: String(description).slice(0, 100),
+    SignatureValue: sig,
+  });
+  if (receipt) form.set("Receipt", receipt);
+  const resp = await fetch(ROBOKASSA_RECURRING_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  const text = (await resp.text()).trim();
+  if (!resp.ok || !/^OK/i.test(text)) throw new Error(`Робокасса не приняла автосписание: ${resp.status} ${text.slice(0, 200)}`);
+  return invoice.invId;
 }
 
 /**
@@ -1639,6 +1914,31 @@ async function handleBillingWebhook(req, res) {
     return;
   }
 
+  await applySubscriptionPayment({
+    eventId: paymentId,
+    provider: "yookassa",
+    status: payment.status,
+    tenantId, chainId, planId, billingPeriod,
+    amount: Number(payment.amount?.value) || 0,
+    purpose: payment.metadata?.purpose || "subscription",
+    // save_payment_method делает способ оплаты сохранённым только с
+    // согласия платёжной системы — сохраняем payment_method_id, только
+    // когда ЮKassa это подтвердила.
+    extra: payment.payment_method?.saved ? { paymentMethodId: payment.payment_method.id } : {},
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Зачисление оплаты подписки — общее для ЮKassa (handleBillingWebhook) и
+ * Робокассы (handleRobokassaResult). Идемпотентно через
+ * billingEvents/{eventId}: повторная доставка того же уведомления не
+ * продлевает подписку дважды. [extra] — поля провайдера для автопродления
+ * (paymentMethodId у ЮKassa, robokassaParentInvId у Робокассы).
+ */
+async function applySubscriptionPayment({ eventId, provider, status, tenantId, chainId, planId, billingPeriod, amount, purpose, extra = {} }) {
+  const billingId = chainId || tenantId;
+  const paymentId = eventId;
   const firestore = db();
   const eventRef = firestore.collection("billingEvents").doc(paymentId);
   const alreadyProcessed = await firestore.runTransaction(async (tx) => {
@@ -1648,23 +1948,20 @@ async function handleBillingWebhook(req, res) {
     // они были обработаны целиком.
     if (seen.exists && seen.data().applied !== false) return true;
     tx.set(eventRef, {
-      tenantId, chainId, planId, billingPeriod, status: payment.status,
+      tenantId, chainId, planId, billingPeriod, status, provider,
       // Сумма — для аналитики платформы (панель Super Admin, выручка): без
-      // неё пришлось бы на каждый показ дохода дёргать API ЮKassa отдельно
-      // по каждому платежу, вместо одного чтения Firestore.
-      amount: Number(payment.amount?.value) || 0,
-      purpose: payment.metadata?.purpose || "subscription",
+      // неё пришлось бы на каждый показ дохода дёргать API провайдера
+      // отдельно по каждому платежу, вместо одного чтения Firestore.
+      amount,
+      purpose,
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
       applied: false,
     });
     return false;
   });
-  if (alreadyProcessed) {
-    sendJson(res, 200, { ok: true });
-    return;
-  }
+  if (alreadyProcessed) return;
 
-  if (payment.status === "succeeded") {
+  if (status === "succeeded") {
     const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
     const subRef = firestore.collection("subscriptions").doc(billingId);
     await firestore.runTransaction(async (tx) => {
@@ -1680,7 +1977,7 @@ async function handleBillingWebhook(req, res) {
       const update = {
         tenantId, chainId, planId, billingPeriod,
         status: "active",
-        provider: "yookassa",
+        provider,
         externalSubscriptionId: paymentId,
         currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
         currentPeriodEnd: admin.firestore.Timestamp.fromMillis(base + periodDays * 86400000),
@@ -1690,11 +1987,8 @@ async function handleBillingWebhook(req, res) {
         // бы в ту же ночь, без льготных 10 дней.
         pastDueSince: null,
         renewalAttemptedAt: admin.firestore.FieldValue.delete(),
+        ...extra,
       };
-      // save_payment_method делает способ оплаты сохранённым только с
-      // согласия платёжной системы — сохраняем payment_method_id, только
-      // когда ЮKassa это подтвердила.
-      if (payment.payment_method?.saved) update.paymentMethodId = payment.payment_method.id;
       // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa
       // будет бесконечно ретраить), если документа почему-то ещё нет.
       tx.set(subRef, update, { merge: true });
@@ -1709,8 +2003,6 @@ async function handleBillingWebhook(req, res) {
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
   }
   await eventRef.update({ applied: true });
-
-  sendJson(res, 200, { ok: true });
 }
 
 /** Переводит и подписку, и само заведение/сеть в past_due синхронно и
@@ -1813,18 +2105,22 @@ async function purgeChainData(chainId) {
 async function runChargeRecurringSubscriptions() {
   const firestore = db();
   const withinADay = admin.firestore.Timestamp.fromMillis(Date.now() + 86400000);
-  const subs = await firestore.collection("subscriptions")
+  const byProvider = async (provider) => (await firestore.collection("subscriptions")
     .where("status", "==", "active")
-    .where("provider", "==", "yookassa")
+    .where("provider", "==", provider)
     .where("currentPeriodEnd", "<=", withinADay)
-    .get();
+    .get()).docs;
+  const docs = [...await byProvider("yookassa"), ...await byProvider("robokassa")];
 
-  for (const subDoc of subs.docs) {
+  for (const subDoc of docs) {
     const sub = subDoc.data();
     const targetId = subDoc.id;
     const isChain = !!sub.chainId;
+    const viaRobokassa = sub.provider === "robokassa";
     if (sub.cancelAtPeriodEnd) continue;
-    if (!sub.paymentMethodId) continue; // нечем продлить автоматически — сгорит в past_due само (см. runEnforceGracePeriod)
+    // Нечем продлить автоматически — сгорит в past_due само (см.
+    // runEnforceGracePeriod), владелец оплатит заново из кабинета.
+    if (viaRobokassa ? !sub.robokassaParentInvId : !sub.paymentMethodId) continue;
 
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
@@ -1843,6 +2139,14 @@ async function runChargeRecurringSubscriptions() {
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
     try {
+      if (viaRobokassa) {
+        const invId = await robokassaCharge({
+          sub, targetId, isChain, price, billingPeriod, locationCount,
+          description: `ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
+        });
+        await subDoc.ref.update({ renewalInvId: invId });
+        continue;
+      }
       const receipt = yookassaReceipt(`Подписка ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
         price, await billingOwnerEmail(isChain, targetId));
       await yookassaRequest("payments", {
@@ -3818,14 +4122,23 @@ function scheduleFirestoreBackup() {
  * ЮKassa, сроки сертификатов, резервные копии, актуальны ли правила базы,
  * передаёт ли nginx настоящий IP.
  */
-const SECURITY_SECRETS = [
+const SECURITY_SECRETS_BASE = [
   ["FIREBASE_SERVICE_ACCOUNT_B64", "Сервисный ключ Firebase"],
   ["FIREBASE_WEB_CONFIG_JSON", "Веб-конфиг Firebase (гостевой веб)"],
-  ["YOOKASSA_SHOP_ID", "ЮKassa: идентификатор магазина"],
-  ["YOOKASSA_SECRET_KEY", "ЮKassa: секретный ключ"],
   ["GITHUB_PAT", "GitHub: токен для сборки APK"],
   ["BUILD_CALLBACK_SECRET", "Секрет ответа сборки APK"],
 ];
+const BILLING_SECRETS = {
+  robokassa: [
+    ["ROBOKASSA_LOGIN", "Робокасса: идентификатор магазина"],
+    ["ROBOKASSA_PASSWORD1", "Робокасса: пароль №1"],
+    ["ROBOKASSA_PASSWORD2", "Робокасса: пароль №2"],
+  ],
+  yookassa: [
+    ["YOOKASSA_SHOP_ID", "ЮKassa: идентификатор магазина"],
+    ["YOOKASSA_SECRET_KEY", "ЮKassa: секретный ключ"],
+  ],
+};
 // Строки из актуального saas/firestore.rules — по ним видно, опубликованы
 // ли последние правила (защита сеансов супер-админов, склад кассы, ключи
 // ИИ отдельно от гостей, реквизиты платформы).
@@ -3896,7 +4209,10 @@ async function handleSecurityStatus(req, res) {
   const b = billing.exists ? billing.data() : {};
   const lp = lastPayment && !lastPayment.empty ? lastPayment.docs[0].data() : null;
   sendJson(res, 200, {
-    secrets: SECURITY_SECRETS.map(([key, label]) => ({ key, label, set: !!(process.env[key] && String(process.env[key]).trim()) })),
+    secrets: [...SECURITY_SECRETS_BASE.slice(0, 2), ...BILLING_SECRETS[billingProvider()], ...SECURITY_SECRETS_BASE.slice(2)]
+      .map(([key, label]) => ({ key, label, set: !!(process.env[key] && String(process.env[key]).trim()) })),
+    billingProvider: billingProvider(),
+    robokassaTest: process.env.ROBOKASSA_TEST === "1",
     githubRef: GITHUB_REF,
     billingWebhook: { lastReceivedAt: ts(b.lastReceivedAt), lastEvent: b.lastEvent || null, lastPaymentAt: lp ? ts(lp.receivedAt) : null },
     certificates: certs.exists ? { ...certs.data(), checkedAt: ts(certs.data().checkedAt) } : null,
@@ -4807,6 +5123,11 @@ const ROUTES = {
   // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
   // внутри самого handleBillingWebhook, не на уровне роутинга.
   "/billingWebhook": handleBillingWebhook,
+  // Робокасса: Result URL (оплата прошла) и возврат владельца в кабинет.
+  // Подлинность Result URL — подпись паролем №2 внутри обработчика.
+  "/robokassaResult": handleRobokassaResult,
+  "/robokassaSuccess": handleRobokassaReturn,
+  "/robokassaFail": handleRobokassaReturn,
 };
 
 function runHandler(handler, req, res) {
@@ -4839,6 +5160,10 @@ const server = http.createServer((req, res) => {
   // Публичный веб-конфиг Firebase — см. docstring handleFirebaseWebConfig,
   // почему НЕ zalpos.ru/__/firebase/init.json.
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
+  // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
+  // «Технических настройках» магазина).
+  if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleRobokassaResult, req, res);
+  if (req.method === "GET" && (urlPath === "/robokassaSuccess" || urlPath === "/robokassaFail")) return runHandler(handleRobokassaReturn, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
 
   const handler = ROUTES[urlPath];
