@@ -574,6 +574,59 @@ function genSecurePassword() {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
+/** Пароль для входа, который удобно переписать: без похожих символов
+ *  (0/O, 1/l), группами — «zal-7kq2-m9xp-4tw3», около 60 бит случайности. */
+function genReadablePassword() {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = new Uint32Array(12);
+  crypto.getRandomValues(bytes);
+  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+  return `zal-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8)}`;
+}
+
+/** Ставит владельцу новый пароль и показывает его; если на сервере настроена
+ *  почта — пароль уходит ещё и письмом. Firebase требует недавний вход:
+ *  при ошибке auth/requires-recent-login вызывающий просит войти заново. */
+async function issueNewPassword(user) {
+  const pass = genReadablePassword();
+  await updatePassword(user, pass);
+  try { await setDoc(doc(state.db, 'users', user.uid), { passwordSet: true }, { merge: true }); } catch (_) {}
+  let emailed = false;
+  try {
+    await callSaasGateway('sendAuthEmail', { type: 'password', email: user.email, password: pass });
+    emailed = true;
+  } catch (_) { /* почта на сервере не настроена — пароль только на экране */ }
+  showPasswordNotice(pass, emailed);
+}
+
+function showPasswordNotice(pass, emailed) {
+  document.getElementById('password-notice')?.remove();
+  const box = document.createElement('div');
+  box.id = 'password-notice';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;'
+    + 'padding:16px;background:rgba(3,6,12,.72)';
+  box.innerHTML = `
+    <div class="card" style="max-width:420px;width:100%;margin:0">
+      <h2 style="margin-top:0">Пароль для входа</h2>
+      <p class="small muted">Сохраните его: с ним можно входить по кнопке «Войти по паролю», без письма на почту.
+        ${emailed ? 'Копию отправили вам на почту.' : ''}</p>
+      <div style="font:600 20px/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.5px;padding:14px;
+        border-radius:12px;background:var(--surface-2);text-align:center;margin:14px 0;user-select:all">${esc(pass)}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="f-pass-copy">Скопировать</button>
+        <button class="btn btn-primary" id="f-pass-ok">Сохранил(а)</button>
+      </div>
+      <p class="small muted" style="margin-top:12px">Сменить пароль можно в «Настройках».</p>
+    </div>`;
+  document.body.appendChild(box);
+  $('f-pass-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(pass); toast('Пароль скопирован'); } catch (_) { toast('Выделите пароль и скопируйте вручную'); }
+  };
+  $('f-pass-ok').onclick = () => box.remove();
+}
+
 function authErrorMessage(e) {
   const map = {
     'auth/email-already-in-use': 'Этот email уже зарегистрирован — попробуйте войти',
@@ -642,6 +695,11 @@ async function boot() {
             email, createdAt: Timestamp.fromDate(new Date()),
             offerAcceptedAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
           });
+          // Новый владелец входил только по ссылке — пароля у него нет, а
+          // «Войти по паролю» и смена пароля в настройках без него не
+          // работают. Создаём сразу и показываем (и шлём на почту, если она
+          // настроена на сервере). Вход только что — Firebase это разрешает.
+          try { await issueNewPassword(cred.user); } catch (_) { /* задаст в «Настройках» */ }
         }
       } catch (_) {
         // Ссылка одноразовая/просрочена (или email введён не тот) —
@@ -2839,7 +2897,10 @@ function watchDashboardData(tenantId) {
         </label>
         <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
         <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
-        <p class="small muted" style="margin-top:10px">Не помните текущий пароль? Выйдите из аккаунта и на экране входа нажмите «Забыли пароль?» — придёт ссылка на почту.</p>
+        <p class="small muted" style="margin-top:10px">Входили только по ссылке из письма или не помните пароль?
+          Создайте новый — он появится на экране.</p>
+        <button class="btn btn-ghost" id="f-pass-generate">Создать новый пароль</button>
+        <div id="f-pass-generate-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
       </div>
 
       <h2>Настройки заведения</h2>
@@ -3265,6 +3326,21 @@ function watchDashboardData(tenantId) {
     }
     if ($('f-profile-signout')) $('f-profile-signout').onclick = () => signOut(state.auth);
     if ($('f-pass-change')) {
+      $('f-pass-generate').onclick = async () => {
+        const btn = $('f-pass-generate');
+        const msgEl = $('f-pass-generate-msg');
+        msgEl.textContent = '';
+        btn.disabled = true;
+        try {
+          await issueNewPassword(state.auth.currentUser);
+        } catch (e) {
+          msgEl.textContent = e?.code === 'auth/requires-recent-login'
+            ? 'Для безопасности войдите заново по ссылке из письма (выйти → ввести почту на главной) и нажмите ещё раз — в течение 5 минут после входа.'
+            : authErrorMessage(e);
+        } finally {
+          btn.disabled = false;
+        }
+      };
       $('f-pass-change').onclick = async () => {
         const currentEl = $('f-pass-current');
         const newEl = $('f-pass-new');
