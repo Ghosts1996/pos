@@ -10,7 +10,7 @@ const tls = require("tls");
 const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
-const { authEmailLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
+const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
 
 /**
  * Онбординг SaaS-платформы ZalPOS БЕЗ Cloud Functions.
@@ -4403,18 +4403,27 @@ function authContinueUrl(raw) {
 async function handleSendAuthEmail(req, res) {
   const body = await parseJsonBody(req);
   const type = String(body.type || "");
-  if (!AUTH_EMAIL_TYPES.includes(type)) throw new HttpError(400, "Неизвестный тип письма");
+  if (!AUTH_EMAIL_TYPES.includes(type) && type !== "password") throw new HttpError(400, "Неизвестный тип письма");
   const email = String(body.email || "").trim().toLowerCase();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
     throw new HttpError(400, "Проверьте адрес почты");
   }
   if (authMailer === undefined) authMailer = createMailer();
   if (!authMailer) throw new HttpError(503, "Почта платформы не настроена");
-  if (type === "verifyEmail") {
+  if (type === "verifyEmail" || type === "password") {
     const decoded = await verifyAuth(req);
     if (String(decoded.email || "").toLowerCase() !== email) {
-      throw new HttpError(403, "Подтвердить можно только свою почту");
+      throw new HttpError(403, "Письмо можно отправить только на свою почту");
     }
+  }
+  if (type === "password") {
+    // Пароль владелец только что поставил себе сам (консоль, issueNewPassword)
+    // — сервер его не хранит и не проверяет, только пересылает на его же почту.
+    const password = String(body.password || "");
+    if (password.length < 8 || password.length > 64) throw new HttpError(400, "Некорректный пароль");
+    hitAuthEmailLimit(`to:${email}`, AUTH_EMAIL_ADDRESS_MAX);
+    await authMailer.send({ to: email, ...passwordLetter(password, { siteUrl: CONSOLE_URL }) });
+    return sendJson(res, 200, { ok: true });
   }
   hitAuthEmailLimit(`ip:${clientIp(req)}`, AUTH_EMAIL_IP_MAX);
   hitAuthEmailLimit(`to:${email}`, AUTH_EMAIL_ADDRESS_MAX);

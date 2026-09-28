@@ -49,11 +49,32 @@ function esc(s) {
 function authEmailLetter(type, link, { siteUrl = "https://zalpos.ru/" } = {}) {
   const l = LETTERS[type];
   if (!l) throw new Error(`неизвестный тип письма: ${type}`);
+  return renderLetter({ ...l, link, siteUrl });
+}
+
+/** Письмо с паролем для входа в личный кабинет. */
+function passwordLetter(password, { siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Пароль для входа в ZalPOS",
+    title: "Ваш пароль для входа",
+    lead: "Пароль для входа в личный кабинет ZalPOS — по кнопке «Войти по паролю», без письма на почту:",
+    code: password,
+    button: "Открыть личный кабинет",
+    link: `${siteUrl}#/login`,
+    note: "Сохраните пароль в надёжном месте и удалите это письмо. Сменить пароль можно в «Настройках» личного кабинета.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
+function renderLetter({ subject, title, lead, code, button, link, note, siteUrl, hideRawLink = false }) {
+  const l = { subject, title, lead, button, note };
   const site = siteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const text = [
     l.title,
     "",
     l.lead,
+    ...(code ? ["", code] : []),
     "",
     `${l.button}: ${link}`,
     "",
@@ -87,6 +108,7 @@ function authEmailLetter(type, link, { siteUrl = "https://zalpos.ru/" } = {}) {
           <td style="background:#FFFFFF;border-radius:0 0 16px 16px;padding:32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#16213A;">
             <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;font-weight:700;color:#0B1630;">${esc(l.title)}</h1>
             <p style="margin:0 0 26px;font-size:16px;line-height:1.55;color:#3A4763;">${esc(l.lead)}</p>
+            ${code ? `<div style="margin:0 0 26px;padding:16px;border-radius:12px;background:#EEF2F8;text-align:center;font-family:Menlo,Consolas,'Courier New',monospace;font-size:22px;font-weight:700;letter-spacing:1px;color:#0B1630;">${esc(code)}</div>` : ""}
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td align="center" bgcolor="#2F6FED" style="border-radius:12px;">
@@ -95,10 +117,10 @@ function authEmailLetter(type, link, { siteUrl = "https://zalpos.ru/" } = {}) {
               </tr>
             </table>
             <p style="margin:26px 0 0;font-size:14px;line-height:1.5;color:#5B6784;">${esc(l.note)}</p>
-            <p style="margin:22px 0 0;padding-top:18px;border-top:1px solid #E3E8F2;font-size:12px;line-height:1.5;color:#8A94AD;">
+            ${hideRawLink ? "" : `<p style="margin:22px 0 0;padding-top:18px;border-top:1px solid #E3E8F2;font-size:12px;line-height:1.5;color:#8A94AD;">
               Кнопка не открывается? Скопируйте ссылку в адресную строку браузера:<br>
               <a href="${esc(link)}" target="_blank" style="color:#2F6FED;word-break:break-all;">${esc(link)}</a>
-            </p>
+            </p>`}
           </td>
         </tr>
         <tr>
@@ -143,4 +165,4 @@ function createMailer(env = process.env) {
   };
 }
 
-module.exports = { authEmailLetter, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
+module.exports = { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
