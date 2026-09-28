@@ -162,7 +162,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                                 ),
                                 ...section.items.map((item) => Padding(
                                       padding: const EdgeInsets.only(bottom: 10),
-                                      child: _itemTile(item, noImage: tobacco(item)),
+                                      child: _itemTile(item, tobacco: tobacco(item)),
                                     )),
                               ],
                             );
@@ -220,7 +220,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         ),
       );
 
-  Widget _itemTile(MenuItem item, {bool noImage = false}) {
+  /// [tobacco] — табак, кальян или принадлежности: вместо фото нейтральная
+  /// плашка «18+» (ст. 19 закона № 15-ФЗ — без изображений продукции).
+  Widget _itemTile(MenuItem item, {bool tobacco = false}) {
     final inCart = _cart[item.id]?.qty ?? 0;
 
     return Container(
@@ -239,7 +241,16 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             child: SizedBox(
               width: 72,
               height: 72,
-              child: item.imageUrl.isEmpty || noImage
+              child: tobacco
+                  ? Container(
+                      color: KolibriColors.surfaceElevated,
+                      alignment: Alignment.center,
+                      child: Text('18+',
+                          semanticsLabel: 'Только для совершеннолетних',
+                          style: TextStyle(
+                              color: KolibriColors.textMuted, fontSize: 20, fontWeight: FontWeight.w800)),
+                    )
+                  : item.imageUrl.isEmpty
                   ? Container(
                       color: KolibriColors.surfaceElevated,
                       child: Icon(
@@ -276,7 +287,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                   ),
                   // «Хит» — топ продаж за 30 дней (сервер не ставит его табаку).
-                  if (item.isHit && !noImage) ...[
+                  if (item.isHit && !tobacco) ...[
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),

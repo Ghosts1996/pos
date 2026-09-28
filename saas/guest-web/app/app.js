@@ -736,7 +736,8 @@ function screenMenu() {
       <div class="card">
         ${shown.length ? shown.map((i) => `
           <div class="item">
-            ${i.imageUrl && !tobacco(i) ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+            ${tobacco(i) ? '<div class="age18" role="img" aria-label="Только для совершеннолетних">18+</div>'
+              : i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
             <div class="grow">
               <div style="font-weight:600">${esc(i.name)}${Number(i.popularRank) > 0 && Number(i.popularRank) <= 5 && !tobacco(i)
                 ? ' <span class="hit">Хит</span>' : ''}</div>
