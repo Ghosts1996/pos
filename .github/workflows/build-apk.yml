@@ -27,7 +27,7 @@ jobs:
           - app: pos
             entrypoint: lib/main.dart
             project_name: hookahpos          # applicationId = com.hookahpos
-            label: Hookah POS
+            label: ZalPOS
             icon: assets/icon/icon.png
             adaptiveIcon: assets/icon/icon_foreground.png
             artifact: hookah-pos-apk

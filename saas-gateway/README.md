@@ -13,7 +13,7 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 `subscriptions` напрямую даже для своего заведения, см. `saas/firestore.rules`),
 `createTenant` (после создания заведения асинхронно, не блокируя ответ,
 автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
-`{slug}.hookahpos.su` через `sudo provision-tenant-domain.sh` — см.
+`{slug}.zalpos.ru` через `sudo provision-tenant-domain.sh` — см.
 `saas/README.md`, раздел 8c, включая ОБЯЗАТЕЛЬНУЮ настройку sudoers и
 `saas-gateway.service` без `NoNewPrivileges`, иначе создание заведения
 продолжит работать, а автовыпуск сертификата будет тихо падать в лог),
@@ -26,8 +26,8 @@ index.js`, а без тарифа Blaze у проекта `saas-3bdc8` прос�
 участнику заведения; номер версии — `buildNumber`, который присылает
 `completeBuildJob`, подробнее в докстринге `handleAppUpdate`),
 `firebaseConfig` (публичный веб-конфиг Firebase проекта — НЕ секрет, нужен
-`saas/guest-web/` на поддоменах `{slug}.hookahpos.su`, потому что
-`hookahpos.su/__/firebase/init.json` не отдаёт CORS для чужого origin —
+`saas/guest-web/` на поддоменах `{slug}.zalpos.ru`, потому что
+`zalpos.ru/__/firebase/init.json` не отдаёт CORS для чужого origin —
 подробнее в докстринге `handleFirebaseWebConfig` в `server.js`) и
 модерация из панели супер-админа — `enableTenant`/`disableTenant`/
 `changeTenantPlan`/`deleteDemoTenant` (эти четыре тоже раньше числились
@@ -126,7 +126,7 @@ cd saas-gateway
    → Your apps → веб-приложение (значок `</>`) → «SDK setup and
    configuration» → переключатель «Config» → скопировать объект целиком
    в одну строку. Нужен, чтобы `saas/guest-web/` на поддоменах
-   `{slug}.hookahpos.su` мог инициализировать Firebase — см. `firebaseConfig`
+   `{slug}.zalpos.ru` мог инициализировать Firebase — см. `firebaseConfig`
    выше и докстринг `handleFirebaseWebConfig` в `server.js`.
 5. **Реквизиты магазина ЮKassa** (`YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`)
    — тот же кабинет ЮKassa, что уже используется (или будет использоваться)
@@ -169,12 +169,12 @@ systemctl restart saas-gateway
 1. Добавить `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`
    (см. выше) и перезапустить сервис.
 2. В личном кабинете ЮKassa → Настройки → API-ключи и HTTP-уведомления →
-   указать адрес webhook'а: `https://pii.hookahpos.su/saas/billingWebhook`
+   указать адрес webhook'а: `https://pii.zalpos.ru/saas/billingWebhook`
    (замените домен, если у вас другой — тот же, что и у остальных ручек
    этого сервиса, см. `SAAS_GATEWAY_URL` в `console.js`). Раньше это был
    адрес Cloud Function `handleBillingWebhook` — если он там уже стоял,
    просто замените на новый.
-3. Проверить: `curl -X POST https://pii.hookahpos.su/saas/billingWebhook`
+3. Проверить: `curl -X POST https://pii.zalpos.ru/saas/billingWebhook`
    без тела должен вернуть `{"error":"bad request"}` (400) — значит,
    маршрут поднят и роутится правильно, а не 404.
 4. В `saas/console/console.js` ничего дополнительно менять не нужно —
@@ -196,9 +196,9 @@ systemctl restart saas-gateway
 ## nginx — добавить маршрут `/saas/` к уже настроенному домену
 
 Сервис использует тот же домен и сертификат, что и `pii-gateway`
-(`pii.hookahpos.su`) — экономим ещё один цикл DNS+certbot. Добавьте в
+(`pii.zalpos.ru`) — экономим ещё один цикл DNS+certbot. Добавьте в
 `/etc/nginx/conf.d/pii-gateway.conf` внутри существующего блока `server {
-listen 80/443 ...; server_name pii.hookahpos.su; ... }` ещё один `location`
+listen 80/443 ...; server_name pii.zalpos.ru; ... }` ещё один `location`
 ПЕРЕД блоком `location / { ... }` (порядок важен — nginx матчит более
 специфичный префикс первым независимо от порядка в файле, но для
 читаемости кладём его выше):
@@ -216,7 +216,7 @@ location /saas/ {
 Обратите внимание на слэш в конце `proxy_pass http://127.0.0.1:8081/` — он
 обрезает префикс `/saas/`, то есть запрос на `/saas/createTenant` уходит в
 сервис как `/createTenant`. После правки: `nginx -t && systemctl reload
-nginx`. Как только certbot выпустит сертификат для `pii.hookahpos.su`
+nginx`. Как только certbot выпустит сертификат для `pii.zalpos.ru`
 (см. `pii-gateway/README.md`), он автоматически применится и к этому
 `location` — отдельно ничего настраивать не нужно.
 
@@ -251,11 +251,11 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
 
 ## Секреты репозитория GitHub, которые нужно завести/поменять
 
-- **`SAAS_GATEWAY_URL`** (новый) — `https://pii.hookahpos.su/saas` — его
+- **`SAAS_GATEWAY_URL`** (новый) — `https://pii.zalpos.ru/saas` — его
   подхватывает `saas/console/console.js` и Flutter-сборки.
 - **`BUILD_CALLBACK_SECRET`** — то же значение, что вы ввели в `setup.sh`.
 - **`SAAS_COMPLETE_BUILD_JOB_URL`** — поменять на
-  `https://pii.hookahpos.su/saas/completeBuildJob` (раньше указывал на URL
+  `https://pii.zalpos.ru/saas/completeBuildJob` (раньше указывал на URL
   Cloud Function).
 
 ## ИИ-прокси и внутренняя сеть
@@ -272,7 +272,7 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
 ## Консоль (`saas/console/console.js`)
 
 Отредактируйте константу `SAAS_GATEWAY_URL` в начале файла на реальный
-адрес (`https://pii.hookahpos.su/saas`) — до этого момента она пустая, и
+адрес (`https://pii.zalpos.ru/saas`) — до этого момента она пустая, и
 кнопки «Создать заведение» / «Собрать APK» будут показывать понятную
 ошибку вместо тихого падения.
 
@@ -318,8 +318,8 @@ node restore-backup.js backups/firestore-...json.gz --yes              # вся 
 
 Необязательные переменные окружения: `BACKUP_DIR`, `BACKUP_KEEP` (14),
 `BACKUP_MAX_DOCS` (20000), `BACKUP_INTERVAL_HOURS` (24),
-`GUEST_BASE_DOMAIN` (hookahpos.su), `GATEWAY_PUBLIC_HOST`
-(pii.hookahpos.su), `CERT_CHECK_CONNECT_HOST` (127.0.0.1),
+`GUEST_BASE_DOMAIN` (zalpos.ru), `GATEWAY_PUBLIC_HOST`
+(pii.zalpos.ru), `CERT_CHECK_CONNECT_HOST` (127.0.0.1),
 `CERT_CHECK_PORT` (443).
 
 ## Подозрительная активность

@@ -1,5 +1,5 @@
 [Unit]
-Description=Hookah POS PII gateway (guest name/phone, primary storage in RF)
+Description=ZalPOS PII gateway (guest name/phone, primary storage in RF)
 After=network.target postgresql.service
 Wants=postgresql.service
 

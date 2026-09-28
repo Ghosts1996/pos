@@ -147,7 +147,7 @@ class HookahPosApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: branding?.appName ?? 'Hookah POS',
+      title: branding?.appName ?? 'ZalPOS',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

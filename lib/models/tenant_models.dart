@@ -256,6 +256,17 @@ class SessionSettings {
   }
 }
 
+/// Название приложения из базы. Прежнее название платформы («Hookah POS»)
+/// форма «Брендинг» сохраняла по умолчанию, когда владелец ничего не
+/// вводил, — это не имя заведения, показываем текущее название платформы.
+String _appNameOf(String? saved) {
+  if (saved == null) return 'ZalPOS';
+  const legacy = {'Hookah POS', 'Hoocah POS', 'HookahPOS'};
+  if (legacy.contains(saved.trim())) return 'ZalPOS';
+  if (saved.trim() == 'Hookah POS (демо)') return 'ZalPOS (демо)';
+  return saved;
+}
+
 /// Брендинг заведения (ТЗ §14) — то немногое, что реально нужно на первом
 /// этапе runtime-брендинга (цвета/название), полный набор (favicon/splash и
 /// т.п.) расширяется по мере реализации экрана предпросмотра (ТЗ §18).
@@ -279,8 +290,8 @@ class BrandingConfig {
   // литералы, а не импорт AppColors, — эта модель намеренно не зависит от
   // слоя темы/UI, см. заголовок файла.)
   const BrandingConfig({
-    this.appName = 'Hookah POS',
-    this.shortName = 'Hookah',
+    this.appName = 'ZalPOS',
+    this.shortName = 'ZalPOS',
     this.primaryColor = '#0B5ED7',
     this.secondaryColor = '#162A4A',
     this.accentColor = '#0B5ED7',
@@ -294,8 +305,8 @@ class BrandingConfig {
   factory BrandingConfig.fromMap(Map<String, dynamic>? d) {
     if (d == null) return const BrandingConfig();
     return BrandingConfig(
-      appName: d['appName'] as String? ?? 'Hookah POS',
-      shortName: d['shortName'] as String? ?? 'Hookah',
+      appName: _appNameOf(d['appName'] as String?),
+      shortName: d['shortName'] as String? ?? 'ZalPOS',
       primaryColor: d['primaryColor'] as String? ?? '#0B5ED7',
       secondaryColor: d['secondaryColor'] as String? ?? '#162A4A',
       accentColor: d['accentColor'] as String? ?? '#0B5ED7',

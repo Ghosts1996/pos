@@ -12,7 +12,7 @@ const net = require("net");
 const zlib = require("zlib");
 
 /**
- * Онбординг SaaS-платформы Hookah POS БЕЗ Cloud Functions.
+ * Онбординг SaaS-платформы ZalPOS БЕЗ Cloud Functions.
  *
  * ПОЧЕМУ этот сервис вообще существует. `createTenant`, `createBuildJob`,
  * `resolveTenantBySlug` и `completeBuildJob` жили в `saas/functions/index.js`
@@ -487,12 +487,12 @@ function getFirebaseWebConfig() {
  * projectId и т.д.) — НЕ секрет, то же самое видно в исходном коде любой
  * веб-страницы, использующей Firebase, или в собранном APK.
  *
- * Раздаём его отсюда, а не с hookahpos.su/__/firebase/init.json (тот
+ * Раздаём его отсюда, а не с zalpos.ru/__/firebase/init.json (тот
  * путь — приём Firebase Hosting для страниц, которые САМИ размещены на
  * этом хостинге: saas/console/console.js читает его РЕЛЯТИВНЫМ путём,
  * т.е. тем же origin, и получает его без проблем. А saas/guest-web/
- * (app.js, table.html) размещены на nginx-поддоменах {slug}.hookahpos.su
- * — ЧУЖОЙ origin для hookahpos.su, и тот путь не отдаёт CORS для чужого
+ * (app.js, table.html) размещены на nginx-поддоменах {slug}.zalpos.ru
+ * — ЧУЖОЙ origin для zalpos.ru, и тот путь не отдаёт CORS для чужого
  * origin: fetch с гостевого поддомена падал с "Failed to fetch" ещё до
  * какого-либо ответа сервера). Здесь тот же sendJson с уже проверенным
  * "Access-Control-Allow-Origin: *" (см. resolveTenantBySlug — оттуда же
@@ -560,7 +560,7 @@ async function handlePublicGuestApk(req, res) {
   // handleGetDownloadUrl (её JSON-ответ подставляет префикс САМ вызывающий
   // код, знающий SAAS_GATEWAY_URL, см. console.js/downloadBuild), здесь
   // редирект шлёт сам сервер: браузер разрешает Location с ведущим `/`
-  // от КОРНЯ ДОМЕНА pii.hookahpos.su, а не от точки, куда nginx примонтировал
+  // от КОРНЯ ДОМЕНА pii.zalpos.ru, а не от точки, куда nginx примонтировал
   // этот шлюз (`location /saas/` с обрезкой префикса перед проксированием
   // в Node) — без него запрос уходил на /downloadBuild мимо nginx-маршрута
   // шлюза вообще.
@@ -1057,18 +1057,18 @@ async function migrateCollectionDocs(firestore, srcCol, destCol) {
 
 /**
  * Автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
- * поддомена нового заведения ({slug}.hookahpos.su, см. saas/guest-web/ —
+ * поддомена нового заведения ({slug}.zalpos.ru, см. saas/guest-web/ —
  * веб-версия гостя и страница-прослойка QR стола).
  *
- * ПОЧЕМУ не единый wildcard-сертификат на *.hookahpos.su: DNS хостится у
+ * ПОЧЕМУ не единый wildcard-сертификат на *.zalpos.ru: DNS хостится у
  * регистратора без API, поддерживаемого certbot, — wildcard требует
  * DNS-01 challenge (TXT-запись), а его без API пришлось бы продлевать
  * руками каждые ~60 дней. Вместо этого — обычный HTTP-01 (никакого API
  * DNS не требует, только чтобы поддомен резолвился на этот сервер — а он
- * уже резолвится, DNS-запись `*.hookahpos.su` заведена один раз и
+ * уже резолвится, DNS-запись `*.zalpos.ru` заведена один раз и
  * навсегда) на КАЖДЫЙ поддомен отдельно, зато полностью автоматически:
  * этот вызов — и на выпуск, и на будущее продление (стандартный таймер
- * certbot, тот же, что уже продлевает pii.hookahpos.su, ничего
+ * certbot, тот же, что уже продлевает pii.zalpos.ru, ничего
  * дополнительно настраивать не нужно — просто больше файлов сертификатов
  * под тем же механизмом).
  *
@@ -1208,7 +1208,7 @@ async function handleCreateBuildJob(req, res) {
 
   // Название и лого заведения — это бренд ТОЛЬКО гостевого приложения
   // (saas-on-demand-build.yml игнорирует app_label/logo_url для matrix.app
-  // == pos: касса всегда "Hookah POS", бренд платформы, не арендатора).
+  // == pos: касса всегда "ZalPOS", бренд платформы, не арендатора).
   // appName предпочтительнее shortName: shortName — снимок имени на момент
   // создания заведения (обрезка до 12 символов), который не обновляется,
   // если владелец потом переименует заведение в «Брендинге» — appName как
@@ -1507,8 +1507,8 @@ async function handleCreateCheckoutSession(req, res) {
   const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
   const description = isChain
-    ? `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
-    : `Hookah POS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
+    ? `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
+    : `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
   const payment = await yookassaRequest("payments", {
     method: "POST",
     idempotenceKey: crypto.randomUUID(),
@@ -1518,7 +1518,7 @@ async function handleCreateCheckoutSession(req, res) {
       save_payment_method: true,
       confirmation: { type: "redirect", return_url: returnUrl },
       description,
-      receipt: yookassaReceipt(`Подписка Hookah POS: тариф «${plan.name || planId}», ${periodLabel}`, price,
+      receipt: yookassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price,
         decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId)),
       metadata: {
         tenantId: isChain ? null : tenantId,
@@ -1798,7 +1798,7 @@ async function runChargeRecurringSubscriptions() {
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
     try {
-      const receipt = yookassaReceipt(`Подписка Hookah POS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
+      const receipt = yookassaReceipt(`Подписка ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
         price, await billingOwnerEmail(isChain, targetId));
       await yookassaRequest("payments", {
         method: "POST",
@@ -1812,8 +1812,8 @@ async function runChargeRecurringSubscriptions() {
           payment_method_id: sub.paymentMethodId,
           receipt,
           description: isChain
-            ? `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} ${pointsWord(locationCount)}`
-            : `Hookah POS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
+            ? `ZalPOS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} ${pointsWord(locationCount)}`
+            : `ZalPOS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
           metadata: {
             tenantId: isChain ? null : targetId,
             chainId: isChain ? targetId : null,
@@ -2201,11 +2201,11 @@ async function handleDownloadBuild(req, res) {
   }
 
   const isWindows = job.platform === "windows";
-  // Имя файла — по типу сборки, а не всегда "hookah-pos-...": иначе кассу и
+  // Имя файла — по типу сборки, а не всегда "zalpos-...": иначе кассу и
   // гостевое приложение (независимые job'ы от одного нажатия «Собрать
   // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
   // друга без переименования вручную. Windows-кассу — от Android-кассы.
-  const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "hookah-pos-windows" : "hookah-pos";
+  const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "zalpos-windows" : "zalpos";
   // Windows-сборка раньше была zip-архивом, теперь — установщик setup.exe.
   // На диске оба лежат как "{jobId}.apk", поэтому что внутри, смотрим по
   // первым байтам: «MZ» — exe, иначе — старый zip.
@@ -2218,7 +2218,7 @@ async function handleDownloadBuild(req, res) {
       isInstaller = buffer.toString("latin1") === "MZ";
     } catch (_) {}
   }
-  const fileNamePrefix2 = isInstaller ? "hookah-pos-setup" : fileNamePrefix;
+  const fileNamePrefix2 = isInstaller ? "zalpos-setup" : fileNamePrefix;
   const fileExt = isWindows ? (isInstaller ? "exe" : "zip") : "apk";
   const contentType = isWindows
     ? (isInstaller ? "application/vnd.microsoft.portable-executable" : "application/zip")
@@ -2773,7 +2773,7 @@ async function handleCreateDemoTenant(req, res) {
     quickExtensions: [15, 30, 60],
   });
   batch.set(tenantRef.collection("branding").doc("config"), {
-    appName: "Hookah POS (демо)",
+    appName: "ZalPOS (демо)",
     shortName: "Демо",
     primaryColor: "#0B5ED7",
     secondaryColor: "#162A4A",
@@ -3292,7 +3292,7 @@ async function handleRecordAdminLogin(req, res) {
 // подключаясь к локальному nginx (CERT_CHECK_CONNECT_HOST) с нужным SNI, а
 // не через внешний IP: многие хостинги не пускают сервер к самому себе
 // по публичному адресу.
-const GUEST_BASE_DOMAIN = process.env.GUEST_BASE_DOMAIN || "hookahpos.su";
+const GUEST_BASE_DOMAIN = process.env.GUEST_BASE_DOMAIN || "zalpos.ru";
 const GATEWAY_PUBLIC_HOST = process.env.GATEWAY_PUBLIC_HOST || `pii.${GUEST_BASE_DOMAIN}`;
 const CERT_CHECK_CONNECT_HOST = process.env.CERT_CHECK_CONNECT_HOST || "127.0.0.1";
 const CERT_CHECK_PORT = Number(process.env.CERT_CHECK_PORT) || 443;
@@ -4430,7 +4430,7 @@ const server = http.createServer((req, res) => {
   // SaaS-аккаунт (см. docstring handlePublicGuestApk).
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
   // Публичный веб-конфиг Firebase — см. docstring handleFirebaseWebConfig,
-  // почему НЕ hookahpos.su/__/firebase/init.json.
+  // почему НЕ zalpos.ru/__/firebase/init.json.
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
 

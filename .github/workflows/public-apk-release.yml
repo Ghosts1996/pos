@@ -218,9 +218,9 @@ jobs:
 
           # Лейбл под иконкой — общий, эта сборка не привязана к заведению.
           xml = open(path, encoding='utf-8').read()
-          xml = xml.replace('android:label="hookahpossaas"', 'android:label="Hookah POS (демо)"')
+          xml = xml.replace('android:label="hookahpossaas"', 'android:label="ZalPOS (демо)"')
           import re
-          xml = re.sub(r'android:label="[^"]*"', 'android:label="Hookah POS (демо)"', xml, count=1)
+          xml = re.sub(r'android:label="[^"]*"', 'android:label="ZalPOS (демо)"', xml, count=1)
           open(path, 'w', encoding='utf-8').write(xml)
           PYEOF
 
@@ -408,8 +408,8 @@ jobs:
           SAAS_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.SAAS_FIREBASE_MESSAGING_SENDER_ID }}
           SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
-          PII_GATEWAY_URL: ${{ secrets.PII_GATEWAY_URL }}
-          SAAS_GATEWAY_URL: ${{ secrets.SAAS_GATEWAY_URL }}
+          PII_GATEWAY_URL: https://pii.zalpos.ru/
+          SAAS_GATEWAY_URL: https://pii.zalpos.ru/saas
         run: |
           if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
@@ -445,7 +445,7 @@ jobs:
           else
             gh release create "$TAG" "$FILE" \
               --repo "${{ github.repository }}" \
-              --title "Hookah POS — публичная демо-сборка" \
+              --title "ZalPOS — публичная демо-сборка" \
               --notes "Универсальный APK кассы без привязки к заведению — при первом запуске выберите «Демо» или введите код приглашения своего заведения. Файл обновляется автоматически при перезапуске workflow «Публичный APK» (не по версиям, а на месте — старый файл в этом релизе перезаписывается)."
           fi
 
@@ -457,7 +457,7 @@ jobs:
       # Ключ ограничен forced-command на сервере (authorized_keys,
       # command="/usr/local/bin/deploy-public-apk.sh",restrict) — им нельзя
       # получить обычный shell, только записать этот конкретный файл.
-      - name: Deploy to own server (pii.hookahpos.su)
+      - name: Deploy to own server (pii.zalpos.ru)
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
