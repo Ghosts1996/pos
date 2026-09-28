@@ -423,9 +423,9 @@ class FirestoreService {
   /// перезаписали друг друга.
   Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
-    // Кальян/табак — по названию позиции или её категории («Кальяны»):
+    // Кальян/табак — по флагу позиции, её названию или категории («Кальяны»):
     // на такие позиции не действуют скидки и бонусы (PromoPolicy).
-    var noPromo = PromoPolicy.looksTobacco(menuItem.name);
+    var noPromo = PromoPolicy.menuTobacco(menuItem);
     if (!noPromo && menuItem.categoryId.isNotEmpty) {
       try {
         final cat = await AppScope.col('menuCategories').doc(menuItem.categoryId).get();

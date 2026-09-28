@@ -685,7 +685,8 @@ function renderStories() {
  *  бонусы) — отдельная галочка согласия не нужна. */
 function privacyNotice(action) {
   return `<p class="small muted" style="margin:10px 0 0">Нажимая «${esc(action)}», вы соглашаетесь, что заведение
-    обработает ваше имя и телефон для брони и бонусной программы. Данные хранятся на серверах в России.
+    обработает ваше имя и телефон для брони и бонусной программы. Данные сначала записываются на сервер
+    в России, копия хранится в облаке Google для работы приложения.
     <a href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
 }
 
@@ -712,7 +713,7 @@ function screenMenu() {
     // чем перебирать категории — особенно когда их много.
     const atTable = !!(state.profile && state.profile.activeSessionId);
     const catName = (id) => (cats.find((c) => c.id === id) || {}).name || '';
-    const tobacco = (i) => TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
+    const tobacco = (i) => i.tobacco === true || TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
     const visible = atTable ? items : items.filter((i) => !tobacco(i));
     const hidden = items.length - visible.length;
     const visibleCats = atTable ? cats : cats.filter((c) =>

@@ -271,7 +271,9 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                     minLines: 1,
                     maxLines: 3,
                     onSubmitted: _send,
-                    decoration: const InputDecoration(hintText: 'Ваш вопрос…'),
+                    // Сообщения уходят ИИ-провайдеру заведения — просим не писать
+                    // туда телефон и прочие личные данные.
+                    decoration: const InputDecoration(hintText: 'Вопрос (без телефона и личных данных)'),
                   ),
                 ),
                 const SizedBox(width: 10),

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/menu_models.dart';
 import '../models/session_model.dart';
 import '../services/app_scope.dart';
 
@@ -23,6 +24,12 @@ class PromoPolicy {
 
   /// Название позиции или её категории похоже на табачную продукцию.
   static bool looksTobacco(String name) => _tobacco.hasMatch(name);
+
+  /// Позиция меню — табак: отмечена владельцем или похожа по названию
+  /// позиции/категории. Не зависит от [excludeTobacco]: реклама и показ вне
+  /// заведения запрещены всегда.
+  static bool menuTobacco(MenuItem item, [String categoryName = '']) =>
+      item.tobacco || looksTobacco(item.name) || looksTobacco(categoryName);
 
   /// Позицию нельзя удешевлять скидкой и бонусами.
   static bool restricted(OrderItem item) => excludeTobacco && (item.noPromo || looksTobacco(item.name));
