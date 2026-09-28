@@ -109,6 +109,17 @@ async function main() {
     check("POST /completeBuildJob с неверным секретом -> 403", r.status === 403);
   }
   {
+    // Автообновление: из GitHub — только с общим секретом, из панели —
+    // только администратору платформы (без входа — 401).
+    const r1 = await request("POST", "/rolloutApps", {
+      headers: { "x-callback-secret": "wrong-secret" },
+      body: { sha: "abcdef1" },
+    });
+    check("POST /rolloutApps с неверным секретом -> 403", r1.status === 403);
+    const r2 = await request("POST", "/rolloutApps", { body: {} });
+    check("POST /rolloutApps без входа -> 401", r2.status === 401);
+  }
+  {
     // Проверка обновлений: касса — только участнику заведения, гостю — без
     // входа, но с корректными полями (всё отваливается до Firestore).
     const r = await request("POST", "/appUpdate", { body: { tenantId: "t1", app: "pos", platform: "android", current: 5 } });

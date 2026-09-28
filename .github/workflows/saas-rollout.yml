@@ -1,0 +1,48 @@
+name: Автообновление приложений заведений
+
+# Изменился код приложений — сообщаем серверу платформы (saas-gateway,
+# POST /rolloutApps), а он сам по очереди пересобирает кассу и гостевое
+# приложение всем заведениям, у которых приложения уже собирались
+# (runAppRolloutTick в saas-gateway/server.js). Приложения на устройствах
+# находят новую версию и скачивают её сами — владельцу не нужно нажимать
+# «Собрать APK». Сборки берут эту же ветку (GITHUB_REF на сервере).
+#
+# Несколько push подряд склеиваются: сервер ждёт 5 минут после последнего.
+# Не раскатывать конкретный коммит — «[no rollout]» в его сообщении.
+on:
+  push:
+    branches: [claude/dazzling-babbage-n65p6l]
+    paths:
+      - 'lib/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/saas-on-demand-build.yml'
+
+concurrency:
+  group: saas-rollout
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    if: ${{ !contains(github.event.head_commit.message, '[no rollout]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Сообщить серверу о новой версии
+        env:
+          SECRET: ${{ secrets.BUILD_CALLBACK_SECRET }}
+        run: |
+          if [ -z "$SECRET" ]; then
+            echo "::error::Нет секрета BUILD_CALLBACK_SECRET — тот же, что у сборок (saas-on-demand-build.yml)."
+            exit 1
+          fi
+          code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://pii.zalpos.ru/saas/rolloutApps" \
+            -H "Content-Type: application/json" \
+            -H "x-callback-secret: $SECRET" \
+            -d "{\"sha\":\"${GITHUB_SHA}\"}")
+          cat resp.json; echo
+          if [ "$code" = "404" ]; then
+            echo "::warning::На сервере старая версия saas-gateway без /rolloutApps — обновите её (saas-gateway/README.md)."
+            exit 0
+          fi
+          [ "$code" = "200" ] || { echo "::error::Сервер ответил $code"; exit 1; }

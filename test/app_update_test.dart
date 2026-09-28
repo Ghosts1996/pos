@@ -45,8 +45,10 @@ class _FakeServer {
       });
 }
 
-AppUpdateService _svc(_FakeServer server, Directory dir, {String app = 'guest', int current = 42, String platform = 'android'}) =>
+AppUpdateService _svc(_FakeServer server, Directory dir,
+        {String app = 'guest', int current = 42, String platform = 'android', bool autoDownload = false}) =>
     AppUpdateService(
+      autoDownload: autoDownload,
       app: app,
       platform: platform,
       currentBuild: current,
@@ -126,6 +128,32 @@ void main() {
       final f = File('${dir.path}/update-43.apk');
       expect(await f.readAsBytes(), server.file);
       expect(await File('${f.path}.part').exists(), isFalse);
+    });
+
+    test('автообновление: нашлась новая версия — качается сама, дальше одно «Установить»', () async {
+      final server = _FakeServer();
+      final s = _svc(server, dir, app: 'pos', autoDownload: true);
+      await s.checkNow();
+      for (var i = 0; i < 50 && s.state.value.phase != AppUpdatePhase.ready; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(s.state.value.phase, AppUpdatePhase.ready);
+      expect(await File('${dir.path}/update-43.apk').readAsBytes(), server.file);
+    });
+
+    test('автообновление: после «Отмены» сама загрузка второй раз не начинается', () async {
+      final server = _FakeServer()..chunkDelay = const Duration(milliseconds: 5);
+      final s = _svc(server, dir, autoDownload: true);
+      await s.checkNow();
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      expect(s.state.value.phase, AppUpdatePhase.downloading);
+      s.cancel();
+      for (var i = 0; i < 50 && s.state.value.phase == AppUpdatePhase.downloading; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(s.state.value.phase, AppUpdatePhase.available);
+      await s.checkNow();
+      expect(s.state.value.phase, AppUpdatePhase.available);
     });
 
     test('уже скачанная версия — сразу «Установить», без второй загрузки', () async {

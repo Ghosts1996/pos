@@ -525,6 +525,7 @@ const SUB_STATUS_LABELS = {
 };
 const BUILD_STATUS_LABELS = {
   queued: 'в очереди', success: 'готова', failed: 'ошибка',
+  superseded: 'заменена новой версией',
 };
 // Одно нажатие «Собрать APK» создаёт сразу 2 buildJobs-документа с разным
 // type (см. handleCreateBuildJob в saas-gateway/server.js) — подпись, чтобы
@@ -2578,6 +2579,12 @@ function watchDashboardData(tenantId) {
         <p class="small muted">Гостевое приложение — меню, заказ из-за
         стола, вызов персонала, бонусы; название и логотип берутся из
         раздела «Брендинг».</p>
+        <p class="small muted">Собрать приложения нужно один раз. Дальше
+        они обновляются сами: когда выходит новая версия ZalPOS, сервер
+        собирает её для вашего заведения, а приложения на планшетах и
+        телефонах гостей скачивают обновление и предлагают его установить.
+        Нажимать «Собрать APK» снова стоит только после смены логотипа или
+        названия в «Брендинге».</p>
         <p class="small muted">На Windows недоступны сканер через камеру и
         Bluetooth-принтер чека — вместо них работают USB/Bluetooth-сканер
         «пистолет» с ручным вводом кода и сетевой Wi-Fi/LAN-принтер.</p>
@@ -2589,7 +2596,7 @@ function watchDashboardData(tenantId) {
           return `<button class="btn btn-ghost" id="f-request-build" ${hasQueued ? 'disabled' : ''}>${hasQueued ? 'Сборка уже идёт…' : 'Собрать APK'}</button>`;
         })() : ''}
         <div id="f-build-error" class="small" style="color:var(--danger);margin-top:6px"></div>
-        ${(buildJobs || []).length ? buildJobs.map((j) => `
+        ${(buildJobs || []).some((j) => j.status !== 'superseded') ? buildJobs.filter((j) => j.status !== 'superseded').map((j) => `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
             <div class="grow small muted">
               ${esc(buildJobLabel(j))} · ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
@@ -4161,6 +4168,7 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="builds">
         <h1>Сборки APK</h1>
+        <div id="admin-rollout"></div>
         <div id="admin-builds"><div class="spinner"></div></div>
       </div>
 
@@ -5034,7 +5042,47 @@ function watchAuditLog() {
   }));
 }
 
+/** Автообновление приложений всех заведений (runAppRolloutTick в
+ *  saas-gateway/server.js): что раскатывается сейчас и кнопка «пересобрать
+ *  всем» — она же снимает паузу после упавшей сборки. */
+const ROLLOUT_STATE_LABELS = {
+  waiting: 'ждёт запуска', running: 'идёт', done: 'все приложения обновлены', paused: 'на паузе',
+};
+function watchAppRollout() {
+  const box = $('admin-rollout');
+  if (!box) return;
+  sub(onSnapshot(doc(state.db, 'platformStatus', 'appRollout'), (snap) => {
+    const r = snap.exists() ? snap.data() : null;
+    const version = r?.sha ? (r.sha.startsWith('manual-') ? 'запуск из панели' : `коммит ${r.sha.slice(0, 7)}`) : '';
+    box.innerHTML = `
+      <div class="card">
+        <div class="small"><b>Автообновление приложений</b>${r ? ` · ${esc(ROLLOUT_STATE_LABELS[r.state] || r.state || '')}` : ''}</div>
+        <p class="small muted">После каждого обновления кода приложений сервер сам пересобирает
+        кассу и гостевое приложение всем заведениям, у которых приложения уже собирались
+        (по два заведения одновременно), — приложения на устройствах скачивают новую версию сами.
+        На сервере хранится только последняя сборка каждого приложения.</p>
+        ${r ? `<div class="small muted">${esc(version)} · запрошено ${fmtDateTime(r.requestedAt)}${r.finishedAt ? ` · завершено ${fmtDateTime(r.finishedAt)}` : ''}</div>` : ''}
+        ${r?.pausedReason ? `<div class="small" style="color:var(--danger);margin-top:6px">${esc(r.pausedReason)}</div>` : ''}
+        ${r?.lastError && r.state !== 'done' ? `<div class="small" style="color:var(--warning);margin-top:6px">${esc(r.lastError)}</div>` : ''}
+        <button class="btn btn-ghost" id="f-rollout-all" style="width:auto;margin-top:10px">Пересобрать приложения всем заведениям</button>
+      </div>`;
+    $('f-rollout-all').onclick = async (e) => {
+      if (!confirm('Пересобрать кассу и гостевое приложение всем заведениям, у которых они уже есть? Сборка идёт по очереди.')) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await callSaasGateway('rolloutApps', {});
+        toast('Пересборка запущена');
+      } catch (err) {
+        toast(err.message || 'Не удалось запустить');
+        btn.disabled = false;
+      }
+    };
+  }, () => { box.innerHTML = ''; }));
+}
+
 function watchAllBuildJobs() {
+  watchAppRollout();
   const body = $('admin-builds');
   const q = query(collection(state.db, 'buildJobs'), orderBy('createdAt', 'desc'), limit(50));
   sub(onSnapshot(q, async (snap) => {
