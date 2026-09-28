@@ -204,7 +204,8 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
               TextField(
                 controller: _name,
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Имя'),
+                decoration:
+                    const InputDecoration(labelText: 'Имя', helperText: 'Как в кассе — достаточно имени, без фамилии'),
               ),
               const SizedBox(height: 14),
               SizedBox(

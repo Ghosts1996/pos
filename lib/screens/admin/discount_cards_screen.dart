@@ -93,13 +93,22 @@ class DiscountCardsScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(controller: numberCtrl, decoration: const InputDecoration(labelText: 'Номер карты')),
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Имя гостя')),
+            // Только имя: карта хранится в облачной базе, и полное ФИО или
+            // телефон здесь были бы лишними персональными данными (152-ФЗ).
+            TextField(
+              controller: nameCtrl,
+              decoration:
+                  const InputDecoration(labelText: 'Имя гостя', helperText: 'Только имя — без фамилии и телефона'),
+            ),
             TextField(
               controller: percentCtrl,
               decoration: const InputDecoration(labelText: 'Скидка, %'),
               keyboardType: TextInputType.number,
             ),
-            TextField(controller: notesCtrl, decoration: const InputDecoration(labelText: 'Заметка')),
+            TextField(
+              controller: notesCtrl,
+              decoration: const InputDecoration(labelText: 'Заметка', helperText: 'Без телефонов и документов гостя'),
+            ),
           ],
         ),
         actions: [

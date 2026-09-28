@@ -262,6 +262,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     // Фискальные реквизиты позиции (54-ФЗ)
     var vat = item?.vat ?? '';
     var fiscalSubject = item?.fiscalSubject ?? 'commodity';
+    var tobacco = item?.tobacco ?? false;
 
     final result = await showDialog<_ItemDialogResult>(
       context: context,
@@ -289,6 +290,17 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Состав / описание',
                     hintText: 'Что входит в блюдо — видит гость и ИИ-помощник',
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: tobacco,
+                  onChanged: (v) => setDialogState(() => tobacco = v),
+                  title: const Text('Табак / никотин'),
+                  subtitle: const Text(
+                    'Кальян, табак, вейп: без скидок, бонусов и «Хита», гость '
+                    'видит позицию только за столом (закон № 15-ФЗ)',
+                    style: TextStyle(fontSize: 11),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -467,6 +479,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     vat: vat,
                     fiscalSubject: fiscalSubject,
                     description: descCtrl.text.trim(),
+                    tobacco: tobacco,
                   )),
               child: const Text('Сохранить'),
             ),
@@ -488,6 +501,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
         description: result.description,
+        tobacco: result.tobacco,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -500,6 +514,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
         description: result.description,
+        tobacco: result.tobacco,
       ));
     }
   }
@@ -647,6 +662,7 @@ class _ItemDialogResult {
   final String vat;
   final String fiscalSubject;
   final String description;
+  final bool tobacco;
 
   _ItemDialogResult({
     required this.name,
@@ -658,6 +674,7 @@ class _ItemDialogResult {
     this.vat = '',
     this.fiscalSubject = 'commodity',
     this.description = '',
+    this.tobacco = false,
   });
 }
 

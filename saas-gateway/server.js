@@ -1355,6 +1355,12 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
   // на случай, если кто-то вставит целое эссе. При возврате автопродления
   // очищается — старая причина не должна висеть как будто актуальная.
   const cancelReason = cancel ? String(reason || "").slice(0, 500) : null;
+  // Робокасса: без родительского платежа (оплатили без галочки согласия)
+  // списывать нечего — честно говорим, а не делаем вид, что включили.
+  const sub = subDoc.data() || {};
+  if (!cancel && sub.provider === "robokassa" && !sub.robokassaParentInvId) {
+    throw new HttpError(409, "Автопродление включается при оплате: во вкладке «Тарифы» отметьте «Автопродление» и оплатите следующий период");
+  }
   await subRef.update({ cancelAtPeriodEnd: cancel, cancelReason });
   await writeAuditLog({
     tenantId: isChain ? null : tenantId,
@@ -1528,7 +1534,7 @@ async function countChainLocations(chainId) {
  */
 async function handleCreateCheckoutSession(req, res) {
   const decoded = await verifyAuth(req);
-  const { tenantId, chainId, planId, returnUrl, billingPeriod: rawBillingPeriod } = await parseJsonBody(req);
+  const { tenantId, chainId, planId, returnUrl, billingPeriod: rawBillingPeriod, autoRenew } = await parseJsonBody(req);
   const isChain = typeof chainId === "string" && !!chainId;
   if (!isChain && (typeof tenantId !== "string" || !tenantId)) {
     throw new HttpError(400, "Не указано заведение");
@@ -1562,15 +1568,19 @@ async function handleCreateCheckoutSession(req, res) {
   const email = decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId);
 
   if (billingProvider() === "robokassa") {
+    // Автосписания — только с явного согласия владельца (галочка
+    // «Автопродление» в консоли, по умолчанию снята): так требуют правила
+    // Робокассы для рекуррентных платежей и ст. 16 закона № 2300-1.
+    const recurring = robokassaConfig().recurring && autoRenew === true;
     const invoice = await createRobokassaInvoice({
       tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
       planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
-      locationCount: isChain ? locationCount : null, requestedBy: decoded.uid,
+      locationCount: isChain ? locationCount : null, requestedBy: decoded.uid, recurring,
     });
     const url = robokassaPaymentUrl({
       invId: invoice.invId, outSum: invoice.outSum,
       description: `ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`,
-      email, recurring: robokassaConfig().recurring,
+      email, recurring,
     });
     sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId) });
     return;
@@ -1699,13 +1709,13 @@ function safeReturnUrl(raw) {
   return "https://zalpos.ru/#/";
 }
 
-async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null }) {
+async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null, recurring = null }) {
   const invId = await nextRobokassaInvId();
   const outSum = amount.toFixed(2);
   await db().collection("billingInvoices").doc(String(invId)).set({
     provider: "robokassa", invId, tenantId, chainId, planId, billingPeriod, purpose,
     amount, outSum, email: email || null, returnUrl: safeReturnUrl(returnUrl),
-    locationCount, parentInvId, requestedBy,
+    locationCount, parentInvId, requestedBy, recurring,
     status: "pending", createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   return { invId, outSum };
@@ -1788,7 +1798,11 @@ async function handleRobokassaResult(req, res) {
   }
 
   // Первая оплата с Recurring=true — «родитель» будущих автосписаний.
-  const parent = inv.parentInvId || (c.recurring && inv.purpose === "subscription" ? Number(invId) : null);
+  // recurring == null — счёт создан до галочки согласия (старая логика).
+  const withConsent = inv.recurring == null ? c.recurring : inv.recurring === true;
+  const parent = inv.parentInvId || (withConsent && inv.purpose === "subscription" ? Number(invId) : null);
+  // Оплатил без галочки — прежнее согласие на автосписания больше не действует.
+  const noAutoRenew = !parent && inv.purpose === "subscription" && inv.recurring === false;
   await applySubscriptionPayment({
     eventId: `robokassa_${invId}`,
     provider: "robokassa",
@@ -1797,7 +1811,9 @@ async function handleRobokassaResult(req, res) {
     billingPeriod: normalizeBillingPeriod(inv.billingPeriod),
     amount: Number(inv.amount) || 0,
     purpose: inv.purpose || "subscription",
-    extra: parent ? { robokassaParentInvId: parent } : {},
+    extra: parent
+      ? { robokassaParentInvId: parent, ...(inv.parentInvId ? {} : { autoRenewConsentAt: admin.firestore.FieldValue.serverTimestamp() }) }
+      : noAutoRenew ? { robokassaParentInvId: null, cancelAtPeriodEnd: true } : {},
   });
   await invRef.set({
     status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2597,7 +2613,7 @@ async function computeMenuPopularity(tenantRef) {
   const catName = new Map(cats.docs.map((c) => [c.id, String(c.data().name || "")]));
   const ranked = items.docs
     .filter((d) => (sold.get(d.id) || 0) > 0)
-    .filter((d) => !TOBACCO_RE.test(String(d.data().name || "")) && !TOBACCO_RE.test(catName.get(d.data().categoryId) || ""))
+    .filter((d) => d.data().tobacco !== true && !TOBACCO_RE.test(String(d.data().name || "")) && !TOBACCO_RE.test(catName.get(d.data().categoryId) || ""))
     .sort((a, b) => sold.get(b.id) - sold.get(a.id))
     .slice(0, POPULAR_TOP);
   const rankOf = new Map(ranked.map((d, i) => [d.id, i + 1]));
@@ -3193,11 +3209,14 @@ const WIKI_FILE = (name) => `https://commons.wikimedia.org/wiki/Special:FilePath
 
 const DEMO_MENU = [
   {
+    // Табак — без фото и с флагом tobacco (ст. 16 закона № 15-ФЗ): фото
+    // кальяна в меню гостя — уже реклама, флаг снимает скидки и «Хит».
     category: "Кальяны",
+    tobacco: true,
     items: [
-      { name: "Классический кальян", price: 1200, image: WIKI_FILE("Hookah_2.jpg") },
-      { name: "Кальян на молоке", price: 1500, image: WIKI_FILE("Hookah_0890.jpg") },
-      { name: "Премиум-микс", price: 1800, image: WIKI_FILE("Shisha_hookah.jpg") },
+      { name: "Классический кальян", price: 1200 },
+      { name: "Кальян на молоке", price: 1500 },
+      { name: "Премиум-микс", price: 1800 },
     ],
   },
   {
@@ -3288,6 +3307,7 @@ function seedDemoData(tenantRef, batch, nowMs) {
         price: item.price,
         available: true,
         imageUrl: item.image || "",
+        tobacco: cat.tobacco === true,
         weight: 0,
         weightUnit: "",
         inventoryItemId: "",
