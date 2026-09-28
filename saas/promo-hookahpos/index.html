@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HookahPOS — касса и учёт для кальянной и лаунж-бара | ZalPOS</title>
+<meta name="description" content="Касса для кальянной и лаунж-бара: сеансы и таймеры столов, карта зала, брони, склад, зарплата, гостевое приложение. Скидки и бонусы на табачную продукцию выключены по 15-ФЗ. Работает на Android и Windows. Платформа ZalPOS.">
+<link rel="canonical" href="https://hookahpos.su/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="HookahPOS — касса для кальянной и лаунж-бара">
+<meta property="og:description" content="Сеансы и таймеры столов, карта зала, брони, склад и зарплата в одной системе. Платформа ZalPOS.">
+<meta property="og:url" content="https://hookahpos.su/">
+<meta property="og:locale" content="ru_RU">
+<meta name="theme-color" content="#070B14">
+<script>
+  // Старые ссылки на личный кабинет (hookahpos.su/#/…, ссылки для входа из
+  // писем) — платформа теперь на zalpos.ru.
+  (function () {
+    var h = location.hash || '', s = location.search || '';
+    if (h.indexOf('#/') === 0 || s.indexOf('oobCode=') >= 0 || s.indexOf('mode=') >= 0) {
+      location.replace('https://zalpos.ru/' + s + h);
+    }
+  })();
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ZalPOS",
+  "alternateName": "HookahPOS",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Android, Windows",
+  "url": "https://zalpos.ru/",
+  "description": "Касса и управление заведением для кальянных, лаунж-баров, кафе и ресторанов."
+}
+</script>
+<style>
+  :root {
+    --bg: #070B14; --surface: #101827; --surface-2: #17223A; --border: #26324A;
+    --text: #F3F6FC; --muted: #8DA0C7; --primary: #2F6FED; --primary-2: #59A6FF; --ok: #3FB27F;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--primary-2); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 0; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: .2px; color: var(--text); text-decoration: none; }
+  .logo small { font-weight: 500; font-size: 13px; color: var(--muted); margin-left: 6px; }
+  .btn {
+    display: inline-block; padding: 13px 22px; border-radius: 12px; font-weight: 700; text-decoration: none;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #fff; white-space: nowrap;
+  }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 600; padding: 10px 16px; }
+  .hero { padding: 40px 0 28px; display: grid; gap: 28px; grid-template-columns: 1.2fr 1fr; align-items: center; }
+  h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.12; margin: 0 0 16px; letter-spacing: -.5px; }
+  h1 span { background: linear-gradient(135deg, var(--primary-2), #9CC8FF); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: var(--muted); font-size: 18px; margin: 0 0 24px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .pill { font-size: 13px; padding: 6px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+  .hall {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 18px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; aspect-ratio: 4 / 3;
+  }
+  .t { border-radius: 14px; border: 2px solid var(--border); padding: 10px; display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 13px; color: var(--muted); }
+  .t b { color: var(--text); font-size: 15px; }
+  .t.busy { border-color: #3B82F6; background: rgba(59,130,246,.12); }
+  .t.soon { border-color: #E7B24E; background: rgba(231,178,78,.10); }
+  .t.free { border-color: rgba(63,178,127,.7); }
+  .t.wide { grid-column: span 2; }
+  .t .time { font-weight: 700; color: #7FB0FF; }
+  .t.soon .time { color: #E7B24E; }
+  section { padding: 34px 0; }
+  h2 { font-size: clamp(24px, 3.4vw, 32px); margin: 0 0 8px; letter-spacing: -.3px; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; }
+  .card h3 { margin: 6px 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .ico { font-size: 22px; }
+  .law { border-left: 3px solid var(--ok); }
+  .steps { counter-reset: s; display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); }
+  .step { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; }
+  .step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--surface-2); color: var(--primary-2); font-weight: 800; margin-bottom: 8px; }
+  .step p { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+  .more { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cta { background: linear-gradient(135deg, #0F1D3A, #13284F); border: 1px solid var(--border); border-radius: 22px; padding: 28px; display: flex; gap: 18px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .cta p { margin: 6px 0 0; color: var(--muted); }
+  footer { color: var(--muted); font-size: 13px; padding: 28px 0 40px; border-top: 1px solid var(--border); margin-top: 20px; }
+  footer a { color: var(--muted); }
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; padding-top: 16px; }
+    .grid, .steps { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 560px) {
+    .grid, .steps { grid-template-columns: 1fr; }
+    header .btn.ghost { display: none; }
+    .btn { width: 100%; text-align: center; }
+    .cta { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="logo" href="https://hookahpos.su/">HookahPOS<small>на платформе ZalPOS</small></a>
+    <a class="btn ghost" href="https://zalpos.ru/#/login">Войти в кабинет</a>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h1>Касса и учёт <span>для кальянной и лаунж-бара</span></h1>
+      <p class="lead">Сеансы с таймерами на каждом столе, карта зала, брони, склад, зарплата и приложение для гостей —
+        в одной системе. Запуск за 15 минут на обычном Android-планшете или компьютере с Windows.</p>
+      <a class="btn" href="https://zalpos.ru/">Попробовать бесплатно</a>
+      <div class="pills">
+        <span class="pill">Пробный период без карты</span>
+        <span class="pill">Данные гостей хранятся в РФ</span>
+        <span class="pill">Работает без интернета</span>
+      </div>
+    </div>
+    <div class="hall" aria-hidden="true">
+      <div class="t busy"><b>Стол 1</b><span class="time">1:12</span></div>
+      <div class="t free"><b>Стол 2</b>свободен</div>
+      <div class="t soon"><b>Стол 3</b><span class="time">0:08</span></div>
+      <div class="t busy wide"><b>VIP</b><span class="time">2:40</span></div>
+      <div class="t free"><b>Стол 5</b>бронь 21:00</div>
+      <div class="t free"><b>Бар</b>6 мест</div>
+      <div class="t busy wide"><b>Терраса</b><span class="time">0:45</span></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Сделано под работу лаунжа</h2>
+    <p class="sub">То, чего не хватает обычной ресторанной кассе.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">⏱️</div><h3>Сеансы и таймеры</h3><p>Время на каждом столе: сколько осталось, кто скоро освободится, у кого время вышло. Цвет стола меняется сам.</p></div>
+      <div class="card"><div class="ico">🗺️</div><h3>Карта зала</h3><p>Зоны, длинные и угловые столы, барная стойка. Несколько чеков на одном столе и пересадка гостей без потери заказа.</p></div>
+      <div class="card"><div class="ico">🔔</div><h3>Вызов мастера</h3><p>Гость зовёт мастера или официанта со своего телефона, на кассе загорается стол. Напоминания персоналу по сеансам.</p></div>
+      <div class="card"><div class="ico">📅</div><h3>Брони и лист ожидания</h3><p>Бронь из приложения гостя и по телефону, подбор свободного стола на нужное время, оценка ожидания.</p></div>
+      <div class="card"><div class="ico">👥</div><h3>Смены и зарплата</h3><p>Кто на смене, табель, оплата за час, за смену и процент с продаж, чаевые конкретному сотруднику.</p></div>
+      <div class="card law"><div class="ico">⚖️</div><h3>По закону</h3><p>Скидки и бонусы на табачную продукцию не начисляются — требование 15-ФЗ включено по умолчанию. Фискальные чеки через АТОЛ.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>И всё остальное для заведения</h2>
+    <p class="sub">Та же система, что у кафе и ресторанов на ZalPOS.</p>
+    <div class="more">
+      <span class="pill">Оплата картой, наличными, раздельный счёт</span>
+      <span class="pill">Склад и техкарты</span>
+      <span class="pill">ЕГАИС для бара</span>
+      <span class="pill">Программа лояльности</span>
+      <span class="pill">Гостевое приложение под вашим логотипом</span>
+      <span class="pill">Отчёты и X-отчёт смены</span>
+      <span class="pill">Сеть заведений</span>
+      <span class="pill">ИИ-помощники</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Как начать</h2>
+    <div class="steps">
+      <div class="step"><b>Зарегистрируйтесь</b><p>Укажите email на zalpos.ru — ссылка для входа придёт на почту, пароль не нужен.</p></div>
+      <div class="step"><b>Настройте зал и меню</b><p>Расставьте столы в редакторе, добавьте позиции и сотрудников — или начните с демо-заведения.</p></div>
+      <div class="step"><b>Установите кассу</b><p>Скачайте приложение на планшет или компьютер и подключите его кодом из личного кабинета.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cta">
+      <div>
+        <h2>Попробуйте на своём заведении</h2>
+        <p>Бесплатный пробный период. В приложении кассы есть демо с заполненным меню и столами.</p>
+      </div>
+      <a class="btn" href="https://zalpos.ru/">Перейти на zalpos.ru</a>
+    </div>
+  </section>
+
+  <footer>
+    HookahPOS — страница платформы <a href="https://zalpos.ru/">ZalPOS</a> для кальянных и лаунж-баров.
+    Сервис и личный кабинет — на zalpos.ru.
+    <a href="https://zalpos.ru/#/legal/offer">Оферта</a> ·
+    <a href="https://zalpos.ru/#/legal/privacy">Политика конфиденциальности</a>
+  </footer>
+</div>
+</body>
+</html>
