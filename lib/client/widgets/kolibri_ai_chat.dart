@@ -6,32 +6,28 @@ import '../../services/ai/tooken_client.dart';
 import '../../services/guest_link_service.dart';
 import '../theme/kolibri_theme.dart';
 
-/// ИИ-консьерж гостя в «Colibri Lounge».
+/// ИИ-помощник гостя: меню и состав блюд, популярное, столы и брони,
+/// бонусы, вызов персонала; про кальян — если гость спросит сам.
 ///
-/// Работает поверх того же ключа tooken.club, что и POS: агент `concierge`
+/// Работает поверх того же ключа ИИ, что и касса: агент `concierge`
 /// видит актуальное меню (без стоп-листа) и обезличенный портрет гостя,
 /// поэтому советует то, что реально есть в зале прямо сейчас.
 class KolibriAiChat extends StatefulWidget {
   final String guestUid;
 
-  /// Открыть чат сразу с готовым вопросом (например, «подбери мне кальян»).
+  /// Открыть чат сразу с готовым вопросом.
   final String? initialQuestion;
-
-  /// Если true — отвечает агент «Кальянный сомелье», иначе консьерж.
-  final bool sommelierMode;
 
   const KolibriAiChat({
     super.key,
     required this.guestUid,
     this.initialQuestion,
-    this.sommelierMode = false,
   });
 
   static Future<void> show(
     BuildContext context, {
     required String guestUid,
     String? initialQuestion,
-    bool sommelierMode = false,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -44,7 +40,6 @@ class KolibriAiChat extends StatefulWidget {
           child: KolibriAiChat(
             guestUid: guestUid,
             initialQuestion: initialQuestion,
-            sommelierMode: sommelierMode,
           ),
         ),
       ),
@@ -70,17 +65,12 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
   bool _busy = false;
   String? _error;
 
-  List<String> get _quick => widget.sommelierMode
-      ? const [
-          'Хочу что-то кисло-фруктовое',
-          'Покрепче, но без горечи',
-          'Мы вчетвером, что взять?',
-        ]
-      : const [
-          'Что у вас есть сегодня?',
-          'Как работают бонусы?',
-          'До скольки вы работаете?',
-        ];
+  List<String> get _quick => const [
+        'Что у вас популярное?',
+        'Мы вчетвером, что взять?',
+        'Есть свободный стол на вечер?',
+        'Как работают бонусы?',
+      ];
 
   @override
   void initState() {
@@ -116,20 +106,18 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = quota.reason ?? 'ИИ-консьерж сейчас недоступен.';
+          _error = quota.reason ?? 'ИИ-помощник сейчас недоступен.';
         });
       }
       return;
     }
 
     try {
-      final reply = widget.sommelierMode
-          ? await AiService.instance.sommelier(text, guestUid: widget.guestUid)
-          : await AiService.instance.conciergeReply(
-              text,
-              guestUid: widget.guestUid,
-              history: List.of(_history),
-            );
+      final reply = await AiService.instance.conciergeReply(
+        text,
+        guestUid: widget.guestUid,
+        history: List.of(_history),
+      );
       if (!mounted) return;
       setState(() => _msgs.add(_Msg(false, reply)));
       _history
@@ -142,7 +130,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       if (mounted) {
         setState(() => _error = e is AiException
             ? e.message
-            : 'Консьерж сейчас недоступен, позовите ${VenueService.instance.terms.staffAcc} в зале.');
+            : 'Помощник сейчас недоступен, позовите ${VenueService.instance.terms.staffAcc} в зале.');
       }
     }
 
@@ -180,9 +168,9 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(widget.sommelierMode ? 'Кальянный сомелье' : 'ИИ-консьерж',
-                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-                      Text('Подскажу по меню, броням и бонусам',
+                      const Text('ИИ-помощник',
+                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                      Text('Меню и состав блюд, популярное, столы и брони',
                           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
                     ],
                   ),

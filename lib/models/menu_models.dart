@@ -115,6 +115,15 @@ class MenuItem {
   /// кальян, аренда), 'excise' (подакцизный — табак, пиво, алкоголь).
   final String fiscalSubject;
 
+  /// Состав и описание для гостя («томаты, моцарелла, базилик»): видно в
+  /// меню гостя, по нему ИИ-помощник рассказывает, что входит в блюдо.
+  final String description;
+
+  /// Место в топе продаж за 30 дней (1 — самая популярная), 0 — не в топе.
+  /// Считает сервер раз в сутки (saas-gateway, runMenuPopularity); в
+  /// toMap() намеренно не пишется — правка позиции его не сотрёт.
+  final int popularRank;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -128,7 +137,12 @@ class MenuItem {
     this.components = const [],
     this.vat = '',
     this.fiscalSubject = 'commodity',
+    this.description = '',
+    this.popularRank = 0,
   });
+
+  /// Входит в пятёрку самых популярных — бейдж «Хит» у гостя.
+  bool get isHit => popularRank > 0 && popularRank <= 5;
 
   /// Позиция привязана к складу через простую связь.
   bool get hasInventoryLink => inventoryItemId.isNotEmpty && weight > 0;
@@ -157,10 +171,13 @@ class MenuItem {
           .toList(),
       vat: (data['vat'] as String?) ?? '',
       fiscalSubject: (data['fiscalSubject'] as String?) ?? 'commodity',
+      description: (data['description'] as String?) ?? '',
+      popularRank: (data['popularRank'] as num?)?.toInt() ?? 0,
     );
   }
 
   Map<String, dynamic> toMap() => {
+        'description': description,
         'vat': vat,
         'fiscalSubject': fiscalSubject,
         'categoryId': categoryId,
@@ -186,9 +203,12 @@ class MenuItem {
     List<MenuItemComponent>? components,
     String? vat,
     String? fiscalSubject,
+    String? description,
   }) =>
       MenuItem(
         id: id,
+        description: description ?? this.description,
+        popularRank: popularRank,
         vat: vat ?? this.vat,
         fiscalSubject: fiscalSubject ?? this.fiscalSubject,
         categoryId: categoryId ?? this.categoryId,

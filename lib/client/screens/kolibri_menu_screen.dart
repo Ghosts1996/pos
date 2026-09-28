@@ -271,8 +271,32 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.name,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                Row(children: [
+                  Flexible(
+                    child: Text(item.name,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  ),
+                  // «Хит» — топ продаж за 30 дней (сервер не ставит его табаку).
+                  if (item.isHit && !noImage) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: KolibriColors.gold.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text('Хит',
+                          style: TextStyle(color: KolibriColors.gold, fontSize: 11, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
+                ]),
+                if (item.description.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(item.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: KolibriColors.textMuted, fontSize: 12.5, height: 1.3)),
+                ],
                 const SizedBox(height: 4),
                 Text(
                   '${rub(item.price)}'

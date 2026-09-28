@@ -203,35 +203,16 @@ class KolibriHomeScreen extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
-            // Кальянный сомелье — только в кальянной; в ресторане, кафе и
-            // баре тот же ИИ советует, что взять из меню.
+            // ИИ-помощник — один для любого заведения: меню и состав,
+            // популярное, столы и брони, бонусы. Про кальян сам не
+            // заговаривает — только отвечает на вопрос гостя (15-ФЗ).
             Expanded(
-              child: ValueListenableBuilder<VenueProfile>(
-                valueListenable: VenueService.instance.notifier,
-                builder: (context, venue, _) => venue.terms.isHookah
-                  ? _action(
-                      icon: Icons.auto_awesome,
-                      title: 'Подбор кальяна',
-                      subtitle: 'ИИ-сомелье',
-                      color: KolibriColors.gold,
-                      onTap: () => KolibriAiChat.show(
-                        context,
-                        guestUid: auth.uid,
-                        sommelierMode: true,
-                        initialQuestion: 'Подбери мне кальян на сегодня.',
-                      ),
-                    )
-                  : _action(
-                      icon: Icons.auto_awesome,
-                      title: 'Что выбрать?',
-                      subtitle: 'ИИ-консьерж',
-                      color: KolibriColors.gold,
-                      onTap: () => KolibriAiChat.show(
-                        context,
-                        guestUid: auth.uid,
-                        initialQuestion: 'Посоветуй, что взять сегодня из меню.',
-                      ),
-                    ),
+              child: _action(
+                icon: Icons.auto_awesome,
+                title: 'ИИ-помощник',
+                subtitle: 'Меню, столы, советы',
+                color: KolibriColors.gold,
+                onTap: () => KolibriAiChat.show(context, guestUid: auth.uid),
               ),
             ),
             const SizedBox(width: 12),

@@ -300,3 +300,7 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
 .daychip small { font-size: 11px; font-weight: 400; color: var(--muted); margin-bottom: 2px; }
 .daychip.on { background: var(--primary); color: var(--on-primary, #04140E); border-color: var(--primary); }
 .daychip.on small { color: inherit; opacity: .7; }
+
+/* «Хит» — топ продаж за 30 дней (runMenuPopularity на сервере). */
+.hit { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 700;
+  color: var(--gold, #D4AF37); background: color-mix(in srgb, var(--gold, #D4AF37) 18%, transparent); vertical-align: 1px; }

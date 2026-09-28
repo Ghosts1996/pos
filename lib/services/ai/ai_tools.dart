@@ -114,6 +114,14 @@ class AiToolRegistry {
     ),
 
     AiTool(
+      name: 'get_tables',
+      description: 'Столы заведения: сколько мест, зона и свободен ли стол прямо сейчас.',
+      parameters: _params({}),
+      scopes: {AiToolScope.staff, AiToolScope.guest},
+      run: (args, ctx) => _ctx.tablesForGuest(),
+    ),
+
+    AiTool(
       name: 'get_hall_state',
       description: 'Состояние зала прямо сейчас: столы, открытые чеки, таймеры, суммы.',
       parameters: _params({}),

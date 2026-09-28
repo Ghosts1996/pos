@@ -43,7 +43,9 @@ class AiContextService {
       for (final i in list) {
         if (count++ >= limit) break;
         final weight = i.weight > 0 ? ', ${i.weight.toStringAsFixed(0)} ${i.weightUnit.name}' : '';
-        buf.writeln('- ${i.name} — ${money(i.price)}$weight [id:${i.id}]');
+        final hit = i.popularRank > 0 ? ', хит продаж №${i.popularRank}' : '';
+        final desc = i.description.isNotEmpty ? '. Состав: ${i.description}' : '';
+        buf.writeln('- ${i.name} — ${money(i.price)}$weight$hit [id:${i.id}]$desc');
       }
     }
     return buf.toString();
@@ -69,6 +71,19 @@ class AiContextService {
   }
 
   // ---------- ЗАЛ ПРЯМО СЕЙЧАС ----------
+
+  /// Столы для гостя: места, зона и занят ли сейчас — без имён гостей,
+  /// сумм и таймеров других столов.
+  Future<String> tablesForGuest() async {
+    final snap = await AppScope.col('tables').get();
+    final tables = snap.docs.map(TableModel.fromDoc).toList()..sort((a, b) => a.name.compareTo(b.name));
+    if (tables.isEmpty) return 'Столы не заведены.';
+    return tables.map((t) {
+      final busy = t.activeSessionIds.isNotEmpty || t.status == 'occupied';
+      final zone = t.zone.isNotEmpty ? ', зона «${t.zone}»' : '';
+      return '- ${t.name} (${seatsLabel(t.seats)}$zone): ${busy ? 'сейчас занят' : 'сейчас свободен'}';
+    }).join('\n');
+  }
 
   Future<String> hallSnapshot() async {
     final tablesSnap = await AppScope.col('tables').get();

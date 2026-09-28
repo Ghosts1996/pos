@@ -195,7 +195,7 @@ class AiSettings {
   final double temperature;
   final int maxTokens;
 
-  /// Индивидуальные выключатели агентов: {'hookah_sommelier': true, ...}.
+  /// Индивидуальные выключатели агентов: {'concierge': true, ...}.
   /// Ключ отсутствует — агент считается включённым.
   final Map<String, bool> agents;
 

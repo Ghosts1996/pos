@@ -2564,6 +2564,68 @@ async function sweepTenantBuilds() {
   return { removedFiles, freedBytes };
 }
 
+// ------------------------------------------------- хиты меню
+
+/**
+ * Раз в сутки: топ-10 позиций меню каждого заведения по числу продаж за
+ * 30 дней — menuItems/{id}.popularRank (1 — самая популярная, 0 — не в
+ * топе). Гость видит «Хит» у первой пятёрки, ИИ-помощник называет их на
+ * «что у вас популярное». Приложение гостя чеки не видит, поэтому считает
+ * сервер; наружу уходит только место в топе, без сумм и чеков. Табак в
+ * хиты не попадает — это было бы стимулированием продаж (ст. 16 15-ФЗ).
+ */
+const POPULAR_DAYS = 30;
+const POPULAR_TOP = 10;
+const TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
+
+async function computeMenuPopularity(tenantRef) {
+  const since = admin.firestore.Timestamp.fromMillis(Date.now() - POPULAR_DAYS * 86400 * 1000);
+  const [sessions, items, cats] = await Promise.all([
+    tenantRef.collection("sessions").where("closedAt", ">=", since).get(),
+    tenantRef.collection("menuItems").get(),
+    tenantRef.collection("menuCategories").get(),
+  ]);
+  const sold = new Map();
+  for (const s of sessions.docs) {
+    const d = s.data();
+    if (d.status !== "closed" || d.refunded) continue;
+    for (const it of d.orderItems || []) {
+      if (!it || !it.menuItemId) continue;
+      sold.set(it.menuItemId, (sold.get(it.menuItemId) || 0) + (Number(it.qty) || 0));
+    }
+  }
+  const catName = new Map(cats.docs.map((c) => [c.id, String(c.data().name || "")]));
+  const ranked = items.docs
+    .filter((d) => (sold.get(d.id) || 0) > 0)
+    .filter((d) => !TOBACCO_RE.test(String(d.data().name || "")) && !TOBACCO_RE.test(catName.get(d.data().categoryId) || ""))
+    .sort((a, b) => sold.get(b.id) - sold.get(a.id))
+    .slice(0, POPULAR_TOP);
+  const rankOf = new Map(ranked.map((d, i) => [d.id, i + 1]));
+  const changes = items.docs.filter((d) => (Number(d.data().popularRank) || 0) !== (rankOf.get(d.id) || 0));
+  for (let i = 0; i < changes.length; i += 400) {
+    const batch = db().batch();
+    changes.slice(i, i + 400).forEach((d) => batch.update(d.ref, { popularRank: rankOf.get(d.id) || 0 }));
+    await batch.commit();
+  }
+  return { top: ranked.length, changed: changes.length };
+}
+
+async function runMenuPopularity() {
+  const tenants = await db().collection("tenants").get();
+  for (const t of tenants.docs) {
+    if (t.data().status === "deleted") continue;
+    try {
+      await computeMenuPopularity(t.ref);
+    } catch (e) {
+      console.error(`saas-gateway: хиты меню ${t.id}:`, e.message || e);
+    }
+  }
+}
+
+function scheduleMenuPopularity() {
+  scheduleDailyJob("menuPopularity", 24 * 3600 * 1000, runMenuPopularity, 30 * 60 * 1000);
+}
+
 function scheduleBuildsSweep() {
   scheduleDailyJob("buildsSweep", 24 * 3600 * 1000, sweepTenantBuilds, 25 * 60 * 1000);
 }
@@ -5182,6 +5244,7 @@ scheduleFirestoreBackup();
 scheduleAiSecretsMigration();
 scheduleBuildsSweep();
 scheduleAppRollout();
+scheduleMenuPopularity();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {

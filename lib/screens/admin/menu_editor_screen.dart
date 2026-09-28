@@ -248,6 +248,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   Future<void> _editItem(BuildContext context, MenuItem? item, {String? categoryId}) async {
     final nameCtrl = TextEditingController(text: item?.name ?? '');
     final priceCtrl = TextEditingController(text: item?.price.toStringAsFixed(0) ?? '');
+    final descCtrl = TextEditingController(text: item?.description ?? '');
     final weightCtrl = TextEditingController(
         text: (item != null && item.weight > 0) ? item.weightUnit.format(item.weight) : '');
     var weightUnit = item?.weightUnit ?? InventoryUnit.g;
@@ -279,6 +280,16 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   controller: priceCtrl,
                   decoration: const InputDecoration(labelText: 'Цена, ₽'),
                   keyboardType: TextInputType.number,
+                ),
+                TextField(
+                  controller: descCtrl,
+                  maxLines: 3,
+                  minLines: 1,
+                  maxLength: 300,
+                  decoration: const InputDecoration(
+                    labelText: 'Состав / описание',
+                    hintText: 'Что входит в блюдо — видит гость и ИИ-помощник',
+                  ),
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
@@ -455,6 +466,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     components: isComposite ? List.from(components) : [],
                     vat: vat,
                     fiscalSubject: fiscalSubject,
+                    description: descCtrl.text.trim(),
                   )),
               child: const Text('Сохранить'),
             ),
@@ -475,6 +487,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         components: result.components,
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
+        description: result.description,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -486,6 +499,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         components: result.components,
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
+        description: result.description,
       ));
     }
   }
@@ -632,6 +646,7 @@ class _ItemDialogResult {
   final List<MenuItemComponent> components;
   final String vat;
   final String fiscalSubject;
+  final String description;
 
   _ItemDialogResult({
     required this.name,
@@ -642,6 +657,7 @@ class _ItemDialogResult {
     this.components = const [],
     this.vat = '',
     this.fiscalSubject = 'commodity',
+    this.description = '',
   });
 }
 
