@@ -680,6 +680,15 @@ function renderStories() {
 
 // ---------- МЕНЮ ----------
 
+/** Уведомление под формами с именем и телефоном (ст. 18.1 152-ФЗ): кто,
+ *  зачем и где обрабатывает данные. Это исполнение договора (бронь,
+ *  бонусы) — отдельная галочка согласия не нужна. */
+function privacyNotice(action) {
+  return `<p class="small muted" style="margin:10px 0 0">Нажимая «${esc(action)}», вы соглашаетесь, что заведение
+    обработает ваше имя и телефон для брони и бонусной программы. Данные хранятся на серверах в России.
+    <a href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
+}
+
 // 15-ФЗ: табак нельзя рекламировать и продавать дистанционно, а в месте
 // продажи его показывают списком без изображений. Поэтому вне заведения
 // табачных позиций в меню не видно, а за столом они идут без фото.
@@ -1413,6 +1422,7 @@ function screenBooking() {
       <label class="field"><span>Пожелания (необязательно)</span>
         <input id="bComment" placeholder="Диван у окна, день рождения, без музыки…"></label>
       <button class="btn-primary" id="bSend">Отправить заявку</button>
+      ${privacyNotice('Отправить заявку')}
       <p class="small muted center" style="margin:12px 0 0">
         Мы подтвердим бронь и закрепим стол. За 20 минут до начала напомним.</p>
     </div>
@@ -2035,6 +2045,7 @@ function screenProfile() {
           ? '🔒 Сменить номер можно только через администратора'
           : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
       <button class="btn-primary" id="pSave">Сохранить</button>
+      ${privacyNotice('Сохранить')}
     </div>
 
     <div class="card" style="border-color:color-mix(in srgb, var(--gold) 45%, transparent)">

@@ -695,6 +695,10 @@ async function boot() {
           await setDoc(userRef, {
             email, createdAt: Timestamp.fromDate(new Date()),
             offerAcceptedAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
+            // Согласие на обработку ПД — отдельной галочкой (с 01.09.2025
+            // его нельзя совмещать с другими документами), тот же момент.
+            pdConsentAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
+            pdConsentEdition: LEGAL_EDITION,
           });
           // Новый владелец входил только по ссылке — пароля у него нет, а
           // «Войти по паролю» и смена пароля в настройках без него не
@@ -824,6 +828,7 @@ const PUBLIC_ROUTES = {
   '#/legal/offer': () => screenLegalOffer(),
   '#/legal/privacy': () => screenLegalPrivacy(),
   '#/legal/payment': () => screenLegalPayment(),
+  '#/legal/consent': () => screenLegalConsent(),
   '#/status': () => screenStatus(),
   '#/faq': () => screenPublicFaq(),
 };
@@ -1037,9 +1042,13 @@ function screenLanding() {
             <label class="field"><span>Email</span>
               <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
             </label>
-            <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
+            <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:8px">
               <input type="checkbox" id="f-landing-agree" style="width:auto">
-              <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
+              <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a></span>
+            </label>
+            <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
+              <input type="checkbox" id="f-landing-pd" style="width:auto">
+              <span class="small muted">Даю <a href="#/legal/consent" target="_blank" rel="noopener">согласие на обработку персональных данных</a>, в том числе на их трансграничную передачу (<a href="#/legal/privacy" target="_blank" rel="noopener">политика конфиденциальности</a>)</span>
             </label>
             <div id="f-landing-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
             <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
@@ -1213,7 +1222,8 @@ function screenLanding() {
     const errEl = $('f-landing-error');
     errEl.textContent = '';
     if (!email) { errEl.textContent = 'Введите email'; return; }
-    if (!$('f-landing-agree')?.checked) { errEl.textContent = 'Нужно принять условия оферты и согласие на обработку персональных данных'; return; }
+    if (!$('f-landing-agree')?.checked) { errEl.textContent = 'Нужно принять условия оферты'; return; }
+    if (!$('f-landing-pd')?.checked) { errEl.textContent = 'Нужно согласие на обработку персональных данных — без него мы не сможем создать личный кабинет'; return; }
     $('f-landing-start').disabled = true;
     try {
       await sendAuthEmail('signIn', email, () => sendSignInLinkToEmail(state.auth, email, {
@@ -1609,6 +1619,35 @@ function screenLegalPayment() {
   fillLegalRequisites();
 }
 
+/** Согласие на обработку персональных данных владельца кабинета — отдельный
+ *  документ (ч. 1 и 4 ст. 9 152-ФЗ; с 01.09.2025 согласие оформляется
+ *  отдельно от оферты и других документов). Даётся отдельной галочкой при
+ *  регистрации; момент — users/{uid}.pdConsentAt. */
+function screenLegalConsent() {
+  screenEl().innerHTML = publicPageWrapHtml('Согласие на обработку персональных данных', `
+    <p class="small muted">${LEGAL_EDITION}</p>
+    <div class="card">
+      ${legalSection('Кому даётся согласие', [
+        'Отмечая при регистрации пункт о согласии, я, действуя свободно, своей волей и в своём интересе, даю согласие Оператору — <span id="legal-requisites" data-kind="privacy">индивидуальному предпринимателю, правообладателю платформы ZalPOS (реквизиты — в политике конфиденциальности)</span> — на обработку моих персональных данных на условиях ниже.',
+      ])}
+      ${legalSection('Какие данные', [
+        'Адрес электронной почты; имя и номер телефона, если я их укажу; сведения о созданных мной заведениях, тарифе и оплатах; сообщения в поддержку; IP-адрес, сведения о браузере и устройстве, дата и время входов.',
+      ])}
+      ${legalSection('Зачем', [
+        'Регистрация и вход в личный кабинет ZalPOS; заключение и исполнение договора-оферты, включая приём оплаты; направление писем о входе, оплате и работе сервиса; техническая поддержка; обеспечение безопасности и предотвращение злоупотреблений.',
+      ])}
+      ${legalSection('Что с ними делают', [
+        'Сбор, запись, систематизация, накопление, хранение, уточнение, извлечение, использование, передача (предоставление, доступ), блокирование, удаление и уничтожение — с использованием средств автоматизации.',
+        'В том числе трансграничная передача компаниям Google LLC (США) и Google Ireland Limited (Ирландия) — для авторизации, хранения и синхронизации данных, и передача платёжному сервису Robokassa — для приёма оплаты.',
+      ])}
+      ${legalSection('Срок и отзыв', [
+        'Согласие действует до его отзыва, но не дольше 3 лет после прекращения договора. Отозвать согласие можно письмом на email Оператора, указанный в политике конфиденциальности; после отзыва обработка прекращается в течение 10 рабочих дней, кроме случаев, когда она необходима для исполнения договора или требуется законом.',
+      ])}
+    </div>
+  `);
+  fillLegalRequisites();
+}
+
 function screenLegalPrivacy() {
   screenEl().innerHTML = publicPageWrapHtml('Политика обработки персональных данных', `
     <p class="small muted">${LEGAL_EDITION} Политика разработана во исполнение ст. 18.1 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки и меры защиты персональных данных при использовании Платформы ZalPOS.</p>
@@ -1634,6 +1673,7 @@ function screenLegalPrivacy() {
         'Обработка ведётся с использованием средств автоматизации и включает сбор, запись, систематизацию, накопление, хранение, уточнение, извлечение, использование, передачу (предоставление, доступ), блокирование, удаление и уничтожение.',
         'Доступ к данным заведения имеют его сотрудники в пределах назначенных ролей. Персонал Оператора получает доступ только для технической поддержки и в необходимом объёме. Данные разных заведений изолированы друг от друга.',
         'Данные не передаются третьим лицам, кроме случаев, предусмотренных законом, и поставщиков инфраструктуры, указанных в разделе 6, действующих на условиях конфиденциальности.',
+        `При оплате тарифа email плательщика и сведения о платеже передаются платёжному сервису ${PAYMENT_SERVICE} для приёма оплаты и отправки чека; данные банковской карты вводятся на странице платёжного сервиса и Оператору не передаются.`,
       ])}
       ${legalSection('6. Место хранения и трансграничная передача', [
         'Имена и телефоны Гостей (профили, бронирования, лист ожидания) первично записываются в базу данных на сервере Оператора, расположенном на территории Российской Федерации (ч. 5 ст. 18 Федерального закона № 152-ФЗ).',
@@ -1725,9 +1765,13 @@ function screenAuth() {
         свой (и вторым письмом — ссылку для подтверждения самого email).</p>
       `}
       ${authMode === 'signup' ? `
-        <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
+        <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:8px">
           <input type="checkbox" id="f-agree" style="width:auto">
-          <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a> и даю согласие на обработку персональных данных, в том числе на их трансграничную передачу, согласно <a href="#/legal/privacy" target="_blank" rel="noopener">политике конфиденциальности</a></span>
+          <span class="small muted">Принимаю условия <a href="#/legal/offer" target="_blank" rel="noopener">публичной оферты</a></span>
+        </label>
+        <label class="row" style="align-items:flex-start;gap:8px;margin-bottom:14px">
+          <input type="checkbox" id="f-pd" style="width:auto">
+          <span class="small muted">Даю <a href="#/legal/consent" target="_blank" rel="noopener">согласие на обработку персональных данных</a>, в том числе на их трансграничную передачу (<a href="#/legal/privacy" target="_blank" rel="noopener">политика конфиденциальности</a>)</span>
         </label>
       ` : ''}
       <div id="f-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
@@ -1778,7 +1822,11 @@ function screenAuth() {
       return;
     }
     if (authMode === 'signup' && !$('f-agree')?.checked) {
-      errEl.textContent = 'Нужно принять условия оферты и согласие на обработку персональных данных';
+      errEl.textContent = 'Нужно принять условия оферты';
+      return;
+    }
+    if (authMode === 'signup' && !$('f-pd')?.checked) {
+      errEl.textContent = 'Нужно согласие на обработку персональных данных — без него мы не сможем создать личный кабинет';
       return;
     }
     $('f-submit').disabled = true;
@@ -1790,6 +1838,8 @@ function screenAuth() {
         await setDoc(doc(state.db, 'users', cred.user.uid), {
           email, createdAt: Timestamp.fromDate(new Date()),
           offerAcceptedAt: Timestamp.fromDate(new Date()),
+          pdConsentAt: Timestamp.fromDate(new Date()),
+          pdConsentEdition: LEGAL_EDITION,
         }, { merge: true });
         // Письмо с подтверждением — до него владелец не может создать
         // заведение (см. screenOnboarding и createTenant на сервере), это

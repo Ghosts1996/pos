@@ -12,6 +12,7 @@ import '../../models/venue_models.dart';
 import '../../services/venue_service.dart';
 import '../../widgets/table_picker_map.dart';
 import '../theme/kolibri_theme.dart';
+import '../widgets/privacy_notice.dart';
 import 'kolibri_menu_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
@@ -465,6 +466,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                   ? 'Выберите время'
                   : 'Забронировать на ${_fmtTime(_slot!)}'),
         ),
+        const PrivacyNotice(action: 'Забронировать'),
 
         const SizedBox(height: 32),
         const Text('Мои брони', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
