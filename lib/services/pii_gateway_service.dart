@@ -145,6 +145,36 @@ extension PiiContactRecords on PiiGatewayService {
   }
 }
 
+/// Гость удаляет свои данные сам: стираем имя и телефон в первичной базе
+/// в РФ (профиль и контакты броней/листа ожидания). Вызывать ДО
+/// saas-gateway /deleteGuestData — тот удаляет анонимный аккаунт, и
+/// токена потом уже не будет.
+extension PiiGuestDeletion on PiiGatewayService {
+  Future<void> deleteGuestData() async {
+    final tenant = AppScope.tenantId ?? '';
+    if (baseUrl.isEmpty || tenant.isEmpty) return;
+    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      throw PiiGatewayException('Нет активной сессии — перезапустите приложение.');
+    }
+    http.Response resp;
+    try {
+      resp = await http
+          .post(
+            Uri.parse(baseUrl),
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
+            body: jsonEncode({'tenantId': tenant, 'kind': 'guest_delete'}),
+          )
+          .timeout(const Duration(seconds: 20));
+    } catch (e) {
+      throw PiiGatewayException('Нет связи с сервером — проверьте интернет и попробуйте снова.');
+    }
+    if (resp.statusCode != 200) {
+      throw PiiGatewayException('Сервер не удалил данные (${resp.statusCode}) — попробуйте ещё раз.');
+    }
+  }
+}
+
 class PiiGatewayException implements Exception {
   final String message;
   PiiGatewayException(this.message);
