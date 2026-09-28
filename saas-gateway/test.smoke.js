@@ -159,6 +159,17 @@ async function main() {
     check(`POST ${path} без токена -> 401`, r.status === 401);
   }
 
+  {
+    // Письма входа: неизвестный тип и кривой адрес отсекаются сразу; без
+    // SMTP сервис отвечает 503 — консоль тогда отправляет письмо через Firebase.
+    let r = await request("POST", "/sendAuthEmail", { body: { type: "spam", email: "a@b.ru" } });
+    check("POST /sendAuthEmail: неизвестный тип -> 400", r.status === 400);
+    r = await request("POST", "/sendAuthEmail", { body: { type: "signIn", email: "не почта" } });
+    check("POST /sendAuthEmail: кривой адрес -> 400", r.status === 400);
+    r = await request("POST", "/sendAuthEmail", { body: { type: "signIn", email: "owner@example.ru" } });
+    check("POST /sendAuthEmail: без SMTP -> 503", r.status === 503);
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);
