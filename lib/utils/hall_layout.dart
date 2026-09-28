@@ -16,18 +16,51 @@ const Size kHallCanvas = Size(1000, 640);
 const double kHallTile = 104;
 
 /// Формы столов для конструктора зала.
-const kTableShapes = ['rect', 'circle', 'long', 'triangle'];
+const kTableShapes = ['rect', 'circle', 'long', 'oval', 'triangle', 'bar'];
 
-/// Размер плитки стола: длинный — две клетки вдоль (или поперёк, если
-/// повёрнут), остальные — одна клетка. Клетки совпадают с шагом сетки
-/// редактора, поэтому столы можно ставить вплотную и собирать из них
-/// длинные и угловые конструкции.
+/// Шаг сетки редактора: четверть плитки. Размеры всех столов кратны
+/// плитке, поэтому края встают вплотную друг к другу.
+const double kHallGridStep = kHallTile / 4;
+
+/// Форму можно поворачивать: у квадрата и круга поворот ничего не меняет.
+bool tableShapeRotates(String shape) => shape != 'rect' && shape != 'circle';
+
+/// Сколько клеток в длину: длинный и овальный — две, барная стойка — три.
+int tableShapeCells(String shape) => switch (shape) {
+      'long' || 'oval' => 2,
+      'bar' => 3,
+      _ => 1,
+    };
+
+/// Размер плитки стола: вытянутые формы — несколько клеток вдоль (или
+/// поперёк, если повёрнуты), остальные — одна клетка. Клетки совпадают с
+/// сеткой редактора, поэтому столы можно ставить вплотную и собирать из
+/// них длинные и угловые конструкции.
 Size hallTileSize(TableModel t) {
-  if (t.shape == 'long') {
-    return t.rotation.isOdd ? const Size(kHallTile, kHallTile * 2) : const Size(kHallTile * 2, kHallTile);
-  }
-  return const Size(kHallTile, kHallTile);
+  final n = tableShapeCells(t.shape);
+  if (n == 1) return const Size(kHallTile, kHallTile);
+  return t.rotation.isOdd ? Size(kHallTile, kHallTile * n) : Size(kHallTile * n, kHallTile);
 }
+
+/// Доли x/y для плитки [size], левый верхний угол которой в (left, top):
+/// с привязкой к сетке и в пределах холста.
+({double x, double y}) hallFractionForTopLeft(double left, double top, Size size) {
+  double snap(double v) => (v / kHallGridStep).round() * kHallGridStep;
+  final freeW = kHallCanvas.width - size.width, freeH = kHallCanvas.height - size.height;
+  final l = snap(left).clamp(0.0, freeW), t = snap(top).clamp(0.0, freeH);
+  return (x: freeW <= 0 ? 0.0 : l / freeW, y: freeH <= 0 ? 0.0 : t / freeH);
+}
+
+/// Стол [after] (другая форма или поворот) на месте [before]: центр плитки
+/// остаётся где был — стол поворачивается «на месте», а не уезжает.
+TableModel hallRefit(TableModel before, TableModel after) {
+  final o = hallTileOffset(before), s = hallTileSize(before), n = hallTileSize(after);
+  final f = hallFractionForTopLeft(o.left + (s.width - n.width) / 2, o.top + (s.height - n.height) / 2, n);
+  return after.copyWith(x: f.x, y: f.y);
+}
+
+/// Стол, повёрнутый на четверть оборота по часовой стрелке.
+TableModel hallRotated(TableModel t) => hallRefit(t, t.copyWith(rotation: (t.rotation + 1) % 4));
 
 /// Левый верхний угол плитки стола на холсте: x/y — доли 0..1 свободного
 /// места (холст минус плитка), чтобы крайние столы не уезжали за край.
