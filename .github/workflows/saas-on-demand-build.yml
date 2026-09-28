@@ -675,7 +675,7 @@ jobs:
         if: success()
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
-          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          SSH_HOST: pii.zalpos.ru
           TENANT_ID: ${{ inputs.tenant_id }}
           JOB_ID: ${{ steps.jobid.outputs.value }}
           APK_PATH: ${{ steps.rename.outputs.path }}
@@ -986,7 +986,7 @@ jobs:
         shell: bash
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
-          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          SSH_HOST: pii.zalpos.ru
           TENANT_ID: ${{ inputs.tenant_id }}
           JOB_ID: ${{ inputs.job_id_pos_windows }}
           ZIP_PATH: ${{ steps.zip.outputs.path }}

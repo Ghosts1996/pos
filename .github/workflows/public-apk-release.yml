@@ -460,7 +460,7 @@ jobs:
       - name: Deploy to own server (pii.zalpos.ru)
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          SSH_HOST: pii.zalpos.ru
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
             echo "::warning::DEPLOY_SSH_KEY/DEPLOY_SSH_HOST не заданы — пропускаю прямую доставку на сервер, файл остался только в GitHub Release. См. saas/README.md, раздел «Публичный APK»."

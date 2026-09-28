@@ -23,7 +23,7 @@ die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
 
-say "1/7 Проверяю DNS"
+say "1/8 Проверяю DNS"
 IP="$(curl -s4 --max-time 5 https://ifconfig.me || true)"
 [[ "$IP" =~ ^[0-9.]+$ ]] || IP="$(hostname -I | awk '{print $1}')"
 for h in "pii.$NEW" "dns-check.$NEW"; do
@@ -40,7 +40,7 @@ mkdir -p "$BACKUP"
 cp -a /etc/nginx/conf.d "$BACKUP/"
 echo "копия настроек nginx: $BACKUP"
 
-say "2/7 pii.$NEW — тот же сервис, что pii.$OLD"
+say "2/8 pii.$NEW — тот же сервис, что pii.$OLD"
 PII_CONF="$(grep -lE "server_name[^;]*pii\.$OLD_RE" /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 || true)"
 [[ -n "$PII_CONF" ]] || die "не нашёл настройку nginx с server_name pii.$OLD"
 if ! grep -qE "server_name[^;]*pii\.$NEW_RE" "$PII_CONF"; then
@@ -53,7 +53,7 @@ certbot --nginx --cert-name "pii.$OLD" -d "pii.$OLD" -d "pii.$NEW" \
 curl -sS --max-time 15 -o /dev/null "https://pii.$NEW/" || die "https://pii.$NEW не открывается"
 echo "ok: https://pii.$NEW работает"
 
-say "3/7 Проверка сертификатов для поддоменов обоих доменов (порт 80)"
+say "3/8 Проверка сертификатов для поддоменов обоих доменов (порт 80)"
 cat > /etc/nginx/conf.d/saas-guest-wildcard-http.conf << 'NGINXEOF'
 server {
     listen 80;
@@ -72,7 +72,7 @@ NGINXEOF
 nginx -t
 systemctl reload nginx
 
-say "4/7 Поддомены заведений: {код}.$NEW, со старого адреса — перенаправление"
+say "4/8 Поддомены заведений: {код}.$NEW, со старого адреса — перенаправление"
 install -m 755 "$REPO/saas-gateway/provision-tenant-domain.sh" /usr/local/bin/provision-tenant-domain.sh
 shopt -s nullglob
 # Старые настройки заведений переименовываем: они продолжают работать как
@@ -118,7 +118,7 @@ if (( ${#failed[@]} )); then
   echo "их старые адреса работают как раньше; повторите позже этот же скрипт"
 fi
 
-say "5/7 Ссылка на демо-кассу: https://pii.$NEW/downloads/zalpos.apk"
+say "5/8 Ссылка на демо-кассу: https://pii.$NEW/downloads/zalpos.apk"
 if [[ -d /var/www/downloads ]]; then
   ln -sfn hookah-pos-public.apk /var/www/downloads/zalpos.apk
   echo "ok"
@@ -126,13 +126,13 @@ else
   echo "папки /var/www/downloads нет — пропускаю"
 fi
 
-say "6/7 Веб-версия гостя"
+say "6/8 Веб-версия гостя"
 mkdir -p /opt/saas-guest-web
 cp -r "$REPO/saas/guest-web/"* /opt/saas-guest-web/
 chown -R www-data:www-data /opt/saas-guest-web
 echo "ok"
 
-say "7/7 saas-gateway"
+say "7/8 saas-gateway"
 ENVF=/etc/saas-gateway.env
 if [[ -f "$ENVF" ]] && grep -q "$OLD_RE" "$ENVF"; then
   cp "$ENVF" "$BACKUP/"
@@ -148,5 +148,79 @@ sleep 3
 systemctl is-active --quiet saas-gateway || die "saas-gateway не запустился — посмотрите: journalctl -u saas-gateway -n 50"
 echo "ok"
 
+say "8/8 Рекламная страница https://$OLD"
+PROMO_HOSTS=()
+for h in "$OLD" "www.$OLD"; do
+  got="$(getent ahostsv4 "$h" | awk 'NR==1{print $1}' || true)"
+  [[ "$got" == "$IP" ]] && PROMO_HOSTS+=("$h")
+done
+if [[ " ${PROMO_HOSTS[*]} " != *" $OLD "* ]]; then
+  echo "пропускаю: $OLD пока указывает не на этот сервер."
+  echo "Чтобы на $OLD открывалась рекламная страница: у регистратора $OLD"
+  echo "поменяйте A-записи @ и www на $IP (записи pii и * не трогайте),"
+  echo "удалите $OLD из Firebase Hosting и запустите этот скрипт ещё раз."
+else
+  mkdir -p /opt/hookahpos-promo /var/www/certbot
+  cp -r "$REPO/saas/promo-hookahpos/"* /opt/hookahpos-promo/
+  chown -R www-data:www-data /opt/hookahpos-promo
+  PROMO_CONF=/etc/nginx/conf.d/promo-hookahpos.conf
+  NAMES="${PROMO_HOSTS[*]}"
+  HTTP_BLOCK="server {
+    listen 80;
+    listen [::]:80;
+    server_name $NAMES;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$OLD\$request_uri;
+    }
+}"
+  # Пока сертификата нет — только порт 80, иначе nginx не примет 443-блок.
+  if [[ ! -f "/etc/letsencrypt/live/$OLD/fullchain.pem" ]]; then
+    echo "$HTTP_BLOCK" > "$PROMO_CONF"
+    nginx -t
+    systemctl reload nginx
+  fi
+  DARGS=()
+  for h in "${PROMO_HOSTS[@]}"; do DARGS+=(-d "$h"); done
+  certbot certonly --webroot -w /var/www/certbot --cert-name "$OLD" "${DARGS[@]}" \
+    --expand --keep-until-expiring --non-interactive --agree-tos -m "admin@$NEW"
+  cat > "$PROMO_CONF" << CONFEOF
+# Рекламная страница HookahPOS (saas/promo-hookahpos/) — ведёт на $NEW.
+$HTTP_BLOCK
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $NAMES;
+
+    ssl_certificate     /etc/letsencrypt/live/$OLD/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$OLD/privkey.pem;
+
+    if (\$host != $OLD) {
+        return 301 https://$OLD\$request_uri;
+    }
+
+    root /opt/hookahpos-promo;
+    error_page 404 /index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~* \.html\$ {
+        add_header Cache-Control "no-cache";
+    }
+}
+CONFEOF
+  nginx -t
+  systemctl reload nginx
+  echo "ok: https://$OLD"
+fi
+
 echo
-echo "Готово. Сервер отвечает и на $NEW, и на $OLD."
+echo "Готово. Платформа работает на $NEW."
+echo "Прежние адреса: pii.$OLD — для ещё не обновлённых приложений, {код}.$OLD — перенаправление для QR-кодов на столах."
