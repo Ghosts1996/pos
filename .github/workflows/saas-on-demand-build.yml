@@ -515,6 +515,35 @@ jobs:
                 android:pathData="M12,18.6m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"/>
           </vector>
           XMLEOF
+          if [ "${{ matrix.app }}" = "pos" ]; then
+            # Касса — силуэт смарт-терминала с чеком, как на её иконке. Android
+            # рисует значок уведомления одним белым цветом, поэтому только контур.
+            cat > "$DRAWABLE/ic_notification.xml" <<'XMLEOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:fillType="evenOdd"
+                android:pathData="M8,2.9L9,2.2L10,2.9L11,2.2L12,2.9L13,2.2L14,2.9L15,2.2L16,2.9V8.3H8Z M9.6,4.6H14.4V5.6H9.6Z M9.6,6.4H13V7.4H9.6Z"/>
+            <path
+                android:fillColor="#FFFFFFFF"
+                android:fillType="evenOdd"
+                android:pathData="M6.6,8.9H17.4A2.6,2.6 0 0 1 20,11.5V18.9A2.6,2.6 0 0 1 17.4,21.5H6.6A2.6,2.6 0 0 1 4,18.9V11.5A2.6,2.6 0 0 1 6.6,8.9Z M7,11H17V16.2H7Z M10,18.2H14V19.4H10Z"/>
+          </vector>
+          XMLEOF
+          fi
+
+          # Значок уведомления фоновой службы кассы: flutter_foreground_task
+          # берёт его по имени meta-data (lib/services/hall_watch_service.dart).
+          # Без него служба показывала цветную иконку приложения — Android
+          # рисовал её в шторке мутным пятном.
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "com.zalpos.notification_icon" "$MANIFEST"; then
+            sed -i 's|</application>|    <meta-data android:name="com.zalpos.notification_icon" android:resource="@drawable/ic_notification" />\n    </application>|' "$MANIFEST"
+          fi
           KEEP=android/app/src/main/res/raw
           mkdir -p "$KEEP"
           cat > "$KEEP/keep.xml" <<'XMLEOF'
