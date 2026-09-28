@@ -16,6 +16,7 @@ import '../../services/guest_link_service.dart';
 import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../widgets/privacy_notice.dart';
 import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
@@ -451,6 +452,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
         ),
+        const PrivacyNotice(action: 'Сохранить'),
 
         const SizedBox(height: 20),
         Container(
