@@ -120,6 +120,14 @@ async function main() {
     check("POST /rolloutApps без входа -> 401", r2.status === 401);
   }
   {
+    // Робокасса: Result URL без параметров — 400 до обращения к базе,
+    // возврат без номера счёта — в личный кабинет.
+    const r1 = await request("POST", "/robokassaResult", { headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    check("POST /robokassaResult без параметров -> 400", r1.status === 400);
+    const r2 = await request("GET", "/robokassaSuccess");
+    check("GET /robokassaSuccess без счёта -> 302", r2.status === 302);
+  }
+  {
     // Проверка обновлений: касса — только участнику заведения, гостю — без
     // входа, но с корректными полями (всё отваливается до Firestore).
     const r = await request("POST", "/appUpdate", { body: { tenantId: "t1", app: "pos", platform: "android", current: 5 } });
