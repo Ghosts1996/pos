@@ -23,7 +23,7 @@ die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
 
-say "1/8 Проверяю DNS"
+say "1/9 Проверяю DNS"
 IP="$(curl -s4 --max-time 5 https://ifconfig.me || true)"
 [[ "$IP" =~ ^[0-9.]+$ ]] || IP="$(hostname -I | awk '{print $1}')"
 for h in "pii.$NEW" "dns-check.$NEW"; do
@@ -40,7 +40,7 @@ mkdir -p "$BACKUP"
 cp -a /etc/nginx/conf.d "$BACKUP/"
 echo "копия настроек nginx: $BACKUP"
 
-say "2/8 pii.$NEW — тот же сервис, что pii.$OLD"
+say "2/9 pii.$NEW — тот же сервис, что pii.$OLD"
 PII_CONF="$(grep -lE "server_name[^;]*pii\.$OLD_RE" /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 || true)"
 [[ -n "$PII_CONF" ]] || die "не нашёл настройку nginx с server_name pii.$OLD"
 if ! grep -qE "server_name[^;]*pii\.$NEW_RE" "$PII_CONF"; then
@@ -53,7 +53,7 @@ certbot --nginx --cert-name "pii.$OLD" -d "pii.$OLD" -d "pii.$NEW" \
 curl -sS --max-time 15 -o /dev/null "https://pii.$NEW/" || die "https://pii.$NEW не открывается"
 echo "ok: https://pii.$NEW работает"
 
-say "3/8 Проверка сертификатов для поддоменов обоих доменов (порт 80)"
+say "3/9 Проверка сертификатов для поддоменов обоих доменов (порт 80)"
 cat > /etc/nginx/conf.d/saas-guest-wildcard-http.conf << 'NGINXEOF'
 server {
     listen 80;
@@ -72,7 +72,36 @@ NGINXEOF
 nginx -t
 systemctl reload nginx
 
-say "4/8 Поддомены заведений: {код}.$NEW, со старого адреса — перенаправление"
+say "4/9 www.$NEW → $NEW"
+got="$(getent ahostsv4 "www.$NEW" | awk 'NR==1{print $1}' || true)"
+if [[ "$got" == "$IP" ]]; then
+  # Порт 80 для www уже обслуживает общий блок выше (проверка certbot).
+  if ! certbot certonly --webroot -w /var/www/certbot --cert-name "www.$NEW" -d "www.$NEW" \
+    --keep-until-expiring --non-interactive --agree-tos -m "admin@$NEW"; then
+    echo "!! сертификат для www.$NEW не выпущен — остальное продолжаю, повторите скрипт позже"
+  else
+  cat > /etc/nginx/conf.d/www-redirect.conf << CONFEOF
+# www.$NEW — перенаправление на $NEW (сам сайт на Firebase Hosting).
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name www.$NEW;
+
+    ssl_certificate     /etc/letsencrypt/live/www.$NEW/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/www.$NEW/privkey.pem;
+
+    return 301 https://$NEW\$request_uri;
+}
+CONFEOF
+  nginx -t
+  systemctl reload nginx
+  echo "ok: https://www.$NEW → https://$NEW"
+  fi
+else
+  echo "пропускаю: www.$NEW указывает не на этот сервер"
+fi
+
+say "5/9 Поддомены заведений: {код}.$NEW, со старого адреса — перенаправление"
 install -m 755 "$REPO/saas-gateway/provision-tenant-domain.sh" /usr/local/bin/provision-tenant-domain.sh
 shopt -s nullglob
 # Старые настройки заведений переименовываем: они продолжают работать как
@@ -118,7 +147,7 @@ if (( ${#failed[@]} )); then
   echo "их старые адреса работают как раньше; повторите позже этот же скрипт"
 fi
 
-say "5/8 Ссылка на демо-кассу: https://pii.$NEW/downloads/zalpos.apk"
+say "6/9 Ссылка на демо-кассу: https://pii.$NEW/downloads/zalpos.apk"
 if [[ -d /var/www/downloads ]]; then
   ln -sfn hookah-pos-public.apk /var/www/downloads/zalpos.apk
   echo "ok"
@@ -126,13 +155,13 @@ else
   echo "папки /var/www/downloads нет — пропускаю"
 fi
 
-say "6/8 Веб-версия гостя"
+say "7/9 Веб-версия гостя"
 mkdir -p /opt/saas-guest-web
 cp -r "$REPO/saas/guest-web/"* /opt/saas-guest-web/
 chown -R www-data:www-data /opt/saas-guest-web
 echo "ok"
 
-say "7/8 saas-gateway"
+say "8/9 saas-gateway"
 ENVF=/etc/saas-gateway.env
 if [[ -f "$ENVF" ]] && grep -q "$OLD_RE" "$ENVF"; then
   cp "$ENVF" "$BACKUP/"
@@ -148,7 +177,7 @@ sleep 3
 systemctl is-active --quiet saas-gateway || die "saas-gateway не запустился — посмотрите: journalctl -u saas-gateway -n 50"
 echo "ok"
 
-say "8/8 Рекламная страница https://$OLD"
+say "9/9 Рекламная страница https://$OLD"
 PROMO_HOSTS=()
 for h in "$OLD" "www.$OLD"; do
   got="$(getent ahostsv4 "$h" | awk 'NR==1{print $1}' || true)"
