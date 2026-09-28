@@ -7,6 +7,7 @@ import '../utils/bill_split.dart';
 import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
 import 'clock_ticker.dart';
+import 'table_shape.dart';
 import 'timer_display.dart';
 
 /// Цвета состояний стола — общие для схемы, списка и сводки зала.
@@ -103,7 +104,6 @@ class TableTile extends StatelessWidget {
         : tableStateOf(table, now: now, plannedEnd: plannedEnd, reservation: reservation);
     final color = editorMode ? AppColors.textMuted : TableStateColors.of(state);
     final circle = table.shape == 'circle';
-    final radius = BorderRadius.circular(circle ? size / 2 : 18);
     final busy = state.isBusy;
     final loud = state == TableState.overdue || hasCall;
 
@@ -142,25 +142,19 @@ class TableTile extends StatelessWidget {
       }
     }
 
-    final tile = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: busy ? Color.alphaBlend(color.withValues(alpha: 0.16), AppColors.surface) : AppColors.surface,
-        borderRadius: radius,
-        border: Border.all(
-          color: isDraggablePreview ? Colors.white : color.withValues(alpha: busy || loud ? 0.95 : 0.6),
-          width: loud ? 2.5 : 1.6,
+    final tile = TableShapeBox(
+      table: table,
+      size: hallTileSize(table),
+      fill: busy ? Color.alphaBlend(color.withValues(alpha: 0.16), AppColors.surface) : AppColors.surface,
+      borderColor: isDraggablePreview ? Colors.white : color.withValues(alpha: busy || loud ? 0.95 : 0.6),
+      borderWidth: loud ? 2.5 : 1.6,
+      shadows: [
+        BoxShadow(
+          color: loud ? color.withValues(alpha: 0.45) : Colors.black.withValues(alpha: 0.35),
+          blurRadius: loud ? 14 : 6,
+          offset: const Offset(0, 2),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: loud ? color.withValues(alpha: 0.45) : Colors.black.withValues(alpha: 0.35),
-            blurRadius: loud ? 14 : 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: EdgeInsets.all(circle ? 14 : 8),
+      ],
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: SizedBox(

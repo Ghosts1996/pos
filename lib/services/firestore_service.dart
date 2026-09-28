@@ -63,6 +63,7 @@ class FirestoreService {
     required String name,
     required int seats,
     required String shape,
+    int rotation = 0,
     required int maxOpenSessions,
     required String zone,
   }) {
@@ -70,6 +71,7 @@ class FirestoreService {
       'name': name,
       'seats': seats,
       'shape': shape,
+      'rotation': rotation,
       'maxOpenSessions': maxOpenSessions,
       'zone': zone,
     });

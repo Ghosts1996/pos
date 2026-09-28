@@ -15,17 +15,34 @@ const Size kHallCanvas = Size(1000, 640);
 /// Размер плитки стола на логическом холсте.
 const double kHallTile = 104;
 
+/// Формы столов для конструктора зала.
+const kTableShapes = ['rect', 'circle', 'long', 'triangle'];
+
+/// Размер плитки стола: длинный — две клетки вдоль (или поперёк, если
+/// повёрнут), остальные — одна клетка. Клетки совпадают с шагом сетки
+/// редактора, поэтому столы можно ставить вплотную и собирать из них
+/// длинные и угловые конструкции.
+Size hallTileSize(TableModel t) {
+  if (t.shape == 'long') {
+    return t.rotation.isOdd ? const Size(kHallTile, kHallTile * 2) : const Size(kHallTile * 2, kHallTile);
+  }
+  return const Size(kHallTile, kHallTile);
+}
+
 /// Левый верхний угол плитки стола на холсте: x/y — доли 0..1 свободного
 /// места (холст минус плитка), чтобы крайние столы не уезжали за край.
-({double left, double top}) hallTileOffset(TableModel t) => (
-      left: t.x.clamp(0.0, 1.0) * (kHallCanvas.width - kHallTile),
-      top: t.y.clamp(0.0, 1.0) * (kHallCanvas.height - kHallTile),
-    );
+({double left, double top}) hallTileOffset(TableModel t) {
+  final s = hallTileSize(t);
+  return (
+    left: t.x.clamp(0.0, 1.0) * (kHallCanvas.width - s.width),
+    top: t.y.clamp(0.0, 1.0) * (kHallCanvas.height - s.height),
+  );
+}
 
 /// Обратное преобразование: центр плитки на холсте → доли x/y стола.
-({double x, double y}) hallFractionForCenter(double cx, double cy) => (
-      x: ((cx - kHallTile / 2) / (kHallCanvas.width - kHallTile)).clamp(0.0, 1.0),
-      y: ((cy - kHallTile / 2) / (kHallCanvas.height - kHallTile)).clamp(0.0, 1.0),
+({double x, double y}) hallFractionForCenter(double cx, double cy, [Size size = const Size(kHallTile, kHallTile)]) => (
+      x: ((cx - size.width / 2) / (kHallCanvas.width - size.width)).clamp(0.0, 1.0),
+      y: ((cy - size.height / 2) / (kHallCanvas.height - size.height)).clamp(0.0, 1.0),
     );
 
 /// Часть холста, где стоят столы, с полями вокруг — её и показываем на
@@ -41,10 +58,11 @@ Rect hallContentRect(
   var l = double.infinity, t = double.infinity, r = -double.infinity, b = -double.infinity;
   for (final x in tables) {
     final o = hallTileOffset(x);
+    final s = hallTileSize(x);
     l = math.min(l, o.left);
     t = math.min(t, o.top);
-    r = math.max(r, o.left + kHallTile);
-    b = math.max(b, o.top + kHallTile);
+    r = math.max(r, o.left + s.width);
+    b = math.max(b, o.top + s.height);
   }
   l -= margin;
   t -= margin;

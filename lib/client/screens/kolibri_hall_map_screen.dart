@@ -6,6 +6,7 @@ import '../theme/kolibri_theme.dart';
 import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
 import '../../widgets/hall_plan_view.dart';
+import '../../widgets/table_shape.dart';
 
 /// Карта зала для гостя — та же схема столов, что видит кальянщик на POS,
 /// в реальном времени. Только просмотр занятости.
@@ -136,24 +137,19 @@ class _KolibriHallMapScreenState extends State<KolibriHallMapScreen> {
   Widget _tableTile(BuildContext context, TableModel table) {
     final busy = table.activeSessionIds.isNotEmpty;
     final color = busy ? KolibriColors.accent : KolibriColors.primary;
-    // Круглый/квадратный — как в редакторе зала на кассе (см. TableTile и
-    // TablePickerMap): radius = размер плитки даёт идеальный круг, Flutter
-    // сам ограничивает его половиной стороны.
-    final radius = table.shape == 'circle' ? BorderRadius.circular(92) : BorderRadius.circular(16);
-
-    return InkWell(
-      borderRadius: radius,
+    // Форма и поворот — как в редакторе зала на кассе (см. TableShapeBox):
+    // длинные и треугольные столы гость видит так же, как их собрали.
+    return GestureDetector(
       onTap: () => _onTap(context, table, busy),
-      child: Container(
-        width: kHallTile,
-        height: kHallTile,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: radius,
-          border: Border.all(color: color, width: 2),
-        ),
+      child: TableShapeBox(
+        table: table,
+        size: hallTileSize(table),
+        fill: color.withValues(alpha: 0.15),
+        borderColor: color,
+        borderWidth: 2,
+        cornerRadius: 16,
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
                 busy
