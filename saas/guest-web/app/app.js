@@ -680,6 +680,11 @@ function renderStories() {
 
 // ---------- МЕНЮ ----------
 
+// 15-ФЗ: табак нельзя рекламировать и продавать дистанционно, а в месте
+// продажи его показывают списком без изображений. Поэтому вне заведения
+// табачных позиций в меню не видно, а за столом они идут без фото.
+const TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
+
 function screenMenu() {
   screenEl().innerHTML = `<h1>Меню</h1><div id="menu"><div class="spinner"></div></div>`;
 
@@ -696,29 +701,36 @@ function screenMenu() {
     }
     // Отдельный чип «Всё меню»: гость чаще хочет посмотреть всё сразу,
     // чем перебирать категории — особенно когда их много.
-    const known = cats.map((c) => c.id);
+    const atTable = !!(state.profile && state.profile.activeSessionId);
+    const catName = (id) => (cats.find((c) => c.id === id) || {}).name || '';
+    const tobacco = (i) => TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
+    const visible = atTable ? items : items.filter((i) => !tobacco(i));
+    const hidden = items.length - visible.length;
+    const visibleCats = atTable ? cats : cats.filter((c) =>
+      !TOBACCO_RE.test(c.name || '') && visible.some((i) => i.categoryId === c.id));
+
+    const known = visibleCats.map((c) => c.id);
     if (activeCat !== 'all' && (!activeCat || !known.includes(activeCat))) activeCat = 'all';
 
     const shown = activeCat === 'all'
-      ? items
-      : items.filter((i) => i.categoryId === activeCat);
-    const atTable = !!(state.profile && state.profile.activeSessionId);
+      ? visible
+      : visible.filter((i) => i.categoryId === activeCat);
 
     box.innerHTML = `
       <div>
         <span class="chip ${activeCat === 'all' ? 'on' : ''}" data-cat="all">Всё меню</span>
-        ${cats.map((c) => `
+        ${visibleCats.map((c) => `
           <span class="chip ${c.id === activeCat ? 'on' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</span>
         `).join('')}</div>
 
       <div class="card">
         ${shown.length ? shown.map((i) => `
           <div class="item">
-            ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+            ${i.imageUrl && !tobacco(i) ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
             <div class="grow">
               <div style="font-weight:600">${esc(i.name)}</div>
               <div class="small muted">${money(i.price)}${activeCat === 'all'
-                ? ' · ' + esc((cats.find((c) => c.id === i.categoryId) || {}).name || '')
+                ? ' · ' + esc(catName(i.categoryId))
                 : ''}</div>
             </div>
             ${atTable ? `
@@ -731,6 +743,8 @@ function screenMenu() {
           </div>
         `).join('') : `<p class="muted small">В этой категории пока пусто.</p>`}
       </div>
+      ${hidden ? `<p class="small muted">Часть позиций (18+) видна только в заведении,
+        когда вы за столом.</p>` : ''}
 
       ${atTable ? cartBlock() : `
         <p class="small muted">Чтобы заказать из приложения, откройте свой
