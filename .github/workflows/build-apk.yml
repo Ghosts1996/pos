@@ -30,6 +30,7 @@ jobs:
             label: ZalPOS
             icon: assets/icon/icon.png
             adaptiveIcon: assets/icon/icon_foreground.png
+            adaptiveBg: assets/icon/icon_background.png
             artifact: hookah-pos-apk
             gservices_secret: GOOGLE_SERVICES_JSON
             deeplink: 'false'
@@ -39,6 +40,7 @@ jobs:
             label: Colibri Lounge
             icon: assets/icon/kolibri.png
             adaptiveIcon: assets/icon/kolibri_foreground.png
+            adaptiveBg: '#000000'
             artifact: kolibri-lounge-apk
             gservices_secret: GOOGLE_SERVICES_JSON_KOLIBRI
             deeplink: 'true'
@@ -566,6 +568,7 @@ jobs:
             FG="$ICON"
           fi
           sed -i -E "s|adaptive_icon_foreground: \".*\"|adaptive_icon_foreground: \"$FG\"|" pubspec.yaml
+          sed -i -E "s|adaptive_icon_background: \".*\"|adaptive_icon_background: \"${{ matrix.adaptiveBg }}\"|" pubspec.yaml
 
           dart run flutter_launcher_icons
 
