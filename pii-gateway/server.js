@@ -234,6 +234,84 @@ async function handleRegisterGuestProfile(req, res, body) {
 // не трогать конфиг nginx. Документ в Firestore клиент создаёт сам, только
 // после ответа 200 отсюда. Писать может любой вошедший пользователь проекта
 // (сотрудник на кассе или гость в приложении) — в реальное заведение.
+// ---------- владельцы личного кабинета ZalPOS ----------
+
+/** IP клиента: nginx передаёт настоящий в X-Real-IP. */
+function clientIp(req) {
+  return String(req.headers["x-real-ip"] || req.socket?.remoteAddress || "").slice(0, 64);
+}
+
+// Регистрация владельца идёт без входа — ограничиваем частоту по IP.
+const OWNER_LIMIT_PER_HOUR = 20;
+const ownerHits = new Map(); // ip -> [ms]
+function ownerRateLimited(ip) {
+  const now = Date.now();
+  const list = (ownerHits.get(ip) || []).filter((t) => now - t < 3600000);
+  list.push(now);
+  ownerHits.set(ip, list);
+  if (ownerHits.size > 10000) ownerHits.clear();
+  return list.length > OWNER_LIMIT_PER_HOUR;
+}
+
+/**
+ * Первичная запись владельца (ч. 5 ст. 18 152-ФЗ): личный кабинет
+ * (saas/console/console.js, recordOwnerInRussia) вызывает её ДО
+ * регистрации в Firebase Auth — email сначала оказывается в базе в РФ.
+ * Вместе с ним — моменты принятия оферты и согласия на обработку ПД.
+ */
+async function handleRegisterOwner(req, res, body) {
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (!email || email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return sendJson(res, 400, { error: "некорректный email" });
+  }
+  if (body.offer !== true || body.pdConsent !== true) {
+    return sendJson(res, 400, { error: "нужны принятие оферты и согласие на обработку персональных данных" });
+  }
+  const ip = clientIp(req);
+  if (ownerRateLimited(ip)) return sendJson(res, 429, { error: "слишком много попыток — попробуйте через час" });
+  const edition = typeof body.edition === "string" ? body.edition.slice(0, 80) : "";
+  const ua = String(req.headers["user-agent"] || "").slice(0, 300);
+  try {
+    await getPool().query(
+      `INSERT INTO owner_registrations (email, offer_accepted_at, pd_consent_at, pd_consent_edition, ip, user_agent)
+       VALUES ($1, now(), now(), $2, $3, $4)
+       ON CONFLICT (email) DO UPDATE SET
+         offer_accepted_at = now(), pd_consent_at = now(), pd_consent_edition = EXCLUDED.pd_consent_edition,
+         ip = EXCLUDED.ip, user_agent = EXCLUDED.user_agent, updated_at = now()`,
+      [email, edition, ip, ua]
+    );
+  } catch (e) {
+    return sendJson(res, 500, { error: "не удалось сохранить: " + (e?.message || e) });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+/** После первого входа — привязать запись к аккаунту (по ID-токену). */
+async function handleLinkOwner(req, res) {
+  const idToken = (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+  if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
+  const fbApp = getSaasApp();
+  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  let decoded;
+  try {
+    decoded = await fbApp.auth().verifyIdToken(idToken);
+  } catch (e) {
+    return sendJson(res, 401, { error: "невалидный токен" });
+  }
+  const email = String(decoded.email || "").toLowerCase();
+  if (!email) return sendJson(res, 400, { error: "в аккаунте нет email" });
+  try {
+    await getPool().query(
+      `INSERT INTO owner_registrations (email, firebase_uid) VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET firebase_uid = EXCLUDED.firebase_uid, updated_at = now()`,
+      [email, decoded.uid]
+    );
+  } catch (e) {
+    return sendJson(res, 500, { error: "не удалось сохранить: " + (e?.message || e) });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
 async function handleRecordContact(req, res, body) {
   const { tenantId, kind, id, name, phone } = body;
   const idOk = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
@@ -287,6 +365,8 @@ const server = http.createServer((req, res) => {
       } catch (_) {
         return sendJson(res, 400, { error: "invalid JSON body" });
       }
+      if (body && body.kind === "owner") return handleRegisterOwner(req, res, body);
+      if (body && body.kind === "owner_link") return handleLinkOwner(req, res);
       if (body && body.kind) return handleRecordContact(req, res, body);
       return handleRegisterGuestProfile(req, res, body);
     })

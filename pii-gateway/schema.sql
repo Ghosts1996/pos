@@ -40,3 +40,29 @@ CREATE TABLE IF NOT EXISTS contact_records (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, kind, record_id)
 );
+
+-- Первичная запись владельцев личного кабинета ZalPOS (ч. 5 ст. 18 152-ФЗ):
+-- email попадает сюда, на сервер в РФ, ДО регистрации в Firebase Auth
+-- (Google). Здесь же — моменты принятия оферты и согласия на обработку ПД
+-- (доказательство согласия). firebase_uid проставляется после первого входа.
+CREATE TABLE IF NOT EXISTS owner_registrations (
+  email               TEXT PRIMARY KEY,           -- в нижнем регистре
+  firebase_uid        TEXT NOT NULL DEFAULT '',
+  offer_accepted_at   TIMESTAMPTZ,
+  pd_consent_at       TIMESTAMPTZ,
+  pd_consent_edition  TEXT NOT NULL DEFAULT '',
+  ip                  TEXT NOT NULL DEFAULT '',
+  user_agent          TEXT NOT NULL DEFAULT '',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Схему применяет суперпользователь postgres (setup.sh) — права сервису
+-- выдаём явно, иначе он не сможет писать в новые таблицы.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'pii_gateway') THEN
+    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations TO pii_gateway;
+  END IF;
+END
+$$;
