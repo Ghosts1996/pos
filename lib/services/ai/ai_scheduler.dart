@@ -45,10 +45,8 @@ class AiScheduler {
       if (!await _acquireLock()) return;
       final now = DateTime.now();
 
-      await _runIfDue('hostess_briefing', const Duration(hours: 12), () async {
-        if (now.hour < 12 || now.hour > 20) return null;
-        return AiService.instance.hostessBriefing();
-      });
+      await _runIfDue('hostess_briefing', const Duration(hours: 12),
+          window: now.hour >= 12 && now.hour <= 20, () => AiService.instance.hostessBriefing());
 
       await _runIfDue('stock_watch', const Duration(hours: 3), () async {
         return AiService.instance.restockPlan(days: 7);
@@ -64,10 +62,9 @@ class AiScheduler {
         return AiService.instance.reviewDigest();
       });
 
-      await _runIfDue('shift_summary', const Duration(hours: 20), () async {
-        if (now.hour < 2 || now.hour > 6) return null; // под закрытие заведения
-        return AiService.instance.shiftSummary();
-      });
+      // Под закрытие заведения.
+      await _runIfDue('shift_summary', const Duration(hours: 20),
+          window: now.hour >= 2 && now.hour <= 6, () => AiService.instance.shiftSummary());
     } catch (_) {
       // Фоновые задания не должны ломать работу кассы.
     } finally {
@@ -102,11 +99,17 @@ class AiScheduler {
 
   /// Выполнить задание, если с прошлого раза прошло достаточно времени.
   /// Результат кладётся в staffNotes — лента подсказок на POS.
+  ///
+  /// [window] — сейчас подходящее время суток. Проверяется до отметки о
+  /// запуске: иначе каждый тик вне окна «съедал» интервал, и итоги смены
+  /// (окно 02–06, интервал 20 ч) приходили раз в несколько дней.
   Future<void> _runIfDue(
     String jobId,
     Duration interval,
-    Future<String?> Function() job,
-  ) async {
+    Future<String?> Function() job, {
+    bool window = true,
+  }) async {
+    if (!window) return;
     final ref = AppScope.col('aiJobs').doc(jobId);
     final snap = await ref.get();
     final ts = snap.data()?['lastRunAt'];

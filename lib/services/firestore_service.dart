@@ -536,8 +536,9 @@ class FirestoreService {
   /// заказ гостя: тогда чек не закрываем, иначе в нём остались бы
   /// неоплаченные позиции.
   ///
-  /// [loyaltyClientUid] — гость, которому за этот чек начисляется кешбэк:
-  /// по нему возврат чека отменит начисление (см. [refundSession]).
+  /// [loyaltyClientUid] — гость из приложения, сидевший на этом чеке: по
+  /// нему возврат отменит начисленный кешбэк (см. [refundSession]), а
+  /// удаление данных гостя найдёт чеки с его именем в подписи.
   Future<void> closeSessionWithPayment(
     String sessionId,
     String tableId, {
@@ -625,6 +626,24 @@ class FirestoreService {
       await AppScope.col('sessionClaims').doc(sessionId).delete();
     } catch (_) {
       // Не критично: id чека больше не повторится, запись просто устареет.
+    }
+    // Гость больше не за этим столом. Обычно это делает начисление кешбэка
+    // (accrueBonuses), но при «закрыть без оплаты» его нет — и профиль
+    // навсегда числил бы гостя за закрытым чеком: он не мог ни сесть за
+    // другой стол по-человечески, ни удалить свои данные.
+    try {
+      final bound = await AppScope.loyaltyCol('clients')
+          .where('activeSessionId', isEqualTo: sessionId)
+          .get();
+      for (final d in bound.docs) {
+        await d.reference.update({
+          'activeSessionId': '',
+          'activeTableId': '',
+          if (AppScope.chainId != null) 'activeTenantId': '',
+        });
+      }
+    } catch (_) {
+      // Не критично: приложение гостя видит, что чек закрыт.
     }
 
     // 4. Списываем склад по позициям заказа (игнорируем ошибки, чтобы не
