@@ -148,7 +148,7 @@ const RESERVED_SLUGS = new Set([
 // удалении просроченных демо-заведений (purgeDemoTenant).
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
-  "branding", "clients", "devices", "discountCards", "employees",
+  "branding", "cashOps", "clients", "devices", "discountCards", "employees",
   "giftCardClaims", "giftCards", "guestOrders", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
@@ -3189,235 +3189,606 @@ function clientIp(req) {
   return req.socket.remoteAddress || "unknown";
 }
 
+// ------------------------------------------------------------ демо-данные
+//
+// Демо должно с первого экрана показать почти всё, что умеет приложение:
+// три зала с аккуратно расставленными столами, живой зал (заняты, «скоро
+// освободится», «время вышло», бронь, два чека на баре), меню с фото,
+// открытую смену с выручкой, брони и лист ожидания, вызовы и заказ гостя,
+// сотрудников с зарплатой, склад с позициями на исходе, гостей с бонусами
+// разных уровней, отзывы, истории, счастливые часы и скидочные карты.
+// Все имена и данные вымышленные; заведение стирается само (DEMO_TTL_MS).
+
+// Схема зала — логический холст 1000×640 с плиткой 104 (как в
+// lib/utils/hall_layout.dart). Столы задаются левым верхним углом плитки в
+// точках холста, доли x/y считает demoTableFraction. Все координаты кратны
+// шагу сетки редактора (26), поэтому при правке схемы столы не «прыгают».
+const DEMO_HALL = { width: 1000, height: 640, tile: 104 };
+
 const DEMO_TABLES = [
-  { name: "Стол 1", x: 0.15, y: 0.2, seats: 4, shape: "rect" },
-  { name: "Стол 2", x: 0.45, y: 0.2, seats: 2, shape: "circle" },
-  { name: "Стол 3", x: 0.75, y: 0.2, seats: 6, shape: "rect" },
-  { name: "Стол 4", x: 0.15, y: 0.6, seats: 4, shape: "rect" },
-  { name: "Стол 5", x: 0.45, y: 0.6, seats: 2, shape: "circle" },
-  { name: "Стол 6", x: 0.75, y: 0.6, seats: 8, shape: "rect" },
+  { name: "Бар", zone: "Основной зал", shape: "bar", seats: 6, left: 52, top: 52, maxOpenSessions: 4 },
+  { name: "Стол 1", zone: "Основной зал", shape: "circle", seats: 2, left: 442, top: 52 },
+  { name: "Стол 2", zone: "Основной зал", shape: "circle", seats: 2, left: 598, top: 52 },
+  { name: "Стол 3", zone: "Основной зал", shape: "rect", seats: 4, left: 754, top: 52 },
+  { name: "Стол 4", zone: "Основной зал", shape: "rect", seats: 4, left: 52, top: 234 },
+  { name: "Стол 5", zone: "Основной зал", shape: "rect", seats: 4, left: 208, top: 234 },
+  { name: "Стол 6", zone: "Основной зал", shape: "long", seats: 6, left: 390, top: 234 },
+  { name: "Стол 7", zone: "Основной зал", shape: "oval", seats: 6, left: 650, top: 234 },
+  { name: "Диван 8", zone: "Основной зал", shape: "corner", seats: 8, left: 52, top: 416 },
+  { name: "Стол 9", zone: "Основной зал", shape: "long", seats: 6, left: 390, top: 416 },
+  { name: "Стол 10", zone: "Основной зал", shape: "rect", seats: 4, left: 702, top: 416 },
+  { name: "Веранда 1", zone: "Веранда", shape: "circle", seats: 2, left: 52, top: 52 },
+  { name: "Веранда 2", zone: "Веранда", shape: "circle", seats: 2, left: 234, top: 52 },
+  { name: "Веранда 3", zone: "Веранда", shape: "circle", seats: 2, left: 416, top: 52 },
+  { name: "Веранда 4", zone: "Веранда", shape: "long", seats: 6, left: 52, top: 234 },
+  { name: "Веранда 5", zone: "Веранда", shape: "oval", seats: 4, left: 312, top: 234 },
+  { name: "Кабинет 1", zone: "VIP", shape: "corner", rotation: 1, seats: 10, left: 52, top: 52 },
+  { name: "Кабинет 2", zone: "VIP", shape: "oval", seats: 6, left: 338, top: 104 },
+  { name: "Кабинет 3", zone: "VIP", shape: "long", rotation: 1, seats: 8, left: 624, top: 52 },
 ];
 
-// Фото — стабильные ссылки на Wikimedia Commons (Special:FilePath — это
-// официально предназначенный для внешнего хотлинка редирект на текущий
-// файл, а не догадка о прямом пути на upload.wikimedia.org, который может
-// смениться при переименовании). Свободные лицензии, править/показывать
-// можно. Если конкретное фото когда-нибудь всё же пропадёт — не критично:
-// _MenuImage в приложении молча откатывается на нейтральную иконку вместо
-// сломанной картинки (см. menu_selection_screen.dart), а не ломает экран.
-const WIKI_FILE = (name) => `https://commons.wikimedia.org/wiki/Special:FilePath/${name}`;
+/** Доли x/y стола: левый верхний угол / свободное место (холст минус плитка). */
+function demoTableFraction(t) {
+  const { width, height, tile } = DEMO_HALL;
+  const cells = t.shape === "bar" ? 3 : ["long", "oval", "corner"].includes(t.shape) ? 2 : 1;
+  let w = tile * cells;
+  let h = t.shape === "corner" ? w : tile;
+  if (t.shape !== "corner" && (t.rotation || 0) % 2 === 1) [w, h] = [h, w];
+  const round = (v) => Math.round(v * 10000) / 10000;
+  return { x: round(t.left / (width - w)), y: round(t.top / (height - h)) };
+}
 
+// Склад: [ключ, название, категория, единица, остаток, минимум]. Три позиции
+// ниже минимума — чтобы в демо было видно предупреждения о закупке.
+const DEMO_STOCK = [
+  ["tobacco", "Табак (ассорти)", "Табак", "g", 180, 250],
+  ["coal", "Уголь кокосовый", "Табак", "pcs", 240, 100],
+  ["milk", "Молоко 3,2%", "Бар", "l", 8, 5],
+  ["coffee", "Кофе в зёрнах", "Бар", "kg", 2.4, 1],
+  ["puer", "Чай пуэр", "Бар", "g", 450, 200],
+  ["syrup", "Сироп «Лаванда»", "Бар", "ml", 150, 300],
+  ["lemon", "Лимоны", "Бар", "kg", 3, 1],
+  ["cola", "Кола 0,33", "Бар", "pcs", 9, 24],
+  ["water", "Вода 0,5", "Бар", "pcs", 48, 24],
+  ["beef", "Говядина (фарш)", "Кухня", "kg", 4, 2],
+  ["mozzarella", "Моцарелла", "Кухня", "kg", 2.5, 1],
+  ["fries", "Картофель фри (заморозка)", "Кухня", "kg", 7, 3],
+  ["cheesecake", "Чизкейк (порции)", "Кухня", "pcs", 11, 4],
+];
+
+// Меню. img — карточка из saas/console/demo-menu (3D-эмодзи Fluent от
+// Microsoft, лицензия MIT, на мягком градиенте): лежит на том же хостинге,
+// что и консоль, и не зависит от чужих сайтов. use — списание со склада:
+// [ключ из DEMO_STOCK, сколько, единица]. rank — место в «Популярном».
 const DEMO_MENU = [
   {
-    // Табак — без фото и с флагом tobacco (ст. 16 закона № 15-ФЗ): фото
-    // кальяна в меню гостя — уже реклама, флаг снимает скидки и «Хит».
+    // Табак — без фото, описаний и с флагом tobacco (ст. 16 закона
+    // № 15-ФЗ): фото кальяна в меню гостя — уже реклама, флаг снимает
+    // скидки и «Хит», а гостю табак показывается строгим списком.
     category: "Кальяны",
     tobacco: true,
     items: [
-      { name: "Классический кальян", price: 1200 },
-      { name: "Кальян на молоке", price: 1500 },
-      { name: "Премиум-микс", price: 1800 },
+      { name: "Классический кальян", price: 1200, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
+      { name: "Кальян на молоке", price: 1500, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"], ["milk", 300, "ml"]] },
+      { name: "Кальян на грейпфруте", price: 1800, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
+      { name: "Перезабивка", price: 700, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
+    ],
+  },
+  {
+    category: "Чай",
+    img: "oolong",
+    items: [
+      { name: "Пуэр", price: 450, weight: [600, "ml"], img: "puer", rank: 5,
+        description: "Выдержанный шу пуэр, заваривается в чайнике", use: [["puer", 8, "g"]] },
+      { name: "Молочный улун", price: 450, weight: [600, "ml"], img: "oolong",
+        description: "Мягкий улун со сливочным ароматом" },
+      { name: "Облепиховый чай", price: 520, weight: [600, "ml"], img: "sea-buckthorn",
+        description: "Облепиха, апельсин, мёд и розмарин" },
+      { name: "Ягодный чай", price: 490, weight: [600, "ml"], img: "berry-tea",
+        description: "Черника, малина, смородина и мята" },
+    ],
+  },
+  {
+    category: "Кофе",
+    img: "cappuccino",
+    items: [
+      { name: "Капучино", price: 290, weight: [300, "ml"], img: "cappuccino", rank: 1,
+        description: "Двойной эспрессо и плотная молочная пена", use: [["coffee", 18, "g"], ["milk", 180, "ml"]] },
+      { name: "Латте", price: 320, weight: [400, "ml"], img: "latte",
+        description: "Эспрессо и много нежного молока", use: [["coffee", 18, "g"], ["milk", 280, "ml"]] },
+      { name: "Раф", price: 360, weight: [350, "ml"], img: "raf",
+        description: "Эспрессо, сливки и ванильный сахар", use: [["coffee", 18, "g"]] },
+      { name: "Американо", price: 220, weight: [250, "ml"], img: "americano",
+        description: "Эспрессо с горячей водой", use: [["coffee", 18, "g"]] },
+    ],
+  },
+  {
+    category: "Лимонады",
+    img: "lemonade",
+    items: [
+      { name: "Классический лимонад", price: 390, weight: [500, "ml"], img: "lemonade",
+        description: "Лимон, лайм, мята и содовая", use: [["lemon", 80, "g"]] },
+      { name: "Манго-маракуйя", price: 420, weight: [500, "ml"], img: "mango", rank: 2,
+        description: "Пюре манго, маракуйя и лайм" },
+      { name: "Клубника-базилик", price: 420, weight: [500, "ml"], img: "strawberry",
+        description: "Клубника, базилик и лимонный сок" },
+      { name: "Мохито безалкогольный", price: 390, weight: [500, "ml"], img: "mojito",
+        description: "Лайм, мята, тростниковый сахар и содовая" },
+    ],
+  },
+  {
+    category: "Кухня",
+    img: "burger",
+    items: [
+      { name: "Цезарь с курицей", price: 520, weight: [250, "g"], img: "caesar",
+        description: "Романо, курица гриль, пармезан и соус цезарь" },
+      { name: "Паста карбонара", price: 560, weight: [300, "g"], img: "carbonara",
+        description: "Спагетти, бекон, желток и пармезан" },
+      { name: "Бургер с говядиной", price: 590, weight: [350, "g"], img: "burger", rank: 4,
+        description: "Котлета из говядины, чеддер, томаты и соус барбекю", use: [["beef", 150, "g"]] },
+      { name: "Картофель фри", price: 250, weight: [150, "g"], img: "fries",
+        description: "Хрустящий, с соусом на выбор", use: [["fries", 150, "g"]] },
+      { name: "Сырные палочки", price: 340, weight: [180, "g"], img: "cheese-sticks",
+        description: "Моцарелла в панировке и соус ранч", use: [["mozzarella", 150, "g"]] },
+      { name: "Пицца Маргарита", price: 590, weight: [450, "g"], img: "pizza",
+        description: "Томатный соус, моцарелла и базилик", use: [["mozzarella", 120, "g"]] },
+    ],
+  },
+  {
+    category: "Десерты",
+    img: "cheesecake",
+    items: [
+      { name: "Чизкейк Нью-Йорк", price: 390, weight: [150, "g"], img: "cheesecake", rank: 3,
+        description: "Классический сливочный чизкейк", use: [["cheesecake", 1, "pcs"]] },
+      { name: "Шоколадный фондан", price: 420, weight: [120, "g"], img: "fondant",
+        description: "Тёплый, с жидкой серединкой и шариком мороженого" },
+      { name: "Мороженое", price: 290, weight: [150, "g"], img: "ice-cream",
+        description: "Три шарика: ваниль, шоколад и клубника" },
+    ],
+  },
+  {
+    category: "Снеки",
+    img: "popcorn",
+    items: [
+      { name: "Орешки", price: 300, weight: [100, "g"], img: "nuts", description: "Кешью, миндаль и фундук" },
+      { name: "Фруктовая тарелка", price: 700, weight: [600, "g"], img: "fruit", description: "Сезонные фрукты и ягоды" },
+      { name: "Попкорн", price: 250, weight: [80, "g"], img: "popcorn", description: "Солёный или карамельный" },
     ],
   },
   {
     category: "Напитки",
+    img: "cola",
     items: [
-      { name: "Чай чёрный", price: 350, image: WIKI_FILE("Cup_of_black_tea.JPG") },
-      { name: "Лимонад", price: 400, image: WIKI_FILE("Mug_of_Lemonade.jpg") },
-      { name: "Морс", price: 350, image: WIKI_FILE("Glass_of_Mango_Juice.jpg") },
-    ],
-  },
-  {
-    category: "Снэки",
-    items: [
-      { name: "Орешки", price: 300, image: WIKI_FILE("Mixed_nuts_small_white2.jpg") },
-      { name: "Фруктовая тарелка", price: 700, image: WIKI_FILE("Fruit_plate_with_fresh_fruits.jpg") },
-      { name: "Чипсы", price: 250, image: WIKI_FILE("Potato_Chips.jpg") },
+      { name: "Вода негазированная", price: 150, weight: [500, "ml"], img: "water", use: [["water", 1, "pcs"]] },
+      { name: "Кола", price: 250, weight: [330, "ml"], img: "cola", description: "Классическая, в стекле", use: [["cola", 1, "pcs"]] },
     ],
   },
 ];
 
-// Готовые "чеки" для двух столов из истории (закрыты, оплачены) — чтобы
-// в демо-заведении сразу было что показать в отчётах/истории смены, а не
-// только пустой зал. minutesAgoStart/End — когда чек был открыт/закрыт
-// относительно момента создания демо (см. seedDemoData ниже).
+// PIN-коды нарочно простые и совпадают с тем, что написано на лендинге
+// рядом с кнопкой скачивания демо-APK (см. screenLanding() в console.js)
+// — заведение живёт несколько часов и стирается само (purgeDemoTenant),
+// это не боевые учётные данные. Длина PIN соответствует роли (см.
+// AppConstants.pinLengthForRole) — иначе экран входа с этим кодом просто
+// не пустит: у сотрудника 4 цифры, у администратора 6.
+const DEMO_STAFF = [
+  { key: "admin", name: "Демо-админ", pinCode: "111111", role: "admin", position: "universal" },
+  { key: "hookah", name: "Максим", pinCode: "1111", role: "employee", position: "hookah_master",
+    hourlyRateEnabled: true, hourlyRate: 250, salesPercentEnabled: true, salesPercentRate: 5 },
+  { key: "waiter", name: "Алина", pinCode: "2222", role: "employee", position: "waiter",
+    shiftRateEnabled: true, shiftRate: 2000, salesPercentEnabled: true, salesPercentRate: 3 },
+  { key: "bar", name: "Денис", pinCode: "3333", role: "employee", position: "bartender",
+    hourlyRateEnabled: true, hourlyRate: 220 },
+];
+
+// Смена открыта столько минут назад — в неё попадают все закрытые чеки
+// ниже, и X-отчёт сразу показывает выручку, наличные и чаевые.
+const DEMO_SHIFT_OPENED_MINUTES_AGO = 360;
+
+// Закрытые за смену чеки: [стол, открыт (мин назад), закрыт, кто вёл,
+// оплата, позиции [название, кол-во], чаевые].
 const DEMO_CLOSED_RECEIPTS = [
-  {
-    tableName: "Стол 1",
-    minutesAgoStart: 150,
-    minutesAgoEnd: 100,
-    items: [
-      { name: "Классический кальян", price: 1200, qty: 1 },
-      { name: "Орешки", price: 300, qty: 1 },
-    ],
-    paymentMethod: "cash",
-  },
-  {
-    tableName: "Стол 3",
-    minutesAgoStart: 260,
-    minutesAgoEnd: 190,
-    items: [
-      { name: "Кальян на молоке", price: 1500, qty: 2 },
-      { name: "Морс", price: 350, qty: 2 },
-      { name: "Чипсы", price: 250, qty: 1 },
-    ],
-    paymentMethod: "card",
-  },
+  ["Стол 3", 340, 280, "hookah", "cash", [["Классический кальян", 1], ["Пуэр", 1], ["Орешки", 1]], { cash: 200 }],
+  ["Веранда 1", 330, 290, "waiter", "card", [["Капучино", 2], ["Чизкейк Нью-Йорк", 2]]],
+  ["Стол 5", 310, 230, "hookah", "card", [["Кальян на молоке", 1], ["Манго-маракуйя", 2], ["Картофель фри", 1]], { card: 300 }],
+  ["Бар", 290, 260, "bar", "cash", [["Раф", 1], ["Латте", 1]]],
+  ["Стол 9", 280, 170, "hookah", "mixed", [["Классический кальян", 2], ["Перезабивка", 1], ["Пицца Маргарита", 1], ["Классический лимонад", 3]]],
+  ["Кабинет 2", 260, 150, "waiter", "card", [["Кальян на грейпфруте", 1], ["Бургер с говядиной", 2], ["Цезарь с курицей", 1], ["Облепиховый чай", 1]], { card: 500, team: true }],
+  ["Стол 4", 200, 130, "waiter", "card", [["Паста карбонара", 1], ["Бургер с говядиной", 1], ["Кола", 2]]],
+  ["Веранда 4", 180, 95, "hookah", "cash", [["Классический кальян", 1], ["Молочный улун", 1], ["Фруктовая тарелка", 1]]],
+  ["Стол 2", 140, 70, "waiter", "card", [["Манго-маракуйя", 1], ["Клубника-базилик", 1], ["Шоколадный фондан", 1]], { card: 150 }],
+  ["Стол 10", 120, 45, "hookah", "card", [["Кальян на молоке", 1], ["Капучино", 2], ["Сырные палочки", 1]]],
 ];
 
-// Столы, занятые ПРЯМО СЕЙЧАС (активный, ещё не закрытый чек) — чтобы зал
-// в демо выглядел живым, а не как только что созданное пустое заведение.
+// Столы, занятые прямо сейчас. Время подобрано так, чтобы в зале были все
+// состояния: Стол 6 — «скоро освободится», Диван 8 — «время вышло», на
+// баре два отдельных чека, в VIP — скидка по карте. refills — перезабивки
+// (минут назад).
 const DEMO_ACTIVE_SESSIONS = [
-  {
-    tableName: "Стол 2",
-    guestTag: "Аня",
-    minutesAgoStart: 25,
-    durationMinutes: 90,
-    items: [
-      { name: "Кальян на молоке", price: 1500, qty: 1 },
-      { name: "Лимонад", price: 400, qty: 2 },
-    ],
-  },
-  {
-    tableName: "Стол 5",
-    guestTag: "Компания у окна",
-    minutesAgoStart: 10,
-    durationMinutes: 90,
-    items: [
-      { name: "Премиум-микс", price: 1800, qty: 1 },
-      { name: "Фруктовая тарелка", price: 700, qty: 1 },
-      { name: "Чай чёрный", price: 350, qty: 3 },
-    ],
-  },
+  { table: "Стол 1", tag: "Аня", start: 25, duration: 90, staff: "hookah", client: "demo-guest-1",
+    items: [["Кальян на молоке", 1], ["Манго-маракуйя", 2]], refills: [10] },
+  { table: "Стол 6", tag: "Компания у окна", start: 80, duration: 90, staff: "hookah",
+    items: [["Классический кальян", 2], ["Пицца Маргарита", 1], ["Пуэр", 2]], refills: [55, 30] },
+  { table: "Диван 8", tag: "День рождения", start: 100, duration: 90, staff: "waiter",
+    items: [["Кальян на грейпфруте", 2], ["Фруктовая тарелка", 1], ["Чизкейк Нью-Йорк", 3], ["Классический лимонад", 4]], refills: [70, 40] },
+  { table: "Кабинет 1", tag: "Банкет", start: 40, duration: 180, staff: "waiter", card: "0001",
+    items: [["Классический кальян", 3], ["Цезарь с курицей", 2], ["Бургер с говядиной", 2], ["Капучино", 4]] },
+  { table: "Веранда 2", tag: "Олег", start: 15, duration: 90, staff: "waiter",
+    items: [["Раф", 2], ["Сырные палочки", 1]] },
+  { table: "Бар", tag: "Кирилл", start: 30, duration: 60, staff: "bar", items: [["Кола", 1], ["Попкорн", 1]] },
+  { table: "Бар", tag: "Двое справа", start: 5, duration: 60, staff: "bar", items: [["Мохито безалкогольный", 2]] },
+];
+
+// Гости с профилем в приложении — по одному на каждый уровень бонусной
+// программы (Бронза … Алмаз). Телефонов нет: в настоящей работе они лежат
+// на сервере в РФ, а не в Firestore.
+const DEMO_CLIENTS = [
+  { uid: "demo-guest-1", name: "Анна", totalSpent: 8200, visits: 6, bonusBalance: 410, lastVisitDays: 0, sinceDays: 60 },
+  { uid: "demo-guest-2", name: "Игорь", totalSpent: 14500, visits: 11, bonusBalance: 1450, lastVisitDays: 6, sinceDays: 150 },
+  { uid: "demo-guest-3", name: "Мария", totalSpent: 31800, visits: 19, bonusBalance: 2300, lastVisitDays: 3, sinceDays: 240 },
+  { uid: "demo-guest-4", name: "Сергей", totalSpent: 56000, visits: 34, bonusBalance: 4100, lastVisitDays: 9, sinceDays: 320 },
+  { uid: "demo-guest-5", name: "Ольга", totalSpent: 112000, visits: 61, bonusBalance: 9800, lastVisitDays: 2, sinceDays: 420 },
 ];
 
 function seedDemoData(tenantRef, batch, nowMs) {
-  const tableRefsByName = {};
-  DEMO_TABLES.forEach((t) => {
-    tableRefsByName[t.name] = { ref: tenantRef.collection("tables").doc(), config: t };
+  const col = (name) => tenantRef.collection(name);
+  const ts = (minutesAgo) => admin.firestore.Timestamp.fromMillis(nowMs - minutesAgo * 60000);
+  const image = (slug) => (slug ? new URL(`demo-menu/${slug}.jpg`, CONSOLE_URL).href : "");
+
+  // Склад
+  const stockIds = {};
+  DEMO_STOCK.forEach(([key, name, category, unit, quantity, minQuantity]) => {
+    const ref = col("inventoryItems").doc();
+    stockIds[key] = ref.id;
+    batch.set(ref, {
+      name, category, unit, quantity, minQuantity,
+      active: true, note: "", updatedAt: ts(30), isMarked: false, gtin: "",
+    });
   });
 
+  // Меню
+  const menuByName = {};
+  const categoryIds = {};
   DEMO_MENU.forEach((cat, ci) => {
-    const catRef = tenantRef.collection("menuCategories").doc();
-    batch.set(catRef, { name: cat.category, order: ci, imageUrl: "" });
+    const catRef = col("menuCategories").doc();
+    categoryIds[cat.category] = catRef.id;
+    batch.set(catRef, { name: cat.category, order: ci, imageUrl: image(cat.img) });
     cat.items.forEach((item) => {
-      batch.set(tenantRef.collection("menuItems").doc(), {
+      const ref = col("menuItems").doc();
+      const tobacco = cat.tobacco === true;
+      menuByName[item.name] = { id: ref.id, price: item.price, tobacco };
+      batch.set(ref, {
         categoryId: catRef.id,
         name: item.name,
         price: item.price,
         available: true,
-        imageUrl: item.image || "",
-        tobacco: cat.tobacco === true,
-        weight: 0,
-        weightUnit: "",
+        imageUrl: tobacco ? "" : image(item.img),
+        description: tobacco ? "" : item.description || "",
+        tobacco,
+        popularRank: tobacco ? 0 : item.rank || 0,
+        vat: "",
+        fiscalSubject: "commodity",
+        // Вес порции — только для показа гостю; со склада списывают components.
+        weight: item.weight ? item.weight[0] : 0,
+        weightUnit: item.weight ? item.weight[1] : "g",
         inventoryItemId: "",
-        components: [],
+        components: (item.use || []).map(([key, weight, weightUnit]) => ({
+          inventoryItemId: stockIds[key], weight, weightUnit,
+        })),
       });
     });
   });
 
-  // PIN-коды нарочно простые и совпадают с тем, что написано на лендинге
-  // рядом с кнопкой скачивания демо-APK (см. screenLanding() в console.js)
-  // — заведение живёт несколько часов и стирается само (purgeDemoTenant),
-  // это не боевые учётные данные. Длина PIN соответствует роли (см.
-  // AppConstants.pinLengthForRole) — иначе экран входа с этим кодом просто
-  // не пустит: у сотрудника 4 цифры, у администратора 6.
-  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-сотрудник", pinCode: "1111", role: "employee" });
-  batch.set(tenantRef.collection("employees").doc(), { name: "Демо-админ", pinCode: "111111", role: "admin" });
-
-  // Профиль заведения: без часов работы гостевая бронь в демо была бы
-  // недоступна (каждый день «закрыто»), а без имени ИИ-консьерж не знал бы,
-  // как называется заведение.
-  const demoHours = {};
-  for (let d = 1; d <= 7; d++) demoHours[String(d)] = "12:00-02:00";
-  batch.set(tenantRef.collection("meta").doc("venueProfile"), {
-    name: "Демо-заведение",
-    address: "",
-    phone: "",
-    about: "Тестовое заведение платформы: примеры столов, меню и броней.",
-    workingHours: demoHours,
+  // Позиции чека как в приложении: табак помечен noPromo — на него не
+  // действуют скидки (ст. 16 закона № 15-ФЗ).
+  const orderItemsOf = (items) => items.map(([name, qty]) => {
+    const m = menuByName[name];
+    return { menuItemId: m.id, name, price: m.price, qty, ...(m.tobacco ? { noPromo: true } : {}) };
   });
 
-  const orderItemsOf = (items) => items.map((i) => ({ menuItemId: "", name: i.name, price: i.price, qty: i.qty }));
-  const ts = (minutesAgo) => admin.firestore.Timestamp.fromMillis(nowMs - minutesAgo * 60000);
+  // Сотрудники
+  const staff = {};
+  DEMO_STAFF.forEach(({ key, ...e }) => {
+    const ref = col("employees").doc();
+    staff[key] = { id: ref.id, name: e.name, position: e.position };
+    batch.set(ref, {
+      hourlyRateEnabled: false, hourlyRate: 0, shiftRateEnabled: false, shiftRate: 0,
+      overtimeEnabled: false, salesPercentEnabled: false, salesPercentRate: 0, tipsLink: "",
+      ...e,
+    });
+  });
 
-  // Активные чеки — стол переходит в "занят" (status/activeSessionIds/
-  // busyUntil/openChecks) ровно так же, как это делает openSession() в
-  // самом приложении (см. FirestoreService.openSession), просто одним
-  // батчем при создании, а не через реальное "Начать сеанс".
+  // Скидочные карты
+  const cardIds = {};
+  [
+    { cardNumber: "0001", guestName: "Постоянный гость", discountPercent: 10, notes: "Скидка на кухню и напитки" },
+    { cardNumber: "0002", guestName: "Сергей", discountPercent: 15, notes: "Карта друга заведения" },
+  ].forEach((c) => {
+    const ref = col("discountCards").doc();
+    cardIds[c.cardNumber] = { id: ref.id, percent: c.discountPercent };
+    batch.set(ref, { ...c, active: true });
+  });
+
+  // Профиль заведения: без часов работы гостевая бронь была бы недоступна
+  // (каждый день «закрыто»), а без имени ИИ-помощник не знал бы, как
+  // называется заведение.
+  const demoHours = {};
+  for (let d = 1; d <= 7; d++) demoHours[String(d)] = "12:00-02:00";
+  batch.set(col("meta").doc("venueProfile"), {
+    name: "Демо-заведение",
+    address: "Москва, ул. Примерная, 1",
+    phone: "+7 900 000-00-00",
+    about: "Лаундж-бар: основной зал, веранда и VIP-кабинеты. Тестовое заведение платформы — все данные вымышленные.",
+    workingHours: demoHours,
+    faq: [
+      { q: "Можно ли прийти с детьми?", a: "Да, до 18:00." },
+      { q: "Есть ли парковка?", a: "Бесплатная парковка во дворе." },
+      { q: "Можно со своим тортом?", a: "Да, сервисный сбор — 300 ₽." },
+    ],
+    rules: "Бронь держим 15 минут. Продажа табачной продукции — только лицам старше 18 лет.",
+    venueType: "hookah",
+    tipsEnabled: true,
+    tipsTeamEnabled: true,
+  });
+
+  // Смена кассы и личные смены сотрудников
+  const shiftRef = col("shifts").doc();
+  batch.set(shiftRef, {
+    openedAt: ts(DEMO_SHIFT_OPENED_MINUTES_AGO), closedAt: null,
+    openedBy: staff.admin.name, openedById: staff.admin.id, closedBy: null,
+    status: "open", openingCash: 5000,
+  });
+  batch.set(col("meta").doc("shiftState"), { openShiftId: shiftRef.id });
+  ["hookah", "waiter"].forEach((key) => {
+    batch.set(col("staffShifts").doc(), {
+      employeeId: staff[key].id, employeeName: staff[key].name,
+      startedAt: ts(DEMO_SHIFT_OPENED_MINUTES_AGO - 5), endedAt: null, status: "open", manual: false,
+    });
+  });
+
+  const tables = {};
+  DEMO_TABLES.forEach((t) => {
+    tables[t.name] = { ref: col("tables").doc(), config: t, checks: [] };
+  });
+
+  const sessionBase = {
+    refillCount: 0, refillHistory: [], discountCardId: null, discountPercent: 0,
+    paymentCash: 0, paymentCard: 0, paymentTerminal: 0, paymentComp: 0,
+    guestContact: "", closedWithoutPayment: false, receiptPrinted: false, fiscalReceiptPrinted: false,
+    tipsCash: 0, tipsCard: 0, refunded: false, refundedAt: null, refundCashOut: false,
+  };
+
+  // Открытые чеки — стол переходит в «занят» (status/activeSessionIds/
+  // busyUntil/openChecks) так же, как это делает FirestoreService.openSession.
+  const activeSessionIds = {};
+  const clientAtTable = {};
   DEMO_ACTIVE_SESSIONS.forEach((s) => {
-    const table = tableRefsByName[s.tableName];
-    const sessionRef = tenantRef.collection("sessions").doc();
-    const startTime = ts(s.minutesAgoStart);
-    const plannedEnd = admin.firestore.Timestamp.fromMillis(
-      nowMs - s.minutesAgoStart * 60000 + s.durationMinutes * 60000
-    );
-    batch.set(sessionRef, {
+    const table = tables[s.table];
+    const ref = col("sessions").doc();
+    const startTime = ts(s.start);
+    const plannedEnd = ts(s.start - s.duration);
+    const card = s.card ? cardIds[s.card] : null;
+    batch.set(ref, {
+      ...sessionBase,
       tableId: table.ref.id,
-      tableName: s.tableName,
-      employeeName: "Демо-сотрудник",
-      guestTag: s.guestTag,
+      tableName: s.table,
+      employeeName: staff[s.staff].name,
+      employeeId: staff[s.staff].id,
+      guestTag: s.tag,
       startTime,
       plannedEnd,
-      refillCount: 0,
-      refillHistory: [],
-      discountCardId: null,
-      discountPercent: 0,
+      refillCount: (s.refills || []).length,
+      refillHistory: (s.refills || []).map((m) => ({ time: ts(m) })),
+      discountCardId: card ? card.id : null,
+      discountPercent: card ? card.percent : 0,
       orderItems: orderItemsOf(s.items),
       status: "active",
       closedAt: null,
-      paymentCash: 0, paymentCard: 0, paymentTerminal: 0, paymentComp: 0,
-      guestContact: "", closedWithoutPayment: false, receiptPrinted: false, fiscalReceiptPrinted: false,
-      refunded: false, refundedAt: null,
     });
-    table.occupied = { sessionId: sessionRef.id, plannedEnd, startTime, guestTag: s.guestTag };
+    activeSessionIds[s.table] = activeSessionIds[s.table] || ref.id;
+    table.checks.push({ id: ref.id, label: s.tag, openedAt: startTime, plannedEnd });
+    if (s.client) clientAtTable[s.client] = { sessionId: ref.id, tableId: table.ref.id };
   });
 
-  // Закрытые чеки из истории — просто документ sessions со status: 'closed'
-  // и заполненной оплатой; на занятость стола не влияют (стол уже свободен,
-  // как и было бы в жизни после реального закрытия чека).
-  DEMO_CLOSED_RECEIPTS.forEach((r) => {
-    const table = tableRefsByName[r.tableName];
-    const sessionRef = tenantRef.collection("sessions").doc();
-    const orderItems = orderItemsOf(r.items);
+  // Закрытые за смену чеки и чаевые по ним
+  const closedIds = [];
+  DEMO_CLOSED_RECEIPTS.forEach(([tableName, start, end, staffKey, pay, items, tips]) => {
+    const ref = col("sessions").doc();
+    closedIds.push({ id: ref.id, tableName, end });
+    const orderItems = orderItemsOf(items);
     const total = orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
-    batch.set(sessionRef, {
-      tableId: table.ref.id,
-      tableName: r.tableName,
-      employeeName: "Демо-сотрудник",
+    const cash = pay === "cash" ? total : pay === "mixed" ? Math.round(total / 200) * 100 : 0;
+    const who = staff[staffKey];
+    batch.set(ref, {
+      ...sessionBase,
+      tableId: tables[tableName].ref.id,
+      tableName,
+      employeeName: who.name,
+      employeeId: who.id,
       guestTag: "",
-      startTime: ts(r.minutesAgoStart),
-      plannedEnd: ts(r.minutesAgoStart - 90 < 0 ? 0 : r.minutesAgoStart - 90),
-      refillCount: 0,
-      refillHistory: [],
-      discountCardId: null,
-      discountPercent: 0,
+      startTime: ts(start),
+      plannedEnd: ts(start - 90),
       orderItems,
       status: "closed",
-      closedAt: ts(r.minutesAgoEnd),
-      paymentCash: r.paymentMethod === "cash" ? total : 0,
-      paymentCard: r.paymentMethod === "card" ? total : 0,
-      paymentTerminal: 0, paymentComp: 0,
-      guestContact: "", closedWithoutPayment: false, receiptPrinted: true, fiscalReceiptPrinted: false,
-      refunded: false, refundedAt: null,
+      closedAt: ts(end),
+      paymentCash: cash,
+      paymentCard: total - cash,
+      receiptPrinted: true,
+      tipsCash: (tips && tips.cash) || 0,
+      tipsCard: (tips && tips.card) || 0,
+    });
+    if (tips) {
+      const amount = (tips.cash || 0) + (tips.card || 0);
+      const team = tips.team === true;
+      batch.set(col("tips").doc(), {
+        amount,
+        target: team ? "team" : "employee",
+        employeeId: team ? "" : who.id,
+        employeeName: team ? "" : who.name,
+        position: team ? "" : who.position,
+        teamMembers: team ? [staff.hookah, staff.waiter].map((m) => ({ id: m.id, name: m.name })) : [],
+        sessionId: ref.id,
+        tableName,
+        clientUid: "",
+        comment: team ? "Спасибо всей команде!" : "",
+        method: "bill",
+        status: "paid",
+        paidVia: tips.cash ? "cash" : "card",
+        source: team ? "guest" : "pos",
+        createdAt: ts(end),
+        paidAt: ts(end),
+      });
+    }
+  });
+
+  Object.values(tables).forEach(({ ref, config: t, checks }) => {
+    const { x, y } = demoTableFraction(t);
+    const busyUntil = checks.reduce((max, c) => (!max || c.plannedEnd.toMillis() > max.toMillis() ? c.plannedEnd : max), null);
+    batch.set(ref, {
+      name: t.name,
+      zone: t.zone,
+      x,
+      y,
+      seats: t.seats,
+      shape: t.shape,
+      rotation: t.rotation || 0,
+      status: checks.length ? "occupied" : "free",
+      activeSessionIds: checks.map((c) => c.id),
+      maxOpenSessions: t.maxOpenSessions || 2,
+      busyUntil,
+      openChecks: checks.map(({ id, label, openedAt }) => ({ id, label, openedAt })),
     });
   });
 
-  Object.values(tableRefsByName).forEach(({ ref, config: t, occupied }) => {
-    batch.set(ref, {
-      name: t.name,
-      x: t.x,
-      y: t.y,
-      seats: t.seats,
-      shape: t.shape,
-      status: occupied ? "occupied" : "free",
-      activeSessionIds: occupied ? [occupied.sessionId] : [],
-      maxOpenSessions: 2,
-      busyUntil: occupied ? occupied.plannedEnd : null,
-      openChecks: occupied
-        ? [{ id: occupied.sessionId, label: occupied.guestTag, openedAt: occupied.startTime }]
-        : [],
+  // Гости с бонусами
+  DEMO_CLIENTS.forEach((c) => {
+    const atTable = clientAtTable[c.uid];
+    batch.set(col("clients").doc(c.uid), {
+      name: c.name, phone: "", bonusBalance: c.bonusBalance, totalSpent: c.totalSpent, visits: c.visits,
+      discountCardId: "", discountPercent: 0, lastVisitId: "", ratedVisitId: "",
+      activeSessionId: atTable ? atTable.sessionId : "", activeTableId: atTable ? atTable.tableId : "",
+      favoriteItemIds: [menuByName["Капучино"].id, menuByName["Чизкейк Нью-Йорк"].id],
+      pushToken: "", aiProfile: "",
+      createdAt: ts(c.sinceDays * 1440), lastVisitAt: ts(c.lastVisitDays * 1440 + 60),
     });
+  });
+
+  // Вызовы и заказ из приложения гостя — видны на плитках зала.
+  batch.set(col("waiterCalls").doc(), {
+    tableId: tables["Диван 8"].ref.id, tableName: "Диван 8", sessionId: activeSessionIds["Диван 8"],
+    clientUid: "", guestName: "Гость", type: "bill", comment: "", status: "new",
+    createdAt: ts(3), doneAt: null, doneBy: "",
+  });
+  batch.set(col("waiterCalls").doc(), {
+    tableId: tables["Стол 1"].ref.id, tableName: "Стол 1", sessionId: activeSessionIds["Стол 1"],
+    clientUid: "demo-guest-1", guestName: "Анна", type: "coal", comment: "", status: "new",
+    createdAt: ts(1), doneAt: null, doneBy: "",
+  });
+  batch.set(col("guestOrders").doc(), {
+    sessionId: activeSessionIds["Стол 1"], tableId: tables["Стол 1"].ref.id, tableName: "Стол 1",
+    clientUid: "demo-guest-1", guestName: "Анна",
+    items: orderItemsOf([["Чизкейк Нью-Йорк", 1], ["Латте", 1]]),
+    comment: "Латте на овсяном, если можно", status: "new", rejectReason: "",
+    createdAt: ts(2), handledAt: null, handledBy: "",
+  });
+
+  // Брони: две в ближайшие два часа (стол подсвечен «Бронь»), одна новая
+  // заявка из приложения ждёт подтверждения, две — на завтра.
+  const msk = new Date(nowMs + 3 * 3600000);
+  const tomorrowAt = (hour) =>
+    admin.firestore.Timestamp.fromMillis(
+      Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), msk.getUTCDate() + 1, hour - 3, 0)
+    );
+  const inMinutes = (m) => ts(-m);
+  [
+    { guestName: "Мария", clientUid: "demo-guest-3", guestsCount: 4, table: "Стол 7", startTime: inMinutes(45),
+      status: "confirmed", source: "kolibri", guestConfirmed: true, comment: "Отмечаем повышение",
+      preOrder: [["Манго-маракуйя", 2], ["Фруктовая тарелка", 1]] },
+    { guestName: "Игорь", clientUid: "demo-guest-2", guestsCount: 6, table: "Кабинет 2", startTime: inMinutes(90),
+      durationMinutes: 180, status: "new", source: "kolibri", comment: "Будем с коллегами" },
+    { guestName: "Екатерина", guestsCount: 2, table: "Веранда 1", startTime: inMinutes(180),
+      status: "confirmed", source: "pos", comment: "Столик у окна" },
+    { guestName: "Сергей", clientUid: "demo-guest-4", guestsCount: 8, table: "Кабинет 3", startTime: tomorrowAt(19),
+      status: "confirmed", source: "pos", comment: "" },
+    { guestName: "Ольга", clientUid: "demo-guest-5", guestsCount: 3, table: "", startTime: tomorrowAt(21),
+      status: "new", source: "kolibri", comment: "Если можно — у окна" },
+  ].forEach((r) => {
+    const confirmed = r.status === "confirmed";
+    batch.set(col("reservations").doc(), {
+      clientUid: r.clientUid || "",
+      guestName: r.guestName,
+      phone: "",
+      guestsCount: r.guestsCount,
+      tableId: r.table ? tables[r.table].ref.id : "",
+      tableName: r.table,
+      startTime: r.startTime,
+      durationMinutes: r.durationMinutes || 120,
+      status: r.status,
+      comment: r.comment,
+      source: r.source,
+      preOrder: orderItemsOf(r.preOrder || []),
+      aiNote: "",
+      sessionId: "",
+      guestConfirmed: r.guestConfirmed === true,
+      createdAt: ts(240),
+      confirmedAt: confirmed ? ts(200) : null,
+      handledBy: confirmed ? staff.waiter.name : "",
+    });
+  });
+
+  // Лист ожидания
+  [
+    { guestName: "Дмитрий", guestsCount: 3, promisedMinutes: 20, created: 12, source: "pos", comment: "Хотят в основной зал" },
+    { guestName: "Светлана", guestsCount: 2, promisedMinutes: 15, created: 4, source: "kolibri", comment: "" },
+  ].forEach((w) => {
+    batch.set(col("waitlist").doc(), {
+      guestName: w.guestName, phone: "", clientUid: "", guestsCount: w.guestsCount, comment: w.comment,
+      status: "waiting", promisedMinutes: w.promisedMinutes, createdAt: ts(w.created), invitedAt: null, source: w.source,
+    });
+  });
+
+  // Отзывы гостей — к закрытым чекам этой смены.
+  [
+    [0, "demo-guest-3", "Мария", 5, "Очень уютно, чай пуэр — лучший в городе!"],
+    [2, "demo-guest-5", "Ольга", 5, "Отличный сервис, Максим всё подсказал."],
+    [5, "demo-guest-2", "Игорь", 4, "Вкусные бургеры, но хотелось бы потише музыку."],
+    [6, "", "Гость", 3, "Долго ждали заказ, но потом всё исправили."],
+  ].forEach(([i, clientUid, guestName, rating, text]) => {
+    batch.set(col("reviews").doc(), {
+      sessionId: closedIds[i].id, clientUid, guestName, rating, text, aiSummary: "", createdAt: ts(closedIds[i].end - 10),
+    });
+  });
+
+  // Истории в приложении гостя и счастливые часы. Без табака: истории —
+  // это уже реклама.
+  [
+    { title: "Счастливые часы", text: "По будням с 14:00 до 17:00 — скидка 20% на кухню и десерты.",
+      img: "burger", action: "menu", actionLabel: "Открыть меню", menuItemId: "" },
+    { title: "Новинка — облепиховый чай", text: "Облепиха, апельсин, мёд и розмарин — согреет в любую погоду.",
+      img: "sea-buckthorn", action: "menu", actionLabel: "Попробовать", menuItemId: menuByName["Облепиховый чай"].id },
+  ].forEach((s, order) => {
+    batch.set(col("stories").doc(), {
+      title: s.title, text: s.text, imageUrl: image(s.img), action: s.action, actionLabel: s.actionLabel,
+      menuItemId: s.menuItemId, published: true, byAi: false, createdAt: ts(600 - order), publishUntil: null, order,
+    });
+  });
+  batch.set(col("happyHours").doc(), {
+    title: "Счастливые часы",
+    weekdays: [1, 2, 3, 4, 5],
+    fromMinutes: 14 * 60,
+    toMinutes: 17 * 60,
+    discountPercent: 20,
+    categoryIds: [categoryIds["Кухня"], categoryIds["Десерты"]],
+    active: true,
+  });
+
+  batch.set(col("staffNotes").doc(), {
+    title: "На вечер",
+    text: "Банкет в VIP: подготовить Кабинет 2 к приходу гостей. Табак (ассорти) на исходе — дозаказать.",
+    priority: "info",
+    source: "manual",
+    createdAt: ts(20),
+    read: false,
   });
 }
 

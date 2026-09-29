@@ -145,7 +145,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
     }
     AppScope.enterTenant(tenantId,
-        branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId);
+        branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
     SubscriptionGate.watch(tenantId, config);
     startBackgroundServices();
 
@@ -266,8 +266,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Одноразовое тестовое заведение с примерами столов и меню — '
-                    'без регистрации, ничего не сохраняется.',
+                    'Одноразовое тестовое заведение: три зала, меню с фото, брони, '
+                    'гости и отчёты — без регистрации, ничего не сохраняется.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
