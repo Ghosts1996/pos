@@ -1067,7 +1067,7 @@ function screenLanding() {
 
           <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">
             <span class="small landing-pill">⚡ Запуск за 10–15 минут</span>
-            <span class="small landing-pill">🔒 Данные гостей хранятся в РФ</span>
+            <span class="small landing-pill">🔒 Данные гостей — сначала на сервер в РФ</span>
             <span class="small landing-pill">💳 Без карты — только email для теста</span>
           </div>
         </div>

@@ -186,6 +186,22 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
+  /// История бонусов: подписка создаётся один раз на гостя, а не на
+  /// каждую перерисовку экрана (сохранение имени, переключатели).
+  Stream<QuerySnapshot>? _bonusStream;
+  String? _bonusUid;
+  Stream<QuerySnapshot> _bonusOps() {
+    if (_bonusStream == null || _bonusUid != _auth.uid) {
+      _bonusUid = _auth.uid;
+      _bonusStream = AppScope.loyaltyCol('bonusOperations')
+          .where('clientUid', isEqualTo: _auth.uid)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots();
+    }
+    return _bonusStream!;
+  }
+
   @override
   void dispose() {
     _name.dispose();
@@ -575,11 +591,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           // попадали, и «история» показывала произвольный срез за все годы.
           // Сортировка на клиенте это не чинила — она сортировала уже не те
           // записи. Составной индекс добавлен в firestore.indexes.json.
-          stream: AppScope.loyaltyCol('bonusOperations')
-              .where('clientUid', isEqualTo: _auth.uid)
-              .orderBy('createdAt', descending: true)
-              .limit(50)
-              .snapshots(),
+          stream: _bonusOps(),
           builder: (context, snap) {
             if (snap.hasError) {
               return Text('Не удалось загрузить историю',

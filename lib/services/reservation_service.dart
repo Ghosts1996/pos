@@ -58,14 +58,16 @@ class ReservationService {
   }
 
   /// Брони конкретного гостя (клиентское приложение).
-  Stream<List<ReservationModel>> clientStream(String clientUid) {
-    return _col
-        .where('clientUid', isEqualTo: clientUid)
-        .orderBy('startTime', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((s) => s.docs.map(ReservationModel.fromDoc).toList());
-  }
+  static final _clientS = SharedStreams<List<ReservationModel>>();
+
+  Stream<List<ReservationModel>> clientStream(String clientUid) => _clientS.get(
+      '${AppScope.tenantId ?? '-'}|$clientUid',
+      () => _col
+          .where('clientUid', isEqualTo: clientUid)
+          .orderBy('startTime', descending: true)
+          .limit(50)
+          .snapshots()
+          .map((s) => s.docs.map(ReservationModel.fromDoc).toList()));
 
   Stream<ReservationModel?> reservationStream(String id) => _col
       .doc(id)

@@ -6,6 +6,7 @@ import 'reservation_service.dart';
 import 'push_service.dart';
 import '../utils/table_label.dart';
 import 'pii_gateway_service.dart';
+import '../utils/shared_stream.dart';
 
 /// Лист ожидания: что делать, когда мест нет.
 ///
@@ -26,12 +27,16 @@ class WaitlistService {
       .map((s) => s.docs.map(WaitlistEntry.fromDoc).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
 
-  Stream<List<WaitlistEntry>> clientStream(String clientUid) => _col
-      .where('clientUid', isEqualTo: clientUid)
-      .orderBy('createdAt', descending: true)
-      .limit(10)
-      .snapshots()
-      .map((s) => s.docs.map(WaitlistEntry.fromDoc).toList());
+  static final _clientS = SharedStreams<List<WaitlistEntry>>();
+
+  Stream<List<WaitlistEntry>> clientStream(String clientUid) => _clientS.get(
+      '${AppScope.tenantId ?? '-'}|$clientUid',
+      () => _col
+          .where('clientUid', isEqualTo: clientUid)
+          .orderBy('createdAt', descending: true)
+          .limit(10)
+          .snapshots()
+          .map((s) => s.docs.map(WaitlistEntry.fromDoc).toList()));
 
   /// Встать в очередь. Возвращает обещанное время и позицию в очереди —
   /// 0, если посчитать её не удалось (см. ниже).

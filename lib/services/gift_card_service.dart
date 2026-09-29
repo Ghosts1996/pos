@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import '../models/venue_models.dart';
 import 'push_service.dart';
+import '../utils/shared_stream.dart';
 
 /// Подарочные сертификаты и чаевые.
 ///
@@ -117,11 +118,12 @@ class GiftCardService {
   }
 
   /// Заявки конкретного гостя — по ним приложение показывает результат.
-  Stream<List<GiftCardClaim>> clientClaimsStream(String clientUid) => _claims
-      .where('clientUid', isEqualTo: clientUid)
-      .snapshots()
-      .map((s) => s.docs.map(GiftCardClaim.fromDoc).toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
+  static final _clientClaimsS = SharedStreams<List<GiftCardClaim>>();
+
+  Stream<List<GiftCardClaim>> clientClaimsStream(String clientUid) => _clientClaimsS.get(
+      '${AppScope.tenantId ?? '-'}|${AppScope.chainId ?? '-'}|$clientUid',
+      () => _claims.where('clientUid', isEqualTo: clientUid).snapshots().map(
+          (s) => s.docs.map(GiftCardClaim.fromDoc).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt))));
 
   StreamSubscription? _claimsSub;
 

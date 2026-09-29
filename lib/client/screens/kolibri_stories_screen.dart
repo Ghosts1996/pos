@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
+import '../../utils/shared_stream.dart';
 import 'package:flutter/material.dart';
 import '../../models/story_model.dart';
 import '../../utils/linkify_utils.dart';
@@ -17,16 +18,19 @@ class KolibriStoriesScreen extends StatelessWidget {
 
   const KolibriStoriesScreen({super.key, this.onOpenTab});
 
+  /// Одна подписка на ленту на всё приложение: экран без состояния и
+  /// строится заново вместе с главной — без общей ссылки лента каждый раз
+  /// переподписывалась на базу.
+  static final _stories = SharedStreams<QuerySnapshot>();
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
       // orderBy убран сознательно: связка where + orderBy требует составного
       // индекса, без которого запрос падает с ошибкой — и лента «висела».
       // Карточек в ленте единицы, поэтому сортируем на устройстве.
-      stream: AppScope.col('stories')
-          .where('published', isEqualTo: true)
-          .limit(30)
-          .snapshots(),
+      stream: _stories.get(
+          AppScope.tenantId ?? '-', () => AppScope.col('stories').where('published', isEqualTo: true).limit(30).snapshots()),
       builder: (context, snap) {
         if (snap.hasError || !snap.hasData) return const SizedBox.shrink();
 

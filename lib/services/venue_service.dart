@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import '../models/venue_models.dart';
+import '../utils/shared_stream.dart';
 
 /// Профиль заведения, FAQ и «счастливые часы».
 ///
@@ -51,8 +52,12 @@ class VenueService {
         );
   }
 
-  Stream<VenueProfile> stream() =>
-      AppScope.doc(_profilePath).snapshots().map((d) => VenueProfile.fromMap(d.data()));
+  /// Одна подписка на профиль заведения: его берут в build экраны и гостя,
+  /// и кассы.
+  static final _profileS = SharedStreams<VenueProfile>();
+
+  Stream<VenueProfile> stream() => _profileS.get(
+      AppScope.tenantId ?? '-', () => AppScope.doc(_profilePath).snapshots().map((d) => VenueProfile.fromMap(d.data())));
 
   Future<void> save(VenueProfile profile) =>
       AppScope.doc(_profilePath).set(profile.toMap(), SetOptions(merge: true));
