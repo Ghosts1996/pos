@@ -589,3 +589,34 @@ a:hover { filter: brightness(1.2); }
 .sec-warn { border-color: rgba(231, 178, 78, .55); background: rgba(231, 178, 78, .08); }
 .sec-bad { border-color: rgba(255, 92, 108, .55); background: rgba(255, 92, 108, .07); }
 .sec-inline-link { display: inline-flex; width: auto; padding: 0 0 0 6px; font-size: inherit; vertical-align: baseline; }
+
+/* Счёт на оплату для ИП и организаций (#/invoice/…): белый лист, как на
+   бумаге, в любой теме; при печати — только сам счёт. */
+.invoice-doc {
+  background: #fff;
+  color: #111;
+  padding: 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.invoice-doc h1 { font-size: 20px; color: #111; margin: 0 0 14px; }
+.invoice-doc p { color: #111; margin: 10px 0; }
+.invoice-doc table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.invoice-doc td, .invoice-doc th { border: 1px solid #999; padding: 6px 8px; text-align: left; vertical-align: top; color: #111; }
+.invoice-doc th { background: #f2f2f2; font-weight: 600; }
+.invoice-doc td:first-child { color: #444; }
+.invoice-doc .invoice-total { font-weight: 700; }
+.invoice-doc .invoice-note { font-size: 12px; color: #444; }
+.invoice-doc td:nth-child(2) { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .invoice-doc { padding: 14px; font-size: 12.5px; }
+  .invoice-doc h1 { font-size: 17px; }
+  .invoice-doc td, .invoice-doc th { padding: 4px 5px; }
+}
+@media print {
+  body { background: #fff !important; }
+  body * { visibility: hidden; }
+  .invoice-doc, .invoice-doc * { visibility: visible; }
+  .invoice-doc { position: absolute; left: 0; top: 0; width: 100%; padding: 0; border-radius: 0; }
+}

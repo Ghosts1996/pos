@@ -535,6 +535,37 @@ describe("billingEvents: история платежей — владелец в
   });
 });
 
+describe("bankInvoices: счета ИП и организаций — своё заведение, запрос по tenantId, супер-админ", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "bankInvoices/1"), {
+        tenantId: "tenantA", chainId: null, amount: 2990, status: "pending",
+        payer: { type: "org", name: "ООО Ромашка", inn: "7707083893" },
+      });
+    });
+  });
+
+  it("супер-админ читает счёт", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "bankInvoices/1")));
+  });
+
+  it("owner своего заведения читает счёт и список счетов заведения", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "bankInvoices/1")));
+    await assertSucceeds(getDocs(query(collection(ctxFor("ownerA"), "bankInvoices"), where("tenantId", "==", "tenantA"))));
+  });
+
+  it("owner чужого заведения не читает счёт tenantA", async () => {
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "bankInvoices/1")));
+    await assertFails(getDocs(query(collection(ctxFor("ownerB"), "bankInvoices"), where("tenantId", "==", "tenantA"))));
+  });
+
+  it("клиент не пишет счета — только saas-gateway", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "bankInvoices/2"), { tenantId: "tenantA", status: "paid" }));
+    await assertFails(updateDoc(doc(ctxFor("ownerA"), "bankInvoices/1"), { status: "paid" }));
+  });
+});
+
 describe("Тарифы (plans): управляет только супер-админ, читает кто угодно", () => {
   beforeEach(seedTwoTenants);
 

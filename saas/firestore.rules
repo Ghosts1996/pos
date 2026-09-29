@@ -934,6 +934,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Счета для ИП и организаций (оплата переводом, saas-gateway
+    //      /createBankInvoice): владелец и администратор видят счета своего
+    //      заведения или сети (печать счёта, ссылка на чек), супер-админ —
+    //      все. Пишет только сервер ----
+    match /bankInvoices/{invoiceId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.tenantId != null && hasRole(resource.data.tenantId, ['owner', 'admin'])) ||
+        (signedIn() && resource.data.chainId != null && hasChainRole(resource.data.chainId, ['owner', 'admin']));
+      allow write: if false;
+    }
+
     // ---- Сборки APK: владелец заведения видит и запрашивает свои,
     //      сам билд выполняет GitHub Actions + Cloud Function ----
     match /buildJobs/{buildId} {
