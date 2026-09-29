@@ -3,6 +3,7 @@ import '../../services/venue_service.dart';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../models/menu_models.dart';
+import '../../models/inventory_models.dart' show InventoryUnitX;
 import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
 import '../services/kolibri_auth_service.dart';
@@ -491,7 +492,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                       Expanded(
                         child: Text(
                           '${rub(item.price)}'
-                          '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.name}' : ''}',
+                          '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.label}' : ''}',
                           style: TextStyle(color: KolibriColors.primary, fontSize: 18, fontWeight: FontWeight.w700),
                         ),
                       ),
@@ -689,7 +690,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 const SizedBox(height: 4),
                 Text(
                   '${rub(item.price)}'
-                  '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.name}' : ''}',
+                  '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.label}' : ''}',
                   style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                 ),
               ],
