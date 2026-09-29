@@ -1,0 +1,54 @@
+name: Обновление сервера
+
+# После изменений в серверной части, сайте или веб-меню GitHub сам обновляет
+# сервер: заходит ключом SERVER_DEPLOY_KEY, которым можно только запустить
+# saas-gateway/auto-deploy.sh (forced-command, без shell) — см.
+# saas-gateway/setup-auto-deploy.sh. Пока ключа нет, шаг пропускается с
+# подсказкой, а обновлять можно вручную: saas-gateway/update-server.sh.
+on:
+  push:
+    branches: [claude/dazzling-babbage-n65p6l]
+    paths:
+      - 'saas-gateway/**'
+      - 'pii-gateway/**'
+      - 'saas/console/**'
+      - 'saas/guest-web/**'
+      - 'saas/firestore.rules'
+      - 'saas/firestore.indexes.json'
+      - 'saas/firebase.json'
+      - '.github/workflows/server-deploy.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: server-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Обновить сервер
+        env:
+          SSH_KEY: ${{ secrets.SERVER_DEPLOY_KEY }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "::warning::Автообновление сервера не настроено: нет секрета SERVER_DEPLOY_KEY. Один раз на сервере: bash /root/pos-deploy/saas-gateway/setup-auto-deploy.sh — и вставьте показанный ключ в Settings → Secrets → Actions. Пока — вручную: bash /root/pos-deploy/saas-gateway/update-server.sh"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 \
+            root@pii.zalpos.ru "$BRANCH"
+
+      - name: Проверить версию сервера
+        env:
+          SSH_KEY: ${{ secrets.SERVER_DEPLOY_KEY }}
+        run: |
+          [ -z "$SSH_KEY" ] && exit 0
+          got="$(curl -fsS --max-time 20 https://pii.zalpos.ru/saas/health)"
+          echo "$got"
+          echo "$got" | grep -q "\"version\":\"${GITHUB_SHA::7}\"" \
+            || { echo "::error::Сервер отвечает, но версия не ${GITHUB_SHA::7}"; exit 1; }
