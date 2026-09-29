@@ -233,6 +233,16 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     if (ok != true || !mounted) return;
     setState(() => _deleting = true);
     try {
+      // Открытый счёт проверяем до всего: сервер откажет, а данные в базе в
+      // РФ к тому моменту уже были бы стёрты — профиль и база разошлись бы.
+      final sid = widget.profile?.activeSessionId ?? '';
+      if (sid.isNotEmpty) {
+        final session = await AppScope.col('sessions').doc(sid).get();
+        if (session.data()?['status'] == 'active') {
+          _snack('У вас открыт счёт за столом — удалить данные можно после его закрытия');
+          return;
+        }
+      }
       await PiiGatewayService().deleteGuestData();
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       final resp = await http

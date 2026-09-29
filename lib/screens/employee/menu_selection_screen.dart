@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import '../../models/fiscal_receipt.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -11,6 +10,7 @@ import '../../services/chestny_znak_service.dart';
 import '../../services/chestny_znak_api_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/adaptive.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
 ///
@@ -164,7 +164,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           // (USB/Bluetooth "пистолет", эмулирующий клавиатуру) продолжает
           // работать одинаково на всех платформах без этой кнопки — она
           // только для сканирования именно КАМЕРОЙ устройства.
-          if (!Platform.isWindows)
+          if (!isWindowsApp)
             IconButton(
               tooltip: 'Сканировать камерой',
               icon: const Icon(Icons.qr_code_scanner),

@@ -132,7 +132,15 @@ async function handleRegisterGuestProfile(req, res, body) {
   }
 
   // Непустой tenantId — гость SaaS-заведения, пустой — сборка одного заведения.
+  // Формат проверяем: из него собирается путь записи с правами админа, и
+  // «T/clients/<uid>» увёл бы запись в чужой документ.
   const tenant = typeof tenantId === "string" ? tenantId : "";
+  if (tenant && !/^[A-Za-z0-9_-]{1,64}$/.test(tenant)) {
+    return sendJson(res, 400, { error: "некорректный tenantId" });
+  }
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+    return sendJson(res, 400, { error: "некорректный uid" });
+  }
   let fbApp;
   if (tenant) {
     fbApp = getSaasApp();
@@ -327,6 +335,8 @@ async function handleRecordPayer(req, res, body) {
  * Контакт брони или листа ожидания. Документ в Firestore клиент создаёт
  * сам, но только после ответа 200. Писать может любой вошедший
  * пользователь платформы: и сотрудник на кассе, и гость в приложении.
+ * Переписать уже записанный контакт может только тот, кто его создал
+ * (повтор после обрыва связи), — чужую бронь по id не перезаписать.
  */
 async function handleRecordContact(req, res, body) {
   const { tenantId, kind, id, name, phone } = body;
@@ -347,7 +357,8 @@ async function handleRecordContact(req, res, body) {
       `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, created_by, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, now())
        ON CONFLICT (tenant_id, kind, record_id)
-       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = now()`,
+       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = now()
+       WHERE contact_records.created_by = EXCLUDED.created_by`,
       [tenantId, kind, id, str(name, 200), str(phone, 40), auth.decoded.uid]
     );
   } catch (_) {

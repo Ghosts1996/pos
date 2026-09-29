@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'venue_service.dart';
 import '../models/employee.dart';
 import '../utils/constants.dart';
@@ -47,7 +48,8 @@ class PushService {
   /// доставится, оповещения зала на этой платформе идут только через
   /// SessionAlertsService (см. HallWatchService/app_bootstrap.dart).
   Future<void> initStaff() async {
-    if (Platform.isWindows) return;
+    // В вебе Platform из dart:io бросает, а топики FCM не поддерживаются.
+    if (kIsWeb || Platform.isWindows) return;
     await _requestPermission();
     await _fcm.subscribeToTopic(_allStaffTopic);
   }
@@ -57,7 +59,7 @@ class PushService {
   /// прошлого не должны приходить следующему. Универсал и админ получают
   /// все специализации.
   Future<void> updateStaffPositionSubscription(Employee employee) async {
-    if (Platform.isWindows) return;
+    if (kIsWeb || Platform.isWindows) return;
     for (final p in _allPositions) {
       await _fcm.unsubscribeFromTopic(_positionTopic(p));
     }

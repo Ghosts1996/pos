@@ -2224,6 +2224,17 @@ async function deleteMyData() {
   const btn = $('deleteDataBtn');
   if (btn) btn.disabled = true;
   try {
+    // Открытый счёт проверяем до всего: сервер откажет, а данные в базе в РФ
+    // к тому моменту уже были бы стёрты — профиль и база разошлись бы.
+    const sid = (state.profile || {}).activeSessionId || '';
+    if (sid) {
+      const ses = await getDoc(doc(state.root, 'sessions', sid)).catch(() => null);
+      if (ses && ses.exists() && ses.data().status === 'active') {
+        toast('У вас открыт счёт за столом — удалить данные можно после его закрытия');
+        if (btn) btn.disabled = false;
+        return;
+      }
+    }
     await piiPost({ tenantId: state.tenantId, kind: 'guest_delete' });
     const token = await state.auth.currentUser.getIdToken();
     const res = await fetch(`${GATEWAY}/deleteGuestData`, {

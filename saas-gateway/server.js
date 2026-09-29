@@ -1277,6 +1277,9 @@ async function handleCreateCheckoutSession(req, res) {
       invId: invoice.invId, outSum: invoice.outSum,
       description: `ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`,
       email, recurring,
+      // С включёнными «Робочеками» платёж без чека Робокасса отклонит —
+      // автопродление чек уже передаёт, первая оплата тоже должна.
+      receipt: robokassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price),
     });
     sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId) });
     return;
@@ -4919,8 +4922,16 @@ async function handleDeleteGuestData(req, res) {
   }
   // За столом открыт счёт — бонусы и заказ привязаны к профилю; удаляем
   // после закрытия счёта, чтобы не сломать гостю и персоналу расчёт.
+  // Проверяем сам чек: после «закрыть без оплаты» отметка в профиле могла
+  // остаться, и гость не смог бы удалить данные никогда.
   if (c.activeSessionId) {
-    throw new HttpError(409, "У вас открыт счёт за столом — удалить данные можно после его закрытия");
+    const sessionTenant = chainId ? (c.activeTenantId || tenantId) : tenantId;
+    const ses = /^[A-Za-z0-9_-]{1,64}$/.test(String(sessionTenant)) && /^[A-Za-z0-9_-]{1,128}$/.test(String(c.activeSessionId))
+      ? await firestore.collection("tenants").doc(String(sessionTenant)).collection("sessions").doc(String(c.activeSessionId)).get()
+      : null;
+    if (ses?.exists && ses.data().status === "active") {
+      throw new HttpError(409, "У вас открыт счёт за столом — удалить данные можно после его закрытия");
+    }
   }
   const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c });
 
@@ -5055,6 +5066,19 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
       }
       scrubbed += snap.size;
     }
+  }
+
+  // Чеки, за которые гостю начисляли кешбэк (касса пишет loyaltyClientUid):
+  // в них подпись с именем гостя и его контакт для электронного чека.
+  for (const tid of tenantIds) {
+    const snap = await firestore.collection("tenants").doc(tid).collection("sessions")
+      .where("loyaltyClientUid", "==", clientUid).get();
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = firestore.batch();
+      snap.docs.slice(i, i + 400).forEach((d) => batch.update(d.ref, { guestTag: "", guestContact: "" }));
+      await batch.commit();
+    }
+    scrubbed += snap.size;
   }
 
   // Ключ восстановления входа (guestRecovery) — иначе приложение вернуло бы
@@ -5219,6 +5243,22 @@ async function handleAiProxy(req, res) {
   ]);
   const isMember = member.exists && member.data().status === "active";
   if (!isMember && !client.exists) throw new HttpError(403, "Нет доступа к ИИ этого заведения");
+  if (!isMember) {
+    // Те же условия, что проверяет приложение гостя (consumeAiQuota), но на
+    // сервере: анонимный аккаунт с профилем заводится бесплатно, и без этой
+    // проверки ИИ заведения можно было бы расходовать в обход приложения.
+    const c = client.data() || {};
+    const sid = String(c.activeSessionId || "");
+    const sessionTenant = chainId ? String(c.activeTenantId || "") : tenantId;
+    const idOk = (v, max) => new RegExp(`^[A-Za-z0-9_-]{1,${max}}$`).test(v);
+    if (!String(c.phone || "").trim() || !idOk(sid, 128) || !idOk(sessionTenant, 64)) {
+      throw new HttpError(403, "ИИ-помощник доступен гостю за столом с указанным в профиле телефоном");
+    }
+    const ses = await firestore.collection("tenants").doc(sessionTenant).collection("sessions").doc(sid).get();
+    if (!ses.exists || ses.data().status !== "active") {
+      throw new HttpError(403, "ИИ-помощник доступен, пока за столом открыт счёт");
+    }
+  }
   const useChain = !!(chainSettingsDoc && chainSettingsDoc.exists);
   const [settingsDoc, secretsDoc] = useChain
     ? [chainSettingsDoc, chainSecretsDoc]

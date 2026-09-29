@@ -1,7 +1,8 @@
-import 'dart:io' show Platform;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../utils/adaptive.dart';
 
 /// Локальные уведомления на POS-планшете.
 ///
@@ -58,7 +59,7 @@ class NotificationService {
     // Без него на Windows не будет уведомлений зала (угли/брони/вызовы) —
     // это принятое ограничение первой версии Windows-сборки, а не баг:
     // кассир видит их прямо на экране (зал/чек), пока приложение открыто.
-    if (Platform.isWindows) {
+    if (kIsWeb || isWindowsApp) {
       _ready = true;
       return;
     }
@@ -157,7 +158,7 @@ class NotificationService {
     bool timer = false,
   }) async {
     await init();
-    if (Platform.isWindows) return;
+    if (kIsWeb || isWindowsApp) return;
     await _plugin.show(
       id,
       title,
@@ -286,13 +287,13 @@ class NotificationService {
 
   Future<void> cancel(int id) async {
     await init();
-    if (Platform.isWindows) return;
+    if (kIsWeb || isWindowsApp) return;
     await _plugin.cancel(id);
   }
 
   Future<void> cancelAll() async {
     await init();
-    if (Platform.isWindows) return;
+    if (kIsWeb || isWindowsApp) return;
     await _plugin.cancelAll();
   }
 
