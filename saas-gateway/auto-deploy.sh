@@ -20,8 +20,10 @@ flock -w 900 9
 cd "$REPO"
 git fetch --quiet origin "$BRANCH"
 # Копия на сервере — точное состояние ветки из GitHub (правок руками в
-# ней нет: настройки лежат в /etc, а не в репозитории).
-git checkout --quiet -B "$BRANCH" "origin/$BRANCH"
+# ней нет: настройки лежат в /etc, а не в репозитории). FETCH_HEAD, а не
+# origin/<ветка>: копия могла быть склонирована с одной веткой, и тогда
+# origin/<ветка> не обновляется.
+git checkout --quiet -B "$BRANCH" FETCH_HEAD
 echo "код: $(git rev-parse --short HEAD) ($BRANCH)"
 
 bash "$REPO/saas-gateway/update-server.sh"
