@@ -803,7 +803,7 @@ function screenMenu() {
     box.innerHTML = `
       <input id="menuSearch" class="msearch" type="search" placeholder="Поиск по меню" value="${esc(search)}">
       ${body}
-      ${atTable ? cartBlock() : `
+      ${atTable ? cartBlock(items) : `
         <p class="small muted">Чтобы заказать из приложения, откройте свой
         стол — отсканируйте QR-код на столе камерой телефона.</p>`}
     `;
@@ -845,12 +845,16 @@ function screenMenu() {
   }, () => {}));
 }
 
-function cartBlock() {
+function cartBlock(items = []) {
   const ids = Object.keys(state.cart);
   if (!ids.length) return '';
+  // Итог видно из любой категории: гость ходит по плиткам и не должен
+  // вспоминать, что уже выбрал.
+  const count = ids.reduce((n, id) => n + state.cart[id], 0);
+  const total = ids.reduce((sum, id) => sum + (Number(items.find((i) => i.id === id)?.price) || 0) * state.cart[id], 0);
   return `
     <div class="card">
-      <div style="font-weight:600;margin-bottom:8px">Ваш заказ</div>
+      <div style="font-weight:600;margin-bottom:8px">Ваш заказ: ${count} ${plural(count, 'позиция', 'позиции', 'позиций')} · ${money(total)}</div>
       <div class="small muted" style="margin-bottom:12px">
         ${cap(staffWord('nom'))} подтвердит заказ, и позиции появятся в счёте.
       </div>
