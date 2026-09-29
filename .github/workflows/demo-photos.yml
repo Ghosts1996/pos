@@ -1,0 +1,44 @@
+name: Фото для демо-меню
+
+# Временный: подбирает живые фото блюд демо-меню с Unsplash (см.
+# tmp/demo-photos/fetch.py). candidates — варианты на выбор, final —
+# выбранные фото в saas/console/demo-menu.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'candidates или final'
+        required: true
+        default: candidates
+      only:
+        description: 'только эти блюда (через запятую), пусто — все'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  photos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet pillow requests
+      - name: Подобрать фото
+        env:
+          MODE: ${{ inputs.mode }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          [[ "$MODE" == candidates || "$MODE" == final ]] || { echo "mode: candidates или final"; exit 1; }
+          python tmp/demo-photos/fetch.py "$MODE"
+      - name: Сохранить в ветку
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A tmp saas/console/demo-menu
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "Демо-меню: фото с Unsplash ($MODE)"
+          git push
