@@ -1542,17 +1542,15 @@ async function countChainLocations(chainId) {
  * место, где статус становится "active", это handleBillingWebhook, после
  * того как ЮKassa подтвердит оплату.
  */
-async function handleCreateCheckoutSession(req, res) {
-  const decoded = await verifyAuth(req);
-  const { tenantId, chainId, planId, returnUrl, billingPeriod: rawBillingPeriod, autoRenew } = await parseJsonBody(req);
+/** Тариф, период, цена и адрес чека для оплаты подписки — общее для оплаты
+ *  картой (createCheckoutSession) и по счёту (createBankInvoice). Проверяет,
+ *  что платит владелец или администратор заведения/сети. */
+async function resolveSubscriptionCheckout(decoded, { tenantId, chainId, planId, billingPeriod: rawBillingPeriod }) {
   const isChain = typeof chainId === "string" && !!chainId;
   if (!isChain && (typeof tenantId !== "string" || !tenantId)) {
     throw new HttpError(400, "Не указано заведение");
   }
   if (typeof planId !== "string" || !planId) throw new HttpError(400, "Не указан тариф");
-  if (typeof returnUrl !== "string" || !returnUrl) {
-    throw new HttpError(400, "Не передан адрес возврата после оплаты");
-  }
   const billingPeriod = normalizeBillingPeriod(rawBillingPeriod);
   if (isChain) {
     await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
@@ -1571,11 +1569,28 @@ async function handleCreateCheckoutSession(req, res) {
   const locationCount = isChain ? Math.max(1, await countChainLocations(chainId)) : 1;
   const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
   const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
+  const email = decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId);
+  return {
+    isChain, tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
+    planId, plan, billingPeriod, locationCount, price, periodLabel, email,
+  };
+}
+
+async function handleCreateCheckoutSession(req, res) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const { returnUrl, autoRenew } = body;
+  if (typeof returnUrl !== "string" || !returnUrl) {
+    throw new HttpError(400, "Не передан адрес возврата после оплаты");
+  }
+  const { isChain, planId, plan, billingPeriod, locationCount, price, periodLabel, email } =
+    await resolveSubscriptionCheckout(decoded, body);
+  const tenantId = body.tenantId;
+  const chainId = body.chainId;
 
   const description = isChain
     ? `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
     : `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
-  const email = decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId);
 
   if (billingProvider() === "robokassa") {
     // Автосписания — только с явного согласия владельца (галочка
@@ -1586,6 +1601,9 @@ async function handleCreateCheckoutSession(req, res) {
       tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
       planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
       locationCount: isChain ? locationCount : null, requestedBy: decoded.uid, recurring,
+      // Картой через Робокассу платят как физическое лицо (оферта, п. 5):
+      // чек в «Мой налог» — без ИНН покупателя. ИП и организации — по счёту.
+      payerType: "individual",
     });
     const url = robokassaPaymentUrl({
       invId: invoice.invId, outSum: invoice.outSum,
@@ -1616,6 +1634,212 @@ async function handleCreateCheckoutSession(req, res) {
   });
 
   sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id });
+}
+
+// ------------------------------------------------------------ счета для ИП и организаций
+
+/**
+ * Оплата по счёту — для индивидуальных предпринимателей и организаций.
+ *
+ * Владелец платформы — самозанятый (НПД). Робокасса принимает только карты
+ * физических лиц и формирует чек без ИНН покупателя, а при расчётах с ИП и
+ * организациями чек обязан содержать ИНН покупателя (ст. 14 закона
+ * № 422-ФЗ; ставка налога — 6 %, а не 4 %). Поэтому ИП и организации
+ * платят переводом по счёту на расчётный счёт, а чек с их ИНН владелец
+ * платформы формирует в «Мой налог» сам — не позднее 9-го числа месяца,
+ * следующего за месяцем оплаты.
+ *
+ *  1. createBankInvoice — владелец указывает реквизиты плательщика; они
+ *     сначала записываются в базу в РФ (pii-gateway, kind "payer": у ИП
+ *     ФИО и ИНН — персональные данные, ч. 5 ст. 18 152-ФЗ), и только потом
+ *     заводится bankInvoices/{номер}. Счёт печатается в личном кабинете.
+ *  2. markBankInvoicePaid — супер-админ отмечает поступление денег:
+ *     подписка продлевается (applySubscriptionPayment, идемпотентно).
+ *  3. markBankInvoiceReceipt — супер-админ отмечает, что чек с ИНН
+ *     сформирован; ссылка на чек видна владельцу в кабинете.
+ *  cancelBankInvoice — отменить неоплаченный счёт (супер-админ или владелец).
+ */
+// pii-gateway стоит на том же сервере (pii-gateway/setup.sh: 127.0.0.1:8080);
+// если локально не отвечает — через nginx по домену.
+const PII_GATEWAY_URLS = process.env.PII_GATEWAY_URL
+  ? [process.env.PII_GATEWAY_URL]
+  : ["http://127.0.0.1:8080/", "https://pii.zalpos.ru/"];
+
+/** Контрольные цифры ИНН: 10 знаков — организация, 12 — ИП/физлицо. */
+function innValid(inn) {
+  if (!/^(\d{10}|\d{12})$/.test(inn)) return false;
+  const d = inn.split("").map(Number);
+  const check = (weights) => (weights.reduce((sum, w, i) => sum + w * d[i], 0) % 11) % 10;
+  if (d.length === 10) return check([2, 4, 10, 3, 5, 9, 4, 6, 8]) === d[9];
+  return check([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === d[10]
+    && check([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === d[11];
+}
+
+/** Реквизиты плательщика из запроса: { type: "ip"|"org", name, inn, kpp }. */
+function parsePayer(raw) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  const type = p.type === "org" ? "org" : p.type === "ip" ? "ip" : null;
+  if (!type) throw new HttpError(400, "Укажите, кто платит: ИП или организация");
+  const name = String(p.name || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (name.length < 3) {
+    throw new HttpError(400, type === "ip" ? "Укажите ФИО индивидуального предпринимателя" : "Укажите название организации");
+  }
+  const inn = String(p.inn || "").replace(/\D/g, "");
+  if ((type === "ip" && inn.length !== 12) || (type === "org" && inn.length !== 10) || !innValid(inn)) {
+    throw new HttpError(400, type === "ip"
+      ? "ИНН индивидуального предпринимателя — 12 цифр; проверьте, в номере ошибка"
+      : "ИНН организации — 10 цифр; проверьте, в номере ошибка");
+  }
+  const kpp = type === "org" ? String(p.kpp || "").replace(/\s/g, "").toUpperCase() : "";
+  if (kpp && !/^\d{4}[\dA-Z]{2}\d{3}$/.test(kpp)) throw new HttpError(400, "КПП — 9 знаков");
+  return { type, name, inn, kpp };
+}
+
+/** Первичная запись реквизитов плательщика в базу в РФ — от имени владельца
+ *  (его ID-токен), до записи счёта в Firestore. */
+async function recordPayerInRussia(req, payload) {
+  const auth = String(req.headers["authorization"] || "");
+  let resp = null;
+  for (const url of PII_GATEWAY_URLS) {
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({ kind: "payer", ...payload }),
+        signal: AbortSignal.timeout(15000),
+      });
+      break;
+    } catch (_) { /* следующий адрес */ }
+  }
+  if (!resp) throw new HttpError(503, "Сервер данных в РФ недоступен — попробуйте через минуту");
+  if (!resp.ok) {
+    let msg = "";
+    try { msg = (await resp.json()).error || ""; } catch (_) {}
+    throw new HttpError(503, `Не удалось сохранить реквизиты плательщика: ${msg || resp.status}`);
+  }
+}
+
+/** Следующий номер счёта (1, 2, 3…) — свой счётчик, не номера Робокассы.
+ *  Занятые номера пропускаем: если счётчик когда-нибудь обнулят, новый
+ *  счёт не наложится на старый (и на его событие оплаты bank_<номер>). */
+async function nextBankInvoiceNumber() {
+  const ref = db().collection("platformStatus").doc("bankInvoices");
+  return db().runTransaction(async (tx) => {
+    let next = (Number((await tx.get(ref)).data()?.lastNumber) || 0) + 1;
+    while ((await tx.get(db().collection("bankInvoices").doc(String(next)))).exists) next += 1;
+    tx.set(ref, { lastNumber: next, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return next;
+  });
+}
+
+/** 9-е число месяца, следующего за месяцем оплаты (по Москве), — крайний
+ *  срок чека при расчётах с ИП и организациями. */
+function receiptDeadline(paidAtMs) {
+  const msk = new Date(paidAtMs + 3 * 3600e3);
+  return new Date(Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth() + 1, 9)).toISOString().slice(0, 10);
+}
+
+async function handleCreateBankInvoice(req, res) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const payer = parsePayer(body.payer);
+  const c = await resolveSubscriptionCheckout(decoded, body);
+  const number = await nextBankInvoiceNumber();
+  const id = String(number);
+  await recordPayerInRussia(req, {
+    invoiceId: id, billingId: c.chainId || c.tenantId,
+    payerType: payer.type, name: payer.name, inn: payer.inn, kpp: payer.kpp,
+  });
+  // Точку сети, из кабинета которой выставлен счёт, тоже запоминаем: по ней
+  // владелец видит счёт в кабинете (правила bankInvoices), а продлевается
+  // всё равно подписка сети (applySubscriptionPayment: chainId важнее).
+  let pointId = c.tenantId;
+  if (c.isChain && typeof body.tenantId === "string" && body.tenantId) {
+    const t = await db().collection("tenants").doc(body.tenantId).get();
+    if (t.exists && t.data().chainId === c.chainId) pointId = body.tenantId;
+  }
+  const planName = c.plan.name || c.planId;
+  const invoice = {
+    number, tenantId: pointId, chainId: c.chainId, planId: c.planId, planName,
+    billingPeriod: c.billingPeriod, periodLabel: c.periodLabel,
+    locationCount: c.isChain ? c.locationCount : null,
+    amount: c.price, email: c.email || null, payer,
+    title: c.isChain
+      ? `Право использования ZalPOS (подписка), тариф «${planName}», ${c.periodLabel}, сеть — ${c.locationCount} ${pointsWord(c.locationCount)}`
+      : `Право использования ZalPOS (подписка), тариф «${planName}», ${c.periodLabel}`,
+    status: "pending", requestedBy: decoded.uid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db().collection("bankInvoices").doc(id).set(invoice);
+  await writeAuditLog({
+    tenantId: pointId, actorId: decoded.uid, action: "bankInvoiceCreated",
+    metadata: { number, amount: c.price, chainId: c.chainId, payerType: payer.type },
+  });
+  sendJson(res, 200, { id, number, amount: c.price });
+}
+
+async function loadBankInvoice(id) {
+  if (typeof id !== "string" || !/^\d{1,9}$/.test(id)) throw new HttpError(400, "Не указан счёт");
+  const ref = db().collection("bankInvoices").doc(id);
+  const inv = (await ref.get()).data();
+  if (!inv) throw new HttpError(404, "Счёт не найден");
+  return { ref, inv };
+}
+
+async function handleMarkBankInvoicePaid(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { id } = await parseJsonBody(req);
+  const { ref, inv } = await loadBankInvoice(id);
+  if (inv.status === "cancelled") throw new HttpError(409, "Счёт отменён");
+  await applySubscriptionPayment({
+    eventId: `bank_${id}`,
+    provider: "bank",
+    status: "succeeded",
+    tenantId: inv.tenantId, chainId: inv.chainId, planId: inv.planId,
+    billingPeriod: normalizeBillingPeriod(inv.billingPeriod),
+    amount: Number(inv.amount) || 0,
+    purpose: "subscription",
+  });
+  if (inv.status !== "paid") {
+    const now = Date.now();
+    await ref.set({
+      status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      paidBy: decoded.uid, receiptDueDate: receiptDeadline(now),
+    }, { merge: true });
+    await writeAuditLog({ tenantId: inv.tenantId, actorId: decoded.uid, action: "bankInvoicePaid", metadata: { number: inv.number, amount: inv.amount } });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleMarkBankInvoiceReceipt(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { id, receiptUrl } = await parseJsonBody(req);
+  const { ref, inv } = await loadBankInvoice(id);
+  if (inv.status !== "paid") throw new HttpError(409, "Сначала отметьте, что счёт оплачен");
+  const url = String(receiptUrl || "").trim();
+  if (url && !/^https:\/\/lknpd\.nalog\.ru\/api\/v1\/receipt\/[\w/.-]+$/i.test(url)) {
+    throw new HttpError(400, "Ссылка на чек — из «Мой налог» (https://lknpd.nalog.ru/api/v1/receipt/…)");
+  }
+  await ref.set({
+    receiptIssuedAt: admin.firestore.FieldValue.serverTimestamp(),
+    receiptUrl: url || null,
+  }, { merge: true });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleCancelBankInvoice(req, res) {
+  const decoded = await verifyAuth(req);
+  const { id } = await parseJsonBody(req);
+  const { ref, inv } = await loadBankInvoice(id);
+  if (!(await isSuperAdmin(decoded))) {
+    if (inv.chainId) await requireChainRole(inv.chainId, decoded.uid, ["owner", "admin"]);
+    else await requireTenantRole(inv.tenantId, decoded.uid, ["owner", "admin"]);
+  }
+  if (inv.status !== "pending") throw new HttpError(409, "Отменить можно только неоплаченный счёт");
+  await ref.set({ status: "cancelled", cancelledAt: admin.firestore.FieldValue.serverTimestamp(), cancelledBy: decoded.uid }, { merge: true });
+  sendJson(res, 200, { ok: true });
 }
 
 // ------------------------------------------------------------ billing (Робокасса)
@@ -1719,13 +1943,13 @@ function safeReturnUrl(raw) {
   return "https://zalpos.ru/#/";
 }
 
-async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null, recurring = null }) {
+async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null, recurring = null, payerType = "individual" }) {
   const invId = await nextRobokassaInvId();
   const outSum = amount.toFixed(2);
   await db().collection("billingInvoices").doc(String(invId)).set({
     provider: "robokassa", invId, tenantId, chainId, planId, billingPeriod, purpose,
     amount, outSum, email: email || null, returnUrl: safeReturnUrl(returnUrl),
-    locationCount, parentInvId, requestedBy, recurring,
+    locationCount, parentInvId, requestedBy, recurring, payerType,
     status: "pending", createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   return { invId, outSum };
@@ -5784,6 +6008,10 @@ const ROUTES = {
   // docstring handleAppUpdate): гостю — без входа, кассе — участнику заведения.
   "/appUpdate": handleAppUpdate,
   "/createCheckoutSession": handleCreateCheckoutSession,
+  "/createBankInvoice": handleCreateBankInvoice,
+  "/markBankInvoicePaid": handleMarkBankInvoicePaid,
+  "/markBankInvoiceReceipt": handleMarkBankInvoiceReceipt,
+  "/cancelBankInvoice": handleCancelBankInvoice,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
   "/uploadMenuImage": handleUploadMenuImage,
   "/savePlatformLegal": handleSavePlatformLegal,
@@ -5885,3 +6113,5 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 module.exports = server;
+// Для test.smoke.js — чистые функции счёта для ИП и организаций.
+Object.assign(module.exports, { innValid, receiptDeadline });

@@ -128,6 +128,24 @@ async function main() {
     check("GET /robokassaSuccess без счёта -> 302", r2.status === 302);
   }
   {
+    // Счета для ИП и организаций: без входа — 401 до обращения к базе.
+    for (const path of ["/createBankInvoice", "/markBankInvoicePaid", "/markBankInvoiceReceipt", "/cancelBankInvoice"]) {
+      const r = await request("POST", path, { body: { id: "1" } });
+      check(`POST ${path} без входа -> 401`, r.status === 401);
+    }
+    // Контрольные цифры ИНН (10 — организация, 12 — ИП).
+    check("ИНН 7707083893 верный", server.innValid("7707083893") === true);
+    check("ИНН 7707083894 с ошибкой", server.innValid("7707083894") === false);
+    check("ИНН ИП 500100732259 верный", server.innValid("500100732259") === true);
+    check("ИНН ИП 500100732258 с ошибкой", server.innValid("500100732258") === false);
+    check("ИНН из 11 цифр неверный", server.innValid("77070838931") === false);
+    // Чек при расчётах с ИП/организациями — до 9-го числа следующего месяца (по Москве).
+    check("срок чека: 29.09 -> 09.10", server.receiptDeadline(Date.UTC(2026, 8, 29, 10)) === "2026-10-09");
+    check("срок чека: 30.09 23:00 МСК -> 09.10", server.receiptDeadline(Date.UTC(2026, 8, 30, 20)) === "2026-10-09");
+    check("срок чека: 01.10 01:00 МСК -> 09.11", server.receiptDeadline(Date.UTC(2026, 8, 30, 22)) === "2026-11-09");
+    check("срок чека: декабрь -> 09.01 следующего года", server.receiptDeadline(Date.UTC(2026, 11, 15)) === "2027-01-09");
+  }
+  {
     // Восстановление входа гостя: без uid и ключа — 400 до обращения к базе.
     const r = await request("POST", "/restoreGuestSession", { body: "{}", headers: { "Content-Type": "application/json" } });
     check("POST /restoreGuestSession без ключа -> 400", r.status === 400);
