@@ -708,8 +708,15 @@ class GuestLinkService {
       if (orderSnap.data()?['status'] != 'new') return 'Заказ уже принят или отклонён.';
       final data = snap.data();
       // Закрытый чек в базе остаётся — проверять надо статус, а не наличие.
+      // Заказ отклоняем сразу: иначе он висел бы в очереди, а гость ждал.
       if (data == null || (data['status'] ?? 'active') != 'active') {
-        return 'Чек уже закрыт — заказ нельзя добавить.';
+        tx.update(orderRef, {
+          'status': 'rejected',
+          'rejectReason': 'Счёт уже закрыт',
+          'handledAt': Timestamp.fromDate(DateTime.now()),
+          'handledBy': employeeName,
+        });
+        return 'Чек уже закрыт — заказ отклонён.';
       }
 
       final current = ((data['orderItems'] ?? []) as List)

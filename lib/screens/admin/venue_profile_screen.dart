@@ -283,7 +283,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                         final faq = List<VenueFaq>.from(_profile.faq)..remove(f);
                         _profile = _profile.copyWith(faq: faq);
                         await _service.save(_profile);
-                        setState(() {});
+                        if (mounted) setState(() {});
                       },
                     ),
                   )),
@@ -372,7 +372,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       ..add(VenueFaq(q.text.trim(), a.text.trim()));
     _profile = _profile.copyWith(faq: faq);
     await _service.save(_profile);
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _addHappyHour() async {
