@@ -22,7 +22,7 @@ UA = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
     "Accept": "application/json, image/*",
 }
-PER = 8
+PER = 12
 CELL = 190
 LABEL = 170
 unsplash_ok = True
@@ -78,7 +78,7 @@ def unsplash(query):
 
 def openverse(query):
     r = get("https://api.openverse.org/v1/images/", params={
-        "q": query, "license": "cc0,pdm,by", "category": "photograph",
+        "q": query, "license": "cc0,pdm,by,by-sa", "category": "photograph",
         "page_size": 20, "mature": "false",
     })
     if not r:
@@ -116,9 +116,13 @@ def candidates(only):
     cands = load("candidates.json", {})
     slugs = [s for s in queries if not only or s in only]
     for s in slugs:
-        found = unsplash(queries[s])
-        if len(found) < 4:
-            found += openverse(queries[s])
+        qs = queries[s] if isinstance(queries[s], list) else [queries[s]]
+        found, seen = [], set()
+        for q in qs:
+            for c in unsplash(q) + openverse(q):
+                if c["id"] not in seen:
+                    seen.add(c["id"])
+                    found.append(c)
         cands[s] = found[:PER]
         log(s, len(cands[s]), cands[s][0]["src"] if cands[s] else "-")
     json.dump(cands, open(os.path.join(HERE, "candidates.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -158,7 +162,9 @@ def final():
     choices = load("choices.json", {})
     credits = []
     for s, pick in choices.items():
-        c = cands[s][pick]
+        # «другое-блюдо:номер» — вариант из подборки другого блюда
+        src, _, idx = str(pick).rpartition(":")
+        c = cands[src or s][int(idx)]
         resp = get(c["full"])
         if not resp:
             sys.exit(f"не скачалось: {s}")
@@ -168,7 +174,8 @@ def final():
     with open(os.path.join(OUT, "CREDITS.txt"), "w", encoding="utf-8") as f:
         f.write("Фото демо-меню. Unsplash — https://unsplash.com/license (бесплатно, в том\n"
                 "числе в коммерческих целях); CC0 / PDM — общественное достояние;\n"
-                "CC BY — https://creativecommons.org/licenses/by/4.0/ (фото обрезаны и уменьшены).\n\n")
+                "CC BY / CC BY-SA — https://creativecommons.org/licenses/ (фото обрезаны и уменьшены;\n"
+                "изменённые фото CC BY-SA распространяются на тех же условиях).\n\n")
         f.write("\n".join(sorted(credits)) + "\n")
     shutil.rmtree(HERE)
 
