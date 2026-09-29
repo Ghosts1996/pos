@@ -2,14 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/image_preload_service.dart';
 import 'login_screen.dart';
 
-/// Раньше этот экран блокировал вход в приложение до полной прогрузки всех
-/// фото меню в кэш (до 40 секунд на каждом запуске, даже если фото уже
-/// давно закэшированы, — именно это было причиной "зависания" при каждом
-/// открытии приложения). Теперь экран входа открывается СРАЗУ, а прогрев
-/// кэша фото идёт в фоне и никак не мешает работе: сотрудник может сразу
-/// войти по PIN-коду, а фото по мере скачивания просто станут появляться
-/// на плитках меню быстрее (без прогрева они и так подгрузятся по месту
-/// использования — см. ImagePreloadService).
+/// Заставка на долю секунды: экран входа открывается сразу, а кэш фото
+/// меню прогревается в фоне (ImagePreloadService).
 class ImagePreloadScreen extends StatefulWidget {
   const ImagePreloadScreen({super.key});
 
@@ -49,9 +43,7 @@ class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Экран виден лишь долю секунды, пока не открылся LoginScreen —
-    // достаточно простого лого без прогресс-бара, который раньше создавал
-    // ложное впечатление, что нужно чего-то ждать.
+    // Виден долю секунды — хватает логотипа, без прогресс-бара.
     return const Scaffold(
       backgroundColor: Color(0xFF1B1B1F),
       body: Center(

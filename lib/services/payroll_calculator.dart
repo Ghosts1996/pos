@@ -113,9 +113,8 @@ class PayrollCalculator {
     double normalHours = 0;
     double overtimeHours = 0;
 
-    // При окладе за смену часы считаются по рабочим сменам (случайно
-    // разорванная смена — одна, см. workedShiftHours), при почасовой — по
-    // каждой записи отдельно, как и раньше.
+    // При окладе за смену часы считаются по рабочим сменам (разорванная
+    // смена — одна, см. workedShiftHours), при почасовой — по каждой записи.
     final perShiftHours = byShift
         ? workedShiftHours(closedShifts)
         : [

@@ -76,11 +76,9 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
     );
   }
 
-  /// Переставляет карточку на одну позицию.
-  ///
-  /// Порядок хранится числом в поле order, и после перестановки он
-  /// переписывается подряд у ВСЕХ карточек — иначе у карточек, созданных
-  /// раньше, там остаются нули, и любая перестановка их не разводит.
+  /// Переставляет карточку на одну позицию и переписывает order у всех
+  /// карточек подряд — у старых там нули, и одна перестановка их не
+  /// развела бы.
   Future<void> _move(List<StoryCard> list, int from, int to) async {
     if (to < 0 || to >= list.length) return;
     final reordered = [...list];
@@ -188,11 +186,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
   Future<void> _generateDrafts() async {
     setState(() => _busy = true);
     try {
-      // Агент отдаёт готовые поля: заголовок, текст, призыв и куда ведёт
-      // кнопка. Раньше здесь резали свободный текст по пустым строкам, и в
-      // заголовок попадала разметка вместе со служебными подписями —
-      // «**Сторис 3 — Ночной формат**», а в текст «Заголовок: … Текст: …
-      // Призыв: …» одной строкой.
+      // Агент отдаёт готовые поля: заголовок, текст, призыв и переход.
       // Черновик про кальян или табак — реклама табака (ст. 16 № 15-ФЗ),
       // такие не сохраняем, даже если модель нарушила инструкцию.
       final drafts = (await AiService.instance.storyDrafts(count: 3))
@@ -321,8 +315,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       'text': body.text.trim(),
       'imageUrl': image.text.trim(),
       'action': action,
-      // Раньше подпись подставлялась жёстко по переходу и затирала любую
-      // свою — в том числе ту, что придумал ИИ под конкретную карточку.
+      // Подпись кнопки по переходу — только если своей нет (например, от ИИ).
       'actionLabel':
           action == 'none' ? '' : (label.text.trim().isEmpty ? defaultLabel(action) : label.text.trim()),
     };

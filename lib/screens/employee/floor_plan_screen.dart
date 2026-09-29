@@ -331,12 +331,9 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         child: ClipRRect(borderRadius: BorderRadius.circular(21), child: map),
       );
 
-  /// Вид «Схема». Показывается та часть зала, где стоят столы (без пустых
-  /// полей), её можно двигать и приближать. На телефоне схема занимает
-  /// столько высоты, сколько нужно столам, а ниже — «Сейчас в зале»:
-  /// занятые столы по срочности (время вышло, скоро освободятся…) с
-  /// таймером и суммой. Раньше под схемой оставалась половина пустого
-  /// экрана.
+  /// Вид «Схема»: часть зала со столами, её можно двигать и приближать. На
+  /// телефоне схема берёт высоту по столам, ниже — «Сейчас в зале»: занятые
+  /// столы по срочности, с таймером и суммой.
   Widget _plan(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
       Map<String, ReservationModel> reservations) {
     final map = HallPlanView(

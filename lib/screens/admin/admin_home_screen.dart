@@ -111,9 +111,8 @@ class AdminHomeScreen extends StatelessWidget {
               child: Text(entry.key,
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             ),
-            // Ширина плитки, а не число колонок: на телефоне по-прежнему 2,
-            // на планшете 5–6 — раньше там было 4 огромные плитки и на экран
-            // помещалось всего 8 разделов из двух десятков.
+            // Задаём ширину плитки, а не число колонок: на телефоне 2, на
+            // планшете 5–6.
             GridView(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),

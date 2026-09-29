@@ -78,24 +78,12 @@ class TenantConfigService {
   /// нескольких заведений, если пользователь состоит в более чем одном).
   /// Обновляет и in-memory состояние, и локальный кэш.
   Future<TenantConfig?> refresh(String uid, {String? preferredTenantId}) async {
-    // tenantMembers/{id} — id всегда предсказуем: "<tenantId>_<uid>" (см.
-    // saas/firestore.rules). Если tenantId уже известен (явно передан сюда,
-    // как сразу после присоединения/демо — см. saas_device_pairing_screen)
-    // или остался в кэше с прошлого раза — читаем ОДИН конкретный документ
-    // по id, а не запросом по коллекции.
-    //
-    // ВАЖНО: это не оптимизация, а обход реального бага. Правило чтения
-    // tenantMembers — "resource.data.userId == request.auth.uid ИЛИ
-    // isMember(resource.data.tenantId)" — рассчитано на то, что Firestore
-    // проверит его для каждого документа результата и увидит первую же
-    // ветку истинной. На практике ЗАПРОС (list) по .where('userId', ...)
-    // с этим правилом на реальном устройстве падает с
-    // [cloud_firestore/permission-denied], хотя одиночный get() по
-    // конкретному id той же самой проверкой проходит нормально (это
-    // подтверждено вручную, не теория). Поэтому list оставлен только как
-    // резерв на случай, когда tenantId заранее неизвестен вообще (самый
-    // первый запуск до присоединения) — и там же, где он используется
-    // (main.dart), сбой уже обёрнут в try/catch с откатом на кэш.
+    // Членство читаем одним get() по id «<tenantId>_<uid>», если tenantId
+    // известен (передан после присоединения или остался в кэше). Запрос
+    // where('userId') с этими правилами на устройствах падал с
+    // permission-denied, хотя get() проходит, — поэтому list только
+    // резервом при самом первом запуске (в main.dart сбой откатывается на
+    // кэш).
     final knownTenantId = preferredTenantId ?? _current?.tenant.id;
     DocumentSnapshot<Map<String, dynamic>>? memberDoc;
     if (knownTenantId != null) {
@@ -117,26 +105,14 @@ class TenantConfigService {
     final member = TenantMember.fromDoc(memberDoc);
 
     final tenantRef = _db.collection('tenants').doc(member.tenantId);
-    // tenant читается ПЕРВЫМ (не в общем Future.wait с остальным) — id
-    // документа subscriptions зависит от того, состоит ли это заведение в
-    // сети (tenant.chainId): для сети общая подписка лежит на
-    // subscriptions/{chainId}, а не subscriptions/{tenantId}, и это можно
-    // узнать только после чтения самого tenant. Для одиночного заведения
-    // (chainId == null, подавляющее большинство) это стоит один
-    // дополнительный последовательный запрос вместо распараллеленных четырёх
-    // — цена, оправданная тем, что раньше ID подписки для сети было бы
-    // неоткуда взять вообще.
+    // Заведение читаем первым: от его chainId зависит, какая подписка —
+    // subscriptions/{chainId} или subscriptions/{tenantId}.
     final tenantDoc = await tenantRef.get();
     if (!tenantDoc.exists) return null;
     final tenant = Tenant.fromDoc(tenantDoc);
     final subscriptionId = tenant.chainId ?? member.tenantId;
 
-    // chainDoc не зависит ни от одного из трёх чтений ниже (chainId уже
-    // известен из tenant, прочитанного выше) — запускаем его тем же
-    // Future.wait, а не отдельным await после: раньше он ждал своей
-    // очереди уже ПОСЛЕ того, как остальные три успеют выполниться
-    // параллельно, добавляя лишний последовательный сетевой круг заведению
-    // сети при каждом refresh() (запуск POS/гостя, обновление конфигурации).
+    // Документ сети — в том же Future.wait: chainId уже известен.
     final results = await Future.wait([
       tenantRef.collection('settings').doc('session').get(),
       tenantRef.collection('branding').doc('config').get(),
