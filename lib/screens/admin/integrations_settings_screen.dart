@@ -271,11 +271,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         paymentMethod: '—',
         footerNote: 'Если вы это видите — принтер настроен верно',
       ));
-      setState(() => _testResult = 'Чек отправлен на печать');
+      if (mounted) setState(() => _testResult = 'Чек отправлен на печать');
     } catch (e) {
-      setState(() => _testResult = 'Ошибка печати: ${humanError(e, lower: true)}');
+      if (mounted) setState(() => _testResult = 'Ошибка печати: ${humanError(e, lower: true)}');
     } finally {
-      setState(() => _testing = false);
+      if (mounted) setState(() => _testing = false);
     }
   }
 
@@ -300,6 +300,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         docs = await service.incomingDocuments();
       } catch (_) {}
     }
+    if (!mounted) return;
     setState(() {
       _testing = false;
       _testResult = status.message;
@@ -327,6 +328,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       items: const [FiscalReceiptItem(name: 'Тестовая позиция', price: 1, quantity: 1)],
       payments: const [FiscalPayment('cash', 1)],
     ));
+    if (!mounted) return;
     setState(() {
       _testing = false;
       _testResult = result.success
@@ -416,6 +418,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     try {
       final api = ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod');
       final results = await api.checkCodes([code]);
+      if (!mounted) return;
       if (results.isEmpty) {
         setState(() => _czTestResult = 'Пустой ответ от «Честного знака»');
       } else {
@@ -427,7 +430,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 : 'Код найден и не продан — можно продавать');
       }
     } catch (e) {
-      setState(() => _czTestResult = 'Ошибка: ${humanError(e, lower: true)}');
+      if (mounted) setState(() => _czTestResult = 'Ошибка: ${humanError(e, lower: true)}');
     } finally {
       if (mounted) setState(() => _czTesting = false);
     }

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../build_info.dart';
@@ -143,7 +144,8 @@ class SaasDeviceJoinService {
       'inviteCode': inviteCode.trim(),
       'deviceName': deviceName,
       'deviceType': 'pos',
-      'platform': 'android',
+      // Касса собирается и под Windows — владелец видит платформу в кабинете.
+      'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
       'userId': uid,
       'createdAt': FieldValue.serverTimestamp(),
       'lastSeenAt': FieldValue.serverTimestamp(),

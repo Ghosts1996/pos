@@ -124,11 +124,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
           ? 'Свободных подходящих столов: ${st.freeTables}'
           : 'Подходящих свободных столов нет — попробуйте другое время',
       if (st.bookingsAtTime > 0)
-        'На это время уже ${st.bookingsAtTime} ${_plural(st.bookingsAtTime, 'бронь', 'брони', 'броней')}',
+        'На это время уже ${st.bookingsAtTime} ${pluralRu(st.bookingsAtTime, 'бронь', 'брони', 'броней')}',
       if (st.occupiedNow > 0)
         'Сейчас в зале занято ${st.occupiedNow} из ${st.tablesTotal}',
       if (st.riskyTables > 0)
-        'Ещё ${st.riskyTables} ${_plural(st.riskyTables, 'стол освободится', 'стола освободятся', 'столов освободятся')} '
+        'Ещё ${st.riskyTables} ${pluralRu(st.riskyTables, 'стол освободится', 'стола освободятся', 'столов освободятся')} '
             'незадолго до брони — гости могут взять перезабивку и остаться',
     ];
 
@@ -162,15 +162,6 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         ],
       ),
     );
-  }
-
-  /// «1 бронь», «2 брони», «5 броней».
-  String _plural(int n, String one, String few, String many) {
-    final last = n % 10;
-    final teen = n % 100 >= 11 && n % 100 <= 14;
-    if (!teen && last == 1) return one;
-    if (!teen && last >= 2 && last <= 4) return few;
-    return many;
   }
 
   /// Сводка по выбранному времени. Только числа: имён и телефонов других
@@ -420,7 +411,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         OutlinedButton.icon(
           onPressed: () async {
             final items = await pickPreOrder(context);
-            if (items != null) setState(() => _preOrder = items);
+            if (items != null && mounted) setState(() => _preOrder = items);
           },
           icon: const Icon(Icons.restaurant_menu),
           label: Text(_preOrder.isEmpty

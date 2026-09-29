@@ -72,11 +72,20 @@ class PiiGatewayService {
 
     if (resp.statusCode != 200) {
       throw PiiGatewayException(
-        'Сервис первичной записи данных ответил ошибкой (${resp.statusCode}): '
-        '${resp.body}',
-      );
+          'Не удалось сохранить данные (${resp.statusCode})${_serverReason(resp)} — попробуйте ещё раз.');
     }
   }
+}
+
+/// Причина отказа из ответа сервера ({"error": "..."}), без сырого тела:
+/// гость не должен видеть JSON или страницу прокси.
+String _serverReason(http.Response resp) {
+  try {
+    final data = jsonDecode(resp.body);
+    final error = data is Map ? data['error'] : null;
+    if (error is String && error.trim().isNotEmpty) return ': ${error.trim()}';
+  } catch (_) {}
+  return '';
 }
 
 /// Первичная запись контакта брони или листа ожидания (имя, телефон) на
@@ -101,7 +110,7 @@ extension PiiContactRecords on PiiGatewayService {
     }
     http.Response resp;
     try {
-      resp = await http
+      resp = await _http
           .post(
             Uri.parse(baseUrl),
             headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
@@ -131,7 +140,7 @@ extension PiiGuestDeletion on PiiGatewayService {
     }
     http.Response resp;
     try {
-      resp = await http
+      resp = await _http
           .post(
             Uri.parse(baseUrl),
             headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},

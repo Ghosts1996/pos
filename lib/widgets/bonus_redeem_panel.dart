@@ -66,12 +66,16 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     // loyaltyCol, а не col — у сети заведений activeSessionId лежит в общем
     // на все точки профиле (chains/{chainId}/clients), см. bindToSession в
     // GuestLinkService.
-    final snap = await AppScope.loyaltyCol('clients')
-        .where('activeSessionId', isEqualTo: widget.sessionId)
-        .limit(1)
-        .get();
-    if (snap.docs.isNotEmpty && mounted) {
-      setState(() => _profile = ClientProfile.fromDoc(snap.docs.first));
+    try {
+      final snap = await AppScope.loyaltyCol('clients')
+          .where('activeSessionId', isEqualTo: widget.sessionId)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty && mounted) {
+        setState(() => _profile = ClientProfile.fromDoc(snap.docs.first));
+      }
+    } catch (_) {
+      // Не нашли автоматически — кассир найдёт гостя по телефону.
     }
   }
 
@@ -80,13 +84,17 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
       _busy = true;
       _error = null;
     });
-    final found = await _link.findByPhone(_phone.text.trim());
-    if (mounted) {
+    try {
+      final found = await _link.findByPhone(_phone.text.trim());
+      if (!mounted) return;
       setState(() {
         _profile = found;
-        _busy = false;
         if (found == null) _error = 'Гость с таким телефоном не найден';
       });
+    } catch (e) {
+      if (mounted) setState(() => _error = humanError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -119,8 +127,22 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     );
     if (newPhone == null || newPhone.isEmpty || !mounted) return;
 
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
+      // Номер уже закреплён за другим профилем — перезаписать его тут
+      // значило бы увести указатель «номер → гость» у того гостя.
+      if (await _link.isPhoneTakenByOther(newPhone, _profile!.uid)) {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _error = 'Этот номер уже у другого гостя — объедините профили в разделе «Гости»';
+          });
+        }
+        return;
+      }
       await _link.updateProfile(_profile!.uid, {'phone': newPhone});
       final refreshed = await _link.findByPhone(newPhone);
       if (mounted) {
