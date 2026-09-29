@@ -1,5 +1,7 @@
-# Временный помощник: подбирает живые фото блюд демо-меню с Unsplash
-# (unsplash.com/license — бесплатно, в том числе в коммерческих целях).
+# Временный помощник: подбирает живые фото блюд демо-меню. Источники:
+# Unsplash (unsplash.com/license — бесплатно, в том числе в коммерческих
+# целях) и, если он недоступен, Openverse (только CC0 / общественное
+# достояние / CC BY — авторы в CREDITS.txt).
 # Запускается из .github/workflows/demo-photos.yml:
 #   candidates — по 8 вариантов на блюдо, листы-превью sheet-*.jpg;
 #   final      — выбранные варианты (choices.json) в saas/console/demo-menu.
@@ -11,18 +13,23 @@ import time
 from io import BytesIO
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "saas", "console", "demo-menu")
 UA = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
-    "Accept": "application/json",
+    "Accept": "application/json, image/*",
 }
 PER = 8
 CELL = 190
 LABEL = 170
+unsplash_ok = True
+
+
+def log(*a):
+    print(*a, flush=True)
 
 
 def load(name, default):
@@ -30,22 +37,29 @@ def load(name, default):
     return json.load(open(p, encoding="utf-8")) if os.path.exists(p) else default
 
 
-def get(url, **kw):
-    for attempt in range(4):
+def get(url, tries=3, **kw):
+    for attempt in range(tries):
         try:
-            r = requests.get(url, headers=UA, timeout=30, **kw)
+            r = requests.get(url, headers=UA, timeout=20, **kw)
             if r.status_code == 200:
                 return r
-            print("HTTP", r.status_code, url[:120])
+            log("HTTP", r.status_code, url[:100], r.text[:120].replace("\n", " "))
+            if r.status_code in (401, 403, 404):
+                return None
         except requests.RequestException as e:
-            print("ERR", e, url[:120])
+            log("ERR", type(e).__name__, url[:100])
         time.sleep(2 * (attempt + 1))
     return None
 
 
-def search(query):
-    r = get("https://unsplash.com/napi/search/photos", params={"query": query, "per_page": 30})
+def unsplash(query):
+    global unsplash_ok
+    if not unsplash_ok:
+        return []
+    r = get("https://unsplash.com/napi/search/photos", tries=2, params={"query": query, "per_page": 30})
     if not r:
+        unsplash_ok = False
+        log("Unsplash недоступен — дальше только Openverse")
         return []
     out = []
     for p in r.json().get("results", []):
@@ -54,14 +68,31 @@ def search(query):
             continue
         user = p.get("user") or {}
         out.append({
-            "id": p["id"],
-            "raw": raw,
-            "author": user.get("name", ""),
-            "username": user.get("username", ""),
-            "alt": p.get("alt_description") or "",
+            "src": "unsplash", "id": p["id"],
+            "thumb": sized(raw, CELL - 6, CELL - 6, 60),
+            "full": sized(raw, 512, 512, 76),
+            "credit": f"{user.get('name', '')} (unsplash.com/@{user.get('username', '')}), https://unsplash.com/photos/{p['id']}, лицензия Unsplash",
         })
-        if len(out) == PER:
-            break
+    return out
+
+
+def openverse(query):
+    r = get("https://api.openverse.org/v1/images/", params={
+        "q": query, "license": "cc0,pdm,by", "category": "photograph",
+        "page_size": 20, "mature": "false",
+    })
+    if not r:
+        return []
+    out = []
+    for p in r.json().get("results", []):
+        lic = f"{(p.get('license') or '').upper()} {p.get('license_version') or ''}".strip()
+        out.append({
+            "src": "openverse", "id": p["id"],
+            "thumb": p.get("thumbnail") or p["url"],
+            "full": p["url"],
+            "credit": f"{p.get('creator') or 'автор не указан'}, {p.get('foreign_landing_url') or p['url']}, {lic}",
+        })
+    time.sleep(3)  # анонимный лимит Openverse
     return out
 
 
@@ -70,11 +101,14 @@ def sized(raw, w, h, q):
     return f"{raw}{sep}w={w}&h={h}&fit=crop&q={q}&fm=jpg"
 
 
+def square(data, size):
+    img = Image.open(BytesIO(data)).convert("RGB")
+    return ImageOps.fit(img, (size, size), Image.LANCZOS)
+
+
 def font(size):
-    for f in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",):
-        if os.path.exists(f):
-            return ImageFont.truetype(f, size)
-    return ImageFont.load_default()
+    f = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    return ImageFont.truetype(f, size) if os.path.exists(f) else ImageFont.load_default()
 
 
 def candidates(only):
@@ -82,8 +116,11 @@ def candidates(only):
     cands = load("candidates.json", {})
     slugs = [s for s in queries if not only or s in only]
     for s in slugs:
-        cands[s] = search(queries[s])
-        print(s, len(cands[s]))
+        found = unsplash(queries[s])
+        if len(found) < 4:
+            found += openverse(queries[s])
+        cands[s] = found[:PER]
+        log(s, len(cands[s]), cands[s][0]["src"] if cands[s] else "-")
     json.dump(cands, open(os.path.join(HERE, "candidates.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
     for f in os.listdir(HERE):
@@ -99,15 +136,21 @@ def candidates(only):
             y = r * CELL
             d.text((8, y + CELL // 2 - 12), s, fill=(255, 255, 255), font=big)
             for i, c in enumerate(cands[s]):
-                resp = get(sized(c["raw"], CELL - 6, CELL - 6, 60))
+                resp = get(c["thumb"], tries=2)
                 if not resp:
                     continue
-                img = Image.open(BytesIO(resp.content)).convert("RGB")
+                try:
+                    img = square(resp.content, CELL - 6)
+                except Exception as e:
+                    log("не картинка", s, i, e)
+                    continue
                 x = LABEL + i * CELL
                 sheet.paste(img, (x + 3, y + 3))
                 d.rectangle((x + 3, y + 3, x + 31, y + 31), fill=(0, 0, 0))
                 d.text((x + 10, y + 5), str(i), fill=(255, 220, 0), font=small)
-        sheet.save(os.path.join(HERE, f"sheet-{n // rows + 1:02d}.jpg"), quality=70)
+        name = f"sheet-{n // rows + 1:02d}.jpg"
+        sheet.save(os.path.join(HERE, name), quality=70)
+        log("лист", name)
 
 
 def final():
@@ -115,17 +158,17 @@ def final():
     choices = load("choices.json", {})
     credits = []
     for s, pick in choices.items():
-        c = cands[s][pick] if isinstance(pick, int) else next(x for x in cands[s] if x["id"] == pick)
-        resp = get(sized(c["raw"], 512, 512, 74))
+        c = cands[s][pick]
+        resp = get(c["full"])
         if not resp:
             sys.exit(f"не скачалось: {s}")
-        Image.open(BytesIO(resp.content)).convert("RGB").save(
-            os.path.join(OUT, f"{s}.jpg"), quality=78, optimize=True, progressive=True)
-        credits.append(f"{s}.jpg — {c['author']} (unsplash.com/@{c['username']}), https://unsplash.com/photos/{c['id']}")
-        print("ok", s)
+        square(resp.content, 512).save(os.path.join(OUT, f"{s}.jpg"), quality=78, optimize=True, progressive=True)
+        credits.append(f"{s}.jpg — {c['credit']}")
+        log("ok", s)
     with open(os.path.join(OUT, "CREDITS.txt"), "w", encoding="utf-8") as f:
-        f.write("Фото демо-меню — Unsplash, лицензия Unsplash (https://unsplash.com/license):\n"
-                "бесплатно, в том числе в коммерческих целях, без обязательного указания автора.\n\n")
+        f.write("Фото демо-меню. Unsplash — https://unsplash.com/license (бесплатно, в том\n"
+                "числе в коммерческих целях); CC0 / PDM — общественное достояние;\n"
+                "CC BY — https://creativecommons.org/licenses/by/4.0/ (фото обрезаны и уменьшены).\n\n")
         f.write("\n".join(sorted(credits)) + "\n")
     shutil.rmtree(HERE)
 
