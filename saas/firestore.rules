@@ -254,9 +254,26 @@ service cloud.firestore {
       allow read: if isSuperAdmin() ||
         (signedIn() &&
          (resource.data.userId == request.auth.uid || isChainMember(resource.data.chainId)));
+      // Вторая ветка — планшет точки сети сам заводит себе зеркало
+      // членства: присоединяется он без сервера (SaasDeviceJoinService), и
+      // без этой записи касса точки не видела бы общую лояльность сети.
+      // Только employee, только активный участник точки этой сети с
+      // документом устройства. Отключённый планшет запись не вернёт: она
+      // уже есть, а менять её может только владелец или админ сети.
       allow create: if isSuperAdmin() ||
         (hasChainRole(request.resource.data.chainId, ['owner', 'admin']) &&
-         request.resource.data.role in ['manager', 'employee']);
+         request.resource.data.role in ['manager', 'employee']) ||
+        (signedIn() &&
+         id == request.resource.data.chainId + '_' + request.auth.uid &&
+         request.resource.data.keys().hasOnly(['chainId', 'userId', 'tenantId', 'role', 'status', 'createdAt']) &&
+         request.resource.data.userId == request.auth.uid &&
+         request.resource.data.role == 'employee' &&
+         request.resource.data.status == 'active' &&
+         request.resource.data.tenantId is string &&
+         request.resource.data.chainId != '' &&
+         chainIdOf(request.resource.data.tenantId) == request.resource.data.chainId &&
+         isMember(request.resource.data.tenantId) &&
+         exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)/devices/$(request.auth.uid)));
       allow update: if isSuperAdmin() ||
         (hasChainRole(resource.data.chainId, ['owner', 'admin']) &&
          resource.data.role in ['manager', 'employee'] &&
@@ -513,11 +530,20 @@ service cloud.firestore {
       allow create: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          request.resource.data.clientUid == request.auth.uid &&
-         request.resource.data.status == 'new');
+         request.resource.data.status == 'new' &&
+         request.resource.data.get('sessionId', '') == '' &&
+         request.resource.data.get('preOrder', []) is list &&
+         request.resource.data.get('preOrder', []).size() <= 50);
+      // Гость может только отменить ещё не состоявшуюся бронь (не ту, где
+      // он уже за столом или отмечен «не пришёл») или ответить «приду» —
+      // и ничего больше в ней не менять.
       allow update: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          resource.data.clientUid == request.auth.uid &&
-         (request.resource.data.status == 'cancelled' ||
+         ((request.resource.data.status == 'cancelled' &&
+           resource.data.status in ['new', 'confirmed'] &&
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'handledBy'])) ||
           (request.resource.data.status == resource.data.status &&
            request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['guestConfirmed']))));
@@ -545,9 +571,14 @@ service cloud.firestore {
 
     match /tenants/{tenantId}/guestOrders/{doc} {
       allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      // Цены из заказа касса не берёт (пересчитывает по меню), но
+      // бесконечный список позиций ронял бы очередь заказов на кассе.
       allow create: if isTenantGuest(tenantId) &&
         request.resource.data.clientUid == request.auth.uid &&
-        request.resource.data.status == 'new';
+        request.resource.data.status == 'new' &&
+        request.resource.data.items is list &&
+        request.resource.data.items.size() > 0 &&
+        request.resource.data.items.size() <= 50;
       allow update, delete: if isStaff(tenantId);
     }
 
