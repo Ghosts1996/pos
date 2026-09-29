@@ -1793,7 +1793,7 @@ function screenAuth() {
     <div class="brand">ZalPOS</div>
     <h1>${authMode === 'login' ? 'Вход в консоль' : 'Регистрация владельца'}</h1>
     <p class="muted">Личный кабинет владельца заведения: подписка, код
-    приглашения устройств, фирменный цвет приложения кассы.</p>
+    приглашения устройств, брендинг приложения для гостей.</p>
     <div class="card">
       <label class="field"><span>Email</span>
         <input id="f-email" type="email" autocomplete="email" placeholder="you@example.com">
@@ -2865,6 +2865,8 @@ function watchDashboardData(tenantId) {
 
     const brandingHtml = () => `
       <h2>Брендинг</h2>
+      <p class="small muted">Название, логотип и цвета — для приложения гостей и веб-меню
+      по QR. Касса у всех заведений в едином стиле ZalPOS: её видит только персонал.</p>
       ${tenant.chainId ? `
         <div class="card" style="border-color:rgba(139,92,246,.45)">
           <p class="small muted">Это заведение — точка сети. Ниже правится брендинг ВСЕЙ сети

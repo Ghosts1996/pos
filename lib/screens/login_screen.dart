@@ -224,34 +224,27 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     }
 
-    // Экран входа рисует свои цвета литералами, а не через Theme.of(context)
-    // (см. AppTheme.branded для остальных экранов) — здесь важна не полная
-    // фирменная палитра, а само имя и логотип заведения (TOR §17/§18), и
-    // именно это единственное, что тянем из AppScope.branding. В
-    // одно-арендной сборке branding всегда null — экран не меняется.
-    final branding = AppScope.branding;
-    final appName = branding?.appName ?? 'ZalPOS';
-    final logoUrl = branding?.logoUrl ?? '';
+    // Касса у всех заведений в фирменном стиле ZalPOS (см. main.dart):
+    // логотип и название платформы. Название заведения — мелкой подписью,
+    // чтобы было видно, к какому заведению привязан планшет.
+    final venue = (AppScope.branding?.appName ?? '').trim();
 
     final header = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        logoUrl.isNotEmpty
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.network(
-                  logoUrl,
-                  width: 56,
-                  height: 56,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Image.asset('assets/icon/icon.png', width: 56, height: 56),
-                ),
-              )
-            : Image.asset('assets/icon/icon.png', width: 56, height: 56),
+        Image.asset('assets/icon/icon.png', width: 56, height: 56),
         const SizedBox(height: 12),
-        Text(appName,
+        const Text('ZalPOS',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        if (venue.isNotEmpty && !venue.startsWith('ZalPOS')) ...[
+          const SizedBox(height: 4),
+          Text(venue,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white60, fontSize: 14)),
+        ],
         const SizedBox(height: 16),
         // Сотрудник — режим по умолчанию (частый вход в течение
         // смены, PIN короче), администратор выбирается явно отдельным
