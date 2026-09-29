@@ -1,11 +1,7 @@
 "use strict";
 
-// Лёгкий smoke-тест валидации входа — без реального Postgres/Firebase (их
-// не поднять здесь без боевых кредов). Поднимает настоящий HTTP-сервер на
-// свободном порту и шлёт ему настоящие запросы — проверяет, что сервис
-// корректно отклоняет некорректные запросы ДО обращения к базе или к
-// Firebase Admin SDK, а не падает необработанным исключением.
-// Запуск: `npm test` или `node test.smoke.js`.
+// Проверка валидации без Postgres и Firebase: плохие запросы должны
+// отклоняться до обращения к базе. Запуск: npm test.
 
 const assert = require("assert");
 const http = require("http");
@@ -52,6 +48,14 @@ async function run() {
     assert.strictEqual(res.statusCode, 400);
   }
   {
+    const res = await request("POST", "/", { body: "null" });
+    assert.strictEqual(res.statusCode, 400);
+  }
+  {
+    const res = await request("POST", "/", { body: JSON.stringify({ uid: "abc123", name: "x".repeat(70000) }) });
+    assert.strictEqual(res.statusCode, 413);
+  }
+  {
     const res = await request("POST", "/", { body: JSON.stringify({ name: "Гость" }) });
     assert.strictEqual(res.statusCode, 400);
     assert.match(JSON.parse(res.body).error, /uid/);
@@ -75,8 +79,7 @@ async function run() {
   }
 
   {
-    // Гость SaaS-заведения при неподключённом проекте платформы — понятная
-    // 503, а не «невалидный токен» от чужого проекта.
+    // Без ключа проекта платформы — понятная 503, а не «невалидный токен».
     delete process.env.SAAS_FIREBASE_SERVICE_ACCOUNT_B64;
     const res = await request("POST", "/", {
       headers: { Authorization: "Bearer not-a-real-token" },
