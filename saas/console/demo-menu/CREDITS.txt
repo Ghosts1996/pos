@@ -1,7 +1,7 @@
-Фото демо-меню. Unsplash — https://unsplash.com/license (бесплатно, в том
-числе в коммерческих целях); CC0 / PDM — общественное достояние;
-CC BY / CC BY-SA — https://creativecommons.org/licenses/ (фото обрезаны и уменьшены;
-изменённые фото CC BY-SA распространяются на тех же условиях).
+Фото демо-меню ZalPOS — с Openverse (openverse.org), свободные лицензии:
+CC0 и PDM — общественное достояние; CC BY 2.0 — https://creativecommons.org/licenses/by/2.0/;
+CC BY-SA 2.0 — https://creativecommons.org/licenses/by-sa/2.0/ (фото обрезаны до квадрата
+и уменьшены; изменённые фото CC BY-SA распространяются на тех же условиях).
 
 americano.jpg — автор не указан, https://www.rawpixel.com/image/5903962/photo-image-public-domain-coffee-food, CC0 1.0
 apple-juice.jpg — JESHOOTS.com, https://stocksnap.io/photo/apple-orange-UR1JSQIAUN, CC0 1.0
@@ -17,7 +17,6 @@ cheese-sticks.jpg — sarahstierch, https://www.flickr.com/photos/7633518@N08/53
 cheesecake.jpg — Red Lobster Lover Joe twitter:RLLoverJoe, https://www.flickr.com/photos/164188154@N05/54040980559, PDM 1.0
 cherry-smoothie.jpg — Anastasia Zhenina, https://stocksnap.io/photo/masonjars-jar-GHVUNMPQ3Q, CC0 1.0
 club.jpg — ccnull.de Bilddatenbank, https://www.flickr.com/photos/115225894@N07/54434892294, BY 2.0
-coconut.jpg — Juhele_CZ, https://www.flickr.com/photos/96541566@N06/53899460450, CC0 1.0
 cola.jpg — автор не указан, https://www.rawpixel.com/image/5918669/photo-image-background-public-domain-black, CC0 1.0
 cookies.jpg — Forsaken Fotos, https://www.flickr.com/photos/55229469@N07/52628505487, BY 2.0
 croissant.jpg — RamseyCountyMN, https://www.flickr.com/photos/40960220@N04/51957169850, BY-SA 2.0

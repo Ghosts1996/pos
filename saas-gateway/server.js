@@ -3277,16 +3277,19 @@ const DEMO_STOCK = [
   ["cheesecake", "Чизкейк (порции)", "Кухня", "pcs", 11, 4],
 ];
 
-// Меню. img — карточка из saas/console/demo-menu (3D-эмодзи Fluent от
-// Microsoft, лицензия MIT, на мягком градиенте): лежит на том же хостинге,
-// что и консоль, и не зависит от чужих сайтов. use — списание со склада:
+// Меню. img — живое фото из saas/console/demo-menu (свободные лицензии,
+// авторы в CREDITS.txt): лежит на том же хостинге, что и консоль, и не
+// зависит от чужих сайтов. use — списание со склада:
 // [ключ из DEMO_STOCK, сколько, единица]. rank — место в «Популярном».
 const DEMO_MENU = [
   {
     // Табак — без фото, описаний и с флагом tobacco (ст. 16 закона
     // № 15-ФЗ): фото кальяна в меню гостя — уже реклама, флаг снимает
     // скидки и «Хит», а гостю табак показывается строгим списком.
+    // Фото категории видят только сотрудники в кассе: гостю табачная
+    // категория плиткой не показывается (kolibri_menu_screen, app.js).
     category: "Кальяны",
+    img: "hookah",
     tobacco: true,
     items: [
       { name: "Классический кальян", price: 1200, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
@@ -3457,8 +3460,8 @@ const DEMO_MENU = [
     items: [
       { name: "Вода негазированная", price: 150, weight: [500, "ml"], img: "water", use: [["water", 1, "pcs"]] },
       { name: "Кола", price: 250, weight: [330, "ml"], img: "cola", description: "Классическая, в стекле", use: [["cola", 1, "pcs"]] },
-      { name: "Сок яблочный", price: 220, weight: [300, "ml"], img: "orange-juice", description: "Прямого отжима" },
-      { name: "Кокосовая вода", price: 320, weight: [330, "ml"], img: "coconut", description: "Натуральная, без сахара" },
+      { name: "Сок яблочный", price: 220, weight: [300, "ml"], img: "apple-juice", description: "Прямого отжима" },
+      { name: "Морс клюквенный", price: 250, weight: [400, "ml"], img: "mors", description: "Домашний, из клюквы и брусники" },
     ],
   },
 ];
