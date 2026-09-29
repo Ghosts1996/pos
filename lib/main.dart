@@ -41,7 +41,6 @@ void main() async {
   // флаг всегда false — экран регистрации устройства остаётся тем же, что
   // и был (StaffDeviceSetupScreen внутри LoginScreen), см. ниже.
   var needsPairing = false;
-  BrandingConfig? branding;
 
   // Если firebase_options.dart ещё не заполнен реальными ключами
   // (flutterfire configure не запускался), не пытаемся инициализировать
@@ -102,7 +101,6 @@ void main() async {
           // без этого просрочка, наступившая посреди смены, ничего бы не
           // меняла до следующего перезапуска планшета).
           SubscriptionGate.watch(config.tenant.id, config);
-          branding = config.branding;
           ready = true;
           startBackgroundServices();
         } else {
@@ -126,7 +124,6 @@ void main() async {
     ready: ready,
     needsPairing: needsPairing,
     startupError: startupError,
-    branding: branding,
   ));
 }
 
@@ -134,20 +131,18 @@ class HookahPosApp extends StatelessWidget {
   final bool ready;
   final bool needsPairing;
   final String? startupError;
-  final BrandingConfig? branding;
 
   const HookahPosApp({
     super.key,
     required this.ready,
     this.needsPairing = false,
     this.startupError,
-    this.branding,
   });
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: branding?.appName ?? 'ZalPOS',
+      title: 'ZalPOS',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -159,11 +154,13 @@ class HookahPosApp extends StatelessWidget {
       // POS-система работает на планшетах в зале с переменным освещением —
       // фиксируем тёмную "Midnight Blue" тему как единственную, без
       // системного light/dark переключения, чтобы кассир не терял привычную
-      // контрастность в течение смены. В SaaS-режиме поверх неё накладывается
-      // фирменная палитра заведения (см. AppTheme.branded — фон, текст,
-      // вторичный цвет и цвет кнопок, с проверкой контраста фон/текст).
-      theme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
-      darkTheme: branding != null ? AppTheme.branded(branding!) : AppTheme.dark,
+      // контрастность в течение смены.
+      //
+      // Касса у всех заведений в фирменном стиле ZalPOS: это рабочий
+      // инструмент персонала, гости её не видят. Брендинг заведения (цвета,
+      // логотип, название) — только для приложения гостя и веб-меню.
+      theme: AppTheme.dark,
+      darkTheme: AppTheme.dark,
       themeMode: ThemeMode.dark,
       // Перед экраном входа — прогрев дискового кэша фото меню (см.
       // ImagePreloadScreen), чтобы дальше открытие меню не грузило фото по
