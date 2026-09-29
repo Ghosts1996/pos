@@ -440,15 +440,15 @@ void main() {
 
     test('ссылка становится кликабельным span, хвостовая точка — нет', () {
       final spans = linkifySpans(
-        'Подписывайтесь: https://t.me/colibrilounge. Ждём вас!',
+        'Подписывайтесь: https://t.me/zalpos. Ждём вас!',
       );
       final linkSpan = spans.firstWhere(
         (s) => (s as TextSpan).recognizer != null,
       ) as TextSpan;
-      expect(linkSpan.text, 'https://t.me/colibrilounge');
+      expect(linkSpan.text, 'https://t.me/zalpos');
 
       final full = spans.map((s) => (s as TextSpan).text).join();
-      expect(full, 'Подписывайтесь: https://t.me/colibrilounge. Ждём вас!');
+      expect(full, 'Подписывайтесь: https://t.me/zalpos. Ждём вас!');
     });
 
     test('www-ссылка без протокола тоже находится', () {

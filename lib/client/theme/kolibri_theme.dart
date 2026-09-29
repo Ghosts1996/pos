@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../build_info.dart';
 import '../../models/tenant_models.dart';
 
 /// Палитра приложения гостя. По умолчанию изумрудно-золотая, отдельно от
@@ -21,14 +20,14 @@ class KolibriColors {
   static const _defaultTextPrimary = Color(0xFFF2F7F4);
   /// Название, когда у заведения нет своего: в SaaS — бренд платформы (не
   /// имя чужого заведения), в одно-арендной сборке — само заведение.
-  static String get _defaultAppName => kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
+  static String get _defaultAppName => 'ZalPOS';
 
   static Color background = _defaultBackground;
   static Color surface = _mix(_defaultBackground, Colors.white, 0.06);
   static Color surfaceElevated = _mix(_defaultBackground, Colors.white, 0.10);
   static Color border = _mix(_defaultBackground, Colors.white, 0.16);
 
-  /// Изумруд — основной акцент (оперение колибри) по умолчанию, branding.primaryColor у заведения с брендингом.
+  /// Изумруд — основной акцент по умолчанию, branding.primaryColor у заведения с брендингом.
   static Color primary = _defaultPrimary;
   static Color primaryPressed = _defaultPrimaryPressed;
 
@@ -67,7 +66,7 @@ class KolibriColors {
   /// (MaterialApp.title в kolibri_main.dart): тот виден только в диспетчере
   /// задач Android, а этот текст читают прямо на главном экране и в профиле
   /// (см. applyBranding). Без него после ребрендинга шапка экрана продолжала
-  /// бы показывать "Colibri Lounge", даже когда заголовок окна уже сменился.
+  /// бы показывать название по умолчанию, даже когда заголовок окна уже сменился.
   static String appName = _defaultAppName;
 
   /// Накладывает фирменную палитру заведения (см. saas/console/console.js,
