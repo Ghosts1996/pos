@@ -125,9 +125,10 @@
  "fruit": "fruit platter",
  "cookies": "chocolate chip cookies",
  "cola": [
-  "cola",
-  "soda glass",
-  "soft drink"
+  "iced soda glass",
+  "soda with ice",
+  "glass of cola",
+  "fizzy drink glass"
  ],
  "water": [
   "water glass",
@@ -136,8 +137,9 @@
  ],
  "apple-juice": "apple juice glass",
  "coconut": [
-  "coconut water",
-  "coconut drink",
-  "coconut straw"
+  "young coconut",
+  "coconut straw",
+  "fresh coconut",
+  "coconut juice"
  ]
 }

@@ -1,1 +1,1 @@
-hookah,syrniki,omelette,croissant,avocado,veggie,khachapuri,ice-cream,oolong,puer,sea-buckthorn,berry-tea,raf,mango,banana-shake,vanilla-shake,nuts,cola,water,coconut
+cola,coconut
