@@ -801,16 +801,21 @@ async function placeOrder(items, redraw) {
   if (!chosen.length) return;
 
   try {
-    // Имя стола — из самого чека: без него персонал видел заказ как
-    // «Стол · …» и не знал, куда нести.
+    // Стол — из самого чека: гостя могли пересадить, а стол в профиле ещё
+    // прежний. Без имени стола персонал видел заказ как «Стол · …» и не
+    // знал, куда нести.
+    let tableId = p.activeTableId || '';
     let tableName = '';
     try {
       const ses = await getDoc(doc(state.root, 'sessions', p.activeSessionId));
-      tableName = (ses.exists() && ses.data().tableName) || '';
+      if (ses.exists()) {
+        tableId = ses.data().tableId || tableId;
+        tableName = ses.data().tableName || '';
+      }
     } catch (_) { /* не критично — заказ всё равно уйдёт с id стола */ }
     await addDoc(collection(state.root, 'guestOrders'), {
       sessionId: p.activeSessionId,
-      tableId: p.activeTableId || '',
+      tableId,
       tableName,
       clientUid: state.uid,
       guestName: p.name || '',
@@ -2106,19 +2111,21 @@ function watchBonusOps() {
       }
       box.innerHTML = snap.docs.map((d) => {
         const v = d.data();
-        const accrual = v.type === 'accrual';
-        const amount = Number(v.amount) || 0;
+        // Возврат ранее списанных бонусов — тоже плюс на счёт.
+        const plus = v.type === 'accrual' || v.type === 'redeem_cancelled';
+        // У начисления за визит в amount — оплаченная сумма, бонусы — в bonus.
+        const amount = Number(v.bonus ?? v.amount) || 0;
         const when = toDate(v.createdAt);
         return `
           <div class="row" style="padding:10px 0;border-bottom:1px solid var(--border)">
-            <span style="color:${accrual ? 'var(--primary)' : 'var(--warning)'}">
-              ${accrual ? '⊕' : '⊖'}</span>
+            <span style="color:${plus ? 'var(--primary)' : 'var(--warning)'}">
+              ${plus ? '⊕' : '⊖'}</span>
             <div class="grow">
-              <div>${esc(bonusReason(v.reason, accrual))}</div>
+              <div>${esc(bonusReason(v.reason, plus, v.type))}</div>
               <div class="small muted">${when ? dmyy(when) : ''}</div>
             </div>
-            <div style="font-weight:700;color:${accrual ? 'var(--primary)' : 'var(--warning)'}">
-              ${accrual ? '+' : '−'}${Math.round(Math.abs(amount))}</div>
+            <div style="font-weight:700;color:${plus ? 'var(--primary)' : 'var(--warning)'}">
+              ${plus ? '+' : '−'}${Math.round(Math.abs(amount))}</div>
           </div>`;
       }).join('');
     },
@@ -2129,14 +2136,18 @@ function watchBonusOps() {
 }
 
 /// Человеческая подпись к бонусной операции — те же слова, что в приложении.
-function bonusReason(reason, accrual) {
+function bonusReason(reason, plus, type) {
   switch (reason) {
     case 'referral_invitee': return 'Бонус за код друга';
     case 'referral_inviter': return 'Друг дошёл до нас';
     case 'giftCard': return 'Сертификат активирован';
+    case 'birthday': return 'Подарок ко дню рождения';
+    case 'refund': return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
+    case 'refund_undone': return plus ? 'Возврат отменён: бонусы за визит' : 'Возврат отменён: бонусы списаны снова';
     case 'visit': return 'Начисление за визит';
-    default: return accrual ? 'Начисление за визит' : 'Списание бонусов';
   }
+  if (type === 'redeem_cancelled') return 'Оплата бонусами отменена';
+  return plus ? 'Начисление за визит' : 'Списание бонусов';
 }
 
 /// Занят ли номер ДРУГИМ профилем. Чтение одного документа по id —
@@ -2258,9 +2269,11 @@ function watchVisits() {
                 ${items ? `<div class="small muted ellipsis">${esc(items)}</div>` : ''}
               </div>
               <div style="text-align:right">
-                <div style="font-weight:600">${money(v.total)}</div>
+                ${v.refunded
+                  ? '<div class="muted" style="font-weight:600">возврат</div>'
+                  : `<div style="font-weight:600">${money(v.total)}</div>
                 ${Number(v.bonusEarned) > 0
-                  ? `<div class="small" style="color:var(--gold)">+${money(v.bonusEarned)}</div>` : ''}
+                  ? `<div class="small" style="color:var(--gold)">+${money(v.bonusEarned)}</div>` : ''}`}
               </div>
             </div>
           </div>`;
