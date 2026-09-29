@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../build_info.dart';
 import '../models/employee.dart';
 import '../services/app_scope.dart';
 import '../services/firestore_service.dart';
@@ -15,6 +16,7 @@ import '../utils/constants.dart';
 import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
+import 'saas/saas_device_pairing_screen.dart';
 import 'staff_device_setup_screen.dart';
 
 /// Вход по PIN-коду сотрудника. Длина кода зависит от роли — 4 цифры у
@@ -207,6 +209,16 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     if (_deviceRegistered == false) {
+      // В SaaS планшет привязывают к заведению кодом приглашения (или
+      // открывают демо), секрета meta/staffSecret там нет. Сюда касса
+      // попадает, когда планшет отключили в кабинете или демо удалилось.
+      if (kSaasMode) {
+        final lost = (AppScope.branding?.appName ?? '').trim();
+        return SaasDevicePairingScreen(
+          lostVenueName: lost.startsWith('ZalPOS') ? null : lost,
+          lostDemo: AppScope.isDemo,
+        );
+      }
       return StaffDeviceSetupScreen(
         onRegistered: () => setState(() {
           _deviceRegistered = true;

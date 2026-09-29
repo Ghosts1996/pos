@@ -81,22 +81,44 @@ class TenantConfigService {
     // permission-denied, хотя get() проходит, — поэтому list только
     // резервом при самом первом запуске (в main.dart сбой откатывается на
     // кэш).
+    //
+    // Членства нет — планшет отвязали в кабинете или демо-заведение
+    // удалилось по истечении срока. Правила не отдают несуществующий
+    // документ членства (permission-denied, а не пустой ответ), и раньше
+    // эта ошибка считалась обрывом сети: касса открывала удалённое
+    // заведение из кэша, и вместо экрана присоединения с кнопкой демо
+    // планшет показывал ввод секрета одно-арендной сборки. Отсутствие
+    // членства — ответ сервера, а не сбой: кэш сбрасываем.
     final knownTenantId = preferredTenantId ?? _current?.tenant.id;
     DocumentSnapshot<Map<String, dynamic>>? memberDoc;
     if (knownTenantId != null) {
-      final doc = await _db.collection('tenantMembers').doc('${knownTenantId}_$uid').get();
-      if (doc.exists && doc.data()?['status'] == 'active') {
-        memberDoc = doc;
+      try {
+        final doc = await _db.collection('tenantMembers').doc('${knownTenantId}_$uid').get();
+        if (doc.exists && doc.data()?['status'] == 'active') {
+          memberDoc = doc;
+        }
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') rethrow;
       }
     }
 
     if (memberDoc == null) {
-      final membersSnap = await _db
-          .collection('tenantMembers')
-          .where('userId', isEqualTo: uid)
-          .where('status', isEqualTo: 'active')
-          .get();
-      if (membersSnap.docs.isEmpty) return null;
+      QuerySnapshot<Map<String, dynamic>> membersSnap;
+      try {
+        membersSnap = await _db
+            .collection('tenantMembers')
+            .where('userId', isEqualTo: uid)
+            .where('status', isEqualTo: 'active')
+            .get();
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') rethrow;
+        await clearCache();
+        return null;
+      }
+      if (membersSnap.docs.isEmpty) {
+        await clearCache();
+        return null;
+      }
       memberDoc = membersSnap.docs.first;
     }
     final member = TenantMember.fromDoc(memberDoc);
@@ -105,7 +127,10 @@ class TenantConfigService {
     // Заведение читаем первым: от его chainId зависит, какая подписка —
     // subscriptions/{chainId} или subscriptions/{tenantId}.
     final tenantDoc = await tenantRef.get();
-    if (!tenantDoc.exists) return null;
+    if (!tenantDoc.exists) {
+      await clearCache();
+      return null;
+    }
     final tenant = Tenant.fromDoc(tenantDoc);
     final subscriptionId = tenant.chainId ?? member.tenantId;
 
@@ -132,6 +157,15 @@ class TenantConfigService {
     _lastVerifiedAt = DateTime.now();
     await _saveCache(config, _lastVerifiedAt!);
     return config;
+  }
+
+  /// Забыть заведение: планшет к нему больше не привязан.
+  Future<void> clearCache() async {
+    _current = null;
+    _lastVerifiedAt = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_cacheConfigKey);
+    await prefs.remove(_cacheVerifiedAtKey);
   }
 
   Future<void> _saveCache(TenantConfig config, DateTime verifiedAt) async {
