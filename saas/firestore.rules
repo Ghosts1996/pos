@@ -584,7 +584,17 @@ service cloud.firestore {
 
     match /tenants/{tenantId}/reviews/{doc} {
       allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
-      allow create: if isTenantGuest(tenantId) && request.resource.data.clientUid == request.auth.uid;
+      // Оценка — целое 1–5: «1000» перекашивала бы средний рейтинг. Итог
+      // ИИ (aiSummary) пишет только касса — иначе гость подсунул бы
+      // владельцу «вывод ИИ» своими словами.
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.rating is int &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5 &&
+        request.resource.data.get('text', '') is string &&
+        request.resource.data.get('text', '').size() <= 2000 &&
+        request.resource.data.get('aiSummary', '') == '';
       allow update, delete: if isStaff(tenantId);
     }
 

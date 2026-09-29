@@ -109,7 +109,7 @@ class TipModel {
 
   factory TipModel.fromDoc(DocumentSnapshot doc) {
     final m = doc.data() as Map<String, dynamic>? ?? {};
-    final rawTeam = (m['teamMembers'] as List?) ?? const [];
+    final rawTeam = m['teamMembers'] is List ? m['teamMembers'] as List : const [];
     return TipModel(
       id: doc.id,
       amount: (m['amount'] ?? 0).toDouble(),

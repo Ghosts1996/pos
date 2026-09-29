@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'session_model.dart';
+import '../utils/parse.dart';
 
 /// Статус брони.
 ///
@@ -147,26 +148,26 @@ class ReservationModel {
     final confirmed = data['confirmedAt'];
     return ReservationModel(
       id: doc.id,
-      clientUid: data['clientUid'] ?? '',
-      guestName: data['guestName'] ?? '',
-      phone: data['phone'] ?? '',
-      guestsCount: (data['guestsCount'] as num?)?.toInt() ?? 2,
-      tableId: data['tableId'] ?? '',
-      tableName: data['tableName'] ?? '',
+      clientUid: asText(data['clientUid']),
+      guestName: asText(data['guestName']),
+      phone: asText(data['phone']),
+      guestsCount: asNum(data['guestsCount'])?.toInt() ?? 2,
+      tableId: asText(data['tableId']),
+      tableName: asText(data['tableName']),
       startTime: start is Timestamp ? start.toDate() : DateTime.now(),
-      durationMinutes: (data['durationMinutes'] as num?)?.toInt() ?? 90,
-      status: ReservationStatusX.fromCode(data['status'] as String?),
-      comment: data['comment'] ?? '',
-      source: data['source'] ?? 'kolibri',
-      preOrder: ((data['preOrder'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
+      durationMinutes: asNum(data['durationMinutes'])?.toInt() ?? 90,
+      status: ReservationStatusX.fromCode(asTextOrNull(data['status'])),
+      comment: asText(data['comment']),
+      source: asText(data['source'], 'kolibri'),
+      preOrder: asList(data['preOrder'])
+          .whereType<Map>().map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
-      aiNote: data['aiNote'] ?? '',
-      sessionId: data['sessionId'] ?? '',
+      aiNote: asText(data['aiNote']),
+      sessionId: asText(data['sessionId']),
       guestConfirmed: data['guestConfirmed'] == true,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       confirmedAt: confirmed is Timestamp ? confirmed.toDate() : null,
-      handledBy: data['handledBy'] ?? '',
+      handledBy: asText(data['handledBy']),
     );
   }
 
