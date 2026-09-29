@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../../models/table_model.dart';
@@ -27,6 +30,33 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   final _fs = FirestoreService();
   late final Stream<List<TableModel>> _stream = _fs.tablesStream();
   final _canvasKey = GlobalKey();
+  final _viewportKey = GlobalKey();
+  final _transform = TransformationController();
+
+  /// Выбранный стол: под схемой — стрелки для точного сдвига, поворот и
+  /// настройки. Перетаскивать пальцем на телефоне неточно.
+  String? _selectedId;
+
+  /// Стол, который сейчас тащат, где палец и куда стол встанет.
+  TableModel? _dragging;
+  Offset? _pointer;
+  ({Rect rect, double x, double y, bool blocked})? _drop;
+
+  /// Тащат мышью — стол держим под курсором; пальцем — чуть выше пальца,
+  /// иначе палец закрывает и стол, и место, куда он встанет.
+  bool _mouse = false;
+  static const double _lift = 36;
+
+  /// Прокрутка схемы, пока стол держат у края экрана.
+  Timer? _panTimer;
+  Offset _panSpeed = Offset.zero;
+
+  @override
+  void dispose() {
+    _panTimer?.cancel();
+    _transform.dispose();
+    super.dispose();
+  }
 
   List<TableModel> _tables = [];
 
@@ -38,6 +68,16 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   final Map<String, ({double x, double y, int rotation})> _moved = {};
 
   List<TableModel> get _inZone => _tables.where((t) => t.zone == _zone).toList();
+
+  /// Стол с учётом сдвигов, которые база ещё не подтвердила: две стрелки
+  /// подряд должны сдвинуть стол на два шага, а не дважды на один.
+  /// Панель под схемой могла получить стол до ответа базы — берём свежий
+  /// из списка по id.
+  TableModel _live(TableModel table) {
+    final t = _tables.where((x) => x.id == table.id).firstOrNull ?? table;
+    final m = _moved[t.id];
+    return m == null ? t : t.copyWith(x: m.x, y: m.y, rotation: m.rotation);
+  }
 
   /// Новый стол — в первую свободную ячейку сетки своей зоны, а не всегда
   /// в одну точку: иначе столы ложились друг на друга, и казалось, что
@@ -59,8 +99,14 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   }
 
   /// Кнопка «Повернуть» на плитке: четверть оборота по часовой, на месте.
-  Future<void> _rotate(TableModel t) async {
+  Future<void> _rotate(TableModel table) async {
+    final t = _live(table);
     final r = hallRotated(t);
+    // Стол, который уже наехал на соседа (старая расстановка), крутить можно.
+    if (_collides(r) && !_collides(t)) {
+      _snack('Повернуть не получится — мешает соседний стол');
+      return;
+    }
     setState(() => _moved[t.id] = (x: r.x, y: r.y, rotation: r.rotation));
     try {
       await _fs.updateTableLayout(t.id, rotation: r.rotation, x: r.x, y: r.y);
@@ -323,28 +369,235 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     return result;
   }
 
-  void _onDrop(TableModel t, Offset globalPointer) {
-    final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final local = box.globalToLocal(globalPointer);
-    // Привязка края стола к сетке в четверть плитки: столы встают ровными
-    // рядами и вплотную друг к другу — так из длинных и треугольных
-    // собираются большие и угловые столы.
-    final s = hallTileSize(t);
-    final f = hallFractionForTopLeft(local.dx - s.width / 2, local.dy - s.height / 2, s);
-    setState(() => _moved[t.id] = (x: f.x, y: f.y, rotation: t.rotation));
-    _fs.updateTablePosition(t.id, f.x, f.y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
+  RenderBox? get _canvasBox => _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+
+  /// Сколько экранных точек в точке холста сейчас (схему приближают).
+  double _canvasScale() {
+    final box = _canvasBox;
+    if (box == null || !box.hasSize) return 1;
+    return (box.localToGlobal(Offset(kHallCanvas.width, 0)) - box.localToGlobal(Offset.zero)).dx / kHallCanvas.width;
+  }
+
+  /// Стол наезжает на другой стол своей зоны.
+  bool _collides(TableModel moved) =>
+      _tables.any((o) => o.id != moved.id && o.zone == moved.zone && hallTablesOverlap(moved, o));
+
+  void _dragStarted(TableModel t) {
+    setState(() {
+      _dragging = t;
+      _selectedId = null;
+      _drop = null;
+    });
+    _panTimer ??= Timer.periodic(const Duration(milliseconds: 16), (_) => _autoPan());
+  }
+
+  void _dragUpdated(Offset globalPointer) {
+    _pointer = globalPointer;
+    _updateDrop();
+    _updatePanSpeed();
+  }
+
+  /// Куда встанет стол, если отпустить сейчас: с привязкой к сетке, как
+  /// при сохранении. Сам стол рисуется прямо там, на схеме, в зелёной рамке
+  /// (красная — место занято): отдельная плитка «в руке» закрывала бы это
+  /// место. Пальцем стол держим чуть выше пальца, чтобы его было видно.
+  void _updateDrop() {
+    final t = _dragging, p = _pointer, box = _canvasBox;
+    if (t == null || p == null || box == null) return;
+    final scale = _canvasScale();
+    final size = hallTileSize(t);
+    final centre = box.globalToLocal(_mouse ? p : p - Offset(0, _lift + size.height * scale / 2));
+    final f = hallFractionForTopLeft(centre.dx - size.width / 2, centre.dy - size.height / 2, size);
+    final moved = t.copyWith(x: f.x, y: f.y);
+    final o = hallTileOffset(moved);
+    final rect = Rect.fromLTWH(o.left, o.top, size.width, size.height);
+    final blocked = _collides(moved);
+    if (_drop?.rect != rect || _drop?.blocked != blocked) {
+      setState(() => _drop = (rect: rect, x: f.x, y: f.y, blocked: blocked));
+    }
+  }
+
+  /// Палец у края видимой части схемы — прокручиваем туда. Только когда
+  /// схема не помещается целиком (телефон); чем ближе к краю, тем быстрее.
+  void _updatePanSpeed() {
+    final view = _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    final p = _pointer;
+    if (view == null || p == null || !view.hasSize) return;
+    final local = view.globalToLocal(p);
+    const edge = 56.0, maxStep = 14.0;
+    double axis(double pos, double len) {
+      if (pos < edge) return -maxStep * (1 - pos.clamp(0.0, edge) / edge);
+      if (pos > len - edge) return maxStep * (1 - (len - pos).clamp(0.0, edge) / edge);
+      return 0;
+    }
+
+    _panSpeed = Offset(axis(local.dx, view.size.width), axis(local.dy, view.size.height));
+  }
+
+  void _autoPan() {
+    if (_dragging == null || _panSpeed == Offset.zero) return;
+    final view = _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (view == null || !view.hasSize) return;
+    // Масштаб — фактический: на планшете схема вписана целиком без
+    // прокрутки, и тогда крутить нечего.
+    final scale = _canvasScale();
+    final t = _transform.value.getTranslation();
+    const pad = 12.0;
+    double shift(double current, double speed, double canvas, double viewLen) {
+      final w = canvas * scale;
+      if (w <= viewLen - pad * 2) return current; // помещается — крутить некуда
+      return (current - speed).clamp(viewLen - pad - w, pad).toDouble();
+    }
+
+    final nx = shift(t.x, _panSpeed.dx, kHallCanvas.width, view.size.width);
+    final ny = shift(t.y, _panSpeed.dy, kHallCanvas.height, view.size.height);
+    if (nx == t.x && ny == t.y) return;
+    _transform.value = Matrix4.identity()
+      ..translateByDouble(nx, ny, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
+    _updateDrop();
+  }
+
+  void _dragEnded() {
+    final t = _dragging, drop = _drop;
+    _panTimer?.cancel();
+    _panTimer = null;
+    _panSpeed = Offset.zero;
+    setState(() {
+      _dragging = null;
+      _drop = null;
+      _pointer = null;
+    });
+    if (t == null || drop == null) return;
+    if (drop.blocked) {
+      _snack('Здесь уже стоит другой стол — поставьте на свободное место');
+      return;
+    }
+    _place(t, drop.x, drop.y);
+  }
+
+  void _place(TableModel t, double x, double y) {
+    setState(() => _moved[t.id] = (x: x, y: y, rotation: t.rotation));
+    _fs.updateTablePosition(t.id, x, y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
+  }
+
+  /// Стрелки под схемой: сдвиг выбранного стола на шаг сетки.
+  void _nudge(TableModel table, double dx, double dy) {
+    final t = _live(table);
+    final o = hallTileOffset(t);
+    final size = hallTileSize(t);
+    final f = hallFractionForTopLeft(o.left + dx * kHallGridStep, o.top + dy * kHallGridStep, size);
+    if ((f.x - t.x).abs() < 1e-6 && (f.y - t.y).abs() < 1e-6) {
+      _snack('Дальше край схемы');
+      return;
+    }
+    final moved = t.copyWith(x: f.x, y: f.y);
+    if (_collides(moved) && !_collides(t)) {
+      _snack('Там другой стол');
+      return;
+    }
+    _place(t, f.x, f.y);
+  }
+
+  /// Рамки поверх схемы: выбранный стол и место, куда встанет перетаскиваемый.
+  Widget _overlay() {
+    Widget frame(TableModel t, Rect r, Color color, {double fillAlpha = 0.18}) => Positioned(
+          left: r.left,
+          top: r.top,
+          child: TableShapeBox(
+            table: t,
+            size: r.size,
+            fill: color.withValues(alpha: fillAlpha),
+            borderColor: color,
+            borderWidth: 3,
+            child: const SizedBox.shrink(),
+          ),
+        );
+    final selected = _selectedId == null ? null : _inZone.where((t) => t.id == _selectedId).firstOrNull;
+    final dragging = _dragging, drop = _drop;
+    return IgnorePointer(
+      child: Stack(clipBehavior: Clip.none, children: [
+        if (selected != null && dragging == null)
+          frame(
+            selected,
+            Rect.fromLTWH(hallTileOffset(selected).left, hallTileOffset(selected).top, hallTileSize(selected).width,
+                    hallTileSize(selected).height)
+                .inflate(6),
+            AppColors.primary,
+            fillAlpha: 0,
+          ),
+        if (dragging != null && drop != null) ...[
+          frame(dragging, drop.rect.inflate(5), drop.blocked ? AppColors.danger : AppColors.success, fillAlpha: 0.22),
+          Positioned(
+            left: drop.rect.left,
+            top: drop.rect.top,
+            child: Opacity(
+              opacity: 0.92,
+              child: TableTile(table: dragging.copyWith(x: drop.x, y: drop.y), editorMode: true),
+            ),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /// Панель выбранного стола: стрелки, поворот, настройки.
+  Widget _selectionBar(TableModel t) {
+    Widget arrow(IconData icon, String tip, double dx, double dy) => IconButton.filledTonal(
+          tooltip: tip,
+          icon: Icon(icon),
+          onPressed: () => _nudge(t, dx, dy),
+        );
+    return Material(
+      color: AppColors.surfaceElevated,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Expanded(
+                child: Text('${t.name} · ${seatsLabel(t.seats)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              TextButton.icon(
+                onPressed: () => _editTable(t),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('Изменить'),
+              ),
+              IconButton(
+                tooltip: 'Готово',
+                icon: const Icon(Icons.close),
+                onPressed: () => setState(() => _selectedId = null),
+              ),
+            ]),
+            Wrap(spacing: 6, runSpacing: 6, alignment: WrapAlignment.center, children: [
+              arrow(Icons.arrow_back, 'Влево', -1, 0),
+              arrow(Icons.arrow_upward, 'Вверх', 0, -1),
+              arrow(Icons.arrow_downward, 'Вниз', 0, 1),
+              arrow(Icons.arrow_forward, 'Вправо', 1, 0),
+              if (tableShapeRotates(t.shape))
+                IconButton.filledTonal(tooltip: 'Повернуть', icon: const Icon(Icons.rotate_right), onPressed: () => _rotate(t)),
+            ]),
+          ]),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final selected = _selectedId == null ? null : _tables.where((t) => t.id == _selectedId).firstOrNull;
     return Scaffold(
       appBar: AppBar(title: const Text('Карта зала')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addTable,
-        icon: const Icon(Icons.add),
-        label: const Text('Стол'),
-      ),
+      floatingActionButton: selected != null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _addTable,
+              icon: const Icon(Icons.add),
+              label: const Text('Стол'),
+            ),
+      bottomNavigationBar: selected != null && selected.zone == _zone ? _selectionBar(selected) : null,
       body: StreamBuilder<List<TableModel>>(
         stream: _stream,
         builder: (context, snap) {
@@ -383,7 +636,10 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                           child: ChoiceChip(
                             label: Text('${z.isEmpty ? kNoZoneLabel : z} · ${_tables.where((t) => t.zone == z).length}'),
                             selected: _zone == z,
-                            onSelected: (_) => setState(() => _zone = z),
+                            onSelected: (_) => setState(() {
+                              _zone = z;
+                              _selectedId = null;
+                            }),
                           ),
                         ),
                     ],
@@ -398,52 +654,60 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     child: Text(
                       _tables.isEmpty
                           ? 'Добавьте первый стол кнопкой «Стол» внизу.'
-                          : '${narrow ? 'Удерживайте' : 'Перетащите'} стол, чтобы переставить; ⟳ — повернуть; '
-                              'нажмите — изменить. Зоны (терраса, VIP) задаются в настройках стола.',
+                          : 'Нажмите на стол — появятся стрелки, поворот и настройки. '
+                              '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
+                              'Зоны (терраса, 2 этаж) задаются в настройках стола.',
                       style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                     ),
                   ),
                 ]),
               ),
               Expanded(
-                child: HallPlanView(
-                  canvasKey: _canvasKey,
-                  tables: _inZone,
-                  tileBuilder: (t) {
-                    final tile = TableTile(
-                      table: t,
-                      editorMode: true,
-                      onTap: () => _editTable(t),
-                      onRotate: () => _rotate(t),
-                    );
-                    Widget feedback() => Material(
-                          color: Colors.transparent,
-                          child: FractionalTranslation(
-                            translation: const Offset(-0.5, -0.5),
-                            child: TableTile(table: t, editorMode: true, isDraggablePreview: true),
-                          ),
+                child: Listener(
+                  onPointerDown: (e) => _mouse = e.kind == PointerDeviceKind.mouse,
+                  child: KeyedSubtree(
+                    key: _viewportKey,
+                    child: HallPlanView(
+                      canvasKey: _canvasKey,
+                      tables: _inZone,
+                      transformationController: _transform,
+                      frameKey: _zone,
+                      fitWidth: true,
+                      overlay: _overlay(),
+                      tileBuilder: (t) {
+                        final tile = TableTile(
+                          table: t,
+                          editorMode: true,
+                          onTap: () => setState(() => _selectedId = _selectedId == t.id ? null : t.id),
+                          onRotate: () => _rotate(t),
                         );
-                    final ghost = Opacity(opacity: 0.3, child: TableTile(table: t, editorMode: true));
-                    // На узком экране схему двигают пальцем, поэтому стол
-                    // берётся долгим нажатием; на планшете — сразу.
-                    return narrow
-                        ? LongPressDraggable<String>(
-                            data: t.id,
-                            dragAnchorStrategy: pointerDragAnchorStrategy,
-                            feedback: feedback(),
-                            childWhenDragging: ghost,
-                            onDragEnd: (d) => _onDrop(t, d.offset),
-                            child: tile,
-                          )
-                        : Draggable<String>(
-                            data: t.id,
-                            dragAnchorStrategy: pointerDragAnchorStrategy,
-                            feedback: feedback(),
-                            childWhenDragging: ghost,
-                            onDragEnd: (d) => _onDrop(t, d.offset),
-                            child: tile,
-                          );
-                  },
+                        final ghost = Opacity(opacity: 0.3, child: TableTile(table: t, editorMode: true));
+                        // На узком экране схему двигают пальцем, поэтому стол
+                        // берётся долгим нажатием; на планшете — сразу.
+                        return narrow
+                            ? LongPressDraggable<String>(
+                                data: t.id,
+                                dragAnchorStrategy: pointerDragAnchorStrategy,
+                                feedback: const SizedBox.shrink(),
+                                childWhenDragging: ghost,
+                                onDragStarted: () => _dragStarted(t),
+                                onDragUpdate: (d) => _dragUpdated(d.globalPosition),
+                                onDragEnd: (_) => _dragEnded(),
+                                child: tile,
+                              )
+                            : Draggable<String>(
+                                data: t.id,
+                                dragAnchorStrategy: pointerDragAnchorStrategy,
+                                feedback: const SizedBox.shrink(),
+                                childWhenDragging: ghost,
+                                onDragStarted: () => _dragStarted(t),
+                                onDragUpdate: (d) => _dragUpdated(d.globalPosition),
+                                onDragEnd: (_) => _dragEnded(),
+                                child: tile,
+                              );
+                      },
+                    ),
+                  ),
                 ),
               ),
               if (_inZone.isNotEmpty)

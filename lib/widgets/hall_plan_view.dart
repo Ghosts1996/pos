@@ -39,6 +39,19 @@ class HallPlanView extends StatefulWidget {
   /// Плашка «Схему можно двигать и приближать» поверх схемы.
   final bool showHint;
 
+  /// Масштаб и сдвиг схемы — редактору, чтобы прокручивать её, пока стол
+  /// тащат к краю экрана. Без него у схемы свой.
+  final TransformationController? transformationController;
+
+  /// Сменился — схема заново показывает, где стоят столы (например, при
+  /// переключении зоны), а не остаётся там, куда её сдвинули.
+  final Object? frameKey;
+
+  /// Телефон: сразу видны все столы по ширине (если плитки при этом не
+  /// мельче схемы целиком), а не удобный для пальца масштаб с обрезанным
+  /// краем. Редактору важнее видеть, куда ставить.
+  final bool fitWidth;
+
   const HallPlanView({
     super.key,
     required this.tables,
@@ -49,6 +62,9 @@ class HallPlanView extends StatefulWidget {
     this.lineColor = AppColors.border,
     this.fitToTables = false,
     this.showHint = true,
+    this.transformationController,
+    this.frameKey,
+    this.fitWidth = false,
   });
 
   /// Самый мелкий масштаб схемы «по столам»: плитка ~52 px — название и
@@ -73,13 +89,14 @@ class HallPlanView extends StatefulWidget {
 }
 
 class _HallPlanViewState extends State<HallPlanView> {
-  final _transform = TransformationController();
-  double? _appliedFor;
+  final _own = TransformationController();
+  TransformationController get _transform => widget.transformationController ?? _own;
+  String? _appliedFor;
   String? _fittedFor;
 
   @override
   void dispose() {
-    _transform.dispose();
+    _own.dispose();
     super.dispose();
   }
 
@@ -122,7 +139,7 @@ class _HallPlanViewState extends State<HallPlanView> {
     // расстановка столов, — иначе каждое обновление стола сбрасывало бы
     // то, как сотрудник подвинул и приблизил схему.
     final key = '${viewport.width.round()}x${viewport.height.round()}|${content.left.round()},${content.top.round()},'
-        '${content.width.round()},${content.height.round()}';
+        '${content.width.round()},${content.height.round()}|${widget.frameKey}';
     if (_fittedFor != key) {
       _fittedFor = key;
       final cw = content.width * scale, ch = content.height * scale;
@@ -162,12 +179,20 @@ class _HallPlanViewState extends State<HallPlanView> {
         );
       }
       // Узкий экран: схему можно двигать и приближать. Начальный масштаб —
-      // удобный для пальца, схема прижата к левому верхнему углу.
-      final start = math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvas.height));
-      if (_appliedFor != box.maxWidth) {
-        _appliedFor = box.maxWidth;
+      // удобный для пальца; видно угол, где начинаются столы, а не пустой
+      // левый верхний угол холста.
+      final content = hallContentRect(widget.tables);
+      final start = widget.fitWidth
+          ? math.max(fit, math.min(HallPlanView.comfortableScale, math.min(w / content.width, h / content.height)))
+          : math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvas.height));
+      final applyKey = '${box.maxWidth}|${widget.frameKey}';
+      if (_appliedFor != applyKey) {
+        _appliedFor = applyKey;
+        double place(double from, double canvas, double view) =>
+            (pad - from * start).clamp(math.min(pad, view - pad - canvas * start), pad).toDouble();
         _transform.value = Matrix4.identity()
-          ..translateByDouble(pad, pad, 0, 1)
+          ..translateByDouble(place(content.left, kHallCanvas.width, box.maxWidth),
+              place(content.top, kHallCanvas.height, box.maxHeight), 0, 1)
           ..scaleByDouble(start, start, 1, 1);
       }
       return Stack(
