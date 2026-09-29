@@ -180,6 +180,7 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
         'planId': c.tenant.planId,
         'ownerUserId': c.tenant.ownerUserId,
         'chainId': c.tenant.chainId,
+        if (c.tenant.demo) 'demo': true,
       },
       if (c.chain != null)
         'chain': {'id': c.chain!.id, 'name': c.chain!.name, 'status': c.chain!.status.id},
@@ -243,6 +244,7 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
       planId: t['planId'] as String,
       ownerUserId: t['ownerUserId'] as String,
       chainId: t['chainId'] as String?,
+      demo: t['demo'] == true,
     ),
     member: TenantMember(
       tenantId: mem['tenantId'] as String,
