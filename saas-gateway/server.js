@@ -26,8 +26,7 @@ const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = requ
  * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
  * Здесь всё, что нельзя доверить клиенту и нельзя держать в Cloud Functions
  * без тарифа Blaze: заведения и сети, приглашения, модерация, сборки APK,
- * оплата подписок, выдача файлов. saas/functions/index.js — старая копия
- * части этой логики, в работе не используется.
+ * оплата подписок, выдача файлов.
  *
  * Слушает 127.0.0.1:PORT, снаружи nginx (location /saas/ на домене
  * pii-gateway, см. README.md). Проект hoocah-pos отсюда не трогаем.

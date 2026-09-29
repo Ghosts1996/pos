@@ -6,16 +6,6 @@
   "storage": {
     "rules": "storage.rules"
   },
-  "functions": {
-    "source": "functions",
-    "ignore": [
-      "node_modules",
-      ".git",
-      "firebase-debug.log",
-      "firebase-debug.*.log"
-    ],
-    "predeploy": "npm --prefix \"$RESOURCE_DIR\" install"
-  },
   "hosting": {
     "public": "console",
     "ignore": [
@@ -35,7 +25,6 @@
   "emulators": {
     "firestore": { "port": 8080 },
     "auth": { "port": 9099 },
-    "functions": { "port": 5001 },
     "hosting": { "port": 5000 },
     "ui": { "enabled": true }
   }

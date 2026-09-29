@@ -1,39 +1,17 @@
 rules_version = '2';
 
-// Правила SaaS-платформы ZalPOS — multi-tenant.
+// Правила платформы ZalPOS (проект saas-3bdc8). Корневой firestore.rules —
+// другое приложение: одно заведение в hoocah-pos.
 //
-// Живёт ОТДЕЛЬНО от корневого firestore.rules, который обслуживает
-// одно действующее заведение (проект hoocah-pos) и его трогать нельзя.
-// Этот файл разворачивается в НОВЫЙ Firebase-проект (см. saas/README.md).
+// users/{uid} — аккаунт человека (email, не анонимный); superAdmins/{uid} —
+// супер-админы платформы; tenants/{id} — заведение; tenantMembers/
+// {tenantId}_{uid} — доступ к нему с ролью (у одного человека в разных
+// заведениях роли разные). Рабочие данные лежат под tenants/{id}/..., и
+// изоляция везде проверяется одинаково: есть ли активное членство в этом
+// tenantId.
 //
-// Модель идентичности:
-//   • users/{uid}            — SaaS-аккаунт человека (владелец/сотрудник),
-//                               настоящий Firebase Auth (email+password —
-//                               НЕ анонимный, в отличие от гостей).
-//   • superAdmins/{uid}      — маркер: этот uid управляет платформой
-//                               целиком, а не одним заведением. Документ
-//                               создаётся только вручную из консоли
-//                               Firebase при бутстрапе платформы — ни один
-//                               клиентский путь не может создать себе такую
-//                               запись.
-//   • tenants/{tenantId}     — заведение-клиент SaaS.
-//   • tenantMembers/{id}     — членство: id = "<tenantId>_<uid>", одно
-//                               членство на пару (пользователь, заведение).
-//                               Роль хранится тут, а не в users — так один
-//                               и тот же человек может быть admin в одном
-//                               заведении и employee в другом.
-//   • tenants/{tenantId}/... — все рабочие данные заведения (столы, чеки,
-//                               меню, гости и т.д.) — вложены под tenantId,
-//                               поэтому изоляция арендаторов проверяется
-//                               ОДНИМ способом во всех этих коллекциях:
-//                               "состоит ли текущий пользователь в
-//                               tenantMembers этого tenantId".
-//
-// Гости (посетители заведения через QR/веб) по-прежнему анонимны — им
-// членство не нужно, они получают доступ к узкому набору документов внутри
-// tenants/{tenantId}/... по тем же принципам, что и в исходном приложении
-// (видят только свой чек, свой профиль, свои брони и т.д.), просто путь
-// теперь на один уровень вложенности глубже.
+// Гости анонимны и членства не имеют: им открыт узкий набор документов
+// заведения, где у них есть профиль clients.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -75,10 +53,7 @@ service cloud.firestore {
       return memberDoc(tenantId).data.role;
     }
 
-    // roles — список строк, например ['owner','admin']. Супер-админ
-    // платформы проходит через isMember() тоже, потому что владеет
-    // "правом делать что угодно" — но здесь именно проверка РОЛИ внутри
-    // заведения, поэтому супер-админа явно добавляем отдельным условием.
+    // Роль внутри заведения; супер-админу можно всё.
     function hasRole(tenantId, roles) {
       return isSuperAdmin() || (isMember(tenantId) && memberRole(tenantId) in roles);
     }
@@ -88,17 +63,10 @@ service cloud.firestore {
       return hasRole(tenantId, ['owner', 'admin', 'manager', 'employee']);
     }
 
-    // ---- Сети заведений (chains) ----
-    //
-    // Сеть — необязательная группировка нескольких tenants одного владельца:
-    // общий биллинг и общая программа лояльности на все точки, при этом
-    // каждая точка сохраняет свою кассу (столы/сотрудники/устройства/чеки)
-    // без изменений. Одиночное заведение НИЧЕГО не знает о сетях: у него
-    // просто нет поля chainId, chainIdOf() для него возвращает '', и
-    // короткое замыкание (||/&&) в isTenantGuest/myActiveSession ниже ни
-    // разу не обращается к коллекциям chains/* — то есть для существующих
-    // одиночных заведений это ровно ноль дополнительных чтений и ровно
-    // прежнее поведение.
+    // ---- Сети заведений ----
+    // Сеть объединяет точки одного владельца: общие подписка, брендинг и
+    // лояльность, касса у каждой точки своя. У одиночного заведения chainId
+    // нет, chainIdOf() вернёт '' — проверки сетей лишних чтений не делают.
     function chainIdOf(tenantId) {
       return get(/databases/$(database)/documents/tenants/$(tenantId)).data.get('chainId', '');
     }
@@ -121,11 +89,7 @@ service cloud.firestore {
       return isSuperAdmin() || (isChainMember(chainId) && chainMemberRole(chainId) in roles);
     }
 
-    // Сотрудник ЛЮБОЙ точки сети — нужен для общего гостевого справочника
-    // (chains/{chainId}/clients и соседние коллекции ниже), который
-    // сотрудник одной точки должен видеть точно так же, как и другой:
-    // баланс/уровень гостя единый на всю сеть, а не только на ту точку,
-    // где гость сейчас сидит.
+    // Сотрудник любой точки сети: гостевой справочник и баланс у сети общие.
     function isChainStaff(chainId) {
       return hasChainRole(chainId, ['owner', 'admin', 'manager', 'employee']);
     }
@@ -135,18 +99,10 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/chains/$(chainId)/clients/$(request.auth.uid));
     }
 
-    // Гость ЭТОГО заведения — определяется не самим фактом входа в Firebase
-    // (в мультитенантном проекте один и тот же анонимный аккаунт гостя
-    // валиден для ЛЮБОГО заведения на платформе), а наличием собственного
-    // профиля clients в поддереве именно этого tenantId. Такой профиль
-    // создаётся первым делом при запуске гостевого приложения/веб-версии
-    // (ensureProfile/ensureGuest), до того как экран показывает меню, зал
-    // или афишу — поэтому к моменту любого такого чтения профиль уже есть.
-    //
-    // Без этой проверки было бы достаточно просто быть авторизованным (а
-    // авторизован в проекте платформы КАЖДЫЙ гость КАЖДОГО заведения), чтобы
-    // читать меню, зал и афишу чужого заведения — прямое нарушение раздела
-    // 9 ТЗ ("данные Tenant A никогда не должны быть доступны Tenant B").
+    // Гость этого заведения — у кого есть профиль clients в его поддереве или
+    // в сети. Анонимный вход валиден для любого заведения платформы, так что
+    // без этой проверки гость одного заведения читал бы меню и зал другого.
+    // Профиль приложение гостя создаёт при запуске, до показа меню.
     function isTenantGuest(tenantId) {
       let cId = chainIdOf(tenantId);
       return signedIn() && (
@@ -159,11 +115,9 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // ---- Поля профиля гостя, которые ведёт ТОЛЬКО касса ----
-    // Бонусы, сумма трат (от неё уровень и кешбэк), число визитов, уровень
-    // и скидка дисконтной карты. Раньше гость не мог поменять часть из них
-    // в существующем профиле, но мог СОЗДАТЬ профиль сразу с любым
-    // bonusBalance/totalSpent и потом оплатить ими счёт на кассе.
+    // ---- Поля профиля гостя, которые ведёт только касса ----
+    // Бонусы, траты, визиты, уровень и скидка карты: гость не может ни
+    // поменять их, ни создать профиль сразу с ними.
     function guestProfileCleanOnCreate(d) {
       return d.get('bonusBalance', 0) == 0 &&
         d.get('totalSpent', 0) == 0 &&
@@ -188,23 +142,15 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // Самого первого супер-админа заводит только консоль Firebase (вручную,
-    // при бутстрапе платформы). Дальше супер-админы назначают и снимают
-    // друг друга только через saas-gateway (handleGrantSuperAdmin/
-    // handleRevokeSuperAdmin): там проверяется, что пароль введён только
-    // что, и каждое изменение пишется в securityLog. Прямая запись отсюда
-    // закрыта — раньше любой открытый сеанс супер-админа (забытый на чужом
-    // устройстве, украденный токен) мог назначить кого угодно в обход окна
-    // пароля, которое было только в браузере.
+    // Первого супер-админа заводят вручную в консоли Firebase, дальше — только
+    // через saas-gateway (свежий ввод пароля и запись в securityLog).
     match /superAdmins/{uid} {
       allow read: if isSelf(uid) || isSuperAdmin();
       allow write: if false;
     }
 
-    // ---- Безопасность платформы: входы в панель (adminLogins) и журнал
-    //      чувствительных действий (securityLog). Читает только
-    //      супер-админ, пишет только saas-gateway (Admin SDK) — запись
-    //      журнала нельзя подделать или стереть из браузера. ----
+    // ---- Входы в панель и журнал опасных действий: читает супер-админ,
+    //      пишет только сервер — из браузера запись не подделать и не стереть.
     match /adminLogins/{id} {
       allow read: if isSuperAdmin();
       allow write: if false;
@@ -214,7 +160,7 @@ service cloud.firestore {
       allow write: if false;
     }
     // Состояние платформы для чек-листа «Безопасность → Платформа»
-    // (сертификаты, резервные копии, уведомления ЮKassa) — пишет сервер.
+    // (сертификаты, резервные копии, уведомления об оплате) — пишет сервер.
     match /platformStatus/{id} {
       allow read: if isSuperAdmin();
       allow write: if false;
@@ -241,20 +187,11 @@ service cloud.firestore {
     // ---- tenants: сам факт существования заведения и его статус ----
     match /tenants/{tenantId} {
       allow read: if isMember(tenantId) || isSuperAdmin();
-      // Создание нового tenant — привилегированная операция. Клиент НЕ
-      // создаёт tenant напрямую: это делает Cloud Function createTenant
-      // (см. saas/functions/index.js), которая работает от имени admin SDK
-      // и не подчиняется этим правилам вовсе. Прямая запись из приложения
-      // запрещена, чтобы никто не мог завести себе tenant в обход
-      // онбординга/лимитов/биллинга.
+      // Заведение создаёт только saas-gateway: онбординг, лимиты, биллинг.
       allow create: if false;
-      // Статус/подписку/владельца/chainId (см. chains/{chainId} выше)
-      // меняет либо супер-админ, либо Cloud Function биллинга (тоже вне
-      // правил) — включение точки в сеть/выключение из неё намеренно
-      // такая же привилегированная операция, как и создание самого tenant.
-      // Обычный owner/admin может менять только некритичные поля (name) —
-      // проверено явно, а не "всё, кроме…", чтобы новое опасное поле не
-      // проскочило по забывчивости.
+      // Статус, подписку, владельца и chainId меняют сервер и супер-админ.
+      // Владельцу — только название, списком разрешённых полей, чтобы новое
+      // поле не проскочило.
       allow update: if isSuperAdmin() ||
         (hasRole(tenantId, ['owner', 'admin']) &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']));
@@ -267,17 +204,12 @@ service cloud.firestore {
         (signedIn() &&
          (resource.data.userId == request.auth.uid ||
           isMember(resource.data.tenantId)));
-      // Добавление/смена роли сотрудника — на бэкенде (Cloud Function),
-      // либо владельцем/админом заведения для рядовых ролей. Владелец не
-      // может назначить второго owner сам себе в обход биллинга (лимит
-      // тарифа на число совладельцев считает функция), поэтому роль
-      // 'owner' тут запрещена клиенту явно.
+      // Владелец и админ выдают и меняют только рядовые роли: owner и admin
+      // назначает сервер (биллинг считает совладельцев).
       //
-      // Третья ветка — самостоятельное присоединение ПЛАНШЕТА: устройство
-      // уже прошло проверку кода приглашения при создании своего документа
-      // в tenants/{tenantId}/devices/{uid} (см. правило ниже) — раз тот
-      // документ существует, повторно спрашивать код не нужно, и устройство
-      // может завести себе БАЗОВУЮ роль employee (не выше) для того же uid.
+      // Третья ветка — планшет присоединяется сам: код приглашения он уже
+      // предъявил, создавая tenants/{tenantId}/devices/{uid}, поэтому может
+      // завести себе роль employee, не выше.
       allow create: if isSuperAdmin() ||
         (hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
          request.resource.data.role in ['manager', 'employee']) ||
@@ -290,15 +222,17 @@ service cloud.firestore {
         (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
          resource.data.role in ['manager', 'employee'] &&
          request.resource.data.role in ['manager', 'employee']);
+      // Убрать можно только рядового участника — иначе админ удалил бы
+      // членство владельца.
       allow delete: if isSuperAdmin() ||
-        hasRole(resource.data.tenantId, ['owner', 'admin']);
+        (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
+         resource.data.role in ['manager', 'employee']);
     }
 
-    // ---- chains: сам факт существования сети и её статус (биллинг) ----
+    // ---- chains: сеть и её статус ----
     match /chains/{chainId} {
       allow read: if isChainMember(chainId) || isSuperAdmin();
-      // Как и tenants выше — создаёт только Cloud Function/шлюз биллинга
-      // (admin SDK, createChain в saas-gateway), не клиент напрямую.
+      // Как и заведение, создаёт только saas-gateway.
       allow create: if false;
       allow update: if isSuperAdmin() ||
         (hasChainRole(chainId, ['owner', 'admin']) &&
@@ -306,21 +240,16 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // ---- chainMembers: кто состоит в сети и с какой ролью — тот же формат,
-    //      что и tenantMembers (id = "<chainId>_<uid>"). Пишется зеркально
-    //      при создании/изменении tenantMembers для точки, у которой задан
-    //      chainId (см. syncChainMembership в saas/console/console.js,
-    //      saas-gateway/server.js и saas_device_join_service.dart) — роль
-    //      'owner' сюда, как и в tenantMembers, может положить только
-    //      admin SDK при создании сети/точки. ----
-    // ---- Реквизиты владельца платформы (оферта, политика ПДн, подвал
-    //      сайта) — публичны; меняет только saas-gateway (savePlatformLegal,
-    //      с повторным вводом пароля и записью в журнал безопасности). ----
+    // ---- Реквизиты платформы (оферта, политика ПДн, подвал сайта) —
+    //      публичны; меняет только saas-gateway после ввода пароля. ----
     match /platformConfig/{doc} {
       allow read: if true;
       allow write: if false;
     }
 
+    // ---- chainMembers — как tenantMembers, id = "<chainId>_<uid>". Сервер
+    //      дублирует сюда членства точек сети (syncChainMembership); owner
+    //      кладёт только он. ----
     match /chainMembers/{id} {
       allow read: if isSuperAdmin() ||
         (signedIn() &&
@@ -332,23 +261,20 @@ service cloud.firestore {
         (hasChainRole(resource.data.chainId, ['owner', 'admin']) &&
          resource.data.role in ['manager', 'employee'] &&
          request.resource.data.role in ['manager', 'employee']);
-      allow delete: if isSuperAdmin() || hasChainRole(resource.data.chainId, ['owner', 'admin']);
+      allow delete: if isSuperAdmin() ||
+        (hasChainRole(resource.data.chainId, ['owner', 'admin']) &&
+         resource.data.role in ['manager', 'employee']);
     }
 
-    // ---- Брендинг сети — тот же принцип, что и tenants/{tenantId}/branding
-    //      ниже: публично читаемо (не секрет, нужно ДО входа гостя), пишет
-    //      только владелец/админ сети. Показывается в едином гостевом
-    //      приложении сети вместо брендинга отдельной точки, чтобы тема не
-    //      "мигала" при переключении гостем точки внутри одной сети. ----
+    // ---- Брендинг сети — как у заведения: читают все (нужен до входа
+    //      гостя), пишут владелец и админ сети. ----
     match /chains/{chainId}/branding/{doc} {
       allow read: if true;
       allow write: if hasChainRole(chainId, ['owner', 'admin']);
     }
 
-    // ---- ИИ сети: один набор ключей и настроек на все точки (владелец
-    //      покупает API один раз). Тот же принцип, что у заведения (см.
-    //      tenants/{tenantId}/meta/aiSettings ниже): публичная часть без
-    //      ключей видна гостям сети, ключи — только персоналу точек. ----
+    // ---- ИИ сети: один набор ключей на все точки. Как у заведения:
+    //      публичная часть без ключей видна гостям, ключи — только персоналу. ----
     match /chains/{chainId}/meta/aiSettings {
       allow read: if isChainStaff(chainId) || isChainGuest(chainId) || isSuperAdmin();
       allow write: if hasChainRole(chainId, ['owner', 'admin']) &&
@@ -362,22 +288,15 @@ service cloud.firestore {
       allow write: if hasChainRole(chainId, ['owner', 'admin']);
     }
 
-    // ---- Общая лояльность сети: профиль/баланс/история визитов гостя один
-    //      на всю сеть, а не на каждую точку — см. docstring chains/{chainId}
-    //      выше. Форма правил намеренно зеркалит tenants/{tenantId}/clients
-    //      и соседние коллекции ниже: та же логика, просто isStaff(tenantId)/
-    //      isTenantGuest(tenantId) заменены на isChainStaff(chainId)/
-    //      isChainGuest(chainId). ----
+    // ---- Общая лояльность сети: профиль, баланс и визиты гостя одни на
+    //      все точки. Правила повторяют tenants/{tenantId}/clients ниже с
+    //      isChainStaff/isChainGuest вместо isStaff/isTenantGuest. ----
     match /chains/{chainId}/clients/{uid} {
       allow read: if isSelf(uid) || isChainStaff(chainId);
 
-      // В отличие от tenants/{tenantId}/clients, здесь нельзя напрямую
-      // проверить sessionClaims конкретной точки — путь до документа не
-      // содержит tenantId. Вместо этого гость обязан прислать activeTenantId
-      // (в какой именно точке сети он физически сидит, см. GuestLinkService.
-      // bindToSession) — и мы проверяем sessionClaims ИМЕННО этой точки, а
-      // заодно что она правда состоит в этой сети (chainIdOf(tid) == chainId),
-      // чтобы нельзя было подставить чек чужой точки/сети.
+      // В пути нет tenantId, поэтому гость присылает activeTenantId — точку,
+      // где он сидит (GuestLinkService.bindToSession). Проверяем sessionClaims
+      // этой точки и что она правда в этой сети.
       function chainSessionClaimOk(currentSid) {
         let sid = request.resource.data.get('activeSessionId', '');
         let tid = request.resource.data.get('activeTenantId', '');
@@ -433,79 +352,44 @@ service cloud.firestore {
     }
 
     // ---- Настройки заведения ----
-    // ВАЖНО про Firestore Security Rules: несколько match-блоков на один и
-    // тот же путь объединяются через ИЛИ (доступ есть, если разрешает ХОТЯ
-    // БЫ ОДИН применимый блок) — более специфичный путь не "переопределяет"
-    // более общий, а лишь ДОБАВЛЯЕТ разрешения. Поэтому исключение для
-    // settings/deviceInvite ниже нельзя вынести отдельным match'ем со своим,
-    // более строгим write — общий settings/{doc} всё равно продолжил бы его
-    // разрешать. Условие приходится держать внутри одного правила.
+    // Правила на один путь складываются через ИЛИ, поэтому исключение для
+    // deviceInvite живёт внутри общего правила, а не отдельным match.
     //
-    // settings/deviceInvite — секретный код приглашения устройства
-    // (tenants/{tenantId}/devices выше сверяет его при первом join) —
-    // единственный документ в этой коллекции, который МЕНЯТЬ должен только
-    // owner/admin: рядовое устройство/сотрудник не должен уметь перевыпустить
-    // код (иначе можно самому себе наприглашать сколько угодно устройств в
-    // обход владельца).
-    //
-    // Остальные settings/* (например settings/integrations — редактируется
-    // прямо с кассы, lib/screens/admin/integrations_settings_screen.dart) —
-    // пишет любой сотрудник заведения, а не только owner/admin: устройство
-    // кассы, присоединившееся по коду приглашения, ВСЕГДА получает роль
-    // employee в tenantMembers (см. saas_device_join_service.dart —
-    // owner/admin там взяться неоткуда, эта роль различается только внутри
-    // самого приложения по PIN, а не на уровне Firestore) — то есть
-    // hasRole(['owner','admin']) тут был бы физически невыполним ни с одного
-    // планшета и такие настройки не сохранялись бы никогда. В одноарендной
-    // версии (firestore.rules в корне) все эти данные точно так же пишет
-    // любой isStaff() без разделения на роли — здесь то же самое поведение.
+    // deviceInvite — секретный код приглашения устройства: перевыпускают его
+    // только владелец и админ, иначе сотрудник приглашал бы устройства в
+    // обход владельца. Остальные settings/* пишет любой сотрудник: планшет
+    // кассы в Firestore всегда employee (роли различаются PIN-кодом внутри
+    // приложения), и с owner/admin ни одна настройка с кассы не сохранилась
+    // бы.
     match /tenants/{tenantId}/settings/{doc} {
-      // Супер-админ тоже читает — нужно для поддержки клиента из панели
-      // платформы без захода в его кабинет.
+      // Супер-админ читает для поддержки из панели платформы.
       allow read: if isMember(tenantId) || isSuperAdmin();
       allow write: if doc == 'deviceInvite'
         ? hasRole(tenantId, ['owner', 'admin'])
         : isStaff(tenantId);
     }
-    // Пороги/кешбек программы лояльности (settings/loyalty,
-    // lib/screens/admin/loyalty_settings_screen.dart) — читает ещё и
-    // ГОСТЬ: это его собственный уровень и процент в профиле (см.
-    // ClientProfile.tiers), а isMember() выше про гостя ничего не знает
-    // (та проверка — про tenantMembers, вход в консоль/устройство кассы,
-    // а не про профиль гостя). Пишет — как и остальные settings/* выше —
-    // любой сотрудник заведения (та же причина: с кассы это всегда роль
-    // employee на уровне Firestore).
+    // Уровни и кешбэк лояльности читает и гость: это его процент в профиле.
     match /tenants/{tenantId}/settings/loyalty {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
     }
 
-    // ---- Внутренние заметки супер-админа о заведении (CRM-заметки для
-    //      поддержки — кто оплатил вручную, о чём договорились и т.д.) ----
-    //      Никогда не видны владельцу/сотрудникам заведения.
+    // ---- Заметки супер-админа о заведении — владельцу не видны ----
     match /tenants/{tenantId}/internal/{doc} {
       allow read, write: if isSuperAdmin();
     }
 
     // ---- Брендинг ----
     match /tenants/{tenantId}/branding/{doc} {
-      // Публично: страница-прослойка QR стола (saas/guest-web/table.html)
-      // показывает название и цвета заведения ДО того, как гость вообще
-      // вошёл в приложение (анонимный вход ещё не случился в момент показа
-      // install-экрана) — обычной проверкой isTenantGuest тут не
-      // обойтись без лишнего анонимного аккаунта на каждый заход. Само по
-      // себе название и цвет — не секрет (то же самое видно в публично
-      // скачиваемом APK), поэтому это единственная коллекция SaaS-правил,
-      // открытая совсем без входа.
+      // Публично: страница стола показывает название и цвета ещё до
+      // анонимного входа. Это не секрет — то же видно в скачиваемом APK.
       allow read: if true;
       allow write: if hasRole(tenantId, ['owner', 'admin']);
     }
 
-    // ---- Рабочие устройства (замена staffDevices) ----
-    // Устройство присоединяется к заведению по коду-приглашению
-    // (tenants/{tenantId}/settings/deviceInvite.code), а не по общему на
-    // всю платформу секрету — иначе угнанный код одного заведения открывал
-    // бы доступ к данным всех остальных.
+    // ---- Устройства кассы ----
+    // Присоединяются по коду приглашения своего заведения, а не по общему
+    // секрету платформы — иначе чужой код открывал бы все заведения.
     match /tenants/{tenantId}/devices/{deviceId} {
       allow read: if isMember(tenantId);
       allow create: if isSelf(deviceId) &&
@@ -514,15 +398,9 @@ service cloud.firestore {
       allow update, delete: if hasRole(tenantId, ['owner', 'admin']);
     }
 
-    // ---- Сотрудники (PIN-вход внутри заведения, как раньше) ----
-    // Пишет любой isStaff(), а не только owner/admin — та же причина, что и
-    // у settings/* выше: устройство кассы всегда состоит в tenantMembers с
-    // ролью employee (см. saas_device_join_service.dart), поэтому
-    // hasRole(['owner','admin']) с планшета невыполним никогда, а именно с
-    // планшета и открывают «Сотрудники» → зарплату, чтобы её настроить —
-    // с hasRole() сохранение молча падало бы permission-denied на каждом
-    // заведении платформы. В одноарендной версии этот экран пишет любой
-    // isStaff() без разделения ролей — здесь то же самое.
+    // ---- Сотрудники (PIN-вход на кассе) ----
+    // isStaff, а не owner/admin: сотрудников и зарплату настраивают с
+    // планшета, а он в Firestore всегда employee.
     match /tenants/{tenantId}/employees/{employeeId} {
       allow read: if isStaff(tenantId);
       allow write: if isStaff(tenantId);
@@ -534,13 +412,8 @@ service cloud.firestore {
       allow write: if isStaff(tenantId);
     }
 
-    // Для гостя сети профиль с activeSessionId лежит в chains/{chainId}/
-    // clients, а не в tenants/{tenantId}/clients — но сама сессия физически
-    // всё равно принадлежит ОДНОЙ конкретной точке (её кассе), поэтому
-    // сверяем ещё и activeTenantId в профиле: гость считается "своим" для
-    // sessions/{doc} только пока сидит именно в этой точке сети (см.
-    // GuestLinkService.bindToSession — пишет activeTenantId вместе с
-    // activeSessionId только в режиме сети).
+    // Чек гостя. У гостя сети профиль лежит в chains/{chainId}/clients, а
+    // чек — в конкретной точке, поэтому сверяем и activeTenantId.
     function myActiveSession(tenantId) {
       let cId = chainIdOf(tenantId);
       return cId == ''
@@ -747,10 +620,8 @@ service cloud.firestore {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
     }
-    // Профиль заведения правят на кассе («Профиль заведения» за PIN
-    // администратора), а планшет входит в заведение с ролью employee — с
-    // hasRole(['owner','admin']) сохранение не проходило ни с одного
-    // планшета (та же история, что с settings/* выше). Поэтому isStaff.
+    // Профиль заведения правят на кассе под PIN администратора, а планшет в
+    // Firestore — employee, поэтому isStaff.
     match /tenants/{tenantId}/meta/venueProfile {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
@@ -773,9 +644,8 @@ service cloud.firestore {
         aiVendorPublic(v, 'tooken') && aiVendorPublic(v, 'darkapi') &&
         aiVendorPublic(v, 'gemini') && aiVendorPublic(v, 'custom');
     }
-    // Публичная часть настроек ИИ (включено ли, модели, агенты) — её читает
-    // и гостевое приложение. Ключи провайдеров сюда класть НЕЛЬЗЯ: гость
-    // (любой, кто вошёл в Kolibri) прочитал бы их. Ключи — в meta/aiSecrets.
+    // Публичная часть настроек ИИ — её читает и приложение гостя, поэтому
+    // ключей здесь быть не может. Ключи — в meta/aiSecrets.
     match /tenants/{tenantId}/meta/aiSettings {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin']) &&
@@ -790,10 +660,7 @@ service cloud.firestore {
       allow read: if isStaff(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin']);
     }
-    // Служебные документы meta/*, не требующие сужения до owner/admin —
-    // перечислены явно (а не через meta/{doc}), чтобы не перекрыть более
-    // узкие правила venueProfile/aiSettings выше (см. предупреждение про
-    // "общий catch-all" в конце файла).
+    // Остальные meta/* — поимённо: общий meta/{doc} открыл бы и aiSettings.
     match /tenants/{tenantId}/meta/jobsLock {
       allow read, write: if isStaff(tenantId);
     }
@@ -807,17 +674,14 @@ service cloud.firestore {
       allow create: if isStaff(tenantId);
       allow update, delete: if false;
     }
-    // Пишут касса и гость ЭТОГО заведения — раньше хватало любого входа в
-    // проект, и посторонний мог засорять журнал ИИ чужого заведения.
+    // Пишут касса и гость этого заведения, не любой вошедший в проект.
     match /tenants/{tenantId}/aiLogs/{doc} {
       allow read: if isStaff(tenantId);
       allow create: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow update, delete: if isStaff(tenantId);
     }
-    // Действия ИИ-ассистента (журнал «Активность»). Гость пишет только
-    // свои — с пометкой scope: 'guest' и своим uid: раньше хватало любого
-    // входа в проект, и подброшенная запись выглядела бы как действие
-    // персонала чужого заведения.
+    // Действия ИИ-ассистента (журнал «Активность»). Гость пишет только свои,
+    // с scope: 'guest' и своим uid, — не выдать себя за персонал.
     match /tenants/{tenantId}/aiActions/{doc} {
       allow read: if isStaff(tenantId);
       allow create: if isStaff(tenantId) ||
@@ -830,20 +694,16 @@ service cloud.firestore {
       allow read, write: if isStaff(tenantId);
     }
 
-    // ---- Платформенный audit log (жизненный цикл tenant, действия
-    //      супер-админа) — top-level, с полем tenantId внутри документа.
+    // ---- Журнал платформы (жизненный цикл заведений, действия супер-админа) ----
     match /auditLogs/{logId} {
       allow read: if isSuperAdmin() ||
         (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
-      // Пишут только Cloud Functions (admin SDK, вне правил) — клиент
-      // не может создать себе запись аудита задним числом или подделать её.
+      // Пишет только сервер.
       allow write: if false;
     }
 
-    // ---- Обращения в поддержку (супер-админ #3) — владелец/админ своего
-    //      заведения и супер-админ; статус меняет любой из них (закрыть/
-    //      переоткрыть), создать может только владелец/админ и только на
-    //      своё заведение и от своего имени. ----
+    // ---- Обращения в поддержку: владелец и админ своего заведения и
+    //      супер-админ. Создать — только на своё заведение и от своего имени. ----
     match /supportTickets/{ticketId} {
       allow read: if hasRole(resource.data.tenantId, ['owner', 'admin']);
       allow create: if hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
@@ -862,82 +722,47 @@ service cloud.firestore {
       }
     }
 
-    // ---- Дневные снимки метрик платформы (супер-админ #5 — тренд
-    //      регистраций/MRR) — пишет только Admin SDK (см.
-    //      runCalculatePlatformMetrics в saas-gateway/server.js), видит
-    //      только супер-админ: это финансовые данные всей платформы, а не
-    //      конкретного заведения. ----
+    // ---- Суточные снимки метрик платформы (регистрации, MRR) — финансы
+    //      всей платформы, видит только супер-админ. ----
     match /platformMetrics/{dateId} {
       allow read: if isSuperAdmin();
       allow write: if false;
     }
 
-    // ---- Тарифы (платформенные, читает кто угодно авторизованный —
-    //      цену и лимиты нужно показать до создания заведения) ----
+    // ---- Тарифы: цены показываем на лендинге до регистрации; меняет
+    //      только сервер, с записью «было → стало» в журнал. ----
     match /plans/{planId} {
-      // Публично: цены и лимиты тарифов должны быть видны на лендинге ДО
-      // регистрации — как у любого нормального SaaS. Ничего секретного в
-      // названии/цене/лимитах тарифа нет.
       allow read: if true;
-      // Цены и лимиты меняет только saas-gateway (handleSavePlan/
-      // handleDeletePlan) — каждое изменение цены пишется в журнал
-      // безопасности с «было → стало».
       allow write: if false;
     }
 
-    // ---- Объявления платформы владельцам (см. панель платформы,
-    //      вкладка "Объявления") — читает любой вошедший (баннер на
-    //      "Обзоре" личного кабинета), пишет только супер-админ. ----
+    // ---- Объявления платформы: баннер в кабинете, пишет супер-админ ----
     match /broadcasts/{broadcastId} {
       allow read: if signedIn();
       allow write: if isSuperAdmin();
     }
 
-    // ---- Подписки: читает любой активный сотрудник заведения (не только
-    //      владелец/админ), менять может только биллинговая Cloud
-    //      Function/супер-админ ----
-    //
-    // ВАЖНО: было hasRole(..., ['owner', 'admin']) — из-за этого сотрудник,
-    // присоединившийся по коду приглашения (см. SaasDeviceJoinService.
-    // joinAsDevice, роль всегда 'employee'), успешно регистрировался
-    // (devices/{uid} и tenantMembers оба создавались), но тут же падал с
-    // permission-denied в TenantConfigService.refresh() — она читает
-    // subscriptions/{tenantId} в общем Future.wait со всем остальным
-    // конфигом, и вся пачка падает из-за одного запрещённого чтения.
-    // Экран присоединения при этом показывал "не удалось присоединиться",
-    // хотя устройство УЖЕ было зарегистрировано — отсюда несколько
-    // задвоенных employee-регистраций от одного и того же теста. Здесь нет
-    // ничего чувствительнее planId/status/дат (см. SubscriptionInfo) — это
-    // ровно то, что SubscriptionGate обязан проверять на КАЖДОМ устройстве,
-    // включая рядовых сотрудников, а не только владельца.
-    // Для сети подписка одна на всю сеть (id документа == chainId, поле
-    // chainId вместо tenantId — см. handleCreateChain в saas-gateway) —
-    // читает любой активный участник ЛЮБОЙ точки сети (isChainMember).
+    // ---- Подписки: читает любой участник заведения или сети — касса на
+    //      каждом планшете (роль employee) проверяет статус подписки. У сети
+    //      документ subscriptions/{chainId} с полем chainId. ----
     match /subscriptions/{subscriptionId} {
       allow read: if isSuperAdmin() ||
         (resource.data.get('tenantId', null) != null && isMember(resource.data.tenantId)) ||
         (resource.data.get('chainId', null) != null && isChainMember(resource.data.chainId));
-      // Ручная правка подписки (по сути выдача доступа без оплаты) — только
-      // через saas-gateway (handleOverrideSubscription), с записью в журнал
-      // безопасности; остальное (оплаты, триал, продление) и так пишет он.
+      // Пишет только сервер: оплаты, триал, продление и ручная правка.
       allow write: if false;
     }
 
-    // ---- Идемпотентность webhook'ов биллинга (handleBillingWebhook) — а
-    //      заодно и история платежей для самого владельца (см. вкладку
-    //      "Оплата" в консоли): владелец видит только события СВОЕГО
-    //      заведения, супер-админ — все, писать сюда может только
-    //      handleBillingWebhook (Admin SDK, вне этих правил) ----
+    // ---- Уведомления об оплате: защита от повторной обработки и история
+    //      платежей владельца. Пишет только сервер. ----
     match /billingEvents/{paymentId} {
       allow read: if isSuperAdmin() ||
         (signedIn() && resource.data.tenantId != null && hasRole(resource.data.tenantId, ['owner', 'admin']));
       allow write: if false;
     }
 
-    // ---- Счета для ИП и организаций (оплата переводом, saas-gateway
-    //      /createBankInvoice): владелец и администратор видят счета своего
-    //      заведения или сети (печать счёта, ссылка на чек), супер-админ —
-    //      все. Пишет только сервер ----
+    // ---- Счета для ИП и организаций: владелец и админ заведения или сети,
+    //      супер-админ. Пишет только сервер. ----
     match /bankInvoices/{invoiceId} {
       allow read: if isSuperAdmin() ||
         (signedIn() && resource.data.tenantId != null && hasRole(resource.data.tenantId, ['owner', 'admin'])) ||
@@ -945,48 +770,31 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---- Сборки APK: владелец заведения видит и запрашивает свои,
-    //      сам билд выполняет GitHub Actions + Cloud Function ----
+    // ---- Сборки APK: запускает сервер (проверяет подписку и лимиты),
+    //      собирает GitHub Actions. ----
     match /buildJobs/{buildId} {
       allow read: if isSuperAdmin() ||
         (signedIn() && hasRole(resource.data.tenantId, ['owner', 'admin']));
-      // Создание job'а — только через Cloud Function createBuildJob
-      // (проверяет лимиты тарифа, статус подписки, валидирует branding),
-      // не напрямую с клиента.
       allow create: if false;
       allow update, delete: if isSuperAdmin();
     }
 
-    // ---- Usage-счётчики заведения (считает calculateUsage раз в сутки,
-    //      Cloud Function, admin SDK — не подчиняется этим правилам) ----
-    // Владелец/админ видит, укладывается ли заведение в лимиты тарифа
-    // (PlanLimits в lib/models/tenant_models.dart), супер-админ — usage
-    // любого заведения для панели платформы.
+    // ---- Счётчики для лимитов тарифа — сервер пересчитывает раз в сутки ----
     match /tenants/{tenantId}/usage/{doc} {
       allow read: if isSuperAdmin() || hasRole(tenantId, ['owner', 'admin']);
       allow write: if false;
     }
 
-    // ---- Остальные внутренние коллекции заведения: склад, смены,
-    //      скидочные карты, маркировка, очередь push, задачи ИИ ----
-    //
-    // ВАЖНО: здесь намеренно НЕТ рекурсивного match /tenants/{tenantId}/
-    // {document=**} "на всё остальное". Firestore разрешает операцию, если
-    // её пропускает ХОТЯ БЫ ОДНО подходящее правило (правила складываются
-    // через ИЛИ, а не "самое специфичное побеждает") — поэтому такой
-    // catch-all с условием isStaff(tenantId) тихо ПЕРЕКРЫВАЛ БЫ более узкие
-    // ограничения выше (branding/employees/venueProfile/aiSettings/devices/
-    // settings — там write разрешён только owner/admin, а catch-all снова
-    // открывал бы его любому employee). Это реальный баг, пойманный
-    // автоматическим тестом (saas/test/firestore.rules.test.js, "employee
-    // читает столы, но не может менять брендинг") — поэтому вместо catch-all
-    // каждая оставшаяся коллекция перечислена явно.
+    // ---- Остальные рабочие коллекции заведения ----
+    // Общего match /tenants/{tenantId}/{document=**} намеренно нет: правила
+    // складываются через ИЛИ, и такой catch-all с isStaff открыл бы
+    // сотруднику брендинг, устройства и код приглашения. Каждая коллекция —
+    // поимённо; тест «Каждая коллекция, которой пользуется касса» ловит
+    // забытые.
     match /tenants/{tenantId}/inventory/{doc} {
       allow read, write: if isStaff(tenantId);
     }
-    // Склад кассы (lib/services/firestore_service.dart пишет именно в
-    // inventoryItems): без этого правила в SaaS не открывался раздел
-    // «Склад», а списание при продаже молча не происходило.
+    // Склад кассы (lib/services/firestore_service.dart).
     match /tenants/{tenantId}/inventoryItems/{doc} {
       allow read, write: if isStaff(tenantId);
     }
@@ -1007,22 +815,12 @@ service cloud.firestore {
     match /tenants/{tenantId}/shifts/{doc} {
       allow read, write: if isStaff(tenantId);
     }
-    // Личные смены сотрудников (учёт часов/зарплата, см. StaffShiftModel и
-    // lib/screens/admin/{payroll_screen,staff_shifts_screen}.dart) — своя
-    // коллекция, ОТДЕЛЬНАЯ от кассовых shifts выше. Забыли завести правило
-    // при переносе этой фичи в SaaS — из-за этого openShiftIfNeeded/clockIn
-    // падали permission-denied, а "Зарплата"/"Смены сотрудников" вечно
-    // крутили спиннер (экраны не оборачивают загрузку в try/catch — см.
-    // отдельный фикс там же).
+    // Личные смены сотрудников (часы и зарплата) — не кассовые shifts.
     match /tenants/{tenantId}/staffShifts/{doc} {
       allow read, write: if isStaff(tenantId);
     }
-    // Служебные указатели текущей открытой смены — та же транзакция
-    // openShiftIfNeeded/clockIn читает и пишет их АТОМАРНО вместе с
-    // shifts/staffShifts выше: Firestore разрешает транзакцию, только
-    // когда правила проходят ВСЕ операции внутри неё, поэтому без этих
-    // двух документов транзакция целиком отклонялась, даже когда сама
-    // запись в shifts/staffShifts была разрешена.
+    // Указатели открытой смены. Транзакция открытия смены читает их вместе
+    // с shifts/staffShifts и проходит, только если разрешены все операции.
     match /tenants/{tenantId}/meta/shiftState {
       allow read, write: if isStaff(tenantId);
     }
@@ -1054,16 +852,15 @@ service cloud.firestore {
     match /tenants/{tenantId}/aiJobs/{doc} {
       allow read, write: if isStaff(tenantId);
     }
-    // Счётчик обращений гостя к ИИ — ведёт только Cloud Function (admin SDK,
-    // вне этих правил); клиенту (даже персоналу) писать сюда незачем.
+    // Счётчик обращений гостя к ИИ — ведёт сервер (/aiProxy).
     match /tenants/{tenantId}/aiUsage/{doc} {
       allow read: if isStaff(tenantId);
       allow write: if false;
     }
-    // Очередь push: пишут оба приложения (гость — только в СВОЁМ заведении),
-    // читает и рассылает Cloud Function.
-    // Гость может только позвать персонал (топики staff*), а не разослать
-    // произвольный текст всем гостям заведения или на чужое устройство.
+    // Очередь push для Cloud Function sendQueuedPush. На платформе функций
+    // нет и приложения сюда не пишут (cloudFunctionsEnabled), но если
+    // включат — гость может только позвать персонал (топики staff*), а не
+    // разослать текст гостям или на чужое устройство.
     match /tenants/{tenantId}/pushQueue/{doc} {
       allow read: if isStaff(tenantId);
       allow create: if isStaff(tenantId) ||
