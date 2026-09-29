@@ -46,7 +46,11 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
   // стрим, созданный прямо в build, переподписывался бы на каждый кадр.
   late final Stream<List<TableModel>> _tables = _fs.tablesStream();
   late final Stream<List<WaiterCall>> _calls = GuestLinkService().openCallsStream();
-  late final Stream<List<ReservationModel>> _reservations = ReservationService().upcomingStream(hours: 3);
+  // Окно броней считается от момента подписки, а зал открыт всю смену —
+  // подписку сдвигаем раз в полчаса (см. таймер в initState), иначе к
+  // вечеру новые брони на плитках не появлялись бы.
+  Stream<List<ReservationModel>> _reservations = ReservationService().upcomingStream(hours: 3);
+  DateTime _reservationsFrom = DateTime.now();
 
   bool? _planMode; // null — ещё не прочитали настройку
   _HallFilter _filter = _HallFilter.all;
@@ -61,7 +65,14 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
     // Сводка («скоро освободятся», брони) зависит от времени — пересчёт раз
     // в полминуты; секундные таймеры на плитках идут сами.
     _minute = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
+      if (!mounted) return;
+      setState(() {
+        _now = DateTime.now();
+        if (_now.difference(_reservationsFrom) >= const Duration(minutes: 30)) {
+          _reservationsFrom = _now;
+          _reservations = ReservationService().upcomingStream(hours: 3);
+        }
+      });
     });
   }
 

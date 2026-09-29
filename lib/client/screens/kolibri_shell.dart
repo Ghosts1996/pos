@@ -159,7 +159,7 @@ class _KolibriShellState extends State<KolibriShell> {
           floatingActionButton: FloatingActionButton.small(
             backgroundColor: KolibriColors.primary,
             onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),
-            tooltip: 'ИИ-консьерж',
+            tooltip: 'ИИ-помощник',
             child: Icon(Icons.auto_awesome, color: KolibriColors.onPrimary, size: 18),
           ),
           // Штатное место кнопки — снизу справа, над панелью вкладок.
