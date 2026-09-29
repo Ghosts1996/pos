@@ -1,28 +1,12 @@
-// Веб-версия гостевого приложения — SaaS-форк public/app/app.js (тот
-// остаётся одно-арендным, для собственного заведения владельца платформы,
-// и НЕ меняется этим файлом вообще).
+// Веб-версия приложения гостя на {slug}.zalpos.ru — для iPhone и всех, кто
+// не ставит APK. Открывается по той же ссылке из QR стола и работает с той
+// же базой по тем же правилам.
 //
-// Зачем она есть. Основное приложение — только для Android: собрать сборку
-// для iPhone нельзя без платного аккаунта разработчика Apple и проверки в
-// App Store. А гость с айфоном за столом такой же гость. Эта версия
-// открывается прямо в Safari по той же ссылке, что зашита в QR на столе,
-// и работает с той же базой и по тем же правилам: отличается способ
-// доставки, а не возможности.
+// От public/app/app.js (приложение одного заведения) отличается двумя
+// вещами: все пути строятся от state.root = tenants/{id} (как AppScope во
+// Flutter), а заведение и его брендинг определяются по поддомену.
 //
-// Отличия от одно-арендной версии — только в двух местах:
-//  1. state.root вместо state.db во ВСЕХ вызовах doc()/collection() (см.
-//     resolveTenant ниже) — тот же приём, что и AppScope в Flutter
-//     (lib/services/app_scope.dart): doc(db,'tenants',id) как "родитель"
-//     заставляет doc()/collection() строить путь ОТНОСИТЕЛЬНО этого
-//     документа, поэтому ни один вызов ниже переписывать не пришлось —
-//     только сам state.db в них заменён на state.root.
-//  2. resolveTenant() + applyBranding() ниже — определяют ЧЬЁ это
-//     заведение (по поддомену {slug}.zalpos.ru) и накладывают его
-//     цвета/название вместо жёстко зашитых "Colibri Lounge".
-//
-// Чего здесь намеренно нет: сканера QR (он не нужен — номер стола уже в
-// ссылке, по которой гость сюда попал) и ИИ-сомелье (он ходит во внешний
-// сервис по ключу, а ключ нельзя отдавать в браузер).
+// ИИ-помощника здесь нет: ключ провайдера в браузер не отдать.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
@@ -33,9 +17,7 @@ import {
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-// Шлюз платформы (saas-gateway) — тот же, что использует Flutter-приложение
-// (SAAS_GATEWAY_URL) и консоль владельца. Нужен только для resolveTenantBySlug
-// (публичный POST, без Auth — см. его docstring в saas-gateway/server.js).
+// Сервер платформы: поиск заведения по поддомену, конфиг Firebase, удаление данных.
 const GATEWAY = 'https://pii.zalpos.ru/saas';
 // Первичное хранилище персональных данных в РФ (pii-gateway, 152-ФЗ):
 // имя и телефон гостя пишутся сюда ДО Firestore.
@@ -55,29 +37,19 @@ async function piiPost(body) {
 
 const state = {
   db: null,
-  /// db, если открыто НЕ через SaaS-поддомен (сюда это никогда не должно
-  /// попасть в проде — см. resolveTenant), иначе doc(db,'tenants',id):
-  /// "родительская" ссылка, от которой doc()/collection() строят все
-  /// остальные пути ниже (см. комментарий в шапке файла).
+  /// tenants/{id} — от него doc()/collection() строят все пути заведения.
   root: null,
   tenantId: '',
-  /// Сеть заведений (chains/{chainId}, см. её docstring в
-  /// saas/firestore.rules) — пусто у одиночного заведения. Заполняется в
-  /// boot(), когда поддомен резолвится в сеть, а не в одну точку (см.
-  /// resolveTenant/renderVenuePicker).
+  /// Сеть, если поддомен принадлежит сети; у одиночного заведения пусто.
   chainId: '',
-  /// Куда пишется/читается лояльность (clients/phoneIndex/referralCodes/
-  /// bonusOperations) — chains/{chainId} у сети, иначе то же самое, что и
-  /// state.root (см. AppScope.loyaltyCol во Flutter — тот же приём).
+  /// Где лежит лояльность (clients, phoneIndex, referralCodes,
+  /// bonusOperations): у сети — chains/{chainId}, иначе state.root.
   loyaltyRoot: null,
   auth: null,
   uid: '',
   profile: null,
   venue: null,
-  /// Имя приложения из раздела «Брендинг» (branding.appName) — заполняется
-  /// в applyBranding(). Пусто, пока не пришёл ответ или владелец его не
-  /// задавал — тогда экраны ниже сами откатываются на имя заведения, а не
-  /// на дефолтный демо-бренд "Colibri Lounge" из app.css.
+  /// Название из «Брендинга»; пусто — показываем имя заведения.
   brandAppName: '',
   /// Отписки от «живых» запросов текущего экрана. При каждом переходе
   /// снимаются все: иначе экраны копят подписки, телефон греется, а
@@ -187,19 +159,9 @@ const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
 
 // ---------- ЗАПУСК ----------
 
-/// Заведение этой сборки определяется поддоменом — {slug}.zalpos.ru
-/// (wildcard DNS+SSL на сервере, см. saas/README.md), а не зашито в сборку,
-/// как у Flutter-приложения (там на каждое заведение своя APK). Здесь
-/// сборка ОДНА на всех — статика раздаётся один раз, слуг читается уже в
-/// браузере из адресной строки.
-/// Поддомен может принадлежать либо одиночному заведению (обычный
-/// случай), либо СЕТИ заведений целиком (гость сети открывает общий адрес
-/// сети — например, из рекламы или ссылки в мессенджере — а не конкретной
-/// точки, которую выбирает уже здесь). Сначала пробуем как заведение: это
-/// подавляющее большинство поддоменов, и лишний запрос к резолву сети
-/// добавлял бы им одну сетевую "волну" впустую. resolveChainBySlug — тот
-/// же приём, что и resolveTenantBySlug (публичный POST без Auth, см. его
-/// docstring в saas-gateway/server.js).
+/// Заведение — по поддомену {slug}.zalpos.ru: статика одна на всех. Поддомен
+/// может принадлежать и сети целиком. Сначала ищем заведение — таких
+/// поддоменов большинство, и лишний запрос про сеть им ни к чему.
 async function resolveTenant() {
   const slug = (location.hostname.split('.')[0] || '').trim();
   if (!slug) throw new Error('Не удалось определить заведение по адресу');
@@ -229,15 +191,15 @@ async function resolveTenant() {
   };
 }
 
-/// Экран выбора точки сети — показывается ТОЛЬКО когда поддомен резолвится
-/// в сеть (см. resolveTenant выше), а не в одну точку. Возвращает Promise,
-/// которая резолвится выбранным tenantId (или null, если у сети сейчас
-/// вообще нет доступных точек).
+/// Точки сети, в которые можно зайти.
+function openLocations(chain) {
+  return (chain.locations || []).filter((l) => l.status !== 'suspended' && l.status !== 'deleted');
+}
+
+/// Выбор точки сети. Возвращает tenantId или null, если открытых точек нет.
 function renderVenuePicker(chain) {
   return new Promise((resolve) => {
-    const locations = (chain.locations || []).filter(
-      (l) => l.status !== 'suspended' && l.status !== 'deleted'
-    );
+    const locations = openLocations(chain);
     if (!locations.length) {
       screenEl().innerHTML = `
         <h1>${esc(chain.name || 'Сеть заведений')}</h1>
@@ -261,25 +223,16 @@ function renderVenuePicker(chain) {
   });
 }
 
-/// Имя, которое видит гость там, где раньше был жёстко зашитый демо-бренд
-/// "Colibri Lounge" — своё название заведения (branding.appName), а если
-/// владелец его не задавал, имя из профиля заведения, и только если совсем
-/// ничего не настроено — нейтральное имя платформы, а не чужой бренд.
+/// Название из «Брендинга», иначе имя заведения, иначе имя платформы.
 function brandDisplayName() {
   return state.brandAppName || (state.venue && state.venue.name) || 'ZalPOS';
 }
 
-/// Брендинг заведения (имя, цвета — раздел «Брендинг» в личном кабинете
-/// владельца) поверх дефолтной палитры "Colibri Lounge" в app.css. Сам
-/// расчёт CSS-переменных — в palette.js (общий с table.html и кэшем в
-/// index.html): там же почему нельзя просто подставить цвета владельца.
+/// Цвета и название заведения поверх палитры по умолчанию. Расчёт
+/// CSS-переменных — в palette.js (общий с table.html и index.html).
 async function applyBranding() {
   try {
-    // Для сети — брендинг САМОЙ СЕТИ (chains/{chainId}/branding), а не
-    // отдельной точки: иначе тема мигала бы при каждом переключении гостем
-    // заведения внутри одной сети (см. её же docstring в
-    // saas/firestore.rules и _applyChainBranding в lib/client/kolibri_main.dart —
-    // тот же приём).
+    // У сети — брендинг сети, иначе тема менялась бы при смене точки.
     const snap = await getDoc(
       state.chainId ? doc(state.db, 'chains', state.chainId, 'branding', 'config')
                     : doc(state.root, 'branding', 'config')
@@ -291,10 +244,8 @@ async function applyBranding() {
     // а не имя заведения: тогда показываем название самого заведения.
     if (b.appName && !['Hookah POS', 'Hoocah POS', 'HookahPOS'].includes(b.appName)) state.brandAppName = b.appName;
 
-    // В кэш — index.html применяет его СРАЗУ при следующем заходе, ещё до
-    // сети (см. комментарий там же), чтобы страница не мелькала дефолтной
-    // палитрой каждый раз, пока идут resolveTenantBySlug/firebaseConfig/
-    // чтение branding.
+    // Кэш: index.html применит его при следующем заходе ещё до сети, и
+    // страница не мелькнёт чужими цветами.
     try {
       const slug = (location.hostname.split('.')[0] || '').trim();
       if (slug) {
@@ -306,30 +257,17 @@ async function applyBranding() {
       }
     } catch (_) {}
   } catch (e) {
-    // Гость по-прежнему видит дефолтную палитру, а не сломанный экран, но
-    // причину теперь видно в консоли браузера (F12 → Console) — раньше
-    // ошибка (например permission-denied из-за не задеплоенных правил, или
-    // сеть) проглатывалась молча, и по симптому "цвет не поменялся" нельзя
-    // было понять, где искать.
+    // Гость остаётся на цветах по умолчанию, причина — в консоли браузера.
     console.error('applyBranding() не сработал:', e);
   }
 }
 
 async function boot() {
-  // resolveTenant() и firebaseConfig НЕ зависят друг от друга (конфиг
-  // общий для всей платформы, не завязан на конкретное заведение) —
-  // запускаем сразу оба, а не один за другим: одна сетевая "волна" вместо
-  // двух подряд, короче время до первого раскрашенного в реальный бренд
-  // кадра (тот же приём и в saas/guest-web/table.html).
+  // Заведение и конфиг Firebase друг от друга не зависят — запрашиваем
+  // параллельно.
   const tenantPromise = resolveTenant();
-  // НЕ zalpos.ru/__/firebase/init.json: тот путь — приём Firebase
-  // Hosting для страниц, размещённых НА НЁМ САМОМ (см. как его читает
-  // saas/console/console.js — релятивным путём, тот же origin). Эта
-  // раздача живёт на поддомене {slug}.zalpos.ru — ЧУЖОЙ origin для
-  // zalpos.ru, а тот путь не отдаёт CORS для чужого origin: живьём
-  // подтверждено, что fetch падает с "Failed to fetch" ещё до какого-либо
-  // ответа сервера. Вместо этого — тот же saas-gateway, что и
-  // resolveTenant() выше (уже проверенно работает с этого origin).
+  // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
+  // Firebase Hosting не отдаёт на него CORS.
   const configPromise = fetch(`${GATEWAY}/firebaseConfig`)
     .then((res) => res.json().then((json) => ({ ok: res.ok, json })));
 
@@ -348,14 +286,13 @@ async function boot() {
   let chainId = '';
   if (resolved.type === 'chain') {
     chainId = resolved.chainId;
-    // Выбор гостя кэшируем по коду сети — при следующем заходе на тот же
-    // поддомен сразу открываем прошлую точку без повторного вопроса (тот
-    // же принцип, что и в приложении Kolibri для сети).
+    // Выбранную точку помним: при следующем заходе не спрашиваем снова. Если
+    // её с тех пор закрыли или заблокировали — спрашиваем.
     const slug = (location.hostname.split('.')[0] || '').trim();
     const cacheKey = 'chainLocation:' + slug;
     let cached = null;
     try { cached = localStorage.getItem(cacheKey); } catch (_) {}
-    if (cached && resolved.locations.some((l) => l.tenantId === cached)) {
+    if (cached && openLocations(resolved).some((l) => l.tenantId === cached)) {
       tenantId = cached;
     } else {
       tenantId = await renderVenuePicker(resolved);
@@ -414,15 +351,10 @@ async function boot() {
     state.profile = null;
     state.cart = {};
 
-    // ensureProfile() ДО applyBranding(): правило isTenantGuest(tenantId) в
-    // saas/firestore.rules пускает гостя к branding/config только когда его
-    // профиль в clients/{tenantId}/{uid} уже существует (тот же порядок,
-    // что и в kolibri_main.dart для Flutter-версии).
+    // Профиль — первым: без него правила не пускают гостя к данным заведения.
     await ensureProfile();
     await applyBranding();
-    // Не await: пороги лояльности не блокируют открытие приложения — если
-    // gость откроет "Мой стол"/"Профиль" на долю секунды раньше, чем это
-    // подгрузится, tierOf() просто отработает по дефолтным цифрам один раз.
+    // Уровни лояльности не ждём: до их прихода действуют пороги по умолчанию.
     applyLoyaltyTiers();
     watchProfile();
     watchVenue();
@@ -435,13 +367,9 @@ async function boot() {
   });
 }
 
-/// Короткий ID этого устройства — шесть символов, которые легко
-/// продиктовать кальянщику.
-///
-/// Ровно то же, что в приложении на Android: алфавит без похожих друг на
-/// друга знаков (нет 0/O и 1/I — их путают на слух и на вид), и он
-/// сохраняется навсегда на этом устройстве. По нему касса находит гостя,
-/// если тот сменил телефон и не помнит, на какой номер копил бонусы.
+/// Короткий ID устройства — шесть знаков без 0/O и 1/I, чтобы легко
+/// продиктовать. По нему касса находит гостя, сменившего телефон. Как в
+/// приложении на Android.
 function shortDeviceId() {
   const KEY = 'colibri_short_device_id';
   let id = '';
@@ -496,10 +424,6 @@ function applyVenueTypeChrome() {
 }
 
 function watchVenue() {
-  // Путь ровно тот же, что у приложения: meta/venueProfile. Раньше здесь
-  // стоял выдуманный 'venue/profile' — документа по нему нет, поэтому
-  // веб-версия считала, что часы работы не заданы, и объявляла закрытым
-  // любой день, а правила заведения не показывались вовсе.
   state.accountSubs.push(onSnapshot(doc(state.root, 'meta', 'venueProfile'), (d) => {
     const had = !!state.venue;
     const prevType = venueType();
@@ -507,10 +431,8 @@ function watchVenue() {
     applyVenueTypeChrome();
     // Сменили тип заведения — перерисовать экраны со словами и кнопками.
     if (had && prevType !== venueType()) route();
-    // Профиль заведения приезжает асинхронно и почти всегда ПОЗЖЕ первой
-    // отрисовки. Экраны, которые от него зависят — часы работы в брони и
-    // правила на «Моём столе», — нужно перерисовать, иначе гость видит
-    // «часы не заданы», даже когда они давно пришли.
+    // Профиль заведения обычно приходит после первой отрисовки — экраны с
+    // часами работы и правилами перерисовываем.
     if (!had && state.venue) {
       const h = location.hash;
       if (h === '#/booking' || h === '#/table' || h === '#/' || h === '') route();
@@ -519,12 +441,9 @@ function watchVenue() {
 }
 
 // ---------- УРОВНИ ЛОЯЛЬНОСТИ ----------
-// Дефолт — те же пороги, что и ClientProfile.tiers в Dart-приложении
-// (lib/models/client_models.dart). НЕ const: applyLoyaltyTiers() ниже
-// подменяет их значениями из tenants/{id}/settings/loyalty, если владелец
-// настроил свои в админке (lib/screens/admin/loyalty_settings_screen.dart)
-// — иначе гость на вебе видел бы чужие цифры, а получал бы (касса считает
-// по тем же настройкам) другие.
+// По умолчанию — пороги ClientProfile.tiers (lib/models/client_models.dart);
+// applyLoyaltyTiers() подменяет их настройками заведения — касса считает
+// по ним же.
 
 let TIERS = [
   { name: 'Бронза', from: 0, cashback: 3 },
@@ -534,8 +453,7 @@ let TIERS = [
   { name: 'Алмаз', from: 100000, cashback: 15 },
 ];
 
-/// Подтягивает settings/loyalty поверх дефолта — тот же приём, что и
-/// applyBranding() выше. Битые/пустые данные — не трогаем то, что уже есть.
+/// settings/loyalty поверх порогов по умолчанию; битые данные пропускаем.
 async function applyLoyaltyTiers() {
   try {
     const snap = await getDoc(doc(state.root, 'settings', 'loyalty'));
@@ -920,15 +838,9 @@ async function placeOrder(items, redraw) {
 async function bindToTable(tableId) {
   screenEl().innerHTML = `<h1>Открываем стол…</h1><div class="spinner"></div>`;
   try {
-    // Без номера в профиле садиться за стол нельзя: кассир не сможет найти
-    // гостя для брони, начисления бонусов на новом устройстве или связи по
-    // проблеме с чеком — то же правило, что и в приложении на Android.
-    //
-    // Читаем документ напрямую, а не через state.profile: сразу после
-    // запуска по ссылке со стола подписка watchProfile() ещё не успела
-    // получить первый снапшот, и state.profile какое-то время пуст даже у
-    // гостя с уже сохранённым номером — свежий getDoc от этой гонки не
-    // зависит.
+    // Без номера за стол не пускаем, как и в приложении: по нему кассир
+    // находит гостя. Профиль читаем напрямую — сразу после перехода по
+    // ссылке watchProfile() ещё не получил первый снапшот.
     const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
     if (!(own.exists() && own.data().phone)) {
       screenEl().innerHTML = `
@@ -1039,11 +951,8 @@ async function claimSession(tableId, sessionId) {
     await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), {
       activeSessionId: sessionId,
       activeTableId: tableId,
-      // Профиль гостя сети общий на все точки, а чек физически принадлежит
-      // ОДНОЙ конкретной точке — без этого поля правила сети
-      // (chainSessionClaimOk в saas/firestore.rules) не смогли бы
-      // проверить, что sessionId правда из sessionClaims именно этой точки.
-      // Для одиночного заведения (state.chainId пуст) поле не пишем вовсе.
+      // Профиль сети общий, а чек — в конкретной точке: по activeTenantId
+      // правила проверяют sessionClaims этой точки.
       ...(state.chainId ? { activeTenantId: state.tenantId } : {}),
       lastVisitAt: Timestamp.fromDate(new Date()),
     }, { merge: true });
@@ -1051,15 +960,9 @@ async function claimSession(tableId, sessionId) {
     return failBind('Не удалось закрепить стол за вами. Попробуйте ещё раз.');
   }
 
-  // Подписываем чек именем гостя, если подпись ещё пуста — кассир сразу
-  // видит на плитке зала, кто сел за стол, без ручного ввода. По
-  // возможности: правила базы разрешают это только владельцу claim'а
-  // (see firestore.rules), а если имени в профиле ещё нет — просто
-  // нечем подписать, и это не повод срывать посадку за стол.
+  // Подписываем чек именем гостя, если подписи ещё нет, — кассир видит на
+  // плитке зала, кто сел. Не вышло — не страшно.
   try {
-    // Читаем профиль напрямую, а не через state.profile: сразу после
-    // перехода по ссылке со стола подписка на профиль ещё может быть не
-    // готова, и state.profile — пуст даже у гостя с уже заполненным именем.
     const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
     const name = (own.exists() ? (own.data().name || '') : '').trim();
     if (name) {
@@ -1376,12 +1279,9 @@ function tableFinished(s) {
 
 // ---------- БРОНЬ ----------
 //
-// Экран повторяет тот, что в приложении: день, число гостей,
-// продолжительность и — главное — СЕТКА СВОБОДНОГО ВРЕМЕНИ. Свободное
-// время считается из часов работы заведения и занятости столов, поэтому
-// забронировать в нерабочий час нельзя в принципе: такого времени просто
-// нет в списке. Раньше здесь стояло обычное поле «Время», и гость мог
-// выбрать хоть 4 утра.
+// Как в приложении: день, число гостей, длительность и сетка свободного
+// времени из часов работы и занятости столов — в нерабочий час
+// забронировать нельзя.
 
 const DURATIONS = [60, 90, 180, 270];
 const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10];
@@ -1424,7 +1324,7 @@ function screenBooking() {
   if (!bookingDraft.duration) bookingDraft.duration = 90;
 
   const day = dayFromDraft();
-  const window = workingWindow(day);
+  const win = workingWindow(day);
   const todayHours = workingWindow(new Date());
 
   screenEl().innerHTML = `
@@ -1454,7 +1354,7 @@ function screenBooking() {
     `).join('')}</div>
 
     <h2>Свободное время</h2>
-    <div id="slots">${window ? '<div class="spinner"></div>'
+    <div id="slots">${win ? '<div class="spinner"></div>'
       : '<p class="muted small">В этот день мы закрыты — выберите другую дату.</p>'}</div>
     <div id="slotSummary"></div>
 
@@ -1487,7 +1387,7 @@ function screenBooking() {
       <button class="btn-primary" id="bSend">Отправить заявку</button>
       ${privacyNotice('Отправить заявку')}
       <p class="small muted center" style="margin:12px 0 0">
-        Мы подтвердим бронь и закрепим стол. За 20 минут до начала напомним.</p>
+        Мы подтвердим бронь и закрепим стол.</p>
     </div>
 
     <div id="soon"></div>
@@ -1508,7 +1408,7 @@ function screenBooking() {
   if (clear) clear.onclick = () => { pickedTable = null; route(); };
 
   $('bSend').onclick = sendBooking;
-  if (window) loadSlots(day, window);
+  if (win) loadSlots(day, win);
   renderBookingSoon('soon');
   watchMyBookings();
 }
@@ -1545,15 +1445,15 @@ function dayFromDraft() {
 /// Слот годится, если: заведение в это время работает, бронь успевает
 /// закончиться до закрытия, до начала осталось хотя бы 15 минут и есть
 /// хотя бы один подходящий свободный стол.
-async function loadSlots(day, window) {
+async function loadSlots(day, win) {
   const box = $('slots');
   if (!box) return;
 
   let tables = [];
   let slots = [];
   try {
-    const from = new Date(window.open.getTime() - 14 * 60 * 60 * 1000);
-    const to = new Date(window.open.getTime() + 26 * 60 * 60 * 1000);
+    const from = new Date(win.open.getTime() - 14 * 60 * 60 * 1000);
+    const to = new Date(win.open.getTime() + 26 * 60 * 60 * 1000);
     const [tSnap, sSnap] = await Promise.all([
       getDocs(collection(state.root, 'tables')),
       getDocs(query(collection(state.root, 'reservationSlots'),
@@ -1578,10 +1478,10 @@ async function loadSlots(day, window) {
   const guests = bookingGuests();
   // Запас на подготовку стола: 15 минут, как в приложении.
   const earliest = new Date(Date.now() + 15 * 60 * 1000);
-  const lastStart = new Date(window.close.getTime() - duration * 60 * 1000);
+  const lastStart = new Date(win.close.getTime() - duration * 60 * 1000);
 
   const free = [];
-  for (let cur = new Date(window.open); cur <= lastStart;
+  for (let cur = new Date(win.open); cur <= lastStart;
        cur = new Date(cur.getTime() + 30 * 60 * 1000)) {
     if (cur <= earliest) continue;
     const end = new Date(cur.getTime() + duration * 60 * 1000);
@@ -1802,11 +1702,8 @@ async function sendBooking() {
 
   $('bSend').disabled = true;
   try {
-    // Стол назначается всегда — ровно как в приложении на Android. Если
-    // гость его не выбирал, подбираем сами; если выбирал, перепроверяем
-    // прямо сейчас: карту он мог листать долго, и стол могли занять.
-    // Без этого бронь уходила без стола и никого не занимала — второй
-    // гость спокойно бронировал то же место на то же время.
+    // Стол назначаем всегда, как в приложении: не выбран — подбираем сами,
+    // выбран — перепроверяем, пока гость листал карту, его могли занять.
     let table = pickedTable;
     const free = await freeTablesFor(start, end, guests);
     if (table && table.id) {
@@ -1982,18 +1879,12 @@ function prettyPhone(d) {
   return `+${d[0]} (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}`;
 }
 
-/// Плашка «Бронь скоро — придёте?».
-///
-/// В вебе она особенно важна: браузер не умеет показывать уведомления по
-/// расписанию, как приложение, поэтому спросить гостя можно только когда
-/// он сам открыл страницу. Ответ «Не приду» сразу отменяет бронь —
-/// заведение узнаёт о неявке заранее и успевает отдать стол.
+/// Плашка «Бронь скоро — придёте?». Напоминаний по расписанию браузер не
+/// умеет, так что спрашиваем, когда гость открыл страницу. «Не приду» сразу
+/// отменяет бронь, и стол успевают отдать.
 function renderBookingSoon(boxId) {
-  // Плашка зависит не только от данных, но и от текущего времени: гость
-  // может открыть страницу за час до брони и не закрывать её. Без этого
-  // таймера перерисовка случалась бы только при изменении брони в базе —
-  // то есть плашка не появлялась бы вовсе, а «через N минут» показывало
-  // бы время открытия страницы.
+  // Перерисовываем по таймеру: плашка зависит от текущего времени, а
+  // страницу могут держать открытой час.
   let draw = () => {};
   const tick = setInterval(() => draw(), 30 * 1000);
   sub(() => clearInterval(tick));
@@ -2162,16 +2053,10 @@ function screenProfile() {
     if (el) el.addEventListener('input', () => { state.profileDirty = true; });
   });
   if (state.chainId) {
-    // Сброс кэша выбранной точки сети (см. boot()) и обычная перезагрузка
-    // страницы — здесь, в отличие от Flutter-приложения, это не риск: нет
-    // фоновых сервисов/долгоживущих подписок, которые надо было бы сначала
-    // аккуратно остановить, boot() просто отработает заново с нуля.
+    // Забываем выбранную точку и перезагружаем страницу — boot() спросит заново.
     $('switchVenueBtn').onclick = () => {
-      // Профиль гостя общий на сеть, а activeSessionId указывает на стол
-      // именно в ТЕКУЩЕМ заведении — после смены точки экран «Мой стол»
-      // будет смотреть в новую точку и перестанет находить этот счёт (сам
-      // счёт при этом никуда не денется, его закроет кальянщик как обычно).
-      // Предупреждаем заранее, а не оставляем гостя гадать, куда делся стол.
+      // Открытый стол останется в прежней точке, и «Мой стол» его не
+      // покажет — предупреждаем.
       if ((state.profile || {}).activeSessionId) {
         const ok = confirm('У вас сейчас открыт стол в этом заведении. После '
           + 'смены заведения приложение перестанет его показывать (сам счёт '
@@ -2204,12 +2089,8 @@ function screenProfile() {
   watchBonusOps();
 }
 
-/// История бонусов — начисления и списания.
-///
-/// orderBy обязателен: limit(50) без сортировки отдаёт первые пятьдесят
-/// документов в порядке id, то есть случайные. У постоянного гостя свежие
-/// начисления в такую выборку просто не попадали. Составной индекс для
-/// этого запроса уже есть — его использует приложение на Android.
+/// История бонусов. orderBy обязателен: без него limit(50) берёт первые
+/// документы по id, и свежие начисления постоянного гостя не попадали.
 function watchBonusOps() {
   sub(onSnapshot(
     query(collection(state.loyaltyRoot, 'bonusOperations'),
@@ -2280,9 +2161,7 @@ async function saveProfile() {
   btn.disabled = true;
   btn.textContent = 'Сохраняем…';
 
-  // Как и в приложении: что бы ни случилось внутри, кнопка обязана
-  // вернуться в рабочее состояние. Иначе она навсегда застревает на
-  // «Сохраняем…», не показывая причины.
+  // Кнопку возвращаем в finally при любом исходе.
   try {
     // Номер новый — сначала проверяем, не занят ли он другим гостем.
     if (!locked && phone) {
@@ -2304,16 +2183,17 @@ async function saveProfile() {
     }
 
     const patch = { name: $('pName').value.trim() };
-    // Введённое уже прочитано — после записи профиль можно перерисовать
-    // (номер станет «только для чтения»).
+    if (!locked && phone) patch.phone = phone;
+    // Имя и телефон — сначала в базу в РФ, сервер сам копирует их в профиль
+    // Firestore. Напрямую в облако эти поля не пишем.
+    await piiPost({ tenantId: state.tenantId, uid: state.uid, ...patch });
+    // Введённое сохранено — профиль можно перерисовать (номер станет
+    // «только для чтения»).
     state.profileDirty = false;
-    if (!locked && phone) {
-      patch.phone = phone;
-      // Указатель «номер → гость»: вторичен, поэтому его осечка не должна
-      // мешать сохранению самого профиля.
+    if (patch.phone) {
+      // Указатель «номер → гость» вторичен: его осечка профилю не мешает.
       try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
     }
-    await setDoc(doc(state.loyaltyRoot, 'clients', state.uid), patch, { merge: true });
     toast('Сохранено');
   } catch (_) {
     toast('Не удалось сохранить: проверьте интернет и попробуйте снова');
@@ -2418,8 +2298,8 @@ function screenExtras() {
     <div class="card">
       <div class="row"><span style="color:var(--primary)">🎁</span>
         <b class="grow">Подарочный сертификат</b></div>
-      <p class="small muted" style="margin:12px 0 0">Код из нашего канала.
-        Активируйте — бонусы сразу появятся на счёте.</p>
+      <p class="small muted" style="margin:12px 0 0">Введите код с сертификата —
+        бонусы начислим на ваш счёт.</p>
       <div class="row" style="margin-top:12px;gap:10px">
         <input id="xCard" class="grow" placeholder="KLB-XXXX-XXXX"
           autocapitalize="characters" spellcheck="false">
@@ -2706,11 +2586,8 @@ function renderExtrasTips() {
 
 // ---------- СЕРТИФИКАТ ----------
 
-/// Гость вводит код сертификата.
-///
-/// Сам себе бонусы гость начислить не может — правила базы этого не
-/// разрешают, и правильно делают. Поэтому отсюда уходит заявка, а
-/// начисляет её касса. Пока заведение работает, это занимает секунды.
+/// Гость не может начислить бонусы сам — отсюда уходит заявка, начисляет
+/// касса, пока заведение работает — за секунды.
 async function activateGiftCard() {
   const msg = $('xCardMsg');
   const btn = $('xCardBtn');
@@ -2844,8 +2721,8 @@ function renderQueue() {
       }
 
       box.innerHTML = `
-        <p class="small muted">Если все столы заняты — встаньте в очередь,
-          мы напишем, как только стол освободится.</p>
+        <p class="small muted">Если все столы заняты — встаньте в очередь:
+          как только стол освободится, здесь появится «Ваш стол готов».</p>
         <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
           ${[2, 4, 6].map((n) =>
             `<button class="btn-ghost" data-queue="${n}">${n} чел.</button>`).join('')}
@@ -2982,13 +2859,8 @@ async function applyReferralCode() {
 
 // ---------- СКАНЕР QR ----------
 //
-// Камера телефона и так открывает ссылку со стола сама — но гость,
-// который уже сидит в приложении, ждёт кнопку внутри него, а не «выйдите
-// и наведите камеру». Здесь она и есть.
-//
-// Safari на iPhone не умеет встроенный разбор кодов (BarcodeDetector),
-// поэтому там подключается разбор на JavaScript. На Android и в Chrome
-// используется встроенный — он быстрее и не тянет ничего лишнего.
+// Камера телефона и сама откроет ссылку со стола, но гость в приложении
+// ждёт кнопку внутри. В Safari нет BarcodeDetector — там подгружаем jsQR.
 
 let scanStream = null;
 let scanRaf = null;
@@ -3071,10 +2943,8 @@ async function startScanner() {
     // телефон успевает между кадрами, и на iPhone экран начинает дёргаться,
     // а батарея — греться. Десять раз в секунду код ловится так же.
     const nowMs = Date.now();
-    // readyState сравниваем «не меньше», а не «равно»: Safari на iPhone
-    // часто держит поток на HAVE_CURRENT_DATA и до HAVE_ENOUGH_DATA не
-    // доходит вовсе — с проверкой на равенство сканер там просто никогда
-    // не начинал смотреть в кадр. А ради iPhone этот экран и сделан.
+    // >= 2, а не HAVE_ENOUGH_DATA: Safari часто так и остаётся на
+    // HAVE_CURRENT_DATA, и сканер не начал бы смотреть в кадр.
     const ready = video.readyState >= 2 && video.videoWidth > 0;
 
     if (ready && nowMs - lastLook >= 100) {
@@ -3132,12 +3002,8 @@ function loadScript(src) {
   });
 }
 
-/// Достаёт номер стола из чего угодно, что может оказаться в коде.
-///
-/// Коды печатались в разное время и в разных форматах: сначала
-/// kolibri://table/5, потом https://colibri-lounge.web.app/table/5.
-/// Понимаем оба, адрес веб-версии и просто номер — перепечатывать
-/// наклейки из-за формата не придётся никогда.
+/// Номер стола из любого формата наклейки: kolibri://table/5,
+/// https://…/table/5, ссылка веб-версии или просто номер.
 function tableIdFrom(raw) {
   const v = String(raw || '').trim();
   if (!v) return null;
@@ -3158,11 +3024,8 @@ function tableIdFrom(raw) {
 
 // ---------- КАРТА ЗАЛА ----------
 //
-// Та же схема столов, что видит кальянщик на кассе, в реальном времени.
-//
-// Открыть чужой счёт отсюда нельзя намеренно: сесть за стол можно только
-// отсканировав код, физически наклеенный на этом столе. Иначе счёт можно
-// было бы «занять» удалённо, не приходя в заведение.
+// Схема столов с кассы в реальном времени. Сесть за стол отсюда нельзя —
+// только по коду на самом столе, чтобы счёт не занимали удалённо.
 
 /// Стол, выбранный для брони. Живёт между экранами: гость уходит на карту
 /// и возвращается в форму брони, где выбор должен сохраниться.
@@ -3222,20 +3085,9 @@ function screenHall(pickMode) {
       return;
     }
     box.innerHTML = tables.map((t) => {
-      // ВАЖНО: занятость считается по-разному для двух режимов.
-      //
-      // Карта зала показывает, что происходит СЕЙЧАС: занят тот стол, за
-      // которым сидят.
-      //
-      // Выбор стола для брони — про БУДУЩЕЕ. Здесь «за столом сейчас
-      // сидят» ничего не значит: гости уйдут задолго до вечера. Важно
-      // только, дотянется ли текущий сеанс до времени брони (busyUntil) и
-      // нет ли на это время чужой брони. Раньше тут стояла проверка «за
-      // столом кто-то есть», и половина зала выглядела занятой на завтра
-      // только потому, что была занята в эту минуту.
-      // Имя намеренно НЕ state: глобальный state хранит соединение с базой
-      // и профиль гостя, и локальная переменная с тем же именем перекрыла
-      // бы его внутри всего этого блока.
+      // Карта зала показывает, кто сидит сейчас. Выбор стола для брони —
+      // про будущее: важно, дотянется ли текущий сеанс до брони (busyUntil)
+      // и нет ли на это время чужой брони.
       const st = pickMode && when
           ? tableStateFor(t, when, new Date(when.getTime() + durMs),
               busyByBooking, bookingGuests())
@@ -3248,10 +3100,8 @@ function screenHall(pickMode) {
           : st === 'risky' ? 'risky' : 'free';
       // «Впритык» выбрать можно — это решение гостя, но он должен знать.
       const canPick = pickMode && (cls === 'free' || cls === 'risky');
-      // Координаты 0..1 — те же, что расставил администратор на кассе.
-      // Раскладываем их в «от края до края минус ширина плитки»: иначе
-      // стол с координатой 0 или 1 наполовину уезжал за границу карты, и
-      // на узких экранах подписи обрезались.
+      // Координаты 0..1 с кассы, раскладываем на «ширину минус плитку» —
+      // иначе крайние столы уезжали за границу карты.
       const x = Math.max(0, Math.min(1, Number(t.x) || 0.1));
       const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
       // Форма как в редакторе зала на кассе (lib/utils/hall_layout.dart):
