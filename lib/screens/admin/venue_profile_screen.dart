@@ -83,8 +83,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     try {
       await _service.save(updated);
     } catch (_) {
-      // Раньше ошибка сохранения молча терялась — казалось, что всё
-      // сохранилось, а гость продолжал видеть старое.
+      // Ошибку сохранения показываем: иначе кажется, что всё сохранилось.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Не удалось сохранить — проверьте интернет')));

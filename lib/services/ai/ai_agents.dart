@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../venue_service.dart';
+import '../../models/client_models.dart';
 import '../../models/session_model.dart';
 import 'ai_context_service.dart';
 import 'ai_settings.dart';
@@ -33,6 +34,11 @@ class AiAgent {
   });
 
   bool get enabled => AiSettingsStore.instance.current.agentEnabled(id);
+
+  /// Системный промпт с текущими уровнями лояльности заведения.
+  String get prompt => systemPrompt.contains(_tiersPlaceholder)
+      ? systemPrompt.replaceAll(_tiersPlaceholder, loyaltyTiersText())
+      : systemPrompt;
 }
 
 const _brandRules = '''
@@ -98,24 +104,17 @@ const _hookahKnowledge = '''
 - Тёмная ночь: тёмный лист вишня 6 / чёрная смородина 4 — крепкий, опытным.
 ''';
 
-/// Как устроены бонусы — модель должна отвечать на этот вопрос сама, не
-/// перекладывая его на сотрудника. Цифры — ДЕФОЛТНЫЕ пороги ClientProfile.tiers
-/// и BonusRedeemPanel. ВАЖНО: с появлением lib/screens/admin/
-/// loyalty_settings_screen.dart владелец может изменить пороги/кешбек в
-/// админке заведения — этот текст статичен (`const`, часть системного
-/// промпта агента) и такие правки НЕ подхватывает. Для заведения с
-/// кастомными настройками консьерж будет называть гостю дефолтные, а не
-/// реальные условия — известное ограничение, не забыть при следующей
-/// доработке ИИ-агентов (нужно вынести формирование этого текста в runtime
-/// из ClientProfile.tiers вместо const-строки).
+/// Как устроены бонусы — модель отвечает на это сама. Уровни владелец
+/// настраивает в админке, поэтому в const-промпте вместо них метка, которую
+/// [AiAgent.prompt] заменяет текущими ClientProfile.tiers.
+const _tiersPlaceholder = '{{LOYALTY_TIERS}}';
+
 const _loyaltyKnowledge = '''
 КАК РАБОТАЮТ БОНУСЫ (отвечай сама, не зови сотрудника — это твой вопрос):
 - 1 бонус = 1 рубль. Начисляются процентом от суммы визита сразу после
   оплаты чека, копятся на балансе гостя без срока сгорания.
 - Уровень зависит от суммы всех визитов за всё время (не за один чек) и
-  определяет процент начисления: Бронза (с 0 ₽) — 3%, Серебро (с 10 000 ₽)
-  — 5%, Золото (с 25 000 ₽) — 7%, Платина (с 50 000 ₽) — 10%, Алмаз
-  (с 100 000 ₽) — 15%.
+  определяет процент начисления: $_tiersPlaceholder.
 - Списать бонусы можно на кассе при оплате — они закрывают до 50% суммы
   чека, остальное оплачивается обычным способом.
 - Если гость спрашивает свой баланс или уровень — возьми через
@@ -434,7 +433,7 @@ class AiService {
     final schemas = _registry.schemasFor(agent.scope, only: agent.tools);
     final venue = await VenueService.instance.aiKnowledgeCached();
     final messages = <AiMessage>[
-      AiMessage.system(agent.systemPrompt),
+      AiMessage.system(agent.prompt),
       if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
       AiMessage.system(
           'Текущее время: ${DateTime.now().toIso8601String()} (${_weekdayRu(DateTime.now())})'),
@@ -497,7 +496,7 @@ class AiService {
     final venue = await VenueService.instance.aiKnowledgeCached();
     yield* _client.stream(
       messages: [
-        AiMessage.system(agent.systemPrompt),
+        AiMessage.system(agent.prompt),
         if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
         if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
         ...history,
@@ -604,18 +603,13 @@ class AiService {
   Future<String> storyIdeas({int count = 3}) =>
       ask(AiAgents.storyteller, 'Придумай $count сторис для ленты приложения на эту неделю.');
 
-  /// Готовые черновики сторис — разобранные по полям, а не сплошным текстом.
-  ///
-  /// Раньше ответ агента резался на карточки по пустым строкам: заголовком
-  /// становилась первая строка блока вместе с разметкой («**Сторис 3 —
-  /// Ночной формат**»), а в текст попадало всё остальное, включая
-  /// служебные подписи «Заголовок:», «Текст:», «Призыв:». В ленте у гостя
-  /// это выглядело как кусок черновика, а не как сторис.
+  /// Черновики сторис, разобранные по полям: заголовок, текст, призыв —
+  /// без разметки и служебных подписей из ответа модели.
   Future<List<StoryDraft>> storyDrafts({int count = 3}) async {
     if (!AiAgents.storyteller.enabled || !_settings.isReady) return const [];
     final json = await _client.completeJson(
       messages: [
-        AiMessage.system(AiAgents.storyteller.systemPrompt),
+        AiMessage.system(AiAgents.storyteller.prompt),
         AiMessage.user('Придумай $count сторис для ленты приложения на эту '
             'неделю. Опирайся на меню и на то, что гости берут чаще.\n\n'
             'МЕНЮ:\n${await _ctx.menuSnapshot()}'),
@@ -667,7 +661,7 @@ class AiService {
 
       final json = await _client.completeJson(
         messages: [
-          AiMessage.system(AiAgents.upsell.systemPrompt),
+          AiMessage.system(AiAgents.upsell.prompt),
           AiMessage.user(ctx),
         ],
         model: _settings.model,
@@ -769,4 +763,18 @@ class UpsellSuggestion {
 String _weekdayRu(DateTime d) {
   const names = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
   return names[d.weekday - 1];
+}
+
+/// «Бронза (с 0 ₽) — 3%, Серебро (с 10 000 ₽) — 5%, …» по текущим настройкам.
+String loyaltyTiersText() {
+  String num(double v) {
+    final whole = v == v.roundToDouble();
+    final raw = whole ? v.round().toString() : v.toStringAsFixed(1);
+    if (!whole) return raw.replaceAll('.', ',');
+    return raw.replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
+  }
+
+  return ClientProfile.tiers
+      .map((t) => '${t.name} (с ${num(t.from)} ₽) — ${num(t.cashback)}%')
+      .join(', ');
 }

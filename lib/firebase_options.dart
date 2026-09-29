@@ -42,21 +42,10 @@ class DefaultFirebaseOptions {
 
   static FirebaseOptions? _windowsOptions;
 
-  /// Заполняет конфигурацию Firebase для Windows-сборки кассы — ЕДИНСТВЕННАЯ
-  /// платформа здесь, где ключи не запекаются в саму сборку через
-  /// --dart-define (в отличие от _saasAndroid), а приходят рантайм-запросом
-  /// к тому же /firebaseConfig эндпоинту saas-gateway, которым уже
-  /// пользуются console.js и guest-web (см. handleFirebaseWebConfig в
-  /// saas-gateway/server.js) — это публичный, не секретный конфиг, ровно то
-  /// же самое видно в исходнике любой страницы с Firebase JS SDK.
-  ///
-  /// Почему не так же, как у Android (свой набор SAAS_FIREBASE_*_WINDOWS
-  /// секретов + отдельная регистрация Windows-приложения в консоли
-  /// Firebase): нативным desktop-плагинам (firebase_core_windows и т.п.)
-  /// для Firestore/Auth достаточно того же apiKey+projectId, что и у уже
-  /// существующего веб-приложения платформы — заводить и поддерживать ещё
-  /// один секрет и ещё одну регистрацию ради того же самого проекта не
-  /// требуется. Вызывается ДО Firebase.initializeApp() — см. main.dart.
+  /// Конфигурация Firebase для кассы на Windows приходит запросом к
+  /// /firebaseConfig saas-gateway, а не через --dart-define: конфиг публичный,
+  /// а десктопным плагинам хватает apiKey и projectId веб-приложения — лишняя
+  /// регистрация и секреты не нужны. Вызывается до Firebase.initializeApp().
   static Future<void> resolveWindowsOptions() async {
     if (_windowsOptions != null) return;
     final uri = Uri.parse('$kSaasGatewayUrl/firebaseConfig');

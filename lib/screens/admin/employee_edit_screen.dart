@@ -14,10 +14,7 @@ import '../../utils/constants.dart';
 enum _TimePay { none, hourly, shift }
 
 /// Карточка сотрудника: имя, PIN, роль, специализация, чаевые, зарплата.
-///
-/// Раньше это был диалог — на телефоне в нём всё теснилось, подписи
-/// обрезались. Теперь отдельный экран с разделами. Возвращает готового
-/// [Employee] (PIN уже проверен на занятость), сохраняет вызывающий.
+/// Возвращает готового [Employee] (PIN уже проверен), сохраняет вызывающий.
 class EmployeeEditScreen extends StatefulWidget {
   final Employee? employee;
   const EmployeeEditScreen({super.key, this.employee});

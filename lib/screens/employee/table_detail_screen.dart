@@ -208,9 +208,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
   static String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
-  /// Раньше здесь стол закрывался напрямую, без экрана оплаты гостя. Теперь
-  /// нажатие "Закрыть стол" открывает PaymentScreen (наличные/карта/за счёт
-  /// заведения, контакт гостя, печать чеков) — закрытие происходит уже там.
+  /// «Закрыть стол» открывает PaymentScreen — закрытие происходит там.
   Future<void> _openPayment(SessionModel session) async {
     final done = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => PaymentScreen(session: session)),
@@ -346,9 +344,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(tableLabel(widget.table.name))),
-      // Подписываемся только на ЭТОТ стол (а не на всю коллекцию столов,
-      // как было раньше) — так изменение любого другого стола в зале не
-      // грузит сеть и не перестраивает этот экран лишний раз.
+      // Подписка только на этот стол — изменения других столов экран не
+      // перестраивают.
       body: StreamBuilder<TableModel?>(
         stream: _fs.tableStream(widget.table.id),
         builder: (context, tablesSnap) {
@@ -360,18 +357,11 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           }
           final t = tablesSnap.data ?? widget.table;
 
-          // ВАЖНО: здесь намеренно НЕ сверяем _sessionId со списком
-          // t.activeSessionIds стола. tablesStream — это отдельный, более
-          // "медленный" стрим (коллекция tables), и сразу после создания
-          // чека транзакцией openSession() он ещё какое-то время отдаёт
-          // старый снимок без нового id. Если сверяться с ним прямо тут,
-          // только что созданный чек на мгновение "не находится" в
-          // activeSessionIds, экран сбрасывает _sessionId и снова
-          // показывает кнопку "Начать сеанс" — а повторное нажатие создаёт
-          // второй (и третий) чек. Поэтому единственный источник истины
-          // для текущего чека — локальный _sessionId, а закрытие чека с
-          // другого устройства отслеживается ниже напрямую по статусу
-          // документа самой сессии (см. sessSnap/session.status).
+          // _sessionId намеренно не сверяем с activeSessionIds стола: стрим
+          // столов отстаёт, и сразу после openSession() новый чек в нём ещё
+          // не виден — экран сбросил бы чек и снова показал «Начать сеанс»,
+          // а повторное нажатие открыло бы второй чек. Закрытие с другого
+          // устройства ловим ниже по статусу самой сессии.
           if (_sessionId == null) return _freeTable(t);
 
           return StreamBuilder<SessionModel?>(
@@ -806,8 +796,7 @@ class _TableAction {
   const _TableAction({required this.icon, required this.label, this.hint, this.accent = false, required this.onTap});
 }
 
-/// Действия со столом — ровной сеткой плиток: 3 в ряд на телефоне, больше
-/// на планшете. Раньше это были кнопки разной ширины во всю строку.
+/// Действия со столом — сеткой плиток: 3 в ряд на телефоне, больше на планшете.
 class _ActionGrid extends StatelessWidget {
   final List<_TableAction> actions;
   const _ActionGrid({required this.actions});

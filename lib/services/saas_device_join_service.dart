@@ -6,23 +6,13 @@ import 'package:http/http.dart' as http;
 
 import '../build_info.dart';
 
-/// Присоединение POS-планшета к заведению SaaS-платформы — замена общего
-/// на всю платформу `staffSecret` из одно-арендной версии индивидуальным
-/// кодом приглашения конкретного заведения (см. saas/firestore.rules,
-/// tenants/{tenantId}/devices и saas/README.md).
+/// Присоединение планшета кассы к заведению по коду приглашения (вместо
+/// общего staffSecret сборки одного заведения).
 ///
-/// Работает ДО того, как известен tenantId устройства, поэтому не может
-/// идти через [AppScope] (который как раз и определяется результатом этого
-/// сервиса) — использует Firestore напрямую по явному пути.
-///
-/// [resolveTenantIdBySlug] и [createDemoTenant] раньше были Cloud Functions
-/// (`resolveTenantBySlug`/`createDemoTenant` в saas/functions/index.js) —
-/// перенесены на свой сервис (см. saas-gateway/README.md), потому что Cloud
-/// Functions не работают без тарифа Blaze у проекта saas-3bdc8, а он сейчас
-/// недоступен. `joinAsDevice` этой проблемы не имеет и продолжает писать в
-/// Firestore напрямую — Firestore Security Rules это уже разрешают
-/// (проверка кода приглашения — часть самих правил, см. их комментарий у
-/// tenants/{tenantId}/devices).
+/// Работает до того, как известен tenantId, поэтому пишет в Firestore по
+/// явному пути, а не через [AppScope]. Поиск заведения по коду и демо —
+/// через saas-gateway; сам joinAsDevice пишет напрямую, код проверяют
+/// правила tenants/{tenantId}/devices.
 class SaasDeviceJoinService {
   final http.Client _http;
 

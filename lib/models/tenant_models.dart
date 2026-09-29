@@ -131,11 +131,8 @@ class Tenant {
   final TenantStatus status;
   final String planId;
   final String ownerUserId;
-  // Сеть заведений (см. docstring "Сети заведений (chains)" в
-  // saas/firestore.rules) — null у подавляющего большинства (одиночных)
-  // заведений: биллинг и лояльность у них остаются полностью per-tenant,
-  // как и раньше. Непустая строка означает, что общий биллинг и лояльность
-  // этого заведения — на уровне chains/{chainId}, а не tenants/{id}.
+  // Сеть; null у одиночного заведения. Если задана — биллинг и лояльность
+  // живут в chains/{chainId}.
   final String? chainId;
 
   /// Одноразовое демо-заведение (createDemoTenant): вход по известным PIN,
@@ -225,8 +222,7 @@ class TenantMember {
   }
 }
 
-/// Настройки сеанса кальяна заведения (ТЗ §12/§13) — то, что раньше было
-/// хардкодом `Duration(minutes: 90)` в одно-арендной версии.
+/// Настройки сеанса кальяна заведения (длительность и прочее).
 class SessionSettings {
   final int defaultHookahDurationMinutes;
   final int minimumHookahDurationMinutes;

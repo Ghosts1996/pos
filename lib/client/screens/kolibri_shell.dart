@@ -33,10 +33,9 @@ class _KolibriShellState extends State<KolibriShell> {
   final _link = GuestLinkService();
   int _index = 0;
 
-  /// Стрим профиля кэшируется и пересоздаётся только при смене аккаунта.
-  /// Раньше он создавался прямо в build(): StreamBuilder сравнивает стримы
-  /// по ссылке, поэтому на каждый ребилд оболочки (а это любое переключение
-  /// вкладки) подписка на профиль отписывалась и подписывалась заново.
+  /// Стрим профиля кэшируется и пересоздаётся только при смене аккаунта:
+  /// StreamBuilder сравнивает стримы по ссылке, и новый стрим на каждом
+  /// build() переподписывался бы при любом переключении вкладки.
   String _uid = '';
   Stream<ClientProfile?>? _profileStream;
   StreamSubscription? _authSub;
@@ -82,8 +81,6 @@ class _KolibriShellState extends State<KolibriShell> {
         );
       }
       // За столом несколько счетов — спрашиваем, какой из них гостя.
-      // Раньше приложение молча цепляло последний открытый, и соседи по
-      // столу видели один и тот же чужой чек.
       ..onChooseCheck = (tableId, tableName, checks) async {
         if (!mounted) return;
         final picked = await CheckPickerSheet.show(
@@ -118,9 +115,7 @@ class _KolibriShellState extends State<KolibriShell> {
     _profileStream = uid.isEmpty ? null : _link.profileStream(uid);
 
     // Уведомления гостя без сервера: статус брони, готовность заказа,
-    // начисленные бонусы и отложенное напоминание за час до брони.
-    // Раньше всё это слал push из Cloud Functions, которых нет на
-    // бесплатном тарифе Firebase, — гость не получал ничего.
+    // бонусы и напоминание за час до брони (Cloud Functions нет).
     unawaited(KolibriNotifications.instance.start(uid));
   }
 

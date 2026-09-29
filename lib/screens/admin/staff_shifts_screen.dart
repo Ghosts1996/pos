@@ -54,8 +54,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
         _loading = false;
       });
     } catch (e) {
-      // Раньше необработанная ошибка (например permission-denied) оставляла
-      // спиннер крутиться вечно без единого объяснения.
+      // Ошибку показываем, а не оставляем вечный спиннер.
       if (!mounted) return;
       setState(() {
         _error = 'Не удалось загрузить: ${humanError(e, lower: true)}';

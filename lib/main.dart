@@ -74,11 +74,8 @@ void main() async {
       ]);
 
       if (kSaasMode) {
-        // SaaS-режим: вместо общего на всю платформу секрета заведения —
-        // членство в конкретном tenant (см. lib/services/app_scope.dart,
-        // saas/firestore.rules). Устройство уже входило раньше → у него
-        // либо уже есть членство (обычный перезапуск), либо ещё нет
-        // (первый запуск на этом планшете, до сбора надо присоединиться).
+        // SaaS: доступ — членство в заведении, а не общий секрет. После
+        // перезапуска оно уже есть, при первом запуске надо присоединиться.
         final tenantConfigService = TenantConfigService();
         await tenantConfigService.loadFromCache();
         final uid = FirebaseAuth.instance.currentUser?.uid;

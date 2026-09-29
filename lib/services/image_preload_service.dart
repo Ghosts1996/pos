@@ -2,17 +2,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'app_scope.dart';
 import 'package:flutter/widgets.dart';
 
-/// Заранее скачивает и кладёт в ДИСКОВЫЙ кэш (cached_network_image /
-/// flutter_cache_manager) все фото категорий и позиций меню.
-///
-/// Раньше фото грузились через Image.network прямо в момент отрисовки
-/// плитки — без кэша это означало повторный сетевой запрос при каждом
-/// открытии экрана меню, и именно это было причиной зависаний/фризов при
-/// первом скролле меню на POS-планшете. Теперь фото качаются один раз
-/// (при первом запуске приложения или когда появляются новые/изменённые
-/// фото) через этот сервис, а сами виджеты (см. CachedNetworkImage в
-/// menu_selection_screen.dart и menu_editor_screen.dart) в дальнейшем
-/// читают их с диска — мгновенно и без сети.
+/// Заранее кладёт фото категорий и позиций меню в дисковый кэш
+/// (flutter_cache_manager): виджеты меню (CachedNetworkImage) читают их с
+/// диска, без сети и без подтормаживаний при первом скролле.
 class ImagePreloadService {
 
   Future<List<String>> _collectImageUrls() async {
@@ -48,8 +40,7 @@ class ImagePreloadService {
     try {
       urls = await _collectImageUrls().timeout(const Duration(seconds: 8));
     } catch (_) {
-      // Нет сети или Firestore недоступен — не блокируем запуск, фото
-      // догрузятся по месту использования, как и раньше.
+      // Нет сети — не блокируем запуск, фото догрузятся при показе.
       onProgress?.call(0, 0);
       return;
     }

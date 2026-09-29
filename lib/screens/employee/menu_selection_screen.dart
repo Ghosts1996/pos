@@ -58,11 +58,9 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           _showSnack('Этот код маркировки уже был продан ранее — повторно продать нельзя');
           return;
         }
-        // Онлайн-проверка напрямую в ИС МП «Честный знак» — ловит код,
-        // проданный на другой точке, или подделку, чего локальный журнал
-        // выше не увидит. Работает только если в Настройках → Интеграции
-        // задан токен; иначе checkOnlineStatus вернёт null и сканирование
-        // продолжится как раньше, только на локальной проверке.
+        // Онлайн-проверка в «Честном знаке» ловит код, проданный на другой
+        // точке, или подделку. Без токена в Интеграциях checkOnlineStatus
+        // вернёт null — остаётся локальная проверка.
         try {
           final online = await _cz.checkOnlineStatus(marking);
           if (online != null) {
@@ -367,9 +365,7 @@ class _CategoryItemsScreen extends StatelessWidget {
 
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-            // На телефоне 2 колонки, на планшете 4–5: раньше одна карточка
-            // растягивалась на пол-экрана, и цена с кнопкой «+» уходили
-            // за нижний край.
+            // На телефоне 2 колонки, на планшете 4–5.
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 260,
               crossAxisSpacing: 10,
@@ -535,11 +531,8 @@ class _MenuImage extends StatelessWidget {
     // это и есть основная причина лагов/фризов при скролле меню. Декодируем
     // сразу под реальный размер плитки с учётом плотности экрана.
     final cacheWidth = (MediaQuery.of(context).devicePixelRatio * 220).round();
-    // CachedNetworkImage вместо Image.network — фото кладутся в дисковый
-    // кэш (см. ImagePreloadScreen/ImagePreloadService, прогревающие его при
-    // запуске приложения), поэтому повторные открытия экрана меню читают
-    // фото с диска, а не качают их заново по сети — раньше именно повторные
-    // сетевые запросы на каждое открытие были причиной зависаний.
+    // CachedNetworkImage: фото с дискового кэша (его прогревает
+    // ImagePreloadService), а не из сети при каждом открытии меню.
     return CachedNetworkImage(
       imageUrl: url,
       fit: BoxFit.cover,
