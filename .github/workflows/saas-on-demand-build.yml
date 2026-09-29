@@ -27,69 +27,26 @@ on:
       invite_code:
         description: 'Код приглашения устройства (settings/deviceInvite.code) заведения — см. tenant_slug'
         required: false
-  # ВРЕМЕННО, только чтобы GitHub впервые "увидел" этот workflow — до первого
-  # запуска (любым способом) API workflow_dispatch отвечает 404 "workflow не
-  # найден" даже с правильным ref, см. тот же трюк для public-apk-release.yml.
-  # Job ниже пропускает себя (if: github.event_name == 'workflow_dispatch'),
-  # поэтому push реального запуска сборки не вызывает — только регистрирует
-  # файл. Удалить этот push-триггер после первого успешного дёрганья
-  # workflow_dispatch (см. историю коммитов).
-  push:
-    branches: [claude/pos-continued]
-    paths: ['.github/workflows/saas-on-demand-build.yml']
 
-# Запускается ТОЛЬКО createBuildJob в saas-gateway/server.js (Node-сервис на
-# собственном сервере, не Cloud Function — Blaze для неё недоступен, см. её
-# же docstring) через GitHub REST API "workflow_dispatch" — не по push и не
-# вручную с обычными правами: personal access token с правом Actions: write
-# хранится в /etc/saas-gateway.env на сервере, не здесь.
+# Личная сборка заведения. Запускает только saas-gateway (createBuildJob)
+# через workflow_dispatch — токен с правом Actions: write лежит на сервере.
 #
-# Технически один и тот же универсальный код для ВСЕХ арендаторов платформы
-# (SAAS_MODE=true, ключи SaaS-проекта Firebase, SaasDevicePairingScreen —
-# код заведения + код приглашения устройства, см. lib/main.dart и
-# saas/README.md) — но КАЖДАЯ сборка личная: tenant_slug+invite_code
-# запекаются как SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE — с ними экран
-# присоединения сам подключается к заведению владельца при первом запуске,
-# без ручного ввода кодов (см. saas_device_pairing_screen.dart). Доступ к
-# самому файлу тоже ограничен per-tenant — см. handleDownloadBuild в
-# saas-gateway/server.js.
+# Один запуск — кассы Android и Windows и приложение гостя. Код общий для
+# всех заведений (SAAS_MODE=true), но в сборку зашиты код заведения и код
+# приглашения (SAAS_PRESET_SLUG/SAAS_PRESET_INVITE_CODE) — приложение само
+# присоединяется при первом запуске. Брендинг заведения (название,
+# логотип) — только у приложения гостя, касса у всех «ZalPOS». У кассы и
+# приложения гостя свои Firebase-приложения (com.hookahpossaas,
+# com.kolibriloungesaas) и свои google-services.json.
 #
-# ВАЖНО про бренд: app_label/logo_url (брендинг заведения) применяются
-# ТОЛЬКО к гостевому приложению — касса жёстко остаётся брендом платформы
-# ("ZalPOS", своя иконка), не арендатора (см. env: у шагов "Ensure
-# required permissions..."/"Generate app launcher icon" ниже — там же и
-# почему). Раньше касса тоже подхватывала лейбл/иконку заведения — это
-# было ошибкой: касса не витрина арендатора, а инструмент персонала,
-# должна выглядеть одинаково у всех заведений платформы.
-#
-# ОДИН запуск — ДВА приложения (матрица ниже, по образцу build-apk.yml):
-# касса (lib/main.dart, com.hookahpossaas) и гостевое приложение «Colibri
-# Lounge» для гостей заведения (lib/client/kolibri_main.dart,
-# com.kolibriloungesaas) — тот же принцип "одна сборка — два приложения",
-# что и в продовом build-apk.yml, только оба здесь ещё и подключаются к
-# КОНКРЕТНОМУ заведению через SAAS_PRESET_SLUG (см. docstring в
-# lib/client/kolibri_main.dart: гостю, в отличие от кассы, вводить код
-# заведения негде и незачем — эта сборка личная). У каждого приложения
-# СВОЙ Firebase Android app внутри одного SaaS-проекта (разные applicationId
-# нельзя зарегистрировать под одним app id) — см. saas/README.md, раздел
-# «APK-конвейер», про секреты *_KOLIBRI.
-#
-# ЭТОТ ФАЙЛ НАМЕРЕННО ОТДЕЛЬНЫЙ от build-apk.yml, а не объединён с ним через
-# общий composite action, и часть Android-шагов ниже дублирует его (сама
-# структура матрицы — намеренное заимствование оттуда, а не копипаста
-# случайно разошедшегося кода). build-apk.yml собирает боевые одно-арендные
-# APK текущего живого заведения — трогать его ради SaaS-варианта, который
-# ему не нужен, значило бы рисковать реальной, годами обкатанной сборкой
-# ради фичи, которая с ней не связана. Если здесь найдётся баг того же
-# рода, что уже пойман и прокомментирован в build-apk.yml (ML Kit, R8,
-# desugaring, App Links и т.д.), правьте оба файла — они специально не
-# разделяют код.
+# Файл намеренно не объединён с build-apk.yml (боевая сборка одного
+# заведения): правка одного не должна задевать другой. Исправляя баг вроде
+# ML Kit, R8 или App Links в одном, проверьте и остальные.
 jobs:
   build:
     # push-триггер выше — только чтобы GitHub зарегистрировал workflow (см.
     # комментарий там же). Реальная сборка требует tenant_id/job_id_*,
     # которых push-событие не передаёт — поэтому push-запуски пропускаются.
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -112,11 +69,8 @@ jobs:
             application_id: com.kolibriloungesaas
             gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
             appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
-            # По умолчанию (владелец не загрузил свой логотип в «Брендинге»)
-            # гостевое приложение — с фирменным знаком платформы «◆»
-            # (сапфир), а не с кассой: гостю касса ни о чём не говорит. Свой
-            # логотип владельца, если загружен (branding.logoUrl), полностью
-            # заменяет его — см. шаг "Generate app launcher icon" ниже.
+            # Без логотипа в «Брендинге» у приложения гостя знак платформы «◆»,
+            # свой логотип заменяет его (шаг "Generate app launcher icon").
             default_icon: assets/icon/guest_icon.png
             default_adaptive_icon: assets/icon/guest_icon_foreground.png
             default_adaptive_bg: assets/icon/icon_background.png
@@ -200,13 +154,9 @@ jobs:
         env:
           GSERVICES: ${{ secrets[matrix.gservices_secret] }}
         run: |
-          # Приложение matrix.application_id должно быть зарегистрировано в
-          # ВАШЕМ SaaS Firebase-проекте (Project settings → Your apps) —
-          # НЕ в hoocah-pos. См. saas/README.md, раздел «APK-конвейер».
-          # Секрет свой на каждое приложение матрицы (GOOGLE_SERVICES_JSON_SAAS
-          # / GOOGLE_SERVICES_JSON_SAAS_KOLIBRI) — это два РАЗНЫХ
-          # зарегистрированных Android-приложения внутри одного и того же
-          # Firebase-проекта, у каждого свой google-services.json.
+          # matrix.application_id зарегистрирован в Firebase-проекте платформы
+          # (не hoocah-pos), у каждого приложения матрицы свой
+          # google-services.json в секретах.
           if [ -z "$GSERVICES" ]; then
             echo "::error::Секрет ${{ matrix.gservices_secret }} не задан (Settings → Secrets and variables → Actions)."
             exit 1
@@ -242,20 +192,11 @@ jobs:
 
       - name: Ensure required permissions and manifest entries
         env:
-          # Каждый арендатор настраивает бренд СВОЕГО гостевого приложения в
-          # разделе «Брендинг» (имя, лого, цвета) — касса ЖЁСТКО остаётся
-          # брендом платформы (ZalPOS), не арендатора, поэтому для
-          # matrix.app == pos ниже APP_LABEL принудительно очищается, а не
-          # приходит из inputs.app_label вообще.
+          # Бренд заведения — только у приложения гостя, у кассы APP_LABEL пуст.
           #
-          # ВАЖНО: сравнение с 'kolibri' (а не 'pos') и порядок операндов —
-          # не косметика. `matrix.app == 'pos' && '' || inputs.app_label`
-          # выглядит как тернарник, но им не является: в GitHub Actions (как
-          # и в JS) '' — falsy, поэтому при true `true && ''` даёт '', а
-          # `'' || inputs.app_label` СОСКАЛЬЗЫВАЕТ на inputs.app_label — касса
-          # получала бренд гостя вместо пустой строки. Когда пустая строка —
-          # это ветка ПО УМОЛЧАНИЮ (после ||), а не результат && — падение
-          # безопасно (пусто и есть то, что нужно).
+          # Порядок операндов важен: `matrix.app == 'pos' && '' || X` не
+          # тернарник — '' ложно, и выражение скатывается в X. Пустая строка
+          # должна быть веткой по умолчанию (после ||).
           APP_LABEL: ${{ matrix.app == 'kolibri' && inputs.app_label || '' }}
           DEFAULT_LABEL: ${{ matrix.default_label }}
         run: |
@@ -333,15 +274,9 @@ jobs:
               xml = xml.replace('</application>', receivers + '    </application>', 1)
               open(path, 'w', encoding='utf-8').write(xml)
 
-          # Лейбл под иконкой на телефоне — для matrix.app == pos APP_LABEL
-          # приходит уже принудительно пустым (см. env: этого шага) — касса
-          # всегда "ZalPOS", бренд платформы, не арендатора. Для
-          # гостевого приложения — из branding.appName заведения
-          # (createBuildJob подставляет его сюда, см. saas-gateway/server.js).
-          # Санитизация тут, а не только на сервере, — потому что
-          # workflow_dispatch technically можно дёрнуть и не через
-          # createBuildJob, а значений оттуда доверять нельзя вслепую (это
-          # идёт прямо в XML-атрибут манифеста).
+          # Название под иконкой: у кассы всегда «ZalPOS», у гостя —
+          # branding.appName. Чистим здесь же: workflow_dispatch можно
+          # вызвать и мимо сервера, а значение идёт в XML манифеста.
           label = (os.environ.get('APP_LABEL') or '').strip()
           label = re.sub(r'[^\w .,()&-]', '', label, flags=re.UNICODE).strip()[:30]
           if not label:
@@ -444,11 +379,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          # Тот же постоянный ключ, что и у продовых сборок build-apk.yml —
-          # это другое приложение (другой applicationId), App Links здесь
-          # не нужны, а отдельный keystore ради ещё одного приложения того
-          # же издателя не даёт разработчику ничего, кроме лишнего секрета
-          # для ротации.
+          # Тот же постоянный ключ, что у build-apk.yml: издатель один, лишний
+          # keystore ничего не даёт. Постоянная подпись нужна для обновления
+          # поверх.
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом."
             exit 0
@@ -557,12 +490,8 @@ jobs:
 
       - name: Generate app launcher icon
         env:
-          # Иконка из логотипа заведения — ТОЛЬКО для гостевого приложения
-          # (matrix.app == kolibri); касса всегда со своей иконкой платформы
-          # (assets/icon/icon.png), поэтому для pos LOGO_URL принудительно
-          # пустой независимо от того, что было в inputs.logo_url.
-          # См. комментарий у APP_LABEL выше — та же ловушка `cond && '' ||
-          # X` была и здесь: касса тоже могла получить чужой логотип.
+          # Иконка из логотипа — только у приложения гостя; у кассы LOGO_URL
+          # пуст (та же ловушка `cond && '' || X`, что у APP_LABEL).
           LOGO_URL: ${{ matrix.app == 'kolibri' && inputs.logo_url || '' }}
           DEFAULT_ICON: ${{ matrix.default_icon }}
           DEFAULT_ADAPTIVE_ICON: ${{ matrix.default_adaptive_icon }}
@@ -574,12 +503,8 @@ jobs:
             sed -i -E "s|adaptive_icon_background: \".*\"|adaptive_icon_background: \"$DEFAULT_ADAPTIVE_BG\"|" pubspec.yaml
             dart run flutter_launcher_icons
           }
-          # Логотип заведения (branding.logoUrl, загружается владельцем в
-          # разделе «Брендинг») — если задан и реально скачивается, иконка
-          # гостевого приложения генерируется из него. Любая неудача (нет
-          # логотипа, битый файл, сеть) откатывается на общую иконку
-          # ZalPOS «◆» — сборка не должна падать из-за проблемы с
-          # картинкой, которую владелец когда-то неудачно загрузил.
+          # Иконка приложения гостя из branding.logoUrl. Нет логотипа, битый
+          # файл, нет сети — берём знак ZalPOS «◆», сборка не падает.
           if [ -n "$LOGO_URL" ] && curl -fsSL --max-time 20 "$LOGO_URL" -o /tmp/tenant_logo.png && [ -s /tmp/tenant_logo.png ]; then
             sed -i -E 's|image_path: ".*"|image_path: "/tmp/tenant_logo.png"|' pubspec.yaml
             sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "/tmp/tenant_logo.png"|' pubspec.yaml
@@ -621,15 +546,10 @@ jobs:
             echo "::error::Секрет ${{ matrix.appid_secret }} не задан — см. saas/README.md, раздел «APK-конвейер»."
             exit 1
           fi
-          # INVITE_CODE в гостевой сборке пустой (см. env выше): гостю код
-          # приглашения не нужен, а публичный APK не должен его содержать.
-          # --build-number — versionCode APK. Номер запуска растёт с каждой
-          # сборкой, поэтому новая версия ставится ПОВЕРХ старой (Android не
-          # даёт поставить версию с меньшим versionCode), а IN_APP_UPDATES
-          # включает в приложении плашку «Вышла новая версия» — см.
-          # lib/services/app_update_service.dart и handleAppUpdate в
-          # saas-gateway/server.js. Обновление поверх требует ещё и той же
-          # подписи — см. шаг "Configure release signing" выше.
+          # INVITE_CODE у приложения гостя пуст: код приглашения ему не нужен.
+          # --build-number — versionCode: номер запуска растёт, и новая версия
+          # ставится поверх (при той же подписи). IN_APP_UPDATES включает
+          # плашку «Вышла новая версия» (lib/services/app_update_service.dart).
           flutter build apk --release \
             -t ${{ matrix.entrypoint }} \
             --build-number=${{ github.run_number }} \
@@ -648,12 +568,9 @@ jobs:
 
       - name: Resolve job id for this matrix leg
         id: jobid
-        # always() — этот шаг должен отработать даже если что-то раньше
-        # (сборка, тесты) уже упало: "Report failure to buildJobs" ниже
-        # тоже использует steps.jobid.outputs.value, и без always() при
-        # сбое ДО этого шага он остался бы пустым — отчёт о провале ушёл бы
-        # с пустым jobId и не долетел бы ни до одного buildJobs-документа,
-        # оставив запись в консоли вечно висеть "в очереди".
+        # always(): jobId нужен шагу "Report failure to buildJobs" и при
+        # падении сборки, иначе запись в кабинете навсегда останется
+        # «в очереди».
         if: always()
         env:
           APP: ${{ matrix.app }}
@@ -682,27 +599,14 @@ jobs:
           name: ${{ matrix.artifact_prefix }}-${{ steps.jobid.outputs.value }}
           path: ${{ steps.rename.outputs.path }}
 
-      # Артефакт GitHub Actions выше виден только тем, у кого есть доступ к
-      # этому репозиторию (не владельцу заведения) — реальная точка выдачи
-      # APK владельцу это собственный сервер платформы (pii.zalpos.ru),
-      # НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze,
-      # которого нет (та же причина, что и у публичного APK — см. её же
-      # комментарий в public-apk-release.yml и PUBLIC_APK_URL в
-      # saas/console/console.js). В отличие от публичного APK эта сборка
-      # ЛИЧНАЯ (лого/название заведения), поэтому раздаётся не статикой
-      # через nginx, а через saas-gateway (GET /downloadBuild) с проверкой
-      # Firebase Auth + роли owner/admin в заведении — см.
-      # handleDownloadBuild в saas-gateway/server.js.
+      # Артефакт Actions виден только тем, у кого доступ к репозиторию, поэтому
+      # сборку кладём на сервер платформы, а владелец скачивает её через
+      # saas-gateway с проверкой прав (handleDownloadBuild).
       #
-      # Отдельный от DEPLOY_SSH_KEY (публичный APK) ключ с СВОИМ forced
-      # command (authorized_keys: command="/usr/local/bin/deploy-tenant-apk.sh",
-      # restrict) — тот ключ физически не может положить файл сюда, и
-      # наоборот, даже если один из них утечёт. tenant_id/job_id идут в
-      # SSH-команду через переменные окружения, а не прямой интерполяцией
-      # ${{ }} в run: — inputs.* нельзя доверять как части shell-команды
-      # (см. тот же комментарий у шага "Build APK" выше); сервер тоже
-      # проверяет их формат перед использованием в пути (см. saas/README.md,
-      # раздел «APK-конвейер»).
+      # Ключ DEPLOY_SSH_KEY_TENANT отдельный от ключа публичного APK, у каждого
+      # свой forced-command на сервере. tenant_id и job_id передаём через env, а
+      # не ${{ }} в run: — inputs нельзя подставлять в shell; сервер тоже
+      # проверяет их формат.
       - name: Deploy APK to own server (pii.zalpos.ru)
         if: success()
         env:
@@ -713,7 +617,7 @@ jobs:
           APK_PATH: ${{ steps.rename.outputs.path }}
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
-            echo "::error::DEPLOY_SSH_KEY_TENANT/DEPLOY_SSH_HOST не заданы — без них личные сборки некуда доставлять. См. saas/README.md, раздел «APK-конвейер»."
+            echo "::error::DEPLOY_SSH_KEY_TENANT не задан — без него личные сборки некуда доставлять. См. saas/README.md, раздел «Сборки приложений»."
             exit 1
           fi
           mkdir -p ~/.ssh
@@ -723,13 +627,8 @@ jobs:
             "$TENANT_ID $JOB_ID" \
             < "$APK_PATH"
 
-      # SAAS_COMPLETE_BUILD_JOB_URL — полный url эндпоинта completeBuildJob
-      # своего сервиса (см. saas-gateway/README.md), например
-      # https://pii.zalpos.ru/saas/completeBuildJob — не Cloud Function
-      # (Blaze для неё сейчас недоступен, см. docstring в saas-gateway/server.js).
-      # downloadPath тут уже не путь в Storage, а просто пометка для
-      # истории/отладки — саму раздачу handleDownloadBuild строит из
-      # tenantId/jobId самого buildJobs-документа, downloadPath не читает.
+      # Сообщаем серверу, что сборка готова. downloadPath — только для
+      # истории: раздачу сервер строит по tenantId и jobId.
       - name: Report success to buildJobs
         if: success()
         run: |
@@ -746,27 +645,14 @@ jobs:
             -H "x-callback-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{\"jobId\":\"${{ steps.jobid.outputs.value }}\",\"status\":\"failed\",\"errorMessage\":\"Сборка упала — подробности в логе запуска (${{ matrix.app }}).\",\"runUrl\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
 
-  # Касса для Windows-планшета/компьютера в заведении — тот же lib/main.dart,
-  # что и у Android-версии выше (тот же tenant_slug/invite_code — тоже сама
-  # присоединяется к заведению владельца при первом запуске), но ОТДЕЛЬНЫЙ
-  # job, а не третья нога матрицы build: нужен другой раннер (windows-latest,
-  # с предустановленным Visual Studio Build Tools — им собирается нативная
-  # часть flutter build windows) и совсем другой набор шагов (CMake/EXE
-  # вместо Gradle/APK, zip вместо APK-подписи). Гостевое приложение
-  # («Colibri Lounge») на Windows НЕ собирается — оно для телефонов гостей,
-  # а не для терминала заведения (см. её же комментарий в handleCreateBuildJob,
-  # saas-gateway/server.js).
+  # Касса для Windows: тот же lib/main.dart и те же коды заведения, но свой
+  # job — нужен windows-latest с Build Tools и другие шаги (CMake, установщик
+  # вместо APK). Приложение гостя для Windows не собираем.
   #
-  # Firebase на Windows настраивается иначе, чем на Android: там не через
-  # --dart-define с ключами конкретного приложения (SAAS_FIREBASE_*), а
-  # рантайм-запросом к тому же /firebaseConfig, которым уже пользуются
-  # console.js и guest-web — см. подробный докстринг resolveWindowsOptions в
-  # lib/firebase_options.dart. Поэтому здесь НЕТ шагов
-  # "Add google-services.json"/"Apply Google Services Gradle plugin" и
-  # секретов *_APP_ID — они Android-специфичны и Windows-сборке не нужны
-  # вовсе, только SAAS_GATEWAY_URL (уже используется остальными сборками).
+  # Firebase на Windows получает конфиг запросом к /firebaseConfig (см.
+  # resolveWindowsOptions в lib/firebase_options.dart), поэтому
+  # google-services.json и секреты *_APP_ID здесь не нужны.
   build-windows:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     name: Build pos (Windows)
 
@@ -848,31 +734,15 @@ jobs:
           # только через createBuildJob).
           TENANT_SLUG: ${{ inputs.tenant_slug }}
           INVITE_CODE: ${{ inputs.invite_code }}
-          # Firebase C++ SDK (тянется транзитивно firebase_core для
-          # Windows-реализации) несёт свой CMakeLists.txt с cmake_minimum_required
-          # ниже 3.5 — начиная с CMake 4.x (уже стоит на windows-latest) это
-          # жёсткая ошибка ("Compatibility with CMake < 3.5 has been removed"),
-          # а не предупреждение, сборка падает ДО компиляции хоть одного файла.
-          # CMAKE_POLICY_VERSION_MINIMUM — официальный обходной путь из самого
-          # текста ошибки CMake (аналог флага -DCMAKE_POLICY_VERSION_MINIMUM=3.5,
-          # но как переменная окружения, потому что flutter build windows сам
-          # решает, как вызывать cmake — передать ему свой флаг напрямую нельзя).
-          # Затронут только выбор политик для СТОРОННЕГО CMakeLists.txt самого
-          # SDK, на нашу Dart/Flutter-часть сборки не влияет.
+          # CMakeLists Firebase C++ SDK требует cmake_minimum_required < 3.5, а
+          # CMake 4.x на windows-latest считает это ошибкой.
+          # CMAKE_POLICY_VERSION_MINIMUM — обходной путь из текста самой
+          # ошибки; через env, потому что cmake вызывает flutter build.
           CMAKE_POLICY_VERSION_MINIMUM: '3.5'
-          # permission_handler_windows (плагин, устанавливается как зависимость
-          # permission_handler — вызовы разрешений реально нужны только на
-          # Android, но Flutter всё равно собирает Windows-реализацию раз она
-          # заявлена в pubspec) использует устаревший <experimental/coroutine> —
-          # начиная с новых версий MSVC/STL это статический assert-error (STL1011),
-          # а не предупреждение. CXXFLAGS — штатный механизм CMake: значение
-          # подставляется как НАЧАЛЬНОЕ содержимое CMAKE_CXX_FLAGS при первой
-          # генерации build/windows (a не патч исходников плагина в pub cache).
-          # ПОПЫТКА №1 — переменная CL — оказалась хуже: cl.exe и правда её
-          # читает, но CMake использует ту же переменную на этапе ОПРЕДЕЛЕНИЯ
-          # компилятора (CMakeDetermineCXXCompiler), и с задефайненным CL это
-          # определение стало падать вообще ("No CMAKE_CXX_COMPILER could be
-          # found") — CXXFLAGS в эту фазу не вмешивается, только в сам билд.
+          # permission_handler_windows использует устаревший
+          # <experimental/coroutine>, свежий MSVC на это падает (STL1011).
+          # Глушим через CXXFLAGS — начальное значение CMAKE_CXX_FLAGS. Через
+          # переменную CL нельзя: она ломает определение компилятора в CMake.
           CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: |
           if [ -z "$SAAS_GATEWAY_URL" ]; then
@@ -894,16 +764,10 @@ jobs:
         id: outdir
         shell: bash
         run: |
-          # Путь менялся между версиями Flutter (с подпапкой архитектуры
-          # x64/arm64 и без неё), поэтому ищем, а не прописываем жёстко. Но
-          # ищем именно папку с готовым .exe (runner/Release): просто первая
-          # попавшаяся «Release» оказывалась служебной
-          # x64/ALL_BUILD.dir/Release без единого файла приложения — архив
-          # выходил пустым, и выкладка на сервер падала.
-          # Берём саму папку runner/Release, где рядом лежат .exe кассы,
-          # flutter_windows.dll и data/. Искать просто «любой .exe внутри»
-          # нельзя: плагины кладут свои вспомогательные exe глубже в data/
-          # (например win_ble/assets/BLEServer.exe).
+          # Путь к runner/Release менялся между версиями Flutter (с x64/arm64 и
+          # без), поэтому ищем. Нужна именно папка с .exe кассы,
+          # flutter_windows.dll и data/, а не служебная ALL_BUILD.dir/Release
+          # и не первый попавшийся .exe плагина.
           DIR=""
           while IFS= read -r d; do
             if [ -f "$d/flutter_windows.dll" ] && [ -d "$d/data" ] && ls "$d"/*.exe >/dev/null 2>&1; then
@@ -1010,13 +874,8 @@ jobs:
           name: hookah-pos-windows-${{ inputs.job_id_pos_windows }}
           path: ${{ steps.zip.outputs.path }}
 
-      # Тот же сервер и тот же forced-command скрипт (deploy-tenant-apk.sh),
-      # что и у Android-сборки выше — он всегда пишет файл на диск как
-      # "{jobId}.apk" независимо от того, что реально внутри (см. подробный
-      # комментарий в handleDownloadBuild, saas-gateway/server.js: тип файла
-      # для скачивающего браузера определяет Content-Type/Content-Disposition
-      # того ответа, а не расширение на диске) — трогать сам скрипт ради
-      # Windows не нужно.
+      # Тот же сервер и скрипт deploy-tenant-apk.sh: файл на диске всегда
+      # «{jobId}.apk», а тип для браузера задаёт ответ handleDownloadBuild.
       - name: Deploy Windows build to own server (pii.zalpos.ru)
         if: success()
         shell: bash
@@ -1028,7 +887,7 @@ jobs:
           ZIP_PATH: ${{ steps.zip.outputs.path }}
         run: |
           if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ]; then
-            echo "::error::DEPLOY_SSH_KEY_TENANT/DEPLOY_SSH_HOST не заданы — без них личные сборки некуда доставлять. См. saas/README.md, раздел «APK-конвейер»."
+            echo "::error::DEPLOY_SSH_KEY_TENANT не задан — без него личные сборки некуда доставлять. См. saas/README.md, раздел «Сборки приложений»."
             exit 1
           fi
           mkdir -p ~/.ssh
