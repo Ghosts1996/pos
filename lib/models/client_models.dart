@@ -250,6 +250,9 @@ class GuestVisit {
   final double bonusSpent;
   final List<GuestVisitItem> items;
 
+  /// Чек вернули: сумма и бонусы этого визита отменены.
+  final bool refunded;
+
   const GuestVisit({
     required this.id,
     required this.date,
@@ -259,6 +262,7 @@ class GuestVisit {
     this.bonusEarned = 0,
     this.bonusSpent = 0,
     this.items = const [],
+    this.refunded = false,
   });
 
   factory GuestVisit.fromDoc(DocumentSnapshot doc) {
@@ -275,7 +279,46 @@ class GuestVisit {
       items: ((data['items'] ?? []) as List)
           .map((e) => GuestVisitItem.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList(),
+      refunded: data['refunded'] == true,
     );
+  }
+}
+
+/// Строка истории бонусов гостя (bonusOperations) — как её показать.
+///
+/// У начисления за визит в amount лежит оплаченная сумма, а сами бонусы —
+/// в bonus; у остальных операций бонусы в amount.
+class BonusOpView {
+  final bool plus;
+  final double bonuses;
+  final String title;
+  const BonusOpView(this.plus, this.bonuses, this.title);
+
+  factory BonusOpView.fromMap(Map<String, dynamic> m) {
+    final type = m['type'] as String? ?? '';
+    final reason = m['reason'] as String? ?? '';
+    final plus = type == 'accrual' || type == 'redeem_cancelled';
+    final bonuses = ((m['bonus'] ?? m['amount'] ?? 0) as num).toDouble();
+    return BonusOpView(plus, bonuses, _title(type, reason, plus));
+  }
+
+  static String _title(String type, String reason, bool plus) {
+    switch (reason) {
+      case 'giftCard':
+        return 'Сертификат активирован';
+      case 'referral_invitee':
+        return 'Бонус за код друга';
+      case 'referral_inviter':
+        return 'Друг дошёл до нас';
+      case 'birthday':
+        return 'Подарок ко дню рождения';
+      case 'refund':
+        return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
+      case 'refund_undone':
+        return plus ? 'Возврат отменён: бонусы за визит' : 'Возврат отменён: бонусы списаны снова';
+    }
+    if (type == 'redeem_cancelled') return 'Оплата бонусами отменена';
+    return plus ? 'Начисление за визит' : 'Списание бонусов';
   }
 }
 

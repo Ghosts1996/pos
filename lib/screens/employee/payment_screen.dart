@@ -363,6 +363,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
         expectedTotal: widget.session.totalWithDiscount,
+        loyaltyClientUid: _closeWithoutPayment ? '' : _clientUid,
       );
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.

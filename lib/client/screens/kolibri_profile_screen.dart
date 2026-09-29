@@ -333,20 +333,6 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
-  /// Подпись к бонусной операции: визит, сертификат, приглашённый друг.
-  String _bonusReason(String? reason, bool accrual) {
-    switch (reason) {
-      case 'giftCard':
-        return 'Сертификат активирован';
-      case 'referral_invitee':
-        return 'Бонус за код друга';
-      case 'referral_inviter':
-        return 'Друг дошёл до нас';
-      default:
-        return accrual ? 'Начисление за визит' : 'Списание бонусов';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
@@ -598,24 +584,23 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             return Column(
               children: docs.map((d) {
                 final data = d.data() as Map<String, dynamic>;
-                final accrual = data['type'] == 'accrual';
-                final amount = (data['amount'] ?? 0).toDouble();
+                final op = BonusOpView.fromMap(data);
                 final ts = data['createdAt'];
                 final date = ts is Timestamp ? ts.toDate() : DateTime.now();
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(
-                    accrual ? Icons.add_circle_outline : Icons.remove_circle_outline,
-                    color: accrual ? KolibriColors.success : KolibriColors.warning,
+                    op.plus ? Icons.add_circle_outline : Icons.remove_circle_outline,
+                    color: op.plus ? KolibriColors.success : KolibriColors.warning,
                   ),
-                  title: Text(_bonusReason(data['reason'] as String?, accrual)),
+                  title: Text(op.title),
                   subtitle: Text(
                     '${date.day.toString().padLeft(2, '0')}.'
                     '${date.month.toString().padLeft(2, '0')}.${date.year}',
                     style: const TextStyle(fontSize: 12),
                   ),
-                  trailing: Text(rub(amount)),
+                  trailing: Text('${op.plus ? '+' : '−'}${bonusesLabel(op.bonuses)}'),
                 );
               }).toList(),
             );
@@ -730,8 +715,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                 ),
               ),
-              Text(rub(v.total),
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              Text(v.refunded ? 'возврат' : rub(v.total),
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: v.refunded ? KolibriColors.textMuted : null)),
             ],
           ),
           if (items.isNotEmpty) ...[
@@ -741,7 +729,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
           ],
-          if (v.bonusEarned > 0 || v.bonusSpent > 0) ...[
+          if (!v.refunded && (v.bonusEarned > 0 || v.bonusSpent > 0)) ...[
             const SizedBox(height: 6),
             Text(
               [

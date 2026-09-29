@@ -346,14 +346,26 @@ class AiToolRegistry {
         final profileDoc = await AppScope.loyaltyCol('clients').doc(ctx.guestUid).get();
         if (!profileDoc.exists) return 'Профиль не найден.';
         final profile = ClientProfile.fromDoc(profileDoc);
-        if (profile.activeTableId.isEmpty) {
+        if (profile.activeSessionId.isEmpty && profile.activeTableId.isEmpty) {
           return 'Гость не привязан к столу — предложи открыть вкладку «Мой стол».';
         }
-        final tableDoc = await AppScope.col('tables').doc(profile.activeTableId).get();
-        final table = tableDoc.exists ? TableModel.fromDoc(tableDoc) : null;
+        // Стол — из самого чека: гостя могли пересадить, а в профиле стол
+        // ещё прежний. Профиль — запасной вариант.
+        var tableId = profile.activeTableId;
+        var tableName = '';
+        if (profile.activeSessionId.isNotEmpty) {
+          final session = (await AppScope.col('sessions').doc(profile.activeSessionId).get()).data();
+          final fromCheck = (session?['tableId'] as String?) ?? '';
+          if (fromCheck.isNotEmpty) tableId = fromCheck;
+          tableName = (session?['tableName'] as String?) ?? '';
+        }
+        if (tableName.isEmpty && tableId.isNotEmpty) {
+          final tableDoc = await AppScope.col('tables').doc(tableId).get();
+          tableName = tableDoc.exists ? TableModel.fromDoc(tableDoc).name : '';
+        }
         await _link.callStaff(
-          tableId: profile.activeTableId,
-          tableName: table?.name ?? '',
+          tableId: tableId,
+          tableName: tableName,
           sessionId: profile.activeSessionId,
           type: GuestCallTypeX.fromCode(args['type']?.toString()),
           clientUid: ctx.guestUid,
