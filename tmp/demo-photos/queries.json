@@ -1,0 +1,145 @@
+{
+ "hookah": [
+  "hookah",
+  "shisha pipe",
+  "narghile",
+  "hookah pipe"
+ ],
+ "syrniki": [
+  "syrniki",
+  "cottage cheese pancakes",
+  "tvorog pancakes",
+  "pancakes sour cream"
+ ],
+ "omelette": [
+  "omelette",
+  "omelet",
+  "omelette bacon"
+ ],
+ "croissant": [
+  "croissant",
+  "croissant sandwich",
+  "croissant salmon"
+ ],
+ "granola": "granola yogurt bowl",
+ "caesar": "caesar salad",
+ "greek": "greek salad",
+ "avocado": [
+  "avocado salad",
+  "shrimp salad",
+  "avocado shrimp"
+ ],
+ "veggie": [
+  "vegetable salad",
+  "tomato cucumber salad",
+  "garden salad"
+ ],
+ "ramen": "chicken ramen",
+ "tomyum": "tom yum soup",
+ "borscht": "borscht",
+ "steak": "ribeye steak",
+ "wings": "bbq chicken wings",
+ "carbonara": "pasta carbonara",
+ "tempura": "shrimp tempura",
+ "pizza": "margherita pizza",
+ "khachapuri": [
+  "khachapuri",
+  "adjarian khachapuri",
+  "georgian cheese bread"
+ ],
+ "burger": "beef burger",
+ "club": "club sandwich",
+ "hotdog": "hot dog",
+ "taco": "chicken tacos",
+ "fries": "french fries",
+ "cheese-sticks": "mozzarella sticks",
+ "gyoza": "gyoza dumplings",
+ "rolls": "sushi rolls salmon",
+ "cheesecake": "new york cheesecake",
+ "fondant": "chocolate lava cake",
+ "ice-cream": [
+  "ice cream",
+  "gelato",
+  "ice cream bowl"
+ ],
+ "waffles": "belgian waffles",
+ "donuts": "donuts",
+ "oolong": [
+  "oolong",
+  "tea cup",
+  "chinese tea"
+ ],
+ "puer": [
+  "pu-erh",
+  "puerh",
+  "teapot",
+  "tea ceremony"
+ ],
+ "sea-buckthorn": [
+  "sea buckthorn",
+  "herbal tea",
+  "ginger tea"
+ ],
+ "berry-tea": [
+  "fruit tea",
+  "hibiscus tea",
+  "tea glass"
+ ],
+ "mate": "yerba mate",
+ "cappuccino": "cappuccino",
+ "latte": "latte art",
+ "raf": [
+  "latte macchiato",
+  "coffee glass",
+  "latte glass"
+ ],
+ "americano": "americano coffee",
+ "lemonade": "lemonade glass",
+ "mango": [
+  "mango juice",
+  "mango smoothie",
+  "mango lassi"
+ ],
+ "strawberry": "strawberry lemonade",
+ "mojito": "mojito mocktail",
+ "watermelon": "watermelon juice",
+ "banana-shake": [
+  "banana smoothie",
+  "banana milkshake",
+  "milkshake"
+ ],
+ "vanilla-shake": [
+  "milkshake",
+  "vanilla shake",
+  "milk shake"
+ ],
+ "kiwi-smoothie": "green smoothie",
+ "cherry-smoothie": "cherry smoothie",
+ "popcorn": "popcorn bowl",
+ "nuts": [
+  "nuts",
+  "cashews",
+  "pistachios",
+  "almonds"
+ ],
+ "fruit": "fruit platter",
+ "cookies": "chocolate chip cookies",
+ "cola": [
+  "iced soda glass",
+  "soda with ice",
+  "glass of cola",
+  "fizzy drink glass"
+ ],
+ "water": [
+  "water glass",
+  "glass of water",
+  "mineral water"
+ ],
+ "apple-juice": "apple juice glass",
+ "coconut": [
+  "young coconut",
+  "coconut straw",
+  "fresh coconut",
+  "coconut juice"
+ ]
+}
