@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'app_scope.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../utils/adaptive.dart';
 
 /// Печать информационного (не фискального) чека на 58/80-мм принтере
 /// командами ESC/POS: по Bluetooth (`print_bluetooth_thermal`) или по сети
@@ -385,7 +387,7 @@ Future<void> loadSavedPrinterSettings() async {
     // integrations_settings_screen.dart._applyActivePrinter. Настройка
     // общая на все устройства заведения, поэтому Windows-планшет просто не
     // применяет её, вместо того чтобы обманчиво "подключаться".
-    if (type == 'bluetooth' && !Platform.isWindows) {
+    if (type == 'bluetooth' && !isWindowsApp && !kIsWeb) {
       final mac = data['printerBtMac'] as String? ?? '';
       if (mac.isNotEmpty) activeReceiptPrinter = BluetoothReceiptPrinter(macAddress: mac);
     } else if (type == 'network') {

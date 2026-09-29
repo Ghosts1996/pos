@@ -4,6 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+/// Касса на Windows: у части плагинов (уведомления, камера сканера,
+/// Bluetooth-печать) здесь нет реализации. Не через dart:io Platform — в
+/// веб-сборке (E2E) он бросает исключение прямо в build.
+bool get isWindowsApp => !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
 /// Ширины, от которых меняется раскладка: до [tablet] — телефон (одна
 /// колонка, списки на всю ширину), от [tablet] — планшет (две колонки,
 /// формы по центру ограниченной ширины), от [wide] — большой планшет в

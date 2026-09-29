@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
@@ -117,7 +116,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     // применяем её, а не пытаемся честно воспроизвести — молчаливый
     // отказ печати хуже, чем никакого принтера. Сеть (LAN) работает
     // одинаково на всех платформах.
-    if (_printerType == 'bluetooth' && _btMac.isNotEmpty && !Platform.isWindows) {
+    if (_printerType == 'bluetooth' && _btMac.isNotEmpty && !isWindowsApp) {
       activeReceiptPrinter = BluetoothReceiptPrinter(macAddress: _btMac);
     } else if (_printerType == 'network' && _networkIpCtrl.text.trim().isNotEmpty) {
       activeReceiptPrinter = NetworkReceiptPrinter(ip: _networkIpCtrl.text.trim());
@@ -515,7 +514,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                   // На Windows варианта нет совсем: print_bluetooth_thermal
                   // там работает через BLE, а дешёвые принтеры — через
                   // classic SPP, и «подключённый» принтер не печатал бы.
-                  if (!Platform.isWindows) ...[
+                  if (!isWindowsApp) ...[
                     RadioListTile<String>(
                       title: const Text('Bluetooth'),
                       subtitle: Text(
@@ -657,7 +656,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 // На Windows нет камеры для сканера — поле по-прежнему
                 // принимает HID-сканер ("пистолет") и ручной ввод, см.
                 // комментарий у _scanTestCode.
-                suffixIcon: Platform.isWindows
+                suffixIcon: isWindowsApp
                     ? null
                     : IconButton(
                         icon: const Icon(Icons.camera_alt),
