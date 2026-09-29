@@ -8,10 +8,11 @@ import '../models/table_model.dart';
 import '../utils/phone_utils.dart';
 import 'pii_gateway_service.dart';
 import 'push_service.dart';
+import 'venue_service.dart';
 import '../utils/shared_stream.dart';
 import '../utils/promo_policy.dart';
 
-/// Мост между POS и клиентским приложением «Colibri Lounge»:
+/// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
 /// стола, бонусы и отзывы. Оба приложения работают с одними коллекциями,
 /// поэтому любое изменение прилетает второй стороне мгновенно.
@@ -520,7 +521,7 @@ class GuestLinkService {
 
   // ---------- ЛИМИТ ИИ-КОНСЬЕРЖА ----------
 
-  /// Каждый вызов ИИ-консьержа/сомелье стоит денег на шлюзе, поэтому доступ
+  /// Каждый вопрос ИИ-помощнику стоит денег на шлюзе, поэтому доступ
   /// ограничен: гость должен указать телефон (иначе анонимный аккаунт можно
   /// плодить бесконечно) и физически сидеть за столом (отсканировал QR —
   /// activeSessionId не пуст), и не больше [dailyLimit] вопросов в день.
@@ -538,12 +539,12 @@ class GuestLinkService {
       final phone = ((data['phone'] as String?) ?? '').trim();
       if (phone.isEmpty) {
         return const AiQuotaResult(
-            false, 'Укажите номер телефона в профиле — так доступен ИИ-консьерж.');
+            false, 'Укажите номер телефона в профиле — так доступен ИИ-помощник.');
       }
       final activeSessionId = (data['activeSessionId'] as String?) ?? '';
       if (activeSessionId.isEmpty) {
         return const AiQuotaResult(
-            false, 'ИИ-консьерж доступен только за столом — отсканируйте QR-код на столе.');
+            false, 'ИИ-помощник доступен только за столом — отсканируйте QR-код на столе.');
       }
 
       final today = _dayKey(DateTime.now());
@@ -552,7 +553,8 @@ class GuestLinkService {
 
       if (used >= dailyLimit) {
         return AiQuotaResult(false,
-            'На сегодня лимит в $dailyLimit вопросов консьержу исчерпан — обратитесь к кальянщику.');
+            'На сегодня лимит в $dailyLimit вопросов помощнику исчерпан — '
+            'обратитесь к ${VenueService.instance.terms.staffDat}.');
       }
 
       tx.set(ref, {'aiQuotaDate': today, 'aiQuotaCount': used + 1}, SetOptions(merge: true));
@@ -697,11 +699,19 @@ class GuestLinkService {
     final sessionRef = AppScope.col('sessions').doc(order.sessionId);
     final orderRef = _orders.doc(order.id);
 
-    await _db.runTransaction((tx) async {
+    // Ошибки бросаем после транзакции: в вебе исключение изнутри неё
+    // теряет свой текст.
+    final problem = await _db.runTransaction<String?>((tx) async {
       final snap = await tx.get(sessionRef);
-      if (!snap.exists) throw StateError('Чек уже закрыт — заказ нельзя добавить.');
+      final orderSnap = await tx.get(orderRef);
+      // Второй планшет уже принял этот заказ — позиции второй раз не льём.
+      if (orderSnap.data()?['status'] != 'new') return 'Заказ уже принят или отклонён.';
+      final data = snap.data();
+      // Закрытый чек в базе остаётся — проверять надо статус, а не наличие.
+      if (data == null || (data['status'] ?? 'active') != 'active') {
+        return 'Чек уже закрыт — заказ нельзя добавить.';
+      }
 
-      final data = snap.data() as Map<String, dynamic>;
       final current = ((data['orderItems'] ?? []) as List)
           .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
@@ -721,7 +731,9 @@ class GuestLinkService {
         'handledAt': Timestamp.fromDate(DateTime.now()),
         'handledBy': employeeName,
       });
+      return null;
     });
+    if (problem != null) throw StateError(problem);
   }
 
   Future<void> markOrderReady(GuestOrder order, String employeeName) async {
@@ -985,10 +997,10 @@ class SessionTakenException implements Exception {
   @override
   String toString() =>
       'Этот счёт уже открыт у другого гостя. Если счёт ваш — попросите '
-      'кальянщика открыть его на вас.';
+      '${VenueService.instance.terms.staffAcc} открыть его на вас.';
 }
 
-/// Результат проверки лимита ИИ-консьержа.
+/// Результат проверки лимита ИИ-помощника.
 class AiQuotaResult {
   final bool allowed;
   final String? reason;

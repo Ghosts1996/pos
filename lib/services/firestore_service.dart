@@ -131,6 +131,15 @@ class FirestoreService {
     final toRef = AppScope.col('tables').doc(toTableId);
 
     await _db.runTransaction((tx) async {
+      // Пока кассир выбирал стол, чек могли закрыть или уже пересадить с
+      // другого устройства — тогда переносить нечего.
+      final session = (await tx.get(sessionRef)).data();
+      if (session == null ||
+          session['status'] != 'active' ||
+          session['tableId'] != fromTableId) {
+        throw StateError('Чек уже закрыт или пересажен');
+      }
+
       final toSnap = await tx.get(toRef);
       final toData = toSnap.data();
       final toIds = ((toData?['activeSessionIds'] ?? []) as List)
@@ -433,12 +442,9 @@ class FirestoreService {
       } catch (_) {}
     }
     await _db.runTransaction((tx) async {
-      final doc = await tx.get(ref);
-      final data = doc.data();
+      final data = (await tx.get(ref)).data();
       if (data == null) return;
-      final items = ((data['orderItems'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
-          .toList();
+      final items = _openCheckItems(data);
       final idx = items.indexWhere((i) => i.menuItemId == menuItem.id);
       if (idx >= 0) {
         items[idx] = items[idx].copyWith(qty: items[idx].qty + qty);
@@ -460,12 +466,9 @@ class FirestoreService {
   Future<void> changeOrderItemQty(String sessionId, String menuItemId, int delta) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
-      final doc = await tx.get(ref);
-      final data = doc.data();
+      final data = (await tx.get(ref)).data();
       if (data == null) return;
-      final items = ((data['orderItems'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
-          .toList();
+      final items = _openCheckItems(data);
       final idx = items.indexWhere((i) => i.menuItemId == menuItemId);
       if (idx < 0) return;
       final newQty = items[idx].qty + delta;
@@ -482,15 +485,23 @@ class FirestoreService {
   Future<void> removeOrderItem(String sessionId, String menuItemId) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
-      final doc = await tx.get(ref);
-      final data = doc.data();
+      final data = (await tx.get(ref)).data();
       if (data == null) return;
-      final items = ((data['orderItems'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
-          .where((i) => i.menuItemId != menuItemId)
-          .toList();
+      final items = _openCheckItems(data)..removeWhere((i) => i.menuItemId == menuItemId);
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
     });
+  }
+
+  /// Позиции чека, который ещё можно править. Закрытый чек уже оплачен и
+  /// попал в отчёты, а правила Firestore персоналу его правку не запрещают —
+  /// с другого устройства кассир мог закрыть его секунду назад.
+  static List<OrderItem> _openCheckItems(Map<String, dynamic> data) {
+    if ((data['status'] ?? 'active') != 'active') {
+      throw StateError('Этот чек уже закрыт');
+    }
+    return ((data['orderItems'] ?? []) as List)
+        .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
   }
 
   Future<void> applyDiscountCard(String sessionId, DiscountCard? card) {
@@ -503,6 +514,11 @@ class FirestoreService {
   /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты,
   /// убирает его из списка открытых чеков стола, и автоматически списывает
   /// со склада позиции, привязанные к проданным пунктам меню.
+  ///
+  /// [expectedTotal] — сумма счёта, которую видел кассир. Пока был открыт
+  /// экран оплаты, с другого планшета могли добавить позиции или принять
+  /// заказ гостя: тогда чек не закрываем, иначе в нём остались бы
+  /// неоплаченные позиции.
   Future<void> closeSessionWithPayment(
     String sessionId,
     String tableId, {
@@ -520,14 +536,20 @@ class FirestoreService {
     double tipsCash = 0,
     double tipsCard = 0,
     List<String> tipsCancelled = const [],
+    double? expectedTotal,
   }) async {
     // 1. Закрываем чек. Транзакция с проверкой статуса делает закрытие
     //    идемпотентным: повторное «Оплатить» после сбоя сети не спишет
     //    склад второй раз.
     final sessionRef = AppScope.col('sessions').doc(sessionId);
-    final alreadyClosed = await _db.runTransaction<bool>((tx) async {
+    final outcome = await _db.runTransaction<_CloseOutcome>((tx) async {
       final snap = await tx.get(sessionRef);
-      if ((snap.data()?['status'] as String?) == 'closed') return true;
+      if ((snap.data()?['status'] as String?) == 'closed') return _CloseOutcome.alreadyClosed;
+      if (expectedTotal != null &&
+          snap.exists &&
+          (SessionModel.fromDoc(snap).totalWithDiscount - expectedTotal).abs() > 0.009) {
+        return _CloseOutcome.billChanged;
+      }
       tx.update(sessionRef, {
         'status': 'closed',
         'closedAt': Timestamp.fromDate(DateTime.now()),
@@ -552,8 +574,13 @@ class FirestoreService {
       for (final id in tipsCancelled) {
         tx.update(AppScope.col('tips').doc(id), {'status': 'cancelled', 'cancelledAt': now});
       }
-      return false;
+      return _CloseOutcome.closed;
     });
+    // Бросаем после транзакции: в вебе исключение изнутри неё теряет текст.
+    if (outcome == _CloseOutcome.billChanged) {
+      throw StateError('Счёт изменился, пока шла оплата — откройте оплату заново');
+    }
+    final alreadyClosed = outcome == _CloseOutcome.alreadyClosed;
 
     // 2. Убираем сессию из стола
     final tableRef = AppScope.col('tables').doc(tableId);
@@ -687,7 +714,8 @@ class FirestoreService {
       final doc = await tx.get(ref);
       final state = await tx.get(stateRef);
       final data = doc.data();
-      if (data == null || data['refunded'] == true) return;
+      // Вернуть можно только оплаченный чек и только один раз.
+      if (data == null || data['refunded'] == true || data['status'] != 'closed') return;
       final cash = ((data['paymentCash'] ?? 0) as num).toDouble();
       final update = <String, dynamic>{
         'refunded': true,
@@ -782,13 +810,11 @@ class FirestoreService {
                 .limit(1)
                 .snapshots()
                 .map((snap) => snap.docs.isEmpty ? null : ShiftModel.fromDoc(snap.docs.first))
-                .handleError((_) {
-              // Не даём одиночной ошибке (например, временная проблема сети)
-              // намертво "заморозить" последнее состояние — считаем смену
-              // неизвестной/закрытой, и следующее изменение в базе снова
-              // разбудит стрим.
-              return null;
-            }));
+                // Ошибку глушим: экраны остаются на последнем известном
+                // состоянии смены. Firestore после ошибки закрывает
+                // подписку, SharedStreams выбрасывает ключ, и следующая
+                // перерисовка подпишется заново.
+                .handleError((_) {}));
   }
 
   /// Открывает смену, если открытой нет, и возвращает её id. Указатель —
@@ -1167,9 +1193,8 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());
   }
 
-  /// Новая категория встаёт в конец. Максимальный order читаем запросом до
-  /// транзакции (tx.get умеет только документы), так что две одновременные
-  /// «Новая категория» могут получить одинаковый order — это безвредно.
+  /// Новая категория встаёт в конец. Две одновременные «Новая категория»
+  /// могут получить одинаковый order — это безвредно.
   Future<String> addCategory(String name, {String imageUrl = ''}) async {
     final snap = await AppScope.col('menuCategories').get();
     var maxOrder = -1;
@@ -1178,9 +1203,7 @@ class FirestoreService {
       if (order > maxOrder) maxOrder = order;
     }
     final docRef = AppScope.col('menuCategories').doc();
-    await _db.runTransaction((tx) async {
-      tx.set(docRef, {'name': name, 'order': maxOrder + 1, 'imageUrl': imageUrl});
-    });
+    await docRef.set({'name': name, 'order': maxOrder + 1, 'imageUrl': imageUrl});
     return docRef.id;
   }
 
@@ -1188,8 +1211,8 @@ class FirestoreService {
     return AppScope.col('menuCategories').doc(id).update({'name': name});
   }
 
-  /// Сохраняет ссылку на фото-плитку категории (после загрузки в Storage
-  /// через StorageService) — используется в редакторе меню и на плитках
+  /// Сохраняет ссылку на фото-плитку категории (после загрузки через
+  /// StorageService) — используется в редакторе меню и на плитках
   /// категорий у сотрудника.
   Future<void> updateCategoryImage(String id, String imageUrl) {
     return AppScope.col('menuCategories').doc(id).update({'imageUrl': imageUrl});
@@ -1582,42 +1605,63 @@ class FirestoreService {
   /// а расхождение (если оно есть) фиксируется отдельным движением типа
   /// 'count' в истории — так же прозрачно, как приход или списание.
   /// Позиции, которые никто не успел посчитать, остаются без изменений.
+  ///
+  /// Расхождение считаем от остатка на момент завершения, а не от снимка
+  /// при старте: пока шёл пересчёт, продажи уже списывали склад, и движение
+  /// должно показывать, на сколько остаток изменился именно сейчас.
   Future<void> completeInventoryCount(String countId, String employeeName) async {
     final ref = AppScope.col('inventoryCounts').doc(countId);
-    final doc = await ref.get();
-    final data = doc.data();
-    if (data == null) return;
+    final data = (await ref.get()).data();
+    // Уже завершили или отменили с другого устройства — второй раз не
+    // применяем, иначе движения в истории задвоятся.
+    if (data == null || data['status'] != 'in_progress') return;
     final entries = ((data['entries'] ?? []) as List)
         .map((e) => InventoryCountEntry.fromMap(Map<String, dynamic>.from(e as Map)))
+        .where((e) => e.countedQty != null)
         .toList();
+    final current = await Future.wait(
+        entries.map((e) => AppScope.col('inventoryItems').doc(e.itemId).get()));
 
     final now = DateTime.now();
-    final batch = _db.batch();
-    for (final entry in entries) {
-      if (entry.countedQty == null) continue;
-      final diff = entry.countedQty! - entry.expectedQty;
-      final itemRef = AppScope.col('inventoryItems').doc(entry.itemId);
-      batch.update(itemRef, {
-        'quantity': entry.countedQty,
+    // Лимит батча — 500 операций, на позицию их до двух.
+    var batch = _db.batch();
+    var ops = 0;
+    for (var i = 0; i < entries.length; i++) {
+      final entry = entries[i];
+      final snap = current[i];
+      if (!snap.exists) continue; // позицию удалили, пока считали
+      final counted = entry.countedQty!;
+      final before = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
+      final diff = counted - before;
+      batch.update(snap.reference, {
+        'quantity': counted,
         'updatedAt': Timestamp.fromDate(now),
       });
-      if (diff.abs() <= 0.0001) continue;
-      final moveRef = AppScope.col('inventoryMovements').doc();
-      batch.set(
-        moveRef,
-        InventoryMovement(
-          id: moveRef.id,
-          itemId: entry.itemId,
-          itemName: entry.name,
-          unit: entry.unit,
-          type: 'count',
-          delta: diff,
-          resultingQty: entry.countedQty!,
-          reason: 'Инвентаризация',
-          employeeName: employeeName,
-          createdAt: now,
-        ).toMap(),
-      );
+      ops++;
+      if (diff.abs() > 0.0001) {
+        final moveRef = AppScope.col('inventoryMovements').doc();
+        batch.set(
+          moveRef,
+          InventoryMovement(
+            id: moveRef.id,
+            itemId: entry.itemId,
+            itemName: entry.name,
+            unit: entry.unit,
+            type: 'count',
+            delta: diff,
+            resultingQty: counted,
+            reason: 'Инвентаризация',
+            employeeName: employeeName,
+            createdAt: now,
+          ).toMap(),
+        );
+        ops++;
+      }
+      if (ops >= 400) {
+        await batch.commit();
+        batch = _db.batch();
+        ops = 0;
+      }
     }
     batch.update(ref, {
       'status': 'completed',
@@ -1646,6 +1690,8 @@ class FirestoreService {
     return snap.docs.map((d) => InventoryCount.fromDoc(d)).toList();
   }
 }
+
+enum _CloseOutcome { closed, alreadyClosed, billChanged }
 
 /// Бросается при попытке открыть чек на столе, где уже открыто
 /// максимально допустимое (maxOpenSessions) число чеков.

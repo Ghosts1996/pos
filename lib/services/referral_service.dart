@@ -95,44 +95,44 @@ class ReferralService {
   }
 
   /// Вызывается с POS после закрытия первого чека гостя.
-  /// Идемпотентна: повторный вызов ничего не начислит.
+  /// Идемпотентна: отметка referralRewarded проверяется и ставится в одной
+  /// транзакции, поэтому два закрытия подряд не начислят бонусы дважды.
   Future<void> rewardIfFirstVisit(String uid) async {
     final ref = AppScope.loyaltyCol('clients').doc(uid);
-    final snap = await ref.get();
-    final data = snap.data();
-    if (data == null) return;
+    final inviterId = await _db.runTransaction<String?>((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return null;
+      final inviterId = data['referredBy'] as String?;
+      if (inviterId == null || inviterId.isEmpty) return null;
+      if (data['referralRewarded'] == true) return null;
+      if (((data['visits'] as num?)?.toInt() ?? 0) < 1) return null;
 
-    final inviterId = data['referredBy'] as String?;
-    if (inviterId == null || inviterId.isEmpty) return;
-    if (data['referralRewarded'] == true) return;
-    if (((data['visits'] as num?)?.toInt() ?? 0) < 1) return;
-
-    final batch = _db.batch();
-    batch.set(ref, {
-      'bonusBalance': FieldValue.increment(inviteeBonus),
-      'referralRewarded': true,
-    }, SetOptions(merge: true));
-    batch.set(AppScope.loyaltyCol('clients').doc(inviterId), {
-      'bonusBalance': FieldValue.increment(inviterBonus),
-      'referralsCount': FieldValue.increment(1),
-    }, SetOptions(merge: true));
-
-    batch.set(AppScope.loyaltyCol('bonusOperations').doc(), {
-      'clientUid': uid,
-      'type': 'accrual',
-      'amount': inviteeBonus,
-      'reason': 'referral_invitee',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
+      final now = Timestamp.fromDate(DateTime.now());
+      tx.set(ref, {
+        'bonusBalance': FieldValue.increment(inviteeBonus),
+        'referralRewarded': true,
+      }, SetOptions(merge: true));
+      tx.set(AppScope.loyaltyCol('clients').doc(inviterId), {
+        'bonusBalance': FieldValue.increment(inviterBonus),
+        'referralsCount': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+      tx.set(AppScope.loyaltyCol('bonusOperations').doc(), {
+        'clientUid': uid,
+        'type': 'accrual',
+        'amount': inviteeBonus,
+        'reason': 'referral_invitee',
+        'createdAt': now,
+      });
+      tx.set(AppScope.loyaltyCol('bonusOperations').doc(), {
+        'clientUid': inviterId,
+        'type': 'accrual',
+        'amount': inviterBonus,
+        'reason': 'referral_inviter',
+        'createdAt': now,
+      });
+      return inviterId;
     });
-    batch.set(AppScope.loyaltyCol('bonusOperations').doc(), {
-      'clientUid': inviterId,
-      'type': 'accrual',
-      'amount': inviterBonus,
-      'reason': 'referral_inviter',
-      'createdAt': Timestamp.fromDate(DateTime.now()),
-    });
-
-    await batch.commit();
+    if (inviterId == null) return;
 
     // Без Cloud Functions push не уйдёт, но приглашающий увидит рост
     // баланса — его приложение уведомит об этом само.
