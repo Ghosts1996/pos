@@ -19,7 +19,7 @@ permissions:
 jobs:
   photos:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - run: pip install --quiet pillow requests
@@ -28,7 +28,7 @@ jobs:
           [ -d tmp/demo-photos ] || { echo "нечего делать"; exit 0; }
           MODE=candidates; [ -f tmp/demo-photos/choices.json ] && MODE=final
           echo "MODE=$MODE" >> "$GITHUB_ENV"
-          ONLY="$(cat tmp/demo-photos/only.txt 2>/dev/null || true)" python tmp/demo-photos/fetch.py "$MODE"
+          ONLY="$(cat tmp/demo-photos/only.txt 2>/dev/null || true)" python -u tmp/demo-photos/fetch.py "$MODE"
       - name: Сохранить в ветку
         run: |
           git config user.name "github-actions[bot]"
