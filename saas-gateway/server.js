@@ -3292,7 +3292,99 @@ const DEMO_MENU = [
       { name: "Классический кальян", price: 1200, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
       { name: "Кальян на молоке", price: 1500, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"], ["milk", 300, "ml"]] },
       { name: "Кальян на грейпфруте", price: 1800, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
+      { name: "Кальян на ананасе", price: 2000, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
       { name: "Перезабивка", price: 700, use: [["tobacco", 20, "g"], ["coal", 3, "pcs"]] },
+    ],
+  },
+  {
+    category: "Завтраки",
+    img: "syrniki",
+    items: [
+      { name: "Сырники со сметаной", price: 390, weight: [220, "g"], img: "syrniki", description: "Три сырника, сметана и ягодный соус. До 16:00" },
+      { name: "Омлет с беконом", price: 420, weight: [250, "g"], img: "omelette", description: "Три яйца, бекон, томаты черри и тост. До 16:00" },
+      { name: "Круассан с лососем", price: 480, weight: [200, "g"], img: "croissant", description: "Слабосолёный лосось, крем-сыр и руккола. До 16:00" },
+      { name: "Гранола с йогуртом", price: 350, weight: [250, "g"], img: "granola", description: "Греческий йогурт, домашняя гранола и мёд. До 16:00" },
+    ],
+  },
+  {
+    category: "Салаты",
+    img: "caesar",
+    items: [
+      { name: "Цезарь с курицей", price: 520, weight: [250, "g"], img: "caesar",
+        description: "Романо, курица гриль, пармезан и соус цезарь" },
+      { name: "Греческий салат", price: 450, weight: [250, "g"], img: "greek",
+        description: "Огурцы, томаты, перец, маслины и фета" },
+      { name: "Салат с авокадо и креветками", price: 640, weight: [230, "g"], img: "avocado",
+        description: "Тигровые креветки, авокадо, микс салатов и цитрусовая заправка" },
+      { name: "Овощной салат", price: 360, weight: [220, "g"], img: "veggie",
+        description: "Сезонные овощи и ароматное масло" },
+    ],
+  },
+  {
+    category: "Супы",
+    img: "ramen",
+    items: [
+      { name: "Рамен с курицей", price: 490, weight: [400, "ml"], img: "ramen", description: "Насыщенный бульон, лапша, курица и яйцо" },
+      { name: "Том ям с креветками", price: 590, weight: [350, "ml"], img: "tomyum", description: "Острый, на кокосовом молоке, с рисом" },
+      { name: "Борщ со сметаной", price: 380, weight: [350, "ml"], img: "borscht", description: "С говядиной, сметаной и бородинским хлебом" },
+    ],
+  },
+  {
+    category: "Горячее",
+    img: "steak",
+    items: [
+      { name: "Стейк рибай", price: 1690, weight: [300, "g"], img: "steak", description: "Мраморная говядина, прожарка на выбор" },
+      { name: "Куриные крылья BBQ", price: 520, weight: [350, "g"], img: "wings", description: "Крылья в соусе барбекю и соус блю-чиз" },
+      { name: "Паста карбонара", price: 560, weight: [300, "g"], img: "carbonara",
+        description: "Спагетти, бекон, желток и пармезан" },
+      { name: "Креветки темпура", price: 690, weight: [200, "g"], img: "tempura", description: "Хрустящие креветки и соус свит-чили" },
+    ],
+  },
+  {
+    category: "Пицца и хачапури",
+    img: "pizza",
+    items: [
+      { name: "Пицца Маргарита", price: 590, weight: [450, "g"], img: "pizza",
+        description: "Томатный соус, моцарелла и базилик", use: [["mozzarella", 120, "g"]] },
+      { name: "Хачапури по-аджарски", price: 550, weight: [400, "g"], img: "khachapuri",
+        description: "Сулугуни, яйцо и сливочное масло", use: [["mozzarella", 80, "g"]] },
+    ],
+  },
+  {
+    category: "Бургеры и сэндвичи",
+    img: "burger",
+    items: [
+      { name: "Бургер с говядиной", price: 590, weight: [350, "g"], img: "burger", rank: 4,
+        description: "Котлета из говядины, чеддер, томаты и соус барбекю", use: [["beef", 150, "g"]] },
+      { name: "Клаб-сэндвич", price: 480, weight: [300, "g"], img: "club", description: "Курица, бекон, яйцо, томаты и картофель фри" },
+      { name: "Хот-дог", price: 350, weight: [250, "g"], img: "hotdog", description: "Баварская колбаска, горчица и маринованный лук" },
+      { name: "Тако с курицей", price: 420, weight: [220, "g"], img: "taco", description: "Две лепёшки, курица, сальса и гуакамоле" },
+    ],
+  },
+  {
+    category: "Закуски",
+    img: "fries",
+    items: [
+      { name: "Картофель фри", price: 250, weight: [150, "g"], img: "fries",
+        description: "Хрустящий, с соусом на выбор", use: [["fries", 150, "g"]] },
+      { name: "Сырные палочки", price: 340, weight: [180, "g"], img: "cheese-sticks",
+        description: "Моцарелла в панировке и соус ранч", use: [["mozzarella", 150, "g"]] },
+      { name: "Гёдза с креветкой", price: 460, weight: [180, "g"], img: "gyoza", description: "Шесть штук, соевый соус и кунжут" },
+      { name: "Роллы Филадельфия", price: 690, weight: [250, "g"], img: "rolls", description: "Лосось, сливочный сыр и огурец, 8 штук" },
+    ],
+  },
+  {
+    category: "Десерты",
+    img: "cheesecake",
+    items: [
+      { name: "Чизкейк Нью-Йорк", price: 390, weight: [150, "g"], img: "cheesecake", rank: 3,
+        description: "Классический сливочный чизкейк", use: [["cheesecake", 1, "pcs"]] },
+      { name: "Шоколадный фондан", price: 420, weight: [120, "g"], img: "fondant",
+        description: "Тёплый, с жидкой серединкой и шариком мороженого" },
+      { name: "Мороженое", price: 290, weight: [150, "g"], img: "ice-cream",
+        description: "Три шарика: ваниль, шоколад и клубника" },
+      { name: "Бельгийские вафли", price: 380, weight: [200, "g"], img: "waffles", description: "С ягодами и кленовым сиропом" },
+      { name: "Пончики", price: 260, weight: [150, "g"], img: "donuts", description: "Два пончика в шоколадной глазури" },
     ],
   },
   {
@@ -3307,6 +3399,7 @@ const DEMO_MENU = [
         description: "Облепиха, апельсин, мёд и розмарин" },
       { name: "Ягодный чай", price: 490, weight: [600, "ml"], img: "berry-tea",
         description: "Черника, малина, смородина и мята" },
+      { name: "Мате", price: 420, weight: [400, "ml"], img: "mate", description: "Бодрящий парагвайский чай в калебасе" },
     ],
   },
   {
@@ -3335,36 +3428,17 @@ const DEMO_MENU = [
         description: "Клубника, базилик и лимонный сок" },
       { name: "Мохито безалкогольный", price: 390, weight: [500, "ml"], img: "mojito",
         description: "Лайм, мята, тростниковый сахар и содовая" },
+      { name: "Арбузный лимонад", price: 420, weight: [500, "ml"], img: "watermelon", description: "Свежий арбуз, лайм и мята" },
     ],
   },
   {
-    category: "Кухня",
-    img: "burger",
+    category: "Милкшейки и смузи",
+    img: "banana-shake",
     items: [
-      { name: "Цезарь с курицей", price: 520, weight: [250, "g"], img: "caesar",
-        description: "Романо, курица гриль, пармезан и соус цезарь" },
-      { name: "Паста карбонара", price: 560, weight: [300, "g"], img: "carbonara",
-        description: "Спагетти, бекон, желток и пармезан" },
-      { name: "Бургер с говядиной", price: 590, weight: [350, "g"], img: "burger", rank: 4,
-        description: "Котлета из говядины, чеддер, томаты и соус барбекю", use: [["beef", 150, "g"]] },
-      { name: "Картофель фри", price: 250, weight: [150, "g"], img: "fries",
-        description: "Хрустящий, с соусом на выбор", use: [["fries", 150, "g"]] },
-      { name: "Сырные палочки", price: 340, weight: [180, "g"], img: "cheese-sticks",
-        description: "Моцарелла в панировке и соус ранч", use: [["mozzarella", 150, "g"]] },
-      { name: "Пицца Маргарита", price: 590, weight: [450, "g"], img: "pizza",
-        description: "Томатный соус, моцарелла и базилик", use: [["mozzarella", 120, "g"]] },
-    ],
-  },
-  {
-    category: "Десерты",
-    img: "cheesecake",
-    items: [
-      { name: "Чизкейк Нью-Йорк", price: 390, weight: [150, "g"], img: "cheesecake", rank: 3,
-        description: "Классический сливочный чизкейк", use: [["cheesecake", 1, "pcs"]] },
-      { name: "Шоколадный фондан", price: 420, weight: [120, "g"], img: "fondant",
-        description: "Тёплый, с жидкой серединкой и шариком мороженого" },
-      { name: "Мороженое", price: 290, weight: [150, "g"], img: "ice-cream",
-        description: "Три шарика: ваниль, шоколад и клубника" },
+      { name: "Банановый милкшейк", price: 390, weight: [400, "ml"], img: "banana-shake", description: "Банан, мороженое и молоко" },
+      { name: "Ванильный милкшейк", price: 370, weight: [400, "ml"], img: "vanilla-shake", description: "Пломбир, ваниль и взбитые сливки" },
+      { name: "Смузи киви-шпинат", price: 420, weight: [400, "ml"], img: "kiwi-smoothie", description: "Киви, шпинат, яблоко и мёд" },
+      { name: "Вишнёвый смузи", price: 420, weight: [400, "ml"], img: "cherry-smoothie", description: "Вишня, банан и йогурт" },
     ],
   },
   {
@@ -3374,6 +3448,7 @@ const DEMO_MENU = [
       { name: "Орешки", price: 300, weight: [100, "g"], img: "nuts", description: "Кешью, миндаль и фундук" },
       { name: "Фруктовая тарелка", price: 700, weight: [600, "g"], img: "fruit", description: "Сезонные фрукты и ягоды" },
       { name: "Попкорн", price: 250, weight: [80, "g"], img: "popcorn", description: "Солёный или карамельный" },
+      { name: "Печенье с шоколадом", price: 190, weight: [90, "g"], img: "cookies", description: "Домашнее, три штуки" },
     ],
   },
   {
@@ -3382,6 +3457,8 @@ const DEMO_MENU = [
     items: [
       { name: "Вода негазированная", price: 150, weight: [500, "ml"], img: "water", use: [["water", 1, "pcs"]] },
       { name: "Кола", price: 250, weight: [330, "ml"], img: "cola", description: "Классическая, в стекле", use: [["cola", 1, "pcs"]] },
+      { name: "Сок яблочный", price: 220, weight: [300, "ml"], img: "orange-juice", description: "Прямого отжима" },
+      { name: "Кокосовая вода", price: 320, weight: [330, "ml"], img: "coconut", description: "Натуральная, без сахара" },
     ],
   },
 ];
@@ -3410,12 +3487,12 @@ const DEMO_SHIFT_OPENED_MINUTES_AGO = 360;
 // оплата, позиции [название, кол-во], чаевые].
 const DEMO_CLOSED_RECEIPTS = [
   ["Стол 3", 340, 280, "hookah", "cash", [["Классический кальян", 1], ["Пуэр", 1], ["Орешки", 1]], { cash: 200 }],
-  ["Стол 11", 330, 290, "waiter", "card", [["Капучино", 2], ["Чизкейк Нью-Йорк", 2]]],
+  ["Стол 11", 330, 290, "waiter", "card", [["Сырники со сметаной", 2], ["Капучино", 2], ["Бельгийские вафли", 1]]],
   ["Стол 5", 310, 230, "hookah", "card", [["Кальян на молоке", 1], ["Манго-маракуйя", 2], ["Картофель фри", 1]], { card: 300 }],
   ["Бар", 290, 260, "bar", "cash", [["Раф", 1], ["Латте", 1]]],
   ["Стол 9", 280, 170, "hookah", "mixed", [["Классический кальян", 2], ["Перезабивка", 1], ["Пицца Маргарита", 1], ["Классический лимонад", 3]]],
   ["Кабинет 2", 260, 150, "waiter", "card", [["Кальян на грейпфруте", 1], ["Бургер с говядиной", 2], ["Цезарь с курицей", 1], ["Облепиховый чай", 1]], { card: 500, team: true }],
-  ["Стол 4", 200, 130, "waiter", "card", [["Паста карбонара", 1], ["Бургер с говядиной", 1], ["Кола", 2]]],
+  ["Стол 4", 200, 130, "waiter", "card", [["Том ям с креветками", 1], ["Паста карбонара", 1], ["Бургер с говядиной", 1], ["Кола", 2]]],
   ["Стол 15", 180, 95, "hookah", "cash", [["Классический кальян", 1], ["Молочный улун", 1], ["Фруктовая тарелка", 1]]],
   ["Стол 2", 140, 70, "waiter", "card", [["Манго-маракуйя", 1], ["Клубника-базилик", 1], ["Шоколадный фондан", 1]], { card: 150 }],
   ["Стол 10", 120, 45, "hookah", "card", [["Кальян на молоке", 1], ["Капучино", 2], ["Сырные палочки", 1]]],
@@ -3433,13 +3510,13 @@ const DEMO_ACTIVE_SESSIONS = [
   { table: "Диван 8", tag: "День рождения", start: 100, duration: 90, staff: "waiter",
     items: [["Кальян на грейпфруте", 2], ["Фруктовая тарелка", 1], ["Чизкейк Нью-Йорк", 3], ["Классический лимонад", 4]], refills: [70, 40] },
   { table: "Кабинет 1", tag: "Банкет", start: 40, duration: 180, staff: "waiter", card: "0001",
-    items: [["Классический кальян", 3], ["Цезарь с курицей", 2], ["Бургер с говядиной", 2], ["Капучино", 4]] },
+    items: [["Классический кальян", 3], ["Стейк рибай", 2], ["Роллы Филадельфия", 2], ["Цезарь с курицей", 2], ["Капучино", 4]] },
   { table: "Стол 12", tag: "Олег", start: 15, duration: 90, staff: "waiter",
     items: [["Раф", 2], ["Сырные палочки", 1]] },
   { table: "Стол 17", tag: "Компания", start: 35, duration: 120, staff: "hookah",
     items: [["Кальян на молоке", 2], ["Ягодный чай", 2], ["Фруктовая тарелка", 1]], refills: [10] },
   { table: "Лаунж 4", tag: "Студенты", start: 50, duration: 120, staff: "waiter",
-    items: [["Классический кальян", 1], ["Картофель фри", 2], ["Кола", 3]], refills: [20] },
+    items: [["Кальян на ананасе", 1], ["Куриные крылья BBQ", 2], ["Картофель фри", 2], ["Банановый милкшейк", 3]], refills: [20] },
   { table: "Бар", tag: "Кирилл", start: 30, duration: 60, staff: "bar", items: [["Кола", 1], ["Попкорн", 1]] },
   { table: "Бар", tag: "Двое справа", start: 5, duration: 60, staff: "bar", items: [["Мохито безалкогольный", 2]] },
 ];
@@ -3787,7 +3864,7 @@ function seedDemoData(tenantRef, batch, nowMs) {
   // Истории в приложении гостя и счастливые часы. Без табака: истории —
   // это уже реклама.
   [
-    { title: "Счастливые часы", text: "По будням с 14:00 до 17:00 — скидка 20% на кухню и десерты.",
+    { title: "Счастливые часы", text: "По будням с 14:00 до 17:00 — скидка 20% на горячее, закуски, бургеры, пиццу и десерты.",
       img: "burger", action: "menu", actionLabel: "Открыть меню", menuItemId: "" },
     { title: "Новинка — облепиховый чай", text: "Облепиха, апельсин, мёд и розмарин — согреет в любую погоду.",
       img: "sea-buckthorn", action: "menu", actionLabel: "Попробовать", menuItemId: menuByName["Облепиховый чай"].id },
@@ -3803,7 +3880,7 @@ function seedDemoData(tenantRef, batch, nowMs) {
     fromMinutes: 14 * 60,
     toMinutes: 17 * 60,
     discountPercent: 20,
-    categoryIds: [categoryIds["Кухня"], categoryIds["Десерты"]],
+    categoryIds: ["Горячее", "Пицца и хачапури", "Бургеры и сэндвичи", "Закуски", "Десерты"].map((c) => categoryIds[c]),
     active: true,
   });
 
