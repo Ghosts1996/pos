@@ -1313,7 +1313,20 @@ class FirestoreService {
   Future<void> updateEmployee(Employee e) =>
       AppScope.col('employees').doc(e.id).update(e.toMap());
 
-  Future<void> deleteEmployee(String id) => AppScope.col('employees').doc(id).delete();
+  /// Удаляет сотрудника. Его открытую личную смену закрываем сейчас же и
+  /// убираем его из списка «кому чаевые»: иначе удалённый числился бы на
+  /// смене у коллег («вы уходите не последним») и в выборе у гостя.
+  Future<void> deleteEmployee(String id) async {
+    final open = await AppScope.col('staffShifts')
+        .where('employeeId', isEqualTo: id)
+        .where('status', isEqualTo: 'open')
+        .get();
+    for (final d in open.docs) {
+      await clockOut(d.id, id);
+    }
+    await AppScope.col('employees').doc(id).delete();
+    await _removeTipsMember(id);
+  }
 
   /// Сотрудник по id — по нему восстанавливается вход на планшете, где
   /// PIN уже вводили. Сам PIN на устройстве не хранится.
