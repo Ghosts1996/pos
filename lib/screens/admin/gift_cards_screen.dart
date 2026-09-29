@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/venue_models.dart';
-import '../../services/app_scope.dart';
 import '../../services/gift_card_service.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
@@ -217,7 +216,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
   String _appName() {
     final name = VenueService.displayNameOf(VenueService.instance.cached);
     if (name.isNotEmpty) return '«$name»';
-    return AppScope.isSaasMode ? 'заведения' : 'Colibri Lounge';
+    return 'заведения';
   }
 
   void _showIssued(GiftCard card) {

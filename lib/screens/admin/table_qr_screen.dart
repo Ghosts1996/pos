@@ -30,7 +30,7 @@ class TableQrScreen extends StatelessWidget {
   /// `{slug}.zalpos.ru` (wildcard DNS + wildcard SSL на сервере, см.
   /// saas/README.md) — отдаёт SaaS-версию страницы-прослойки и веб-гостя с
   /// брендингом именно этого заведения (раздел «Брендинг» в личном
-  /// кабинете), а не общий "Colibri Lounge".
+  /// кабинете), а не общее название платформы.
   static const saasDomain = 'zalpos.ru';
 
   /// Ссылка для НОВЫХ наклеек — через страницу-прослойку. В SaaS-режиме
@@ -132,10 +132,7 @@ class TableQrScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-                AppScope.isSaasMode
-                    ? (AppScope.branding?.appName ?? 'ZalPOS')
-                    : 'Colibri Lounge',
+            Text(AppScope.branding?.appName ?? 'ZalPOS',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(

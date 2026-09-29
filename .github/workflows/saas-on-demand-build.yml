@@ -10,7 +10,7 @@ on:
         description: 'ID документа buildJobs/{jobId} для сборки кассы (matrix.app == pos)'
         required: true
       job_id_kolibri:
-        description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения «Colibri Lounge» (matrix.app == kolibri)'
+        description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения (matrix.app == kolibri)'
         required: true
       job_id_pos_windows:
         description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
@@ -74,7 +74,7 @@ jobs:
             default_icon: assets/icon/guest_icon.png
             default_adaptive_icon: assets/icon/guest_icon_foreground.png
             default_adaptive_bg: assets/icon/icon_background.png
-            default_label: 'Colibri Lounge'
+            default_label: 'ZalPOS'
             artifact_prefix: colibri-lounge-saas
     name: Build ${{ matrix.app }}
 
