@@ -74,6 +74,30 @@ TableModel hallRotated(TableModel t) => hallRefit(t, t.copyWith(rotation: (t.rot
   );
 }
 
+/// Клетки, которые стол занимает на холсте. У углового стола их три из
+/// четырёх: пустая клетка напротив сгиба свободна, в неё можно поставить
+/// другой стол.
+List<Rect> hallTileCells(TableModel t) {
+  final o = hallTileOffset(t);
+  final s = hallTileSize(t);
+  if (t.shape != 'corner') return [Rect.fromLTWH(o.left, o.top, s.width, s.height)];
+  // (колонка, строка) пустой клетки: сгиб слева снизу — пусто справа сверху,
+  // дальше по часовой стрелке (как tableFreeCorner).
+  final empty = switch (t.rotation % 4) { 1 => (1, 1), 2 => (0, 1), 3 => (0, 0), _ => (1, 0) };
+  return [
+    for (var col = 0; col < 2; col++)
+      for (var row = 0; row < 2; row++)
+        if ((col, row) != empty) Rect.fromLTWH(o.left + col * kHallTile, o.top + row * kHallTile, kHallTile, kHallTile),
+  ];
+}
+
+/// Столы наезжают друг на друга. Касаться краями можно — так собирают
+/// длинные и угловые столы.
+bool hallTablesOverlap(TableModel a, TableModel b) {
+  final cb = hallTileCells(b).map((r) => r.deflate(0.5)).toList();
+  return hallTileCells(a).any((x) => cb.any((y) => x.deflate(0.5).overlaps(y)));
+}
+
 /// Обратное преобразование: центр плитки на холсте → доли x/y стола.
 ({double x, double y}) hallFractionForCenter(double cx, double cy, [Size size = const Size(kHallTile, kHallTile)]) => (
       x: ((cx - size.width / 2) / (kHallCanvas.width - size.width)).clamp(0.0, 1.0),

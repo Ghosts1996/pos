@@ -122,4 +122,27 @@ void main() {
     await tester.tapAt(const Offset(25, 75)); // клетка на сгибе
     expect(taps, 1);
   });
+
+  test('столкновение столов: вплотную можно, внахлёст — нет', () {
+    TableModel at(String shape, double left, double top, {int rotation = 0}) {
+      final probe = _t(shape, rotation: rotation);
+      final f = hallFractionForTopLeft(left, top, hallTileSize(probe));
+      return _t(shape, rotation: rotation, x: f.x, y: f.y);
+    }
+
+    final a = at('rect', 104, 104);
+    expect(hallTablesOverlap(a, at('rect', 208, 104)), isFalse, reason: 'касаются краем');
+    expect(hallTablesOverlap(a, at('rect', 182, 104)), isTrue);
+    expect(hallTablesOverlap(a, at('long', 52, 156)), isTrue);
+    // Угловой со сгибом слева снизу: клетка справа сверху пустая — туда
+    // можно поставить квадратный стол, а в клетку на сгибе — нельзя.
+    final corner = at('corner', 104, 104);
+    expect(hallTileCells(corner), hasLength(3));
+    expect(hallTablesOverlap(corner, at('rect', 208, 104)), isFalse);
+    expect(hallTablesOverlap(corner, at('rect', 104, 208)), isTrue);
+    // Поворот переносит пустую клетку по часовой стрелке.
+    expect(hallTablesOverlap(at('corner', 104, 104, rotation: 1), at('rect', 208, 208)), isFalse);
+    expect(hallTablesOverlap(at('corner', 104, 104, rotation: 2), at('rect', 104, 208)), isFalse);
+    expect(hallTablesOverlap(at('corner', 104, 104, rotation: 3), at('rect', 104, 104)), isFalse);
+  });
 }
