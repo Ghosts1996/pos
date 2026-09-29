@@ -455,6 +455,7 @@ class TookenClient {
             tools: tools,
             agentId: agentId,
             timeout: timeout,
+            cacheFor: cacheFor,
           );
         }
 
@@ -497,7 +498,10 @@ class TookenClient {
         }
 
         if (cacheKey != null) {
-          _cache[cacheKey] = _CacheEntry(result, DateTime.now().add(cacheFor!));
+          // Касса работает сутками — просроченное выбрасываем, чтобы кэш не рос.
+          final now = DateTime.now();
+          _cache.removeWhere((_, e) => !now.isBefore(e.expiresAt));
+          _cache[cacheKey] = _CacheEntry(result, now.add(cacheFor!));
         }
         unawaited(_log(agentId, ep, useModel, result));
         return result;
@@ -542,7 +546,10 @@ class TookenClient {
         maxRounds: maxRounds,
         maxTokens: maxTokens,
       );
-    } catch (_) {
+    } catch (e) {
+      // Отказ сервера платформы (ИИ выключен, лимит гостя) повтор без
+      // инструментов не исправит — только потратит ещё один запрос.
+      if (e is AiException && e.fromGateway) rethrow;
       final res = await complete(
         messages: messages,
         model: model,

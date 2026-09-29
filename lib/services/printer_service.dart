@@ -170,8 +170,6 @@ Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperS
   return bytes;
 }
 
-/// Bluetooth-принтер (в режиме классического SPP, как у подавляющего
-/// большинства недорогих 58-мм принтеров).
 /// Кодировка CP866 («DOS-кириллица») для ESC/POS-принтеров. Символы,
 /// которых в CP866 нет (₽, эмодзи, «ёлочки»), заменяются похожими или «?»,
 /// а не роняют печать всего чека.
@@ -236,6 +234,8 @@ class _Cp866Decoder extends Converter<List<int>, String> {
       }));
 }
 
+/// Bluetooth-принтер (в режиме классического SPP, как у подавляющего
+/// большинства недорогих 58-мм принтеров).
 class BluetoothReceiptPrinter extends ReceiptPrinter {
   /// MAC-адрес принтера — выбирается пользователем один раз на экране
   /// настроек из списка сопряжённых Bluetooth-устройств
@@ -332,6 +332,19 @@ class NetworkReceiptPrinter extends ReceiptPrinter {
 
   @override
   Future<void> printBytes(List<int> bytes) async {
+    try {
+      await _send(bytes);
+    } catch (_) {
+      // Удержанное соединение могло умереть (принтер перезагрузили, Wi-Fi
+      // моргнул) — без сброса все следующие чеки падали бы до перезапуска.
+      if (_socket == null) rethrow;
+      _socket?.destroy();
+      _socket = null;
+      await _send(bytes);
+    }
+  }
+
+  Future<void> _send(List<int> bytes) async {
     try {
       final socket = _socket ?? await Socket.connect(ip, port, timeout: const Duration(seconds: 5));
       socket.add(bytes);

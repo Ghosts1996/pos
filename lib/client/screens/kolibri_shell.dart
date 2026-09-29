@@ -91,7 +91,8 @@ class _KolibriShellState extends State<KolibriShell> {
         if (picked == null || !mounted) return;
         try {
           await _link.bindToSession(_auth.uid, tableId, picked.id);
-        } on SessionTakenException catch (e) {
+        } catch (e) {
+          // «Чек занят» и обрыв сети — одинаково: сказать гостю, что не так.
           if (!mounted) return;
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text(humanError(e))));

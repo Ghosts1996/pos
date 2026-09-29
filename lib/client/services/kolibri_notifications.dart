@@ -115,8 +115,15 @@ class KolibriNotifications {
 
   void _persistOrders() {
     // Храним только последние 50 заказов, иначе список растёт вечно.
-    final trimmed = Map.fromEntries(_orderStatus.entries.take(50));
-    _prefs?.setString(_orderKey, jsonEncode(trimmed));
+    // Последние — это хвост: порядок вставки идёт от старых к новым, и
+    // take(50) держал бы вечно самые старые, а новые не запоминались бы.
+    final extra = _orderStatus.length - 50;
+    if (extra > 0) {
+      for (final k in _orderStatus.keys.take(extra).toList()) {
+        _orderStatus.remove(k);
+      }
+    }
+    _prefs?.setString(_orderKey, jsonEncode(_orderStatus));
   }
 
   Future<void> stop() async {
@@ -280,8 +287,8 @@ class KolibriNotifications {
   void _watchOrders() {
     _ordersSub = _link.clientOrdersStream(_uid).listen((list) {
       for (final o in list) {
-        final known = _orderStatus[o.id];
-        _orderStatus[o.id] = o.status;
+        final known = _orderStatus.remove(o.id);
+        _orderStatus[o.id] = o.status; // в конец — как самый свежий
         if (known == null || known == o.status) continue;
         if (_silenced) continue;
         if (o.createdAt.isBefore(_startedAt.subtract(const Duration(hours: 6)))) continue;
