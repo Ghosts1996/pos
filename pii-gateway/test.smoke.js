@@ -97,6 +97,13 @@ async function run() {
   }
 
   {
+    // Реквизиты плательщика по счёту: неверные — 400, без токена — 401.
+    const bad = await request("POST", "/", { body: JSON.stringify({ kind: "payer", invoiceId: "1", billingId: "t1", payerType: "org", inn: "12" }) });
+    assert.strictEqual(bad.statusCode, 400);
+    const noToken = await request("POST", "/", { body: JSON.stringify({ kind: "payer", invoiceId: "1", billingId: "t1", payerType: "org", inn: "7707083893" }) });
+    assert.strictEqual(noToken.statusCode, 401);
+  }
+  {
     // Гость удаляет свои данные: без заведения — 400, без токена — 401.
     const noTenant = await request("POST", "/", { body: JSON.stringify({ kind: "guest_delete" }) });
     assert.strictEqual(noTenant.statusCode, 400);

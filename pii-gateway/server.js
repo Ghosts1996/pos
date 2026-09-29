@@ -312,6 +312,44 @@ async function handleLinkOwner(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+/**
+ * Реквизиты плательщика по счёту (ИП или организация) — первичная запись в
+ * РФ: у ИП ФИО и ИНН — персональные данные (ч. 5 ст. 18 152-ФЗ).
+ * saas-gateway (/createBankInvoice) вызывает это от имени владельца (его
+ * ID-токен) и только после успешного ответа заводит счёт в Firestore.
+ */
+async function handleRecordPayer(req, res, body) {
+  const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+  const invoiceId = str(body.invoiceId, 12);
+  const billingId = str(body.billingId, 64);
+  const payerType = body.payerType === "org" ? "org" : body.payerType === "ip" ? "ip" : "";
+  const inn = str(body.inn, 12);
+  if (!/^\d{1,9}$/.test(invoiceId) || !/^[A-Za-z0-9_-]{1,64}$/.test(billingId) || !payerType || !/^(\d{10}|\d{12})$/.test(inn)) {
+    return sendJson(res, 400, { error: "некорректные реквизиты плательщика" });
+  }
+  const idToken = (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+  if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
+  const fbApp = getSaasApp();
+  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  let decoded;
+  try {
+    decoded = await fbApp.auth().verifyIdToken(idToken);
+  } catch (e) {
+    return sendJson(res, 401, { error: "невалидный токен" });
+  }
+  try {
+    await getPool().query(
+      `INSERT INTO payer_requisites (invoice_id, billing_id, payer_type, name, inn, kpp, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (invoice_id) DO NOTHING`,
+      [invoiceId, billingId, payerType, str(body.name, 200), inn, str(body.kpp, 9), decoded.uid]
+    );
+  } catch (e) {
+    return sendJson(res, 500, { error: "не удалось сохранить в первичной базе" });
+  }
+  return sendJson(res, 200, { ok: true });
+}
+
 async function handleRecordContact(req, res, body) {
   const { tenantId, kind, id, name, phone } = body;
   const idOk = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
@@ -434,6 +472,7 @@ const server = http.createServer((req, res) => {
       if (body && body.kind === "owner") return handleRegisterOwner(req, res, body);
       if (body && body.kind === "owner_link") return handleLinkOwner(req, res);
       if (body && body.kind === "guest_delete") return handleDeleteGuest(req, res, body);
+      if (body && body.kind === "payer") return handleRecordPayer(req, res, body);
       if (body && body.kind) return handleRecordContact(req, res, body);
       return handleRegisterGuestProfile(req, res, body);
     })

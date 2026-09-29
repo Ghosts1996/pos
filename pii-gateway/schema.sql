@@ -57,12 +57,27 @@ CREATE TABLE IF NOT EXISTS owner_registrations (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Реквизиты плательщиков по счёту (ИП и организации): у ИП ФИО и ИНН —
+-- персональные данные, поэтому сначала сюда (РФ), затем счёт в Firestore
+-- (saas-gateway, /createBankInvoice). Нужны для чека с ИНН покупателя в
+-- «Мой налог» (ст. 14 закона № 422-ФЗ).
+CREATE TABLE IF NOT EXISTS payer_requisites (
+  invoice_id  TEXT PRIMARY KEY,               -- номер счёта (bankInvoices/{id})
+  billing_id  TEXT NOT NULL,                  -- заведение или сеть
+  payer_type  TEXT NOT NULL,                  -- 'ip' | 'org'
+  name        TEXT NOT NULL DEFAULT '',
+  inn         TEXT NOT NULL,
+  kpp         TEXT NOT NULL DEFAULT '',
+  created_by  TEXT NOT NULL DEFAULT '',       -- uid владельца
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Схему применяет суперпользователь postgres (setup.sh) — права сервису
 -- выдаём явно, иначе он не сможет писать в новые таблицы.
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'pii_gateway') THEN
-    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations TO pii_gateway;
+    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations, payer_requisites TO pii_gateway;
     -- Гость удаляет свои данные сам (kind "guest_delete" в server.js).
     GRANT DELETE ON guest_profiles, contact_records TO pii_gateway;
   END IF;
