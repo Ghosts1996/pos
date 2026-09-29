@@ -87,15 +87,10 @@ class AppConstants {
   // Валюта, используемая в отображении цен и отчётов
   static const String currencySymbol = '₽';
 
-  // Специализация сотрудника внутри роли 'employee' (роль отвечает за
-  // ДЛИНУ PIN/доступ к настройкам, специализация — за то, КОМУ адресуется
-  // вызов гостя из-за стола, см. GuestCallTypeX.targetPosition в
-  // lib/models/client_models.dart и фильтр в session_alerts_service.dart).
-  // 'universal' — значение по умолчанию: и для уже существующих
-  // сотрудников (заведённых до этой фичи), и для новых, пока владелец не
-  // назначит специализацию явно — такой сотрудник видит и получает ВСЕ
-  // вызовы, ровно как было устроено раньше. Так апдейт ничего не ломает
-  // сам по себе: без единого действия владельца поведение не меняется.
+  // Специализация сотрудника: роль отвечает за длину PIN и доступ к
+  // настройкам, специализация — за то, кому адресован вызов гостя
+  // (GuestCallTypeX.targetPosition, session_alerts_service.dart).
+  // 'universal' по умолчанию — такой сотрудник получает все вызовы.
   static const String positionUniversal = 'universal';
   static const String positionWaiter = 'waiter';
   static const String positionHookahMaster = 'hookah_master';

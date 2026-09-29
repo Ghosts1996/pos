@@ -1,28 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/tenant_models.dart';
 
-/// Единая точка входа в Firestore для ВСЕХ сервисов приложения.
+/// Единая точка входа в Firestore для всех сервисов.
 ///
-/// По умолчанию (`tenantId == null`) ведёт себя ТОЧНО как прямой вызов
-/// `FirebaseFirestore.instance.collection(...)` — плоские коллекции
-/// верхнего уровня, как в одно-арендной версии. Это гарантирует, что
-/// существующее развёртывание (hoocah-pos) не меняет поведение ни на йоту,
-/// пока SaaS-режим не включён явно вызовом [enterTenant].
-///
-/// Когда SaaS-режим включён, каждый вызов [col]/[doc] автоматически
-/// подставляет префикс `tenants/{tenantId}/` — благодаря этому ни одному
-/// из ~35 файлов сервисов и экранов не пришлось переписывать бизнес-логику:
-/// изменилось только ТО, ЧЕРЕЗ ЧТО они обращаются к базе (было
-/// `FirebaseFirestore.instance.collection('sessions')`, стало
-/// `AppScope.col('sessions')`), а не КАК они читают/пишут данные.
-///
-/// Не требует интерцепции `.doc()`/`.where()`/`.snapshots()` и т.п. —
-/// они вызываются УЖЕ на результате [col]/[doc], то есть на настоящем
-/// `CollectionReference`/`DocumentReference` с уже правильным (вложенным
-/// или плоским) путём, и работают через обычный Firestore SDK без изменений.
-/// Транзакции и батчи (`FirebaseFirestore.instance.runTransaction/batch`)
-/// тоже не нуждаются в обёртке: они лишь читают/пишут по уже переданным им
-/// ссылкам на документы, которые сервис получил через [col]/[doc] заранее.
+/// Без заведения ([enterTenant] не вызывали) — плоские коллекции, как в
+/// сборке одного заведения (hoocah-pos). В SaaS [col]/[doc] подставляют
+/// префикс `tenants/{tenantId}/`, так что сервисам не нужно знать режим.
+/// Запросы, транзакции и батчи работают на уже полученных ссылках и обёртки
+/// не требуют.
 class AppScope {
   AppScope._();
 
@@ -94,25 +79,16 @@ class AppScope {
     return FirebaseFirestore.instance.collection(scopedPath(_tenantId, name));
   }
 
-  /// Документ по составному пути вида `"meta/aiSettings"` — для обычного
-  /// случая `коллекция.doc(id)` используйте `AppScope.col(name).doc(id)`,
-  /// этот метод — только для мест, где путь и так уже "коллекция/документ"
-  /// одной строкой (раньше — `FirebaseFirestore.instance.doc('meta/x')`).
+  /// Документ по пути «коллекция/документ» одной строкой, например
+  /// `"meta/aiSettings"`. Для обычного случая — `AppScope.col(name).doc(id)`.
   static DocumentReference<Map<String, dynamic>> doc(String path) {
     return FirebaseFirestore.instance.doc(scopedPath(_tenantId, path));
   }
 
-  /// Коллекции общей лояльности сети (clients/phoneIndex/referralCodes/
-  /// bonusOperations и соседние, см. [GuestLinkService]) — при активной
-  /// сети (см. [enterTenant]) живут в `chains/{chainId}/...`, а не в
-  /// `tenants/{tenantId}/...`, чтобы баланс/уровень/история гостя были
-  /// общими на все точки сети, а не свои на каждой точке в отдельности
-  /// (см. docstring "Сети заведений (chains)" в saas/firestore.rules).
-  ///
-  /// Для одиночного заведения ([chainId] == null, подавляющее большинство)
-  /// ведёт себя ИДЕНТИЧНО [col] — ни один вызывающий код не должен сам
-  /// решать, сеть это или нет, он просто всегда читает/пишет лояльность
-  /// через этот метод вместо [col].
+  /// Коллекции лояльности (clients, phoneIndex, referralCodes,
+  /// bonusOperations…). У точки сети они в `chains/{chainId}/...` — баланс и
+  /// история гостя общие на все точки; у одиночного заведения — как [col].
+  /// Лояльность всегда читаем и пишем через этот метод.
   static CollectionReference<Map<String, dynamic>> loyaltyCol(String name) {
     if (_chainId == null) return col(name);
     return FirebaseFirestore.instance.collection('chains/$_chainId/$name');

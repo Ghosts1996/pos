@@ -281,10 +281,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     final phone = rawPhone.isNotEmpty ? normalizePhone(rawPhone) : '';
     setState(() => _saving = true);
 
-    // try/finally обязателен. Раньше его не было, и любая ошибка внутри
-    // (а проверка занятости номера падала с permission-denied всегда)
-    // просто улетала наружу: _saving оставался true, и кнопка навсегда
-    // застревала на «Сохраняем…», не показывая никакой причины.
+    // finally — чтобы кнопка не застряла на «Сохраняем…» при любой ошибке.
     try {
       // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
       // ли он уже ДРУГИМ устройством, прежде чем сохранять.
@@ -294,9 +291,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           return;
         }
 
-        // Проверка идёт по обезличенному указателю phoneIndex, а не
-        // запросом по коллекции clients: запрос гостю запрещён правилами,
-        // и именно он раньше ронял сохранение.
+        // Проверка по указателю phoneIndex: запрос по clients гостю
+        // правила не разрешают.
         if (await _link.isPhoneTakenByOther(phone, _auth.uid)) {
           if (!mounted) return;
           await showDialog(
@@ -304,9 +300,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             builder: (_) => AlertDialog(
               scrollable: true,
               title: const Text('Номер уже зарегистрирован'),
-              // Про чужой профиль не рассказываем ничего — ни имени, ни
-              // баланса: раньше здесь показывался бонусный счёт другого
-              // человека любому, кто угадал его номер телефона.
+              // Про чужой профиль ничего не рассказываем — ни имени, ни
+              // баланса: иначе их увидел бы любой, кто угадал номер.
               content: Text(
                 'На этот номер уже есть профиль. Чтобы его бонусы и история '
                 'появились на этом устройстве, назовите ${VenueService.instance.terms.staffDat} номер и '
@@ -338,11 +333,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
-  /// Человеческая подпись к бонусной операции.
-  ///
-  /// Раньше любое начисление подписывалось «за визит» — и бонусы за
-  /// сертификат или за приведённого друга выглядели как поход в кальянную,
-  /// которого не было.
+  /// Подпись к бонусной операции: визит, сертификат, приглашённый друг.
   String _bonusReason(String? reason, bool accrual) {
     switch (reason) {
       case 'giftCard':

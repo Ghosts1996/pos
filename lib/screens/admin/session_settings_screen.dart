@@ -5,10 +5,8 @@ import '../../utils/constants.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
 
-/// Настройка длительности сеанса кальяна — у каждого заведения на платформе
-/// своё правило (где-то 1 час, где-то 2, где-то вообще без таймера), а
-/// раньше это было общим хардкодом на 1.5 часа (AppConstants.defaultSessionMinutes)
-/// одинаковым для всех. См. AppConstants.sessionMinutes/loadSessionDurationSettings.
+/// Длительность сеанса кальяна — у каждого заведения своя (час, два, без
+/// таймера). См. AppConstants.sessionMinutes/loadSessionDurationSettings.
 class SessionSettingsScreen extends StatefulWidget {
   const SessionSettingsScreen({super.key});
 

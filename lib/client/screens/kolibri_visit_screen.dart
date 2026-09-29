@@ -33,23 +33,16 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   final _link = GuestLinkService();
   final _auth = KolibriAuthService();
 
-  // Раз в секунду здесь перестраивался ВЕСЬ экран: список позиций счёта,
-  // кнопки вызова, карточки — ради одной надписи с обратным отсчётом.
-  // На слабых телефонах это давало заметные подтормаживания и грело
-  // батарею впустую. Теперь тикает только сам счётчик (TickerBuilder), и
-  // от общего таймера приложения, а не от собственного.
+  // Раз в секунду тикает только счётчик (TickerBuilder от общего таймера),
+  // а не весь экран со счётом и кнопками.
 
   @override
   Widget build(BuildContext context) {
     final sessionId = widget.profile?.activeSessionId ?? '';
 
-    // Гость уже не за столом. Но если последний визит закрыт только что и
-    // оценка за него не поставлена — показываем «Спасибо за визит».
-    //
-    // Раньше этот экран строился на activeSessionId, а касса обнуляет его
-    // при оплате: предложение оценить визит появлялось и пропадало в тот
-    // же миг. Теперь оно держится на записи визита, которая никуда не
-    // денется, и живёт, пока гость не оценит или не закроет его.
+    // Гость уже не за столом, но последний визит закрыт только что и не
+    // оценён — показываем «Спасибо за визит». Держится на записи визита, а
+    // не на activeSessionId: его касса обнуляет при оплате.
     if (sessionId.isEmpty) {
       final last = widget.profile?.lastVisitId ?? '';
       final rated = widget.profile?.ratedVisitId ?? '';
@@ -366,8 +359,6 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                       contentPadding: EdgeInsets.zero,
                       // Касса ведёт заказ так: new → preparing (принят в
                       // чек) → ready (несём к столу); rejected — отклонён.
-                      // Раньше здесь проверялся несуществующий 'accepted', и
-                      // гость до конца видел «Ждёт подтверждения».
                       leading: Icon(
                         _orderAccepted(o.status)
                             ? Icons.check_circle
@@ -608,11 +599,8 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   Widget _callButton(SessionModel s, GuestCallType type, IconData icon) {
     final pending = _pendingCalls.contains(type);
     return OutlinedButton.icon(
-      // Кнопка не ждёт сеть: запись уходит в Firestore, который применяет
-      // её локально мгновенно и сам дошлёт на сервер. Раньше здесь стоял
-      // await, и на слабой связи кнопка висела секундами — гость успевал
-      // нажать её несколько раз, а кальянщик получал пачку одинаковых
-      // вызовов (ровно это и видно на экране с восемью «крутилками»).
+      // Кнопка не ждёт сеть: Firestore применит запись локально и сам
+      // дошлёт. С await на слабой связи кнопку жали по нескольку раз.
       onPressed: pending
           ? null
           : () {
@@ -625,10 +613,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                 guestName: widget.profile?.name ?? '',
               );
               setState(() => _pendingCalls.add(type));
-              // Кому именно передали — зависит от типа вызова (см.
-              // GuestCallTypeX.targetPosition): раньше тут было зашито
-              // "кальянщику" для всех типов, включая счёт и (после этой
-              // правки) вызов официанта — что было бы просто неверно.
+              // Кому передали — по типу вызова (GuestCallTypeX.targetPosition).
               final toWhom = type.targetPosition == AppConstants.positionWaiter
                   ? 'официанту'
                   : VenueService.instance.terms.staffDat;

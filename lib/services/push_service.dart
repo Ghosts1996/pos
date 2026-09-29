@@ -7,29 +7,19 @@ import 'venue_service.dart';
 import '../models/employee.dart';
 import '../utils/constants.dart';
 
-/// Push-уведомления через Firebase Cloud Messaging.
+/// Push-уведомления через FCM.
 ///
-/// Отправка идёт не с устройства (ключ сервера нельзя класть в APK), а через
-/// очередь: приложение пишет документ в `pushQueue`, Cloud Function
-/// `sendQueuedPush` его забирает и рассылает (см. functions/index.js).
+/// Ключ сервера в APK класть нельзя, поэтому приложение пишет задание в
+/// `pushQueue`, а рассылает Cloud Function `sendQueuedPush` (functions/ в
+/// корне, только сборка одного заведения на Blaze).
 ///
-/// Топики персонала — НЕ один голый `staff` (так было раньше — в SaaS это
-/// вдобавок значило бы, что все заведения платформы сидят на одном топике,
-/// а вызов гостя из одного заведения будил бы персонал другого). Схема:
-///   `staff-{scope}-all` — общий канал (новая бронь и т.п., касается всех
-///   независимо от специализации);
-///   `staff-{scope}-{position}` — конкретная специализация
-///   (waiter/hookah_master/bartender, см. AppConstants.position*) — на них
-///   рассылаются вызовы гостя из-за стола (см. GuestCallTypeX.targetPosition
-///   и onWaiterCall в functions/index.js).
-/// `scope` — tenantId в SaaS-режиме (изоляция между заведениями платформы),
-/// либо `default` в одно-арендном режиме.
+/// Топики персонала: `staff-{scope}-all` — общий канал (брони и т.п.),
+/// `staff-{scope}-{position}` — специализация (waiter, hookah_master,
+/// bartender) для вызовов гостя. `scope` — tenantId в SaaS или `default`,
+/// чтобы вызовы одного заведения не будили персонал другого.
 ///
-/// Устройство подписывается на "all" сразу при старте ([initStaff]) — общий
-/// канал не зависит от того, кто именно вошёл. На топики специализации
-/// подписывает [updateStaffPositionSubscription] — вызывается ПОСЛЕ
-/// PIN-входа, когда уже известно, кто на этом устройстве работает: до
-/// входа неизвестно, кому какие вызовы показывать.
+/// На «all» устройство подписывается при старте ([initStaff]), на
+/// специализацию — после PIN-входа ([updateStaffPositionSubscription]).
 class PushService {
   PushService._();
   static final PushService instance = PushService._();
@@ -62,13 +52,10 @@ class PushService {
     await _fcm.subscribeToTopic(_allStaffTopic);
   }
 
-  /// Переподписывает устройство на топики специализации ПОСЛЕ успешного
-  /// PIN-входа сотрудника. Сначала отписывается от ВСЕХ — на общем
-  /// планшете смена сотрудника ("Сменить сотрудника" в EmployeeDrawer) не
-  /// должна оставлять вызовы прошлого сотрудника прилетать следующему.
-  /// Универсал (значение по умолчанию, см. Employee.position) и админ
-  /// получают вызовы всех специализаций — ровно как было устроено раньше,
-  /// пока владелец никого не специализировал явно.
+  /// Переподписывает устройство на топики специализации после PIN-входа.
+  /// Сначала отписывается от всех: после «Сменить сотрудника» вызовы
+  /// прошлого не должны приходить следующему. Универсал и админ получают
+  /// все специализации.
   Future<void> updateStaffPositionSubscription(Employee employee) async {
     if (Platform.isWindows) return;
     for (final p in _allPositions) {
@@ -138,14 +125,10 @@ class PushService {
     await enqueue(token: token, title: title, body: body, data: data);
   }
 
-  /// Кладёт задание в очередь `pushQueue`. Разбирает её Cloud Function
-  /// `sendQueuedPush` — а она есть только на платном тарифе Blaze.
-  ///
-  /// Поэтому без функций мы в очередь НЕ пишем: раньше документы копились
-  /// там мёртвым грузом (гость их всё равно не получал), впустую съедая
-  /// лимит записей бесплатного тарифа. Уведомления в этом случае
-  /// показывают сами приложения: POS — локальные уведомления зала, гость —
-  /// KolibriNotifications.
+  /// Кладёт задание в `pushQueue`. Без Cloud Functions очередь никто не
+  /// разбирает, поэтому пишем только при `cloudFunctionsEnabled` — иначе
+  /// уведомления показывают сами приложения (касса — локальные, гость —
+  /// KolibriNotifications).
   Future<void> enqueue({
     String? topic,
     String? token,
