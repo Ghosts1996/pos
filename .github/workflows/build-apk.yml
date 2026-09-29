@@ -10,7 +10,7 @@ on:
 # иконкой:
 #
 #   POS            lib/main.dart                → com.hookahpos      → hookah-pos-apk
-#   Colibri Lounge lib/client/kolibri_main.dart → com.kolibrilounge  → kolibri-lounge-apk
+#   Гость          lib/client/kolibri_main.dart → com.kolibrilounge  → kolibri-lounge-apk
 #
 # Разные applicationId обязательны: с одинаковым id второй APK затирает
 # первый при установке на одно устройство и их нельзя развести в Play.
@@ -37,7 +37,7 @@ jobs:
           - app: kolibri
             entrypoint: lib/client/kolibri_main.dart
             project_name: kolibrilounge      # applicationId = com.kolibrilounge
-            label: Colibri Lounge
+            label: ZalPOS Гость
             icon: assets/icon/kolibri.png
             adaptiveIcon: assets/icon/kolibri_foreground.png
             adaptiveBg: '#000000'
@@ -396,7 +396,7 @@ jobs:
         run: |
           # Без своего keystore release подписывается debug-ключом, новым на
           # каждом запуске CI: SHA-1 меняется, ломаются вход по SMS в
-          # «Colibri Lounge» и обновление поверх. Подписываем постоянным
+          # приложении гостя и обновление поверх. Подписываем постоянным
           # ключом из секретов; нет секретов — предупреждаем и собираем так.
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."

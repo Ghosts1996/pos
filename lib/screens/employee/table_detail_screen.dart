@@ -5,6 +5,7 @@ import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/timer_display.dart';
 import '../../widgets/clock_ticker.dart';
 import '../../theme/app_colors.dart';
@@ -328,12 +329,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   /// Показывает список всех открытых чеков стола: можно переключиться на
   /// другой чек или открыть новый (если позволяет лимит maxOpenSessions).
   Future<void> _pickAnotherCheck(TableModel t) async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      builder: (_) => _CheckPickerSheet(table: t, fs: _fs, currentId: _sessionId),
-    );
-    if (choice == null) return;
-    if (choice == '__new__') {
+    final choice = await TableChecksSheet.show(context, table: t, currentId: _sessionId);
+    if (choice == null || !mounted) return;
+    if (choice == TableChecksSheet.newCheck) {
       await _startSession();
     } else {
       setState(() => _sessionId = choice);
@@ -1016,64 +1014,6 @@ class _MoveTableScreen extends StatelessWidget {
                 ),
               );
             },
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Нижний лист со списком открытых чеков стола + возможность открыть новый.
-class _CheckPickerSheet extends StatelessWidget {
-  final TableModel table;
-  final FirestoreService fs;
-  final String? currentId;
-
-  const _CheckPickerSheet({required this.table, required this.fs, required this.currentId});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: StreamBuilder<List<SessionModel>>(
-        stream: fs.activeSessionsStream(table.id),
-        builder: (context, snap) {
-          final sessions = snap.data ?? [];
-          // Много чеков на низком экране — список прокручивается.
-          return SingleChildScrollView(
-            child: Wrap(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Text('Чеки за столом', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                if (!snap.hasData)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ...sessions.asMap().entries.map((e) {
-                  final index = e.key;
-                  final s = e.value;
-                  final isCurrent = s.id == currentId;
-                  final title = s.guestTag.isEmpty
-                      ? 'Чек ${index + 1} · ${s.employeeName}'
-                      : 'Чек ${index + 1} · ${s.guestTag}';
-                  return ListTile(
-                    leading: Icon(isCurrent ? Icons.radio_button_checked : Icons.receipt_outlined),
-                    title: Text(title),
-                    subtitle: Text(
-                        '${s.employeeName} · ${rub(s.totalWithDiscount)}'),
-                    onTap: () => Navigator.pop(context, s.id),
-                  );
-                }),
-                if (table.activeSessionIds.length < table.maxOpenSessions)
-                  ListTile(
-                    leading: const Icon(Icons.add_circle_outline),
-                    title: const Text('Открыть новый чек'),
-                    onTap: () => Navigator.pop(context, '__new__'),
-                  ),
-              ],
-            ),
           );
         },
       ),

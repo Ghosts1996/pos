@@ -108,12 +108,12 @@ class VenueService {
   // ---------- БАЗА ЗНАНИЙ ДЛЯ ИИ ----------
 
   /// Название заведения для чека и ИИ: из профиля, иначе имя приложения из
-  /// брендинга (SaaS), иначе — исторический бренд одно-арендной сборки.
+  /// брендинга (SaaS), иначе пусто.
   static String displayNameOf(VenueProfile p) {
     if (p.name.trim().isNotEmpty) return p.name.trim();
     final brand = AppScope.branding?.appName.trim() ?? '';
     if (brand.isNotEmpty) return brand;
-    return AppScope.isSaasMode ? '' : 'Colibri Lounge';
+    return '';
   }
 
   /// true — владелец так и не заполнил часы работы ни на один день. Гостевая

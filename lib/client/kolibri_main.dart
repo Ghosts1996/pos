@@ -54,7 +54,7 @@ void main() async {
 
   String? startupError;
   var ready = false;
-  var appTitle = kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
+  var appTitle = 'ZalPOS';
 
   if (DefaultFirebaseOptions.isConfigured) {
     try {
@@ -74,7 +74,7 @@ void main() async {
         // Бренд заведения (имя, лого, цвета — раздел «Брендинг» в личном
         // кабинете) применяется ДО первого runApp(), чтобы первый же кадр
         // уже был в цветах заведения, а не мигал дефолтной палитрой
-        // "Colibri Lounge". Требует ensureGuest() до себя: правило
+        // "ZalPOS". Требует ensureGuest() до себя: правило
         // isTenantGuest() в saas/firestore.rules пускает гостя к
         // branding/config только когда его профиль в clients/{tenantId}/{uid}
         // уже существует (см. её же комментарий там).
@@ -143,7 +143,7 @@ Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
 /// Подтягивает branding/config текущего заведения (см. AppScope.enterTenant
 /// выше) и накладывает его на [KolibriColors] — см. её же docstring и
 /// [KolibriColors.applyBranding]. Нет сети/документа — гость просто видит
-/// дефолтную палитру "Colibri Lounge", а не ошибку (возвращает null):
+/// палитру по умолчанию, а не ошибку (возвращает null):
 /// свежий брендинг подтянется при следующем удачном запуске.
 Future<BrandingConfig?> _applyTenantBranding() async {
   try {
@@ -195,7 +195,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   _ChainBootPhase _phase = _ChainBootPhase.loading;
   String? _error;
   ChainDirectory? _directory;
-  String _appTitle = kSaasMode ? 'ZalPOS' : 'Colibri Lounge';
+  String _appTitle = 'ZalPOS';
   bool _picking = false;
 
   @override
@@ -314,7 +314,7 @@ class KolibriApp extends StatelessWidget {
     super.key,
     required this.ready,
     this.startupError,
-    this.title = kSaasMode ? 'ZalPOS' : 'Colibri Lounge',
+    this.title = 'ZalPOS',
   });
 
   @override

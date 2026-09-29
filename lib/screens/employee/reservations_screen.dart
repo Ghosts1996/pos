@@ -22,7 +22,7 @@ import '../../utils/adaptive.dart';
 
 /// Экран хостес: брони на выбранный день в реальном времени.
 /// Сюда мгновенно прилетают брони из клиентского приложения
-/// «Colibri Lounge» — подтверждение, назначение стола, посадка.
+/// приложения гостя — подтверждение, назначение стола, посадка.
 class ReservationsScreen extends StatefulWidget {
   final Employee employee;
   const ReservationsScreen({super.key, required this.employee});
@@ -636,7 +636,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     final start = DateTime(_day.year, _day.month, _day.day, time.hour, time.minute);
     final phone = _normalizePhone(phoneCtrl.text.trim());
 
-    // Если гость уже ставил себе телефон в «Colibri Lounge» — находим его
+    // Если гость уже ставил себе телефон в приложении гостя — находим его
     // профиль и привязываем бронь к нему: тогда она сразу появится в его
     // приложении и придёт пуш о подтверждении. Если профиля ещё нет —
     // бронь всё равно создаётся, просто без привязки (гость не увидит её
@@ -669,7 +669,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   }
 
   /// Приводит номер к формату, в котором он хранится в профиле гостя
-  /// («Colibri Lounge» использует Firebase Phone Auth — там номер всегда
+  /// (приложение гостя использовало Firebase Phone Auth — там номер всегда
   /// в E.164: +7XXXXXXXXXX). Без этого поиск по строке findByPhone почти
   /// никогда не совпадёт с тем, что ввёл сотрудник.
   String _normalizePhone(String raw) {

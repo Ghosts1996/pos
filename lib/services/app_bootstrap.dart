@@ -66,7 +66,7 @@ void startBackgroundServices() {
   GiftCardService.instance.watchClaims();
 
   // Автостоп-лист следит за остатками и сам убирает из меню то, чего
-  // нет в зале, — иначе гость закажет это в «Colibri Lounge».
+  // нет в зале, — иначе гость закажет это в приложении.
   AutoStopListService.instance.start();
 
   // Фоновые ИИ-задания. Замок внутри планировщика гарантирует, что
