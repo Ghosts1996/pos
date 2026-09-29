@@ -700,7 +700,10 @@ function screenMenu() {
 
   let cats = [];
   let items = [];
+  // Как в кассе: null — плитки категорий, id — открытая категория,
+  // '__tobacco' — перечень табака.
   let activeCat = null;
+  let search = '';
 
   const draw = () => {
     const box = $('menu');
@@ -709,28 +712,31 @@ function screenMenu() {
       box.innerHTML = `<p class="muted">Меню пока пустое.</p>`;
       return;
     }
-    // Отдельный чип «Всё меню»: гость чаще хочет посмотреть всё сразу,
-    // чем перебирать категории — особенно когда их много.
     const atTable = !!(state.profile && state.profile.activeSessionId);
     const catName = (id) => (cats.find((c) => c.id === id) || {}).name || '';
     const tobacco = (i) => i.tobacco === true || TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
-    const visible = atTable ? items : items.filter((i) => !tobacco(i));
-    const hidden = items.length - visible.length;
-    const visibleCats = atTable ? cats : cats.filter((c) =>
-      !TOBACCO_RE.test(c.name || '') && visible.some((i) => i.categoryId === c.id));
+    const regular = items.filter((i) => !tobacco(i));
+    // Табак — только гостю за столом: продавать его дистанционно нельзя.
+    // Показываем отдельным строгим перечнем (ст. 19 закона № 15-ФЗ): чёрные
+    // буквы одного размера на белом, по алфавиту, с ценой, без изображений.
+    const tobaccoItems = atTable ? items.filter(tobacco) : [];
+    const hidden = atTable ? 0 : items.length - regular.length;
 
-    const known = visibleCats.map((c) => c.id);
-    if (activeCat !== 'all' && (!activeCat || !known.includes(activeCat))) activeCat = 'all';
+    // Категории в порядке справочника; позиции без категории — «Прочее».
+    const sections = [];
+    const known = new Set();
+    cats.forEach((c) => {
+      known.add(c.id);
+      const list = regular.filter((i) => i.categoryId === c.id);
+      if (list.length) sections.push({ id: c.id, name: c.name || '', imageUrl: c.imageUrl || '', items: list });
+    });
+    const rest = regular.filter((i) => !known.has(i.categoryId));
+    if (rest.length) sections.push({ id: '__other', name: 'Прочее', imageUrl: '', items: rest });
+    if (activeCat === '__tobacco' ? !tobaccoItems.length : activeCat && !sections.some((s) => s.id === activeCat)) {
+      activeCat = null;
+    }
 
-    const inCat = activeCat === 'all'
-      ? visible
-      : visible.filter((i) => i.categoryId === activeCat);
-    // Табак, кальяны и принадлежности — отдельным строгим перечнем
-    // (ст. 19 закона № 15-ФЗ): чёрные буквы одного размера на белом, по
-    // алфавиту, с ценой, без изображений — кнопки заказа тоже текстом.
-    const shown = inCat.filter((i) => !tobacco(i));
-    const tobaccoItems = inCat.filter(tobacco)
-      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+    const isHit = (i) => Number(i.popularRank) > 0 && Number(i.popularRank) <= 5;
     const qtyControls = (i) => `
               <div class="qty">
                 ${state.cart[i.id] ? `
@@ -738,49 +744,83 @@ function screenMenu() {
                   <span>${state.cart[i.id]}</span>` : ''}
                 <button data-plus="${esc(i.id)}">+</button>
               </div>`;
+    const itemCard = (i) => `
+      <div class="mcard${state.cart[i.id] ? ' on' : ''}">
+        <div class="mphoto">${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+          ${isHit(i) ? '<span class="hit">Хит</span>' : ''}</div>
+        <div class="mbody">
+          <div class="mname">${esc(i.name)}</div>
+          ${i.description ? `<div class="small muted mdesc">${esc(i.description)}</div>` : ''}
+          <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable ? qtyControls(i) : ''}</div>
+        </div>
+      </div>`;
+    const tobaccoBlock = (list) => `
+      <div class="tobacco-list">
+        <p>Табачная и никотинсодержащая продукция, кальяны. Продажа лицам младше 18 лет запрещена.</p>
+        ${[...list].sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru')).map((i) => `
+          <div class="tobacco-row">
+            <span class="name">${esc(i.name)} — <span class="nowrap">${money(i.price)}</span></span>
+            ${qtyControls(i)}
+          </div>`).join('')}
+      </div>`;
+    const backBar = (title) => `
+      <div class="backbar"><button data-back aria-label="Все категории">←</button><h2>${esc(title)}</h2></div>`;
+
+    const q = search.trim().toLowerCase();
+    let body;
+    if (q) {
+      // Поиск — по всему меню сразу, как в кассе.
+      const match = (i) => String(i.name || '').toLowerCase().includes(q)
+        || String(i.description || '').toLowerCase().includes(q);
+      const found = regular.filter(match);
+      const foundTobacco = tobaccoItems.filter(match);
+      body = found.length || foundTobacco.length
+        ? `<div class="mgrid">${found.map(itemCard).join('')}</div>${foundTobacco.length ? tobaccoBlock(foundTobacco) : ''}`
+        : '<p class="muted">Ничего не найдено.</p>';
+    } else if (activeCat === '__tobacco') {
+      body = backBar('Табак и кальяны') + tobaccoBlock(tobaccoItems);
+    } else if (activeCat) {
+      const s = sections.find((x) => x.id === activeCat);
+      body = `${backBar(s.name)}<div class="mgrid">${s.items.map(itemCard).join('')}</div>`;
+    } else {
+      const hits = regular.filter(isHit).sort((a, b) => Number(a.popularRank) - Number(b.popularRank));
+      body = `
+        ${hits.length ? `<h2 class="mh">Популярное</h2><div class="mstrip">${hits.map(itemCard).join('')}</div>` : ''}
+        ${sections.length ? '<h2 class="mh">Категории</h2>' : ''}
+        <div class="cgrid">${sections.map((s) => {
+          const img = s.imageUrl || (s.items.find((i) => i.imageUrl) || {}).imageUrl || '';
+          return `<button class="ctile" data-cat="${esc(s.id)}">
+            ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : ''}
+            <span class="cname">${esc(s.name)}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
+          </button>`;
+        }).join('')}</div>
+        ${tobaccoItems.length ? `<button class="tobacco-tile" data-cat="__tobacco">Табачная и никотинсодержащая
+          продукция, кальяны — перечень. Продажа лицам младше 18 лет запрещена.</button>` : ''}
+        ${hidden ? `<p class="small muted">Часть позиций (18+) видна только в заведении,
+          когда вы за столом.</p>` : ''}`;
+    }
 
     box.innerHTML = `
-      <div>
-        <span class="chip ${activeCat === 'all' ? 'on' : ''}" data-cat="all">Всё меню</span>
-        ${visibleCats.map((c) => `
-          <span class="chip ${c.id === activeCat ? 'on' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</span>
-        `).join('')}</div>
-
-      <div class="card">
-        ${shown.length ? shown.map((i) => `
-          <div class="item">
-            ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
-            <div class="grow">
-              <div style="font-weight:600">${esc(i.name)}${Number(i.popularRank) > 0 && Number(i.popularRank) <= 5
-                ? ' <span class="hit">Хит</span>' : ''}</div>
-              ${i.description ? `<div class="small muted" style="margin:2px 0">${esc(i.description)}</div>` : ''}
-              <div class="small muted">${money(i.price)}${activeCat === 'all'
-                ? ' · ' + esc(catName(i.categoryId))
-                : ''}</div>
-            </div>
-            ${atTable ? qtyControls(i) : ''}
-          </div>
-        `).join('') : tobaccoItems.length ? '' : `<p class="muted small">В этой категории пока пусто.</p>`}
-      </div>
-      ${tobaccoItems.length ? `
-        <div class="tobacco-list">
-          <p>Табачная и никотинсодержащая продукция, кальяны. Продажа лицам младше 18 лет запрещена.</p>
-          ${tobaccoItems.map((i) => `
-            <div class="tobacco-row">
-              <span class="name">${esc(i.name)} — <span class="nowrap">${money(i.price)}</span></span>
-              ${qtyControls(i)}
-            </div>`).join('')}
-        </div>` : ''}
-      ${hidden ? `<p class="small muted">Часть позиций (18+) видна только в заведении,
-        когда вы за столом.</p>` : ''}
-
+      <input id="menuSearch" class="msearch" type="search" placeholder="Поиск по меню" value="${esc(search)}">
+      ${body}
       ${atTable ? cartBlock() : `
         <p class="small muted">Чтобы заказать из приложения, откройте свой
         стол — отсканируйте QR-код на столе камерой телефона.</p>`}
     `;
 
+    const input = $('menuSearch');
+    input.oninput = () => {
+      search = input.value;
+      draw();
+      const again = $('menuSearch');
+      again.focus();
+      again.setSelectionRange(again.value.length, again.value.length);
+    };
     box.querySelectorAll('[data-cat]').forEach((el) => {
-      el.onclick = () => { activeCat = el.dataset.cat; draw(); };
+      el.onclick = () => { activeCat = el.dataset.cat; draw(); window.scrollTo(0, 0); };
+    });
+    box.querySelectorAll('[data-back]').forEach((el) => {
+      el.onclick = () => { activeCat = null; draw(); };
     });
     box.querySelectorAll('[data-plus]').forEach((el) => {
       el.onclick = () => { addToCart(el.dataset.plus, items); draw(); };

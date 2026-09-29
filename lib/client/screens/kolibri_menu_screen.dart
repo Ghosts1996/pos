@@ -12,12 +12,10 @@ import '../../utils/table_label.dart';
 import '../../utils/money.dart';
 import '../../utils/promo_policy.dart';
 
-/// Живое меню заведения для гостя.
-///
-/// Позиции сгруппированы по категориям с заголовками — сплошной список
-/// вперемешку читать невозможно. Категории, которых нет в справочнике
-/// (позиция без categoryId или с удалённой категорией), собираются в
-/// блок «Прочее», а не теряются.
+/// Живое меню заведения для гостя — как в кассе: сначала плитки категорий
+/// с фото (и «Популярное» лентой), внутри категории — карточки позиций
+/// сеткой, поиск — плоским списком по всему меню. Позиции без категории
+/// собираются в «Прочее», а не теряются.
 ///
 /// Табак по закону № 15-ФЗ нельзя рекламировать и продавать дистанционно,
 /// а в месте продажи его показывают списком без изображений. Поэтому
@@ -57,6 +55,13 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             atTable: !widget.preOrderMode && (snap.data?.activeSessionId.isNotEmpty ?? false)),
       );
 
+  /// Табак, кальяны и принадлежности — не плиткой с фото, а отдельной
+  /// «категорией» со строгим перечнем (ст. 19 закона № 15-ФЗ).
+  static const _tobaccoKey = '__tobacco';
+  static const _otherKey = '__other';
+
+  static int _byName(MenuItem a, MenuItem b) => _alphaKey(a.name).compareTo(_alphaKey(b.name));
+
   Widget _menuBody({required bool atTable}) {
     return StreamBuilder<List<MenuCategory>>(
       stream: _categories,
@@ -82,108 +87,458 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final all = atTable ? itemSnap.data! : itemSnap.data!.where((i) => !tobacco(i)).toList();
-            final hidden = itemSnap.data!.length - all.length;
-            final categories = atTable
-                ? allCategories
-                : allCategories.where((c) =>
-                    !PromoPolicy.looksTobacco(c.name) && all.any((i) => i.categoryId == c.id)).toList();
-            final categoryId = categories.any((c) => c.id == _categoryId) ? _categoryId : '';
-            final filtered = all.where((i) {
-              final okCat = categoryId.isEmpty || i.categoryId == categoryId;
-              final okSearch =
-                  _search.isEmpty || i.name.toLowerCase().contains(_search.toLowerCase());
-              return okCat && okSearch;
-            }).toList();
+            final items = itemSnap.data!;
+            final regular = items.where((i) => !tobacco(i)).toList();
+            // Табак — только гостю за столом: продавать его дистанционно нельзя.
+            final tobaccoItems = atTable ? (items.where(tobacco).toList()..sort(_byName)) : <MenuItem>[];
+            final hidden = atTable ? 0 : items.length - regular.length;
 
-            // Табак, кальяны и принадлежности — отдельным строгим перечнем
-            // (ст. 19 закона № 15-ФЗ), не карточками с фото.
-            final tobaccoItems = filtered.where(tobacco).toList()
-              ..sort((a, b) => _alphaKey(a.name).compareTo(_alphaKey(b.name)));
-            final regular = filtered.where((i) => !tobacco(i)).toList();
-
-            // Группируем по категориям в порядке справочника, остаток — в «Прочее».
-            final sections = <({String title, List<MenuItem> items})>[];
-            final used = <String>{};
-            for (final c in categories) {
-              final items = regular.where((i) => i.categoryId == c.id).toList()
-                ..sort((a, b) => a.name.compareTo(b.name));
-              if (items.isEmpty) continue;
-              used.add(c.id);
-              sections.add((title: c.name, items: items));
+            // Категории — плитками, как в кассе, в порядке справочника;
+            // позиции без категории собираются в «Прочее», а не теряются.
+            final sections = <_MenuSection>[];
+            final known = <String>{};
+            for (final c in allCategories) {
+              known.add(c.id);
+              final list = regular.where((i) => i.categoryId == c.id).toList()..sort(_byName);
+              if (list.isNotEmpty) sections.add(_MenuSection(c.id, c.name, c.imageUrl, list));
             }
-            final rest = regular.where((i) => !used.contains(i.categoryId)).toList()
-              ..sort((a, b) => a.name.compareTo(b.name));
-            if (rest.isNotEmpty) sections.add((title: 'Прочее', items: rest));
+            final rest = regular.where((i) => !known.contains(i.categoryId)).toList()..sort(_byName);
+            if (rest.isNotEmpty) sections.add(_MenuSection(_otherKey, 'Прочее', '', rest));
 
-            return Column(
-              children: [
-                _searchBar(),
-                if (categories.isNotEmpty) _categoryChips(categories, categoryId),
-                Expanded(
-                  child: sections.isEmpty && tobaccoItems.isEmpty
-                      ? Center(
-                          child: Text('Ничего не найдено',
-                              style: TextStyle(color: KolibriColors.textMuted)))
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
-                          itemCount: sections.length + (tobaccoItems.isNotEmpty ? 1 : 0) + (hidden > 0 ? 1 : 0),
-                          itemBuilder: (_, s) {
-                            if (s == sections.length && tobaccoItems.isNotEmpty) {
-                              return _tobaccoList(tobaccoItems, first: sections.isEmpty);
-                            }
-                            if (s >= sections.length) {
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 18),
-                                child: Text(
-                                    'Часть позиций (18+) видна только в заведении, когда вы за столом.',
-                                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
-                              );
-                            }
-                            final section = sections[s];
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: EdgeInsets.only(top: s == 0 ? 4 : 22, bottom: 10),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 3,
-                                        height: 18,
-                                        decoration: BoxDecoration(
-                                          color: KolibriColors.primary,
-                                          borderRadius: BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        section.title,
-                                        style: const TextStyle(
-                                            fontSize: 18, fontWeight: FontWeight.w700),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text('${section.items.length}',
-                                          style: TextStyle(
-                                              color: KolibriColors.textMuted, fontSize: 13)),
-                                    ],
-                                  ),
-                                ),
-                                ...section.items.map((item) => Padding(
-                                      padding: const EdgeInsets.only(bottom: 10),
-                                      child: _itemTile(item),
-                                    )),
-                              ],
-                            );
-                          },
-                        ),
+            final q = _search.trim().toLowerCase();
+            final Widget body;
+            if (q.isNotEmpty) {
+              bool match(MenuItem i) => i.name.toLowerCase().contains(q) || i.description.toLowerCase().contains(q);
+              body = _searchResults(regular.where(match).toList()..sort(_byName), tobaccoItems.where(match).toList());
+            } else if (_categoryId == _tobaccoKey && tobaccoItems.isNotEmpty) {
+              body = _categoryPage(
+                'Табак и кальяны',
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 140),
+                  children: [_tobaccoList(tobaccoItems, first: true)],
                 ),
-                if (_cart.isNotEmpty) _cartBar(),
-              ],
+              );
+            } else {
+              final open = sections.where((s) => s.id == _categoryId).firstOrNull;
+              body = open != null
+                  ? _categoryPage(open.name, _itemsGrid(open.items))
+                  : _categoryGrid(sections, regular, hasTobacco: tobaccoItems.isNotEmpty, hidden: hidden);
+            }
+
+            return PopScope(
+              // «Назад» из категории возвращает к плиткам, а не закрывает меню.
+              canPop: _categoryId.isEmpty,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop) setState(() => _categoryId = '');
+              },
+              child: Column(
+                children: [
+                  _searchBar(),
+                  Expanded(child: body),
+                  if (_cart.isNotEmpty) _cartBar(),
+                ],
+              ),
             );
           },
         );
       },
+    );
+  }
+
+  /// Главный экран меню: «Популярное» лентой и плитки категорий с фото.
+  Widget _categoryGrid(List<_MenuSection> sections, List<MenuItem> regular,
+      {required bool hasTobacco, required int hidden}) {
+    if (sections.isEmpty && !hasTobacco) {
+      return Center(child: Text('Меню пока пустое', style: TextStyle(color: KolibriColors.textMuted)));
+    }
+    final hits = regular.where((i) => i.isHit).toList()..sort((a, b) => a.popularRank.compareTo(b.popularRank));
+    return CustomScrollView(
+      slivers: [
+        if (hits.isNotEmpty) ...[
+          SliverToBoxAdapter(child: _heading('Популярное')),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 232,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: hits.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (_, i) => SizedBox(width: 156, child: _itemCard(hits[i])),
+              ),
+            ),
+          ),
+        ],
+        if (sections.isNotEmpty) SliverToBoxAdapter(child: _heading('Категории')),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          sliver: SliverGrid(
+            // Ширина плитки, а не число колонок: на телефоне 2–3 плитки в
+            // ряд, на планшете больше, как в кассе.
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 190,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.92,
+            ),
+            delegate: SliverChildBuilderDelegate((_, i) => _categoryTile(sections[i]), childCount: sections.length),
+          ),
+        ),
+        if (hasTobacco) SliverToBoxAdapter(child: _tobaccoTile()),
+        if (hidden > 0)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+              child: Text('Часть позиций (18+) видна только в заведении, когда вы за столом.',
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 140)),
+      ],
+    );
+  }
+
+  Widget _heading(String text) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        child: Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+      );
+
+  Widget _categoryTile(_MenuSection s) {
+    // Своего фото у категории нет — берём фото первой позиции с фото.
+    final image = s.imageUrl.isNotEmpty
+        ? s.imageUrl
+        : s.items.firstWhere((i) => i.imageUrl.isNotEmpty, orElse: () => s.items.first).imageUrl;
+    return Material(
+      color: KolibriColors.surface,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => setState(() => _categoryId = s.id),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _photo(image, width: 190),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x00000000), Color(0xD9000000)],
+                  stops: [0.4, 1],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 10,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(s.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text('${s.items.length} ${pluralRu(s.items.length, 'позиция', 'позиции', 'позиций')}',
+                      style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Вход в перечень табака — такой же строгий: чёрные буквы на белом,
+  /// без изображений.
+  Widget _tobaccoTile() {
+    const style = TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w400, height: 1.35);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Material(
+        color: Colors.white,
+        child: InkWell(
+          onTap: () => setState(() => _categoryId = _tobaccoKey),
+          child: const Padding(
+            padding: EdgeInsets.all(14),
+            child: Text('Табачная и никотинсодержащая продукция, кальяны — перечень. '
+                'Продажа лицам младше 18 лет запрещена.', style: style),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _categoryPage(String title, Widget child) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 16, 4),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Все категории',
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => setState(() => _categoryId = ''),
+                ),
+                Expanded(
+                  child: Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: child),
+        ],
+      );
+
+  Widget _itemsGrid(List<MenuItem> items) => GridView.builder(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 140),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 240,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 0.64,
+        ),
+        itemCount: items.length,
+        itemBuilder: (_, i) => _itemCard(items[i]),
+      );
+
+  /// Карточка позиции: фото, название, состав, цена и «+» / «− N +».
+  /// Нажатие на карточку — подробности (крупное фото и полный состав).
+  Widget _itemCard(MenuItem item) {
+    final inCart = _cart[item.id]?.qty ?? 0;
+    return Material(
+      color: KolibriColors.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: inCart > 0 ? KolibriColors.primary : KolibriColors.border),
+      ),
+      child: InkWell(
+        onTap: () => _showItem(item),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _photo(item.imageUrl, width: 240),
+                  // «Хит» — топ продаж за 30 дней (сервер не ставит его табаку).
+                  if (item.isHit) Positioned(left: 8, top: 8, child: _hitBadge(onPhoto: true)),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: Text(item.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, height: 1.25)),
+            ),
+            if (item.description.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 3, 12, 0),
+                child: Text(item.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 2, 4),
+              child: Row(
+                children: [
+                  // Цена не переносится на две строки рядом с «− N +».
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(rub(item.price),
+                          maxLines: 1,
+                          style: TextStyle(color: KolibriColors.primary, fontSize: 15, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  _qtyControls(item, inCart, compact: true),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _qtyControls(MenuItem item, int inCart, {bool compact = false}) {
+    final density = compact ? VisualDensity.compact : VisualDensity.standard;
+    // В карточке кнопки поуже — иначе на узком телефоне не хватает места цене.
+    final small = compact ? const BoxConstraints(minWidth: 34, minHeight: 34) : null;
+    final pad = compact ? EdgeInsets.zero : null;
+    if (inCart == 0) {
+      return IconButton(
+        visualDensity: density,
+        constraints: small,
+        padding: pad,
+        tooltip: 'Добавить',
+        onPressed: () => _add(item),
+        icon: Icon(Icons.add_circle, color: KolibriColors.primary, size: compact ? 28 : 30),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          visualDensity: density,
+          constraints: small,
+          padding: pad,
+          onPressed: () => _remove(item),
+          icon: Icon(Icons.remove_circle_outline, color: KolibriColors.textMuted),
+        ),
+        Text('$inCart', style: const TextStyle(fontWeight: FontWeight.w700)),
+        IconButton(
+          visualDensity: density,
+          constraints: small,
+          padding: pad,
+          onPressed: () => _add(item),
+          icon: Icon(Icons.add_circle, color: KolibriColors.primary),
+        ),
+      ],
+    );
+  }
+
+  Widget _hitBadge({bool onPhoto = false}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: onPhoto ? KolibriColors.gold : KolibriColors.gold.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text('Хит',
+            style: TextStyle(
+                color: onPhoto ? Colors.black : KolibriColors.gold, fontSize: 11, fontWeight: FontWeight.w800)),
+      );
+
+  /// Фото позиции или категории с запасной плашкой, если фото нет.
+  Widget _photo(String url, {required double width}) {
+    Widget fallback() => Container(
+          color: KolibriColors.surfaceElevated,
+          alignment: Alignment.center,
+          child: Icon(Icons.restaurant, color: KolibriColors.textMuted, size: 32),
+        );
+    if (url.isEmpty) return fallback();
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      // Декодируем под размер плитки, а не всё фото: иначе длинное меню
+      // дёргается при прокрутке и съедает память на слабых телефонах.
+      memCacheWidth: (width * MediaQuery.of(context).devicePixelRatio).round(),
+      fadeInDuration: const Duration(milliseconds: 150),
+      placeholder: (_, __) => Container(color: KolibriColors.surfaceElevated),
+      errorWidget: (_, __, ___) => fallback(),
+    );
+  }
+
+  /// Подробности позиции: крупное фото, полный состав, вес и кнопка.
+  void _showItem(MenuItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: KolibriColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final inCart = _cart[item.id]?.qty ?? 0;
+          void change(void Function() f) {
+            f();
+            setSheet(() {});
+          }
+
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (item.imageUrl.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                    child: AspectRatio(aspectRatio: 16 / 10, child: _photo(item.imageUrl, width: 480)),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(item.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                      ),
+                      if (item.isHit) _hitBadge(),
+                    ],
+                  ),
+                ),
+                if (item.description.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                    child: Text(item.description,
+                        style: TextStyle(color: KolibriColors.textMuted, fontSize: 14, height: 1.4)),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${rub(item.price)}'
+                          '${item.weight > 0 ? ' · ${item.weight.toStringAsFixed(0)} ${item.weightUnit.name}' : ''}',
+                          style: TextStyle(color: KolibriColors.primary, fontSize: 18, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      if (inCart == 0)
+                        FilledButton.icon(
+                          onPressed: () => change(() => _add(item)),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Добавить'),
+                        )
+                      else
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              onPressed: () => change(() => _remove(item)),
+                              icon: Icon(Icons.remove_circle_outline, color: KolibriColors.textMuted),
+                            ),
+                            Text('$inCart', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                            IconButton(
+                              onPressed: () => change(() => _add(item)),
+                              icon: Icon(Icons.add_circle, color: KolibriColors.primary, size: 30),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Поиск — плоским списком по всему меню, как в кассе.
+  Widget _searchResults(List<MenuItem> found, List<MenuItem> tobaccoFound) {
+    if (found.isEmpty && tobaccoFound.isEmpty) {
+      return Center(child: Text('Ничего не найдено', style: TextStyle(color: KolibriColors.textMuted)));
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 140),
+      children: [
+        for (final item in found)
+          Padding(padding: const EdgeInsets.only(bottom: 10), child: _itemTile(item)),
+        if (tobaccoFound.isNotEmpty) _tobaccoList(tobaccoFound, first: found.isEmpty),
+      ],
     );
   }
 
@@ -201,31 +556,6 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               ),
             ),
           ],
-        ),
-      );
-
-  Widget _categoryChips(List<MenuCategory> categories, String categoryId) => SizedBox(
-        height: 44,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          children: [
-            _chip('Всё', categoryId.isEmpty, () => setState(() => _categoryId = '')),
-            ...categories.map((c) =>
-                _chip(c.name, categoryId == c.id, () => setState(() => _categoryId = c.id))),
-          ],
-        ),
-      );
-
-  Widget _chip(String label, bool selected, VoidCallback onTap) => Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: ChoiceChip(
-          label: Text(label),
-          selected: selected,
-          onSelected: (_) => onTap(),
-          backgroundColor: KolibriColors.surface,
-          selectedColor: KolibriColors.primary.withValues(alpha: 0.22),
-          side: BorderSide(color: KolibriColors.border),
         ),
       );
 
@@ -501,4 +831,13 @@ Future<List<OrderItem>?> pickPreOrder(BuildContext context) {
       ),
     ),
   );
+}
+
+/// Категория меню для плитки: id, название, фото и её позиции.
+class _MenuSection {
+  final String id;
+  final String name;
+  final String imageUrl;
+  final List<MenuItem> items;
+  const _MenuSection(this.id, this.name, this.imageUrl, this.items);
 }

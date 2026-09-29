@@ -314,3 +314,34 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
 /* «Хит» — топ продаж за 30 дней (runMenuPopularity на сервере). */
 .hit { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 700;
   color: var(--gold, #D4AF37); background: color-mix(in srgb, var(--gold, #D4AF37) 18%, transparent); vertical-align: 1px; }
+
+/* Меню как в кассе: плитки категорий с фото → карточки позиций. */
+.msearch { width: 100%; margin: 0 0 6px; }
+.mh { font-size: 18px; margin: 16px 0 10px; }
+.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.ctile { position: relative; aspect-ratio: 1 / 1.05; border: 0; padding: 0; border-radius: 18px; overflow: hidden; cursor: pointer;
+  text-align: left; background: linear-gradient(135deg, var(--surface-2), var(--surface)); color: #fff; font: inherit; }
+.ctile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ctile::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,.85)); }
+.ctile .cname { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 1; font-weight: 700; font-size: 15px;
+  display: flex; flex-direction: column; line-height: 1.25; }
+.ctile .cname small { font-weight: 400; font-size: 12px; opacity: .8; margin-top: 2px; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; }
+.mstrip { display: grid; grid-auto-flow: column; grid-auto-columns: 158px; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+.mcard { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }
+.mcard.on { border-color: var(--primary); }
+.mphoto { position: relative; aspect-ratio: 4 / 3; background: linear-gradient(135deg, var(--surface-2), var(--surface)); }
+.mphoto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mphoto .hit { position: absolute; left: 8px; top: 8px; margin: 0; }
+.mbody { padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.mname { font-weight: 600; font-size: 14px; line-height: 1.25; }
+.mdesc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mfoot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 6px; gap: 6px; }
+.mprice { color: var(--primary); font-size: 15px; white-space: nowrap; }
+.mcard .qty { gap: 6px; }
+.mcard .qty button { width: 28px; height: 28px; border-radius: 9px; }
+.backbar { display: flex; align-items: center; gap: 10px; margin: 8px 0 12px; }
+.backbar h2 { margin: 0; font-size: 20px; }
+.backbar button { width: 40px; height: 40px; border-radius: 12px; border: 0; background: var(--surface-2); color: var(--text); font-size: 20px; cursor: pointer; }
+.tobacco-tile { display: block; width: 100%; background: #fff; color: #000; border: 0; border-radius: 0; padding: 14px;
+  font: inherit; font-size: 15px; font-weight: 400; line-height: 1.35; text-align: left; margin-top: 14px; cursor: pointer; }
