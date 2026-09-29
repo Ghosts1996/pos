@@ -271,9 +271,11 @@ class AiToolRegistry {
             clientUid: ctx.scope == AiToolScope.guest ? ctx.guestUid : '',
             guestName: name.isEmpty ? 'Гость' : name,
             phone: phone,
-            guestsCount: (args['guests'] as num?)?.toInt() ?? 2,
+            // Модель может прислать что угодно — 0 гостей или бронь на сутки,
+            // которая заняла бы стол на весь день.
+            guestsCount: ((args['guests'] as num?)?.toInt() ?? 2).clamp(1, 50),
             startTime: start,
-            durationMinutes: (args['duration_minutes'] as num?)?.toInt() ?? 90,
+            durationMinutes: ((args['duration_minutes'] as num?)?.toInt() ?? 90).clamp(30, 360),
             comment: args['comment']?.toString() ?? '',
             status: ctx.scope == AiToolScope.staff
                 ? ReservationStatus.confirmed
@@ -286,6 +288,8 @@ class AiToolRegistry {
           return 'Бронь создана (id $id) на ${start.hour}:${start.minute.toString().padLeft(2, '0')}.';
         } on NoTablesAvailableException {
           return 'Свободных столов на это время нет — предложи другое время.';
+        } on ReservationTimeException catch (e) {
+          return e.message;
         }
       },
     ),
@@ -328,7 +332,7 @@ class AiToolRegistry {
 
     AiTool(
       name: 'call_staff',
-      description: 'Позвать персонал к столу гостя: угли, перезабивка, счёт, кальянщик.',
+      description: 'Позвать персонал к столу гостя: угли, перезабивка, счёт или просто подойти.',
       parameters: _params({
         'type': {
           'type': 'string',
@@ -356,7 +360,7 @@ class AiToolRegistry {
           guestName: profile.name,
           comment: args['comment']?.toString() ?? '',
         );
-        return 'Передал кальянщику — сейчас подойдут.';
+        return 'Передал персоналу — сейчас подойдут.';
       },
     ),
 

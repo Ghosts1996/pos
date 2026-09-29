@@ -14,7 +14,7 @@ class BirthdayService {
 
   final _db = FirebaseFirestore.instance;
 
-  /// Подарок имениннику: бонусы, которые сгорают через неделю.
+  /// Подарок имениннику — бонусы на счёт.
   static const double giftBonus = 500;
   static const int daysBefore = 3;
 
@@ -53,7 +53,9 @@ class BirthdayService {
   /// планировщик, так что без транзакции два планшета разных точек одной
   /// сети, сработав почти одновременно, оба прошли бы проверку в [upcoming]
   /// до того, как второй увидит отметку первого, и начислили бы подарок дважды.
-  Future<void> greet({
+  ///
+  /// false — гостя уже поздравили в этом году (другой планшет сети успел).
+  Future<bool> greet({
     required String uid,
     required String name,
     required String token,
@@ -70,7 +72,7 @@ class BirthdayService {
       }, SetOptions(merge: true));
       return false;
     });
-    if (alreadyGreeted) return;
+    if (alreadyGreeted) return false;
 
     await AppScope.loyaltyCol('bonusOperations').add({
       'clientUid': uid,
@@ -88,19 +90,20 @@ class BirthdayService {
         body: '${giftBonus.toStringAsFixed(0)} бонусов уже на счету — ждём вас отметить.',
       );
     }
+    return true;
   }
 
   /// Обработать всех именинников разом — одна строка в планировщике.
   /// Возвращает количество поздравленных.
   Future<int> runDailyGreetings() async {
-    final list = await upcoming();
-    for (final g in list) {
-      await greet(uid: g.uid, name: g.name, token: g.token);
+    final greeted = <String>[];
+    for (final g in await upcoming()) {
+      if (await greet(uid: g.uid, name: g.name, token: g.token)) greeted.add(g.name);
     }
-    if (list.isNotEmpty) {
+    if (greeted.isNotEmpty) {
       await AppScope.col('staffNotes').add({
         'title': 'Именинники',
-        'text': 'Через $daysBefore ${pluralRu(daysBefore, 'день', 'дня', 'дней')} отмечают: ${list.map((e) => e.name).join(', ')}. '
+        'text': 'Через $daysBefore ${pluralRu(daysBefore, 'день', 'дня', 'дней')} отмечают: ${greeted.join(', ')}. '
             'Подарочные бонусы начислены.',
         'priority': 'info',
         'source': 'birthday',
@@ -108,6 +111,6 @@ class BirthdayService {
         'createdAt': Timestamp.fromDate(DateTime.now()),
       });
     }
-    return list.length;
+    return greeted.length;
   }
 }

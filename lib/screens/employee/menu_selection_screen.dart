@@ -132,7 +132,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось добавить — проверьте интернет')));
+            SnackBar(content: Text('Не удалось добавить: ${humanError(e, lower: true)}')));
       }
     }
   }
@@ -379,7 +379,11 @@ class _CategoryItemsScreen extends StatelessWidget {
                 item: item,
                 qty: qtyOf(item.id),
                 onAdd: () => onAdd(item),
-                onRemoveOne: () => fs.changeOrderItemQty(session.id, item.id, -1),
+                onRemoveOne: () => fs.changeOrderItemQty(session.id, item.id, -1).catchError((Object e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+                  }
+                }),
               );
             },
           );

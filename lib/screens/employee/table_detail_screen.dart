@@ -305,7 +305,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     } on TableFullException catch (e) {
       _showError(e);
     } catch (e) {
-      _showError('Не удалось пересадить — проверьте интернет');
+      _showError('Не удалось пересадить: ${humanError(e, lower: true)}');
     }
   }
 
@@ -321,7 +321,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     try {
       await _fs.changeOrderItemQty(sessionId, menuItemId, delta);
     } catch (e) {
-      _showError('Не удалось изменить заказ — проверьте интернет');
+      _showError('Не удалось изменить заказ: ${humanError(e, lower: true)}');
     }
   }
 

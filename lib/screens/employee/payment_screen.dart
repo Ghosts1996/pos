@@ -23,9 +23,8 @@ import '../../utils/human_error.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / за счёт заведения,
-/// указать контакт гостя и отметить печать чека. Сама печать физически не
-/// подключена (в проекте нет драйвера принтера/фискального регистратора) —
-/// переключатели только сохраняются в чек как флаги для отчётности.
+/// указать контакт гостя, напечатать чек на принтере и отправить
+/// фискальный чек в онлайн-кассу (Настройки → Интеграции).
 class PaymentScreen extends StatefulWidget {
   final SessionModel session;
   const PaymentScreen({super.key, required this.session});
@@ -81,9 +80,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
   // сходился и X-отчёт не показывал недостачу.
   double _bonusPaid = 0;
   String _clientUid = '';
-
-  /// Какие сертификаты и на какую сумму уже погашены на этом экране —
-  /// нужно, чтобы вернуть деньги, если оплату так и не провели.
 
   /// Оплата проведена — списанные бонусы/сертификаты возврату не подлежат.
   bool _paidDone = false;
@@ -166,7 +162,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       });
     }, onError: (_) {});
 
-    // Гость из «Colibri Lounge», сидящий за этим чеком, — нужен для
+    // Гость из приложения, сидящий за этим чеком, — нужен для
     // бонусов и реферальной программы. Если приложения у гостя нет,
     // панель бонусов просто предложит найти его по телефону.
     GuestLinkService().findBySession(widget.session.id).then((profile) {
@@ -366,6 +362,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         fiscalReceiptPrinted: _printFiscalReceipt,
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
+        expectedTotal: widget.session.totalWithDiscount,
       );
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.
@@ -399,7 +396,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Не удалось провести оплату — проверьте интернет')));
+            SnackBar(content: Text('Не удалось провести оплату: ${humanError(e, lower: true)}')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);

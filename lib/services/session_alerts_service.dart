@@ -305,9 +305,7 @@ class SessionAlertsService {
         if (!firstSeen && !refilled && !moved) continue;
 
         _planned[s.id] = (end: s.plannedEnd, refills: s.refillCount);
-        // Перезабивка только что произошла — отсчёт углей начинаем заново
-        // от текущего момента. При первом появлении чека — от его начала.
-        unawaited(_scheduleFor(s, coalFrom: refilled ? DateTime.now() : s.startTime));
+        unawaited(_scheduleFor(s, coalFrom: coalBase(s)));
       }
 
       // Чек закрыли или перенесли — снимаем его будильники.
@@ -318,6 +316,19 @@ class SessionAlertsService {
         unawaited(_notify.cancel(NotificationService.idFor('end_$id')));
       }
     }, onError: (_) {});
+  }
+
+  /// От чего считать угли: от последней перезабивки, а если её не было —
+  /// от начала сеанса. Берём из самого чека: будильники переставляются и
+  /// при сдвиге времени стола, и при смене сотрудника, и отсчёт после
+  /// перезабивки не должен откатываться к началу сеанса (такое время уже
+  /// в прошлом, и напоминание молча пропадало).
+  static DateTime coalBase(SessionModel s) {
+    var base = s.startTime;
+    for (final r in s.refillHistory) {
+      if (r.time.isAfter(base)) base = r.time;
+    }
+    return base;
   }
 
   Future<void> _scheduleFor(SessionModel s, {required DateTime coalFrom}) async {
@@ -340,8 +351,8 @@ class SessionAlertsService {
         when: coalFrom.add(coalAfter),
         title: 'Угли: ${s.tableName}',
         body: s.refillCount > 0
-            ? 'Прошло 35 минут после перезабивки — проверьте угли'
-            : 'Прошло 35 минут — пора поменять угли',
+            ? 'Прошло ${coalAfter.inMinutes} минут после перезабивки — проверьте угли'
+            : 'Прошло ${coalAfter.inMinutes} минут — пора поменять угли',
       );
     }
 
@@ -351,7 +362,7 @@ class SessionAlertsService {
       id: endId,
       when: s.plannedEnd.subtract(warnBefore),
       title: 'Сеанс заканчивается: ${s.tableName}',
-      body: 'Через 10 минут конец сеанса — предложите продление или счёт',
+      body: 'Через ${warnBefore.inMinutes} минут конец сеанса — предложите продление или счёт',
     );
   }
 
