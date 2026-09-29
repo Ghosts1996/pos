@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import 'firestore_service.dart';
 import '../models/client_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
@@ -703,6 +704,9 @@ class GuestLinkService {
   Future<void> acceptGuestOrder(GuestOrder order, String employeeName) async {
     final sessionRef = AppScope.col('sessions').doc(order.sessionId);
     final orderRef = _orders.doc(order.id);
+    // Цены, названия и признак табака — из меню, а не из заказа: его пишет
+    // приложение гостя, и цену в нём можно подменить.
+    final priced = await FirestoreService().menuPricedItems(order.items);
 
     // Ошибки бросаем после транзакции: в вебе исключение изнутри неё
     // теряет свой текст.
@@ -724,11 +728,21 @@ class GuestLinkService {
         return 'Чек уже закрыт — заказ отклонён.';
       }
 
+      if (priced.isEmpty) {
+        tx.update(orderRef, {
+          'status': 'rejected',
+          'rejectReason': 'Этих позиций уже нет в меню',
+          'handledAt': Timestamp.fromDate(DateTime.now()),
+          'handledBy': employeeName,
+        });
+        return 'Позиций заказа нет в меню — заказ отклонён.';
+      }
+
       final current = ((data['orderItems'] ?? []) as List)
           .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
 
-      for (final incoming in order.items) {
+      for (final incoming in priced) {
         final idx = current.indexWhere((i) => i.menuItemId == incoming.menuItemId);
         if (idx >= 0) {
           current[idx] = current[idx].copyWith(qty: current[idx].qty + incoming.qty);

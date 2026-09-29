@@ -160,6 +160,41 @@ class SaasDeviceJoinService {
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
+
+  /// Зеркало членства в сети (chainMembers) для планшета точки сети: по
+  /// нему правила пускают к общей лояльности сети — гостям, бонусам,
+  /// визитам. Присоединение идёт без сервера, и раньше планшет, подключённый
+  /// к точке уже созданной сети, получал permission-denied на всех гостях.
+  /// Вызывается на каждом старте: так чинятся и планшеты, присоединённые до
+  /// исправления. Запись уже есть (в том числе отключённая владельцем) —
+  /// ничего не делаем. Ошибки не пробрасывает: попробуем при следующем
+  /// запуске.
+  static Future<void> ensureChainMembership({
+    required String chainId,
+    required String tenantId,
+    required String uid,
+  }) async {
+    if (chainId.isEmpty || tenantId.isEmpty || uid.isEmpty) return;
+    final ref = FirebaseFirestore.instance.collection('chainMembers').doc('${chainId}_$uid');
+    try {
+      if ((await ref.get()).exists) return;
+    } on FirebaseException catch (e) {
+      // Несуществующий документ правила не отдают — это и есть «записи нет».
+      if (e.code != 'permission-denied') return;
+    } catch (_) {
+      return;
+    }
+    try {
+      await ref.set({
+        'chainId': chainId,
+        'userId': uid,
+        'tenantId': tenantId,
+        'role': 'employee',
+        'status': 'active',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
 }
 
 /// Одна точка сети — то, что нужно показать гостю в списке выбора

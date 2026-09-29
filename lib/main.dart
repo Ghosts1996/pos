@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -12,6 +14,7 @@ import 'services/app_bootstrap.dart';
 import 'services/app_scope.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
+import 'services/saas_device_join_service.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
@@ -98,6 +101,11 @@ void main() async {
           // без этого просрочка, наступившая посреди смены, ничего бы не
           // меняла до следующего перезапуска планшета).
           SubscriptionGate.watch(config.tenant.id, config);
+          final chainId = config.tenant.chainId;
+          if (chainId != null && uid != null) {
+            unawaited(SaasDeviceJoinService.ensureChainMembership(
+                chainId: chainId, tenantId: config.tenant.id, uid: uid));
+          }
           ready = true;
           startBackgroundServices();
         } else {

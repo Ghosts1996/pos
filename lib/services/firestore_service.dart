@@ -17,6 +17,7 @@ import 'venue_service.dart';
 import 'tips_service.dart';
 import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
+import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
@@ -475,6 +476,18 @@ class FirestoreService {
       }
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
     });
+  }
+
+  /// Позиции от гостя по текущему меню — см. [priceGuestItems].
+  Future<List<OrderItem>> menuPricedItems(List<OrderItem> items) async {
+    final ids = items.map((i) => i.menuItemId).where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return const [];
+    final docs = await Future.wait(ids.map((id) => AppScope.col('menuItems').doc(id).get()));
+    final menu = {for (final d in docs) if (d.exists) d.id: MenuItem.fromDoc(d)};
+    final catIds = menu.values.map((m) => m.categoryId).where((id) => id.isNotEmpty).toSet();
+    final cats = await Future.wait(catIds.map((id) => AppScope.col('menuCategories').doc(id).get()));
+    final categoryNames = {for (final c in cats) c.id: (c.data()?['name'] ?? '').toString()};
+    return priceGuestItems(items, menu, categoryNames: categoryNames);
   }
 
   /// Изменить количество позиции в заказе на delta (может быть отрицательным).

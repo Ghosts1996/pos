@@ -3576,10 +3576,10 @@ function watchDashboardData(tenantId) {
       el.onchange = () => changeMemberRole(tenantId, el.dataset.uid, el.value);
     });
     document.querySelectorAll('.f-member-toggle').forEach((el) => {
-      el.onclick = () => toggleMemberStatus(tenantId, el.dataset.uid, el.dataset.active === '1');
+      el.onclick = () => toggleMemberStatus(tenantId, el.dataset.uid, el.dataset.active === '1', tenant.chainId);
     });
     document.querySelectorAll('.f-member-delete').forEach((el) => {
-      el.onclick = () => deleteMember(tenantId, el.dataset.uid, el.dataset.device === '1', el.dataset.label);
+      el.onclick = () => deleteMember(tenantId, el.dataset.uid, el.dataset.device === '1', el.dataset.label, tenant.chainId);
     });
     if ($('f-invite-submit')) {
       $('f-invite-submit').onclick = async () => {
@@ -4027,11 +4027,38 @@ async function changeMemberRole(tenantId, memberUid, role) {
   }
 }
 
-async function toggleMemberStatus(tenantId, memberUid, isActive) {
+// Зеркало членства в сети (chainMembers): по нему правила пускают к общей
+// лояльности сети — гостям и бонусам всех точек. Без синхронизации
+// отключённый или удалённый из точки сотрудник (или планшет) продолжал
+// видеть гостей сети. Если у человека есть активное членство в другой
+// точке этой сети, доступ к сети не трогаем.
+async function syncChainMember(chainId, tenantId, memberUid, status) {
+  if (!chainId) return;
+  const ref = doc(state.db, 'chainMembers', `${chainId}_${memberUid}`);
   try {
-    await updateDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`), {
-      status: isActive ? 'inactive' : 'active',
-    });
+    if (status !== 'active') {
+      for (const t of state.tenants.filter((x) => x.chainId === chainId && x.id !== tenantId)) {
+        try {
+          const m = await getDoc(doc(state.db, 'tenantMembers', `${t.id}_${memberUid}`));
+          if (m.exists() && m.data().status === 'active') return;
+        } catch (_) {
+          // Нет записи в этой точке — правила не отдают несуществующий документ.
+        }
+      }
+    }
+    if (status === null) await deleteDoc(ref);
+    else await updateDoc(ref, { status });
+  } catch (e) {
+    // Записи в сети нет (планшет заведёт её сам при запуске) — нечего менять.
+    console.warn('chainMembers sync:', e?.message || e);
+  }
+}
+
+async function toggleMemberStatus(tenantId, memberUid, isActive, chainId) {
+  try {
+    const status = isActive ? 'inactive' : 'active';
+    await updateDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`), { status });
+    await syncChainMember(chainId, tenantId, memberUid, status);
     toast(isActive ? 'Доступ отключён' : 'Доступ включён');
   } catch (e) {
     toast(`Не удалось изменить доступ: ${e?.message || e}`);
@@ -4040,7 +4067,7 @@ async function toggleMemberStatus(tenantId, memberUid, isActive) {
 
 // «Отключить» оставляет запись в списке, а через заведение проходит много
 // планшетов — «Удалить» убирает её совсем.
-async function deleteMember(tenantId, memberUid, isDevice, label) {
+async function deleteMember(tenantId, memberUid, isDevice, label, chainId) {
   if (!confirm(`Удалить «${label}» из команды безвозвратно? Отменить нельзя — для устройства понадобится заново присоединяться по коду приглашения.`)) return;
   try {
     await deleteDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`));
@@ -4049,6 +4076,7 @@ async function deleteMember(tenantId, memberUid, isDevice, label) {
       // себе членство: правила пускают самоприсоединение, пока он есть.
       await deleteDoc(doc(state.db, 'tenants', tenantId, 'devices', memberUid));
     }
+    await syncChainMember(chainId, tenantId, memberUid, null);
     toast('Удалено');
   } catch (e) {
     toast(`Не удалось удалить: ${e?.message || e}`);

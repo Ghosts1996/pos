@@ -1052,6 +1052,54 @@ describe("Сеть заведений (chains) — общая лояльност
     await assertSucceeds(getDoc(doc(db, "subscriptions/chainX")));
     await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
   });
+
+  // Планшет присоединяется к точке без сервера и сам заводит зеркало
+  // членства в сети (SaasDeviceJoinService.ensureChainMembership).
+  async function seedChainDevice(uid, tenantId) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `tenantMembers/${tenantId}_${uid}`), {
+        tenantId, userId: uid, role: "employee", status: "active",
+      });
+      await setDoc(doc(db, `tenants/${tenantId}/devices/${uid}`), { userId: uid, status: "active" });
+    });
+  }
+  const mirror = (uid, extra = {}) => ({
+    chainId: "chainX", userId: uid, tenantId: "tenantX2", role: "employee", status: "active", ...extra,
+  });
+
+  it("планшет точки сети сам заводит зеркало членства и видит гостей сети", async () => {
+    await seedChainDevice("padX2", "tenantX2");
+    const db = ctxFor("padX2");
+    await assertFails(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+    await assertSucceeds(setDoc(doc(db, "chainMembers/chainX_padX2"), mirror("padX2")));
+    await assertSucceeds(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+  });
+
+  it("зеркало членства: не выше employee, не в чужую сеть, не без устройства", async () => {
+    await seedChainDevice("padX2", "tenantX2");
+    await seedChainDevice("padSolo", "tenantSolo");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantX2_personX2"), {
+        tenantId: "tenantX2", userId: "personX2", role: "employee", status: "active",
+      });
+    });
+    await assertFails(setDoc(doc(ctxFor("padX2"), "chainMembers/chainX_padX2"), mirror("padX2", { role: "admin" })));
+    await assertFails(setDoc(doc(ctxFor("padSolo"), "chainMembers/chainX_padSolo"),
+      mirror("padSolo", { tenantId: "tenantSolo" })));
+    await assertFails(setDoc(doc(ctxFor("personX2"), "chainMembers/chainX_personX2"), mirror("personX2")));
+    await assertFails(setDoc(doc(ctxFor("padX2"), "chainMembers/chainX_other"), mirror("padX2")));
+  });
+
+  it("отключённый владельцем планшет не возвращает себе доступ к сети", async () => {
+    await seedChainDevice("padX2", "tenantX2");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "chainMembers/chainX_padX2"), mirror("padX2", { status: "inactive" }));
+    });
+    const db = ctxFor("padX2");
+    await assertFails(setDoc(doc(db, "chainMembers/chainX_padX2"), mirror("padX2")));
+    await assertFails(getDoc(doc(db, "chains/chainX/clients/chainGuest")));
+  });
 });
 
 describe("Настройки ИИ: ключи провайдеров не видны гостям", () => {
@@ -1353,5 +1401,44 @@ describe("Аудит безопасности: гость не накрутит 
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p2"), { topic: "guests-all", title: "Акция", body: "Переведите..." }));
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p3"), { token: "victim-device", title: "x", body: "y" }));
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p4"), { topic: "staff", title: "x", body: "y".repeat(600) }));
+  });
+});
+
+describe("Брони и заказы гостя: только своё и только разрешённое", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { clientUid: "guestA", guestName: "Гость A", tableId: "table1", sessionId: "" };
+      await setDoc(doc(db, "tenants/tenantA/reservations/rNew"), { ...base, status: "new" });
+      await setDoc(doc(db, "tenants/tenantA/reservations/rNoShow"), { ...base, status: "noShow" });
+      await setDoc(doc(db, "tenants/tenantA/reservations/rSeated"), { ...base, status: "seated", sessionId: "sess1" });
+    });
+  });
+
+  it("гость отменяет свою будущую бронь, но не «не пришёл» и не ту, где уже сидит", async () => {
+    const g = ctxFor("guestA");
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/reservations/rNoShow"), { status: "cancelled" }));
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/reservations/rSeated"), { status: "cancelled" }));
+    await assertFails(updateDoc(doc(g, "tenants/tenantA/reservations/rNew"), { status: "cancelled", tableId: "vip" }));
+    await assertSucceeds(updateDoc(doc(g, "tenants/tenantA/reservations/rNew"), { status: "cancelled", handledBy: "guest" }));
+  });
+
+  it("гость не создаёт бронь сразу с открытым чеком или огромным предзаказом", async () => {
+    const g = ctxFor("guestA");
+    const r = (over = {}) => ({ clientUid: "guestA", status: "new", tableId: "table1", sessionId: "", preOrder: [], ...over });
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/ok"), r()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/s"), r({ sessionId: "sess1" })));
+    const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/big"), r({ preOrder: Array(51).fill(item) })));
+  });
+
+  it("заказ гостя: хотя бы одна позиция и не больше 50", async () => {
+    const g = ctxFor("guestA");
+    const o = (items) => ({ clientUid: "guestA", status: "new", sessionId: "sess1", items });
+    const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/guestOrders/o1"), o([item])));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/o2"), o([])));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/o3"), o(Array(51).fill(item))));
   });
 });
