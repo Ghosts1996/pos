@@ -132,5 +132,5 @@ def final():
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "candidates"
-    only = [s for s in os.environ.get("ONLY", "").split(",") if s]
+    only = [s.strip() for s in os.environ.get("ONLY", "").split(",") if s.strip()]
     candidates(only) if mode == "candidates" else final()

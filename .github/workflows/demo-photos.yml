@@ -1,19 +1,17 @@
 name: Фото для демо-меню
 
 # Временный: подбирает живые фото блюд демо-меню с Unsplash (см.
-# tmp/demo-photos/fetch.py). candidates — варианты на выбор, final —
-# выбранные фото в saas/console/demo-menu.
+# tmp/demo-photos/fetch.py). Пока нет choices.json — варианты на выбор
+# (листы-превью), с choices.json — выбранные фото в saas/console/demo-menu.
+# only.txt — подобрать заново только эти блюда (через запятую).
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'candidates или final'
-        required: true
-        default: candidates
-      only:
-        description: 'только эти блюда (через запятую), пусто — все'
-        required: false
-        default: ''
+  push:
+    branches: [claude/dazzling-babbage-n65p6l]
+    paths:
+      - 'tmp/demo-photos/queries.json'
+      - 'tmp/demo-photos/only.txt'
+      - 'tmp/demo-photos/choices.json'
+      - '.github/workflows/demo-photos.yml'
 
 permissions:
   contents: write
@@ -26,15 +24,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: pip install --quiet pillow requests
       - name: Подобрать фото
-        env:
-          MODE: ${{ inputs.mode }}
-          ONLY: ${{ inputs.only }}
         run: |
-          [[ "$MODE" == candidates || "$MODE" == final ]] || { echo "mode: candidates или final"; exit 1; }
-          python tmp/demo-photos/fetch.py "$MODE"
+          [ -d tmp/demo-photos ] || { echo "нечего делать"; exit 0; }
+          MODE=candidates; [ -f tmp/demo-photos/choices.json ] && MODE=final
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+          ONLY="$(cat tmp/demo-photos/only.txt 2>/dev/null || true)" python tmp/demo-photos/fetch.py "$MODE"
       - name: Сохранить в ветку
-        env:
-          MODE: ${{ inputs.mode }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
