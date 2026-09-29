@@ -1,10 +1,6 @@
-// Консоль владельца заведения — веб-приложение SaaS-платформы ZalPOS.
-//
-// Отдельный сайт от гостевого public/app: тот открывает гость по ссылке на
-// столе, этот — владелец заведения, чтобы завести заведение, посмотреть код
-// приглашения устройств и подписку. Тот же стиль (без сборки, ES-модули
-// прямо из CDN, конфиг Firebase подтягивается с хостинга), см.
-// public/app/app.js — но вход по email/паролю, а не анонимный.
+// Личный кабинет владельца заведения и панель платформы ZalPOS.
+// Без сборки: ES-модули Firebase прямо с CDN, конфиг Firebase берётся с
+// хостинга (/__/firebase/init.json).
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
@@ -18,33 +14,16 @@ import {
   getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-import {
-  getFunctions, httpsCallable,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
-// Firebase Storage больше не используется — единственное, для чего он был
-// нужен (логотип заведения, см. handleUploadBrandingLogo в
-// saas-gateway/server.js), требует у saas-3bdc8 платный тариф Blaze, а
-// бакета физически не существует (та же история, что и с публичным APK —
-// см. saas/README.md, раздел 8b). Загрузка логотипа перенесена на сам
-// saas-gateway, см. uploadBrandingLogoToGateway() ниже.
 
-// Тот же регион, что у Cloud Functions платформы (см. saas/functions/index.js).
-const FUNCTIONS_REGION = 'europe-west1';
-
-// Адрес saas-gateway (см. saas-gateway/README.md) — берёт на себя
-// createTenant/createBuildJob, которые не могут задеплоиться как Cloud
-// Functions без тарифа Blaze у этого проекта. Тот же сервер и сертификат,
-// что и у pii-gateway (см. saas-gateway/README.md, раздел про nginx) —
-// отдельный путь /saas/, а не отдельный домен.
+// saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
+// домене, что и pii-gateway, по пути /saas/.
 const SAAS_GATEWAY_URL = 'https://pii.zalpos.ru/saas';
-// pii-gateway — первичное хранилище персональных данных в РФ (PostgreSQL на
-// сервере платформы), см. recordOwnerInRussia.
+// pii-gateway — первичная запись персональных данных в РФ.
 const PII_GATEWAY_URL = 'https://pii.zalpos.ru/';
 
-/** Первичная запись владельца в РФ (ч. 5 ст. 18 152-ФЗ): email и моменты
- *  принятия оферты и согласия попадают в базу на сервере в России ДО
- *  регистрации в Firebase Auth (Google). Не получилось — регистрацию не
- *  продолжаем: иначе email первично окажется за рубежом. */
+/** Email владельца и отметки о согласиях сначала пишутся в базу в РФ
+ *  (ч. 5 ст. 18 152-ФЗ) и только потом в Firebase Auth. Не записалось —
+ *  регистрацию не продолжаем. */
 async function recordOwnerInRussia(email) {
   let res;
   try {
@@ -88,19 +67,16 @@ if (/(^|\.)hookahpos\.su$/.test(location.hostname)) {
     .catch(() => {});
 }
 
-/** Вызывает saas-gateway тем же способом, каким httpsCallable вызывал бы
- *  Cloud Function — с ID-токеном текущего пользователя в заголовке и JSON
- *  телом. Бросает Error с понятным сообщением (существующие вызывающие
- *  места уже показывают e.message пользователю). */
+/** Вызов saas-gateway с ID-токеном пользователя. Бросает Error с текстом,
+ *  который можно показать пользователю. */
 async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   if (!SAAS_GATEWAY_URL) {
     throw new Error(
       'SAAS_GATEWAY_URL не задан в console.js — заведите свой сервис (см. saas-gateway/README.md) и пропишите его адрес.'
     );
   }
-  // forceRefresh — сразу после reauthenticate(): действиям, которые сервер
-  // пускает только со свежим вводом пароля (requireRecentAuth), нужен токен
-  // с новым auth_time, а не закэшированный от прошлого входа.
+  // forceRefresh — сразу после reauthenticate(): серверу нужен токен со
+  // свежим auth_time (requireRecentAuth).
   const idToken = await state.auth.currentUser?.getIdToken(forceRefresh);
   const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
     method: 'POST',
@@ -119,11 +95,9 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   return { data: json };
 }
 
-/** Письмо входа, смены пароля или подтверждения почты — в оформлении ZalPOS,
- *  с сервера платформы (см. handleSendAuthEmail в saas-gateway/server.js).
- *  Шаблон письма Firebase в его консоли не редактируется. Если сервер не
- *  отправил (почта на нём не настроена, недоступен) — отправляет Firebase,
- *  как раньше: [fallback]. Упор в лимит (429) не обходим. */
+/** Письмо входа, смены пароля или подтверждения почты в оформлении ZalPOS
+ *  (handleSendAuthEmail). Сервер не смог — отправляет Firebase своим
+ *  шаблоном (fallback). Упор в лимит (429) не обходим. */
 async function sendAuthEmail(type, email, fallback) {
   try {
     await callSaasGateway('sendAuthEmail', {
@@ -135,13 +109,9 @@ async function sendAuthEmail(type, email, fallback) {
   }
 }
 
-/** Загружает логотип заведения в saas-gateway (см. handleUploadBrandingLogo
- *  в server.js) — XMLHttpRequest, а не fetch, потому что только у него
- *  есть реальный процент ОТПРАВКИ тела запроса (fetch отслеживает лишь
- *  скачивание ответа). Возвращает { xhr, promise }: xhr — чтобы вызывающий
- *  код мог отменить загрузку (xhr.abort()) или засечь зависание по
- *  отсутствию прогресса, promise разрешается относительным путём файла на
- *  сервере (без домена — см. docstring самого хендлера). */
+/** Логотип в saas-gateway. XMLHttpRequest, а не fetch: только у него есть
+ *  прогресс отправки. Возвращает { xhr, promise } — xhr для отмены и
+ *  проверки зависания, promise отдаёт путь файла без домена. */
 function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
   const xhr = new XMLHttpRequest();
   const promise = new Promise((resolve, reject) => {
@@ -151,7 +121,7 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
     };
     xhr.onload = () => {
       let json = null;
-      try { json = JSON.parse(xhr.responseText); } catch (_) { /* см. ниже — пустой ответ трактуется как ошибка */ }
+      try { json = JSON.parse(xhr.responseText); } catch (_) { /* пустой ответ — ошибка ниже */ }
       if (xhr.status >= 200 && xhr.status < 300 && json?.path) resolve(json.path);
       else reject(new Error(json?.error || `Сервис ответил ошибкой (${xhr.status})`));
     };
@@ -169,8 +139,6 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
 const state = {
   auth: null,
   db: null,
-  functions: null,
-  storage: null,
   uid: null,
   tenants: [],        // [{ id, role, name, slug }] — заведения этого владельца
   tenantsLoaded: false,
@@ -205,10 +173,9 @@ function colorFieldHtml(id, label, value, editable) {
   `;
 }
 
-// Контраст по формуле WCAG 2 — тот же расчёт, что и на стороне приложения
-// (lib/theme/app_theme.dart, _contrastRatio) — предупреждаем владельца
-// здесь, ДО сохранения, а на устройстве нечитаемая пара фон/текст всё равно
-// откатится на цвета темы по умолчанию (двойная защита, не только совет).
+// Контраст по WCAG 2, как _contrastRatio в lib/theme/app_theme.dart:
+// предупреждаем до сохранения, а приложение само откатит нечитаемую пару
+// фон/текст на цвета по умолчанию.
 function hexToRgb01(hex) {
   let h = String(hex ?? '').replace('#', '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
@@ -228,14 +195,9 @@ function contrastRatio(hexA, hexB) {
   return la > lb ? la / lb : lb / la;
 }
 
-// Готовые премиальные цветовые гаммы для брендинга клиентского приложения —
-// подобраны так, чтобы подходить любому типу заведения (не только
-// кальянным), с запасом по контрасту фон/текст (см. contrastRatio выше) и
-// с достаточно тёмной/насыщенной кнопкой, чтобы текст на ней (тот же
-// textColor, что и везде — см. updateBrandPreview) оставался читаемым.
-// Первая гамма — байт-в-байт дефолт createTenant (saas/functions/index.js)
-// и BrandingConfig (lib/models/tenant_models.dart) — выбор её эквивалентен
-// "ничего не менять".
+// Готовые гаммы для приложения гостя — подходят любому типу заведения, с
+// запасом по контрасту фон/текст и кнопка/текст. Первая совпадает с
+// брендингом по умолчанию (createTenant, BrandingConfig).
 const PREMIUM_PALETTES = [
   { id: 'midnight', name: 'Полночный синий', primaryColor: '#0B5ED7', secondaryColor: '#162A4A', buttonColor: '#0B5ED7', backgroundColor: '#02050B', textColor: '#F8FAFC' },
   { id: 'emerald', name: 'Изумрудная ночь', primaryColor: '#9C7A22', secondaryColor: '#0E2A20', buttonColor: '#9C7A22', backgroundColor: '#071510', textColor: '#F4EFDD' },
@@ -273,10 +235,8 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
 }
 
-/** Какие объявления платформы владелец уже закрыл на ЭТОМ браузере — простой
- *  localStorage, без синхронизации между устройствами (см. комментарий у
- *  `let broadcasts` в watchDashboardData). Обёрнуто в try/catch: приватный
- *  режим браузера или отключённое хранилище не должны ронять весь "Обзор". */
+/** Закрытые объявления платформы — в localStorage этого браузера.
+ *  Приватный режим и выключенное хранилище не должны ронять «Обзор». */
 function dismissedBroadcastIds() {
   try {
     return new Set(JSON.parse(localStorage.getItem('dismissedBroadcasts') || '[]'));
@@ -289,23 +249,14 @@ function dismissBroadcast(id) {
     const ids = dismissedBroadcastIds();
     ids.add(id);
     localStorage.setItem('dismissedBroadcasts', JSON.stringify([...ids]));
-  } catch (_) { /* см. docstring выше — не критично, просто не запомнится */ }
+  } catch (_) { /* не запомнится — не страшно */ }
 }
 
-/** Повторный пароль перед опасным действием в панели платформы (супер-админ
- *  #10) — не полноценная 2FA (та требует Identity Platform, платный тариф,
- *  привязанный к тому же Blaze, который весь этот сеанс сознательно
- *  обходили ради экономии), а более лёгкая защита: если чужая сессия каким-
- *  то образом оказалась открыта в браузере супер-админа (забытый вход на
- *  чужом устройстве, похищенный токен), у злоумышленника всё равно нет
- *  пароля — назначить/снять супер-админа или необратимо удалить заведение
- *  с наскока не выйдет. Пароль есть у КАЖДОГО супер-админа гарантированно —
- *  сама панель требует регистрации в этой консоли ДО назначения (см. текст
- *  на вкладке "Сотрудники платформы"); регистрация теперь не спрашивает
- *  пароль напрямую (см. screenAuth), но всё равно создаёт для аккаунта
- *  пароль (случайный, задать свой владелец сможет по ссылке из письма) —
- *  reauthenticateWithCredential работает точно так же в обоих случаях.
- *  Возвращает true, если пароль подтверждён, false — если отменили ввод. */
+/** Повторный ввод пароля перед опасным действием в панели платформы.
+ *  Не 2FA (та требует платной Identity Platform), но открытый на чужом
+ *  устройстве или украденный сеанс без пароля ничего опасного не сделает.
+ *  Пароль есть у каждого аккаунта: при регистрации без пароля он
+ *  создаётся случайным. true — пароль подтверждён, false — отменили. */
 async function reauthenticate(actionLabel) {
   const password = prompt(`Подтвердите действие «${actionLabel}» — введите свой пароль от этой панели:`);
   if (password === null) return false;
@@ -325,12 +276,9 @@ async function reauthenticate(actionLabel) {
 function clearScreen() {
   state.screenSubs.forEach((off) => { try { off(); } catch (_) {} });
   state.screenSubs = [];
-  // Нижняя навигация — только у личного кабинета владельца (screenDashboard
-  // включает его сама); любой другой экран должен начинать без него.
+  // Нижнюю навигацию и тему лендинга включают свои экраны, остальные
+  // начинают без них.
   screenEl().classList.remove('has-tabbar');
-  // Премиальная тёмно-синяя схема лендинга (screenLanding() включает её
-  // сама) — без явного снятия здесь она осталась бы висеть на #screen и
-  // после ухода на любой другой экран (вход, кабинет и т.д.).
   screenEl().classList.remove('landing');
 }
 function sub(off) { state.screenSubs.push(off); }
@@ -347,8 +295,7 @@ function fmtDate(ts) {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
-// Timestamp -> "YYYY-MM-DD" для value инпута <input type="date"> — ручное
-// управление подпиской в панели платформы (см. saveSubscriptionOverride).
+// Timestamp → "ГГГГ-ММ-ДД" для <input type="date">.
 function tsToDateInputValue(ts) {
   const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : null;
   if (!d) return '';
@@ -361,12 +308,11 @@ function fmtDateTime(ts) {
   return `${fmtDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Тот же льготный период, что и на сервере (saas/functions/index.js,
-// GRACE_PERIOD_DAYS) и в приложении (lib/models/tenant_models.dart,
-// gracePeriodDays) — три рантайма, синхронизировать вручную при изменении.
+// Как GRACE_PERIOD_DAYS в saas-gateway и gracePeriodDays в
+// lib/models/tenant_models.dart — менять вместе.
 const GRACE_PERIOD_DAYS = 10;
 
-/// «1 день», «2 дня», «5 дней» — тот же приём, что и в public/app/app.js.
+/// «1 день», «2 дня», «5 дней».
 function pluralDays(n) {
   const last = n % 10;
   const teen = n % 100 >= 11 && n % 100 <= 14;
@@ -384,9 +330,7 @@ function plural(n, one, few, many) {
   return many;
 }
 
-/// «1 человек», «2 человека», «5 человек» — «человек» неправильное
-/// существительное, родительный падеж множественного числа совпадает с
-/// именительным единственного, поэтому это не то же самое, что pluralDays.
+/// «1 человек», «2 человека», «5 человек».
 function pluralPeople(n) {
   const last = n % 10;
   const teen = n % 100 >= 11 && n % 100 <= 14;
@@ -403,10 +347,7 @@ function daysUntilDataPurge(subscription) {
   return Math.max(0, remainingDays);
 }
 
-// Сколько дней осталось до конца пробного периода — null, если подписка не
-// в статусе "trial" или дата не задана. Используется в "Требует внимания"
-// панели платформы, чтобы владелец не пропустил заведение, у которого вот-
-// вот кончится триал и понадобится напоминание об оплате.
+// Дней до конца пробного периода, null — не триал или дата не задана.
 function daysUntilTrialEnd(subscription) {
   if (subscription?.status !== 'trial') return null;
   const end = subscription.trialEndsAt?.toDate?.();
@@ -414,11 +355,8 @@ function daysUntilTrialEnd(subscription) {
   return Math.ceil((end.getTime() - Date.now()) / 86400000);
 }
 
-// Персональное приветствие вверху "Обзора" — по времени суток БРАУЗЕРА
-// владельца (тот же принцип, что и у "живых" цифр за сегодня) + имя,
-// приближённо взятое из локальной части его email (отдельного поля "как
-// вас зовут" в форме регистрации нет, а обращаться по email целиком типа
-// "Добрый вечер, ivan.petrov1988@!" не звучит по-человечески).
+// Приветствие на «Обзоре»: время суток браузера и имя из email
+// (отдельного поля с именем при регистрации нет).
 function greetingLine() {
   const h = new Date().getHours();
   const greeting = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
@@ -433,9 +371,8 @@ function planName(plans, planId) {
   return plan ? plan.name || plan.id : null;
 }
 
-// Список превышенных лимитов тарифа заведения ("сотрудников: 5 из 3") —
-// апсел-сигнал для супер-админа: заведение переросло свой тариф, стоит
-// предложить более дорогой, а не просто молча терпеть перегруз.
+// Превышенные лимиты тарифа («сотрудников: 5 из 3») — повод для
+// супер-админа предложить тариф побольше.
 const PLAN_LIMIT_CHECKS = [
   ['employees', 'maxEmployees', 'сотрудников'],
   ['devices', 'maxDevices', 'устройств'],
@@ -453,13 +390,9 @@ function planLimitWarnings(t, plans) {
   return warnings;
 }
 
-// Логотип показывается максимум в паре десятков-сотен пикселей (окошко
-// предпросмотра, иконка приложения — см. flutter_launcher_icons в
-// saas-on-demand-build.yml, которому и 1024px за глаза) — а телефонная
-// камера легко даёт файл на несколько мегабайт и 3000+ px по стороне,
-// который на медленном мобильном интернете грузится минуты. Уменьшаем на
-// клиенте перед отправкой в Storage; если canvas почему-то недоступен —
-// просто шлём файл как есть, не блокируя загрузку логотипа вовсе.
+// Фото с камеры телефона весит мегабайты, а логотип показывается мелко
+// (иконке приложения хватает и 1024 px). Уменьшаем перед загрузкой; нет
+// canvas — отправляем как есть.
 async function resizeImageForUpload(file, maxDim = 1024) {
   try {
     const bitmap = await createImageBitmap(file);
@@ -469,9 +402,7 @@ async function resizeImageForUpload(file, maxDim = 1024) {
     canvas.width = Math.round(bitmap.width * scale);
     canvas.height = Math.round(bitmap.height * scale);
     canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    // Всегда PNG, а не формат исходника — у логотипов часто прозрачный фон
-    // (JPEG её не умеет), а на таком небольшом размере разница в весе с
-    // JPEG уже не критична.
+    // Всегда PNG: у логотипов часто прозрачный фон.
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     return blob ? new File([blob], file.name.replace(/\.\w+$/, '.png'), { type: 'image/png' }) : file;
   } catch (_) {
@@ -494,8 +425,7 @@ function csvCell(v) {
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// BOM в начале — иначе Excel на Windows показывает кириллицу в CSV
-// абракадаброй, считая файл однобайтовой кодировкой без явного маркера.
+// BOM нужен, иначе Excel на Windows показывает кириллицу в CSV кракозябрами.
 function downloadCsv(filename, rows) {
   const csv = '﻿' + rows.map((row) => row.map(csvCell).join(';')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -509,22 +439,17 @@ function downloadCsv(filename, rows) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-// Тот же алфавит, что в Cloud Function randomInviteCode() и в коротком ID
-// устройства гостевого приложения — без символов, которые путают на слух и
-// на вид (0/O, 1/I).
+// Как в saas-gateway: без символов, которые путают на слух и на вид (0/O, 1/I).
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function randomInviteCode() {
-  let out = '';
-  for (let i = 0; i < 8; i++) {
-    out += INVITE_ALPHABET[Math.floor(Math.random() * INVITE_ALPHABET.length)];
-  }
-  return out;
+  // Код открывает устройству все данные заведения — только криптослучайный.
+  const bytes = new Uint32Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => INVITE_ALPHABET[b % INVITE_ALPHABET.length]).join('');
 }
 
-// Подпись участника заведения: email, если он есть в членстве; иначе
-// известный email (свой аккаунт / владелец в панели платформы) — у
-// владельцев, заведённых до того, как шлюз начал писать email в
-// tenantMembers, его там нет; иначе это планшет, присоединённый по коду.
+// Подпись участника: email из членства, иначе известный email, иначе это
+// планшет, присоединённый по коду.
 function memberLabel(m, knownEmail) {
   return m.email || knownEmail || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`;
 }
@@ -541,15 +466,13 @@ function slugify(s) {
 }
 
 const TENANT_STATUS_LABELS = {
-  trial: 'пробный период', active: 'активно', pastDue: 'просрочена оплата',
+  trial: 'пробный период', active: 'активно', past_due: 'просрочена оплата',
   suspended: 'приостановлено', cancelled: 'отменено', deleted: 'удалено',
 };
 const ROLE_LABELS = { owner: 'владелец', admin: 'администратор', manager: 'менеджер', employee: 'сотрудник' };
 const ROLE_ORDER = { owner: 0, admin: 1, manager: 2, employee: 3 };
-// Специализация сотрудника кассы (см. AppConstants.position* в
-// lib/utils/constants.dart — та же раскладка, тот же смысл значений)
-// — определяет, какие вызовы гостя из-за стола ему адресованы.
-// 'universal' (значение по умолчанию) получает вообще все вызовы.
+// Специализация сотрудника (AppConstants.position*): от неё зависит, какие
+// вызовы гостей ему приходят. universal получает все.
 const POSITION_LABELS = {
   universal: 'Универсал (видит все вызовы)',
   waiter: 'Официант',
@@ -564,22 +487,15 @@ const BUILD_STATUS_LABELS = {
   queued: 'в очереди', success: 'готова', failed: 'ошибка',
   superseded: 'заменена новой версией',
 };
-// Одно нажатие «Собрать APK» создаёт сразу 2 buildJobs-документа с разным
-// type (см. handleCreateBuildJob в saas-gateway/server.js) — подпись, чтобы
-// в списке было видно, какая запись про что, а не только "готова"/"в очереди".
+// Одно нажатие «Собрать APK» — три сборки: касса Android, касса Windows и
+// приложение гостя.
 const BUILD_TYPE_LABELS = {
   pos: 'Касса', guest: 'Гостевое приложение',
 };
-// platform: 'windows' — та же касса (type всегда 'pos'), но отдельная
-// desktop-сборка для планшета/компьютера на Windows (см. handleCreateBuildJob
-// в saas-gateway/server.js) — без суффикса две строки в списке ("Касса" и
-// "Касса") были бы неотличимы друг от друга.
 function buildJobLabel(j) {
   const base = BUILD_TYPE_LABELS[j.type] || j.type || 'Сборка';
   return j.platform === 'windows' ? `${base} (Windows)` : base;
 }
-// См. purpose в handleBillingWebhook (saas/functions/index.js) —
-// 'subscription' (первая оплата) и 'renewal' (автопродление).
 const BILLING_PURPOSE_LABELS = {
   subscription: 'оплата тарифа', renewal: 'автопродление',
 };
@@ -596,15 +512,24 @@ const AUDIT_ACTION_LABELS = {
   buildJobRequested: 'Запрошена сборка APK',
   planChangedBySuperAdmin: 'Тариф изменён супер-админом',
   bonusPeriodGranted: 'Выдан бонусный период',
+  buildJobAutoUpdate: 'Автообновление приложений',
+  tenantConvertedToChain: 'Заведение переведено в сеть',
+  subscriptionOverridden: 'Подписка изменена вручную',
+  trialExpired: 'Пробный период закончился',
+  tenantDataPurged: 'Данные удалены после просрочки',
+  chainDataPurged: 'Данные сети удалены после просрочки',
+  chainCreated: 'Создана сеть',
+  billingUnknownInvoice: 'Оплата по неизвестному счёту',
+  billingRefundNotified: 'Платёжный сервис сообщил о возврате',
+  bankInvoiceCreated: 'Выставлен счёт',
+  bankInvoicePaid: 'Счёт оплачен',
+  demoTenantDeletedBySuperAdmin: 'Демо удалено супер-админом',
+  billingAmountMismatch: 'Сумма оплаты не совпала со счётом',
 };
 
-/** Случайный пароль для аккаунта, который владелец никогда не увидит и не
- *  вводит сам (см. регистрацию в screenAuth) — сразу после создания
- *  аккаунта на почту уходит ссылка sendPasswordResetEmail, ею владелец
- *  задаёт СВОЙ пароль. crypto.getRandomValues, а не Math.random() — этот
- *  пароль хоть и временный, но реально даёт полный доступ к аккаунту до
- *  того, как придёт письмо, поэтому предсказуемым быть не должен.
- */
+/** Случайный пароль при регистрации по ссылке: владелец его не видит и
+ *  задаёт свой. Пока не задал, этот пароль даёт полный доступ, поэтому
+ *  crypto.getRandomValues, а не Math.random. */
 function genSecurePassword() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
   const bytes = new Uint32Array(24);
@@ -685,8 +610,7 @@ function authErrorMessage(e) {
 async function boot() {
   let config;
   try {
-    // Firebase Hosting сам отдаёт настройки проекта по этому адресу —
-    // ключи не приходится вшивать в код (см. тот же приём в public/app/app.js).
+    // Настройки проекта отдаёт Firebase Hosting — ключи не вшиваем в код.
     const res = await fetch('/__/firebase/init.json');
     config = await res.json();
     if (!config || !config.projectId) throw new Error('пусто');
@@ -704,12 +628,9 @@ async function boot() {
   const app = initializeApp(config);
   state.auth = getAuth(app);
   state.db = getFirestore(app);
-  state.functions = getFunctions(app, FUNCTIONS_REGION);
 
-  // Возврат по ссылке из письма (см. sendLoginLink на лендинге) — сама
-  // ссылка не требует пароля вообще: клик по ней уже доказывает владение
-  // почтой, поэтому именно так закрывается регистрация "любой email без
-  // подтверждения" на самом первом шаге, ещё до онбординга.
+  // Вход по ссылке из письма: пароль не нужен, клик по ссылке и так
+  // доказывает владение почтой.
   if (isSignInWithEmailLink(state.auth, window.location.href)) {
     let email = window.localStorage.getItem('emailForSignIn');
     if (!email) {
@@ -719,11 +640,9 @@ async function boot() {
       try {
         const cred = await signInWithEmailLink(state.auth, email, window.location.href);
         window.localStorage.removeItem('emailForSignIn');
-        // Момент акцепта оферты и согласия на обработку ПД фиксируется на
-        // лендинге, ДО отправки письма (см. submit() в screenLanding) — сама
-        // ссылка приходит уже после этого. Если флага почему-то нет (старая
-        // вкладка/localStorage очищен), не блокируем вход — просто пишем
-        // текущий момент, чтобы поле не осталось пустым.
+        // Согласие отмечено на лендинге до отправки письма. Флага нет
+        // (старая вкладка, очищено хранилище) — не блокируем вход, пишем
+        // текущий момент.
         const offerAcceptedAtIso = window.localStorage.getItem('offerAcceptedAt');
         window.localStorage.removeItem('offerAcceptedAt');
         const userRef = doc(state.db, 'users', cred.user.uid);
@@ -732,28 +651,23 @@ async function boot() {
           await setDoc(userRef, {
             email, createdAt: Timestamp.fromDate(new Date()),
             offerAcceptedAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
-            // Согласие на обработку ПД — отдельной галочкой (с 01.09.2025
-            // его нельзя совмещать с другими документами), тот же момент.
+            // Согласие на обработку ПД — отдельной отметкой (с 01.09.2025
+            // его нельзя совмещать с другими документами).
             pdConsentAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
             pdConsentEdition: LEGAL_EDITION,
           });
           linkOwnerInRussia(cred.user);
-          // Новый владелец входил только по ссылке — пароля у него нет, а
-          // «Войти по паролю» и смена пароля в настройках без него не
-          // работают. Создаём сразу и показываем (и шлём на почту, если она
-          // настроена на сервере). Вход только что — Firebase это разрешает.
+          // Вход был только по ссылке — пароля нет, а без него не работают
+          // «Войти по паролю» и смена пароля. Создаём и показываем сразу.
           try { await issueNewPassword(cred.user); } catch (_) { /* задаст в «Настройках» */ }
         }
       } catch (_) {
-        // Ссылка одноразовая/просрочена (или email введён не тот) —
-        // раньше здесь просто молча показывался лендинг без объяснений,
-        // почему вход не сработал. state.authLinkError подхватывает и
-        // показывает screenLanding()/screenAuth() при первом рендере.
+        // Ссылка одноразовая или просрочена — объясним на экране входа.
         state.authLinkError = 'Ссылка для входа устарела или уже была использована — запросите новую.';
       }
     }
-    // Убираем oobCode/apiKey и т.п. из адресной строки — иначе повторное
-    // обновление страницы попробует использовать уже потраченную ссылку.
+    // Убираем oobCode из адреса, иначе обновление страницы снова
+    // попробует потраченную ссылку.
     history.replaceState(null, '', location.pathname + '#/');
   }
 
@@ -779,13 +693,10 @@ function handleAuthChange(user) {
   route();
   watchMemberships();
 
-  // Флаг платформы, не заведения — не блокирует обычный экран владельца,
-  // поэтому отдельная лёгкая подписка, а не часть watchMemberships().
+  // Флаг платформы — отдельной лёгкой подпиской.
   state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), async (d) => {
-    // «Выйти на всех устройствах» (раздел «Безопасность»): этот вход
-    // случился раньше — правила базы и saas-gateway его уже не пускают,
-    // поэтому сразу выходим, а не показываем панель, где всё падает с
-    // «нет прав».
+    // «Выйти на всех устройствах»: этот вход старше — сервер и правила его
+    // уже не пускают, поэтому выходим сразу.
     const validAfter = d.exists() ? d.data().sessionsValidAfter : null;
     if (typeof validAfter === 'number' && state.auth.currentUser) {
       try {
@@ -814,17 +725,13 @@ function watchMemberships() {
   );
   state.accountSubs.push(onSnapshot(q, async (snap) => {
     const list = snap.docs.map((d) => ({ id: d.data().tenantId, role: d.data().role }));
-    // Название и код заведения тянем сразу для всех членств — обычно
-    // владелец состоит в одном-двух заведениях, а не в сотне, так что
-    // это пара лишних чтений, а не N+1 проблема.
+    // Владелец обычно состоит в одном-двух заведениях — пара лишних чтений.
     await Promise.all(list.map(async (t) => {
       try {
         const tSnap = await getDoc(doc(state.db, 'tenants', t.id));
         t.name = tSnap.exists() ? tSnap.data().name : t.id;
         t.slug = tSnap.exists() ? tSnap.data().slug : '';
-        // Сеть заведений (см. её docstring в saas/firestore.rules) — нужна
-        // здесь, чтобы сгруппировать точки одной сети в переключателе
-        // заведения (см. dashboardNavHtml) и подставить её название.
+        // Сеть — чтобы сгруппировать точки в переключателе заведения.
         t.chainId = tSnap.exists() ? (tSnap.data().chainId || null) : null;
       } catch (_) {
         t.name = t.id;
@@ -877,10 +784,7 @@ function route() {
     return PUBLIC_ROUTES[location.hash]();
   }
   if (!state.uid) {
-    // Лендинг — дефолтная дверь для того, кто ещё не вошёл: что это за
-    // система, какие тарифы, кнопка "Попробовать бесплатно". #/login —
-    // прежний вход по email+паролю, для тех, кто уже регистрировался так
-    // раньше (ссылка снизу лендинга ведёт туда же).
+    // Не вошёл — лендинг; #/login и #/signup — вход и регистрация.
     if (location.hash === '#/login' || location.hash === '#/signup') {
       authMode = location.hash === '#/signup' ? 'signup' : 'login';
       return screenAuth();
@@ -895,17 +799,13 @@ function route() {
     // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
     return state.isSuperAdmin ? screenSuperAdmin() : screenDashboardOrOnboarding();
   }
-  // #/onboarding — явный выход на форму "Новое заведение" даже для
-  // супер-админа без своего заведения (ссылка "Своё заведение" на панели
-  // платформы). Без этого хэша супер-админ без заведения не смог бы туда
-  // попасть вообще — экран ниже подставляется по умолчанию.
+  // Явный переход к созданию заведения — в том числе для супер-админа без
+  // своего заведения (ссылка «Своё заведение» в панели).
   if (location.hash === '#/onboarding') {
     return screenDashboardOrOnboarding();
   }
-  // Супер-админ БЕЗ собственного заведения по умолчанию попадает на панель
-  // платформы — это его рабочий экран, а не приглашение завести бизнес
-  // самому. Пока список заведений не загружен, ничего не решаем — обычный
-  // screenLoading() внутри screenDashboardOrOnboarding() покажется сам.
+  // Супер-админ без своего заведения по умолчанию попадает в панель
+  // платформы. Пока заведения не загружены, покажется загрузка.
   if (state.isSuperAdmin && state.tenantsLoaded && !state.tenants.length) {
     return screenSuperAdmin();
   }
@@ -923,10 +823,7 @@ boot();
 
 // ---------- ЛЕНДИНГ ----------
 
-// Реальные возможности приложения (см. корневой README.md, разделы
-// "ZalPOS — возможности сотрудника/администратора") — сокращённо, для
-// человека, который видит систему первый раз, а не для того, кто уже читал
-// техническую документацию.
+// Возможности для лендинга — коротко, для человека, который видит систему впервые.
 const LANDING_FEATURES = [
   { icon: '🗺️', title: 'Карта зала', desc: 'столы по зонам, статусы и таймеры, несколько чеков на одном столе, пересадка гостей без потери заказа' },
   { icon: '💳', title: 'Оплата и чеки', desc: 'наличные, карта, терминал, раздельный счёт, чаевые; фискальные чеки через онлайн-кассу АТОЛ' },
@@ -982,10 +879,8 @@ function landingPlanCardHtml(p, selected, popular) {
   `;
 }
 
-// Тариф для сети заведений: цена/лимиты — за КАЖДУЮ точку (первая может
-// отличаться от последующих, см. customAdditionalPrice в watchPlans), а не
-// за заведение целиком, как у обычных тарифов выше — поэтому отдельная
-// карточка, а не переиспользование landingPlanCardHtml с другими цифрами.
+// Карточка тарифа сети: цены и лимиты за каждую точку, первая может стоить
+// иначе, чем следующие (customAdditionalPrice).
 function landingChainPlanCardHtml(p, selected) {
   const priceText = Number(p.priceRub) > 0
     ? `от ${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
@@ -1026,11 +921,7 @@ function landingChainPlanCardHtml(p, selected) {
 
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
-  // Премиальная тёмно-синяя схема — только для этого публичного экрана
-  // продажи подписки (см. :root в console.css и класс .landing там же).
-  // Личный кабинет намеренно остаётся на своей бордовой схеме — это два
-  // разных класса задач (продать подписку вообще незнакомому человеку vs
-  // рабочий инструмент персонала заведения), это не забыли поменять.
+  // Тёмно-синяя тема только у лендинга, кабинет остаётся в своей.
   screenEl().classList.add('landing');
 
   const HOW_IT_WORKS = [
@@ -1203,7 +1094,7 @@ function screenLanding() {
       <div class="landing-inner">
         <h2 class="landing-h2">Безопасность и соответствие</h2>
         <div class="card">
-          <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🔒 У каждого заведения отдельная изолированная база данных — доступ к чужим данным технически невозможен</div>
+          <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🔒 Данные заведений разделены правилами доступа: персонал видит только своё заведение, это проверяют автотесты</div>
           <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🗄️ Имена и телефоны гостей сначала записываются на сервер в России — в соответствии с 152-ФЗ</div>
           <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🧾 Фискальные чеки (54-ФЗ) — через вашу зарегистрированную онлайн-кассу АТОЛ; ЕГАИС — через ваш УТМ. Система подключается к ним, но не заменяет ККТ, договор с ОФД и эквайринг</div>
           <div class="small" style="padding:7px 0">☁️ Инфраструктура — надёжный облачный провайдер с резервированием и автомасштабированием, статус в реальном времени — на <a href="#/status">странице статуса</a></div>
@@ -1308,9 +1199,7 @@ function screenLanding() {
     el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
   });
 
-  // Липкая кнопка снизу появляется, как только форма email вверху уходит
-  // за пределы экрана — на длинной странице решение "попробовать" всегда
-  // должно быть в одно касание, а не пролистывание обратно наверх.
+  // Липкая кнопка появляется, когда форма email ушла за верх экрана.
   const onLandingScroll = () => {
     const heroCard = $('f-landing-email');
     if (!heroCard) return;
@@ -1321,22 +1210,13 @@ function screenLanding() {
 
   sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
     const allPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
-    // Тарифы для сети (isChainPlan) показываем ОТДЕЛЬНОЙ секцией ниже
-    // (landing-chain-plans), а не среди обычных: цена/лимиты у них за
-    // точку, а выбор такого тарифа обязан провести посетителя через
-    // онбординг именно сети (чекбокс "Это сеть заведений") — иначе
-    // получилось бы одиночное заведение с ценой/лимитами сети без самой
-    // сети. Кнопки чуть ниже сами включают этот путь через presetIsChain
-    // в localStorage (см. screenOnboarding) — тариф сети по-прежнему
-    // нельзя выбрать и одновременно завести одиночное заведение.
+    // Тарифы сети — отдельной вкладкой: цены у них за точку, и выбрать такой
+    // тариф можно только вместе с созданием сети (presetIsChain в онбординге).
     const plans = allPlans.filter((p) => !p.isChainPlan);
     const chainPlans = allPlans.filter((p) => !!p.isChainPlan);
     const body = $('landing-plans');
     if (!body) return;
-    // "Популярный" — средний по цене из реально продаваемых тарифов (не
-    // "по запросу"), классическая подсказка "бери этот", если есть из чего
-    // выбирать — не сама дорогая (звучит навязчиво) и не самая дешёвая
-    // (выглядит как самая слабая уценка).
+    // «Популярный» — средний по цене из продаваемых, если их хотя бы три.
     const sellable = plans.filter((p) => Number(p.priceRub) > 0);
     const popularId = sellable.length >= 3 ? sellable[1].id : null;
     body.innerHTML = plans.length
@@ -1344,9 +1224,7 @@ function screenLanding() {
       : '<p class="small muted">Тарифы скоро появятся.</p>';
     const chainBody = $('landing-chain-plans');
     if (chainBody) chainBody.innerHTML = chainPlans.map((p) => landingChainPlanCardHtml(p, p.id === selectedPlanId)).join('');
-    // Переключатель "Одно заведение" / "Сеть заведений" — только если есть
-    // хотя бы один тариф сети, иначе это был бы выбор без выбора (вторая
-    // вкладка вела бы в пустоту), см. пустое состояние ниже.
+    // Переключатель «Одно заведение / Сеть» — только если есть тарифы сети.
     const toggle = $('landing-pricing-toggle');
     const subEl = $('landing-pricing-sub');
     const SINGLE_SUB = 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.';
@@ -1364,9 +1242,7 @@ function screenLanding() {
       toggle.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
         btn.onclick = () => setMode(btn.dataset.mode);
       });
-      // Если посетитель уже когда-то выбирал тариф сети (см. presetIsChain),
-      // при повторном визите сразу открываем нужную вкладку, а не заставляем
-      // искать её заново.
+      // Выбирал тариф сети раньше — сразу открываем эту вкладку.
       setMode(window.localStorage.getItem('presetIsChain') === '1' ? 'chain' : 'single');
     }
     const updateSkipTrialNote = () => {
@@ -1383,18 +1259,14 @@ function screenLanding() {
         btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
       });
     };
-    // Общая точка выбора и для обычных тарифов, и для тарифов сети —
-    // presetIsChain дальше решает, придёт ли посетитель в онбординг с уже
-    // отмеченным чекбоксом "Это сеть заведений" (см. screenOnboarding).
+    // presetIsChain решает, откроется ли онбординг сразу с отметкой «Это сеть».
     const selectLandingPlan = (id, { isChain, buyNow }) => {
       selectedPlanId = id;
       window.localStorage.setItem('selectedPlanId', selectedPlanId);
       if (isChain) window.localStorage.setItem('presetIsChain', '1');
       else window.localStorage.removeItem('presetIsChain');
-      // Обычный путь — через пробный период, а не сразу оплата: если до
-      // этого выбирали "Купить сразу" на другом тарифе, сбрасываем флаг,
-      // иначе после регистрации владельца неожиданно перекинуло бы на
-      // оплату тарифа, который он уже передумал покупать напрямую.
+      // Выбрали тариф с пробным периодом — сбрасываем «Купить сразу» от
+      // другого тарифа, иначе после регистрации неожиданно откроется оплата.
       if (buyNow) window.localStorage.setItem('skipTrial', '1');
       else window.localStorage.removeItem('skipTrial');
       refreshPlanButtons();
@@ -1495,11 +1367,9 @@ async function loadPlatformLegal() {
   return legalCache;
 }
 
-/** Исполнитель для текстов: ФИО из выписки ЕГРИП приходит заглавными и с
- *  «ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ» в начале — без этого в оферте было
- *  «Индивидуальный предприниматель ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ …».
- *  full — для документов, short — для подвала («ИП Иванов Иван Иванович»).
- *  Название организации — как записано. */
+// ФИО из выписки ЕГРИП приходит заглавными и с «ИНДИВИДУАЛЬНЫЙ
+// ПРЕДПРИНИМАТЕЛЬ» в начале — приводим к виду для документов (full) и
+// подвала (short, «ИП Иванов Иван Иванович»). Организация — как записана.
 function legalParty(l) {
   const raw = String(l.fullName || '').trim();
   const isOrg = !/^ИП\s|индивидуальн/i.test(raw) && (l.ogrnip || '').length === 13;
@@ -1520,8 +1390,6 @@ async function fillLegalFooter() {
   els.forEach((el) => { el.textContent = parts.join(' · '); });
 }
 
-/** Подставляет в оферту/политику реквизиты вместо «[указать]», если они
- *  заполнены в панели платформы. Сам текст документов не меняется. */
 /** Как выдаётся чек: самозанятый — из «Мой налог» (422-ФЗ), иначе —
  *  кассовый чек по 54-ФЗ. */
 function receiptRuleText(l) {
@@ -1929,17 +1797,12 @@ function screenAuth() {
           pdConsentEdition: LEGAL_EDITION,
         }, { merge: true });
         linkOwnerInRussia(cred.user);
-        // Письмо с подтверждением — до него владелец не может создать
-        // заведение (см. screenOnboarding и createTenant на сервере), это
-        // и есть защита от регистрации на случайный/чужой email.
+        // Без подтверждения почты заведение не создать — защита от регистрации на чужой адрес.
         try { await sendAuthEmail('verifyEmail', cred.user.email, () => sendEmailVerification(cred.user)); } catch (_) {}
-        // Пароль сгенерирован выше и нигде не показывается — второе письмо
-        // (та же механика, что и "Забыли пароль?" выше) даёт владельцу
-        // способ задать СВОЙ пароль, которым он потом сможет входить.
+        // Пароль сгенерирован случайно — по этому письму владелец задаст свой.
         try { await sendAuthEmail('passwordReset', email, () => sendPasswordResetEmail(state.auth, email)); } catch (_) {}
       }
-      // Дальше подхватит onAuthStateChanged — свой экран он покажет сам
-      // (screenVerifyEmail расскажет и про письмо для пароля тоже).
+      // Дальше экран сменит onAuthStateChanged.
     } catch (e) {
       errEl.textContent = authErrorMessage(e);
       $('f-submit').disabled = false;
@@ -2010,11 +1873,7 @@ function screenVerifyEmail() {
 // ---------- СОЗДАНИЕ ЗАВЕДЕНИЯ ----------
 
 function screenOnboarding() {
-  // Пока владелец не подтвердил почту — никакого создания заведения. Это и
-  // есть защита от "любой вписал любой email и тут же завёл себе бизнес":
-  // без клика по ссылке в реальном письме сюда не попасть, а createTenant
-  // на сервере проверяет то же самое ещё раз (request.auth.token.email_verified),
-  // так что этот экран — не единственная защита, а просто первая.
+  // Без подтверждённой почты заведение не создаём; сервер проверяет то же.
   if (!state.auth.currentUser?.emailVerified) {
     return screenVerifyEmail();
   }
@@ -2111,11 +1970,7 @@ function screenOnboarding() {
     $('f-submit').textContent = isChain ? 'Создать сеть' : 'Создать заведение';
   };
   $('f-is-chain').addEventListener('change', (e) => applyChainToggle(e.target.checked));
-  // Если владелец пришёл с лендинга, выбрав тариф именно для сети (см.
-  // f-landing-chain-plan-pick/-buy в screenLanding) — сразу отмечаем
-  // чекбокс, иначе он решил бы, что выбранный тариф потерялся. Сам
-  // chosenPlanId ниже читается из того же localStorage независимо от этого
-  // чекбокса — presetIsChain лишь избавляет от лишнего клика.
+  // Пришёл с лендинга с тарифом сети — сразу отмечаем «Это сеть».
   if (window.localStorage.getItem('presetIsChain') === '1') {
     $('f-is-chain').checked = true;
     applyChainToggle(true);
@@ -2140,6 +1995,9 @@ function screenOnboarding() {
   $('f-brand-name')?.addEventListener('input', updateBrandPreview);
   updateBrandPreview();
 
+  // Сеть создана, а первая точка нет (например, занят код) — повторное
+  // нажатие не должно заводить вторую сеть.
+  let createdChainId = null;
   $('f-submit').onclick = async () => {
     const isChain = $('f-is-chain').checked;
     const name = nameEl.value.trim();
@@ -2167,30 +2025,23 @@ function screenOnboarding() {
     }
     $('f-submit').disabled = true;
     try {
-      // Если владелец пришёл с лендинга, выбрав конкретный тариф — заводим
-      // заведение сразу на нём (пробный период всё равно бесплатный 14
-      // дней, planId лишь определяет, какие лимиты/тариф ждут ПОСЛЕ триала).
+      // Тариф, выбранный на лендинге: пробный период от него не зависит, он
+      // определяет лимиты и цену после триала.
       const chosenPlanId = window.localStorage.getItem('selectedPlanId');
-      // "Купить сразу" на лендинге (см. f-landing-plan-buy) — тенант всё
-      // равно заводится обычным путём (createTenant не умеет "сразу
-      // платно", да это и не нужно: ниже сразу открываем оплату, до того
-      // как владелец увидит личный кабинет, а после реальной оплаты
-      // handleBillingWebhook переведёт статус в active — пробный период
-      // просто никогда не будет использован).
+      // «Купить сразу»: заведение создаётся обычным путём, а оплата
+      // открывается сразу, до кабинета.
       const skipTrial = window.localStorage.getItem('skipTrial') === '1';
 
-      // Для сети — сначала пустая сеть (createChain), потом первая точка с
-      // её chainId (createTenant); для одиночного заведения — как раньше.
-      let chainId = null;
-      if (isChain) {
+      // Сеть: сначала пустая сеть, потом первая точка с её chainId.
+      let chainId = isChain ? createdChainId : null;
+      if (isChain && !chainId) {
         const chainRes = await callSaasGateway(
           'createChain',
           chosenPlanId ? { name: chainName, slug: chainSlug, planId: chosenPlanId } : { name: chainName, slug: chainSlug }
         );
         chainId = chainRes.data.chainId;
+        createdChainId = chainId;
       }
-      // createTenant — не Cloud Function (Blaze для неё сейчас недоступен),
-      // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
       const res = await callSaasGateway(
         'createTenant',
         {
@@ -2203,16 +2054,9 @@ function screenOnboarding() {
       window.localStorage.removeItem('presetIsChain');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
-      // createTenant/createChain уже завели дефолтный брендинг ("Полночный
-      // синий") — если владелец выбрал другую гамму или свой лейбл,
-      // дописываем это отдельным клиентским merge-запросом сразу после: к
-      // этому моменту членство владельца в заведении/сети уже закоммичено
-      // на сервере (тем же батчем), поэтому правила (owner/admin) это
-      // разрешают без гонки. Для сети — пишем в брендинг САМОЙ СЕТИ
-      // (chainId передан третьим аргументом), а не первой точки: гостевые
-      // приложения сети читают именно его (см. writeBrandingConfig).
-      // Цвета берём прямо из полей, а не из объекта пресета — так учитываются
-      // и ручные правки владельца поверх выбранной гаммы (см. BRANDING_COLOR_FIELD_IDS).
+      // Сервер завёл брендинг по умолчанию — дописываем выбранные цвета и
+      // лейбл (у сети — в брендинг самой сети: его читают приложения гостей).
+      // Цвета берём из полей, чтобы учесть ручные правки поверх гаммы.
       const appName = label || (isChain ? chainName : name);
       try {
         await writeBrandingConfig(tenantId, {
@@ -2225,16 +2069,10 @@ function screenOnboarding() {
           textColor: $('f-color-text').value,
         }, chainId);
       } catch (_) {
-        // Заведение всё равно создано с рабочим брендингом по умолчанию —
-        // не блокируем онбординг, если этот необязательный шаг не прошёл.
+        // Необязательный шаг: заведение уже работает с брендингом по умолчанию.
       }
-      // "Купить сразу" — уводим на оплату ДО того, как отрисуется дашборд
-      // (иначе владелец на долю секунды увидел бы личный кабинет пробного
-      // периода, которым не собирался пользоваться). startCheckout теперь
-      // возвращает true/false — если оплата не запустилась (сеть, ЮKassa
-      // недоступна), явно говорим об этом здесь, а не тихо проваливаемся в
-      // обычный дашборд без единого слова: заведение уже создано, просто
-      // предлагаем оплатить из личного кабинета как обычно.
+      // «Купить сразу» — на оплату до отрисовки кабинета. Не открылась —
+      // говорим об этом: заведение уже создано, оплатить можно из кабинета.
       if (skipTrial && chosenPlanId) {
         const paid = await startCheckout(tenantId, chosenPlanId, 'monthly', chainId);
         if (!paid) {
@@ -2242,8 +2080,7 @@ function screenOnboarding() {
         }
         return;
       }
-      // Новый tenantMembers придёт сам через watchMemberships — она уже
-      // слушает эту коллекцию и перерисует экран в screenDashboard.
+      // Новое членство придёт через watchMemberships, экран перерисуется сам.
     } catch (e) {
       errEl.textContent = `Не удалось создать заведение: ${e?.message || e}`;
       $('f-submit').disabled = false;
@@ -2267,38 +2104,27 @@ const TIMEZONE_OPTIONS = [
   { id: 'Asia/Vladivostok', label: 'Владивосток (UTC+10)' },
 ];
 
-// Реальные, а не "рыбные" вопросы — то, что действительно спрашивают на
-// этапе выбора и подключения (честно про фискализацию: её из коробки нет,
-// это же написано и в самом приложении, см. корневой README.md).
+// Вопросы, которые на самом деле задают при выборе и подключении.
 const FAQ_ITEMS = [
   { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока пробный период не закончится. Длительность зависит от тарифа, обычно 7 дней.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
   { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
   { q: 'Можно ли сменить тариф позже?', a: 'Да, в любой момент в разделе «Тарифы» — повышение и понижение доступны в один клик, без обращения в поддержку.' },
   { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Да, через вашу онлайн-кассу АТОЛ: система отправляет в неё чек с позициями, ставками НДС и способами оплаты. Саму ККТ с фискальным накопителем, договор с ОФД и регистрацию в ФНС оформляете вы — система к ним подключается, но не заменяет. Приём карт — через ваш банковский терминал или эквайринг, подключение — в разделе «Интеграции» на кассе.' },
-  { q: 'Где хранятся данные заведения?', a: 'Имена и телефоны гостей сначала записываются на наш сервер в России, остальные данные — в облаке с резервированием. У каждого заведения своя изолированная база: другие заведения платформы не могут увидеть ваши данные — это проверяется автоматическими тестами защиты.' },
+  { q: 'Где хранятся данные заведения?', a: 'Имена и телефоны гостей сначала записываются на наш сервер в России, остальные данные — в облаке с резервированием. Данные заведений разделены правилами доступа: другие заведения платформы не могут увидеть ваши данные — это проверяется автоматическими тестами защиты.' },
   { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Зависит от тарифа — лимиты указаны в разделе «Тарифы». При превышении лимита приложение продолжает работать, но администратора платформы попросят предложить тариф выше.' },
   { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Экспортировать данные до удаления можно, обратившись в поддержку.' },
 ];
 
 function screenDashboard() {
   screenEl().classList.add('has-tabbar');
-  // Переключатель заведения (для владельцев с несколькими точками) живёт
-  // внутри drawer (см. dashboardNavHtml) — доступен с любой вкладки, а не
-  // только пока открыт "Обзор", и не толкает контент вниз на телефоне.
+  // Переключатель заведения — в боковом меню, доступен с любой вкладки.
   screenEl().innerHTML = `<div id="dash-body"><div class="spinner"></div></div>`;
   watchDashboardData(state.activeTenantId);
 }
 
-// Свой набор SVG вместо голых эмодзи (🏠💳💎🎨 и т.д.) — у каждого эмодзи
-// своя "родная" цветовая палитра, из-за чего ряд иконок выглядел случайным
-// набором, а не единым стилем (отзыв "иконки в разнобой"). Один viewBox
-// 24×24 на все — гарантированно одинаковый размер и центровка; цвет теперь
-// свой параметр (background чипа), а не то, что нарисовано внутри самого
-// эмодзи-глифа. См. также .nav-item { justify-content: flex-start } в
-// console.css — это была вторая, более серьёзная причина того же отзыва
-// (браузер по умолчанию центрирует содержимое <button>, из-за чего иконка
-// у коротких подписей стояла ближе к центру плашки, чем у длинных).
+// Свои SVG-иконки вместо эмодзи: у эмодзи разная палитра и размеры, ряд
+// выглядел случайным. Один viewBox 24×24, цвет задаёт фон чипа.
 const NAV_ICON_PATHS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
   device: '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
@@ -2355,10 +2181,8 @@ const DASHBOARD_NAV = [
   { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
 ];
 
-// Точки одной сети (см. её docstring в saas/firestore.rules) группируются
-// под общим <optgroup> — иначе владелец с сетью из 5+ точек видел бы
-// плоский список неотличимых друг от друга названий без подсказки, что
-// это вообще одна сеть с общим биллингом/лояльностью.
+// Точки одной сети — под общим <optgroup>, иначе у владельца сети из пяти
+// точек получается плоский список похожих названий.
 function tenantSwitcherOptionsHtml() {
   const option = (t) => `<option value="${esc(t.id)}" ${t.id === state.activeTenantId ? 'selected' : ''}>${esc(t.name || t.id)}</option>`;
   const standalone = state.tenants.filter((t) => !t.chainId);
@@ -2432,46 +2256,31 @@ function watchDashboardData(tenantId) {
   let plans = null;
   let buildJobs = null;
   let generalSettings = null;
-  // ИИ: публичная часть (meta/aiSettings), ключи (meta/aiSecrets) и
-  // несохранённые правки формы — draw() перерисовывает всё на каждое
-  // обновление данных, поэтому правки живут в aiDraft, а не только в DOM.
+  // ИИ: публичные настройки, ключи и несохранённые правки формы. draw()
+  // перерисовывает экран целиком, поэтому правки держим в aiDraft.
   let aiPub = null;
   let aiSec = null;
   let aiLegacy = null; // настройки самой точки сети до перехода на общие
   let aiDraft = null;
   let paymentHistory = null;
-  // Счета на оплату для ИП и организаций (bankInvoices) и черновик формы
-  // плательщика: draw() перерисовывает экран на каждое обновление данных,
-  // поэтому введённое живёт здесь, а не только в полях.
+  // Счета для ИП и организаций и черновик формы плательщика — по той же
+  // причине, что aiDraft.
   let bankInvoices = null;
   const payerDraft = { mode: 'individual', type: 'ip', name: '', inn: '', kpp: '' };
-  // Активные объявления платформы (см. watchAdminBroadcasts в панели
-  // супер-админа) — баннер на "Обзоре", скрытие конкретного объявления
-  // запоминается в localStorage браузера (см. dismissedBroadcastIds ниже):
-  // не критично для этой функции хранить "прочитано" синхронно между
-  // устройствами одного владельца, а заводить для этого отдельный
-  // Firestore-документ на пользователя — лишняя сложность ради баннера.
+  // Объявления платформы. Скрытые запоминаем в localStorage: синхронизировать
+  // «прочитано» между устройствами ради баннера незачем.
   let broadcasts = null;
-  // Обращения в поддержку (супер-админ #3) — список тикетов ЭТОГО заведения
-  // плюс сообщения открытого сейчас тикета. Сообщения грузятся отдельной
-  // подпиской (unsubTicketMessages) только для выбранного тикета —
-  // тянуть переписку по всем сразу незачем, а список тикетов и так лёгкий
-  // (без вложенных сообщений).
+  // Обращения в поддержку; переписку грузим только для открытого тикета.
   let supportTickets = null;
-  // Не удалось загрузить список обращений — показываем ошибку, а не «пусто»:
-  // раньше любая ошибка запроса выглядела как «Обращений пока не было», и
-  // владелец не видел ответов поддержки.
+  // Ошибку загрузки показываем как ошибку, а не как «обращений нет».
   let supportTicketsError = '';
   let selectedTicketId = null;
   let ticketMessages = null;
   let unsubTicketMessages = null;
-  // Не через sub(onSnapshot(...)) как остальные подписки этого экрана —
-  // эта включается/выключается по выбору тикета (см. selectTicket ниже),
-  // а не живёт одну на весь экран. sub() здесь только чтобы её тоже
-  // закрыло при уходе с "Обзора" целиком (иначе слушатель бы утёк).
+  // Подписка на переписку меняется при выборе тикета (selectTicket), поэтому
+  // не через sub(onSnapshot). Здесь только закрываем её при уходе с экрана.
   sub(() => { if (unsubTicketMessages) unsubTicketMessages(); });
-  // "Живые" цифры на "Обзоре" (см. подписки ниже) — null, пока не пришёл
-  // первый снапшот, чтобы отличить "ещё грузится" от настоящего нуля.
+  // null — первый снапшот ещё не пришёл, не путать с нулём.
   let liveOpenSessions = null;
   let liveOnShift = null;
   let todayRevenue = null;
@@ -2480,22 +2289,16 @@ function watchDashboardData(tenantId) {
   // наличных в «Требует внимания» (пересчёт при закрытии в кассе).
   let recentClosedShifts = null;
   let devicesCount = null;
-  // Сотрудники с PIN-входом в кассу (tenants/{id}/employees) — отдельно от
-  // members выше: то доступ к ЭТОЙ веб-панели (email+пароль), это доступ к
-  // самой кассе на планшете (имя+PIN), см. teamHtml().
+  // Сотрудники кассы (имя + PIN). Не путать с members — те входят в эту
+  // веб-панель по email.
   let employees = null;
-  // id редактируемого сейчас сотрудника, или null — форма добавления
-  // нового. Переживает промежуточные перерисовки, как pendingLogoUrl ниже.
+  // Сотрудник в форме редактирования; null — форма добавления.
   let editingEmployeeId = null;
   const revealedEmpPins = new Set();
-  // Загруженный, но ещё не сохранённый логотип — переживает промежуточные
-  // перерисовки (см. ниже), сбрасывается после успешного сохранения.
+  // Загруженный, но ещё не сохранённый логотип.
   let pendingLogoUrl = null;
-  // Пока идёт uploadBrandingLogoToGateway() (см. обработчик f-logo-file
-  // ниже) — раньше «Сохранить брендинг» можно было нажать до того, как
-  // pendingLogoUrl вообще появился: имя/цвета сохранялись, тост говорил
-  // «Брендинг сохранён», а logoUrl в payload просто не попадал — выглядело
-  // как «загрузил лого, а оно не применилось», без единой ошибки на экране.
+  // Пока логотип грузится, сохранение брендинга ждёт: иначе сохранились бы
+  // имя и цвета, а логотип молча потерялся.
   let logoUploading = false;
 
   const selectTicket = (ticketId) => {
@@ -2520,31 +2323,21 @@ function watchDashboardData(tenantId) {
   };
 
   const draw = () => {
-    // Пока не пришёл хотя бы сам документ заведения — рано рисовать: без
-    // него неизвестны ни название, ни роль в подписи блока устройств.
+    // Без документа заведения нет ни названия, ни роли.
     if (!tenant) return;
     const role = (state.tenants.find((t) => t.id === tenantId) || {}).role || '';
     const canManage = role === 'owner' || role === 'admin';
     const sortedMembers = (members || []).slice().sort((a, b) =>
       (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
 
-    // Форма брендинга не сбрасывается на середине правки: любое ДРУГОЕ
-    // обновление на этом экране (статус сборки APK, состав команды и т.п.)
-    // тоже вызывает draw() — без этого перерисовка стирала бы не
-    // сохранённые правки цветов/имени. Поэтому если поля уже отрисованы,
-    // берём их ТЕКУЩИЕ значения из DOM, а не то, что лежит в Firestore;
-    // после успешного сохранения (saveBranding) эти же значения и есть
-    // сохранённые, так что рассинхронизации не возникает.
+    // draw() срабатывает на любое обновление экрана (сборка APK, команда…).
+    // Чтобы не стереть несохранённые правки брендинга, берём значения из уже
+    // отрисованных полей, а не из Firestore.
     const existingName = $('f-brand-name')?.value;
     const existingColor = (id) => $(id)?.value;
 
-    // Значения по умолчанию — ровно палитра AppColors ("Midnight Blue") из
-    // lib/theme/app_colors.dart, та же, что и в saas/functions/index.js
-    // (createTenant) и lib/models/tenant_models.dart (BrandingConfig) —
-    // заведение без кастомного брендинга выглядит как проверенный продукт,
-    // а не какой-то другой палитрой по умолчанию.
-    // Старое название платформы, сохранённое по умолчанию, — не имя
-    // заведения: показываем вместо него название самого заведения.
+    // По умолчанию — палитра AppColors (lib/theme/app_colors.dart), как в
+    // createTenant. Старое название платформы — не имя заведения.
     const savedName = LEGACY_PLATFORM_NAMES.includes(branding?.appName) ? '' : branding?.appName;
     const brandName = existingName ?? (savedName || tenant.name || 'ZalPOS');
     const logoUrl = pendingLogoUrl ?? (branding?.logoUrl || '');
@@ -2575,9 +2368,8 @@ function watchDashboardData(tenantId) {
     ];
     const allStepsDone = checklistSteps.every((s) => s.done);
 
-    // "Требует внимания" — в отличие от чек-листа выше (разовый онбординг,
-    // прячется навсегда после первого прохождения), эти пункты появляются и
-    // исчезают по ситуации на протяжении всей жизни заведения.
+    // В отличие от чек-листа, эти пункты появляются и исчезают по ситуации
+    // всё время жизни заведения.
     const attentionItems = [];
     const trialDaysLeft = daysUntilTrialEnd(subscription);
     if (trialDaysLeft !== null && trialDaysLeft <= 3) {
@@ -2621,10 +2413,7 @@ function watchDashboardData(tenantId) {
       });
     }
 
-    // Что видит владелец на "Обзоре" про саму подписку — название тарифа
-    // (а не только статус, который и так был виден строкой выше) и сколько
-    // дней осталось до следующего события (конец триала/списания/уже
-    // просрочено), одной строкой, без похода во вкладку "Оплата".
+    // Тариф и сколько осталось до конца триала или списания — одной строкой.
     const subscriptionLine = (() => {
       const plan = planName(plans, subscription?.planId);
       const planText = plan ? `Тариф «${plan}»` : 'Тариф не выбран';
@@ -2657,9 +2446,7 @@ function watchDashboardData(tenantId) {
       </div>
     `).join('') : '';
 
-    // Список точек ТОЙ ЖЕ сети (см. её docstring в saas/firestore.rules) —
-    // владелец видит их, не выходя из "Обзора", и может открыть/добавить
-    // ещё одну прямо отсюда, а не только через выпадающий список в drawer.
+    // Точки этой же сети — открыть или добавить прямо с «Обзора».
     const chainLocationsHtml = () => {
       const chainName = (state.tenants.find((t) => t.chainId === tenant.chainId) || {}).chainName || '';
       const locations = state.tenants.filter((t) => t.chainId === tenant.chainId);
@@ -2794,9 +2581,7 @@ function watchDashboardData(tenantId) {
         Bluetooth-принтер чека — вместо них работают USB/Bluetooth-сканер
         «пистолет» с ручным вводом кода и сетевой Wi-Fi/LAN-принтер.</p>
         ${canManage ? (() => {
-          // Пока есть незавершённая сборка (см. проверку в handleCreateBuildJob
-          // на сервере) — кнопка неактивна, чтобы не плодить дубли повторными
-          // нажатиями, а не просто показывать ошибку после нажатия.
+          // Пока сборка в очереди, кнопка неактивна — не плодим дубли.
           const hasQueued = (buildJobs || []).some((j) => j.status === 'queued');
           return `<button class="btn btn-ghost" id="f-request-build" ${hasQueued ? 'disabled' : ''}>${hasQueued ? 'Сборка уже идёт…' : 'Собрать APK'}</button>`;
         })() : ''}
@@ -2824,7 +2609,7 @@ function watchDashboardData(tenantId) {
         ${subscription?.trialEndsAt ? `<div class="small muted">Пробный период до: ${fmtDate(subscription.trialEndsAt)}</div>` : ''}
         ${subscription?.currentPeriodEnd && subscription?.status === 'active' ? `<div class="small muted">Оплачено до: ${fmtDate(subscription.currentPeriodEnd)}</div>` : ''}
         ${subscription?.cancelAtPeriodEnd ? `
-          <div class="small" style="color:var(--warning);margin-top:6px">Автопродление отключено — доступ работает до конца оплаченного периода, дальше без действий с вашей стороны спишется не будет.</div>
+          <div class="small" style="color:var(--warning);margin-top:6px">Автопродление отключено — доступ работает до конца оплаченного периода, новых списаний не будет.</div>
         ` : ''}
         ${canManage ? `<button class="btn btn-primary f-dash-tab" data-tab="plans" style="margin-top:14px">Перейти к тарифам</button>` : ''}
         ${canManage && subscription?.status === 'active' ? `
@@ -2885,7 +2670,7 @@ function watchDashboardData(tenantId) {
                 <div>${esc(p.name || p.id)}</div>
                 <div class="small muted">${priceParts.join(' · ')}</div>
                 ${Number(p.priceRubSemiannual) > 0 || Number(p.priceRubYearly) > 0 ? `
-                  <select class="f-plan-period" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
+                  <select class="f-plan-period" id="f-plan-period-${esc(p.id)}" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
                     <option value="monthly">Помесячно</option>
                     ${Number(p.priceRubSemiannual) > 0 ? '<option value="semiannual">На 6 месяцев</option>' : ''}
                     ${Number(p.priceRubYearly) > 0 ? '<option value="yearly">На год (выгоднее)</option>' : ''}
@@ -3298,16 +3083,16 @@ function watchDashboardData(tenantId) {
             <span class="small muted">${esc(slotLabel)}${c.hasKey ? ' · ✓ ключ сохранён' : ''}</span>
           </div>
           <label class="field"><span>API-ключ</span>
-            <input type="password" autocomplete="off" class="f-ai-input" data-vendor="${esc(id)}" data-field="apiKey"
+            <input type="password" autocomplete="off" class="f-ai-input" id="f-ai-${esc(id)}-key" data-vendor="${esc(id)}" data-field="apiKey"
               value="${esc(c.apiKey)}" placeholder="${esc(c.hasKey ? 'сохранён — оставьте пустым, чтобы не менять' : v.hint)}" ${canManage ? '' : 'disabled'}>
           </label>
           <label class="field"><span>Модель</span>
-            <input class="f-ai-input" data-vendor="${esc(id)}" data-field="model" list="ai-models-${esc(id)}"
+            <input class="f-ai-input" id="f-ai-${esc(id)}-model" data-vendor="${esc(id)}" data-field="model" list="ai-models-${esc(id)}"
               value="${esc(c.model)}" placeholder="${esc(v.model || 'имя модели')}" ${canManage ? '' : 'disabled'}>
             <datalist id="ai-models-${esc(id)}">${v.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
           </label>
           <label class="field"><span>Адрес API${id === 'custom' ? '' : ' (необязательно)'}</span>
-            <input class="f-ai-input" data-vendor="${esc(id)}" data-field="baseUrl" value="${esc(c.baseUrl)}"
+            <input class="f-ai-input" id="f-ai-${esc(id)}-url" data-vendor="${esc(id)}" data-field="baseUrl" value="${esc(c.baseUrl)}"
               placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}" ${canManage ? '' : 'disabled'}>
           </label>
           ${id === 'custom' ? `
@@ -3364,7 +3149,7 @@ function watchDashboardData(tenantId) {
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml,
     };
-    body.innerHTML = (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId);
+    renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
 
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
       el.onclick = (e) => {
@@ -3373,9 +3158,8 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
-    // Название заведения — то, что видно в шапке кабинета и в панели
-    // платформы. Название в приложениях гостя и кассы задаётся отдельно,
-    // в «Брендинге». Правила разрешают владельцу/админу менять только name.
+    // Название для кабинета и панели платформы; в приложениях — своё, из
+    // «Брендинга». Правила дают владельцу менять в документе только name.
     const renameBtn = $('f-tenant-rename');
     if (renameBtn) renameBtn.onclick = async () => {
       const next = (window.prompt('Новое название заведения', tenant.name || '') || '').trim();
@@ -3444,6 +3228,8 @@ function watchDashboardData(tenantId) {
           apiKey: del, baseUrl: del, provider: del, model: del, analyticsModel: del, vendorKeys: del,
         }, { merge: true });
         aiDraft = null;
+        // Сохранённый ключ в поле не держим — иначе перерисовка вернёт его туда.
+        document.querySelectorAll('.f-ai-input[data-field="apiKey"]').forEach((el) => { el.value = ''; });
       };
 
       if ($('f-ai-save')) $('f-ai-save').onclick = async () => {
@@ -3546,7 +3332,8 @@ function watchDashboardData(tenantId) {
             lastAuthorRole: 'owner',
             status: selectedTicket.status === 'closed' ? 'open' : selectedTicket.status,
           }, { merge: true });
-          replyEl.value = '';
+          // Новое сообщение уже перерисовало экран — replyEl устарел.
+          if ($('f-ticket-reply')) $('f-ticket-reply').value = '';
         } catch (e) {
           toast(`Не удалось отправить: ${e?.message || e}`);
         } finally {
@@ -3568,10 +3355,8 @@ function watchDashboardData(tenantId) {
       };
     }
 
-    // Гамбургер-меню: на телефоне это выдвижная панель поверх контента, на
-    // широком экране (см. media query в console.css) она уже показана
-    // постоянно и сама кнопка/подложка скрыты — обработчики безобидны и там,
-    // и там.
+    // На широком экране панель видна всегда, а кнопка и подложка скрыты
+    // стилями — обработчики там просто не срабатывают.
     const navDrawer = $('nav-drawer');
     const navBackdrop = $('nav-backdrop');
     const closeNav = () => { navDrawer?.classList.remove('open'); navBackdrop?.classList.remove('open'); };
@@ -3619,18 +3404,16 @@ function watchDashboardData(tenantId) {
         const btn = $('f-pass-change');
         btn.disabled = true;
         try {
-          // updatePassword требует "свежий" вход — на смене пароля это
-          // особенно уместно (см. тот же приём в reauthenticate() для
-          // опасных действий супер-админа): подтверждаем ТЕКУЩИЙ пароль
-          // перед тем, как поставить новый, а не полагаемся на то, что
-          // сессия в браузере вообще принадлежит владельцу аккаунта.
+          // Сначала подтверждаем текущий пароль: открытая вкладка ещё не
+          // значит, что за компьютером владелец.
           await reauthenticateWithCredential(
             state.auth.currentUser,
             EmailAuthProvider.credential(state.auth.currentUser.email, currentEl.value)
           );
           await updatePassword(state.auth.currentUser, newEl.value);
-          currentEl.value = '';
-          newEl.value = '';
+          // Пока ждали ответа, экран мог перерисоваться — берём поля заново.
+          if ($('f-pass-current')) $('f-pass-current').value = '';
+          if ($('f-pass-new')) $('f-pass-new').value = '';
           msgEl.style.color = 'var(--primary)';
           msgEl.textContent = 'Пароль изменён';
         } catch (e) {
@@ -3667,10 +3450,7 @@ function watchDashboardData(tenantId) {
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
-    // Код приглашения — секрет устройства (см. подсказку выше), поэтому он
-    // замазан blur'ом, пока по нему не кликнут — обычный текст в DOM всё
-    // равно доступен через "показать код страницы", но так хотя бы никто
-    // не подсмотрит его через плечо на весь экран открытым текстом.
+    // Размытие — от взгляда через плечо, не более: в DOM код открытым текстом.
     const inviteCodeEl = $('f-invite-code');
     if (inviteCodeEl) {
       inviteCodeEl.onclick = () => {
@@ -3718,16 +3498,9 @@ function watchDashboardData(tenantId) {
             errEl.textContent = 'Файл больше 5 МБ — выберите изображение поменьше';
             return;
           }
-          // Локальный превью сразу же, не дожидаясь загрузки — иначе на
-          // медленной сети окошко логотипа несколько секунд стоит пустым/
-          // белым, и не отличить "грузится" от "сломалось". Реальный URL
-          // подменит его ниже, после ответа сервера.
+          // Локальное превью сразу, серверный URL подменит его после загрузки.
           const localPreviewUrl = URL.createObjectURL(file);
           $('f-logo-preview').src = localPreviewUrl;
-          // Пока файл грузится, «Сохранить брендинг» заблокирована (см.
-          // ниже) — иначе клик по ней раньше, чем отработает загрузка,
-          // сохранял бы имя/цвета без ещё не готового pendingLogoUrl, и
-          // логотип молча не попадал бы в базу.
           logoUploading = true;
           if ($('f-save-branding')) $('f-save-branding').disabled = true;
           if (progressWrap) progressWrap.style.display = 'block';
@@ -3744,11 +3517,8 @@ function watchDashboardData(tenantId) {
               if (progressText) progressText.textContent = `Загружается… ${pct}%`;
             });
             if (cancelBtn) cancelBtn.onclick = () => xhr.abort();
-            // Если за 20 секунд не прилетело ни одного обновления прогресса —
-            // соединение, скорее всего, не просто медленное, а разорвано:
-            // XHR сам по себе не отменяется по таймауту и молча висит сколько
-            // угодно, оставляя кнопку "Сохранить" заблокированной навсегда
-            // без единой подсказки, что происходит.
+            // 20 секунд без прогресса — соединение, скорее всего, оборвалось,
+            // а XHR сам не отменится и оставит «Сохранить» заблокированной.
             stallTimer = setInterval(() => {
               if (Date.now() - lastProgressAt > 20000) xhr.abort();
             }, 5000);
@@ -3842,10 +3612,7 @@ function watchDashboardData(tenantId) {
         const emp = (employees || []).find((x) => x.id === el.dataset.id);
         if (!emp) return;
         editingEmployeeId = emp.id;
-        // Проставляем значения ПРЯМО в ещё-старые (до перерисовки) поля —
-        // draw() читает их именно оттуда (см. комментарий про existingName
-        // у формы брендинга выше): иначе форма осталась бы пустой, а не
-        // заполнилась данными выбранного сотрудника.
+        // Заполняем текущие поля — draw() перенесёт значения в новую разметку.
         if ($('f-emp-name')) $('f-emp-name').value = emp.name || '';
         if ($('f-emp-role')) $('f-emp-role').value = emp.role || 'employee';
         if ($('f-emp-pin')) $('f-emp-pin').value = emp.pinCode || '';
@@ -3883,9 +3650,8 @@ function watchDashboardData(tenantId) {
         const role = $('f-emp-role').value === 'admin' ? 'admin' : 'employee';
         const pin = $('f-emp-pin').value.trim();
         const position = $('f-emp-position') ? $('f-emp-position').value : 'universal';
-        // Та же длина PIN по роли, что и в кассе (lib/utils/constants.dart,
-        // AppConstants.pinLengthForRole) — иначе владелец задал бы PIN,
-        // который сама касса потом не примет ни при каком вводе.
+        // Длина PIN — как в AppConstants.pinLengthForRole, иначе касса его
+        // не примет.
         const requiredLen = role === 'admin' ? 6 : 4;
         if (!name) { errEl.textContent = 'Введите имя'; return; }
         if (!/^\d+$/.test(pin) || pin.length !== requiredLen) {
@@ -3900,10 +3666,7 @@ function watchDashboardData(tenantId) {
             await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), { name, role, pinCode: pin, position });
             toast('Сотрудник обновлён');
           } else {
-            // Остальные поля — те же дефолты, что и у Employee() в
-            // lib/models/employee.dart, чтобы касса читала запись как
-            // сотрудника без настроенной зарплаты, а не падала на
-            // отсутствующих полях.
+            // Остальные поля — дефолты Employee() из lib/models/employee.dart.
             await addDoc(collection(state.db, 'tenants', tenantId, 'employees'), {
               name, role, pinCode: pin, position,
               hourlyRateEnabled: false, hourlyRate: 0,
@@ -3917,6 +3680,7 @@ function watchDashboardData(tenantId) {
           $('f-emp-role').value = 'employee';
           $('f-emp-pin').value = '';
           if ($('f-emp-position')) $('f-emp-position').value = 'universal';
+          draw();
         } catch (e) {
           errEl.textContent = `Не удалось сохранить: ${e?.message || e}`;
         } finally {
@@ -3973,12 +3737,8 @@ function watchDashboardData(tenantId) {
     draw();
   }).catch(() => { plans = []; draw(); });
 
-  // Подписка живёт на subscriptions/{chainId} для точки сети (см. её
-  // docstring в saas/firestore.rules) и на subscriptions/{tenantId} для
-  // одиночного заведения — а chainId заведения узнаём только из его же
-  // документа, поэтому слушатель подписки не заводится сразу с остальными
-  // (как раньше), а (пере)создаётся из колбэка tenant ниже, как только
-  // приходит первый снапшот заведения (или chainId вдруг меняется).
+  // Подписка точки сети лежит в subscriptions/{chainId}, а chainId известен
+  // только из документа заведения — слушатель заводим из его снапшота.
   let unsubSubscription = null;
   const watchSubscriptionFor = (chainId) => {
     if (unsubSubscription) { unsubSubscription(); unsubSubscription = null; }
@@ -3989,13 +3749,8 @@ function watchDashboardData(tenantId) {
   };
   sub(() => { if (unsubSubscription) unsubSubscription(); });
 
-  // Брендинг точки сети (в отличие от подписки) всё равно СУЩЕСТВУЕТ у
-  // каждого tenant — createTenant заводит его как обычно (пригодится, если
-  // точку когда-нибудь выведут из сети) — но гостевые приложения точки
-  // сети читают брендинг САМОЙ СЕТИ (chains/{chainId}/branding), а не его:
-  // без переключения владелец сети правил бы вкладку "Брендинг", которую
-  // никто из гостей никогда не видит, и не понимал бы, почему изменения не
-  // применяются (см. её же docstring в saas/firestore.rules).
+  // У точки сети свой брендинг тоже есть, но гости видят брендинг сети —
+  // его и показываем.
   let unsubBranding = null;
   const watchBrandingFor = (chainId) => {
     if (unsubBranding) { unsubBranding(); unsubBranding = null; }
@@ -4062,10 +3817,8 @@ function watchDashboardData(tenantId) {
     broadcasts = [];
     draw();
   }));
-  // Только фильтр по заведению, без orderBy: сортировка по другому полю
-  // требовала составного индекса, и пока он не развёрнут в проекте, запрос
-  // падал — владелец видел «Обращений пока не было» и не видел ответов.
-  // Обращений у одного заведения единицы — отсортировать на месте проще.
+  // Без orderBy — он требует составного индекса. Обращений у заведения
+  // единицы, сортируем на месте.
   sub(onSnapshot(query(collection(state.db, 'supportTickets'), where('tenantId', '==', tenantId), limit(200)), (snap) => {
     supportTickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       .sort((a, b) => ticketTime(b) - ticketTime(a));
@@ -4090,10 +3843,8 @@ function watchDashboardData(tenantId) {
     employees = [];
     draw();
   }));
-  // id -> последний известный статус сборки — чтобы поймать именно ПЕРЕХОД
-  // queued -> success/failed и показать тост один раз, а не при каждом
-  // снимке (и не при первой же загрузке экрана, если сборка уже была
-  // готова до того, как владелец открыл кабинет).
+  // Тост — только на переходе queued → success/failed, а не на каждом
+  // снапшоте и не для сборок, готовых до открытия кабинета.
   const knownBuildStatuses = new Map();
   sub(onSnapshot(
     query(collection(state.db, 'buildJobs'), where('tenantId', '==', tenantId), orderBy('createdAt', 'desc'), limit(10)),
@@ -4112,10 +3863,6 @@ function watchDashboardData(tenantId) {
     },
     () => { buildJobs = []; draw(); },
   ));
-  // Своя история платежей — раньше эти события (billingEvents) видел
-  // только супер-админ платформы; владельцу заведения приходилось писать
-  // в поддержку за квитанцией. saas/firestore.rules теперь пускает сюда и
-  // owner/admin СВОЕГО заведения (см. комментарий там же).
   sub(onSnapshot(
     query(collection(state.db, 'billingEvents'), where('tenantId', '==', tenantId), orderBy('receivedAt', 'desc'), limit(50)),
     (snap) => {
@@ -4134,10 +3881,8 @@ function watchDashboardData(tenantId) {
     () => { bankInvoices = []; draw(); },
   ));
 
-  // "Живые" цифры на "Обзоре" — открытые столы и сотрудники на смене прямо
-  // сейчас, выручка и число чеков за сегодня. Границу "сегодня" берём по
-  // времени БРАУЗЕРА владельца (он и смотрит "Обзор" в своём часовом
-  // поясе) — не бухгалтерская точность, а ориентир на один взгляд.
+  // Живые цифры «Обзора». «Сегодня» — по часам браузера: это ориентир, а не
+  // бухгалтерия.
   sub(onSnapshot(
     query(collection(state.db, 'tenants', tenantId, 'sessions'), where('status', '==', 'active')),
     (snap) => { liveOpenSessions = snap.size; draw(); },
@@ -4192,6 +3937,40 @@ function watchDashboardData(tenantId) {
   }
 }
 
+// draw() кабинета перерисовывает вкладку на любой снапшот, а живые цифры
+// «Обзора» меняются весь день. Без переноса введённого и фокуса формы
+// (сотрудник, приглашение, согласие на автопродление) стирались бы посреди
+// набора.
+function renderKeepingInputs(root, html) {
+  const saved = new Map();
+  root.querySelectorAll('input[id], textarea[id], select[id]').forEach((el) => {
+    if (el.type === 'file' || el.type === 'radio') return;
+    saved.set(el.id, el.type === 'checkbox' ? el.checked : el.value);
+  });
+  const active = document.activeElement;
+  const focusId = active && active.id && root.contains(active) ? active.id : '';
+  let caret = null;
+  try { caret = focusId ? [active.selectionStart, active.selectionEnd] : null; } catch (_) { /* select, checkbox */ }
+
+  root.innerHTML = html;
+
+  saved.forEach((value, id) => {
+    const el = document.getElementById(id);
+    if (!el || !root.contains(el)) return;
+    if (el.type === 'checkbox') el.checked = value;
+    else if (el.tagName === 'SELECT') {
+      if (Array.from(el.options).some((o) => o.value === value)) el.value = value;
+    } else el.value = value;
+  });
+  const focusEl = focusId ? document.getElementById(focusId) : null;
+  if (focusEl && root.contains(focusEl)) {
+    focusEl.focus();
+    if (caret && caret[0] !== null) {
+      try { focusEl.setSelectionRange(caret[0], caret[1]); } catch (_) { /* type=email/number */ }
+    }
+  }
+}
+
 async function rotateInviteCode(tenantId) {
   if (!confirm('Обновить код приглашения? Прежний код перестанет работать на новых устройствах.')) return;
   try {
@@ -4206,10 +3985,8 @@ async function rotateInviteCode(tenantId) {
 }
 
 async function toggleAutorenew(tenantId, cancel, chainId) {
-  // Отмену подтверждаем через prompt(), а не confirm() (как для возврата
-  // ниже) — заодно спрашиваем причину: null означает "нажали Отмена",
-  // пустая строка — "нажали ОК, но причину не написали" (оба варианта
-  // существующий формат super-админа читает как есть, см. renderTenantDetail).
+  // Отмену подтверждаем через prompt() и заодно спрашиваем причину:
+  // null — нажали «Отмена», пустая строка — причину не написали.
   let reason = '';
   if (cancel) {
     const input = prompt(
@@ -4227,9 +4004,7 @@ async function toggleAutorenew(tenantId, cancel, chainId) {
   if (errEl) errEl.textContent = '';
   if (btn) btn.disabled = true;
   try {
-    // cancelSubscription/resumeSubscription — свой сервис (см. server.js в
-    // saas-gateway), не Cloud Function: Firestore-правила не пускают
-    // клиента писать в subscriptions напрямую даже для своего заведения.
+    // В subscriptions клиенту писать нельзя — только через saas-gateway.
     await callSaasGateway(
       cancel ? 'cancelSubscription' : 'resumeSubscription',
       cancel ? { tenantId, chainId, reason } : { tenantId, chainId }
@@ -4243,9 +4018,8 @@ async function toggleAutorenew(tenantId, cancel, chainId) {
 
 async function changeMemberRole(tenantId, memberUid, role) {
   try {
-    // Правила разрешают эту запись только когда И текущая, И новая роль —
-    // manager/employee (см. saas/firestore.rules, tenantMembers.update) —
-    // повышение до admin/owner отсюда невозможно даже случайно.
+    // Правила пускают эту запись, только если и старая, и новая роль —
+    // manager/employee: до admin/owner отсюда не повысить.
     await updateDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`), { role });
     toast('Роль изменена');
   } catch (e) {
@@ -4264,20 +4038,15 @@ async function toggleMemberStatus(tenantId, memberUid, isActive) {
   }
 }
 
-// «Отключить» выше просто ставит status: 'inactive' — запись остаётся в
-// списке навсегда, и он захламляется, если через заведение прошло много
-// планшетов (замена сломанных, старые точки продаж и т.д.). «Удалить»
-// стирает саму запись насовсем.
+// «Отключить» оставляет запись в списке, а через заведение проходит много
+// планшетов — «Удалить» убирает её совсем.
 async function deleteMember(tenantId, memberUid, isDevice, label) {
   if (!confirm(`Удалить «${label}» из команды безвозвратно? Отменить нельзя — для устройства понадобится заново присоединяться по коду приглашения.`)) return;
   try {
     await deleteDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`));
     if (isDevice) {
-      // Обязательно удалить и сам devices/{uid} — иначе устройство само
-      // восстановит себе tenantMembers с ролью employee при следующем
-      // запуске приложения: правила разрешают самоприсоединение, пока
-      // существует его собственный devices/{uid} (см. saas/firestore.rules,
-      // tenantMembers.create, третья ветка).
+      // Без удаления devices/{uid} планшет при следующем запуске сам вернёт
+      // себе членство: правила пускают самоприсоединение, пока он есть.
       await deleteDoc(doc(state.db, 'tenants', tenantId, 'devices', memberUid));
     }
     toast('Удалено');
@@ -4286,10 +4055,7 @@ async function deleteMember(tenantId, memberUid, isDevice, label) {
   }
 }
 
-// [chainId] — брендинг точки сети правится на уровне САМОЙ СЕТИ (см.
-// watchBrandingFor/её докстринг в watchDashboardData выше) — гостевые
-// приложения точки сети читают именно chains/{chainId}/branding, а не
-// собственный, никем не читаемый брендинг этой точки.
+// У точки сети брендинг пишется в сеть: гости читают chains/{chainId}/branding.
 async function writeBrandingConfig(tenantId, payload, chainId) {
   const ref = chainId
     ? doc(state.db, 'chains', chainId, 'branding', 'config')
@@ -4297,13 +4063,7 @@ async function writeBrandingConfig(tenantId, payload, chainId) {
   await setDoc(ref, payload, { merge: true });
 }
 
-// Обновляет мини-предпросмотр карточки (фон/текст/кнопка) вживую, по мере
-// того как владелец крутит цветовые пикеры — без этого пришлось бы сначала
-// сохранить брендинг, чтобы увидеть, не получилось ли нечитаемо.
-// Общий список id цветовых инпутов брендинга — используется и на онбординге,
-// и в разделе "Брендинг" личного кабинета: одинаковая разметка (colorFieldHtml
-// с этими же id) в обоих местах, поэтому применение пресета/обновление
-// подписи-хекс тоже общее, без дублирования.
+// Поля цветов одинаковые в онбординге и во вкладке «Брендинг».
 const BRANDING_COLOR_FIELD_IDS = ['f-color-primary', 'f-color-secondary', 'f-color-button', 'f-color-bg', 'f-color-text'];
 
 function applyPaletteToColorInputs(palette) {
@@ -4324,6 +4084,8 @@ function applyPaletteToColorInputs(palette) {
   updateBrandPreview();
 }
 
+// Предпросмотр меняется вместе с пикерами, чтобы нечитаемое сочетание было
+// видно до сохранения.
 function updateBrandPreview() {
   const preview = $('f-brand-preview');
   const title = $('f-preview-title');
@@ -4342,10 +4104,8 @@ function updateBrandPreview() {
   btn.style.background = button;
   btn.style.color = text;
 
-  // Тот же порог 3:1, что и в lib/theme/app_theme.dart (_contrastRatio) —
-  // само приложение всё равно откатится на цвета темы по умолчанию при
-  // недостаточном контрасте, это предупреждение не единственная защита,
-  // а просто способ сказать владельцу заранее, ДО сохранения.
+  // Порог 3:1, как в lib/theme/app_theme.dart: приложение само откатится на
+  // цвета по умолчанию, здесь просто предупреждаем до сохранения.
   if (warning) {
     warning.textContent = contrastRatio(bg, text) < 3.0
       ? 'Фон и текст слишком похожи — на планшете в зале приложение применит цвета темы по умолчанию вместо этой пары.'
@@ -4369,10 +4129,8 @@ const ADMIN_NAV = [
 
 function adminNavHtml(activeTab) {
   const activeMeta = ADMIN_NAV.find((t) => t.id === activeTab);
-  // Супер-админ без своего заведения по умолчанию и так уже здесь (см.
-  // route()) — "В консоль" вёл бы его в никуда (обратно на эту же панель).
-  // Ему нужен не переход назад, а явный путь завести СВОЁ заведение, если
-  // он вообще этого хочет.
+  // Без своего заведения «В консоль» вернуло бы сюда же — вместо неё
+  // предлагаем завести заведение.
   const consoleLink = state.tenants.length
     ? `<a href="#/" class="nav-item" style="text-decoration:none">${navIconHtml('back', '#64748B')}<span>В консоль</span></a>`
     : `<a href="#/onboarding" class="nav-item" style="text-decoration:none">${navIconHtml('plus', '#22C55E')}<span>Своё заведение</span></a>`;
@@ -4450,7 +4208,7 @@ function screenSuperAdmin() {
             <option value="">Все статусы</option>
             <option value="trial">Пробный период</option>
             <option value="active">Активно</option>
-            <option value="pastDue">Просрочена оплата</option>
+            <option value="past_due">Просрочена оплата</option>
             <option value="suspended">Приостановлено</option>
             <option value="cancelled">Отменено</option>
           </select>
@@ -4588,8 +4346,8 @@ function screenSuperAdmin() {
           <h2>Запросы о персональных данных</h2>
           <p class="small muted">Удалить, выдать копию или исправить данные. Гости удаляют свои данные
           сами кнопкой в профиле приложения — сразу, здесь такие запросы видны уже выполненными; письма
-          и звонки заводите здесь. Срок ответа — 30 дней с получения запроса (ч. 5 ст. 21 152-ФЗ),
-          просроченные подсвечены.</p>
+          и звонки заводите здесь. Срок ответа — 10 рабочих дней с получения запроса, на исправление —
+          7 рабочих дней (ст. 20 и 21 152-ФЗ); просроченные подсвечены.</p>
           <div id="sec-requests"><div class="spinner"></div></div>
           <div class="card">
             <div style="font-weight:600;margin-bottom:8px">Новый запрос</div>
@@ -4670,11 +4428,8 @@ function screenSuperAdmin() {
   callSaasGateway('recordAdminLogin', {}).catch(() => {});
 }
 
-/** Обращения в поддержку — вкладка "Поддержка" панели платформы (супер-админ
- *  #3). Тот же приём "раскрыть карточку -> подгрузить сообщения отдельной
- *  подпиской", что и selectTicket() в личном кабинете владельца (см.
- *  watchDashboardData) — только здесь список тикетов один на всю
- *  платформу (без where по tenantId, супер-админ читает всё правилами). */
+// Обращения всех заведений. Переписку грузим только для раскрытого тикета,
+// как selectTicket() в кабинете владельца.
 function watchAdminSupportTickets() {
   const body = $('admin-support');
   let tickets = [];
@@ -4703,13 +4458,13 @@ function watchAdminSupportTickets() {
       body.innerHTML = '<p class="small muted">Обращений пока не было.</p>';
       return;
     }
-    // Открытые — наверх, внутри групп новые сверху (тот же порядок, что и
-    // источник запроса, orderBy('updatedAt','desc') ниже).
+    // Открытые наверх; sort стабильный, так что внутри групп остаётся
+    // порядок запроса — новые сверху.
     const sorted = tickets.slice().sort((a, b) => {
       const rank = (t) => (t.status === 'closed' ? 1 : 0);
       return rank(a) - rank(b);
     });
-    body.innerHTML = `<div class="card">${sorted.map((t) => `
+    renderKeepingInputs(body, `<div class="card">${sorted.map((t) => `
       <div style="padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="row f-admin-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;cursor:pointer">
           <div class="small grow" style="min-width:0">
@@ -4728,7 +4483,7 @@ function watchAdminSupportTickets() {
                 <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
               </div>
             `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
-            <textarea class="f-admin-ticket-reply" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу..." style="width:100%;resize:vertical;margin-top:6px"></textarea>
+            <textarea class="f-admin-ticket-reply" id="f-admin-reply-${esc(t.id)}" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу..." style="width:100%;resize:vertical;margin-top:6px"></textarea>
             <button class="btn btn-primary f-admin-ticket-send" data-id="${esc(t.id)}" style="margin-top:6px">Отправить</button>
             <button class="btn-link f-admin-ticket-toggle" data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="width:auto;margin-top:6px">
               ${t.status === 'closed' ? 'Переоткрыть' : 'Отметить решённым'}
@@ -4736,7 +4491,7 @@ function watchAdminSupportTickets() {
           </div>
         ` : ''}
       </div>
-    `).join('')}</div>`;
+    `).join('')}</div>`);
 
     document.querySelectorAll('.f-admin-ticket-open').forEach((el) => {
       el.onclick = () => selectTicket(el.dataset.id);
@@ -4754,7 +4509,8 @@ function watchAdminSupportTickets() {
             text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now,
           });
           await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now, lastAuthorRole: 'super_admin' }, { merge: true });
-          textEl.value = '';
+          const fresh = document.getElementById(`f-admin-reply-${ticketId}`);
+          if (fresh) fresh.value = '';
         } catch (e) {
           toast(`Не удалось отправить: ${e?.message || e}`);
         } finally {
@@ -4792,10 +4548,8 @@ function watchAdminSupportTickets() {
   }));
 }
 
-/** Объявления платформы (панель супер-админа, вкладка "Объявления") — прямая
- *  запись в Firestore под isSuperAdmin(), тот же приём, что у watchPlans()/
- *  savePlan() (без похода в saas-gateway, там нечего проверять сверх того,
- *  что уже проверяют правила). */
+// Объявления пишутся прямо в Firestore: проверять сверх правил
+// (isSuperAdmin) нечего.
 function watchAdminBroadcasts() {
   const body = $('admin-broadcasts');
   sub(onSnapshot(query(collection(state.db, 'broadcasts'), orderBy('createdAt', 'desc'), limit(30)), (snap) => {
@@ -4856,20 +4610,12 @@ function watchAdminBroadcasts() {
   }
 }
 
-// Порог, после которого сборка в очереди считается зависшей (воркер на
-// сервере обычно забирает задачу за секунды) — тот же смысл, что и
-// GRACE_PERIOD_DAYS для подписок: не точная диагностика, а сигнал
-// «сюда стоит заглянуть».
+// Воркер забирает сборку за секунды; полчаса в очереди — повод заглянуть.
 const STUCK_BUILD_MINUTES = 30;
 
-/** Инфраструктура на "Обзоре": жив ли saas-gateway (публичный /health, без
- *  токена) и кнопка ручного пересчёта usage/current — до этой правки
- *  calculateUsage вообще не запускался нигде (Cloud Function, которую
- *  забыли перенести при уходе с Blaze), т.е. лимиты тарифов никогда не
- *  обновлялись сами. Счётчик зависших сборок считается отдельным
- *  снапшотом (не переиспользует watchAllBuildJobs — тому нужен только
- *  последний экран из 50 записей, а здесь важны именно все status=queued
- *  независимо от возраста остальных). */
+// Жив ли saas-gateway, сколько сборок зависло и ручной пересчёт лимитов
+// (сервер и так пересчитывает их раз в сутки). Зависшие считаем отдельным
+// запросом: watchAllBuildJobs видит только последние 50 сборок.
 function watchAdminInfra() {
   const statusEl = $('admin-infra-gateway-status');
   fetch(`${SAAS_GATEWAY_URL}/health`)
@@ -4920,19 +4666,13 @@ function watchAdminInfra() {
 function watchAllTenants() {
   const body = $('admin-body');
   const attentionBody = $('admin-attention');
-  // limit(200) без постраничности — заведомо достаточно на старте
-  // платформы; поиск ниже фильтрует уже загруженный список на клиенте, а
-  // не делает отдельный запрос — простое и рабочее решение, пока
-  // заведений меньше пары сотен (настоящая курсорная пагинация — отдельная
-  // задача, когда/если платформа вырастет за этот предел).
+  // 200 последних без пагинации, поиск — по загруженному списку. Когда
+  // заведений станет больше, понадобится курсор.
   const q = query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(200));
   let allTenants = [];
   let plans = [];
-  // "Подробнее" на карточке заведения — раскрытые id и подгруженные для них
-  // данные (команда/код приглашения/заметки), которые НЕ идут в основной
-  // снапшот заведений: дорого тянуть это для всех 200 заведений сразу, а
-  // нужно обычно для одного-двух за раз, когда реально требуется помочь
-  // клиенту или свериться по оплате.
+  // «Подробнее»: команду, код, заметки и историю грузим только для раскрытых
+  // карточек — для всех 200 сразу это дорого.
   const expandedIds = new Set();
   const detailsCache = new Map();
 
@@ -4995,10 +4735,8 @@ function watchAllTenants() {
     if (!statusEl) return;
     if (btn) btn.disabled = true;
     try {
-      // Через saas-gateway (handleOverrideSubscription): это по сути выдача
-      // доступа без оплаты, поэтому сервер пишет «было → стало» в журнал
-      // безопасности. Там же сброс pastDueSince и выбор subscriptions/
-      // {chainId} для точки сети.
+      // Через сервер: это выдача доступа без оплаты, он пишет «было → стало»
+      // в журнал безопасности и сам выбирает подписку сети для её точки.
       await callSaasGateway('overrideSubscription', {
         tenantId,
         status: statusEl.value,
@@ -5014,11 +4752,8 @@ function watchAllTenants() {
   };
 
   const grantBonusPeriod = async (tenantId) => {
-    // Точка сети продлевает общую подписку СЕТИ (subscriptions/{chainId}),
-    // а не свою — см. комментарий у saveSubscriptionOverride выше и
-    // docstring handleGrantBonusPeriod в saas-gateway/server.js. Бонус в
-    // этом случае получают сразу ВСЕ точки сети — предупреждаем заранее,
-    // а не после того как days уже введены.
+    // У точки сети продлевается общая подписка — бонус получат все точки,
+    // об этом говорим прямо в вопросе.
     const t = allTenants.find((it) => it.id === tenantId) || {};
     const promptLabel = t.chainId
       ? `На сколько дней продлить доступ сети «${t.chainName || t.chainId}» (это затронет ВСЕ её точки)? (от 1 до 365)`
@@ -5033,10 +4768,8 @@ function watchAllTenants() {
     const btn = document.querySelector(`.f-grant-bonus[data-id="${tenantId}"]`);
     if (btn) btn.disabled = true;
     try {
-      // Отдельный эндпоинт saas-gateway, а не прямая запись в subscriptions
-      // (как saveSubscriptionOverride выше) — нужен аудит-лог (кто и сколько
-      // дней выдал), а писать в auditLogs с клиента правила не дают ни при
-      // каких условиях (allow write: if false — только Admin SDK).
+      // Через сервер: кто и сколько дней выдал, пишется в auditLogs, а туда
+      // клиенту писать нельзя.
       await callSaasGateway('grantBonusPeriod', { tenantId, days });
       toast(`Выдано ${days} ${pluralDays(days)}${t.chainId ? ' (всей сети)' : ''}`);
     } catch (e) {
@@ -5066,20 +4799,20 @@ function watchAllTenants() {
 
         <div style="margin-top:12px">
           <div class="small muted" style="margin-bottom:6px">Заметки (видны только супер-админам)</div>
-          <textarea class="f-tenant-notes" data-id="${esc(t.id)}" rows="3" placeholder="Например: платит переводом, звонил по поводу..." style="width:100%;resize:vertical">${esc(d.notes || '')}</textarea>
+          <textarea class="f-tenant-notes" id="f-tenant-notes-${esc(t.id)}" data-id="${esc(t.id)}" rows="3" placeholder="Например: платит переводом, звонил по поводу..." style="width:100%;resize:vertical">${esc(d.notes || '')}</textarea>
           <button class="btn btn-ghost f-tenant-notes-save" data-id="${esc(t.id)}" style="margin-top:6px">Сохранить заметку</button>
         </div>
 
         <div style="margin-top:14px">
           <div class="small muted" style="margin-bottom:6px">Ручное управление подпиской (оплата мимо платёжного сервиса — перевод, наличные)</div>
-          <select class="f-sub-status" data-id="${esc(t.id)}">
+          <select class="f-sub-status" id="f-sub-status-${esc(t.id)}" data-id="${esc(t.id)}">
             ${Object.keys(SUB_STATUS_LABELS).map((s) => `<option value="${s}" ${t.subscription?.status === s ? 'selected' : ''}>${esc(SUB_STATUS_LABELS[s])}</option>`).join('')}
           </select>
           <label class="field"><span>Оплачено до</span>
-            <input type="date" class="f-sub-period-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.currentPeriodEnd)}">
+            <input type="date" class="f-sub-period-end" id="f-sub-period-end-${esc(t.id)}" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.currentPeriodEnd)}">
           </label>
           <label class="field"><span>Триал до</span>
-            <input type="date" class="f-sub-trial-end" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
+            <input type="date" class="f-sub-trial-end" id="f-sub-trial-end-${esc(t.id)}" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
           </label>
           <button class="btn btn-ghost f-sub-save" data-id="${esc(t.id)}">Сохранить подписку</button>
         </div>
@@ -5147,7 +4880,9 @@ function watchAllTenants() {
       return rank(a) - rank(b);
     });
 
-    body.innerHTML = filtered.length ? filtered.map((t) => `
+    // Список перерисовывается на любое изменение любого заведения — не
+    // теряем начатую заметку или ручную правку подписки.
+    renderKeepingInputs(body, filtered.length ? filtered.map((t) => `
       <div class="card${t.daysLeft !== null && t.daysLeft !== undefined ? ' danger' : ''}">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div class="grow" style="min-width:0">
@@ -5209,7 +4944,7 @@ function watchAllTenants() {
         </button>
         ${expandedIds.has(t.id) ? renderTenantDetail(t) : ''}
       </div>
-    `).join('') : `<p class="small muted">${term || statusFilter ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`;
+    `).join('') : `<p class="small muted">${term || statusFilter ? 'Ничего не найдено.' : 'Заведений пока нет.'}</p>`);
 
     document.querySelectorAll('.f-tenant-toggle').forEach((el) => {
       el.onclick = () => toggleTenantSuspension(el.dataset.id, el.dataset.suspended === '1');
@@ -5251,12 +4986,8 @@ function watchAllTenants() {
 
   sub(onSnapshot(q, async (snap) => {
     const tenants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // Usage читаем отдельно от списка заведений — это соседняя коллекция
-    // (tenants/{id}/usage/current), не realtime: пересчитывается раз в
-    // сутки Cloud Function calculateUsage, обновлять её на каждый снапшот
-    // списка заведений незачем. Подписку читаем туда же — она и даёт
-    // "требует внимания" (грейс-период / скорый конец триала), и тариф с
-    // датами на карточке заведения ниже.
+    // usage (сервер пересчитывает раз в сутки) и подписку читаем разово —
+    // для карточек и «Требует внимания».
     await Promise.all(tenants.map(async (t) => {
       try {
         const uSnap = await getDoc(doc(state.db, 'tenants', t.id, 'usage', 'current'));
@@ -5265,9 +4996,7 @@ function watchAllTenants() {
         t.usage = null;
       }
       try {
-        // Точка сети (t.chainId) не имеет собственной подписки — общая
-        // подписка на всю сеть лежит на subscriptions/{chainId}, см. её
-        // docstring в saas/firestore.rules.
+        // У точки сети подписка общая — subscriptions/{chainId}.
         const sSnap = await getDoc(doc(state.db, 'subscriptions', t.chainId || t.id));
         const subscription = sSnap.exists() ? sSnap.data() : null;
         t.subscription = subscription;
@@ -5282,9 +5011,7 @@ function watchAllTenants() {
         t.daysLeft = null;
         t.trialEndingSoonDays = null;
       }
-      // Для поиска по email владельца и отображения в "Подробнее" — не
-      // критично, если недоступно (например у совсем старой записи нет
-      // ownerUserId), тогда просто не участвует в поиске по email.
+      // Email владельца — для поиска и «Подробнее»; нет — не беда.
       try {
         if (t.ownerUserId) {
           const uSnap = await getDoc(doc(state.db, 'users', t.ownerUserId));
@@ -5388,10 +5115,7 @@ function watchAllBuildJobs() {
   const q = query(collection(state.db, 'buildJobs'), orderBy('createdAt', 'desc'), limit(50));
   sub(onSnapshot(q, async (snap) => {
     const jobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // Имя заведения по tenantId — buildJobs его не хранит. До полусотни
-    // лишних чтений на панель, которую открывает не каждый визит, это
-    // не проблема (тот же порядок, что уже используется для usage/subscription
-    // в watchAllTenants).
+    // В buildJobs нет названия заведения — дочитываем, это до 50 чтений.
     await Promise.all(jobs.map(async (j) => {
       try {
         const tSnap = await getDoc(doc(state.db, 'tenants', j.tenantId));
@@ -5491,7 +5215,7 @@ function watchPlans() {
           </label>
         </div>
         <label class="field"><span>Пробный период, дней (при создании заведения на этом тарифе)</span>
-          <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="trialDays" value="${Number(p.trialDays) || 7}">
+          <input type="number" min="1" class="f-plan-field" data-plan="${esc(p.id)}" data-field="trialDays" value="${Number(p.trialDays) || 7}">
         </label>
         <div class="row" style="flex-wrap:wrap;gap:14px;margin:10px 0 16px">
           <label class="row" style="width:auto;gap:6px">
@@ -5539,10 +5263,8 @@ function watchPlans() {
       if (id !== null) toast('Код тарифа: только латиница, цифры и дефис');
       return;
     }
-    // Тариф для сети — своя цена за первую и за каждую следующую точку (см.
-    // chainPriceForPeriod в saas-gateway/server.js). Код "chain" — просто
-    // самый ожидаемый вариант (используется как planId по умолчанию в
-    // handleCreateChain), но пометить чекбоксом можно любой тариф.
+    // «chain» — тариф сети по умолчанию в handleCreateChain, но сетевым можно
+    // сделать любой.
     const isChainPlan = id === 'chain' || confirm('Это тариф для сети заведений (своя цена за первую и доп. точки)?');
     try {
       // Тарифы пишет только saas-gateway (handleSavePlan) — изменения цен
@@ -5589,10 +5311,7 @@ async function deletePlan(planId) {
   const btn = document.querySelector(`.f-plan-delete[data-plan="${planId}"]`);
   if (btn) btn.disabled = true;
   try {
-    // Предупреждаем, если тариф ещё кому-то назначен — само удаление их не
-    // трогает (у заведения просто останется planId, ссылающийся в никуда;
-    // "Тариф: —" в его карточке подскажет, что надо назначить другой), но
-    // молча удалять тариф, которым кто-то пользуется, не стоит.
+    // Заведения удаление не трогает, но их planId повиснет — предупреждаем.
     const inUse = await getDocs(query(collection(state.db, 'tenants'), where('planId', '==', planId), limit(1)));
     const warning = inUse.empty
       ? `Удалить тариф «${planId}»? Отменить нельзя.`
@@ -5607,9 +5326,7 @@ async function deletePlan(planId) {
   }
 }
 
-// Простой бар-чарт без библиотек — несколько div'ов с высотой в процентах
-// от максимума, как и остальные "плитки" этой панели (admin-stat-grid) не
-// тянут отдельную зависимость ради одного графика.
+// Столбики на div'ах — библиотека ради двух графиков не нужна.
 function barChartHtml(points, formatValue) {
   const max = Math.max(1, ...points.map((p) => p.value));
   return `
@@ -5694,22 +5411,15 @@ function watchAnalytics() {
     const day = 86400000;
     const byStatus = {};
     tenants.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
-    // Точка сети (t.chainId задан) свои status/planId не считает здесь —
-    // они не отражают реальный биллинг (тот общий на всю сеть, см.
-    // handleCreateChain/handleBillingWebhook в saas-gateway/server.js):
-    // status у точки сети всегда "active" уже с создания (даже пока сеть
-    // ещё на триале), а planId — незначащий дефолт "start". Без этого
-    // исключения (и цикла по chains ниже) каждая точка сети считалась бы
-    // отдельным активным заведением по цене случайного тарифа "start" —
-    // тот же баг, что и в runCalculatePlatformMetrics на сервере (см. её
-    // докстринг), только на клиенте для "MRR (оценка)" здесь и сейчас.
+    // status и planId точки сети биллинг не отражают (точка «active» даже на
+    // триале сети), поэтому точки только считаем, а MRR сетей — ниже по
+    // chains. Так же считает runCalculatePlatformMetrics на сервере.
     const locationCountByChain = new Map();
     let activeCount = 0;
     let mrr = tenants.reduce((sum, t) => {
       if (t.chainId) {
-        // "deleted" — та же граница, что и countChainLocations в
-        // saas-gateway/server.js: приостановленные точки в число
-        // оплачиваемых входят, удалённые — нет.
+        // Как countChainLocations: приостановленные точки оплачиваются,
+        // удалённые — нет.
         if (t.status !== 'deleted') locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
         return sum;
       }
@@ -5748,11 +5458,8 @@ function watchAnalytics() {
       </div>
     `;
 
-    // Регистрации по дням — считаются на лету из уже загруженных tenants
-    // (createdAt есть у каждого заведения с самого начала, снимок для этого
-    // не нужен). MRR по дням — наоборот, ТОЛЬКО из снимков platformMetrics:
-    // это метрика "на текущий момент" (активные подписки × цена тарифа),
-    // её нельзя восстановить задним числом без сохранённой истории.
+    // Регистрации восстанавливаются по createdAt, а MRR задним числом не
+    // посчитать — только из суточных снимков platformMetrics.
     const REGS_TREND_DAYS = 14;
     const dayKey = (ms) => new Date(ms).toISOString().slice(5, 10);
     const regsByDay = new Map();
@@ -5796,7 +5503,7 @@ function watchAnalytics() {
       <div class="card" style="margin-top:14px">
         <div class="small muted">MRR по дням</div>
         ${mrrTrendPoints.length ? barChartHtml(mrrTrendPoints, (v) => `${v.toLocaleString('ru-RU')} ₽`) : `
-          <p class="small muted" style="margin-top:8px">Снимков пока нет — появятся начиная с сегодняшнего дня (суточный таймер saas-gateway) или сразу после нажатия «Пересчитать сейчас» в разделе «Инфраструктура».</p>
+          <p class="small muted" style="margin-top:8px">Снимков пока нет — появятся начиная с сегодняшнего дня (суточный таймер saas-gateway) или сразу после нажатия «Пересчитать лимиты сейчас» в блоке «Инфраструктура».</p>
         `}
       </div>
     `;
@@ -5826,17 +5533,13 @@ function watchAnalytics() {
     maybeDraw();
   }, () => { chains = []; maybeDraw(); }));
 
-  // Статус фильтруем на клиенте, а не в запросе — экономит один составной
-  // индекс ради аналитики, которая и так читает не весь архив, а только
-  // последние 500 платежей (см. текст под плитками).
+  // Статус фильтруем на клиенте — без лишнего составного индекса.
   sub(onSnapshot(query(collection(state.db, 'billingEvents'), orderBy('receivedAt', 'desc'), limit(500)), (snap) => {
     revenueEvents = snap.docs.map((d) => d.data());
     maybeDraw();
   }, () => { revenueEvents = []; maybeDraw(); }));
 
-  // orderBy('date','desc') + .reverse(), а не сразу 'asc' с limit(30), —
-  // иначе limit(30) в порядке "по возрастанию" взял бы САМЫЕ СТАРЫЕ 30
-  // снимков, а не последние 30 (нужные для графика).
+  // desc + reverse: с asc limit(30) взял бы самые старые снимки.
   sub(onSnapshot(query(collection(state.db, 'platformMetrics'), orderBy('date', 'desc'), limit(30)), (snap) => {
     metrics = snap.docs.map((d) => d.data()).reverse();
     maybeDraw();
@@ -5851,13 +5554,15 @@ async function exportPaymentsCsv() {
   const btn = $('f-export-payments-csv');
   if (btn) btn.disabled = true;
   try {
-    // Свежий запрос, а не данные из watchAnalytics() — экспорт может
-    // понадобиться раньше, чем отрисуется первая аналитика.
     const snap = await getDocs(query(collection(state.db, 'billingEvents'), orderBy('receivedAt', 'desc'), limit(500)));
-    const rows = [['Дата', 'Заведение (id)', 'Статус', 'Назначение', 'Сумма, ₽']];
+    const rows = [['Дата', 'Заведение (id)', 'Сеть (id)', 'Статус', 'Назначение', 'Сумма, ₽']];
     snap.docs.forEach((d) => {
       const e = d.data();
-      rows.push([fmtDateTime(e.receivedAt), e.tenantId || '—', SUB_STATUS_LABELS[e.status] || e.status || '—', e.purpose || '—', Number(e.amount) || 0]);
+      rows.push([
+        fmtDateTime(e.receivedAt), e.tenantId || '—', e.chainId || '',
+        e.status === 'succeeded' ? 'оплачен' : (e.status || '—'),
+        BILLING_PURPOSE_LABELS[e.purpose] || e.purpose || '—', Number(e.amount) || 0,
+      ]);
     });
     downloadCsv(`zalpos-платежи-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   } catch (e) {
@@ -5867,11 +5572,6 @@ async function exportPaymentsCsv() {
   }
 }
 
-// enableTenant/disableTenant/changeTenantPlan/deleteDemoTenant — не Cloud
-// Functions (Blaze недоступен, см. docstring в saas-gateway/server.js), а
-// свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше — раньше эти три
-// кнопки звали httpsCallable на функции, которых физически не существует
-// (не задеплоены), и молча проваливались.
 async function toggleTenantSuspension(tenantId, isSuspended) {
   try {
     await callSaasGateway(isSuspended ? 'enableTenant' : 'disableTenant',
@@ -5944,12 +5644,9 @@ function watchSuperAdmins() {
   };
 }
 
-// Назначение и снятие — только через saas-gateway (handleGrantSuperAdmin/
-// handleRevokeSuperAdmin): сервер сам проверяет, что пароль введён только
-// что, ищет кандидата в Firebase Auth (с подтверждённой почтой) и пишет
-// событие в журнал безопасности. Писать в superAdmins из браузера правила
-// базы больше не дают. forceRefresh — токен с новым auth_time после
-// reauthenticate().
+// Только через сервер: он проверяет свежий ввод пароля и подтверждённую
+// почту кандидата и пишет журнал. forceRefresh — чтобы токен нёс новый
+// auth_time после reauthenticate().
 async function promoteSuperAdmin(email) {
   await callSaasGateway('grantSuperAdmin', { email }, { forceRefresh: true });
 }
@@ -6113,7 +5810,7 @@ function watchSecurityData() {
     reqBox.querySelectorAll('.f-dr-resolve').forEach((el) => {
       el.onclick = async () => {
         const done = el.dataset.status === 'done';
-        const resolution = prompt(done ? 'Что сделано (для истории):' : 'Причина отказа (для истории):', done ? '' : '');
+        const resolution = prompt(done ? 'Что сделано (для истории):' : 'Причина отказа (для истории):', '');
         if (resolution === null) return;
         try {
           await callSaasGateway('resolveDataRequest', { id: el.dataset.id, status: el.dataset.status, resolution });
@@ -6167,7 +5864,7 @@ function watchSecurityData() {
     };
   }
 
-  // Журнал удалений: обезличивания и удаления демо — из securityLog,
+  // Обезличивания, самоудаления гостей и удаления демо — из securityLog,
   // стирание заведений и сетей после льготного периода — из auditLogs
   // (их пишет ночная задача биллинга).
   let secDeletions = [];
@@ -6184,6 +5881,9 @@ function watchSecurityData() {
       if (kind === 'guestAnonymized') {
         title = 'Гость обезличен';
         detail = `${m.phone || ''}${m.guestName ? ` · ${m.guestName}` : ''} · ${m.scope === 'chain' ? 'сеть' : 'заведение'} «${m.rootName || m.rootId || ''}» · очищено записей: ${m.scrubbedRecords ?? 0}`;
+      } else if (kind === 'guestSelfDeleted') {
+        title = 'Гость удалил свои данные сам';
+        detail = `${m.scope === 'chain' ? 'сеть' : 'заведение'} «${m.rootName || m.rootId || ''}» · очищено записей: ${m.scrubbedRecords ?? 0}`;
       } else if (kind === 'demoTenantDeletedBySuperAdmin') {
         title = 'Удалено демо-заведение';
         detail = m.tenantName || e.tenantId || '';
@@ -6208,7 +5908,7 @@ function watchSecurityData() {
     }));
     delBox.innerHTML = html.join('') || '<p class="small muted">Удалений пока не было.</p>';
   };
-  sub(onSnapshot(query(collection(state.db, 'securityLog'), where('action', 'in', ['guestAnonymized', 'demoTenantDeletedBySuperAdmin']), limit(100)), (snap) => {
+  sub(onSnapshot(query(collection(state.db, 'securityLog'), where('action', 'in', ['guestAnonymized', 'guestSelfDeleted', 'demoTenantDeletedBySuperAdmin']), limit(100)), (snap) => {
     secDeletions = snap.docs.map((d) => d.data());
     drawDeletions();
   }, () => {}));
@@ -6646,6 +6346,7 @@ const SECURITY_EVENT_LABELS = {
   dataRequestRejected: 'Запрос о персональных данных отклонён',
   guestLookup: 'Поиск гостя по телефону',
   guestAnonymized: 'Гость обезличен',
+  guestSelfDeleted: 'Гость удалил свои данные',
 };
 function securityEventDetails(e) {
   const m = e.metadata || {};
@@ -6687,7 +6388,6 @@ function securityEventDetails(e) {
     case 'emailDomainUnblocked':
       return m.value || '';
     case 'dataRequestCreated':
-      return `${DATA_REQUEST_KIND_LABELS[m.kind] || m.kind || ''} · ${m.contact || ''}`;
     case 'dataRequestDone':
     case 'dataRequestRejected':
       return `${DATA_REQUEST_KIND_LABELS[m.kind] || m.kind || ''} · ${m.contact || ''}`;
@@ -6695,6 +6395,8 @@ function securityEventDetails(e) {
       return `${m.phone || ''} · найдено: ${m.found ?? 0}`;
     case 'guestAnonymized':
       return `${m.phone || ''}${m.guestName ? ` · ${m.guestName}` : ''} · «${m.rootName || m.rootId || ''}»`;
+    case 'guestSelfDeleted':
+      return `«${m.rootName || m.rootId || ''}» · очищено записей: ${m.scrubbedRecords ?? 0}`;
     case 'deviceDisabled':
     case 'deviceEnabled':
       return `${tenant}${m.deviceName ? ` · ${m.deviceName}` : ''}${m.reason ? ` · ${m.reason}` : ''}`;
@@ -6751,10 +6453,7 @@ function watchSecurityJournal() {
   }, () => { eventsBox.innerHTML = '<p class="small muted">Журнал недоступен.</p>'; }));
 }
 
-/** «Доступ»: все супер-админы, когда и кем назначены, последний вход
- *  (время, IP, браузер) и «Выйти на всех устройствах». Предупреждает, если
- *  супер-админ один (восстановить доступ будет некому) или их слишком
- *  много (у каждого полный доступ к платформе). */
+// «Доступ»: супер-админы, их последний вход и «Выйти на всех устройствах».
 function watchSecurityAccess() {
   const list = $('sec-access-list');
   const warnings = $('sec-access-warnings');
@@ -6797,33 +6496,22 @@ function watchSecurityAccess() {
   }));
 }
 
-// ---------- ПОДПИСКА (ЮKASSA) И СБОРКА APK ----------
+// ---------- ПОДПИСКА И СБОРКА APK ----------
 
-// Возвращает true/false — раньше вызывающие места об исходе не узнавали
-// вообще (ошибка тихо оседала в f-checkout-error, которого на некоторых
-// экранах, например онбординге, попросту нет — там "оплата не началась"
-// выглядела бы как ничего не произошло, без единого объяснения).
-// [chainId] — точка сети платит не сама за себя: биллинг общий на всю сеть
-// (subscriptions/{chainId}, см. её docstring в saas/firestore.rules), цена
-// тарифа умножается на число точек сети на сервере (countChainLocations в
-// saas-gateway) — здесь достаточно передать chainId вместо/вместе с tenantId.
+// Возвращает true/false: на онбординге нет f-checkout-error, и вызывающий
+// сам говорит, что оплата не открылась. С chainId платит сеть — цену за
+// число точек считает сервер.
 async function startCheckout(tenantId, planId, billingPeriod, chainId, autoRenew = false) {
   const errEl = $('f-checkout-error');
   if (errEl) errEl.textContent = '';
   try {
-    // Раньше — httpsCallable Cloud Function, которая не может задеплоиться
-    // без тарифа Blaze (см. docstring в начале saas-gateway/server.js) —
-    // теперь тот же самый эндпойнт, но на своём сервере.
     const res = await callSaasGateway('createCheckoutSession', {
       tenantId, chainId, planId,
       billingPeriod: billingPeriod === 'yearly' ? 'yearly' : billingPeriod === 'semiannual' ? 'semiannual' : 'monthly',
       // Согласие на автосписания — только галочкой владельца (по умолчанию снята).
       autoRenew,
-      // После оплаты платёжный сервис вернёт сюда же — на этот дашборд, где статус
-      // подписки обновится сам по snapshot-подписке, как только придёт
-      // webhook (обычно за секунды, но платёжная форма может быть и
-      // быстрее самого webhook'а — поэтому это просто "куда вернуться",
-      // а не сигнал об оплате).
+      // Просто «куда вернуться»: статус обновит уведомление об оплате, оно
+      // может прийти и позже возврата.
       returnUrl: `${location.origin}${location.pathname}#/`,
     });
     if (res.data?.confirmationUrl) {
@@ -6914,14 +6602,8 @@ async function screenBankInvoice(id) {
   $('f-invoice-print').onclick = () => window.print();
 }
 
-/// Перевод уже РАБОТАЮЩЕГО одиночного заведения в новую сеть (см. кнопку
-/// "Перевести в сеть" в plansHtml() выше, только для role === 'owner' и
-/// только если у платформы вообще есть хотя бы один тариф сети) — заведение
-/// остаётся тем же документом и первой точкой сети, переносится вся уже
-/// накопленная лояльность гостей (см. handleConvertTenantToChain на
-/// сервере). Необратимо (обратной кнопки "разъединить сеть" нет), поэтому
-/// подтверждение — явный confirm() с прямым текстом об этом, а не просто
-/// "точно?".
+// Работающее заведение становится первой точкой новой сети вместе с гостями
+// и бонусами. Обратно не разделить — об этом прямо спрашиваем.
 async function convertTenantToChain(tenantId, tenant, planId) {
   const name = prompt('Название сети:', tenant?.name || '');
   if (!name || !name.trim()) return;
@@ -6933,10 +6615,7 @@ async function convertTenantToChain(tenantId, tenant, planId) {
   if (!confirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`)) return;
   try {
     const res = await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
-    // state.tenants строит watchMemberships только при изменении членств —
-    // а перевод в сеть меняет сам tenants/{id}, не tenantMembers, поэтому
-    // без этого блок "Сеть заведений" в кабинете остался бы без названия
-    // и без списка точек до перезагрузки страницы.
+    // Членства не менялись, watchMemberships сам state.tenants не обновит.
     const entry = state.tenants.find((t) => t.id === tenantId);
     if (entry) {
       entry.chainId = res.data.chainId;
@@ -6949,10 +6628,8 @@ async function convertTenantToChain(tenantId, tenant, planId) {
   }
 }
 
-/// Добавляет ещё одну точку в уже существующую сеть — та же операция, что
-/// и создание одиночного заведения (createTenant в saas-gateway), только с
-/// chainId: новая точка сразу "active" (не "trial"), без своей подписки —
-/// биллинг общий на всю сеть (см. её docstring в saas/firestore.rules).
+// Новая точка сети — тот же createTenant, но с chainId: сразу active и без
+// своей подписки.
 async function addChainLocation(chainId) {
   const name = prompt('Название новой точки сети:');
   if (!name || !name.trim()) return;
@@ -6977,8 +6654,6 @@ async function requestBuild(tenantId) {
   const btn = $('f-request-build');
   if (btn) btn.disabled = true;
   try {
-    // createBuildJob — не Cloud Function (Blaze для неё сейчас недоступен),
-    // а свой сервис, см. callSaasGateway/SAAS_GATEWAY_URL выше.
     await callSaasGateway('createBuildJob', { tenantId });
     toast('Сборка запущена — обычно занимает 5–10 минут');
   } catch (e) {
@@ -6988,37 +6663,18 @@ async function requestBuild(tenantId) {
   }
 }
 
-// Универсальная сборка кассы для кнопки "Скачать" на лендинге — не привязана
-// ни к одному заведению (кто угодно, даже не зарегистрированный, должен
-// суметь её скачать). Лежит на собственном сервере владельца платформы
-// (том же, что pii-gateway/saas-gateway — pii.zalpos.ru), статикой через
-// nginx (location /downloads/, см. saas/README.md, раздел «Публичный APK»).
-//
-// НЕ Firebase Storage: у saas-3bdc8 Storage требует план Blaze, которого
-// нет. НЕ GitHub Release: пробовали — у части пользователей в России
-// зависало скачивание независимо от VPN (видимо, сеть до CDN
-// objects.githubusercontent.com/Amazon S3 нестабильна), при этом с
-// обычного сервера (в том числе с этого же сервера) тот же файл скачивался
-// полностью и без проблем — поэтому раздача переехала туда же.
+// Общая касса для «Скачать» на лендинге — статика nginx на нашем сервере.
+// Storage требует Blaze, а с GitHub Releases у части пользователей в России
+// скачивание зависало.
 const PUBLIC_APK_URL = 'https://pii.zalpos.ru/downloads/zalpos.apk';
 
 function downloadPublicApk() {
   window.open(PUBLIC_APK_URL, '_blank', 'noopener');
 }
 
-// Личная сборка заведения (в отличие от универсальной PUBLIC_APK_URL выше)
-// лежит на том же собственном сервере, но НЕ статикой через nginx — она
-// привязана к конкретному заведению (лого/название), поэтому просто так
-// её не отдать. Раньше это делалось через fetch()+заголовок Authorization,
-// но на реальном телефоне пользователя браузер (по всей видимости) молча
-// блокировал такой запрос — кнопка визуально ничего не делала, без единой
-// ошибки в интерфейсе. Разбираться в этом дальше без доступа к консоли
-// разработчика на его телефоне бессмысленно, поэтому сам механизм
-// скачивания упрощён до ТОГО ЖЕ window.open(), что и у публичного APK
-// (downloadPublicApk выше) — разница только в том, что ссылка одноразовая
-// и живёт 60 секунд (см. handleGetDownloadUrl/DOWNLOAD_TOKEN_TTL_MS в
-// saas-gateway/server.js): её ещё нужно СНАЧАЛА получить обычным POST с
-// Firebase Auth, так что чужую сборку по угаданному jobId не скачать.
+// Сборку заведения отдаёт сервер по одноразовой ссылке на 60 секунд, её
+// выдают только участнику заведения. Скачивание через fetch с заголовком
+// Authorization на телефонах молча не срабатывало — поэтому window.open.
 async function downloadBuild(jobId) {
   try {
     const { data } = await callSaasGateway('getDownloadUrl', { jobId });

@@ -6,13 +6,7 @@
 <title>ZalPOS — касса и управление заведением: зал, склад, брони, лояльность</title>
 <meta name="theme-color" content="#0A0909">
 <meta name="description" content="Облачная касса для кафе, ресторанов, баров и лаунжей: карта зала, оплата и фискальные чеки, склад, брони, программа лояльности, смены и зарплата, гостевое приложение. Бесплатный тестовый период, запуск за 10–15 минут.">
-<!-- Раньше здесь был noindex,nofollow — оставался с тех времён, когда эта
-     страница была только личным кабинетом (см. screenDashboard) без
-     публичного лендинга. Теперь тот же файл отдаёт и screenLanding() для
-     незалогиненных посетителей (см. PUBLIC_ROUTES в console.js) — открывать
-     его поисковикам можно и нужно, коммерческий сайт без индексации не
-     находят. Авторизованные экраны от этого не страдают: анонимный краулер
-     видит ровно то же, что и обычный посетитель без входа, — сам лендинг. -->
+<!-- Без входа здесь лендинг — его индексируем; кабинет краулер не увидит. -->
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://zalpos.ru/">
 <meta property="og:type" content="website">
@@ -31,7 +25,6 @@
 <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js">
 <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js">
 <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js">
 <link rel="modulepreload" href="console.js">
 </head>
 <body>

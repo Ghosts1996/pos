@@ -1,15 +1,8 @@
-/* Консоль владельца заведения SaaS-платформы ZalPOS — те же компоненты
-   (карточки/кнопки/поля), что и в веб-версии гостя (public/app/app.css), но
-   своя, премиальная палитра платформы (см. :root ниже), без нижнего
-   таббара и гостевых экранов: здесь только вход, создание заведения и
-   личный кабинет. */
+/* Консоль владельца и панель платформы ZalPOS. Компоненты те же, что в
+   веб-версии гостя (public/app/app.css), палитра — своя. */
 :root {
-  /* Премиальная гамма самой платформы — тёмно-синяя, в одном семействе с
-     публичным лендингом (см. .landing ниже), чтобы личный кабинет ощущался
-     продолжением того же продукта, а не отдельным устаревшим экраном.
-     Поверхности чуть светлее, чем на лендинге: здесь персонал реально
-     работает весь день с плотными формами и списками карточек, а не
-     разглядывает один экран пару минут. */
+  /* Тёмно-синяя гамма, как у лендинга, но поверхности чуть светлее: в
+     кабинете весь день работают с плотными формами и списками. */
   --bg: #070B14;
   --surface: #101827;
   --surface-2: #17223A;
@@ -126,10 +119,7 @@ a:hover { filter: brightness(1.2); }
 .grow { flex: 1; min-width: 0; }
 .row > button, .row > .btn { width: auto; flex: 0 0 auto; }
 .row > input, .row > select { margin-bottom: 0; }
-/* Класс использовался в разметке (console.js) без единого правила здесь —
-   длинные email/названия в узком .grow-контейнере не обрезались "...", а
-   переносились по словам/буквам вразнобой (на узком телефоне выглядело как
-   наехавший друг на друга текст). */
+/* Длинные email и названия в узком .grow обрезаем многоточием. */
 .ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .spinner {
@@ -180,15 +170,9 @@ a:hover { filter: brightness(1.2); }
 .palette-swatch-colors span { flex: 1; }
 .palette-swatch-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
 
-/* Навигация личного кабинета владельца — на телефоне гамбургер живёт в
-   ЗАФИКСИРОВАННОЙ верхней панели (.dash-topbar), а не в потоке контента
-   вкладки: раньше кнопка ☰ была обычным блочным элементом внутри
-   dash-body и на телефоне уезжала туда, где HTML-строка с ней оказывалась
-   после конкатенации (в конец, под всеми плитками «Быстрого доступа») —
-   теперь она всегда на своём месте независимо от длины контента вкладки.
-   На широком экране .dash-topbar скрыт, а drawer превращается в
-   постоянную боковую панель — один и тот же HTML, разное поведение через
-   media query ниже. */
+/* На телефоне ☰ живёт в фиксированной верхней панели. На широком экране
+   панель скрыта, а меню становится постоянной боковой колонкой — HTML
+   один, поведение задают media query ниже. */
 .dash-topbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20;
   display: flex; align-items: center; gap: 12px;
@@ -231,20 +215,14 @@ a:hover { filter: brightness(1.2); }
   background: none; border: none; color: var(--muted); text-align: left;
   font: inherit; font-size: 14px; font-weight: 600; padding: 9px 10px;
   border-radius: 10px; cursor: pointer; position: relative;
-  /* justify-content не наследуется сам по себе, но у <button> браузер по
-     умолчанию центрирует содержимое (внутренний UA-стиль, не связанный с
-     этим autoprefix-правилом) — без явного flex-start короткие подписи
-     держали иконку у центра плашки, а длинные ("Сотрудники платформы") —
-     сильно левее: иконки в столбик не совпадали (баг-отчёт "в разнобой"). */
+  /* <button> по умолчанию центрирует содержимое — без flex-start иконки
+     в столбике не совпадали. */
 }
 .nav-item:hover { color: var(--text); background: var(--surface-2); }
 .nav-item.active { color: var(--text); background: var(--surface-2); }
 .nav-item .nav-icon {
   width: 30px; height: 30px; border-radius: 9px; flex: none;
-  /* --icon-bg приходит инлайном на каждом значке (см. navIconHtml в
-     console.js) — свой цвет у каждого пункта меню; .active ниже всё равно
-     перекрывает его синим, т.к. у него выше specificity, а не потому что
-     позже в файле. */
+  /* --icon-bg задаётся инлайном у каждого значка (navIconHtml). */
   background: var(--icon-bg, var(--surface-2));
   display: flex; align-items: center; justify-content: center;
 }
@@ -259,27 +237,18 @@ a:hover { filter: brightness(1.2); }
   .wrap.has-tabbar > *:not(.nav-drawer):not(.nav-backdrop) { max-width: 760px; margin-left: auto; margin-right: auto; }
 }
 
-/* Панель платформы (screenSuperAdmin) переиспользует тот же .has-tabbar
-   drawer/топ-бар, что и личный кабинет владельца, но контент там гораздо
-   плотнее (списки заведений, аналитика, журнал) — id вместо класса, чтобы
-   переопределить 760px из правила выше без лишних !important. На
-   мобильном (где то правило вообще не действует) 1040px ничего не ломает —
-   это лишь верхняя граница, реальная ширина всё равно ограничена экраном. */
+/* Панели платформы нужно больше ширины под списки и аналитику; id — чтобы
+   перебить 760px без !important. */
 #admin-root { max-width: 1040px; }
 
-/* Вкладки панели платформы — переключение чистым CSS (показать/скрыть),
-   без пересоздания DOM: все watchXxx()-подписки (аналитика, заведения,
-   сборки и т.д.) остаются живыми и работающими вне зависимости от того,
-   какая вкладка сейчас видна, лишние сеть-запросы на переключение вкладки
-   не нужны. */
+/* Вкладки переключаются стилями: подписки всех вкладок остаются живыми,
+   лишних запросов при переключении нет. */
 .admin-tab-panel { display: none; }
 .admin-tab-panel.active { display: block; }
 
 .dash-greeting { font-size: 19px; font-weight: 700; margin-bottom: 14px; }
 
-/* Полоса прогресса загрузки логотипа (см. uploadBytesResumable в console.js) —
-   на медленной мобильной сети файл в несколько МБ грузится не мгновенно,
-   и без видимого процента непонятно, работает это или зависло. */
+/* Прогресс загрузки логотипа — на мобильной сети файл грузится не сразу. */
 .upload-progress {
   height: 6px; border-radius: 999px; overflow: hidden;
   background: var(--surface-2); border: 1px solid var(--border);
@@ -290,9 +259,7 @@ a:hover { filter: brightness(1.2); }
   transition: width .2s ease;
 }
 
-/* "Живые" цифры на "Обзоре" (открытые столы, сотрудники на смене, выручка
-   и чеки за сегодня) — 2 колонки на телефоне, все 4 в ряд начиная с
-   планшета, той же плотности, что и plans/quick-actions рядом. */
+/* Живые цифры «Обзора»: две колонки на телефоне, четыре с планшета. */
 .live-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 @media (min-width: 640px) { .live-stats-grid { grid-template-columns: repeat(4, 1fr); } }
 .live-stat { text-align: center; padding: 16px 8px; margin-bottom: 0; }
@@ -303,9 +270,7 @@ a:hover { filter: brightness(1.2); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
 }
 .quick-actions .btn { flex-direction: row; justify-content: flex-start; padding: 14px; }
-/* Иконка вынесена в отдельный span (а не просто "эмодзи + пробел + текст"
-   одной строкой) — иначе на некоторых экранах эмодзи-глиф и подпись кнопки
-   визуально слипаются в одно пятно без ритма между ними. */
+/* Иконка — отдельным span, иначе эмодзи слипается с подписью. */
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 16px; line-height: 1; flex: none;
@@ -397,23 +362,10 @@ a:hover { filter: brightness(1.2); }
 .checklist-label { flex: 1; font-size: 13.5px; }
 .checklist-item.done .checklist-label { color: var(--muted); text-decoration: line-through; }
 
-/* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ — премиальная тёмно-синяя схема ==================
-   Личный кабинет (класс .wrap.has-tabbar и все экраны выше) намеренно
-   остаётся на бордово-чёрной гамме из :root — это рабочий инструмент
-   персонала действующей кальянной, её не трогаем. У лендинга — своя
-   аудитория (человек, который ещё не клиент и решает, платить ли за
-   подписку) и своя задача (выглядеть как отдельный премиальный
-   маркетинговый сайт, по образцу корпоративных сайтов POS-систем вроде
-   r_keeper — а не как экран внутри личного кабинета).
-   Хитрость в том, что почти весь остальной CSS в этом файле (.card,
-   .btn-primary, инпуты, .hero-badge, .step-num, .plan-badge, .faq-*,
-   .compare-card и т.д. — включая даже инлайн style="...var(--border)..."
-   прямо в HTML из console.js) уже написан через переменные --bg/--surface/
-   --primary/... . CSS-переменные наследуются по DOM, поэтому достаточно
-   ПЕРЕОПРЕДЕЛИТЬ те же самые имена на классе .landing (он вешается на
-   #screen в screenLanding(), см. console.js) — и ВСЁ перечисленное само
-   перекрасится в новую гамму, без переписывания каждого места по
-   отдельности и без риска что-то пропустить. */
+/* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ ==================
+   Почти все компоненты написаны через переменные --bg/--surface/--primary,
+   поэтому лендингу хватает переопределить их на .landing (класс вешает
+   screenLanding) — карточки, кнопки и инлайновые стили перекрасятся сами. */
 .landing {
   --bg: #02060E;
   --surface: #0B1220;
@@ -456,9 +408,8 @@ a:hover { filter: brightness(1.2); }
 }
 .landing-nav-links button:hover { color: var(--text); }
 .landing-nav-actions { display: flex; align-items: center; gap: 14px; flex: none; }
-/* На узком экране "Войти" убираем — это дублирует ссылку внизу страницы
-   ("Уже есть аккаунт? Войти по паролю"), а тут иначе не хватает места и
-   кнопка "Попробовать бесплатно" обрезается по правому краю экрана. */
+/* На узком экране «Войти» прячем: он есть внизу страницы, а здесь из-за
+   него обрезается «Попробовать бесплатно». */
 .landing-nav-login { display: none; font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .landing-nav-actions .btn { width: auto; padding: 10px 14px; font-size: 13px; white-space: nowrap; }
 /* На самых узких телефонах (iPhone SE 1-го поколения, 320px) логотип и
@@ -508,9 +459,8 @@ a:hover { filter: brightness(1.2); }
   .landing-h2 { font-size: 28px; }
 }
 
-/* Тарифы: переключатель "Одно заведение"/"Сеть заведений" — не показываем
-   вовсе, если тарифов сети ни одного нет (см. screenLanding в console.js),
-   так что оформление рассчитано ровно на два пункта. */
+/* Переключатель «Одно заведение / Сеть» показывается, только если есть
+   тарифы сети, — пунктов всегда два. */
 .landing-pricing-toggle {
   display: flex; background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 999px; padding: 4px; gap: 4px; max-width: 460px; margin-bottom: 24px;
@@ -531,9 +481,8 @@ a:hover { filter: brightness(1.2); }
   .landing-pricing-toggle-btn { font-size: 14.5px; padding: 11px 20px; }
 }
 
-/* Фичи/шаги — на широком экране просторнее, чем дефолтные 3 колонки
-   (.feature-grid используется и в других местах консоли — переопределяем
-   плотность только внутри .landing, не трогая базовое правило). */
+/* На широком экране у лендинга своя плотность сетки; базовое правило
+   .feature-grid не трогаем. */
 @media (min-width: 860px) {
   .landing .feature-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
 }
@@ -560,12 +509,8 @@ a:hover { filter: brightness(1.2); }
 .landing-cta-inner h3 { font-size: 23px; margin: 0 0 8px; color: #fff; }
 .landing-cta-inner p { color: rgba(255,255,255,.82); margin-bottom: 18px; }
 .landing-cta-inner .btn {
-  /* width:auto само по себе не сжимает кнопку по содержимому — .btn
-     блочный display:flex, а не инлайновый, поэтому width:auto у него
-     всё равно растягивается на всю ширину контейнера (тот же класс
-     ошибки, что и с text-align:center на блочном потомке); нужен именно
-     inline-flex, чтобы text-align:center у .landing-cta-inner вообще
-     на что-то подействовал. */
+  /* .btn — блочный flex, width:auto его не сжимает; inline-flex нужен,
+     чтобы сработал text-align:center у .landing-cta-inner. */
   display: inline-flex; width: auto; padding: 15px 32px;
   background: #fff; color: #052B6B; box-shadow: 0 16px 40px rgba(0,0,0,.35);
 }
