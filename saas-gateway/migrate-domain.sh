@@ -170,6 +170,8 @@ if [[ -f "$ENVF" ]] && grep -q "$OLD_RE" "$ENVF"; then
 fi
 command -v rsync >/dev/null || apt-get install -y rsync >/dev/null
 rsync -a --exclude node_modules "$REPO/saas-gateway/" /opt/saas-gateway/
+# Версия кода — её показывает /health: видно, обновился ли сервер.
+git -C "$REPO" rev-parse --short HEAD > /opt/saas-gateway/VERSION 2>/dev/null || true
 (cd /opt/saas-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
 chown -R saas-gateway:saas-gateway /opt/saas-gateway
 systemctl restart saas-gateway
