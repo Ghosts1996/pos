@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import '../../build_info.dart';
 import '../../services/app_bootstrap.dart';
 import '../../services/app_scope.dart';
+import '../../services/hall_watch_service.dart';
 import '../../services/saas_device_join_service.dart';
+import '../../services/session_alerts_service.dart';
 import '../../services/subscription_gate.dart';
 import '../../services/tenant_config_service.dart';
 import '../../theme/app_colors.dart';
@@ -16,8 +18,18 @@ import '../../utils/human_error.dart';
 /// одного секрета на всю платформу — код заведения (slug) + код
 /// приглашения устройства, свой у каждого заведения (см. saas/README.md,
 /// раздел про tenants/{tenantId}/settings/deviceInvite).
+///
+/// Сюда же касса возвращается, когда планшет отвязали от заведения или
+/// демо-заведение удалилось по истечении срока: [lostVenueName] и
+/// [lostDemo] объясняют, что случилось.
 class SaasDevicePairingScreen extends StatefulWidget {
-  const SaasDevicePairingScreen({super.key});
+  const SaasDevicePairingScreen({super.key, this.lostVenueName, this.lostDemo = false});
+
+  /// Заведение, к которому планшет был привязан до этого.
+  final String? lostVenueName;
+
+  /// Прежнее заведение — демо, которое удалилось само.
+  final bool lostDemo;
 
   @override
   State<SaasDevicePairingScreen> createState() => _SaasDevicePairingScreenState();
@@ -147,12 +159,32 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     AppScope.enterTenant(tenantId,
         branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
     SubscriptionGate.watch(tenantId, config);
+    // Планшет мог работать в другом заведении (например, в удалённом демо):
+    // фоновые службы следят за прежним — перезапускаем под новое.
+    await HallWatchService.instance.stop();
+    await SessionAlertsService.instance.stop();
     startBackgroundServices();
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const ImagePreloadScreen()),
     );
+  }
+
+  String get _intro {
+    const where = 'Код заведения и код приглашения устройства — в личном кабинете '
+        'владельца, раздел «Устройства».';
+    if (widget.lostDemo) {
+      return 'Демо-заведение закрылось: оно удаляется само через 3 часа вместе '
+          'со всеми данными. Откройте новое демо или присоедините планшет '
+          'к своему заведению. $where';
+    }
+    final venue = widget.lostVenueName?.trim() ?? '';
+    if (venue.isNotEmpty) {
+      return 'Планшет больше не подключён к заведению «$venue» — его могли '
+          'отключить в личном кабинете. Присоедините его заново. $where';
+    }
+    return 'Этот планшет ещё не привязан ни к одному заведению платформы. $where';
   }
 
   @override
@@ -196,12 +228,10 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Этот планшет ещё не привязан ни к одному заведению платформы. '
-                    'Код заведения и код приглашения устройства — в личном кабинете '
-                    'владельца, раздел «Устройства».',
+                  Text(
+                    _intro,
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 14),
                   ),
                   const SizedBox(height: 24),
                   TextField(

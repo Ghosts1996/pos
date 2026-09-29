@@ -16,14 +16,19 @@ class StaffDeviceService {
 
   String get _collection => kSaasMode ? 'devices' : 'staffDevices';
 
-  /// Устройство уже зарегистрировано как рабочее?
+  /// Устройство уже зарегистрировано как рабочее? «Нет» — только ответ
+  /// сервера (документа нет или правила его не отдают). Обрыв сети — не
+  /// повод отправлять рабочий планшет на регистрацию: вход по PIN сам
+  /// скажет, что нет связи.
   Future<bool> isRegistered() async {
     if (_uid.isEmpty) return false;
     try {
       final doc = await AppScope.col(_collection).doc(_uid).get();
       return doc.exists;
+    } on FirebaseException catch (e) {
+      return e.code != 'permission-denied';
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
