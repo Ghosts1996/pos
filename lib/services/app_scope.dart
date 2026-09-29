@@ -43,6 +43,10 @@ class AppScope {
   /// Непустая строка — общий биллинг/лояльность нескольких точек сети.
   static String? get chainId => _chainId;
 
+  /// Открыто демо-заведение — экран входа подсказывает PIN-коды.
+  static bool _demo = false;
+  static bool get isDemo => _demo;
+
   /// Брендинг текущего заведения (имя, логотип, цвета) — задаётся вместе с
   /// [enterTenant], читается экранами, которым сама тема (AppTheme.branded)
   /// не подходит напрямую (например LoginScreen рисует свои цвета
@@ -63,7 +67,8 @@ class AppScope {
   /// пользователя (или устройство подтвердило код приглашения). Что именно
   /// вызывает это на старте — решает main.dart/kolibri_main.dart, сам
   /// AppScope ничего не знает про Auth/логины.
-  static void enterTenant(String tenantId, {BrandingConfig? branding, String? slug, String? chainId}) {
+  static void enterTenant(String tenantId,
+      {BrandingConfig? branding, String? slug, String? chainId, bool demo = false}) {
     if (tenantId.trim().isEmpty) {
       throw ArgumentError('tenantId не может быть пустым');
     }
@@ -71,6 +76,7 @@ class AppScope {
     _branding = branding;
     _slug = slug;
     _chainId = (chainId != null && chainId.isNotEmpty) ? chainId : null;
+    _demo = demo;
   }
 
   /// Возврат в одно-арендный режим (например, выход из SaaS-аккаунта или
@@ -80,6 +86,7 @@ class AppScope {
     _branding = null;
     _slug = null;
     _chainId = null;
+    _demo = false;
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому

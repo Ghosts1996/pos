@@ -294,6 +294,17 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 8),
           Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent)),
         ],
+        // PIN демо-сотрудников задаёт createDemoTenant (saas-gateway).
+        if (AppScope.isDemo) ...[
+          const SizedBox(height: 8),
+          Text(
+            _adminMode
+                ? 'Демо: администратор — 111111'
+                : 'Демо: кальянщик — 1111, официант — 2222, бармен — 3333',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ],
       ],
     );
 

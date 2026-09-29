@@ -137,6 +137,10 @@ class Tenant {
   // как и раньше. Непустая строка означает, что общий биллинг и лояльность
   // этого заведения — на уровне chains/{chainId}, а не tenants/{id}.
   final String? chainId;
+
+  /// Одноразовое демо-заведение (createDemoTenant): вход по известным PIN,
+  /// стирается само через несколько часов.
+  final bool demo;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -148,6 +152,7 @@ class Tenant {
     required this.planId,
     required this.ownerUserId,
     this.chainId,
+    this.demo = false,
     this.createdAt,
     this.updatedAt,
   });
@@ -165,6 +170,7 @@ class Tenant {
       planId: d['planId'] as String? ?? 'start',
       ownerUserId: d['ownerUserId'] as String? ?? '',
       chainId: (chainId != null && chainId.isNotEmpty) ? chainId : null,
+      demo: d['demo'] == true,
       createdAt: created is Timestamp ? created.toDate() : null,
       updatedAt: updated is Timestamp ? updated.toDate() : null,
     );
