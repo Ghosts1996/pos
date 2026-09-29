@@ -172,6 +172,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
     });
     try {
       if (await _fs.isPinTaken(e.pinCode, excludeId: _emp?.id)) {
+        if (!mounted) return;
         setState(() {
           _saving = false;
           _error = 'Этот PIN-код уже занят другим сотрудником';

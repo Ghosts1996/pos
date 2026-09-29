@@ -176,9 +176,11 @@ class AppUpdateService {
 
   void _begin() {
     // Первый раз — не в самый старт: там и так грузятся меню, смены, фото.
-    Timer(const Duration(seconds: 20), () {
-      unawaited(_cleanupOld());
-      unawaited(checkNow());
+    // Сначала уборка, потом проверка: уборка удаляет недокачанные .part, и
+    // параллельно она могла снести файл, который проверка только начала качать.
+    Timer(const Duration(seconds: 20), () async {
+      await _cleanupOld();
+      await checkNow();
     });
     _timer = Timer.periodic(_interval, (_) => unawaited(checkNow()));
     _lifecycle = AppLifecycleListener(onResume: () {

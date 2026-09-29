@@ -56,7 +56,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
     try {
       final snap = await _doc.get();
       final data = snap.data();
-      if (data != null) {
+      if (data != null && mounted) {
         final unlimited = data['unlimited'] as bool? ?? false;
         final minutes = (data['minutes'] as num?)?.toInt();
         setState(() {

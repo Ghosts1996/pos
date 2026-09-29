@@ -5,7 +5,7 @@ import '../utils/promo_policy.dart';
 import 'session_model.dart';
 import 'table_model.dart';
 
-/// Профиль гостя приложения «Colibri Lounge».
+/// Профиль гостя в приложении заведения.
 /// Документ clients/{uid}, где uid — Firebase Auth UID клиентского приложения.
 class ClientProfile {
   final String uid;
@@ -38,7 +38,7 @@ class ClientProfile {
   /// Токен push-уведомлений (FCM) клиентского устройства.
   final String pushToken;
 
-  /// Портрет гостя, который поддерживает ИИ-агент «Консьерж»:
+  /// Портрет гостя, который пополняет ИИ-помощник:
   /// вкусовые предпочтения, крепость кальяна, аллергии, средний чек.
   final String aiProfile;
 
@@ -86,7 +86,8 @@ class ClientProfile {
   static void applyTiers(List<dynamic> raw) {
     try {
       final parsed = raw
-          .cast<Map<String, dynamic>>()
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
           .map((m) => (
                 name: (m['name'] as String?)?.trim() ?? '',
                 from: (m['from'] as num?)?.toDouble() ?? 0,

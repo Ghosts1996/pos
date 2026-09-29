@@ -190,7 +190,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final source = await _pickSource(context);
     if (source == null) return;
     final file = await _storage.pickImage(source: source);
-    if (file == null) return;
+    if (file == null || !mounted) return;
     setState(() => _uploadingIds.add(cat.id));
     try {
       final url = await _storage.uploadMenuImage(file: file, folder: 'categories', entityId: cat.id);
@@ -213,7 +213,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final source = await _pickSource(context);
     if (source == null) return;
     final file = await _storage.pickImage(source: source);
-    if (file == null) return;
+    if (file == null || !mounted) return;
     setState(() => _uploadingIds.add(item.id));
     try {
       final url = await _storage.uploadMenuImage(file: file, folder: 'items', entityId: item.id);

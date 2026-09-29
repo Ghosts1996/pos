@@ -170,7 +170,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
         maxOpenSessions: result.maxOpenSessions,
         zone: result.zone,
       ));
-      if (result.zone != _zone) setState(() => _zone = result.zone);
+      if (mounted && result.zone != _zone) setState(() => _zone = result.zone);
     } catch (e) {
       _snack('Не удалось добавить стол: ${humanError(e, lower: true)}');
     }

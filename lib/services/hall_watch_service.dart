@@ -2,10 +2,13 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter/painting.dart' show Color;
 
+import '../build_info.dart';
 import '../firebase_options.dart';
+import 'app_scope.dart';
 import 'auth_service.dart';
 import 'notification_service.dart';
 import 'session_alerts_service.dart';
+import 'tenant_config_service.dart';
 
 /// Держит кассу «живой», пока приложение свёрнуто.
 ///
@@ -173,6 +176,18 @@ class _HallWatchHandler extends TaskHandler {
       // правила базы не признают устройство рабочим и молча не отдадут
       // ни вызовов, ни броней.
       await AuthService().ensureSignedIn();
+      // Изолят службы не видит памяти приложения: AppScope здесь пустой, и в
+      // SaaS-сборке подписки ушли бы в корневые коллекции вместо
+      // tenants/{id}/… — уведомления в фоне молча не приходили. Заведение
+      // берём из того же кэша, что и приложение при старте.
+      if (kSaasMode) {
+        final config = TenantConfigService();
+        await config.loadFromCache();
+        final c = config.current;
+        if (c == null) return; // устройство ещё не присоединено — слушать нечего
+        AppScope.enterTenant(c.tenant.id,
+            branding: c.branding, slug: c.tenant.slug, chainId: c.tenant.chainId, demo: c.tenant.demo);
+      }
       await NotificationService.instance.init();
       await SessionAlertsService.instance.start();
     } catch (_) {

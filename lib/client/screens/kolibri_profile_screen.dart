@@ -230,7 +230,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
     setState(() => _deleting = true);
     try {
       await PiiGatewayService().deleteGuestData();

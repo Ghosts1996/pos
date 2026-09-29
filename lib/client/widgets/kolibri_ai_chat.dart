@@ -5,6 +5,7 @@ import '../../services/ai/ai_settings.dart';
 import '../../services/ai/tooken_client.dart';
 import '../../services/guest_link_service.dart';
 import '../theme/kolibri_theme.dart';
+import '../../utils/human_error.dart';
 
 /// ИИ-помощник гостя: меню и состав блюд, популярное, столы и брони,
 /// бонусы, вызов персонала; про кальян — если гость спросит сам.
@@ -101,7 +102,14 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
     // Каждый вопрос стоит денег на шлюзе ИИ, поэтому доступ ограничен:
     // нужен указанный телефон, реальное присутствие за столом (QR) и не
     // больше 10 вопросов в день — иначе показываем причину и на ИИ не идём.
-    final quota = await _link.consumeAiQuota(widget.guestUid);
+    AiQuotaResult quota;
+    try {
+      quota = await _link.consumeAiQuota(widget.guestUid);
+    } catch (e) {
+      // Транзакция лимита без сети падает — без этого чат навсегда
+      // оставался «занятым» и не принимал новых вопросов.
+      quota = AiQuotaResult(false, humanError(e));
+    }
     if (!quota.allowed) {
       if (mounted) {
         setState(() {

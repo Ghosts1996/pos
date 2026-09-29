@@ -123,11 +123,13 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     });
     try {
       final res = await TookenClient.instance.ping(endpoint: _settings.endpointFor(_editing));
+      if (!mounted) return;
       setState(() {
         _pingOk = true;
         _pingResult = '${_vendor.title}: связь есть. Ответ модели: «$res»';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _pingOk = false;
         _pingResult = 'Ошибка: ${humanError(e, lower: true)}';
@@ -139,6 +141,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     _commitFields();
     try {
       final list = await TookenClient.instance.listModels(endpoint: _settings.endpointFor(_editing));
+      if (!mounted) return;
       setState(() => _models = list);
       if (list.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
