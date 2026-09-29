@@ -77,6 +77,18 @@ class FirestoreService {
     });
   }
 
+  /// Переносит столы в зону [zone] одной записью — так переименовывают зону
+  /// («Без зоны» → «Основной зал») или сливают две в одну.
+  Future<void> setTablesZone(List<String> tableIds, String zone) async {
+    for (var i = 0; i < tableIds.length; i += 400) {
+      final batch = _db.batch();
+      for (final id in tableIds.skip(i).take(400)) {
+        batch.update(AppScope.col('tables').doc(id), {'zone': zone});
+      }
+      await batch.commit();
+    }
+  }
+
   Future<void> updateTablePosition(String tableId, double x, double y) {
     return AppScope.col('tables').doc(tableId).update({'x': x, 'y': y});
   }

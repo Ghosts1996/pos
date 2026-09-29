@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../../models/table_model.dart';
@@ -42,10 +41,11 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   Offset? _pointer;
   ({Rect rect, double x, double y, bool blocked})? _drop;
 
-  /// Тащат мышью — стол держим под курсором; пальцем — чуть выше пальца,
-  /// иначе палец закрывает и стол, и место, куда он встанет.
-  bool _mouse = false;
-  static const double _lift = 36;
+  /// Где коснулись схемы (экранные координаты) и в какой точке стола его
+  /// взяли (координаты холста): стол едет за пальцем, оставаясь под ним
+  /// той же точкой, а не прыгает.
+  Offset? _downAt;
+  Offset _grab = Offset.zero;
 
   /// Прокрутка схемы, пока стол держат у края экрана.
   Timer? _panTimer;
@@ -62,6 +62,32 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
 
   /// Зона, которую сейчас расставляем ('' — столы без зоны).
   String _zone = '';
+
+  /// Зоны, заведённые кнопкой «+ Зона», в которых ещё нет столов: зона
+  /// хранится в самих столах, поэтому до первого стола она живёт здесь.
+  final List<String> _newZones = [];
+
+  /// Вкладки зон — чтобы прокрутить к выбранной (новая зона оказывается в
+  /// конце списка и на телефоне уходила за край экрана).
+  final Map<String, GlobalKey> _zoneKeys = {};
+
+  void _showZone(String zone) {
+    setState(() {
+      _zone = zone;
+      _selectedId = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _zoneKeys[zone]?.currentContext;
+      if (ctx != null) Scrollable.ensureVisible(ctx, alignment: 0.5, duration: const Duration(milliseconds: 250));
+    });
+  }
+
+  /// Все зоны: из столов и только что заведённые.
+  List<String> get _allZones {
+    final zones = hallZones(_tables);
+    _newZones.removeWhere(zones.contains);
+    return [...zones, ..._newZones];
+  }
 
   /// Только что перетащенный стол — показываем на новом месте сразу, не
   /// дожидаясь ответа базы (иначе плитка на миг прыгала обратно).
@@ -206,6 +232,100 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     }
   }
 
+  /// Ответ диалога зоны «удалить» — не может совпасть с названием.
+  static const _deleteZone = '\u0000delete';
+
+  /// «+ Зона» ([zone] == null) или переименование зоны [zone] ('' — столы
+  /// без зоны: так им дают имя, например «Основной зал»). Имя уже
+  /// существующей зоны — столы переезжают в неё.
+  Future<void> _editZone(String? zone) async {
+    final isNew = zone == null;
+    final ctrl = TextEditingController(text: zone ?? '');
+    final existing = _allZones;
+    final inZone = isNew ? <TableModel>[] : _tables.where((t) => t.zone == zone).toList();
+    String? error;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        final suggestions =
+            ['Основной зал', 'Терраса', '2 этаж', 'VIP', 'Веранда', 'Бар'].where((s) => !existing.contains(s)).toList();
+        void save() {
+          final name = ctrl.text.trim();
+          if (name.isEmpty) return setSt(() => error = 'Введите название зоны');
+          if (name.length > 30) return setSt(() => error = 'Не длиннее 30 символов');
+          if (name == kNoZoneLabel) return setSt(() => error = 'Выберите другое название');
+          if (isNew && existing.contains(name)) return setSt(() => error = 'Такая зона уже есть');
+          Navigator.pop(ctx, name);
+        }
+
+        return AlertDialog(
+          title: Text(isNew ? 'Новая зона' : 'Зона «${zone.isEmpty ? kNoZoneLabel : zone}»'),
+          content: SizedBox(
+            width: 380,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(labelText: 'Название', hintText: 'Например, Терраса', errorText: error),
+                onSubmitted: (_) => save(),
+              ),
+              if (suggestions.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (final s in suggestions) ActionChip(label: Text(s), onPressed: () => setSt(() => ctrl.text = s)),
+                ]),
+              ],
+              const SizedBox(height: 10),
+              Text(
+                isNew
+                    ? 'У каждой зоны своя схема. Новые столы кнопкой «Стол» добавятся в неё.'
+                    : 'Новое имя получат все столы этой зоны (${inZone.length}). Если такая зона уже есть — столы переедут в неё.',
+                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            ]),
+          ),
+          actions: [
+            if (!isNew && inZone.isEmpty)
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, _deleteZone),
+                child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+              ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            FilledButton(onPressed: save, child: Text(isNew ? 'Добавить' : 'Сохранить')),
+          ],
+        );
+      }),
+    );
+    ctrl.dispose();
+    if (result == null || !mounted) return;
+    if (result == _deleteZone) {
+      setState(() {
+        _newZones.remove(zone);
+        _zone = '';
+      });
+      return;
+    }
+    if (isNew) {
+      _newZones.add(result);
+      _showZone(result);
+      return;
+    }
+    if (result == zone) return;
+    if (inZone.isEmpty) {
+      final i = _newZones.indexOf(zone);
+      if (i >= 0) _newZones[i] = result;
+      _showZone(result);
+      return;
+    }
+    try {
+      await _fs.setTablesZone([for (final t in inZone) t.id], result);
+      if (mounted) _showZone(result);
+    } catch (e) {
+      _snack('Не удалось переименовать зону: ${humanError(e, lower: true)}');
+    }
+  }
+
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -218,7 +338,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     var rotation = existing?.rotation ?? 0;
     var maxOpenSessions = existing?.maxOpenSessions ?? 2;
     final zoneCtrl = TextEditingController(text: existing?.zone ?? _zone);
-    final zones = hallZones(_tables);
+    final zones = _allZones;
     String? error;
 
     final result = await showDialog<_TableForm>(
@@ -341,7 +461,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   setSt(() => error = 'Введите название');
                   return;
                 }
-                final clash = _tables.any((t) => t.id != existing?.id && t.name.trim().toLowerCase() == name.toLowerCase());
+                final clash =
+                    _tables.any((t) => t.id != existing?.id && t.name.trim().toLowerCase() == name.toLowerCase());
                 if (clash) {
                   setSt(() => error = 'Стол с таким названием уже есть');
                   return;
@@ -383,6 +504,13 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
       _tables.any((o) => o.id != moved.id && o.zone == moved.zone && hallTablesOverlap(moved, o));
 
   void _dragStarted(TableModel t) {
+    final box = _canvasBox;
+    final o = hallTileOffset(t);
+    final size = hallTileSize(t);
+    final down = _downAt;
+    _grab = box != null && down != null
+        ? box.globalToLocal(down) - Offset(o.left, o.top)
+        : Offset(size.width / 2, size.height / 2);
     setState(() {
       _dragging = t;
       _selectedId = null;
@@ -400,14 +528,13 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   /// Куда встанет стол, если отпустить сейчас: с привязкой к сетке, как
   /// при сохранении. Сам стол рисуется прямо там, на схеме, в зелёной рамке
   /// (красная — место занято): отдельная плитка «в руке» закрывала бы это
-  /// место. Пальцем стол держим чуть выше пальца, чтобы его было видно.
+  /// место.
   void _updateDrop() {
     final t = _dragging, p = _pointer, box = _canvasBox;
     if (t == null || p == null || box == null) return;
-    final scale = _canvasScale();
     final size = hallTileSize(t);
-    final centre = box.globalToLocal(_mouse ? p : p - Offset(0, _lift + size.height * scale / 2));
-    final f = hallFractionForTopLeft(centre.dx - size.width / 2, centre.dy - size.height / 2, size);
+    final topLeft = box.globalToLocal(p) - _grab;
+    final f = hallFractionForTopLeft(topLeft.dx, topLeft.dy, size);
     final moved = t.copyWith(x: f.x, y: f.y);
     final o = hallTileOffset(moved);
     final rect = Rect.fromLTWH(o.left, o.top, size.width, size.height);
@@ -478,7 +605,9 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
 
   void _place(TableModel t, double x, double y) {
     setState(() => _moved[t.id] = (x: x, y: y, rotation: t.rotation));
-    _fs.updateTablePosition(t.id, x, y).catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
+    _fs
+        .updateTablePosition(t.id, x, y)
+        .catchError((e) => _snack('Не удалось переставить стол: ${humanError(e, lower: true)}'));
   }
 
   /// Стрелки под схемой: сдвиг выбранного стола на шаг сетки.
@@ -577,7 +706,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
               arrow(Icons.arrow_downward, 'Вниз', 0, 1),
               arrow(Icons.arrow_forward, 'Вправо', 1, 0),
               if (tableShapeRotates(t.shape))
-                IconButton.filledTonal(tooltip: 'Повернуть', icon: const Icon(Icons.rotate_right), onPressed: () => _rotate(t)),
+                IconButton.filledTonal(
+                    tooltip: 'Повернуть', icon: const Icon(Icons.rotate_right), onPressed: () => _rotate(t)),
             ]),
           ]),
         ),
@@ -615,36 +745,52 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             }
             return t.copyWith(x: m.x, y: m.y, rotation: m.rotation);
           }).toList();
-          final zones = hallZones(_tables);
+          final zones = _allZones;
           final hasNoZone = _tables.any((t) => t.zone.isEmpty);
           final zoneKeys = [...zones, if (hasNoZone || zones.isEmpty) ''];
+          // Пока зон нет, все столы — один зал.
+          String zoneLabel(String z) => z.isNotEmpty ? z : (zones.isEmpty ? 'Весь зал' : kNoZoneLabel);
           if (!zoneKeys.contains(_zone)) _zone = zoneKeys.first;
           final narrow = MediaQuery.sizeOf(context).width < 600;
 
           return Column(
             children: [
-              if (zones.isNotEmpty)
-                SizedBox(
-                  height: 50,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    children: [
-                      for (final z in zoneKeys)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
-                            label: Text('${z.isEmpty ? kNoZoneLabel : z} · ${_tables.where((t) => t.zone == z).length}'),
-                            selected: _zone == z,
-                            onSelected: (_) => setState(() {
-                              _zone = z;
-                              _selectedId = null;
-                            }),
-                          ),
+              // Зоны — вкладки: «+ Зона» заводит новую (терраса, 2 этаж…),
+              // нажатие на выбранную — переименовать.
+              SizedBox(
+                height: 50,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  children: [
+                    for (final z in zoneKeys)
+                      Padding(
+                        key: _zoneKeys.putIfAbsent(z, GlobalKey.new),
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          showCheckmark: false,
+                          avatar: _zone == z ? const Icon(Icons.edit_outlined, size: 16) : null,
+                          tooltip: _zone == z ? 'Переименовать зону' : null,
+                          label: Text('${zoneLabel(z)} · ${_tables.where((t) => t.zone == z).length}'),
+                          selected: _zone == z,
+                          onSelected: (_) {
+                            if (_zone == z) {
+                              _editZone(z);
+                              return;
+                            }
+                            _showZone(z);
+                          },
                         ),
-                    ],
-                  ),
+                      ),
+                    ActionChip(
+                      avatar: const Icon(Icons.add, size: 18),
+                      label: const Text('Зона'),
+                      tooltip: 'Новая зона: терраса, 2 этаж, VIP…',
+                      onPressed: () => _editZone(null),
+                    ),
+                  ],
                 ),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Row(children: [
@@ -653,10 +799,12 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   Expanded(
                     child: Text(
                       _tables.isEmpty
-                          ? 'Добавьте первый стол кнопкой «Стол» внизу.'
-                          : 'Нажмите на стол — появятся стрелки, поворот и настройки. '
-                              '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
-                              'Зоны (терраса, 2 этаж) задаются в настройках стола.',
+                          ? 'Добавьте первый стол кнопкой «Стол» внизу. Зоны (терраса, 2 этаж) — кнопкой «+ Зона».'
+                          : _inZone.isEmpty
+                              ? 'В зоне «${zoneLabel(_zone)}» пока нет столов — добавьте их кнопкой «Стол» внизу.'
+                              : 'Нажмите на стол — появятся стрелки, поворот и настройки. '
+                                  '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
+                                  'Зоны — вкладки сверху: «+ Зона» добавит новую, нажмите на выбранную — переименовать.',
                       style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                     ),
                   ),
@@ -664,7 +812,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
               ),
               Expanded(
                 child: Listener(
-                  onPointerDown: (e) => _mouse = e.kind == PointerDeviceKind.mouse,
+                  onPointerDown: (e) => _downAt = e.position,
                   child: KeyedSubtree(
                     key: _viewportKey,
                     child: HallPlanView(

@@ -4,6 +4,16 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+
+// Версия кода (короткий хеш коммита) — её пишет migrate-domain.sh при
+// установке, а /health показывает: так видно, обновился ли сервер.
+const SERVER_VERSION = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, "VERSION"), "utf8").trim();
+  } catch (_) {
+    return "";
+  }
+})();
 const admin = require("firebase-admin");
 const { execFile } = require("child_process");
 const tls = require("tls");
@@ -5755,7 +5765,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
 
   const urlPath = (req.url || "").split("?")[0];
-  if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true });
+  if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
   // Единственный GET с полезной нагрузкой — скачивание готового APK (см.
   // handleDownloadBuild) — остальные операции ниже намеренно только POST.
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
