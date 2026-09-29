@@ -653,20 +653,25 @@ class GuestLinkService {
     String guestName = '',
     String comment = '',
   }) async {
-    // Имя стола обязательно: без него у персонала заказ приходил как «Стол ·
-    // …», и было непонятно, куда нести. Приложение гостя знает только id
-    // чека — имя берём из самого чека (его гостю читать можно).
+    // Стол берём из самого чека (его гостю читать можно): гостя могли
+    // пересадить, а стол в профиле ещё прежний. Имя стола обязательно —
+    // без него у персонала заказ приходил как «Стол · …», и было
+    // непонятно, куда нести.
+    var resolvedTableId = tableId;
     var resolvedTable = tableName;
-    if (resolvedTable.isEmpty && sessionId.isNotEmpty) {
+    if (sessionId.isNotEmpty) {
       try {
-        final snap = await AppScope.col('sessions').doc(sessionId).get();
-        resolvedTable = (snap.data()?['tableName'] as String?) ?? '';
+        final data = (await AppScope.col('sessions').doc(sessionId).get()).data();
+        final id = (data?['tableId'] as String?) ?? '';
+        final name = (data?['tableName'] as String?) ?? '';
+        if (id.isNotEmpty) resolvedTableId = id;
+        if (name.isNotEmpty) resolvedTable = name;
       } catch (_) {}
     }
     final order = GuestOrder(
       id: '',
       sessionId: sessionId,
-      tableId: tableId,
+      tableId: resolvedTableId,
       tableName: resolvedTable,
       clientUid: clientUid,
       guestName: guestName,

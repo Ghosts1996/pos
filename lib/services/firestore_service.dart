@@ -17,6 +17,7 @@ import 'venue_service.dart';
 import 'tips_service.dart';
 import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
+import '../utils/loyalty_refund.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -173,6 +174,21 @@ class FirestoreService {
     // plannedEnd по всем чекам стола.
     await syncTableBusyUntil(fromTableId);
     await syncTableBusyUntil(toTableId);
+
+    // Гость, сидящий на этом чеке через приложение, пересаживается вместе
+    // с ним: по activeTableId приложение зовёт персонал, и вызов уходил бы
+    // к пустому столу, за которым гостя уже нет.
+    try {
+      final bound = await AppScope.loyaltyCol('clients')
+          .where('activeSessionId', isEqualTo: sessionId)
+          .get();
+      for (final d in bound.docs) {
+        await d.reference.update({'activeTableId': toTableId});
+      }
+    } catch (_) {
+      // Не критично: приложение гостя берёт стол из самого чека, а
+      // профиль поправится при следующей привязке.
+    }
   }
 
   /// Пересчитывает [TableModel.busyUntil] — до какого момента стол занят.
@@ -519,6 +535,9 @@ class FirestoreService {
   /// экран оплаты, с другого планшета могли добавить позиции или принять
   /// заказ гостя: тогда чек не закрываем, иначе в нём остались бы
   /// неоплаченные позиции.
+  ///
+  /// [loyaltyClientUid] — гость, которому за этот чек начисляется кешбэк:
+  /// по нему возврат чека отменит начисление (см. [refundSession]).
   Future<void> closeSessionWithPayment(
     String sessionId,
     String tableId, {
@@ -537,6 +556,7 @@ class FirestoreService {
     double tipsCard = 0,
     List<String> tipsCancelled = const [],
     double? expectedTotal,
+    String loyaltyClientUid = '',
   }) async {
     // 1. Закрываем чек. Транзакция с проверкой статуса делает закрытие
     //    идемпотентным: повторное «Оплатить» после сбоя сети не спишет
@@ -563,6 +583,7 @@ class FirestoreService {
         'fiscalReceiptPrinted': fiscalReceiptPrinted,
         'tipsCash': tipsCash,
         'tipsCard': tipsCard,
+        if (loyaltyClientUid.isNotEmpty) 'loyaltyClientUid': loyaltyClientUid,
       });
       // Чаевые, взятые вместе со счётом, отмечаются оплаченными в той же
       // транзакции: чек не может закрыться, а чаевые — повиснуть «к счёту»
@@ -706,20 +727,30 @@ class FirestoreService {
   /// учитывается в выручке отчётов.
   ///
   /// Если платили наличными, в той же транзакции записывается расход
-  /// «Возврат наличными» в текущую смену.
+  /// «Возврат наличными» в текущую смену. Если за чек гостю начисляли
+  /// кешбэк, возврат его отменяет (см. [applyLoyaltyRefund]) — иначе
+  /// бонусы за возвращённый чек оставались бы у гостя.
   Future<void> refundSession(String sessionId, {String employeeName = '', String employeeId = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     final stateRef = AppScope.col('meta').doc('shiftState');
+    // Гостя ищем до транзакции: внутри неё запросы по коллекциям нельзя.
+    final uid = await _loyaltyClientOf(sessionId);
+    final clientRef = uid.isEmpty ? null : AppScope.loyaltyCol('clients').doc(uid);
+    final visitRef = clientRef?.collection('visits').doc(sessionId);
+
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final state = await tx.get(stateRef);
+      final client = clientRef == null ? null : (await tx.get(clientRef)).data();
+      final visit = visitRef == null ? null : (await tx.get(visitRef)).data();
       final data = doc.data();
       // Вернуть можно только оплаченный чек и только один раз.
       if (data == null || data['refunded'] == true || data['status'] != 'closed') return;
+      final now = Timestamp.fromDate(DateTime.now());
       final cash = ((data['paymentCash'] ?? 0) as num).toDouble();
       final update = <String, dynamic>{
         'refunded': true,
-        'refundedAt': Timestamp.fromDate(DateTime.now()),
+        'refundedAt': now,
         'refundCashOut': cash > 0,
       };
       if (cash > 0) {
@@ -739,21 +770,52 @@ class FirestoreService {
             ).toMap());
         update['refundCashOpId'] = opRef.id;
       }
+
+      // Визит гостя по этому чеку — в нём ровно то, что было начислено.
+      if (client != null && visit != null && visit['refunded'] != true) {
+        final r = applyLoyaltyRefund(
+          balance: _num(client['bonusBalance']),
+          totalSpent: _num(client['totalSpent']),
+          visits: _num(client['visits']).toInt(),
+          earned: _num(visit['bonusEarned']),
+          bonusSpent: _num(visit['bonusSpent']),
+          visitTotal: _num(visit['total']),
+        );
+        tx.update(clientRef!, {'bonusBalance': r.balance, 'totalSpent': r.totalSpent, 'visits': r.visits});
+        tx.update(visitRef!, {'refunded': true});
+        _bonusOp(tx, uid, sessionId, 'refund_reversal', 'refund', r.refund.taken, now);
+        _bonusOp(tx, uid, sessionId, 'redeem_cancelled', 'refund', r.refund.returned, now);
+        update['refundLoyalty'] = r.refund.toMap(uid);
+      }
       tx.update(ref, update);
     });
   }
 
   /// Отменить возврат чека (если оформили по ошибке) — снова учитывается
-  /// в отчётах как обычный оплаченный чек, а расход наличных по возврату
-  /// помечается отменённым.
+  /// в отчётах как обычный оплаченный чек, расход наличных по возврату
+  /// помечается отменённым, а гостю возвращается то, что снял возврат.
   Future<void> undoRefundSession(String sessionId, {String employeeName = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
-      final doc = await tx.get(ref);
-      final data = doc.data();
-      if (data == null) return;
+      final data = (await tx.get(ref)).data();
+      // Повторная отмена второй раз начислила бы гостю бонусы.
+      if (data == null || data['refunded'] != true) return;
+      final loyalty = data['refundLoyalty'];
+      final uid = loyalty is Map ? (loyalty['uid'] as String? ?? '') : '';
+      final clientRef = uid.isEmpty ? null : AppScope.loyaltyCol('clients').doc(uid);
+      final visitRef = clientRef?.collection('visits').doc(sessionId);
+      final client = clientRef == null ? null : (await tx.get(clientRef)).data();
+      // Гость мог удалить свои данные вместе с историей визитов.
+      final visitExists = visitRef != null && (await tx.get(visitRef)).exists;
+
       final opId = (data['refundCashOpId'] ?? '').toString();
-      tx.update(ref, {'refunded': false, 'refundedAt': null, 'refundCashOut': false, 'refundCashOpId': null});
+      tx.update(ref, {
+        'refunded': false,
+        'refundedAt': null,
+        'refundCashOut': false,
+        'refundCashOpId': null,
+        'refundLoyalty': FieldValue.delete(),
+      });
       if (opId.isNotEmpty) {
         tx.update(AppScope.col('cashOps').doc(opId), {
           'cancelled': true,
@@ -761,8 +823,64 @@ class FirestoreService {
           'cancelledAt': Timestamp.fromDate(DateTime.now()),
         });
       }
+
+      if (client != null && loyalty is Map) {
+        final refund = LoyaltyRefund.fromMap(loyalty);
+        final r = undoLoyaltyRefund(
+          balance: _num(client['bonusBalance']),
+          totalSpent: _num(client['totalSpent']),
+          visits: _num(client['visits']).toInt(),
+          refund: refund,
+        );
+        final now = Timestamp.fromDate(DateTime.now());
+        tx.update(clientRef!, {'bonusBalance': r.balance, 'totalSpent': r.totalSpent, 'visits': r.visits});
+        if (visitExists) tx.update(visitRef, {'refunded': false});
+        _bonusOp(tx, uid, sessionId, 'accrual', 'refund_undone', refund.taken, now);
+        _bonusOp(tx, uid, sessionId, 'redeem', 'refund_undone', r.reclaimed, now);
+      }
     });
   }
+
+  /// Гость, которому за чек начислялся кешбэк. У новых чеков он записан
+  /// при оплате; у старых ищем по истории бонусов, а если кешбэка не было
+  /// (одни кальяны) — по отметке bonusAccruedFor в профиле.
+  Future<String> _loyaltyClientOf(String sessionId) async {
+    try {
+      final data = (await AppScope.col('sessions').doc(sessionId).get()).data();
+      final uid = (data?['loyaltyClientUid'] as String?) ?? '';
+      if (uid.isNotEmpty) return uid;
+      final ops = await AppScope.loyaltyCol('bonusOperations')
+          .where('sessionId', isEqualTo: sessionId)
+          .where('type', isEqualTo: 'accrual')
+          .limit(1)
+          .get();
+      if (ops.docs.isNotEmpty) return (ops.docs.first.data()['clientUid'] as String?) ?? '';
+      final clients = await AppScope.loyaltyCol('clients')
+          .where('bonusAccruedFor', isEqualTo: sessionId)
+          .limit(1)
+          .get();
+      if (clients.docs.isNotEmpty) return clients.docs.first.id;
+    } catch (_) {
+      // Не нашли — вернём деньги без правки бонусов, чек важнее.
+    }
+    return '';
+  }
+
+  /// Строка в истории бонусов гостя — то, что он видит в профиле.
+  static void _bonusOp(Transaction tx, String uid, String sessionId, String type, String reason,
+      double amount, Timestamp at) {
+    if (amount <= 0) return;
+    tx.set(AppScope.loyaltyCol('bonusOperations').doc(), {
+      'clientUid': uid,
+      'sessionId': sessionId,
+      'type': type,
+      'reason': reason,
+      'amount': amount,
+      'createdAt': at,
+    });
+  }
+
+  static double _num(Object? v) => v is num ? v.toDouble() : 0;
 
   /// Закрытые чеки за период [start; end) — источник данных для отчётов и
   /// X-отчёта. Специально фильтруется только по диапазону closedAt (у

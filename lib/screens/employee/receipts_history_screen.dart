@@ -103,7 +103,9 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
         content: Text(
             'Оформить возврат чека на ${rub(s.totalWithDiscount)} '
             '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'
-            '${s.paymentCash > 0 ? '\nНаличные ${rub(s.paymentCash)} будут списаны из кассы как возврат гостю.' : ''}'),
+            '${s.paymentCash > 0 ? '\nНаличные ${rub(s.paymentCash)} будут списаны из кассы как возврат гостю.' : ''}'
+            '\nЕсли гость копит бонусы, кешбэк за этот чек спишется, а бонусы, '
+            'которыми он платил, вернутся на его счёт.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
           FilledButton(
