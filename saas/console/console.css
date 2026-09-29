@@ -42,6 +42,12 @@ body {
 h1 { font-size: 22px; font-weight: 700; margin: 4px 0 8px; }
 h2 { font-size: 15px; font-weight: 600; margin: 22px 0 10px; }
 p { margin: 0 0 10px; }
+
+/* Переносы и строки: длинные слова в абзацах переносятся по слогам
+   (lang="ru"), абзац не заканчивается одиноким словом, заголовки делятся
+   на ровные строки. Неразрывные пробелы расставляет typograf.js. */
+p, li { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word; text-wrap: pretty; }
+h1, h2, h3 { text-wrap: balance; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .center { text-align: center; }
