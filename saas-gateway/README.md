@@ -2,8 +2,7 @@
 
 Серверная часть платформы ZalPOS (проект Firebase `saas-3bdc8`) на том же
 сервере, что и `pii-gateway/`. Здесь всё, что нельзя доверить клиенту и
-нельзя держать в Cloud Functions без тарифа Blaze. `saas/functions/index.js`
-— старая копия части этой логики, в работе не используется.
+нельзя держать в Cloud Functions без тарифа Blaze.
 
 Что умеет (адреса — `POST /saas/<имя>`, если не сказано иное):
 
@@ -203,27 +202,18 @@ ROBOKASSA_TEST=1                  # пока магазин не активир�
   9-го числа следующего месяца; ссылку на чек вставить кнопкой «Чек выдан» —
   владелец увидит её в кабинете.
 
-## Биллинг (ЮKassa) — что сделать один раз после переноса
+## Оплата через ЮKassa (запасной вариант)
 
-1. Добавить `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`
-   (см. выше) и перезапустить сервис.
-2. В личном кабинете ЮKassa → Настройки → API-ключи и HTTP-уведомления →
-   указать адрес webhook'а: `https://pii.zalpos.ru/saas/billingWebhook`
-   (замените домен, если у вас другой — тот же, что и у остальных ручек
-   этого сервиса, см. `SAAS_GATEWAY_URL` в `console.js`). Раньше это был
-   адрес Cloud Function `handleBillingWebhook` — если он там уже стоял,
-   просто замените на новый.
-3. Проверить: `curl -X POST https://pii.zalpos.ru/saas/billingWebhook`
-   без тела должен вернуть `{"error":"bad request"}` (400) — значит,
-   маршрут поднят и роутится правильно, а не 404.
-4. В `saas/console/console.js` ничего дополнительно менять не нужно —
-   `startCheckout()` уже обращается на `callSaasGateway('createCheckoutSession', ...)`,
-   то есть на этот сервис, а не на Cloud Function.
-5. Если в кабинете ЮKassa подключены «Чеки от ЮKassa» (54-ФЗ для продажи
-   подписки) — добавьте `YOOKASSA_RECEIPTS=1`: без чека ЮKassa такие платежи
-   отклоняет. Ставка НДС — `YOOKASSA_VAT_CODE` (по умолчанию `1`, «без
-   НДС»), система налогообложения — `YOOKASSA_TAX_SYSTEM_CODE` (1–6, по
-   справочнику ЮKassa). Чек уходит на e-mail владельца заведения/сети.
+1. `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`,
+   перезапустить сервис.
+2. В кабинете ЮKassa → HTTP-уведомления: `https://pii.zalpos.ru/saas/billingWebhook`,
+   события `payment.succeeded` и `payment.canceled`.
+3. Проверка: `curl -X POST https://pii.zalpos.ru/saas/billingWebhook` без
+   тела отвечает 400 `{"error":"bad request"}`, а не 404.
+4. Если подключены «Чеки от ЮKassa» — `YOOKASSA_RECEIPTS=1` (без чека такие
+   платежи отклоняются). НДС — `YOOKASSA_VAT_CODE` (по умолчанию `1`, без
+   НДС), система налогообложения — `YOOKASSA_TAX_SYSTEM_CODE` (1–6). Чек
+   уходит на email владельца.
 
 Как считается период: оплата раньше срока (или автопродление) добавляет
 месяц/полгода/год к концу текущего оплаченного или пробного периода, а не
@@ -288,14 +278,11 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
 существует, `chmod` на неё можно пропустить до этого момента).
 После правки конфига: `nginx -t && systemctl reload nginx`.
 
-## Секреты репозитория GitHub, которые нужно завести/поменять
+## Секреты репозитория GitHub
 
-- **`SAAS_GATEWAY_URL`** (новый) — `https://pii.zalpos.ru/saas` — его
-  подхватывает `saas/console/console.js` и Flutter-сборки.
-- **`BUILD_CALLBACK_SECRET`** — то же значение, что вы ввели в `setup.sh`.
-- **`SAAS_COMPLETE_BUILD_JOB_URL`** — поменять на
-  `https://pii.zalpos.ru/saas/completeBuildJob` (раньше указывал на URL
-  Cloud Function).
+`BUILD_CALLBACK_SECRET` — то же значение, что в `setup.sh`. Адреса сервера
+прописаны в самих workflow. Полный список секретов сборок — в
+`saas/README.md`, раздел «Сборки приложений».
 
 ## ИИ-прокси и внутренняя сеть
 
