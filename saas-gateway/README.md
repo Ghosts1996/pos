@@ -1,96 +1,47 @@
-# SaaS-шлюз онбординга (без Cloud Functions/Blaze)
+# saas-gateway
 
-Небольшой сервис на том же сервере, что и `pii-gateway/` — берёт на себя
-четыре операции, которые раньше были Cloud Functions в `saas/functions/
-index.js`, а без тарифа Blaze у проекта `saas-3bdc8` просто не деплоятся
-(Cloud Functions не работают без Blaze вообще, независимо от суммы реальных
-трат): `createTenant`, `createBuildJob`, `resolveTenantBySlug`,
-`completeBuildJob`. Плюс новые функции, которых в Cloud Functions не было:
-`createDemoTenant` (одноразовое тестовое заведение для демонстрации
-приложения, без email/пароля, само удаляется через несколько часов),
-`cancelSubscription`/`resumeSubscription` (самостоятельная отмена/возврат
-автопродления — Firestore-правила не пускают владельца писать в
-`subscriptions` напрямую даже для своего заведения, см. `saas/firestore.rules`),
-`createTenant` (после создания заведения асинхронно, не блокируя ответ,
-автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
-`{slug}.zalpos.ru` через `sudo provision-tenant-domain.sh` — см.
-`saas/README.md`, раздел 8c, включая ОБЯЗАТЕЛЬНУЮ настройку sudoers и
-`saas-gateway.service` без `NoNewPrivileges`, иначе создание заведения
-продолжит работать, а автовыпуск сертификата будет тихо падать в лог),
-`downloadBuild` (выдача готового личного APK владельцу), `publicGuestApk`
-(скачивание гостевого APK по QR со стола — БЕЗ Firebase Auth: гость,
-наведший камеру, не входил ни в один SaaS-аккаунт; отдаёт только
-`type: "guest"`, кассу так получить нельзя ни при каком slug),
-`appUpdate` (касса и приложение гостя сами спрашивают, вышла ли новая
-версия, и получают минутную ссылку на файл — гостю без входа, кассе только
-участнику заведения; номер версии — `buildNumber`, который присылает
-`completeBuildJob`, подробнее в докстринге `handleAppUpdate`),
-`firebaseConfig` (публичный веб-конфиг Firebase проекта — НЕ секрет, нужен
-`saas/guest-web/` на поддоменах `{slug}.zalpos.ru`, потому что
-`zalpos.ru/__/firebase/init.json` не отдаёт CORS для чужого origin —
-подробнее в докстринге `handleFirebaseWebConfig` в `server.js`) и
-модерация из панели супер-админа — `enableTenant`/`disableTenant`/
-`changeTenantPlan`/`deleteDemoTenant` (эти четыре тоже раньше числились
-Cloud Functions, просто ещё не задеплоенными — кнопки в консоли звали их
-и молча проваливались, пока платформой реально не начали пользоваться).
+Серверная часть платформы ZalPOS (проект Firebase `saas-3bdc8`) на том же
+сервере, что и `pii-gateway/`. Здесь всё, что нельзя доверить клиенту и
+нельзя держать в Cloud Functions без тарифа Blaze. `saas/functions/index.js`
+— старая копия части этой логики, в работе не используется.
 
-Плюс биллинг ЮKassa — `createCheckoutSession` (создание платежа),
-`billingWebhook` (подтверждение оплаты — публичный адрес, его нужно
-прописать в личном кабинете ЮKassa, см. раздел «Биллинг» ниже),
-автопродление подписок и перевод в `past_due`/удаление данных по
-истечении льготного периода (два фоновых таймера раз в сутки, без
-`onSchedule` — та же идея, что и у `createDemoTenant`'а очистки). Тоже
-раньше было Cloud Functions (`createCheckoutSession`/`handleBillingWebhook`/
-`chargeRecurringSubscriptions`/`enforceGracePeriod` в `saas/functions/
-index.js`) — перенесено сюда по той же причине (Blaze недоступен), тот файл
-не менялся и остаётся эталонной копией на случай, если Blaze всё же
-появится.
+Что умеет (адреса — `POST /saas/<имя>`, если не сказано иное):
 
-Плюс `uploadBrandingLogo` — загрузка логотипа заведения (раздел «Брендинг»
-в консоли). Раньше шла напрямую в Firebase Storage из браузера — но у
-`saas-3bdc8` Storage требует платный тариф Blaze, и бакет физически не
-существует (та же история, что и с публичным APK на лендинге, см.
-`saas/README.md`, раздел 8b). Файл кладётся на диск этого сервера
-(`branding-uploads/{tenantId}/logo.{png,jpg,webp}`) и раздаётся публично
-напрямую статикой самим nginx (см. раздел «nginx» ниже), без токена на
-чтение — логотип и раньше был публичным (`allow read: if true` в старых
-Storage-правилах), закрыта только запись.
+- **Заведения и сети:** `createTenant`, `createChain`, `convertTenantToChain`,
+  `resolveTenantBySlug`, `resolveChainBySlug`, `inviteTenantMember`,
+  `createDemoTenant` (демо удаляется само через несколько часов). После
+  создания заведения или сети в фоне выпускается сертификат для
+  `{slug}.zalpos.ru` (`provision-tenant-domain.sh`, см. `saas/README.md`,
+  раздел 8c — там же про sudoers).
+- **Сборки приложений:** `createBuildJob`, `completeBuildJob` (обратный вызов
+  сборки), `rolloutApps` (автообновление всем), `getDownloadUrl`,
+  `GET downloadBuild`, `GET publicGuestApk` (гостевой APK по QR, без входа),
+  `appUpdate` (приложения сами проверяют новую версию).
+- **Оплата:** `createCheckoutSession`, `robokassaResult` / `robokassaSuccess` /
+  `robokassaFail`, запасной `billingWebhook` (ЮKassa), счета для ИП и
+  организаций (`createBankInvoice`, `markBankInvoicePaid`,
+  `markBankInvoiceReceipt`, `cancelBankInvoice`), `cancelSubscription` /
+  `resumeSubscription`. Раз в сутки — автопродление и перевод в `past_due`
+  с удалением данных после льготного периода.
+- **Файлы заведения:** `uploadBrandingLogo`, `uploadMenuImage` — на диск
+  сервера (`branding-uploads/`), читаются публично через nginx.
+- **Панель платформы:** модерация (`enableTenant`, `disableTenant`,
+  `changeTenantPlan`, `grantBonusPeriod`, `deleteDemoTenant`,
+  `overrideSubscription`), тарифы (`savePlan`, `deletePlan`), реквизиты
+  (`savePlatformLegal`), безопасность (супер-админы, сеансы, блок-лист,
+  устройства, резервные копии, сертификаты), запросы по персональным данным.
+- **Гость:** `aiProxy` (ИИ-помощник без доступа гостя к ключам),
+  `deleteGuestData`, `registerGuestRecovery` / `restoreGuestSession`.
+- **Прочее:** `GET firebaseConfig` (публичный веб-конфиг для гостевого веба),
+  `sendAuthEmail` (письма входа в оформлении ZalPOS), суточный пересчёт
+  лимитов тарифа и хитов меню.
 
-Плюс `calculateUsage` — ещё одна Cloud Function, которую забыли перенести
-при уходе с Blaze: должна была раз в сутки пересчитывать
-`tenants/{tenantId}/usage/current` (сотрудники/устройства/столы/гости) для
-предупреждения о превышении лимита тарифа в консоли — но так и не
-запускалась НИГДЕ, поэтому лимиты никогда не обновлялись сами. Портирована
-как `runCalculateUsage()` + `scheduleUsageCron()` (тот же приём раз-в-сутки
-`setInterval`, что у `scheduleDemoCleanup`/`scheduleBillingCron`), плюс
-ручной запуск для супер-админа — `POST /recalculateUsage` (кнопка
-«Пересчитать лимиты сейчас» на «Обзоре» панели платформы).
+Все изменения подписок и тарифов из панели идут только через сервис и
+пишутся в `securityLog` («было → стало»). IP клиента берётся из
+`X-Real-IP` от nginx, без него в журнале будет 127.0.0.1.
 
-Приглашение сотрудников по email — `POST /inviteTenantMember` (раньше
-оставалось на Cloud Functions, которые без Blaze не задеплоены).
-
-**Безопасность панели платформы** (раздел «Безопасность»):
-`POST /grantSuperAdmin` и `POST /revokeSuperAdmin` — назначить/снять
-супер-админа (только сразу после ввода пароля, запись в `securityLog`;
-писать в `superAdmins` из браузера правила базы больше не дают),
-`POST /revokeAdminSessions` — «Выйти на всех устройствах»,
-`POST /recordAdminLogin` — отметка входа в панель (IP, браузер,
-`adminLogins`). Ручная правка подписки (`POST /overrideSubscription`) и
-тарифов (`POST /savePlan`, `POST /deletePlan`) тоже только здесь — с
-записью «было → стало» в `securityLog`; из браузера правила базы их
-больше не пишут. IP клиента берётся из `X-Real-IP`, который выставляет
-nginx (см. раздел «nginx» ниже) — без этого заголовка IP в журнале будет
-127.0.0.1.
-
-**Что НЕ переехало**: фото
-позиций меню (`tenants/{tenantId}/menu/...` в `saas/storage.rules`) —
-тоже упирается в тот же недоступный Storage, но пока не переносилось:
-логотип нужен был раньше и требуется реже редактируется, чем меню.
-
-**Изоляция данных**: этот сервис использует сервисный ключ ИМЕННО проекта
-`saas-3bdc8` — отдельного от `hoocah-pos` (личное заведение владельца
-платформы и все одно-арендные сборки). Никак не связан и не может быть
-связан с базой данных вашего собственного заведения.
+Сервис работает только с проектом `saas-3bdc8`; база собственного
+заведения владельца платформы (`hoocah-pos`) отсюда недоступна.
 
 ## Установка
 
@@ -429,7 +380,7 @@ Auth (устройство обновляет токен примерно раз
 на удаление сам (кнопка «Удалить мои данные» в профиле веб-версии и
 Android-приложения гостя → `POST /requestGuestDataDeletion`), остальные
 запросы супер-админ заводит в «Безопасность → Данные»
-(`/createDataRequest`, `/resolveDataRequest`); срок — 30 дней с получения.
+(`/createDataRequest`, `/resolveDataRequest`); сроки по ст. 20 и 21 152-ФЗ: сведения и удаление — 10 рабочих дней, исправление — 7.
 `POST /findGuest` ищет гостя по телефону во всех заведениях и сетях,
 `POST /anonymizeGuest` (только после ввода пароля) обезличивает гостя:
 в профиле остаются только обезличенные цифры, удаляются указатели

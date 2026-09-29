@@ -5,8 +5,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-// Версия кода (короткий хеш коммита) — её пишет migrate-domain.sh при
-// установке, а /health показывает: так видно, обновился ли сервер.
+// Короткий хеш коммита: его пишет migrate-domain.sh, а /health отдаёт,
+// чтобы было видно, обновился ли сервер.
 const SERVER_VERSION = (() => {
   try {
     return fs.readFileSync(path.join(__dirname, "VERSION"), "utf8").trim();
@@ -23,118 +23,46 @@ const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
 
 /**
- * Онбординг SaaS-платформы ZalPOS БЕЗ Cloud Functions.
+ * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
+ * Здесь всё, что нельзя доверить клиенту и нельзя держать в Cloud Functions
+ * без тарифа Blaze: заведения и сети, приглашения, модерация, сборки APK,
+ * оплата подписок, выдача файлов. saas/functions/index.js — старая копия
+ * части этой логики, в работе не используется.
  *
- * ПОЧЕМУ этот сервис вообще существует. `createTenant`, `createBuildJob`,
- * `resolveTenantBySlug` и `completeBuildJob` жили в `saas/functions/index.js`
- * как Cloud Functions — а Cloud Functions в принципе не работают без
- * подключённого тарифа Blaze у проекта `saas-3bdc8`, независимо от того,
- * сколько реально потрачено (это ограничение самого Google, а не размера
- * счёта). Пока Blaze недоступен (нет способа его оплатить), эти функции не
- * задеплоены — значит, ни одно новое заведение не может появиться, ни одна
- * сборка APK не может запуститься. Это ровно та же логика, что и у
- * `pii-gateway/` рядом: Admin SDK Firebase работает откуда угодно, не
- * только из Cloud Functions — значит, эти четыре операции можно перенести
- * на свой сервер, где они уже НЕ требуют Blaze вообще.
+ * Слушает 127.0.0.1:PORT, снаружи nginx (location /saas/ на домене
+ * pii-gateway, см. README.md). Проект hoocah-pos отсюда не трогаем.
  *
- * Приём оплаты через ЮKassa (`createCheckoutSession`, `handleBillingWebhook`,
- * `chargeRecurringSubscriptions`, `enforceGracePeriod`) — тоже здесь, той же
- * причине: платформа сначала не принимала реальные платежи (только
- * тестовые/демо-заведения), поэтому перенос был отложен, но остаётся ровно
- * тем же самым fetch-к-API-плюс-Admin-SDK кодом, что и остальное — см.
- * секцию "billing (ЮKassa)" ниже. saas/functions/index.js эту логику
- * по-прежнему тоже содержит (не удалялась) — как и в случае с
- * createTenant/createBuildJob, это эталонная копия на случай, если Blaze
- * когда-нибудь появится, но реально работает только версия здесь.
- *
- * Приглашение сотрудников по email (`inviteTenantMember`) — тоже здесь
- * (раньше оставалось на Cloud Functions, и кнопка «Пригласить» в консоли
- * всегда падала: функция не задеплоена).
- *
- * `enableTenant`/`disableTenant`/`changeTenantPlan` (модерация из панели
- * супер-админа) и `deleteDemoTenant` (ручное удаление демо-заведения) —
- * ТОЖЕ здесь, не Cloud Functions: кнопки в консоли раньше звали их через
- * httpsCallable на несуществующие (никогда не задеплоенные) функции и
- * молча проваливались — см. handleDisableTenant и соседей ниже.
- *
- * ВАЖНО про изоляцию данных: этот сервис использует сервисный ключ
- * ИМЕННО проекта `saas-3bdc8` — совершенно отдельного от `hoocah-pos`
- * (собственное заведение владельца платформы и вообще все одно-арендные
- * сборки). База гостей/чеков/столов конкретного заведения владельца НИКАК
- * не связана с этим сервисом и не читается и не пишется отсюда ни при
- * каких условиях — только `saas-3bdc8`, коммерческий SaaS-проект целиком
- * отдельно от личного бизнеса.
- *
- * Домен/порт: слушает только 127.0.0.1 (см. PORT), наружу смотрит тот же
- * nginx, что и pii-gateway — отдельным `location /saas/` в том же
- * серверном блоке (общий сертификат, экономим ещё один цикл DNS+certbot).
- * См. README.md.
- *
- * Переменные окружения (см. README.md и setup.sh):
- *   PORT — порт сервиса (по умолчанию 8081).
- *   FIREBASE_SERVICE_ACCOUNT_B64 — сервисный аккаунт ИМЕННО saas-3bdc8
- *     (не hoocah-pos!) в base64.
- *   GITHUB_PAT — fine-grained personal access token с правами ТОЛЬКО
- *     "Actions: read and write" на репозиторий Ghosts1996/pos.
- *   BUILD_CALLBACK_SECRET — общий секрет для проверки обратного вызова от
- *     GitHub Actions (см. handleCompleteBuildJob) — то же значение должно
- *     быть прописано в секрете репозитория BUILD_CALLBACK_SECRET.
- *   GITHUB_REF — ветка/тег, из которого GitHub должен запускать
- *     saas-on-demand-build.yml (см. GITHUB_REF ниже) — по умолчанию
- *     claude/dazzling-babbage-n65p6l, не main: пока весь код SaaS-платформы живёт
- *     именно там (main трогать нельзя, см. историю разработки), запрос на
- *     запуск workflow с ref: "main" получал от GitHub 404 — файла с таким
- *     содержимым на main просто нет. Когда ветку в итоге смержат в main,
- *     достаточно прописать GITHUB_REF=main в /etc/saas-gateway.env и
- *     перезапустить сервис — код трогать не придётся.
- *   YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY — реквизиты магазина ЮKassa (тот
- *     же кабинет, что раньше настраивался под Secret Manager Cloud
- *     Functions — теперь просто переменные окружения этого сервиса). После
- *     переноса нужно один раз поменять URL webhook'а в личном кабинете
- *     ЮKassa на https://<ваш-домен>/saas/billingWebhook — см. README.md,
- *     раздел «Биллинг».
+ * Окружение (README.md, setup.sh):
+ *   PORT — по умолчанию 8081;
+ *   FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта saas-3bdc8;
+ *   GITHUB_PAT — токен с правами Actions: read and write на Ghosts1996/pos;
+ *   BUILD_CALLBACK_SECRET — секрет обратного вызова сборки, тот же, что
+ *     в секретах репозитория;
+ *   GITHUB_REF — ветка, из которой запускаются сборки;
  *   ROBOKASSA_LOGIN / ROBOKASSA_PASSWORD1 / ROBOKASSA_PASSWORD2 — магазин
- *     Робокассы (идентификатор и пароли №1 и №2 из «Технических настроек»).
- *     Если заданы, оплата подписок идёт через Робокассу, а не ЮKassa (или
- *     явно: BILLING_PROVIDER=robokassa|yookassa). Остальное — в секции
- *     "billing (Робокасса)" ниже и в README.md, раздел «Робокасса».
+ *     Робокассы; если заданы, подписки оплачиваются через неё;
+ *   YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY — запасной вариант ЮKassa
+ *     (выбор можно задать явно: BILLING_PROVIDER=robokassa|yookassa).
  */
 
 const GITHUB_OWNER = "Ghosts1996";
 const GITHUB_REPO = "pos";
 const GITHUB_SAAS_WORKFLOW = "saas-on-demand-build.yml";
-// Ветка, в которой идёт разработка платформы (сюда же деплоится этот
-// сервис — см. README.md). Прежняя claude/pos-continued отстала: сборка из
-// неё выдавала заведениям старое приложение, несовместимое с текущими
-// правилами базы и этим сервером.
+// Когда ветку сольют в main, достаточно GITHUB_REF=main в /etc/saas-gateway.env.
 const GITHUB_REF = process.env.GITHUB_REF || "claude/dazzling-babbage-n65p6l";
 
-// Куда saas-on-demand-build.yml кладёт готовые личные APK по SSH (шаг
-// "Deploy APK to own server" — см. её же docstring и saas/README.md,
-// раздел «APK-конвейер»). НЕ Firebase Storage: у saas-3bdc8 Storage
-// недоступен без Blaze (та же причина, что и у публичного APK — см.
-// PUBLIC_APK_URL в saas/console/console.js). Путь per-tenant
-// (tenant-builds/{tenantId}/{jobId}.apk), доступ к файлу проверяется в
-// handleDownloadBuild через Firebase Auth + роль в заведении, а не просто
-// статикой через nginx — эта сборка личная (лого/название заведения), не
-// предназначена для публичной раздачи, в отличие от универсальной.
+// Личные APK заведений: сборка кладёт их сюда по SSH (Storage у проекта
+// без Blaze недоступен). Отдаёт handleDownloadBuild после проверки роли.
 const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
 
-// Логотип заведения (branding.logoUrl, см. handleUploadBrandingLogo) — та
-// же история, что и у TENANT_BUILDS_DIR выше: Firebase Storage у
-// saas-3bdc8 требует Blaze, бакета физически не существует. В отличие от
-// личных сборок APK, логотип должен быть ПУБЛИЧНО читаемым без токена
-// (гостевое приложение, иконка сборки, старый Storage-правило было
-// `allow read: if true`) — поэтому раздаёт его напрямую статикой сам
-// nginx (location /branding/, см. README.md), без X-Accel-Redirect и
-// проверки токена на чтение: только на запись (см. сам хендлер).
+// Логотипы заведений. Читаются публично (nginx, location /branding/),
+// запись — только через handleUploadBrandingLogo.
 const BRANDING_UPLOADS_DIR = path.join(__dirname, "branding-uploads");
 const BRANDING_MAX_BYTES = 5 * 1024 * 1024;
 const BRANDING_CONTENT_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-/** Файл действительно картинка заявленного типа — по сигнатуре, а не по
- *  заголовку Content-Type, который присылает клиент: иначе под видом
- *  «логотипа» можно было выложить на домен платформы HTML или скрипт. */
+/** Проверяем сигнатуру файла, а не присланный Content-Type: иначе под
+ *  видом логотипа можно выложить на домен HTML или скрипт. */
 function imageMatchesType(buffer, ext) {
   if (ext === "png") return buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   if (ext === "jpg") return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
@@ -142,10 +70,7 @@ function imageMatchesType(buffer, ext) {
   return false;
 }
 
-// Тот же список, что и RESERVED_SLUGS в saas/functions/index.js, плюс
-// "demo"/"saas" — эти два слова теперь тоже значимы в маршрутизации сервиса,
-// и служебные поддомены домена платформы: код заведения становится
-// поддоменом, и заведение с кодом "pii" перехватило бы адрес самого сервера.
+// Код заведения становится поддоменом, поэтому служебные имена заняты.
 const RESERVED_SLUGS = new Set([
   "admin", "api", "app", "www", "download", "support", "billing",
   "docs", "static", "assets", "cdn", "mail", "status", "help", "demo", "saas",
@@ -153,9 +78,8 @@ const RESERVED_SLUGS = new Set([
   "autoconfig", "autodiscover", "dns-check",
 ]);
 
-// Полный список вложенных коллекций заведения — см. TENANT_SUBCOLLECTIONS в
-// saas/functions/index.js и saas/firestore.rules; используется только при
-// удалении просроченных демо-заведений (purgeDemoTenant).
+// Все вложенные коллекции заведения — для удаления демо (purgeDemoTenant).
+// Держать в синхроне с saas/firestore.rules.
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
@@ -168,8 +92,7 @@ const TENANT_SUBCOLLECTIONS = [
   "waitlist",
 ];
 
-// Демо-заведения живут недолго и создаются анонимно (без email/пароля) —
-// поэтому вместо ручного удаления это делает сам сервис по расписанию.
+// Демо-заведения создаются анонимно и удаляются сами по расписанию.
 const DEMO_TTL_MS = 3 * 60 * 60 * 1000; // 3 часа с момента создания
 const DEMO_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // проверка каждые 30 минут
 const DEMO_RATE_LIMIT_MAX = 5; // создание демо-заведений с одного IP
@@ -199,15 +122,8 @@ function sendJson(res, statusCode, obj) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
-    // Консоль (saas/console/console.js) — отдельный сайт (Firebase
-    // Hosting), обращается сюда с другого origin, поэтому CORS обязателен;
-    // Flutter-приложению он не мешает.
-    //
-    // GET — ради downloadBuild: браузер шлёт CORS preflight (OPTIONS) на
-    // любой запрос с заголовком Authorization, включая GET, и ждёт от него
-    // именно этот список методов — раньше тут было только "POST, OPTIONS",
-    // из-за чего preflight на GET /downloadBuild проходил, а сам GET браузер
-    // молча блокировал (не ошибка сервера — он её даже не видел).
+    // Консоль живёт на другом origin. GET нужен для downloadBuild: preflight
+    // с Authorization приходит и на GET.
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -217,35 +133,38 @@ function sendJson(res, statusCode, obj) {
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = "";
+    // Буферы, а не строка: иначе кириллица бьётся на стыке чанков.
+    const chunks = [];
+    let size = 0;
     req.on("data", (chunk) => {
-      data += chunk;
-      // Тело — короткие поля (название, слаг, id) — 256KB с большим запасом.
-      if (data.length > 262144) {
-        reject(new HttpError(413, "тело запроса слишком большое"));
-        req.destroy();
+      size += chunk.length;
+      if (size <= 262144) {
+        chunks.push(chunk);
+        return;
       }
+      reject(new HttpError(413, "тело запроса слишком большое"));
+      if (size > 1048576) req.destroy();
     });
-    req.on("end", () => resolve(data));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
 
 async function parseJsonBody(req) {
   const raw = await readBody(req);
+  let body;
   try {
-    return JSON.parse(raw || "{}");
+    body = JSON.parse(raw || "{}");
   } catch (e) {
-    throw new HttpError(400, "invalid JSON body");
+    throw new HttpError(400, "тело запроса — не JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new HttpError(400, "ожидается JSON-объект");
+  }
+  return body;
 }
 
-/**
- * Нормализует и валидирует slug заведения — байт-в-байт та же проверка,
- * что и в saas/functions/index.js (см. её собственный docstring там про
- * то, почему именно такой алфавит и почему это защита сразу от нескольких
- * классов инъекций).
- */
+/** Код заведения: латиница, цифры и дефис — он же поддомен. */
 function normalizeSlug(raw) {
   if (typeof raw !== "string") {
     throw new HttpError(400, "Название-код заведения обязательно");
@@ -264,6 +183,16 @@ function normalizeSlug(raw) {
     throw new HttpError(400, "Этот код зарезервирован платформой, выберите другой");
   }
   return slug;
+}
+
+/** Код заведения и код сети — один поддомен, поэтому проверяем обе коллекции:
+ *  гостевой веб сначала ищет заведение, и сеть с тем же кодом не открылась бы. */
+async function assertSlugFree(firestore, slug, message) {
+  const [tenants, chains] = await Promise.all([
+    firestore.collection("tenants").where("slug", "==", slug).limit(1).get(),
+    firestore.collection("chains").where("slug", "==", slug).limit(1).get(),
+  ]);
+  if (!tenants.empty || !chains.empty) throw new HttpError(409, message);
 }
 
 function randomInviteCode() {
@@ -298,18 +227,14 @@ async function verifyAuth(req) {
   }
 }
 
-/** Сеанс супер-админа ещё действует: вход был ПОСЛЕ последнего «Выйти на
- *  всех устройствах» (superAdmins/{uid}.sessionsValidAfter, секунды — см.
- *  handleRevokeAdminSessions; та же проверка в isSuperAdmin() в
- *  saas/firestore.rules). */
+/** Вход был после последнего «Выйти на всех устройствах»
+ *  (superAdmins/{uid}.sessionsValidAfter, секунды). То же в firestore.rules. */
 function adminSessionValid(adminData, decoded) {
   const validAfter = adminData && adminData.sessionsValidAfter;
   return typeof validAfter !== "number" || (Number(decoded.auth_time) || 0) > validAfter;
 }
 
-/** См. одноимённую функцию в saas/functions/index.js — та же проверка,
- *  плюс завершённые сеансы (adminSessionValid). Возвращает данные
- *  superAdmins/{uid}. */
+/** Возвращает данные superAdmins/{uid}. */
 async function requireSuperAdmin(decoded) {
   if (!decoded || !decoded.uid) throw new HttpError(401, "Нужен вход");
   const doc = await db().collection("superAdmins").doc(decoded.uid).get();
@@ -320,21 +245,15 @@ async function requireSuperAdmin(decoded) {
   return doc.data();
 }
 
-/** Не бросает — булев вариант requireSuperAdmin для точек, где супер-админ
- *  ДОПОЛНИТЕЛЬНО к обычным владельцам может выполнить действие (например,
- *  запросить сборку APK чужого заведения из панели поддержки), а не
- *  единственный, кому оно разрешено вообще. */
+/** Для действий, которые кроме владельца может сделать и супер-админ. */
 async function isSuperAdmin(decoded) {
   if (!decoded || !decoded.uid) return false;
   const doc = await db().collection("superAdmins").doc(decoded.uid).get();
   return doc.exists && adminSessionValid(doc.data(), decoded);
 }
 
-// Назначить/снять супер-админа можно только сразу после ввода пароля
-// (консоль вызывает reauthenticate() и шлёт свежий токен): украденный или
-// забытый открытым сеанс сам по себе на это не годится. Раньше то же самое
-// окно пароля было только в браузере, а правила базы пускали писать в
-// superAdmins любой сеанс супер-админа напрямую.
+// Самые опасные действия (например, назначить супер-админа) — только сразу
+// после ввода пароля: открытый или украденный сеанс для них не годится.
 const RECENT_AUTH_MAX_AGE_SEC = 5 * 60;
 function requireRecentAuth(decoded) {
   const age = Math.floor(Date.now() / 1000) - (Number(decoded.auth_time) || 0);
@@ -343,7 +262,6 @@ function requireRecentAuth(decoded) {
   }
 }
 
-/** См. одноимённую функцию в saas/functions/index.js — та же проверка. */
 async function requireTenantRole(tenantId, uid, allowedRoles) {
   const memberDoc = await db().collection("tenantMembers").doc(`${tenantId}_${uid}`).get();
   const member = memberDoc.data();
@@ -352,8 +270,6 @@ async function requireTenantRole(tenantId, uid, allowedRoles) {
   }
 }
 
-/** Тот же принцип, что и requireTenantRole, но на уровне сети заведений
- *  (chainMembers/{chainId}_{uid}, см. saas/firestore.rules). */
 async function requireChainRole(chainId, uid, allowedRoles) {
   const memberDoc = await db().collection("chainMembers").doc(`${chainId}_${uid}`).get();
   const member = memberDoc.data();
@@ -363,16 +279,9 @@ async function requireChainRole(chainId, uid, allowedRoles) {
 }
 
 /**
- * Зеркалит членство в tenantMembers на chainMembers — вызывается везде,
- * где gateway пишет tenantMembers для точки, у которой задан chainId (см.
- * docstring chainMembers в saas/firestore.rules): без этого зеркала
- * сотрудник/устройство одной точки сети не сможет читать/писать общую
- * лояльность сети (chains/{chainId}/clients и соседние коллекции) —
- * правила проверяют именно chainMembers, а не tenantMembers напрямую,
- * потому что путь до тех коллекций не содержит tenantId.
- * Не бросает исключений — членство в самой точке (tenantMembers) уже
- * записано к моменту вызова, эта запись вторична и не должна ронять
- * основную операцию.
+ * Членство в точке сети дублируем в chainMembers: правила общих коллекций
+ * сети (chains/{chainId}/clients и др.) смотрят туда, в пути нет tenantId.
+ * Ошибку только логируем — основная запись уже сделана.
  */
 async function syncChainMembership(chainId, uid, role, status) {
   if (!chainId) return;
@@ -387,12 +296,9 @@ async function syncChainMembership(chainId, uid, role, status) {
 }
 
 /**
- * Журнал безопасности платформы (securityLog) — отдельно от auditLogs:
- * там жизненный цикл заведений и оплаты, здесь только то, чем можно
- * навредить платформе целиком (доступ супер-админов, ручные решения по
- * деньгам и данным, блокировки). Читает только супер-админ, пишет только
- * этот сервис (saas/firestore.rules). Не бросает — основное действие уже
- * выполнено и не должно откатываться из-за журнала.
+ * securityLog — то, чем можно навредить платформе целиком: доступ
+ * супер-админов, ручные решения по деньгам и данным, блокировки.
+ * Не бросает: действие уже выполнено.
  */
 async function writeSecurityEvent(req, decoded, action, { targetUid, targetEmail, tenantId, metadata } = {}) {
   try {
@@ -413,9 +319,8 @@ async function writeSecurityEvent(req, decoded, action, { targetUid, targetEmail
   }
 }
 
-/** { tenantName, tenantSlug } для записи журнала безопасности — чтобы
- *  лента читалась без поиска заведения по id (и оставалась понятной после
- *  удаления заведения). */
+/** Название и код заведения в журнал — чтобы запись была понятна и после
+ *  удаления заведения. */
 async function tenantLabel(tenantId, knownData) {
   try {
     const data = knownData || (await db().collection("tenants").doc(tenantId).get()).data() || {};
@@ -438,10 +343,8 @@ async function writeAuditLog({ tenantId, actorId, action, metadata }) {
 // ------------------------------------------------ resolveTenantBySlug
 
 /**
- * По человекочитаемому коду заведения отдаёт tenantId — нужен ДО того, как
- * устройство вообще состоит в заведении (см. lib/services/
- * saas_device_join_service.dart), поэтому не может идти через обычные
- * Firestore-правила (allow read требует уже быть участником).
+ * tenantId по коду заведения. Нужен устройству до вступления в заведение,
+ * когда правила ещё не дают читать tenants.
  */
 async function handleResolveTenantBySlug(req, res) {
   const body = await parseJsonBody(req);
@@ -455,14 +358,7 @@ async function handleResolveTenantBySlug(req, res) {
   sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status, chainId: tenant.data().chainId || null });
 }
 
-/**
- * По человекочитаемому коду СЕТИ отдаёт chainId и список её точек — нужен
- * гостевому веб-приложению/приложению Kolibri в режиме сети (см. docstring
- * kSaasChainMode в lib/build_info.dart) для экрана "выберите заведение
- * сети", прежде чем гость вообще выбрал точку и получил её tenantId.
- * Та же причина, что и у resolveTenantBySlug выше: недоступно по обычным
- * Firestore-правилам, пока гость ни к чему не привязан.
- */
+/** Сеть по коду и список её точек — экран «выберите заведение» у гостя. */
 async function handleResolveChainBySlug(req, res) {
   const body = await parseJsonBody(req);
   const slug = normalizeSlug(body.slug);
@@ -479,7 +375,7 @@ async function handleResolveChainBySlug(req, res) {
   const locations = locationsSnap.docs
     .map((d) => ({ tenantId: d.id, name: d.data().name, slug: d.data().slug, status: d.data().status }))
     .filter((t) => t.status !== "deleted")
-    .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
 
   const brandingDoc = await firestore.collection("chains").doc(chain.id).collection("branding").doc("config").get();
 
@@ -503,20 +399,9 @@ function getFirebaseWebConfig() {
 }
 
 /**
- * Публичный веб-конфиг Firebase проекта saas-3bdc8 (apiKey/authDomain/
- * projectId и т.д.) — НЕ секрет, то же самое видно в исходном коде любой
- * веб-страницы, использующей Firebase, или в собранном APK.
- *
- * Раздаём его отсюда, а не с zalpos.ru/__/firebase/init.json (тот
- * путь — приём Firebase Hosting для страниц, которые САМИ размещены на
- * этом хостинге: saas/console/console.js читает его РЕЛЯТИВНЫМ путём,
- * т.е. тем же origin, и получает его без проблем. А saas/guest-web/
- * (app.js, table.html) размещены на nginx-поддоменах {slug}.zalpos.ru
- * — ЧУЖОЙ origin для zalpos.ru, и тот путь не отдаёт CORS для чужого
- * origin: fetch с гостевого поддомена падал с "Failed to fetch" ещё до
- * какого-либо ответа сервера). Здесь тот же sendJson с уже проверенным
- * "Access-Control-Allow-Origin: *" (см. resolveTenantBySlug — оттуда же
- * гостевой веб этот сервис уже успешно зовёт).
+ * Публичный веб-конфиг Firebase (не секрет). Гостевой веб живёт на
+ * поддоменах {slug}.zalpos.ru, а /__/firebase/init.json хостинга не отдаёт
+ * CORS для чужого origin, поэтому раздаём конфиг отсюда.
  */
 async function handleFirebaseWebConfig(req, res) {
   const config = getFirebaseWebConfig();
@@ -529,26 +414,13 @@ async function handleFirebaseWebConfig(req, res) {
 // -------------------------------------------------- publicGuestApk
 
 /**
- * Скачивание гостевого APK по QR со стола (см. SaaS-версию public/table.html
- * и TableQrScreen.linkFor) — единственная точка входа в весь build-конвейер,
- * которая НЕ требует Firebase Auth вообще: гость, наведший камеру на стол,
- * не вошёл ни в один SaaS-аккаунт и не может им войти.
- *
- * ВАЖНО, почему это безопасно, хотя выдаёт файл без авторизации:
- *  - отдаёт только job.type === "guest" — сборку кассы (владельческий
- *    доступ ко всем данным заведения) публично получить так нельзя ни при
- *    каком slug;
- *  - slug у заведения и так публичный (он же в адресе поддомена/QR);
- *  - сам файл — обычный гостевой APK, без секретов внутри (в отличие от
- *    кассы, которая содержит код приглашения устройства).
- * Токен на скачивание — тот же одноразовый механизм, что и у владельца
- * (signDownloadToken/handleDownloadBuild), поэтому раздача самих байт
- * ничем не отличается от уже проверенного пути.
+ * Гостевой APK по QR со стола — единственная выдача сборки без входа.
+ * Отдаём только сборку типа guest: в ней нет секретов, а код заведения и так
+ * публичный. Кассу (у неё внутри код приглашения устройства) так не получить.
  */
 async function handlePublicGuestApk(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
   const slug = normalizeSlug(requestUrl.searchParams.get("slug") || "");
-  if (!slug) throw new HttpError(400, "не указан код заведения");
 
   const firestore = db();
   const tenantSnap = await firestore.collection("tenants").where("slug", "==", slug).limit(1).get();
@@ -558,9 +430,8 @@ async function handlePublicGuestApk(req, res) {
     throw new HttpError(404, "Заведение с таким кодом не найдено");
   }
 
-  // Последние 20 сборок (не только гостевые — индекс buildJobs уже есть
-  // только на tenantId+createdAt, отдельный композитный под type/status
-  // заводить незачем) — среди них ищем самую свежую успешную гостевую.
+  // Индекс есть только на tenantId+createdAt, поэтому берём последние 20
+  // сборок и ищем среди них успешную гостевую.
   const jobsSnap = await firestore
     .collection("buildJobs")
     .where("tenantId", "==", tenantDoc.id)
@@ -576,33 +447,15 @@ async function handlePublicGuestApk(req, res) {
 
   const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
   const token = signDownloadToken(guestJob.id, expiresAt);
-  // ВАЖНО: с префиксом /saas/, а не голый /downloadBuild — в отличие от
-  // handleGetDownloadUrl (её JSON-ответ подставляет префикс САМ вызывающий
-  // код, знающий SAAS_GATEWAY_URL, см. console.js/downloadBuild), здесь
-  // редирект шлёт сам сервер: браузер разрешает Location с ведущим `/`
-  // от КОРНЯ ДОМЕНА pii.zalpos.ru, а не от точки, куда nginx примонтировал
-  // этот шлюз (`location /saas/` с обрезкой префикса перед проксированием
-  // в Node) — без него запрос уходил на /downloadBuild мимо nginx-маршрута
-  // шлюза вообще.
+  // Редирект отдаёт сам сервер, поэтому префикс /saas/ нужен здесь: nginx
+  // срезает его перед проксированием, а браузер считает Location от корня.
   const url = `/saas/downloadBuild?jobId=${encodeURIComponent(guestJob.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
-  // Обычная навигация браузера (window.location.href), не fetch/XHR — CORS
-  // тут ни при чём, редирект следует сам, как за обычной ссылкой.
   res.writeHead(302, { Location: url });
   res.end();
 }
 
 // ------------------------------------------------------- createTenant
 
-/**
- * [name, slug] — точка сети создаётся с ЧИСТЫМ chainId (не входит в
- * batch.set(tenantRef, ...) напрямую): её статус сразу "active" (не
- * "trial" — пробный период относится к сети целиком, не к отдельной новой
- * точке в уже платящей сети) и у неё НЕТ собственного subscriptions-
- * документа — биллинг только один, на chains/{chainId} (см.
- * handleCreateChain). requireChainRole здесь — та же привилегия, что и
- * "hasRole(tenantId,['owner','admin'])" для одиночного заведения, просто
- * на уровне сети.
- */
 const VENUE_TYPES = ["hookah", "restaurant", "cafe", "bar"];
 
 async function handleCreateTenant(req, res) {
@@ -614,8 +467,7 @@ async function handleCreateTenant(req, res) {
 
   const body = await parseJsonBody(req);
   const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
-  // Тип заведения (кальянная/ресторан/кафе/бар) — от него зависят слова
-  // в приложении гостя. Неизвестное значение — кальянная, как раньше.
+  // От типа заведения зависят слова в приложении гостя.
   const venueType = VENUE_TYPES.includes(body.venueType) ? body.venueType : "hookah";
   if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
     throw new HttpError(400, "Название заведения: от 2 до 80 символов");
@@ -634,28 +486,19 @@ async function handleCreateTenant(req, res) {
     await requireChainRole(chainId, uid, ["owner", "admin"]);
   }
 
-  const existing = await firestore.collection("tenants").where("slug", "==", slug).limit(1).get();
-  if (!existing.empty) throw new HttpError(409, "Этот код заведения уже занят, выберите другой");
+  await assertSlugFree(firestore, slug, "Этот код заведения уже занят, выберите другой");
 
   const tenantRef = firestore.collection("tenants").doc();
   const tenantId = tenantRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  // planId с клиента доверяем как ОДИНОЧНОМУ (chainId не передан) только
-  // если это ДЕЙСТВИТЕЛЬНО не тариф для сети — иначе (например, старая
-  // вкладка лендинга с уже выбранным тарифом сети в localStorage, у которой
-  // почему-то не отметился чекбокс "Это сеть") заведение получило бы
-  // planId с per-location ценой сети без самой сети — тот же класс бага,
-  // что и isChainPlan-фильтрация в консоли, только с другой стороны запроса
-  // (см. симметричную проверку в handleCreateChain для обратного случая).
+  // Тариф сети одиночному заведению не даём: иначе оно получит цену
+  // «за точку» без самой сети. Обратная проверка — в handleCreateChain.
   let resolvedPlanId = "start";
   if (!chainId && typeof planId === "string" && planId.trim()) {
     const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
     if (requestedSnap.exists && !requestedSnap.data().isChainPlan) resolvedPlanId = planId.trim();
   } else if (chainId) {
-    // Точка сети (chainId уже провалидирован выше) не имеет собственного
-    // тарифа вовсе — planId с клиента для нового узла сети сюда не
-    // передаётся (см. addChainLocation в консоли), а если бы и был передан,
-    // не должен ни на что влиять: биллинг только на chains/{chainId}.
+    // У точки сети своего тарифа нет, биллинг — на chains/{chainId}.
     resolvedPlanId = "start";
   }
   const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
@@ -674,9 +517,7 @@ async function handleCreateTenant(req, res) {
     updatedAt: now,
   });
   batch.set(firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`), {
-    // email — чтобы во вкладке «Команда» владелец был подписан своим
-    // адресом, а не безликим «Устройство · XXXX» (так консоль подписывает
-    // членства без email — планшеты, присоединённые по коду).
+    // email — чтобы в «Команде» владелец был подписан адресом, а не «Устройство».
     tenantId, userId: uid, email: decoded.email || null, role: "owner", status: "active", createdAt: now,
   });
   batch.set(tenantRef.collection("settings").doc("general"), {
@@ -702,12 +543,9 @@ async function handleCreateTenant(req, res) {
   batch.set(tenantRef.collection("settings").doc("deviceInvite"), {
     code: randomInviteCode(), rotatedAt: now,
   });
-  // Профиль заведения с его названием — сразу: его берут чек, ИИ-консьерж и
-  // экран «Профиль заведения» на кассе. Часы работы владелец заполняет сам
-  // (касса и приложение гостя напомнят, пока они пустые).
+  // Название нужно чеку, ИИ-помощнику и профилю заведения на кассе.
   batch.set(tenantRef.collection("meta").doc("venueProfile"), { name: name.trim(), venueType }, { merge: true });
-  // Собственная подписка есть только у одиночного заведения — у точки сети
-  // биллинг общий, на chains/{chainId} (см. handleCreateChain).
+  // Своя подписка только у одиночного заведения.
   if (!chainId) {
     batch.set(firestore.collection("subscriptions").doc(tenantId), {
       tenantId,
@@ -728,11 +566,7 @@ async function handleCreateTenant(req, res) {
   if (chainId) await syncChainMembership(chainId, uid, "owner", "active");
   await writeAuditLog({ tenantId, actorId: uid, action: "tenantCreated", metadata: { slug, chainId } });
 
-  // Не await: выпуск сертификата занимает несколько секунд (обращение к
-  // Let's Encrypt) — владелец не должен ждать это внутри ответа на
-  // создание заведения. Ошибка (если Let's Encrypt недоступен, лимит
-  // запросов и т.п.) не должна ронять само создание заведения — только
-  // логируется, см. docstring provisionTenantDomain.
+  // Сертификат выпускается несколько секунд — не ждём, ошибку только логируем.
   provisionTenantDomain(slug).catch((e) => {
     console.error(`provisionTenantDomain(${slug}) не удался:`, e.message || e);
   });
@@ -742,15 +576,9 @@ async function handleCreateTenant(req, res) {
 }
 
 /**
- * Создаёт сеть заведений (владелец нескольких точек с общим биллингом и
- * общей лояльностью, см. docstring "Сети заведений (chains)" в
- * saas/firestore.rules) — пустую, без единой точки внутри: первую и все
- * следующие точки владелец добавляет отдельным вызовом handleCreateTenant
- * с тем же chainId. Тариф на сеть — per-location (за каждую точку
- * отдельно, см. planPriceForPeriod ниже: цена тарифа умножается на число
- * точек сети при выставлении счёта), поэтому сама сеть без точек стоит 0 —
- * пробный период (trialDays тарифа) начинает отсчёт сразу, как и у
- * одиночного заведения.
+ * Пустая сеть заведений: точки добавляются потом через handleCreateTenant
+ * с этим chainId. Цена тарифа сети считается за каждую точку
+ * (chainPriceForPeriod), пробный период идёт сразу.
  */
 async function handleCreateChain(req, res) {
   const decoded = await verifyAuth(req);
@@ -768,19 +596,12 @@ async function handleCreateChain(req, res) {
   const uid = decoded.uid;
 
   const firestore = db();
-  const existing = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
-  if (!existing.empty) throw new HttpError(409, "Этот код сети уже занят, выберите другой");
+  await assertSlugFree(firestore, slug, "Этот код сети уже занят, выберите другой");
 
   const chainRef = firestore.collection("chains").doc();
   const chainId = chainRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  // planId с клиента доверяем, только если это ДЕЙСТВИТЕЛЬНО тариф для сети
-  // (isChainPlan) — иначе, например, владелец, выбравший обычный per-venue
-  // тариф на публичном лендинге (localStorage.selectedPlanId) и уже в
-  // онбординге отдельно отметивший чекбокс "Это сеть", завёл бы сеть на
-  // тарифе без per-location цены за доп. точку (см. chainPriceForPeriod
-  // ниже) — ровно тот же класс бага, что и isChainPlan-фильтрация в
-  // plansHtml()/screenLanding() консоли, только с другой стороны запроса.
+  // Только тариф сети: обычный тариф не знает цены за дополнительную точку.
   let resolvedPlanId = "chain";
   if (typeof planId === "string" && planId.trim()) {
     const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
@@ -838,21 +659,11 @@ async function handleCreateChain(req, res) {
 }
 
 /**
- * Перевод УЖЕ РАБОТАЮЩЕГО одиночного заведения в новую сеть — владелец
- * начинает сеть с уже настроенного заведения, а не заводит пустую сеть и
- * точку в ней заново (тот путь — handleCreateChain + handleCreateTenant с
- * chainId, он для НОВЫХ точек). Заведение остаётся тем же документом,
- * просто получает chainId — дальше это первая точка сети, как любая другая.
- *
- * Переносит: подписку (статус/даты как есть, без сброса уже идущего
- * пробного периода или оплаченного периода — просто с новым planId сети),
- * брендинг (гость не должен увидеть внезапную смену оформления в день
- * перевода) и всю накопленную лояльность гостей (clients/phoneIndex/
- * referralCodes/bonusOperations) из tenants/{tenantId}/... в
- * chains/{chainId}/... — ровно те коллекции, которые AppScope.loyaltyCol
- * начинает читать оттуда же, как только у tenant появляется chainId (см. её
- * докстринг в lib/services/app_scope.dart) — клиентскому коду мигрировать
- * ничего не нужно, он просто продолжит читать по новому пути.
+ * Перевод работающего заведения в новую сеть: документ заведения тот же,
+ * он просто получает chainId и становится первой точкой. Подписка
+ * переносится как есть (с planId сети), брендинг и лояльность гостей
+ * (clients, phoneIndex, referralCodes, bonusOperations) копируются в
+ * chains/{chainId}/… — оттуда их начинает читать AppScope.loyaltyCol.
  */
 async function handleConvertTenantToChain(req, res) {
   const decoded = await verifyAuth(req);
@@ -869,9 +680,7 @@ async function handleConvertTenantToChain(req, res) {
   if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
     throw new HttpError(400, "Название сети: от 2 до 80 символов");
   }
-  // Только владелец — та же операция необратима без ручного вмешательства
-  // поддержки (обратной кнопки "разъединить сеть" нет), решать не может
-  // ни admin, ни manager.
+  // Только владелец: обратного действия «выйти из сети» нет.
   await requireTenantRole(tenantId, uid, ["owner"]);
 
   const firestore = db();
@@ -882,11 +691,9 @@ async function handleConvertTenantToChain(req, res) {
   if (tenant.chainId) throw new HttpError(409, "Заведение уже состоит в сети");
 
   const slug = normalizeSlug(rawSlug || name);
-  const existingChain = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
-  if (!existingChain.empty) throw new HttpError(409, "Этот код сети уже занят, выберите другой");
+  // Код самого заведения сети тоже не подходит: его поддомен уже занят.
+  await assertSlugFree(firestore, slug, "Этот код сети уже занят, выберите другой");
 
-  // planId с клиента доверяем, только если это ДЕЙСТВИТЕЛЬНО тариф для сети
-  // — та же защита, что и в handleCreateChain (симметрично).
   let resolvedPlanId = "chain";
   if (typeof planId === "string" && planId.trim()) {
     const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
@@ -899,9 +706,7 @@ async function handleConvertTenantToChain(req, res) {
     firestore.collection("tenantMembers").where("tenantId", "==", tenantId).get(),
   ]);
   const oldSub = oldSubSnap.exists ? oldSubSnap.data() : null;
-  // trialDays нужен только если у заведения почему-то не оказалось
-  // собственной подписки (не должно происходить в норме, но подписка —
-  // не то, ради чего стоит блокировать весь перевод в сеть).
+  // Подписки у заведения быть не может только при сбое — тогда даём пробный период.
   const trialDays = oldSub ? 0 : (Number((await firestore.collection("plans").doc(resolvedPlanId).get()).data()?.trialDays) || 7);
 
   const branding = brandingSnap.exists ? brandingSnap.data() : {
@@ -939,43 +744,28 @@ async function handleConvertTenantToChain(req, res) {
     startedAt: now, trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
     currentPeriodStart: now, currentPeriodEnd: null, cancelAtPeriodEnd: false,
   });
-  // Старая подписка одиночного заведения помечается "superseded", а не
-  // удаляется и не перезаписывается в "cancelled" — та же философия, что и
-  // в purgeChainData/purgeTenantData: платёжная история не должна исчезать
-  // бесследно, а "cancelled" звучало бы так, будто владелец отменил
-  // подписку, а не перевёл её на сеть. runCalculatePlatformMetrics эту
-  // подписку больше не читает — как только tenant.chainId задан, тенант
-  // считается по chains-циклу, а не по своему подписочному документу.
+  // Старую подписку не удаляем и не отменяем: история платежей остаётся,
+  // а «cancelled» выглядело бы как отказ владельца. Метрики её больше не
+  // считают — у заведения теперь есть chainId.
   if (oldSub) {
     batch.set(firestore.collection("subscriptions").doc(tenantId), {
       status: "superseded", supersededByChainId: chainId, updatedAt: now,
     }, { merge: true });
   }
-  // status/subscriptionStatus/planId — та же тройка значений, что
-  // handleCreateTenant проставляет НОВОЙ точке сети (chainId ветка): для
-  // точки сети они не отражают реальный биллинг (он общий на chains/{chainId},
-  // см. TenantConfigService.refresh — subscriptionId берётся из chainId, а не
-  // tenantId), planId "start" здесь — тот же незначащий дефолт, что и у
-  // новой точки, а не потеря информации о РЕАЛЬНОМ тарифе (он был перенесён
-  // в chains/{chainId}.planId несколькими строками выше).
+  // Как у новой точки сети: реальный тариф теперь в chains/{chainId}.
   batch.update(tenantRef, {
     chainId, status: "active", subscriptionStatus: "active", planId: "start", updatedAt: now,
   });
   await batch.commit();
 
-  // Зеркалим ВСЕХ действующих участников заведения (не только владельца) в
-  // chainMembers — иначе персонал заведения, кроме владельца, потерял бы
-  // доступ к общей лояльности сети сразу после конвертации (см. docstring
-  // syncChainMembership выше).
+  // Весь персонал, не только владелец, должен видеть общую лояльность сети.
   await Promise.all(membersSnap.docs.map((d) => {
     const m = d.data();
     if (m.userId === uid || m.status !== "active") return null;
     return syncChainMembership(chainId, m.userId, m.role, m.status);
   }));
 
-  // Перенос уже накопленной лояльности гостей — CHAIN_SUBCOLLECTIONS минус
-  // "branding" (её уже скопировали отдельно выше, одним документом, а не
-  // коллекцией с множеством документов гостей).
+  // branding уже скопирован выше одним документом.
   for (const colName of CHAIN_SUBCOLLECTIONS) {
     if (colName === "branding") continue;
     await migrateCollectionDocs(firestore, tenantRef.collection(colName), chainRef.collection(colName));
@@ -993,13 +783,8 @@ async function handleConvertTenantToChain(req, res) {
 }
 
 /**
- * Приглашение в заведение по email (вкладка «Команда» в консоли) с ролью
- * manager/employee — перенос одноимённой Cloud Function из
- * saas/functions/index.js: Cloud Functions у проекта не развёрнуты (нужен
- * тариф Blaze), и кнопка «Пригласить» всегда падала. Найти uid по email
- * может только Admin SDK — поэтому это эндпоинт, а не прямая запись с
- * клиента. Роли owner/admin здесь не выдаются намеренно (как и в правилах
- * для прямой записи tenantMembers).
+ * Приглашение по email во вкладке «Команда». uid по email находит только
+ * Admin SDK. Роли owner/admin так не выдаются — как и в правилах.
  */
 async function handleInviteTenantMember(req, res) {
   const decoded = await verifyAuth(req);
@@ -1041,8 +826,6 @@ async function handleInviteTenantMember(req, res) {
     status: "active",
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
-  // Точка сети — без зеркала в chainMembers новый сотрудник не увидел бы
-  // общую лояльность сети (см. docstring syncChainMembership).
   const tenantSnap = await firestore.collection("tenants").doc(tenantId).get();
   const chainId = tenantSnap.exists ? tenantSnap.data().chainId : null;
   if (chainId) await syncChainMembership(chainId, invitedUser.uid, role, "active");
@@ -1051,10 +834,9 @@ async function handleInviteTenantMember(req, res) {
   sendJson(res, 200, { ok: true, userId: invitedUser.uid });
 }
 
-/** Копирует все документы одной коллекции в другую (id сохраняется) и
- *  удаляет исходные — батчами по BATCH_CHUNK, чтобы не упереться в лимит
- *  Firestore на 500 операций в одном batch, даже если у заведения, которое
- *  переводят в сеть, уже накопилось много гостей. */
+/** Переносит документы коллекции вместе с вложенными коллекциями
+ *  (например, clients/{uid}/visits) и удаляет исходные. Пачками по 400 —
+ *  лимит batch в Firestore 500 операций. */
 async function migrateCollectionDocs(firestore, srcCol, destCol) {
   const snap = await srcCol.get();
   if (snap.empty) return;
@@ -1064,6 +846,11 @@ async function migrateCollectionDocs(firestore, srcCol, destCol) {
     const writeBatch = firestore.batch();
     chunk.forEach((d) => writeBatch.set(destCol.doc(d.id), d.data()));
     await writeBatch.commit();
+  }
+  for (const d of snap.docs) {
+    for (const sub of await d.ref.listCollections()) {
+      await migrateCollectionDocs(firestore, sub, destCol.doc(d.id).collection(sub.id));
+    }
   }
   for (let i = 0; i < snap.docs.length; i += BATCH_CHUNK) {
     const chunk = snap.docs.slice(i, i + BATCH_CHUNK);
@@ -1076,27 +863,11 @@ async function migrateCollectionDocs(firestore, srcCol, destCol) {
 // ------------------------------------------- provisionTenantDomain
 
 /**
- * Автоматически выпускает Let's Encrypt сертификат и nginx-конфиг для
- * поддомена нового заведения ({slug}.zalpos.ru, см. saas/guest-web/ —
- * веб-версия гостя и страница-прослойка QR стола).
- *
- * ПОЧЕМУ не единый wildcard-сертификат на *.zalpos.ru: DNS хостится у
- * регистратора без API, поддерживаемого certbot, — wildcard требует
- * DNS-01 challenge (TXT-запись), а его без API пришлось бы продлевать
- * руками каждые ~60 дней. Вместо этого — обычный HTTP-01 (никакого API
- * DNS не требует, только чтобы поддомен резолвился на этот сервер — а он
- * уже резолвится, DNS-запись `*.zalpos.ru` заведена один раз и
- * навсегда) на КАЖДЫЙ поддомен отдельно, зато полностью автоматически:
- * этот вызов — и на выпуск, и на будущее продление (стандартный таймер
- * certbot, тот же, что уже продлевает pii.zalpos.ru, ничего
- * дополнительно настраивать не нужно — просто больше файлов сертификатов
- * под тем же механизмом).
- *
- * Требует на сервере: certbot, скрипт /usr/local/bin/provision-tenant-
- * domain.sh (создаёт webroot-сертификат + отдельный server-блок nginx по
- * шаблону и перезагружает nginx) и точечное sudo-правило, разрешающее
- * пользователю saas-gateway запускать ИМЕННО этот скрипт без пароля — см.
- * saas/README.md, раздел «Веб-версия гостя и QR стола».
+ * Сертификат Let's Encrypt и server-блок nginx для {slug}.zalpos.ru.
+ * Wildcard не подходит: у регистратора нет API для DNS-01, продлевать
+ * пришлось бы руками. HTTP-01 на каждый поддомен продлевает обычный таймер
+ * certbot. Нужны скрипт /usr/local/bin/provision-tenant-domain.sh и
+ * sudo-правило на него (saas/README.md, «Веб-версия гостя и QR стола»).
  */
 async function provisionTenantDomain(slug) {
   await new Promise((resolve, reject) => {
@@ -1121,11 +892,8 @@ async function provisionTenantDomain(slug) {
 async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode }) {
   const token = process.env.GITHUB_PAT;
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
-  // Один запуск workflow, но три job_id — saas-on-demand-build.yml собирает
-  // кассу и гостевое приложение под Android матрицей (см. её же
-  // комментарий) плюс кассу под Windows отдельным job'ом (другой раннер,
-  // другой набор шагов) — каждое отчитывается о своём результате в свой
-  // buildJobs-документ.
+  // Один запуск workflow, три job_id: касса и гость под Android, касса под
+  // Windows. Каждая сборка отчитывается в свой buildJobs-документ.
   const inputs = {
     tenant_id: tenantId, job_id_pos: jobIdPos, job_id_kolibri: jobIdKolibri,
     job_id_pos_windows: jobIdPosWindows, app_label: appLabel,
@@ -1157,10 +925,7 @@ async function handleCreateBuildJob(req, res) {
   const { tenantId } = body;
   // Формат — до любых проверок: tenantId уходит в параметры сборки в CI.
   if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
-  // Супер-админ платформы может пересобрать APK ЛЮБОГО заведения (например
-  // из панели платформы, кнопка "Пересобрать" у неудачной сборки в общем
-  // мониторе) — в дополнение к обычному владельцу/админу самого заведения,
-  // не вместо него.
+  // Супер-админ может пересобрать приложения любого заведения из панели.
   if (!(await isSuperAdmin(decoded))) {
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
   }
@@ -1168,17 +933,13 @@ async function handleCreateBuildJob(req, res) {
 }
 
 /**
- * Запуск сборки всех приложений заведения — и по кнопке «Собрать APK»
- * (handleCreateBuildJob), и автообновлением после выхода новой версии
- * платформы (runAppRolloutTick, [rolloutSha] — коммит, ради которого
- * собираем). Проверки прав — на вызывающем.
+ * Сборка всех приложений заведения: по кнопке «Собрать APK» и при
+ * автообновлении (runAppRolloutTick, rolloutSha — коммит, ради которого
+ * собираем). Права проверяет вызывающий.
  */
 async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
   const firestore = db();
-  // Точка сети не имеет своей subscriptions/{tenantId} — биллинг общий, на
-  // subscriptions/{chainId} (см. handleCreateChain) — без этого resolve'а
-  // "Собрать APK" всегда падало бы 412 для ЛЮБОЙ точки сети, даже с активной
-  // подпиской: подписки под её собственным tenantId просто не существует.
+  // У точки сети подписка общая — subscriptions/{chainId}.
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
   const chainId = tenantDoc.exists ? tenantDoc.data().chainId || null : null;
   const sub = await firestore.collection("subscriptions").doc(chainId || tenantId).get();
@@ -1186,20 +947,15 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
     throw new HttpError(412, "Подписка неактивна — сборка APK недоступна");
   }
 
-  // Без этой проверки повторные нажатия «Собрать APK» (например, пока первая
-  // сборка ещё идёт 5–10 минут) плодят параллельные запуски одного и того же
-  // workflow — GitHub Actions это не запрещает, а буквально захламляет
-  // список сборок в консоли и впустую тратит минуты Actions. Один
-  // незавершённый job на заведение — этого достаточно, чтобы кнопка не
-  // превращалась в очередь дублей.
+  // Одна незавершённая сборка на заведение: повторные нажатия иначе
+  // запускают параллельные сборки и тратят минуты Actions.
   const pending = await firestore
     .collection("buildJobs")
     .where("tenantId", "==", tenantId)
     .where("status", "==", "queued")
     .get();
-  // Сборка, не отчитавшаяся за APP_ROLLOUT_STALE_MS (запуск отменили в
-  // GitHub, раннер пропал), — потерялась: закрываем её, иначе ни кнопка,
-  // ни автообновление этому заведению больше ничего не соберут.
+  // Сборку, которая не отчиталась за APP_ROLLOUT_STALE_MS (отменили в
+  // GitHub, пропал раннер), закрываем — иначе заведение больше не соберётся.
   const isStale = (d) => {
     const at = d.data().createdAt;
     return at && typeof at.toMillis === "function" && Date.now() - at.toMillis() > APP_ROLLOUT_STALE_MS;
@@ -1216,16 +972,7 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
     });
   }
 
-  // Одно нажатие «Собрать APK» — три приложения (см. build-apk.yml, откуда
-  // и пришла сама идея матрицы): касса для Android-планшета владельца,
-  // касса для Windows (тот же lib/main.dart, отдельный job на
-  // windows-latest — см. saas-on-demand-build.yml) и гостевое приложение
-  // «Colibri Lounge» для его гостей (брендинг заведения общий на все —
-  // логотип и название берутся из тех же tenants/{tenantId}/branding, хотя
-  // касса, в отличие от гостевого, его игнорирует и на Windows тоже).
-  // Каждое — свой buildJobs-документ, поэтому в консоли сразу видно 3
-  // записи «в очереди», и каждая получает свою ссылку «Скачать» по
-  // готовности независимо от остальных.
+  // Три приложения — три записи buildJobs, у каждой своя ссылка «Скачать».
   const firestoreNow = admin.firestore.FieldValue.serverTimestamp();
   const jobRefPos = firestore.collection("buildJobs").doc();
   const jobRefKolibri = firestore.collection("buildJobs").doc();
@@ -1250,15 +997,9 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
   createBatch.set(jobRefPosWindows, { ...baseJob, type: "pos", platform: "windows" });
   await createBatch.commit();
 
-  // Название и лого заведения — это бренд ТОЛЬКО гостевого приложения
-  // (saas-on-demand-build.yml игнорирует app_label/logo_url для matrix.app
-  // == pos: касса всегда "ZalPOS", бренд платформы, не арендатора).
-  // appName предпочтительнее shortName: shortName — снимок имени на момент
-  // создания заведения (обрезка до 12 символов), который не обновляется,
-  // если владелец потом переименует заведение в «Брендинге» — appName как
-  // раз то самое, живое поле «Имя приложения».
-  // Без брендинга — название самого заведения (раньше здесь стояло имя
-  // первого заведения платформы, и гость видел под иконкой чужой бренд).
+  // Название и логотип нужны только гостевому приложению: касса всегда
+  // «ZalPOS». appName, а не shortName: shortName — снимок имени при
+  // создании, обрезанный до 12 символов.
   let appLabel = (tenantDoc.exists && String(tenantDoc.data().name || "").trim()) || "Меню заведения";
   let logoUrl = "";
   try {
@@ -1271,27 +1012,19 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
       logoUrl = branding.data().logoUrl || "";
     }
   } catch (_) {
-    // Не критично — сборка всё равно пойдёт с дефолтным лейблом/иконкой.
+    // Не критично: соберём с названием заведения и стандартной иконкой.
   }
 
-  // Слаг заведения и код приглашения устройства — чтобы собранный APK сразу
-  // "знал", к какому заведению он относится (см. docstring в
-  // saas-on-demand-build.yml, шаг "Прописать пресет привязки устройства"):
-  // владелец получает APK, который на первом экране сам присоединяется к
-  // ЕГО заведению, а не показывает форму "код заведения / код приглашения"
-  // как для универсальной сборки. Необязательно — если что-то не читается,
-  // сборка просто пойдёт без автопривязки, ничего не ломая.
-  let tenantSlug = "";
+  // Код заведения и приглашения зашиваются в кассу, чтобы она сама
+  // присоединилась к заведению при первом запуске. Не прочитали — соберём
+  // без автопривязки.
+  const tenantSlug = tenantDoc.data()?.slug || "";
   let inviteCode = "";
   try {
-    const [tenantDoc, inviteDoc] = await Promise.all([
-      firestore.collection("tenants").doc(tenantId).get(),
-      firestore.collection("tenants").doc(tenantId).collection("settings").doc("deviceInvite").get(),
-    ]);
-    tenantSlug = tenantDoc.data()?.slug || "";
+    const inviteDoc = await firestore.collection("tenants").doc(tenantId).collection("settings").doc("deviceInvite").get();
     inviteCode = inviteDoc.data()?.code || "";
   } catch (_) {
-    // Не критично — сборка пойдёт без автопривязки устройства.
+    // сборка пойдёт без автопривязки
   }
 
   try {
@@ -1306,10 +1039,8 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
     throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. записи в buildJobs");
   }
 
-  // Отметка «приложения этого заведения собраны с такой-то версией
-  // платформы» — по ней автообновление решает, кого пересобирать (и не
-  // трогает заведения, которые приложений ещё не собирали). Ручная сборка
-  // берёт последнюю версию ветки, то есть уже содержит текущий коммит.
+  // По этой отметке автообновление решает, кого пересобирать. Ручная
+  // сборка берёт свежую ветку, то есть уже содержит текущий коммит.
   let sha = rolloutSha;
   if (!sha) {
     sha = (await firestore.collection("platformStatus").doc("appRollout").get().catch(() => null))?.data()?.sha || "manual";
@@ -1329,17 +1060,9 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
 // -------------------------------------------- cancelSubscription/resume
 
 /**
- * Самостоятельная отмена автопродления — владелец решает, что не будет
- * платить за следующий период, и сам это включает/выключает, не дожидаясь
- * поддержки. НЕ отключает доступ немедленно — chargeRecurringSubscriptions
- * и enforceGracePeriod (см. saas/functions/index.js) уже умеют учитывать
- * cancelAtPeriodEnd: просто не будет попытки списания в конце периода,
- * заведение доработает до currentPeriodEnd как обычно.
- *
- * Firestore-правила запрещают клиенту писать в subscriptions напрямую
- * (allow write: if isSuperAdmin()) — этот сервис, как и createTenant выше,
- * делает то же самое через Admin SDK, но только для СВОЕГО заведения и
- * только это одно поле.
+ * Владелец сам выключает или возвращает автопродление. Доступ не
+ * отключается: заведение работает до конца оплаченного периода, просто
+ * без списания. Клиенту писать в subscriptions правила не дают.
  */
 async function handleSetSubscriptionCancel(req, res, cancel) {
   const decoded = await verifyAuth(req);
@@ -1359,14 +1082,11 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
   const subRef = db().collection("subscriptions").doc(billingId);
   const subDoc = await subRef.get();
   if (!subDoc.exists) throw new HttpError(404, "Подписка не найдена");
-  // Причина отмены (супер-админ #6) — видна в панели платформы в карточке
-  // заведения, помогает понять, почему уходят, не дозваниваясь владельцу.
-  // Необязательна (пустая строка — "нажал ОК, но не написал"), обрезается
-  // на случай, если кто-то вставит целое эссе. При возврате автопродления
-  // очищается — старая причина не должна висеть как будто актуальная.
+  // Причина отмены видна супер-админу в карточке заведения. При возврате
+  // автопродления стираем её.
   const cancelReason = cancel ? String(reason || "").slice(0, 500) : null;
-  // Робокасса: без родительского платежа (оплатили без галочки согласия)
-  // списывать нечего — честно говорим, а не делаем вид, что включили.
+  // Без родительского платежа Робокассы (оплатили без согласия на
+  // автосписание) списывать нечего — так и говорим.
   const sub = subDoc.data() || {};
   if (!cancel && sub.provider === "robokassa" && !sub.robokassaParentInvId) {
     throw new HttpError(409, "Автопродление включается при оплате: во вкладке «Тарифы» отметьте «Автопродление» и оплатите следующий период");
@@ -1381,31 +1101,12 @@ async function handleSetSubscriptionCancel(req, res, cancel) {
   sendJson(res, 200, { ok: true });
 }
 
-// ------------------------------------------------------------ billing (ЮKassa)
+// ---------------------------------------------------------------- billing
 
-/**
- * Перенесено из saas/functions/index.js — та же логика (createCheckoutSession,
- * handleBillingWebhook, chargeRecurringSubscriptions, enforceGracePeriod) и
- * та же причина, что и у createTenant/createBuildJob выше: весь этот код —
- * REST-запросы к ЮKassa (обычный fetch) плюс запись в Firestore через Admin
- * SDK, ни то ни другое не привязано к рантайму Cloud Functions и не требует
- * Blaze. saas/functions/index.js НЕ трогаем и не удаляем оттуда — тот файл
- * остаётся эталонной, готовой к деплою копией на случай, если Blaze
- * когда-нибудь появится (тот же принцип, что уже применён к createTenant и
- * остальным перенесённым операциям); реально с этого момента работает
- * только копия здесь.
- *
- * Секреты — переменные окружения (см. README.md/setup.sh), а не Secret
- * Manager, как раньше: YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY.
- */
-
+// Секреты платёжных систем — переменные окружения (README.md, setup.sh).
 const BILLING_PERIOD_DAYS = { monthly: 30, semiannual: 182, yearly: 365 };
 const GRACE_PERIOD_DAYS = 10;
 
-/** Единая нормализация периода оплаты — везде, где он приходит снаружи
- *  (checkout/webhook/автопродление), а не только в одном месте: раньше
- *  "любое не yearly" молча схлопывалось в monthly, из-за чего добавление
- *  нового периода потребовало бы искать все места по отдельности. */
 /** «1 точка», «2 точки», «5 точек» — для описания платежа сети. */
 function pointsWord(n) {
   const last = n % 10;
@@ -1421,9 +1122,7 @@ function normalizeBillingPeriod(raw) {
   return "monthly";
 }
 
-/** Цена тарифа за billingPeriod ('monthly'|'semiannual'|'yearly'); период
- *  без заданной цены (priceRubSemiannual/priceRubYearly) считается
- *  недоступным (0 — вызывающий код сам решает, что это значит). */
+/** Цена тарифа за период; 0 — на этот период тариф не продаётся. */
 function planPriceForPeriod(plan, billingPeriod) {
   if (billingPeriod === "yearly") return Number(plan.priceRubYearly) || 0;
   if (billingPeriod === "semiannual") return Number(plan.priceRubSemiannual) || 0;
@@ -1431,20 +1130,9 @@ function planPriceForPeriod(plan, billingPeriod) {
 }
 
 /**
- * Цена ОДНОЙ дополнительной точки сети за billingPeriod. По умолчанию
- * (customAdditionalPrice не включён) — столько же, сколько первая: это
- * безопасный дефолт, платформа сама никогда не занижает цену сети без
- * явного решения. Только когда владелец платформы в Тарифах отдельно
- * включил переключатель "Своя цена за доп. точку", читаются поля
- * priceRubAdditional/priceRubAdditionalSemiannual/priceRubAdditionalYearly
- * (решение "за доп. заведения цены меньше").
- *
- * ВАЖНО: это НЕ "поле не задано → как первая, 0 → бесплатно" — числовое
- * поле в форме редактирования тарифа (см. savePlan() в console.js) всегда
- * сохраняется КОНКРЕТНЫМ числом (пустое поле сохраняется как 0), поэтому
- * само значение 0 не может служить признаком "владелец платформы про это
- * поле ещё не думал" — для этого и нужен отдельный явный флаг-чекбокс, а
- * не догадки по числу.
+ * Цена каждой следующей точки сети. Пока в тарифе не включён флажок
+ * «Своя цена за доп. точку» (customAdditionalPrice), она равна цене первой.
+ * Смотреть на 0 в полях нельзя: форма тарифа сохраняет пустое поле как 0.
  */
 function additionalLocationPriceForPeriod(plan, billingPeriod) {
   if (!plan.customAdditionalPrice) return planPriceForPeriod(plan, billingPeriod);
@@ -1454,10 +1142,7 @@ function additionalLocationPriceForPeriod(plan, billingPeriod) {
   return Number(plan[field]) || 0;
 }
 
-/** Полная цена подписки сети за billingPeriod: первая точка по обычной
- *  цене тарифа + каждая следующая — по (обычно более низкой) цене доп.
- *  точки, а не flat price × locationCount, как было до появления
- *  раздельного ценообразования (см. её докстринг выше). */
+/** Первая точка по цене тарифа, остальные — по цене доп. точки. */
 function chainPriceForPeriod(plan, billingPeriod, locationCount) {
   const first = planPriceForPeriod(plan, billingPeriod);
   const additional = additionalLocationPriceForPeriod(plan, billingPeriod);
@@ -1486,11 +1171,10 @@ async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = 
 }
 
 /**
- * Чек 54-ФЗ за подписку («Чеки от ЮKassa»). Включается переменной
- * YOOKASSA_RECEIPTS=1 — только если в кабинете ЮKassa подключена
- * отправка чеков: тогда без чека ЮKassa отклоняет платёж. Ставка НДС —
- * YOOKASSA_VAT_CODE (по умолчанию 1 — «без НДС»), система налогообложения —
- * YOOKASSA_TAX_SYSTEM_CODE (необязательно, 1–6 по справочнику ЮKassa).
+ * Чек 54-ФЗ от ЮKassa. Включается YOOKASSA_RECEIPTS=1, только если в
+ * кабинете ЮKassa подключены чеки: тогда платёж без чека отклоняется.
+ * НДС — YOOKASSA_VAT_CODE (по умолчанию 1, «без НДС»), СНО —
+ * YOOKASSA_TAX_SYSTEM_CODE (1–6).
  */
 function yookassaReceipt(description, price, email) {
   if (process.env.YOOKASSA_RECEIPTS !== "1" || !email) return undefined;
@@ -1522,29 +1206,16 @@ async function billingOwnerEmail(isChain, id) {
   }
 }
 
-/** Число НЕ удалённых точек сети — тариф на сеть посчитан за каждую точку
- *  отдельно (решение владельца платформы: "за каждую точку отдельно"), а
- *  не фиксированной суммой на сеть, поэтому цену пересчитываем каждый раз
- *  заново (и здесь, при оформлении, и в runChargeRecurringSubscriptions
- *  при продлении) — владелец платит ровно за то число точек, что у него
- *  есть на момент списания, без отдельного шага "обновить тариф вручную"
- *  при добавлении/закрытии точки.
- */
+/** Число действующих точек сети. Сеть платит за каждую точку, поэтому
+ *  считаем заново при оплате и при каждом продлении. */
 async function countChainLocations(chainId) {
   const snap = await db().collection("tenants").where("chainId", "==", chainId).get();
   return snap.docs.filter((d) => d.data().status !== "deleted").length;
 }
 
-/**
- * Создаёт платёж ЮKassa на оплату тарифа и возвращает ссылку на форму
- * оплаты — консоль делает location.href на неё. Статус подписки/заведения
- * НЕ меняется здесь (платёж ещё не оплачен, только создан) — единственное
- * место, где статус становится "active", это handleBillingWebhook, после
- * того как ЮKassa подтвердит оплату.
- */
-/** Тариф, период, цена и адрес чека для оплаты подписки — общее для оплаты
- *  картой (createCheckoutSession) и по счёту (createBankInvoice). Проверяет,
- *  что платит владелец или администратор заведения/сети. */
+/** Тариф, период, цена и email для чека — общее для оплаты картой и по
+ *  счёту. Платить может только владелец или администратор. Статус
+ *  подписки здесь не меняется: это делает только подтверждённая оплата. */
 async function resolveSubscriptionCheckout(decoded, { tenantId, chainId, planId, billingPeriod: rawBillingPeriod }) {
   const isChain = typeof chainId === "string" && !!chainId;
   if (!isChain && (typeof tenantId !== "string" || !tenantId)) {
@@ -1593,16 +1264,14 @@ async function handleCreateCheckoutSession(req, res) {
     : `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
 
   if (billingProvider() === "robokassa") {
-    // Автосписания — только с явного согласия владельца (галочка
-    // «Автопродление» в консоли, по умолчанию снята): так требуют правила
-    // Робокассы для рекуррентных платежей и ст. 16 закона № 2300-1.
+    // Автосписание только с явного согласия (галочка «Автопродление»,
+    // по умолчанию снята) — правила Робокассы и ст. 16 закона № 2300-1.
     const recurring = robokassaConfig().recurring && autoRenew === true;
     const invoice = await createRobokassaInvoice({
       tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
       planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
       locationCount: isChain ? locationCount : null, requestedBy: decoded.uid, recurring,
-      // Картой через Робокассу платят как физическое лицо (оферта, п. 5):
-      // чек в «Мой налог» — без ИНН покупателя. ИП и организации — по счёту.
+      // Картой платят как физлицо: чек в «Мой налог» без ИНН покупателя.
       payerType: "individual",
     });
     const url = robokassaPaymentUrl({
@@ -1636,31 +1305,23 @@ async function handleCreateCheckoutSession(req, res) {
   sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id });
 }
 
-// ------------------------------------------------------------ счета для ИП и организаций
+// ---------------------------------------------- счета для ИП и организаций
 
 /**
- * Оплата по счёту — для индивидуальных предпринимателей и организаций.
+ * Владелец платформы на НПД: Робокасса принимает карты физлиц и выбивает
+ * чек без ИНН, а при расчётах с ИП и организациями ИНН покупателя в чеке
+ * обязателен (ст. 14 422-ФЗ, ставка 6 %). Поэтому они платят переводом по
+ * счёту, а чек с ИНН владелец платформы делает в «Мой налог» сам — до
+ * 9-го числа следующего месяца.
  *
- * Владелец платформы — самозанятый (НПД). Робокасса принимает только карты
- * физических лиц и формирует чек без ИНН покупателя, а при расчётах с ИП и
- * организациями чек обязан содержать ИНН покупателя (ст. 14 закона
- * № 422-ФЗ; ставка налога — 6 %, а не 4 %). Поэтому ИП и организации
- * платят переводом по счёту на расчётный счёт, а чек с их ИНН владелец
- * платформы формирует в «Мой налог» сам — не позднее 9-го числа месяца,
- * следующего за месяцем оплаты.
- *
- *  1. createBankInvoice — владелец указывает реквизиты плательщика; они
- *     сначала записываются в базу в РФ (pii-gateway, kind "payer": у ИП
- *     ФИО и ИНН — персональные данные, ч. 5 ст. 18 152-ФЗ), и только потом
- *     заводится bankInvoices/{номер}. Счёт печатается в личном кабинете.
- *  2. markBankInvoicePaid — супер-админ отмечает поступление денег:
- *     подписка продлевается (applySubscriptionPayment, идемпотентно).
- *  3. markBankInvoiceReceipt — супер-админ отмечает, что чек с ИНН
- *     сформирован; ссылка на чек видна владельцу в кабинете.
- *  cancelBankInvoice — отменить неоплаченный счёт (супер-админ или владелец).
+ *  createBankInvoice — реквизиты плательщика сначала в базу в РФ
+ *    (pii-gateway), потом bankInvoices/{номер};
+ *  markBankInvoicePaid — супер-админ отмечает поступление, подписка
+ *    продлевается (идемпотентно);
+ *  markBankInvoiceReceipt — чек с ИНН выбит, ссылка видна владельцу;
+ *  cancelBankInvoice — отмена неоплаченного счёта.
  */
-// pii-gateway стоит на том же сервере (pii-gateway/setup.sh: 127.0.0.1:8080);
-// если локально не отвечает — через nginx по домену.
+// pii-gateway на этом же сервере; если локально не отвечает — через домен.
 const PII_GATEWAY_URLS = process.env.PII_GATEWAY_URL
   ? [process.env.PII_GATEWAY_URL]
   : ["http://127.0.0.1:8080/", "https://pii.zalpos.ru/"];
@@ -1695,8 +1356,7 @@ function parsePayer(raw) {
   return { type, name, inn, kpp };
 }
 
-/** Первичная запись реквизитов плательщика в базу в РФ — от имени владельца
- *  (его ID-токен), до записи счёта в Firestore. */
+/** Реквизиты — в базу в РФ токеном владельца, до записи счёта. */
 async function recordPayerInRussia(req, payload) {
   const auth = String(req.headers["authorization"] || "");
   let resp = null;
@@ -1719,9 +1379,8 @@ async function recordPayerInRussia(req, payload) {
   }
 }
 
-/** Следующий номер счёта (1, 2, 3…) — свой счётчик, не номера Робокассы.
- *  Занятые номера пропускаем: если счётчик когда-нибудь обнулят, новый
- *  счёт не наложится на старый (и на его событие оплаты bank_<номер>). */
+/** Свой счётчик номеров. Занятые пропускаем: если счётчик обнулят, новый
+ *  счёт не наложится на старый и его событие оплаты bank_<номер>. */
 async function nextBankInvoiceNumber() {
   const ref = db().collection("platformStatus").doc("bankInvoices");
   return db().runTransaction(async (tx) => {
@@ -1732,8 +1391,7 @@ async function nextBankInvoiceNumber() {
   });
 }
 
-/** 9-е число месяца, следующего за месяцем оплаты (по Москве), — крайний
- *  срок чека при расчётах с ИП и организациями. */
+/** Срок чека с ИНН — 9-е число следующего месяца по Москве. */
 function receiptDeadline(paidAtMs) {
   const msk = new Date(paidAtMs + 3 * 3600e3);
   return new Date(Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth() + 1, 9)).toISOString().slice(0, 10);
@@ -1750,9 +1408,8 @@ async function handleCreateBankInvoice(req, res) {
     invoiceId: id, billingId: c.chainId || c.tenantId,
     payerType: payer.type, name: payer.name, inn: payer.inn, kpp: payer.kpp,
   });
-  // Точку сети, из кабинета которой выставлен счёт, тоже запоминаем: по ней
-  // владелец видит счёт в кабинете (правила bankInvoices), а продлевается
-  // всё равно подписка сети (applySubscriptionPayment: chainId важнее).
+  // Точку сети запоминаем, чтобы счёт был виден в её кабинете; продлевается
+  // всё равно подписка сети.
   let pointId = c.tenantId;
   if (c.isChain && typeof body.tenantId === "string" && body.tenantId) {
     const t = await db().collection("tenants").doc(body.tenantId).get();
@@ -1842,32 +1499,24 @@ async function handleCancelBankInvoice(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
-// ------------------------------------------------------------ billing (Робокасса)
+// -------------------------------------------------- billing (Робокасса)
 
 /**
- * Оплата подписок через Робокассу (владелец платформы — самозанятый: чек
- * в «Мой налог» Робокасса формирует сама, передавать его не нужно).
+ * Чек в «Мой налог» Робокасса для самозанятого делает сама.
  *
- * Как устроено:
- *  1. createCheckoutSession заводит счёт billingInvoices/{InvId} (номер —
- *     из счётчика platformStatus/robokassa) и отдаёт консоли ссылку на
- *     платёжную форму с подписью (пароль №1).
- *  2. После оплаты Робокасса вызывает Result URL — /robokassaResult с
- *     подписью по паролю №2. Только здесь подписка продлевается
- *     (applySubscriptionPayment, идемпотентно); ответ — «OK<InvId>».
- *  3. Success/Fail URL (/robokassaSuccess, /robokassaFail) лишь возвращают
- *     владельца в личный кабинет, ничего не меняя.
- *  4. Автопродление (ROBOKASSA_RECURRING=1, после того как Робокасса
- *     включит магазину периодические платежи): первая оплата идёт с
- *     Recurring=true, её номер сохраняется в подписке
- *     (robokassaParentInvId), продление — POST на Merchant/Recurring с
- *     PreviousInvoiceID; результат приходит на тот же Result URL.
+ *  1. createCheckoutSession заводит billingInvoices/{InvId} (счётчик
+ *     platformStatus/robokassa) и отдаёт ссылку на форму с подписью по
+ *     паролю №1.
+ *  2. Result URL (/robokassaResult) с подписью по паролю №2 — единственное
+ *     место, где продлевается подписка; ответ «OK<InvId>».
+ *  3. Success/Fail URL только возвращают в кабинет.
+ *  4. Автопродление (ROBOKASSA_RECURRING=1): первая оплата с Recurring=true,
+ *     её номер — robokassaParentInvId; продление — POST на
+ *     Merchant/Recurring с PreviousInvoiceID, ответ на тот же Result URL.
  *
  * Переменные: ROBOKASSA_LOGIN, ROBOKASSA_PASSWORD1, ROBOKASSA_PASSWORD2,
- * ROBOKASSA_HASH (алгоритм подписи из «Технических настроек», по
- * умолчанию md5), ROBOKASSA_TEST=1 (тестовые платежи — и тестовые пароли),
- * ROBOKASSA_RECURRING=1, ROBOKASSA_RECEIPTS=1 + ROBOKASSA_SNO/ROBOKASSA_TAX
- * (только для фискализации «Робочеки», не для самозанятых).
+ * ROBOKASSA_HASH (по умолчанию md5), ROBOKASSA_TEST=1, ROBOKASSA_RECURRING=1,
+ * ROBOKASSA_RECEIPTS=1 + ROBOKASSA_SNO/ROBOKASSA_TAX (только для «Робочеков»).
  */
 const ROBOKASSA_PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx";
 const ROBOKASSA_RECURRING_URL = "https://auth.robokassa.ru/Merchant/Recurring";
@@ -2103,22 +1752,16 @@ async function robokassaCharge({ sub, targetId, isChain, price, billingPeriod, d
 }
 
 /**
- * Webhook ЮKassa — БЕЗ Firebase Auth, платёжная система не умеет посылать
- * ID-токен. Подлинность — не по факту самого POST'а, а перепроверкой
- * платежа напрямую в API ЮKassa своим секретным ключом (см. развёрнутый
- * докстринг у handleBillingWebhook в saas/functions/index.js — тот же
- * приём, ЮKassa официально не подписывает уведомления секретом, поэтому
- * доверять телу запроса нельзя, только тому, что вернул сам API по id
- * платежа). Идемпотентно через billingEvents/{paymentId} — повторная
- * доставка того же уведомления не применяет оплату дважды.
+ * Webhook ЮKassa. Она не подписывает уведомления, поэтому телу не верим:
+ * перепроверяем платёж по id в её API своим ключом. Повторная доставка
+ * не применяется дважды (billingEvents/{paymentId}).
  */
 async function handleBillingWebhook(req, res) {
   const body = await parseJsonBody(req);
   const paymentId = body?.object?.id;
   if (typeof paymentId !== "string" || !paymentId) throw new HttpError(400, "bad request");
-  // Для чек-листа «Безопасность → Платформа»: если уведомления от ЮKassa
-  // давно не приходят, адрес webhook'а в её кабинете мог сбиться, и оплаты
-  // перестанут продлевать подписки. Не мешает основной обработке.
+  // Для чек-листа «Безопасность → Платформа»: давно нет уведомлений —
+  // возможно, в кабинете ЮKassa сбился адрес webhook.
   db().collection("platformStatus").doc("billingWebhook").set({
     lastReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
     lastEvent: typeof body.event === "string" ? body.event.slice(0, 60) : null,
@@ -2145,14 +1788,10 @@ async function handleBillingWebhook(req, res) {
   const chainId = payment.metadata?.chainId || null;
   const billingId = chainId || tenantId;
   const planId = payment.metadata?.planId;
-  // Старые платежи (до появления годовой/полугодовой оплаты) не несут
-  // этого поля — трактуем как помесячные, это было единственным вариантом
-  // на тот момент.
+  // У старых платежей периода нет — тогда они были только помесячные.
   const billingPeriod = normalizeBillingPeriod(payment.metadata?.billingPeriod);
   if (!billingId || !planId) {
-    // Платёж без наших metadata — не от этой платформы, но раз ЮKassa
-    // прислала его на наш webhook, отвечаем 200, чтобы не получать
-    // бесконечные повторы того, что мы всё равно никогда не обработаем.
+    // Не наш платёж. Отвечаем 200, иначе ЮKassa будет присылать его снова.
     sendJson(res, 200, { ok: true, ignored: true });
     return;
   }
@@ -2171,9 +1810,7 @@ async function handleBillingWebhook(req, res) {
     tenantId, chainId, planId, billingPeriod,
     amount: Number(payment.amount?.value) || 0,
     purpose: payment.metadata?.purpose || "subscription",
-    // save_payment_method делает способ оплаты сохранённым только с
-    // согласия платёжной системы — сохраняем payment_method_id, только
-    // когда ЮKassa это подтвердила.
+    // Способ оплаты сохраняем, только если ЮKassa подтвердила сохранение.
     extra: payment.payment_method?.saved ? { paymentMethodId: payment.payment_method.id } : {},
   });
   sendJson(res, 200, { ok: true });
@@ -2199,9 +1836,7 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
     if (seen.exists && seen.data().applied !== false) return true;
     tx.set(eventRef, {
       tenantId, chainId, planId, billingPeriod, status, provider,
-      // Сумма — для аналитики платформы (панель Super Admin, выручка): без
-      // неё пришлось бы на каждый показ дохода дёргать API провайдера
-      // отдельно по каждому платежу, вместо одного чтения Firestore.
+      // Сумма — для выручки в панели платформы без запросов к провайдеру.
       amount,
       purpose,
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2255,12 +1890,8 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
   await eventRef.update({ applied: true });
 }
 
-/** Переводит и подписку, и само заведение/сеть в past_due синхронно и
- *  фиксирует момент начала льготного периода — см. одноимённую функцию в
- *  saas/functions/index.js, та же логика. Не трогает pastDueSince, если он
- *  уже стоит — иначе повторный вызов отодвигал бы дедлайн удаления.
- *  [isChain] — subscriptions/{id} принадлежит chains/{id}, а не
- *  tenants/{id} (см. subscriptions.chainId в saas/firestore.rules). */
+/** Подписку и заведение (или сеть) — в past_due. pastDueSince ставим
+ *  только один раз, иначе повторный вызов отодвигал бы удаление данных. */
 async function markPastDue(id, subRef, isChain = false) {
   const sub = (await subRef.get()).data();
   const update = { status: "past_due" };
@@ -2272,18 +1903,10 @@ async function markPastDue(id, subRef, isChain = false) {
   }, { merge: true });
 }
 
-/** Реально стирает операционные данные заведения после истечения льготного
- *  периода — см. purgeTenantData в saas/functions/index.js, та же логика.
- *  В отличие от purgeDemoTenant выше, здесь НАМЕРЕННО остаются сам
- *  tenant-документ (статус "deleted") и подписка (статус "cancelled") —
- *  история для поддержки/бухгалтерии, а не бесследное удаление, как у
- *  демо-заведений.
- *  [skipSubscription] — точка сети (tenant.chainId задан) не имеет
- *  собственного subscriptions-документа (биллинг общий на сеть, см.
- *  handleCreateTenant) — писать туда "cancelled" в этом случае значило бы
- *  создать ЛИШНИЙ документ subscriptions/{tenantId}, которого раньше не
- *  было и который никто не должен читать; вызывается из purgeChainData,
- *  которая сама отмечает cancelled ОДНУ подписку сети. */
+/** Удаляет данные заведения после льготного периода. Сам документ
+ *  заведения (status: deleted) и подписка (cancelled) остаются для истории,
+ *  в отличие от демо. skipSubscription — для точки сети: своей подписки у
+ *  неё нет, подписку сети отменяет purgeChainData. */
 async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
@@ -2314,12 +1937,8 @@ async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
 // TENANT_SUBCOLLECTIONS, но для общей лояльности сети (см. saas/firestore.rules).
 const CHAIN_SUBCOLLECTIONS = ["branding", "clients", "phoneIndex", "referralCodes", "bonusOperations"];
 
-/** Стирает сеть целиком после истечения льготного периода: каждую живую
- *  точку — тем же purgeTenantData (без собственной подписки, см. выше),
- *  затем общую лояльность/брендинг сети и членство chainMembers. Как и у
- *  purgeTenantData, сам документ chains/{chainId} (статус "deleted") и
- *  подписка (статус "cancelled") НАМЕРЕННО остаются — история для
- *  поддержки/бухгалтерии. */
+/** Удаляет сеть после льготного периода: точки, общую лояльность и
+ *  членство. Документ сети и подписка остаются для истории. */
 async function purgeChainData(chainId) {
   const firestore = db();
   const locations = await firestore.collection("tenants").where("chainId", "==", chainId).get();
@@ -2348,10 +1967,8 @@ async function purgeChainData(chainId) {
   });
 }
 
-/** Раз в сутки продлевает подписки, у которых скоро закончится оплаченный
- *  период — см. chargeRecurringSubscriptions в saas/functions/index.js,
- *  та же логика (включая идемпотентность продления и 20-часовую защёлку
- *  от повторных попыток в один и тот же день). */
+/** Раз в сутки продлевает подписки, у которых период кончается в
+ *  ближайшие сутки. Повторы в тот же день отсекает 20-часовая защёлка. */
 async function runChargeRecurringSubscriptions() {
   const firestore = db();
   const withinADay = admin.firestore.Timestamp.fromMillis(Date.now() + 86400000);
@@ -2368,8 +1985,7 @@ async function runChargeRecurringSubscriptions() {
     const isChain = !!sub.chainId;
     const viaRobokassa = sub.provider === "robokassa";
     if (sub.cancelAtPeriodEnd) continue;
-    // Нечем продлить автоматически — сгорит в past_due само (см.
-    // runEnforceGracePeriod), владелец оплатит заново из кабинета.
+    // Нечем списать — подписка уйдёт в past_due сама, владелец оплатит из кабинета.
     if (viaRobokassa ? !sub.robokassaParentInvId : !sub.paymentMethodId) continue;
 
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
@@ -2378,10 +1994,7 @@ async function runChargeRecurringSubscriptions() {
     const planDoc = await firestore.collection("plans").doc(sub.planId).get();
     const plan = planDoc.data() || {};
     const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
-    // За сеть — цена тарифа за число точек НА МОМЕНТ продления (первая
-    // точка + доп. точки по своей, обычно более низкой цене — см.
-    // chainPriceForPeriod), а не то, что было при первой оплате: владелец
-    // мог за прошедший период добавить или закрыть точку.
+    // Сеть платит за число точек на момент продления: их могли добавить или закрыть.
     const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
     const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
     if (price <= 0) continue;
@@ -2401,9 +2014,7 @@ async function runChargeRecurringSubscriptions() {
         price, await billingOwnerEmail(isChain, targetId));
       await yookassaRequest("payments", {
         method: "POST",
-        // Ключ детерминирован от даты окончания периода — повторный прогон
-        // в тот же день не создаёт второй платёж, даже если что-то упало
-        // между первой попыткой и следующим тиком.
+        // Ключ зависит от конца периода: повторный прогон не создаст второй платёж.
         idempotenceKey: `renewal_${targetId}_${sub.currentPeriodEnd.toMillis()}`,
         body: {
           amount: { value: price.toFixed(2), currency: "RUB" },
@@ -2431,11 +2042,8 @@ async function runChargeRecurringSubscriptions() {
   }
 }
 
-/** Раз в сутки продвигает жизненный цикл подписки там, где
- *  runChargeRecurringSubscriptions не справляется сама (просроченные
- *  триалы, зависшие "active" без продления, реальное удаление данных
- *  после GRACE_PERIOD_DAYS) — см. enforceGracePeriod в
- *  saas/functions/index.js, та же логика в тех же трёх шагах. */
+/** Раз в сутки: истёкшие пробные периоды и неоплаченные подписки — в
+ *  past_due, а через GRACE_PERIOD_DAYS после этого данные удаляются. */
 async function runEnforceGracePeriod() {
   const firestore = db();
   const now = Date.now();
@@ -2460,8 +2068,7 @@ async function runEnforceGracePeriod() {
     .get();
   for (const subDoc of staleActive.docs) {
     const sub = subDoc.data();
-    // Списание могло быть запущено только сегодня — даём webhook'у сутки
-    // дойти, прежде чем считать подписку просроченной.
+    // Если списание запустили сегодня, даём уведомлению об оплате сутки.
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     if (now - lastAttemptMs < 24 * 3600000) continue;
     await markPastDue(subDoc.id, subDoc.ref, !!sub.chainId);
@@ -2483,18 +2090,10 @@ async function runEnforceGracePeriod() {
   }
 }
 
-// Раз в сутки — тот же интервал по смыслу, что и у двух отдельных Cloud
-// Functions на "every 24 hours" в saas/functions/index.js; здесь это один
-// таймер на оба шага, а не гарантия конкретного порядка/времени суток —
-// как и в оригинале, шаги независимы и защищены собственными проверками
-// (renewalAttemptedAt) от повторного срабатывания в тот же день.
 /**
- * Суточная задача, переживающая перезапуски: время последнего прогона — в
- * platformStatus/cronJobs, проверка — раз в час (первая — через
- * [firstDelayMs] после старта). Раньше задачи висели на setInterval(24 ч)
- * от момента запуска процесса: каждый деплой/перезапуск сбрасывал отсчёт,
- * и при обновлениях чаще раза в сутки автопродление подписок, льготный
- * период и подсчёт usage не запускались вообще.
+ * Суточная задача, которая переживает перезапуски: время прогона хранится в
+ * platformStatus/cronJobs, проверяем раз в час. С setInterval(24 ч) каждый
+ * деплой сбрасывал отсчёт, и при частых обновлениях задачи не шли вообще.
  */
 function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
   const ref = () => db().collection("platformStatus").doc("cronJobs");
@@ -2531,18 +2130,9 @@ function scheduleBillingCron() {
 // ------------------------------------------------------- calculateUsage
 
 /**
- * Раз в сутки пересчитывает usage каждого активного заведения
- * (tenants/{id}/usage/current) — то же самое, что было Cloud Function
- * calculateUsage в saas/functions/index.js (перенесено сюда по той же
- * причине, что и весь остальной этот файл — Blaze недоступен). Без неё
- * этот документ никогда не появляется, и "Требует внимания"/карточка
- * заведения в панели платформы (planLimitWarnings в console.js, уже читает
- * ровно этот путь) молча никогда не показывает превышение лимита тарифа —
- * не потому что лимиты не превышены, а потому что их физически некому
- * посчитать.
- *
- * Считает только количества (count()), не читает содержимое документов —
- * дёшево по чтениям даже при большом числе заведений.
+ * Раз в сутки: число сотрудников, устройств, столов и гостей заведения
+ * (tenants/{id}/usage/current) — по нему панель платформы показывает
+ * превышение лимитов тарифа. Только count(), документы не читаем.
  */
 async function runCalculateUsage() {
   const firestore = db();
@@ -2574,16 +2164,9 @@ function scheduleUsageCron() {
 }
 
 /**
- * Дневной снимок платформы (супер-админ #5) — тренд регистраций и MRR по
- * дням в "Аналитике" панели платформы. Регистрации за последние N дней
- * консоль и так считает на лету из tenants.createdAt (см. watchAnalytics в
- * console.js) — снимок нужен именно для MRR: это метрика "прямо сейчас"
- * (активные подписки × цена тарифа), её нельзя посчитать задним числом,
- * если не сохранять каждый день — в отличие от регистраций, у смены
- * тарифа/отмены подписки нет истории с датой изменения.
- *
- * Один документ в день (id — дата UTC), set() перезаписывает при повторном
- * запуске в тот же день — идемпотентно, повторный прогон не плодит дубли.
+ * Дневной снимок для графиков «Аналитики»: регистрации консоль считает
+ * сама, а MRR задним числом не восстановить — истории смены тарифа нет.
+ * Один документ на день (id — дата UTC), повторный прогон его перезаписывает.
  */
 async function runCalculatePlatformMetrics() {
   const firestore = db();
@@ -2599,23 +2182,13 @@ async function runCalculatePlatformMetrics() {
 
   let activeCount = 0;
   let mrr = 0;
-  // Точка сети (t.chainId задан) не считаем здесь по своим status/planId —
-  // оба поля у неё не отражают реальный биллинг (он общий на сеть, см.
-  // handleCreateChain/handleBillingWebhook): status у точки сети всегда
-  // "active" уже с момента создания (даже пока СЕТЬ ещё на пробном периоде
-  // или просрочена), а planId — просто дефолт "start", который никогда не
-  // синхронизируется с реальным тарифом сети. Без этого исключения MRR
-  // считал бы за каждую точку сети цену случайного одиночного тарифа
-  // "start" вместо настоящей per-location цены сети — см. цикл по chains
-  // ниже.
+  // Точки сети считаем через сеть: у точки status всегда active, а planId —
+  // заглушка «start», настоящий тариф и цена — у сети.
   const locationCountByChain = new Map();
   tenantsSnap.docs.forEach((d) => {
     const t = d.data();
     if (t.chainId) {
-      // "deleted", а не (status !== "active") — та же граница, что и в
-      // countChainLocations выше: тариф на сеть считается за каждую НЕ
-      // удалённую точку, приостановленные ("suspended") в их число тоже
-      // входят (владелец продолжает платить за них, пока не удалит).
+      // Как в countChainLocations: платят за все неудалённые точки, включая приостановленные.
       if (t.status !== "deleted") locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
       return;
     }
@@ -2630,9 +2203,7 @@ async function runCalculatePlatformMetrics() {
     if (!plan) return;
     const locationCount = Math.max(1, locationCountByChain.get(d.id) || 0);
     activeCount += locationCount;
-    // "monthly" — та же огрубление, что и для одиночных заведений выше
-    // (priceRub, без учёта того, что заведение может платить за 6/12
-    // месяцев сразу) — MRR здесь везде нормируется к месячной цене тарифа.
+    // MRR везде по месячной цене, даже если платят за полгода или год.
     mrr += chainPriceForPeriod(plan, "monthly", locationCount);
   });
 
@@ -2651,13 +2222,8 @@ function schedulePlatformMetricsCron() {
   scheduleDailyJob("platformMetrics", PLATFORM_METRICS_CRON_INTERVAL_MS, runCalculatePlatformMetrics, 20 * 60 * 1000);
 }
 
-/** Ручной запуск того же самого расчёта — кнопка "Пересчитать сейчас" в
- *  разделе "Инфраструктура" панели платформы: суточный таймер задумывался
- *  для тихой фоновой работы, но после первого деплоя этой фичи (или после
- *  перезапуска сервиса) ждать до суток, чтобы просто ПРОВЕРИТЬ, что она
- *  вообще считает, неудобно. Заодно снимает и дневную метрику платформы
- *  (см. runCalculatePlatformMetrics) — та же кнопка сразу даёт первую точку
- *  графика на "Аналитике", а не через сутки ожидания фонового таймера. */
+/** Кнопка «Пересчитать сейчас» в панели: usage и дневной снимок сразу, не
+ *  дожидаясь суточного таймера. */
 async function handleRecalculateUsage(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -2668,10 +2234,8 @@ async function handleRecalculateUsage(req, res) {
 // --------------------------------------------------- completeBuildJob
 
 /**
- * Обратный вызов от GitHub Actions (последний шаг saas-on-demand-build.yml)
- * — см. её же секрет SAAS_COMPLETE_BUILD_JOB_URL, который нужно перевести
- * на этот сервис (README.md). Подлинность — общий секрет в заголовке, не
- * Firebase Auth: раннеру GitHub не выдаётся токен ради одного действия.
+ * Обратный вызов последнего шага saas-on-demand-build.yml. Подлинность —
+ * общий секрет в заголовке x-callback-secret.
  */
 async function handleCompleteBuildJob(req, res) {
   const expected = process.env.BUILD_CALLBACK_SECRET || "";
@@ -2688,9 +2252,8 @@ async function handleCompleteBuildJob(req, res) {
   const jobDoc = await jobRef.get();
   if (!jobDoc.exists) throw new HttpError(404, "job not found");
 
-  // Номер запуска workflow — он же versionCode APK и BUILD_NUMBER внутри
-  // приложения (см. saas-on-demand-build.yml): по нему приложение решает,
-  // что вышла новая версия (handleAppUpdate ниже).
+  // Номер запуска workflow — это versionCode APK: по нему приложение видит
+  // новую версию (handleAppUpdate).
   const buildNumber = Number(body.buildNumber);
   await jobRef.update({
     status,
@@ -2705,9 +2268,8 @@ async function handleCompleteBuildJob(req, res) {
   if (status === "success") {
     await supersedeOldBuilds(job.tenantId).catch((e) => console.error("saas-gateway: чистка старых сборок:", e.message || e));
   } else if (job.rolloutSha) {
-    // Автообновление не собралось — заведение остаётся в очереди
-    // (appBuild.sha ≠ текущему коммиту), а сама раскатка встаёт на паузу
-    // (см. runAppRolloutTick), чтобы не собирать всем заведомо битую версию.
+    // Автообновление не собралось: заведение остаётся в очереди, а раскатка
+    // встаёт на паузу (runAppRolloutTick), чтобы не собирать всем битую версию.
     await db().collection("tenants").doc(job.tenantId)
       .set({ appBuild: { sha: "failed" } }, { merge: true })
       .catch(() => {});
@@ -2718,13 +2280,9 @@ async function handleCompleteBuildJob(req, res) {
 // ------------------------------------------- хранение сборок на диске
 
 /**
- * На сервере у заведения лежит только ПОСЛЕДНЯЯ готовая сборка каждого
- * приложения (касса Android, касса Windows, гостевое): приложения на
- * устройствах обновляются до неё сами (handleAppUpdate), старые файлы
- * никому не нужны, а место на диске они съедают быстро — каждое
- * обновление платформы пересобирает приложения всех заведений.
- * Предыдущие сборки помечаются "superseded" (в консоли — без «Скачать»),
- * их файлы удаляются.
+ * На сервере храним только последнюю готовую сборку каждого приложения
+ * заведения: устройства обновляются до неё сами, а каждое обновление
+ * платформы пересобирает всех. Старые помечаются superseded, файлы удаляются.
  */
 async function supersedeOldBuilds(tenantId) {
   const snap = await db()
@@ -2752,13 +2310,10 @@ async function supersedeOldBuilds(tenantId) {
 }
 
 /**
- * Раз в сутки — порядок на диске, даже если что-то прошло мимо
- * supersedeOldBuilds (сбой посреди чистки, файл без записи в buildJobs,
- * удалённое заведение): в tenant-builds остаются только файлы готовых и
- * ещё идущих сборок живых заведений. Свежие файлы (моложе 3 часов) не
- * трогаем — сборка могла только что загрузиться и ещё не отчитаться.
- * Заодно удаляются записи buildJobs старше 60 дней без файла (ошибки и
- * заменённые версии) — список сборок не растёт бесконечно.
+ * Суточная уборка tenant-builds на случай, если supersedeOldBuilds что-то
+ * пропустил: остаются файлы готовых и идущих сборок живых заведений.
+ * Файлы моложе 3 часов не трогаем — сборка могла ещё не отчитаться.
+ * Записи buildJobs без файла старше 60 дней удаляем.
  */
 const BUILD_FILE_GRACE_MS = 3 * 3600 * 1000;
 const BUILD_JOB_HISTORY_DAYS = 60;
@@ -2883,21 +2438,16 @@ function scheduleBuildsSweep() {
 // ------------------------------------------------- автообновление
 
 /**
- * Автообновление приложений всех заведений. Когда меняется код
- * приложений, GitHub Actions (.github/workflows/saas-rollout.yml) сообщает
- * сюда коммит — дальше сервер сам, по очереди, пересобирает кассу и
- * гостевое приложение каждому заведению, у которого приложения уже
- * собирались (tenants.appBuild — ставит startTenantBuild). Приложения на
- * устройствах находят новую версию и скачивают её сами (handleAppUpdate,
- * lib/services/app_update_service.dart) — владельцу ничего нажимать не нужно.
+ * Автообновление приложений всех заведений. saas-rollout.yml присылает
+ * коммит, и сервер по очереди пересобирает приложения тем, у кого они уже
+ * собирались (tenants.appBuild). Устройства сами находят новую версию
+ * (handleAppUpdate).
  *
- * Очередь — в Firestore (platformStatus/appRollout + tenants.appBuild.sha),
- * поэтому переживает перезапуск сервера. Несколько обновлений подряд
- * склеиваются: сборка начинается через APP_ROLLOUT_DELAY_MS после
- * последнего. Одновременно собирается не больше APP_ROLLOUT_CONCURRENCY
- * заведений. Если сборка какого-то заведения упала — раскатка встаёт на
- * паузу (битую версию всем не собираем); продолжит следующее обновление
- * или кнопка в панели платформы.
+ * Очередь в Firestore (platformStatus/appRollout, tenants.appBuild.sha) и
+ * переживает перезапуск. Пуши подряд склеиваются (APP_ROLLOUT_DELAY_MS),
+ * одновременно собирается не больше APP_ROLLOUT_CONCURRENCY заведений.
+ * Упала сборка — раскатка встаёт на паузу до следующего обновления или
+ * кнопки в панели.
  */
 const APP_ROLLOUT_DELAY_MS = 5 * 60 * 1000;
 const APP_ROLLOUT_CONCURRENCY = 2;
@@ -3031,22 +2581,10 @@ function scheduleAppRollout() {
 // ----------------------------------------------------- downloadBuild
 
 /**
- * Секрет для подписи одноразовых ссылок на скачивание — генерируется
- * заново при каждом старте процесса, хранить между рестартами не нужно:
- * сама ссылка живёт всего DOWNLOAD_TOKEN_TTL_MS, случайный рестарт сервера
- * ровно в это окно — цена ещё одного клика «Скачать», не более того.
- *
- * ПОЧЕМУ так, а не проверка заголовка Authorization на самом GET (как было
- * раньше): консоль скачивала через fetch()+blob с заголовком Authorization,
- * а обычный window.open() так не может — пришлось бы либо держать сложный
- * JS-путь (fetch → blob → синтетическая ссылка), либо звать этот GET
- * напрямую без заголовка. Первый способ на практике не сработал у
- * реального пользователя (браузер молча блокировал запрос) — а разбираться
- * дальше вслепую, без доступа к консоли разработчика на его телефоне,
- * бессмысленно. Подписанная одноразовая ссылка работает как у публичного
- * APK — просто window.open() — но всё равно требует СНАЧАЛА получить её
- * через getDownloadUrl (POST, с Firebase Auth), так что чужую сборку по
- * прямому URL не скачать: угадать jobId мало, нужен ещё и свежий токен.
+ * Одноразовые минутные ссылки на скачивание: консоль сначала получает
+ * ссылку через getDownloadUrl (с Firebase Auth и проверкой роли), потом
+ * просто открывает её. fetch+blob с заголовком Authorization на телефонах
+ * молча блокировался. Секрет живёт до перезапуска — ссылка всё равно минутная.
  */
 const DOWNLOAD_TOKEN_SECRET = crypto.randomBytes(32).toString("hex");
 const DOWNLOAD_TOKEN_TTL_MS = 60000;
@@ -3065,10 +2603,7 @@ function verifyDownloadToken(jobId, token) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/**
- * POST, с обычной проверкой Firebase Auth + роли — выдаёт саму ссылку для
- * скачивания (см. docstring выше). Консоль сразу открывает её window.open().
- */
+/** Выдаёт ссылку на скачивание сборки (Firebase Auth + роль). */
 async function handleGetDownloadUrl(req, res) {
   const decoded = await verifyAuth(req);
   const { jobId } = await parseJsonBody(req);
@@ -3088,12 +2623,7 @@ async function handleGetDownloadUrl(req, res) {
   });
 }
 
-/**
- * Сам файл — единственный GET в этом файле (остальные операции — POST с
- * JSON-телом, см. ROUTES ниже). Доступ проверяется токеном из
- * handleGetDownloadUrl выше, не заголовком Authorization — см. её же
- * docstring, почему.
- */
+/** Сам файл: доступ по токену из ссылки, без заголовка Authorization. */
 async function handleDownloadBuild(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
   const jobId = requestUrl.searchParams.get("jobId") || "";
@@ -3108,14 +2638,8 @@ async function handleDownloadBuild(req, res) {
   const job = jobDoc.data();
   if (job.status !== "success") throw new HttpError(409, "сборка ещё не готова");
 
-  // На диске файл ВСЕГДА лежит как "{jobId}.apk" независимо от платформы —
-  // это фиксированное имя пишет forced-command скрипт deploy-tenant-apk.sh
-  // на сервере (см. saas/README.md), которому нужно поправить один параметр
-  // ("apk"), чтобы что-то поменять, а трогать его ради Windows-сборки не
-  // нужно: то, что фактически внутри архива (APK или zip Windows-сборки),
-  // определяет только это тело ответа — Content-Type и имя файла в
-  // Content-Disposition, а не путь на диске. Браузер сохраняет файл под
-  // именем из Content-Disposition, а не по URL/пути на сервере.
+  // На диске файл всегда "{jobId}.apk" (так пишет deploy-tenant-apk.sh),
+  // что внутри — определяют Content-Type и имя в Content-Disposition.
   const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
   try {
     await fs.promises.access(filePath, fs.constants.R_OK);
@@ -3124,14 +2648,9 @@ async function handleDownloadBuild(req, res) {
   }
 
   const isWindows = job.platform === "windows";
-  // Имя файла — по типу сборки, а не всегда "zalpos-...": иначе кассу и
-  // гостевое приложение (независимые job'ы от одного нажатия «Собрать
-  // APK», см. handleCreateBuildJob) в папке «Загрузки» не отличить друг от
-  // друга без переименования вручную. Windows-кассу — от Android-кассы.
+  // Разные имена, чтобы кассу и гостевое приложение можно было отличить в «Загрузках».
   const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "zalpos-windows" : "zalpos";
-  // Windows-сборка раньше была zip-архивом, теперь — установщик setup.exe.
-  // На диске оба лежат как "{jobId}.apk", поэтому что внутри, смотрим по
-  // первым байтам: «MZ» — exe, иначе — старый zip.
+  // Windows-касса раньше была zip, теперь установщик: смотрим сигнатуру «MZ».
   let isInstaller = false;
   if (isWindows) {
     try {
@@ -3147,19 +2666,8 @@ async function handleDownloadBuild(req, res) {
     ? (isInstaller ? "application/vnd.microsoft.portable-executable" : "application/zip")
     : "application/vnd.android.package-archive";
 
-  // X-Accel-Redirect, не fs.createReadStream(...).pipe(res): раньше файл
-  // отдавал сам Node-процесс — на реальном телефоне загрузка зависала
-  // ровно на 100% (все байты приходили, но браузер/загрузчик так и не
-  // считал файл завершённым — судя по всему, что-то в связке Node ⇄ nginx
-  // ⇄ клиент не закрывало соединение как положено). Публичный APK
-  // (downloadPublicApk) отдаёт статикой сам nginx и НИ РАЗУ не зависал за
-  // всю сессию — поэтому личные сборки теперь отдаёт тоже он: этот
-  // заголовок говорит nginx подменить тело ответа на файл по внутреннему
-  // пути (см. location /internal-tenant-builds/ в конфиге nginx,
-  // saas/README.md), а Node только решает, МОЖНО ли этому запросу вообще
-  // получить файл (проверка токена выше) — байты через Node больше не
-  // идут вообще. Сам внутренний путь всегда "{jobId}.apk" (см. комментарий
-  // выше про filePath) независимо от того, что фактически внутри.
+  // Байты отдаёт nginx (location /internal-tenant-builds/), Node только
+  // проверяет доступ: при отдаче из Node загрузка на телефонах зависала на 100 %.
   res.writeHead(200, {
     "Content-Type": contentType,
     "Content-Disposition": `attachment; filename="${fileNamePrefix2}-${jobId}.${fileExt}"`,
@@ -3173,31 +2681,15 @@ async function handleDownloadBuild(req, res) {
 
 /**
  * «Вышла ли новая версия?» — касса и гостевое приложение спрашивают сами
- * (на старте, при возврате в приложение и раз в полчаса, см.
- * lib/services/app_update_service.dart) и, если да, показывают плашку
- * «Обновить»: файл качается прямо в приложении с полосой загрузки и
- * ставится поверх старой версии — данные на устройстве остаются (та же
- * подпись, versionCode больше, см. saas-on-demand-build.yml).
+ * (app_update_service.dart) и ставят обновление поверх, данные на месте.
+ * Версия — buildNumber сборки (номер запуска workflow); у старых сборок
+ * номера нет, им обновление не предлагаем.
  *
- * Версия — buildNumber сборки (номер запуска workflow, его присылает
- * completeBuildJob); приложение знает свой из --dart-define=BUILD_NUMBER.
- * У сборок, собранных до этого поля, номера нет — им обновление не
- * предлагается.
+ * Гостевому приложению отвечаем без входа: его APK и так раздаётся по QR.
+ * Кассе — только участнику заведения: в неё зашит код приглашения.
  *
- * Доступ:
- *  - гостевое приложение (app: "guest") — без входа, как и
- *    handlePublicGuestApk: этот APK и так раздаётся всем по QR стола;
- *  - касса (app: "pos") — только активному участнику заведения, любая роль
- *    (планшет кассы входит как employee): в кассовую сборку запечён код
- *    приглашения устройства, посторонним её отдавать нельзя.
- * Ссылка на файл — та же подписанная минутная, что и в консоли
- * (signDownloadToken → handleDownloadBuild); приложение берёт свежую прямо
- * перед загрузкой.
- *
- * Гостевых телефонов у заведения сотни, и каждый спрашивает — поэтому
- * список сборок заведения кэшируется в памяти (APP_UPDATE_CACHE_TTL_MS) и
- * сбрасывается, как только completeBuildJob отметил новую сборку: новая
- * версия видна сразу, а Firestore не читается на каждый вопрос.
+ * Гостей у заведения сотни, поэтому список сборок кэшируется в памяти и
+ * сбрасывается, как только completeBuildJob отметил новую сборку.
  */
 const APP_UPDATE_TYPES = { pos: "pos", guest: "guest" };
 const APP_UPDATE_PLATFORMS = ["android", "windows"];
@@ -3288,12 +2780,13 @@ function readRawBody(req, maxBytes) {
     let size = 0;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > maxBytes) {
-        reject(new HttpError(413, "файл слишком большой"));
-        req.destroy();
+      if (size <= maxBytes) {
+        chunks.push(chunk);
         return;
       }
-      chunks.push(chunk);
+      // Дочитываем вхолостую, чтобы клиент увидел 413, а не обрыв; совсем большое рвём.
+      reject(new HttpError(413, "файл слишком большой"));
+      if (size > maxBytes * 2 + 1048576) req.destroy();
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
@@ -3301,14 +2794,9 @@ function readRawBody(req, maxBytes) {
 }
 
 /**
- * Загрузка логотипа заведения (branding.logoUrl, раздел "Брендинг" в
- * консоли) — раньше шла напрямую в Firebase Storage из браузера, но
- * Storage у saas-3bdc8 требует платный тариф Blaze (бакета физически не
- * существует — ровно та же история, что и с публичным APK, см.
- * saas/README.md раздел 8b и BRANDING_UPLOADS_DIR выше). Тело запроса —
- * СЫРЫЕ байты картинки (Content-Type: image/png|jpeg|webp), не JSON и не
- * multipart — так проще и на клиенте (XMLHttpRequest с прогрессом), и
- * здесь: не нужен парсер multipart ради одного файла без доп. полей.
+ * Логотип заведения (Storage у проекта без Blaze недоступен). Тело —
+ * сырые байты картинки с Content-Type image/png|jpeg|webp: на клиенте это
+ * XMLHttpRequest с прогрессом, здесь не нужен разбор multipart.
  */
 async function handleUploadBrandingLogo(req, res) {
   const decoded = await verifyAuth(req);
@@ -3327,9 +2815,7 @@ async function handleUploadBrandingLogo(req, res) {
 
   const dir = path.join(BRANDING_UPLOADS_DIR, tenantId);
   await fs.promises.mkdir(dir, { recursive: true });
-  // У заведения один логотип, а не история версий — если раньше грузили
-  // другой формат, старый файл остался бы висеть рядом с новым и (в теории)
-  // мог бы отдаться по прямой ссылке, если кто-то её угадает/сохранил.
+  // Логотип один: файл другого формата от прошлой загрузки удаляем.
   await Promise.all(
     Object.values(BRANDING_CONTENT_TYPES)
       .filter((oldExt) => oldExt !== ext)
@@ -3337,19 +2823,14 @@ async function handleUploadBrandingLogo(req, res) {
   );
   await fs.promises.writeFile(path.join(dir, `logo.${ext}`), buffer);
 
-  // Домен сюда сознательно не зашиваем (см. отсутствие PUBLIC_BASE_URL во
-  // всём этом файле) — консоль и так уже знает свой SAAS_GATEWAY_URL и
-  // достраивает из него origin сама (см. uploadBrandingLogo в console.js).
+  // Путь без домена: консоль достраивает адрес от SAAS_GATEWAY_URL.
   sendJson(res, 200, { path: `/branding/${tenantId}/logo.${ext}` });
 }
 
 /**
- * Фото блюд и категорий меню кассы (раньше — общий бакет Supabase, где
- * файлы всех заведений лежали в одной папке и любое заведение могло
- * перезаписать или удалить чужие). Теперь — в папку своего заведения
- * рядом с логотипом: публичное чтение статикой nginx (/branding/, меню
- * видят гости), запись — только персонал этого заведения. Тело — сырые
- * байты картинки, как у uploadBrandingLogo.
+ * Фото блюд и категорий меню — в папку своего заведения (раньше лежали в
+ * общем бакете, и заведения могли перезаписать чужие). Читаются публично
+ * через nginx (/branding/), пишет только персонал заведения.
  */
 const MENU_IMAGE_FOLDERS = new Set(["items", "categories"]);
 async function handleUploadMenuImage(req, res) {
@@ -3406,11 +2887,9 @@ function checkDemoRateLimit(ip) {
 }
 
 /**
- * Настоящий IP клиента. nginx (см. README.md, location /saas/) кладёт его в
- * X-Real-IP и ДОПИСЫВАЕТ в конец X-Forwarded-For ($proxy_add_x_forwarded_for).
- * Первый элемент X-Forwarded-For присылает сам клиент — раньше брался
- * именно он, и лимит на демо-заведения (а с ним и любые проверки по IP)
- * обходился одним поддельным заголовком.
+ * IP клиента. nginx кладёт его в X-Real-IP и дописывает в конец
+ * X-Forwarded-For; первый элемент X-Forwarded-For присылает сам клиент,
+ * ему верить нельзя.
  */
 function clientIp(req) {
   const real = req.headers["x-real-ip"];
@@ -3425,14 +2904,11 @@ function clientIp(req) {
 
 // ------------------------------------------------------------ демо-данные
 //
-// Демо должно с первого экрана показать почти всё, что умеет приложение:
-// основной зал, 2 этаж и терраса с аккуратно расставленными столами всех
-// форм, живой зал (заняты, «скоро освободится», «время вышло», бронь, два
-// чека на баре), меню с фото,
-// открытую смену с выручкой, брони и лист ожидания, вызовы и заказ гостя,
-// сотрудников с зарплатой, склад с позициями на исходе, гостей с бонусами
-// разных уровней, отзывы, истории, счастливые часы и скидочные карты.
-// Все имена и данные вымышленные; заведение стирается само (DEMO_TTL_MS).
+// Демо с первого экрана показывает почти всё: три зала, живую посадку
+// (заняты, «скоро освободится», «время вышло», бронь, два чека на баре),
+// меню с фото, открытую смену с выручкой, брони, сотрудников с зарплатой,
+// склад с позициями на исходе, гостей разных уровней, отзывы и акции.
+// Все данные вымышленные, заведение удаляется само (DEMO_TTL_MS).
 
 // Схема зала — логический холст 1000×640 с плиткой 104 (как в
 // lib/utils/hall_layout.dart). Столы задаются левым верхним углом плитки в
@@ -3507,11 +2983,9 @@ const DEMO_STOCK = [
 // [ключ из DEMO_STOCK, сколько, единица]. rank — место в «Популярном».
 const DEMO_MENU = [
   {
-    // Табак — без фото, описаний и с флагом tobacco (ст. 16 закона
-    // № 15-ФЗ): фото кальяна в меню гостя — уже реклама, флаг снимает
-    // скидки и «Хит», а гостю табак показывается строгим списком.
-    // Фото категории видят только сотрудники в кассе: гостю табачная
-    // категория плиткой не показывается (kolibri_menu_screen, app.js).
+    // Табак без фото и описаний, с флагом tobacco (ст. 16 15-ФЗ): флаг
+    // убирает скидки и «Хит», гостю табак показывается строгим списком.
+    // Фото категории видят только сотрудники в кассе.
     category: "Кальяны",
     img: "hookah",
     tobacco: true,
@@ -3690,12 +3164,9 @@ const DEMO_MENU = [
   },
 ];
 
-// PIN-коды нарочно простые и совпадают с тем, что написано на лендинге
-// рядом с кнопкой скачивания демо-APK (см. screenLanding() в console.js)
-// — заведение живёт несколько часов и стирается само (purgeDemoTenant),
-// это не боевые учётные данные. Длина PIN соответствует роли (см.
-// AppConstants.pinLengthForRole) — иначе экран входа с этим кодом просто
-// не пустит: у сотрудника 4 цифры, у администратора 6.
+// PIN-коды нарочно простые, они же написаны на лендинге у демо-APK.
+// Длина по роли (AppConstants.pinLengthForRole): 4 цифры у сотрудника, 6 у
+// администратора.
 const DEMO_STAFF = [
   { key: "admin", name: "Демо-админ", pinCode: "111111", role: "admin", position: "universal" },
   { key: "hookah", name: "Максим", pinCode: "1111", role: "employee", position: "hookah_master",
@@ -4122,11 +3593,9 @@ function seedDemoData(tenantRef, batch, nowMs) {
 }
 
 /**
- * Создаёт одноразовое тестовое заведение — без email/пароля, без владельца:
- * сразу возвращает tenantId + код приглашения устройства, чтобы клиент мог
- * присоединиться тем же путём, что и обычное устройство (см.
- * SaasDeviceJoinService.joinAsDevice), только не вводя код руками.
- * Помечено `demo: true` — по этому полю его позже найдёт и удалит
+ * Одноразовое демо-заведение без владельца: сразу отдаём tenantId и код
+ * приглашения, клиент присоединяется как обычное устройство
+ * (SaasDeviceJoinService.joinAsDevice). По флагу demo его потом удаляет
  * scheduleDemoCleanup.
  */
 async function handleCreateDemoTenant(req, res) {
@@ -4212,14 +3681,7 @@ async function purgeDemoTenant(tenantId) {
 
 // ----------------------------------------- super-admin: enable/disable/plan
 
-/**
- * enableTenant/disableTenant/changeTenantPlan — раньше были Cloud Functions
- * (saas/functions/index.js), не задеплоены по той же причине, что и
- * createTenant/createBuildJob выше (Blaze недоступен у saas-3bdc8). Кнопки
- * «Заблокировать»/смена тарифа в панели платформы раньше звали их через
- * httpsCallable и молча проваливались (функция никогда не существовала —
- * не 403, а просто нет такого HTTP-эндпоинта вообще).
- */
+// Модерация из панели платформы.
 async function handleDisableTenant(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -4243,10 +3705,17 @@ async function handleEnableTenant(req, res) {
   await requireSuperAdmin(decoded);
   const { tenantId } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
-  await db().collection("tenants").doc(tenantId).update({
-    status: "active",
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  const tenantRef = db().collection("tenants").doc(tenantId);
+  const tenant = (await tenantRef.get()).data();
+  if (!tenant) throw new HttpError(404, "Заведение не найдено");
+  // Возвращаем статус подписки: разблокированный триал не должен стать
+  // «active» и попасть в MRR. У точки сети статус всегда active.
+  let status = "active";
+  if (!tenant.chainId) {
+    const sub = (await db().collection("subscriptions").doc(tenantId).get()).data();
+    if (sub && ["trial", "active", "past_due"].includes(sub.status)) status = sub.status;
+  }
+  await tenantRef.update({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "tenantEnabled" });
   await writeSecurityEvent(req, decoded, "tenantEnabled", { tenantId, metadata: await tenantLabel(tenantId) });
   sendJson(res, 200, { ok: true });
@@ -4277,22 +3746,21 @@ async function handleChangeTenantPlan(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+/** Статус подписки дублируется в документе заведения (или сети) — его
+ *  читают консоль и приложения. Приостановленное вручную не трогаем. */
+async function syncBillingOwnerStatus(chainId, billingId, subStatus) {
+  if (!["trial", "active", "past_due"].includes(subStatus)) return;
+  const ref = db().collection(chainId ? "chains" : "tenants").doc(billingId);
+  const cur = (await ref.get()).data();
+  if (!cur || cur.status === "suspended" || cur.status === "deleted") return;
+  await ref.set({ status: subStatus, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+}
+
 /**
- * Бонусный период (супер-админ #7) — продлить доступ заведению вручную, не
- * трогая дату руками через "Ручное управление подпиской" (та форма в
- * консоли остаётся для точных исправлений, эта кнопка — для быстрого "дать
- * ещё N дней", например в благодарность за отзыв или при жалобе на баг).
- * Для триала продлевает trialEndsAt, иначе — currentPeriodEnd и сразу
- * возвращает status в "active" (снимая pastDueSince) — бонус должен снять
- * блокировку, а не тихо продлить дату у уже заблокированного заведения.
- * Отсчитывается от MAX(текущая дата окончания, сейчас) — иначе бонус,
- * выданный уже просроченному заведению, "сгорал" бы в прошлом.
- *
- * Точка сети (tenant.chainId задан) не имеет своей subscriptions/{tenantId}
- * — биллинг общий, на subscriptions/{chainId} (см. handleCreateChain) — без
- * этого resolve'а запрос всегда падал бы 404 для любой точки сети. Бонус
- * в этом случае продлевает подписку ВСЕЙ сети, а не одной точки — это и
- * есть верное поведение при общем биллинге.
+ * «Дать ещё N дней» из панели платформы. Триалу продлевает trialEndsAt,
+ * остальным — currentPeriodEnd и снимает блокировку. Считаем от
+ * max(дата окончания, сейчас), иначе бонус просроченному заведению сгорел
+ * бы в прошлом. У точки сети продлевается подписка всей сети.
  */
 async function handleGrantBonusPeriod(req, res) {
   const decoded = await verifyAuth(req);
@@ -4327,6 +3795,7 @@ async function handleGrantBonusPeriod(req, res) {
     update.pastDueSince = null;
   }
   await subRef.update(update);
+  if (update.status) await syncBillingOwnerStatus(chainId, billingId, update.status);
   await writeAuditLog({
     tenantId, actorId: decoded.uid, action: "bonusPeriodGranted", metadata: { days: daysNum, chainId },
   });
@@ -4337,13 +3806,9 @@ async function handleGrantBonusPeriod(req, res) {
 }
 
 /**
- * Удаление демо-заведения вручную из панели платформы — та же логика,
- * что и у автоматической ночной очистки (scheduleDemoCleanup ниже), но по
- * запросу супер-админа, не дожидаясь DEMO_TTL_MS. Намеренно ограничено
- * ТОЛЬКО демо-заведениями (tenant.demo === true) — это необратимое
- * рекурсивное удаление всех данных, давать его на произвольный (платящий)
- * tenantId из этой же кнопки было бы слишком лёгким способом снести чужие
- * реальные данные одним случайным кликом.
+ * Удаление демо-заведения вручную, не дожидаясь DEMO_TTL_MS. Только демо:
+ * удаление рекурсивное и необратимое, по случайному клику нельзя снести
+ * данные настоящего заведения.
  */
 async function handleDeleteDemoTenant(req, res) {
   const decoded = await verifyAuth(req);
@@ -4366,12 +3831,9 @@ async function handleDeleteDemoTenant(req, res) {
 }
 
 /**
- * Ручная правка подписки из карточки заведения в панели платформы
- * (статус, «оплачено до», «триал до») — по сути выдача или отключение
- * доступа без оплаты. Раньше писалась прямо из браузера и нигде не
- * оставляла следа; теперь только здесь, с записью «было → стало» в журнал
- * безопасности. Точка сети правит общую подписку сети (subscriptions/
- * {chainId}), как и раньше в консоли.
+ * Ручная правка подписки из карточки заведения (статус, «оплачено до»,
+ * «триал до») с записью «было → стало» в журнал безопасности. У точки сети
+ * правится подписка сети.
  */
 const SUBSCRIPTION_STATUSES = ["trial", "active", "past_due", "cancelled", "incomplete"];
 function dateInputToTimestamp(value, label) {
@@ -4401,10 +3863,10 @@ async function handleOverrideSubscription(req, res) {
   const trialEnd = dateInputToTimestamp(body.trialEndsAt, "Триал до");
   if (periodEnd) payload.currentPeriodEnd = periodEnd;
   if (trialEnd) payload.trialEndsAt = trialEnd;
-  // Ручная правка всегда означает «разобрались вручную» — сбрасываем
-  // pastDueSince, иначе отсчёт до удаления данных продолжил бы тикать.
+  // Разобрались вручную — останавливаем отсчёт до удаления данных.
   if (status !== "past_due") payload.pastDueSince = null;
   await subRef.set(payload, { merge: true });
+  await syncBillingOwnerStatus(chainId, chainId || tenantId, status);
 
   const day = (ts) => (ts && typeof ts.toDate === "function" ? ts.toDate().toISOString().slice(0, 10) : null);
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "subscriptionOverridden", metadata: { status, chainId } });
@@ -4421,10 +3883,8 @@ async function handleOverrideSubscription(req, res) {
 }
 
 /**
- * Создание/правка/удаление тарифа (цены, лимиты) — раньше прямо из
- * браузера; теперь здесь, чтобы каждое изменение цены попадало в журнал
- * безопасности с «было → стало». Принимаются только известные поля своих
- * типов — произвольный мусор в публичный документ тарифа не попадёт.
+ * Создание, правка и удаление тарифов — с записью изменений цен в журнал
+ * безопасности. Принимаем только известные поля своих типов.
  */
 const PLAN_NUMBER_FIELDS = [
   "priceRub", "priceRubSemiannual", "priceRubYearly",
@@ -4473,9 +3933,8 @@ async function handleSavePlan(req, res) {
   const before = snap.exists ? snap.data() : {};
   await ref.set(fields, { merge: true });
 
-  // Незаданное раньше поле, пришедшее как 0/false/пусто (форма шлёт все
-  // поля разом, включая скрытые поля тарифа сети), изменением не считаем —
-  // иначе в журнале тонули бы настоящие изменения цен.
+  // Форма шлёт все поля разом: ранее незаданное поле, пришедшее пустым,
+  // изменением не считаем, иначе в журнале утонут настоящие изменения цен.
   const changes = {};
   if (!create) {
     for (const [k, v] of Object.entries(fields)) {
@@ -4510,14 +3969,9 @@ async function handleDeletePlan(req, res) {
 }
 
 /**
- * Раз в DEMO_CLEANUP_INTERVAL_MS стирает демо-заведения старше DEMO_TTL_MS
- * — замена Cloud Scheduler (тоже требует Blaze) обычным setInterval внутри
- * долгоживущего systemd-процесса. Первый прогон может упасть с
- * FAILED_PRECONDITION, если в Firestore ещё нет составного индекса
- * (demo ASC, createdAt ASC, см. saas/firestore.indexes.json) — ошибка
- * содержит прямую ссылку на консоль Firebase для его создания в один клик,
- * до этого демо-заведения просто накапливаются лишние несколько часов, без
- * какого-либо сбоя для гостей/владельцев.
+ * Каждые DEMO_CLEANUP_INTERVAL_MS удаляет демо старше DEMO_TTL_MS. Нужен
+ * составной индекс demo+createdAt (saas/firestore.indexes.json); без него
+ * запрос падает с FAILED_PRECONDITION и ссылкой на создание индекса.
  */
 function scheduleDemoCleanup() {
   setInterval(async () => {
@@ -4599,13 +4053,10 @@ async function handleRevokeSuperAdmin(req, res) {
 }
 
 /**
- * «Выйти на всех устройствах»: отзывает refresh-токены (новый токен уже не
- * выдать) и ставит sessionsValidAfter — по нему и этот сервис
- * (requireSuperAdmin), и правила базы (isSuperAdmin в saas/firestore.rules)
- * перестают пускать ВСЕ ранее открытые сеансы сразу, а не через час, когда
- * истечёт уже выданный токен. Свои сеансы можно завершить в любой момент;
- * чужие — только после ввода пароля (иначе украденный сеанс мог бы
- * бесконечно выкидывать настоящих админов).
+ * «Выйти на всех устройствах»: отзываем refresh-токены и ставим
+ * sessionsValidAfter — по нему и сервис, и правила базы сразу перестают
+ * пускать уже открытые сеансы. Чужие сеансы — только после ввода пароля,
+ * иначе украденный сеанс мог бы выкидывать настоящих админов.
  */
 async function handleRevokeAdminSessions(req, res) {
   const decoded = await verifyAuth(req);
@@ -4626,17 +4077,14 @@ async function handleRevokeAdminSessions(req, res) {
   sendJson(res, 200, { ok: true, self: uid === decoded.uid });
 }
 
-// Не чаще раза в 10 минут на один сеанс обновляем lastSeenAt — панель
-// может открываться много раз подряд, а запись в базу не бесплатна.
+// lastSeenAt обновляем не чаще раза в 10 минут на сеанс.
 const ADMIN_LOGIN_TOUCH_MS = 10 * 60 * 1000;
 const adminLoginTouched = new Map(); // sessionId -> ms
 
 /**
- * Консоль вызывает при каждом открытии панели платформы. Один документ
- * adminLogins/{uid}_{auth_time} на один вход (сеанс), с IP и браузером —
- * по ним супер-админ видит в «Безопасности», откуда заходили в панель, и
- * может нажать «Это был не я». Если в течение одного сеанса сменился IP,
- * он добавляется в ips — тоже повод присмотреться.
+ * Консоль вызывает при каждом открытии панели платформы: один документ
+ * adminLogins/{uid}_{auth_time} на вход, с IP и браузером, для «Это был не
+ * я». Смена IP внутри сеанса добавляется в ips.
  */
 async function handleRecordAdminLogin(req, res) {
   const decoded = await verifyAuth(req);
@@ -4681,11 +4129,9 @@ async function handleRecordAdminLogin(req, res) {
 
 // ------------------------------------------- security: состояние платформы
 
-// Поддомены заведений {slug}.GUEST_BASE_DOMAIN выпускает provision-tenant-
-// domain.sh (certbot) на этом же сервере — поэтому сертификаты проверяем,
-// подключаясь к локальному nginx (CERT_CHECK_CONNECT_HOST) с нужным SNI, а
-// не через внешний IP: многие хостинги не пускают сервер к самому себе
-// по публичному адресу.
+// Сертификаты поддоменов выпускает этот же сервер, поэтому проверяем через
+// локальный nginx с нужным SNI: многие хостинги не пускают сервер к самому
+// себе по публичному адресу.
 const GUEST_BASE_DOMAIN = process.env.GUEST_BASE_DOMAIN || "zalpos.ru";
 const GATEWAY_PUBLIC_HOST = process.env.GATEWAY_PUBLIC_HOST || `pii.${GUEST_BASE_DOMAIN}`;
 const CERT_CHECK_CONNECT_HOST = process.env.CERT_CHECK_CONNECT_HOST || "127.0.0.1";
@@ -4764,15 +4210,11 @@ function scheduleCertificateCheck() {
 
 // ------------------------------------------------ резервные копии базы
 //
-// Firestore «managed export» требует тарифа Blaze и бакета Cloud Storage —
-// у saas-3bdc8 их нет (см. шапку файла). Поэтому копия делается здесь:
-// все документы читаются через Admin SDK и пишутся одним сжатым JSON в
-// BACKUP_DIR на этом сервере (права 600, только пользователь сервиса).
-// Каждый документ — одно чтение из бесплатной квоты Firebase (50 000 в
-// сутки на тарифе Spark, при превышении база встаёт до конца суток!),
-// поэтому перед копией размер базы оценивается через count(): больше
-// BACKUP_MAX_DOCS — копия не делается, а панель объясняет, почему.
-// Восстановление — вручную, скриптом restore-backup.js (см. README.md).
+// Managed export Firestore требует Blaze и бакета, поэтому читаем все
+// документы через Admin SDK и пишем один сжатый JSON в BACKUP_DIR (права
+// 600). Чтения идут из бесплатной квоты (50 000 в сутки, при превышении база
+// встаёт до конца суток), поэтому сначала оцениваем размер через count():
+// больше BACKUP_MAX_DOCS — копию не делаем. Восстановление — restore-backup.js.
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 const BACKUP_KEEP = Math.max(1, Number(process.env.BACKUP_KEEP) || 14);
 const BACKUP_MAX_DOCS = Math.max(100, Number(process.env.BACKUP_MAX_DOCS) || 20000);
@@ -5066,12 +4508,10 @@ async function handleReprovisionDomain(req, res) {
 // ------------------------------------- security: подозрительная активность
 
 /**
- * Регистрации и попытки по IP (signupEvents): создание заведения, сети,
- * демо, упор в лимит демо, отказ по блок-листу. По ним раздел
- * «Безопасность → Активность» показывает всплески с одного адреса. Читает
- * только супер-админ; IP хранится отдельно от документа заведения, чтобы
- * его не видели сотрудники заведения. Упоры в лимит и отказы пишутся не
- * чаще раза в час на IP — иначе бот сам бы заполнял коллекцию.
+ * signupEvents: создание заведений, сетей и демо, упоры в лимит и отказы
+ * по блок-листу — по ним «Безопасность → Активность» показывает всплески с
+ * одного IP. Читает только супер-админ. Упоры и отказы пишем не чаще раза в
+ * час на IP, иначе бот сам заполнял бы коллекцию.
  */
 const signupEventThrottle = new Map(); // `${type}:${ip}` -> ms
 function recordSignupEvent(req, type, { uid, email, tenantId, chainId, slug } = {}) {
@@ -5079,6 +4519,7 @@ function recordSignupEvent(req, type, { uid, email, tenantId, chainId, slug } = 
   if (type === "rateLimited" || type === "blocked") {
     const key = `${type}:${ip}`;
     if (Date.now() - (signupEventThrottle.get(key) || 0) < 60 * 60 * 1000) return;
+    if (signupEventThrottle.size > 10000) signupEventThrottle.clear();
     signupEventThrottle.set(key, Date.now());
   }
   let col;
@@ -5263,14 +4704,24 @@ async function setDeviceEnabled(req, res, enabled) {
 
 // ------------------------------------ security: персональные данные (152-ФЗ)
 //
-// Реестр запросов субъектов персональных данных (dataRequests): удалить,
-// выдать копию, исправить. Гость отправляет запрос на удаление сам (кнопка
-// «Удалить мои данные» в профиле веб-версии), остальные запросы (письмо,
-// звонок) супер-админ заводит вручную. Срок — 30 дней с получения (ч. 5
-// ст. 21 152-ФЗ), панель подсвечивает просроченные. Читает только
-// супер-админ, пишет только этот сервис.
-const DATA_REQUEST_DUE_DAYS = 30;
+// Реестр запросов субъектов ПД (dataRequests): удалить, выдать копию,
+// исправить. Гость просит удалить данные сам из веб-версии, письма и звонки
+// супер-админ заводит вручную. Сроки — ст. 20 и 21 152-ФЗ: сведения и
+// прекращение обработки — 10 рабочих дней, уточнение — 7 рабочих дней.
 const DATA_REQUEST_KINDS = ["delete", "export", "correct"];
+const DATA_REQUEST_WORKDAYS = { delete: 10, export: 10, correct: 7 };
+
+/** Срок ответа: рабочие дни без учёта праздников — считаем с запасом. */
+function dataRequestDueMs(kind, fromMs) {
+  let days = DATA_REQUEST_WORKDAYS[kind] || 10;
+  const d = new Date(fromMs + 3 * 3600000); // день недели по Москве
+  while (days > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6) days--;
+  }
+  return d.getTime() - 3 * 3600000;
+}
 const DATA_REQUEST_SUBJECTS = ["guest", "owner", "other"];
 
 async function handleCreateDataRequest(req, res) {
@@ -5290,7 +4741,7 @@ async function handleCreateDataRequest(req, res) {
     source: "manual",
     status: "new",
     createdAt: admin.firestore.Timestamp.fromMillis(now),
-    dueAt: admin.firestore.Timestamp.fromMillis(now + DATA_REQUEST_DUE_DAYS * 86400000),
+    dueAt: admin.firestore.Timestamp.fromMillis(dataRequestDueMs(kind, now)),
     createdBy: decoded.uid, createdByEmail: decoded.email || null,
   });
   await writeSecurityEvent(req, decoded, "dataRequestCreated", { metadata: { requestId: ref.id, subjectType, kind, contact } });
@@ -5328,9 +4779,9 @@ async function handleRequestGuestDataDeletion(req, res) {
     source: "guest-web",
     status: "new",
     createdAt: admin.firestore.Timestamp.fromMillis(now),
-    dueAt: admin.firestore.Timestamp.fromMillis(now + DATA_REQUEST_DUE_DAYS * 86400000),
+    dueAt: admin.firestore.Timestamp.fromMillis(dataRequestDueMs("delete", now)),
   });
-  sendJson(res, 200, { ok: true, id: ref.id, dueAt: now + DATA_REQUEST_DUE_DAYS * 86400000 });
+  sendJson(res, 200, { ok: true, id: ref.id, dueAt: dataRequestDueMs("delete", now) });
 }
 
 async function handleResolveDataRequest(req, res) {
@@ -5354,16 +4805,15 @@ async function handleResolveDataRequest(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
-/** Найти гостя по телефону во всех заведениях и сетях — для запросов,
- *  пришедших письмом или звонком. Читает phoneIndex/{телефон} у каждого
- *  заведения и сети (без запросов по коллекциям-группам, которым нужен
- *  отдельный индекс). */
 function normalizeRuPhone(raw) {
   let d = String(raw || "").replace(/\D/g, "");
   if (d.length === 11 && d.startsWith("8")) d = `7${d.slice(1)}`;
   if (d.length === 10 && d.startsWith("9")) d = `7${d}`;
   return d;
 }
+/** Поиск гостя по телефону во всех заведениях и сетях — для запросов,
+ *  пришедших письмом или звонком. Читаем phoneIndex/{телефон} у каждого
+ *  корня: запросу по группе коллекций нужен был бы отдельный индекс. */
 async function handleFindGuest(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -5443,12 +4893,10 @@ async function handleAnonymizeGuest(req, res) {
 }
 
 /**
- * Гость сам удаляет свои данные кнопкой «Удалить мои данные» в профиле —
- * сразу, без очереди запросов. Приложение перед этим стирает имя и
- * телефон в первичной базе в РФ (pii-gateway, kind "guest_delete"), здесь —
- * то же обезличивание, что делает супер-админ (anonymizeGuestData). В
- * реестр dataRequests пишется уже выполненный запрос — без имени и
- * телефона, только факт удаления.
+ * «Удалить мои данные» у гостя — сразу, без очереди. Имя и телефон в базе в
+ * РФ приложение уже стёрло (pii-gateway, guest_delete), здесь то же
+ * обезличивание, что у супер-админа. В реестр пишем выполненный запрос без
+ * имени и телефона.
  */
 async function handleDeleteGuestData(req, res) {
   const decoded = await verifyAuth(req);
@@ -5500,13 +4948,10 @@ async function handleDeleteGuestData(req, res) {
 
 // ------------------------------------------------ восстановление входа гостя
 //
-// Гость входит анонимно, и его профиль (номер, бонусы) держится только на
-// сессии Firebase на телефоне. Если сессия пропала (слетела после
-// обновления, аккаунт пропал на сервере), приложение раньше заводило новый
-// пустой профиль. Теперь при первом входе оно создаёт случайный ключ,
-// хранит его у себя и присылает сюда — храним только его sha256. Потеряв
-// сессию, приложение предъявляет uid и ключ и получает custom token на тот
-// же uid (lib/client/services/kolibri_auth_service.dart).
+// Гость входит анонимно, и профиль держится на сессии Firebase в телефоне.
+// При первом входе приложение создаёт случайный ключ и присылает его сюда
+// (храним только sha256). Потеряв сессию, оно предъявляет uid и ключ и
+// получает custom token на тот же uid (kolibri_auth_service.dart).
 const GUEST_RECOVERY_LIMIT = 30; // попыток восстановления с одного IP в час
 const guestRecoveryHits = new Map(); // ip -> [ms]
 const RECOVERY_SECRET_RE = /^[A-Za-z0-9_-]{43,128}$/;
@@ -5553,8 +4998,9 @@ async function handleRestoreGuestSession(req, res) {
     const user = await getFirebaseApp().auth().getUser(uid);
     if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
   } catch (e) {
-    // Аккаунта нет в Firebase — custom token создаст его заново с тем же uid.
-    if (e instanceof HttpError) throw e;
+    // Аккаунта нет — custom token создаст его заново с тем же uid. Другие
+    // ошибки (сеть, квоты) не превращаем в выдачу токена.
+    if (e instanceof HttpError || e?.code !== "auth/user-not-found") throw e;
   }
   const token = await getFirebaseApp().auth().createCustomToken(uid);
   await ref.set({
@@ -5685,14 +5131,6 @@ function resolveAiVendor(settings, secrets, slot) {
   };
 }
 
-/**
- * ИИ-консьерж гостевого приложения. Ключи ИИ заведения лежат в
- * meta/aiSecrets, который читает только персонал; гость шлёт сюда тело
- * запроса к модели, а сервер подставляет адрес и ключ провайдера и
- * возвращает ответ как есть. Гость не может выбрать другую (дорогую)
- * модель или огромный лимит ответа, и у него лимит запросов — иначе
- * посторонний мог бы расходовать баланс ИИ заведения.
- */
 /** Адрес из IPv4/IPv6, который нельзя отдавать в руки владельца заведения:
  *  loopback, частные сети, link-local (метаданные облака), CGNAT,
  *  multicast и служебные диапазоны. */
@@ -5738,11 +5176,18 @@ async function assertPublicAiUrl(raw) {
   }
 }
 
+/**
+ * ИИ-помощник гостя. Ключи заведения лежат в meta/aiSecrets, который гостю
+ * не виден: гость присылает тело запроса, сервер подставляет адрес и ключ
+ * провайдера. Модель и лимит ответа берём из настроек заведения, у гостя —
+ * лимит запросов, иначе посторонний мог бы тратить баланс ИИ заведения.
+ */
 async function handleAiProxy(req, res) {
   const decoded = await verifyAuth(req);
   const now = Date.now();
   const lim = aiProxyLimiter.get(decoded.uid);
   if (!lim || lim.resetAt <= now) {
+    if (aiProxyLimiter.size > 20000) aiProxyLimiter.clear();
     aiProxyLimiter.set(decoded.uid, { count: 1, resetAt: now + AI_PROXY_WINDOW_MS });
   } else if (lim.count >= AI_PROXY_LIMIT) {
     throw new HttpError(429, "Слишком много вопросов подряд — попробуйте через несколько минут");
@@ -6004,8 +5449,7 @@ const ROUTES = {
   "/grantBonusPeriod": handleGrantBonusPeriod,
   "/deleteDemoTenant": handleDeleteDemoTenant,
   "/getDownloadUrl": handleGetDownloadUrl,
-  // Касса и гостевое приложение спрашивают сами, вышла ли новая версия (см.
-  // docstring handleAppUpdate): гостю — без входа, кассе — участнику заведения.
+  // Проверка обновлений: гостю без входа, кассе — участнику заведения.
   "/appUpdate": handleAppUpdate,
   "/createCheckoutSession": handleCreateCheckoutSession,
   "/createBankInvoice": handleCreateBankInvoice,
@@ -6042,9 +5486,7 @@ const ROUTES = {
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,
   "/recordAdminLogin": handleRecordAdminLogin,
-  // Публичный (без Auth) адрес — его нужно прописать в личном кабинете
-  // ЮKassa как URL для уведомлений (webhook). Подлинность проверяется
-  // внутри самого handleBillingWebhook, не на уровне роутинга.
+  // Webhook ЮKassa: без входа, подлинность проверяет сам обработчик.
   "/billingWebhook": handleBillingWebhook,
   // Робокасса: Result URL (оплата прошла) и возврат владельца в кабинет.
   // Подлинность Result URL — подпись паролем №2 внутри обработчика.
@@ -6056,6 +5498,11 @@ const ROUTES = {
 function runHandler(handler, req, res) {
   handler(req, res).catch((e) => {
     const known = e instanceof HttpError;
+    if (res.headersSent) {
+      // Ответ уже начат — второй writeHead уронил бы процесс.
+      if (!known) console.error(`saas-gateway ${(req.url || "").split("?")[0]}:`, e && e.stack ? e.stack : e);
+      return;
+    }
     // Непредусмотренная ошибка (Firestore, сеть, баг) — подробности только в
     // журнал сервера: наружу они выдавали бы внутреннее устройство
     // платформы (пути, коллекции, тексты исключений библиотек).
@@ -6074,23 +5521,18 @@ const server = http.createServer((req, res) => {
 
   const urlPath = (req.url || "").split("?")[0];
   if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
-  // Единственный GET с полезной нагрузкой — скачивание готового APK (см.
-  // handleDownloadBuild) — остальные операции ниже намеренно только POST.
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
-  // Без Firebase Auth — гость сканирует QR стола, не входя ни в один
-  // SaaS-аккаунт (см. docstring handlePublicGuestApk).
+  // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
-  // Публичный веб-конфиг Firebase — см. docstring handleFirebaseWebConfig,
-  // почему НЕ zalpos.ru/__/firebase/init.json.
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
   // «Технических настройках» магазина).
   if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleRobokassaResult, req, res);
   if (req.method === "GET" && (urlPath === "/robokassaSuccess" || urlPath === "/robokassaFail")) return runHandler(handleRobokassaReturn, req, res);
-  if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
+  if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
-  if (!handler) return sendJson(res, 404, { error: "not found" });
+  if (!handler) return sendJson(res, 404, { error: "адрес не найден" });
   runHandler(handler, req, res);
 });
 
@@ -6107,8 +5549,6 @@ scheduleMenuPopularity();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
-  // Слушаем только localhost — снаружи виден через nginx (443, тот же
-  // сертификат, что у pii-gateway, путь /saas/*), см. README.md.
   console.log(`saas-gateway listening on 127.0.0.1:${port}`);
 });
 
