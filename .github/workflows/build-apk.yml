@@ -186,18 +186,10 @@ jobs:
             sed -i "/<manifest /a\\    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />" "$MANIFEST"
           fi
 
-          # <queries>: системная камера (image_picker), движок распознавания
-          # речи и звонок по tel: (кнопка телефона в бронях) — без этого
-          # блока Android 11+ считает их «невидимыми» для приложения, и
-          # canLaunchUrl(...) всегда возвращает false.
-          #
-          # НАЙДЕННЫЙ БАГ: для tel: тут стояло только ACTION_DIAL. А
-          # url_launcher проверяет видимость набора номера через
-          # ACTION_VIEW (см. UrlLauncher.canLaunchUrl в его Android-коде) —
-          # действие не совпадало, Android скрывал телефонное приложение, и
-          # canLaunchUrl('tel:...') ВСЕГДА отвечал false. Кнопка звонка в
-          # бронях из-за этого никогда не открывала набор — падала в
-          # запасную ветку «просто показать номер». Держим оба действия.
+          # <queries>: системная камера (image_picker), распознавание речи и
+          # звонок по tel: — без них Android 11+ прячет эти приложения, и
+          # canLaunchUrl всегда false. Для tel: нужны и ACTION_DIAL, и
+          # ACTION_VIEW: url_launcher проверяет именно VIEW.
           if ! grep -q "<queries>" "$MANIFEST"; then
             sed -i "/<\/manifest>/i\\    <queries>\n        <intent>\n            <action android:name=\"android.media.action.IMAGE_CAPTURE\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.speech.RecognitionService\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.VIEW\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n        <intent>\n            <action android:name=\"android.intent.action.DIAL\" />\n            <data android:scheme=\"tel\" />\n        </intent>\n    </queries>" "$MANIFEST"
           fi
@@ -402,11 +394,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          # Без своего keystore Flutter подписывает release-сборку debug-ключом,
-          # который в CI генерируется заново на каждом запуске. SHA-1 при этом
-          # меняется, и Firebase Phone Auth (вход по SMS в «Colibri Lounge»)
-          # перестаёт работать. Поэтому подписываем постоянным ключом из
-          # секретов; если секретов нет — предупреждаем и собираем как раньше.
+          # Без своего keystore release подписывается debug-ключом, новым на
+          # каждом запуске CI: SHA-1 меняется, ломаются вход по SMS в
+          # «Colibri Lounge» и обновление поверх. Подписываем постоянным
+          # ключом из секретов; нет секретов — предупреждаем и собираем так.
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::warning::ANDROID_KEYSTORE_BASE64 не задан — APK подписан debug-ключом, вход по SMS работать не будет."
             exit 0
@@ -494,12 +485,8 @@ jobs:
 
       - name: Create notification icon
         run: |
-          # Android рисует иконку уведомления силуэтом: любой цвет и любые
-          # детали теряются, остаётся плоский белый контур на прозрачном
-          # фоне. Поэтому здесь простой восклицательный знак — он читается
-          # в строке состояния даже размером в несколько пикселей, в
-          # отличие от колокольчика с деталями, который превращался в
-          # неразборчивое пятно.
+          # Иконка уведомления рисуется белым силуэтом, детали пропадают —
+          # поэтому простой восклицательный знак, а не колокольчик.
           DRAWABLE=android/app/src/main/res/drawable
           mkdir -p "$DRAWABLE"
           cat > "$DRAWABLE/ic_notification.xml" <<'XMLEOF'
@@ -546,21 +533,11 @@ jobs:
             sed -i 's|</application>|    <meta-data android:name="com.zalpos.notification_icon" android:resource="@drawable/ic_notification" />\n    </application>|' "$MANIFEST"
           fi
 
-          # НАЙДЕННЫЙ БАГ: flutter build apk --release включает shrinkResources
-          # по умолчанию (это делает сам Flutter Gradle Plugin, без всякой
-          # настройки с нашей стороны). R8 решает, какие ресурсы «не
-          # используются», по статическим ссылкам вида R.drawable.xxx в коде.
-          # А иконку уведомления плагин flutter_local_notifications находит
-          # по ИМЕНИ СТРОКОЙ в рантайме (Resources.getIdentifier) — такую
-          # ссылку статический анализ не видит, и R8 вырезал ic_notification
-          # из финального APK. Отсюда PlatformException(invalid_icon,
-          # ...ic_notification could not be found...) при каждой попытке
-          # показать уведомление, и приложение молча откатывалось на
-          # @mipmap/ic_launcher — некрасивую иконку из цветной картинки.
-          #
-          # Лечится ровно так, как советует сам плагин в своём README:
-          # tools:keep помечает ресурс как используемый для шейкера ресурсов,
-          # не влияя на R8-обфускацию кода.
+          # --release включает shrinkResources, и R8 вырезал ic_notification:
+          # flutter_local_notifications ищет иконку по имени строкой, а такую
+          # ссылку статический анализ не видит. Итог — invalid_icon и откат
+          # на цветную ic_launcher. tools:keep, как советует README плагина,
+          # оставляет ресурс, не влияя на обфускацию кода.
           KEEP=android/app/src/main/res/raw
           mkdir -p "$KEEP"
           cat > "$KEEP/keep.xml" <<'XMLEOF'
