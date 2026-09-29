@@ -32,8 +32,23 @@ class GuestLinkService {
 
   // ---------- ПРОФИЛЬ ГОСТЯ ----------
 
-  Stream<ClientProfile?> profileStream(String uid) =>
-      _clients.doc(uid).snapshots().map((d) => d.exists ? ClientProfile.fromDoc(d) : null);
+  /// Общие подписки гостя (см. SharedStreams): экраны берут эти стримы
+  /// прямо в build, и без общей ссылки каждое нажатие (вызов, заказ,
+  /// оценка) переподписывало экран на базу — лишние чтения и подёргивания.
+  static final _profileS = SharedStreams<ClientProfile?>();
+  static final _sessionS = SharedStreams<SessionModel?>();
+  static final _myCallsS = SharedStreams<List<WaiterCall>>();
+  static final _myOrdersS = SharedStreams<List<GuestOrder>>();
+  static final _visitsS = SharedStreams<List<GuestVisit>>();
+  static final _reviewsS = SharedStreams<List<GuestReview>>();
+  static final _menuS = SharedStreams<List<MenuItem>>();
+  static final _categoriesS = SharedStreams<List<MenuCategory>>();
+
+  /// Ключ с учётом заведения и сети: у сети профиль гостя общий.
+  static String _key([String id = '']) => '${AppScope.tenantId ?? '-'}|${AppScope.chainId ?? '-'}|$id';
+
+  Stream<ClientProfile?> profileStream(String uid) => _profileS.get(
+      _key(uid), () => _clients.doc(uid).snapshots().map((d) => d.exists ? ClientProfile.fromDoc(d) : null));
 
   Future<ClientProfile> ensureProfile(String uid, {String name = '', String phone = ''}) async {
     final doc = await _clients.doc(uid).get();
@@ -586,10 +601,12 @@ class GuestLinkService {
 
   /// Живой счёт гостя: сумма, позиции, таймер стола — тот же документ,
   /// который правит кассир на POS.
-  Stream<SessionModel?> sessionStream(String sessionId) => AppScope.col('sessions')
-      .doc(sessionId)
-      .snapshots()
-      .map((d) => d.exists ? SessionModel.fromDoc(d) : null);
+  Stream<SessionModel?> sessionStream(String sessionId) => _sessionS.get(
+      _key(sessionId),
+      () => AppScope.col('sessions')
+          .doc(sessionId)
+          .snapshots()
+          .map((d) => d.exists ? SessionModel.fromDoc(d) : null));
 
   // ---------- ВЫЗОВ ПЕРСОНАЛА ----------
 
@@ -644,19 +661,14 @@ class GuestLinkService {
   /// гостя вечно и копился вместе со следующими — экран превращался в
   /// столбик «крутилок», по которому невозможно понять, что происходит
   /// сейчас.
-  Stream<List<WaiterCall>> myCallsStream(String clientUid) => _calls
-      .where('clientUid', isEqualTo: clientUid)
-      .where('status', isEqualTo: 'new')
-      .snapshots()
-      .map((s) {
-        final fresh = DateTime.now().subtract(const Duration(minutes: 30));
-        final list = s.docs
-            .map(WaiterCall.fromDoc)
-            .where((c) => c.createdAt.isAfter(fresh))
-            .toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return list.take(4).toList();
-      });
+  Stream<List<WaiterCall>> myCallsStream(String clientUid) => _myCallsS.get(
+      _key(clientUid),
+      () => _calls.where('clientUid', isEqualTo: clientUid).where('status', isEqualTo: 'new').snapshots().map((s) {
+            final fresh = DateTime.now().subtract(const Duration(minutes: 30));
+            final list = s.docs.map(WaiterCall.fromDoc).where((c) => c.createdAt.isAfter(fresh)).toList()
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            return list.take(4).toList();
+          }));
 
   Future<void> closeCall(String callId, String employeeName) => _calls.doc(callId).update({
         'status': 'done',
@@ -708,12 +720,14 @@ class GuestLinkService {
           .snapshots()
           .map((s) => s.docs.map(GuestOrder.fromDoc).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt))));
 
-  Stream<List<GuestOrder>> clientOrdersStream(String clientUid) => _orders
-      .where('clientUid', isEqualTo: clientUid)
-      .orderBy('createdAt', descending: true)
-      .limit(20)
-      .snapshots()
-      .map((s) => s.docs.map(GuestOrder.fromDoc).toList());
+  Stream<List<GuestOrder>> clientOrdersStream(String clientUid) => _myOrdersS.get(
+      _key(clientUid),
+      () => _orders
+          .where('clientUid', isEqualTo: clientUid)
+          .orderBy('createdAt', descending: true)
+          .limit(20)
+          .snapshots()
+          .map((s) => s.docs.map(GuestOrder.fromDoc).toList()));
 
   Future<void> acceptGuestOrder(GuestOrder order, String employeeName) async {
     final sessionRef = AppScope.col('sessions').doc(order.sessionId);
@@ -907,13 +921,15 @@ class GuestLinkService {
 
   /// Вечная история визитов гостя, от самого свежего. Источник — та самая
   /// подколлекция, что пишется при закрытии чека.
-  Stream<List<GuestVisit>> visitsStream(String uid, {int limit = 100}) => _clients
-      .doc(uid)
-      .collection('visits')
-      .orderBy('date', descending: true)
-      .limit(limit)
-      .snapshots()
-      .map((s) => s.docs.map(GuestVisit.fromDoc).toList());
+  Stream<List<GuestVisit>> visitsStream(String uid, {int limit = 100}) => _visitsS.get(
+      _key('$uid|$limit'),
+      () => _clients
+          .doc(uid)
+          .collection('visits')
+          .orderBy('date', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(GuestVisit.fromDoc).toList()));
 
   Future<double> redeemBonuses({
     required String clientUid,
@@ -986,22 +1002,28 @@ class GuestLinkService {
     }
   }
 
-  Stream<List<GuestReview>> recentReviewsStream({int limit = 50}) => _reviews
-      .orderBy('createdAt', descending: true)
-      .limit(limit)
-      .snapshots()
-      .map((s) => s.docs.map(GuestReview.fromDoc).toList());
+  Stream<List<GuestReview>> recentReviewsStream({int limit = 50}) => _reviewsS.get(
+      _key('$limit'),
+      () => _reviews
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(GuestReview.fromDoc).toList()));
 
   // ---------- МЕНЮ ДЛЯ ГОСТЯ ----------
 
-  Stream<List<MenuItem>> publicMenuStream() => AppScope.col('menuItems')
-      .snapshots()
-      .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList());
+  Stream<List<MenuItem>> publicMenuStream() => _menuS.get(
+      _key(),
+      () => AppScope.col('menuItems')
+          .snapshots()
+          .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList()));
 
-  Stream<List<MenuCategory>> publicCategoriesStream() => AppScope.col('menuCategories')
-      .orderBy('order')
-      .snapshots()
-      .map((s) => s.docs.map(MenuCategory.fromDoc).toList());
+  Stream<List<MenuCategory>> publicCategoriesStream() => _categoriesS.get(
+      _key(),
+      () => AppScope.col('menuCategories')
+          .orderBy('order')
+          .snapshots()
+          .map((s) => s.docs.map(MenuCategory.fromDoc).toList()));
 }
 
 /// Чек уже открыт у другого гостя.
