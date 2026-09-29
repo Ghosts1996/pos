@@ -159,6 +159,10 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     AppScope.enterTenant(tenantId,
         branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
     SubscriptionGate.watch(tenantId, config);
+    final chainId = config.tenant.chainId;
+    if (chainId != null) {
+      await SaasDeviceJoinService.ensureChainMembership(chainId: chainId, tenantId: tenantId, uid: uid);
+    }
     // Планшет мог работать в другом заведении (например, в удалённом демо):
     // фоновые службы следят за прежним — перезапускаем под новое.
     await HallWatchService.instance.stop();

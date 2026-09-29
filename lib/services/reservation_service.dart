@@ -543,6 +543,7 @@ class ReservationService {
   Future<String> seat({
     required ReservationModel reservation,
     required String employeeName,
+    String employeeId = '',
   }) async {
     if (reservation.tableId.isEmpty) {
       throw StateError('У брони не назначен стол — назначьте стол перед посадкой.');
@@ -552,6 +553,8 @@ class ReservationService {
     final sessionRef = AppScope.col('sessions').doc();
     final resRef = _col.doc(reservation.id);
     final now = DateTime.now();
+    // Предзаказ пишет приложение гостя — в чек он идёт по ценам меню.
+    final preOrder = await FirestoreService().menuPricedItems(reservation.preOrder);
 
     await _db.runTransaction((tx) async {
       final freshRes = await tx.get(resRef);
@@ -575,10 +578,13 @@ class ReservationService {
         tableId: reservation.tableId,
         tableName: data['name'] ?? reservation.tableName,
         employeeName: employeeName,
+        // Выручка в зарплате считается по id: по одному имени тёзки и
+        // переименованные сотрудники теряли продажи с броней.
+        employeeId: employeeId,
         guestTag: reservation.guestName,
         startTime: now,
         plannedEnd: now.add(Duration(minutes: reservation.durationMinutes)),
-        orderItems: reservation.preOrder,
+        orderItems: preOrder,
       );
       tx.set(sessionRef, session.toMap());
 

@@ -423,7 +423,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
 
   Future<void> _seat(ReservationModel r) async {
     try {
-      final sessionId = await _service.seat(reservation: r, employeeName: widget.employee.name);
+      final sessionId = await _service.seat(
+          reservation: r, employeeName: widget.employee.name, employeeId: widget.employee.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Гость посажен, чек открыт')));

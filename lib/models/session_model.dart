@@ -23,11 +23,13 @@ class OrderItem {
     this.noPromo = false,
   });
 
+  /// Строки заказа приходят и от гостя (guestOrders, предзаказ) — дробное
+  /// количество или цена строкой роняли бы разбор всего списка заказов.
   factory OrderItem.fromMap(Map<String, dynamic> m) => OrderItem(
-        menuItemId: m['menuItemId'] ?? '',
-        name: m['name'] ?? '',
-        price: (m['price'] ?? 0).toDouble(),
-        qty: m['qty'] ?? 1,
+        menuItemId: m['menuItemId']?.toString() ?? '',
+        name: m['name']?.toString() ?? '',
+        price: m['price'] is num ? (m['price'] as num).toDouble() : 0,
+        qty: m['qty'] is num ? (m['qty'] as num).toInt() : 1,
         noPromo: m['noPromo'] == true,
       );
 
