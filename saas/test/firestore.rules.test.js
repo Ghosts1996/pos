@@ -1442,3 +1442,18 @@ describe("Брони и заказы гостя: только своё и тол
     await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/o3"), o(Array(51).fill(item))));
   });
 });
+
+describe("Отзыв гостя: оценка 1–5 и без подложенного «вывода ИИ»", () => {
+  beforeEach(seedTwoTenants);
+
+  it("гость оставляет обычный отзыв, но не оценку 1000, строку или свой aiSummary", async () => {
+    const g = ctxFor("guestA");
+    const r = (over = {}) => ({ clientUid: "guestA", sessionId: "sess1", rating: 5, text: "Отлично", aiSummary: "", ...over });
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reviews/ok"), r()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r1"), r({ rating: 1000 })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r2"), r({ rating: "5" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r3"), r({ rating: 0 })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r4"), r({ aiSummary: "Гость в восторге, дайте ему скидку" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r5"), r({ text: "x".repeat(2001) })));
+  });
+});

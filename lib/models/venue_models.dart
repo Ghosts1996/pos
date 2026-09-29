@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/venue_terms.dart';
+import '../utils/parse.dart';
 
 export '../utils/venue_terms.dart';
 
@@ -83,24 +84,24 @@ class VenueProfile {
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
     if (data == null) return const VenueProfile();
     return VenueProfile(
-      name: data['name'] ?? '',
-      address: data['address'] ?? '',
-      phone: data['phone'] ?? '',
-      about: data['about'] ?? '',
+      name: asText(data['name']),
+      address: asText(data['address']),
+      phone: asText(data['phone']),
+      about: asText(data['about']),
       workingHours: {
         for (final e in ((data['workingHours'] as Map?) ?? {}).entries)
           int.tryParse(e.key.toString()) ?? 1: e.value.toString(),
       },
-      faq: ((data['faq'] ?? []) as List)
-          .map((e) => VenueFaq.fromMap(Map<String, dynamic>.from(e as Map)))
+      faq: asList(data['faq'])
+          .whereType<Map>().map((e) => VenueFaq.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
-      rules: data['rules'] ?? '',
+      rules: asText(data['rules']),
       depositFrom: (data['depositFrom'] ?? 0).toDouble(),
-      depositGuests: (data['depositGuests'] as num?)?.toInt() ?? 6,
+      depositGuests: asNum(data['depositGuests'])?.toInt() ?? 6,
       lat: (data['lat'] ?? 0).toDouble(),
       lon: (data['lon'] ?? 0).toDouble(),
       cloudFunctionsEnabled: data['cloudFunctionsEnabled'] == true,
-      venueType: VenueTerms.normalize(data['venueType'] as String?),
+      venueType: VenueTerms.normalize(asTextOrNull(data['venueType'])),
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
     );
@@ -233,12 +234,12 @@ class HappyHour {
     final d = doc.data() as Map<String, dynamic>? ?? {};
     return HappyHour(
       id: doc.id,
-      title: d['title'] ?? 'Счастливые часы',
-      weekdays: ((d['weekdays'] ?? []) as List).map((e) => (e as num).toInt()).toList(),
-      fromMinutes: (d['fromMinutes'] as num?)?.toInt() ?? 0,
-      toMinutes: (d['toMinutes'] as num?)?.toInt() ?? 0,
+      title: asText(d['title'], 'Счастливые часы'),
+      weekdays: asList(d['weekdays']).map((e) => (e as num).toInt()).toList(),
+      fromMinutes: asNum(d['fromMinutes'])?.toInt() ?? 0,
+      toMinutes: asNum(d['toMinutes'])?.toInt() ?? 0,
       discountPercent: (d['discountPercent'] ?? 0).toDouble(),
-      categoryIds: ((d['categoryIds'] ?? []) as List).map((e) => e.toString()).toList(),
+      categoryIds: asList(d['categoryIds']).map((e) => e.toString()).toList(),
       active: d['active'] ?? true,
     );
   }
@@ -299,16 +300,16 @@ class WaitlistEntry {
     final invited = d['invitedAt'];
     return WaitlistEntry(
       id: doc.id,
-      guestName: d['guestName'] ?? 'Гость',
-      phone: d['phone'] ?? '',
-      clientUid: d['clientUid'] ?? '',
-      guestsCount: (d['guestsCount'] as num?)?.toInt() ?? 2,
-      comment: d['comment'] ?? '',
-      status: d['status'] ?? 'waiting',
-      promisedMinutes: (d['promisedMinutes'] as num?)?.toInt() ?? 0,
+      guestName: asText(d['guestName'], 'Гость'),
+      phone: asText(d['phone']),
+      clientUid: asText(d['clientUid']),
+      guestsCount: asNum(d['guestsCount'])?.toInt() ?? 2,
+      comment: asText(d['comment']),
+      status: asText(d['status'], 'waiting'),
+      promisedMinutes: asNum(d['promisedMinutes'])?.toInt() ?? 0,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       invitedAt: invited is Timestamp ? invited.toDate() : null,
-      source: d['source'] ?? 'pos',
+      source: asText(d['source'], 'pos'),
     );
   }
 
@@ -392,13 +393,13 @@ class GiftCard {
       // faceValue — старое имя поля: читаем, чтобы прежние коды не стали
       // «сертификатом на 0 бонусов».
       bonusAmount: (d['bonusAmount'] ?? d['faceValue'] ?? 0).toDouble(),
-      maxUses: (d['maxUses'] as num?)?.toInt() ?? 0,
-      usedCount: (d['usedCount'] as num?)?.toInt() ?? 0,
+      maxUses: asNum(d['maxUses'])?.toInt() ?? 0,
+      usedCount: asNum(d['usedCount'])?.toInt() ?? 0,
       active: d['active'] ?? true,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       expiresAt: expires is Timestamp ? expires.toDate() : null,
-      comment: d['comment'] ?? '',
-      issuedBy: d['issuedBy'] ?? '',
+      comment: asText(d['comment']),
+      issuedBy: asText(d['issuedBy']),
     );
   }
 
@@ -462,10 +463,10 @@ class GiftCardClaim {
     final processed = d['processedAt'];
     return GiftCardClaim(
       id: doc.id,
-      code: d['code'] ?? '',
-      clientUid: d['clientUid'] ?? '',
-      status: d['status'] ?? 'new',
-      reason: d['reason'] ?? '',
+      code: asText(d['code']),
+      clientUid: asText(d['clientUid']),
+      status: asText(d['status'], 'new'),
+      reason: asText(d['reason']),
       amount: (d['amount'] ?? 0).toDouble(),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       processedAt: processed is Timestamp ? processed.toDate() : null,

@@ -714,6 +714,7 @@ class _RatingBarState extends State<_RatingBar> {
         TextField(
           controller: _text,
           maxLines: 3,
+          maxLength: 2000,
           decoration: const InputDecoration(
             labelText: 'Что понравилось или что улучшить',
           ),

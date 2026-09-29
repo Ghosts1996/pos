@@ -1244,7 +1244,7 @@ function tableFinished(s) {
       <div class="center" id="stars" style="font-size:30px;letter-spacing:6px">
         ${[1, 2, 3, 4, 5].map((i) => `<span data-star="${i}" style="cursor:pointer">☆</span>`).join('')}
       </div>
-      <textarea id="reviewText" rows="3" placeholder="Что понравилось, что нет (необязательно)" style="margin-top:14px"></textarea>
+      <textarea id="reviewText" rows="3" maxlength="2000" placeholder="Что понравилось, что нет (необязательно)" style="margin-top:14px"></textarea>
       <button class="btn-primary" id="sendReview" disabled>Отправить отзыв</button>
     </div>`;
 

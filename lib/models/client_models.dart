@@ -4,6 +4,7 @@ import '../utils/constants.dart';
 import '../utils/promo_policy.dart';
 import 'session_model.dart';
 import 'table_model.dart';
+import '../utils/parse.dart';
 
 /// Профиль гостя в приложении заведения.
 /// Документ clients/{uid}, где uid — Firebase Auth UID клиентского приложения.
@@ -89,9 +90,9 @@ class ClientProfile {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .map((m) => (
-                name: (m['name'] as String?)?.trim() ?? '',
-                from: (m['from'] as num?)?.toDouble() ?? 0,
-                cashback: (m['cashback'] as num?)?.toDouble() ?? 0,
+                name: asTextOrNull(m['name'])?.trim() ?? '',
+                from: asNum(m['from'])?.toDouble() ?? 0,
+                cashback: asNum(m['cashback'])?.toDouble() ?? 0,
               ))
           .where((t) => t.name.isNotEmpty)
           .toList()
@@ -151,21 +152,21 @@ class ClientProfile {
     final last = data['lastVisitAt'];
     return ClientProfile(
       uid: doc.id,
-      name: data['name'] ?? '',
-      phone: data['phone'] ?? '',
+      name: asText(data['name']),
+      phone: asText(data['phone']),
       bonusBalance: (data['bonusBalance'] ?? 0).toDouble(),
       totalSpent: (data['totalSpent'] ?? 0).toDouble(),
-      visits: (data['visits'] as num?)?.toInt() ?? 0,
-      discountCardId: data['discountCardId'] ?? '',
+      visits: asNum(data['visits'])?.toInt() ?? 0,
+      discountCardId: asText(data['discountCardId']),
       discountPercent: (data['discountPercent'] ?? 0).toDouble(),
-      activeSessionId: data['activeSessionId'] ?? '',
-      lastVisitId: data['lastVisitId'] ?? '',
-      ratedVisitId: data['ratedVisitId'] ?? '',
-      activeTableId: data['activeTableId'] ?? '',
+      activeSessionId: asText(data['activeSessionId']),
+      lastVisitId: asText(data['lastVisitId']),
+      ratedVisitId: asText(data['ratedVisitId']),
+      activeTableId: asText(data['activeTableId']),
       favoriteItemIds:
-          ((data['favoriteItemIds'] ?? []) as List).map((e) => e.toString()).toList(),
-      pushToken: data['pushToken'] ?? '',
-      aiProfile: data['aiProfile'] ?? '',
+          asList(data['favoriteItemIds']).map((e) => e.toString()).toList(),
+      pushToken: asText(data['pushToken']),
+      aiProfile: asText(data['aiProfile']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       lastVisitAt: last is Timestamp ? last.toDate() : null,
     );
@@ -271,13 +272,13 @@ class GuestVisit {
     return GuestVisit(
       id: doc.id,
       date: date is Timestamp ? date.toDate() : DateTime.now(),
-      tableName: data['tableName'] ?? '',
+      tableName: asText(data['tableName']),
       total: (data['total'] ?? 0).toDouble(),
       paid: (data['paid'] ?? 0).toDouble(),
       bonusEarned: (data['bonusEarned'] ?? 0).toDouble(),
       bonusSpent: (data['bonusSpent'] ?? 0).toDouble(),
-      items: ((data['items'] ?? []) as List)
-          .map((e) => GuestVisitItem.fromMap(Map<String, dynamic>.from(e as Map)))
+      items: asList(data['items'])
+          .whereType<Map>().map((e) => GuestVisitItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
       refunded: data['refunded'] == true,
     );
@@ -295,8 +296,8 @@ class BonusOpView {
   const BonusOpView(this.plus, this.bonuses, this.title);
 
   factory BonusOpView.fromMap(Map<String, dynamic> m) {
-    final type = m['type'] as String? ?? '';
-    final reason = m['reason'] as String? ?? '';
+    final type = asTextOrNull(m['type']) ?? '';
+    final reason = asTextOrNull(m['reason']) ?? '';
     final plus = type == 'accrual' || type == 'redeem_cancelled';
     final bonuses = ((m['bonus'] ?? m['amount'] ?? 0) as num).toDouble();
     return BonusOpView(plus, bonuses, _title(type, reason, plus));
@@ -333,7 +334,7 @@ class GuestVisitItem {
 
   factory GuestVisitItem.fromMap(Map<String, dynamic> m) => GuestVisitItem(
         name: m['name']?.toString() ?? '',
-        qty: (m['qty'] as num?)?.toInt() ?? 1,
+        qty: asNum(m['qty'])?.toInt() ?? 1,
         price: (m['price'] ?? 0).toDouble(),
       );
 }
@@ -433,17 +434,17 @@ class WaiterCall {
     final done = data['doneAt'];
     return WaiterCall(
       id: doc.id,
-      tableId: data['tableId'] ?? '',
-      tableName: data['tableName'] ?? '',
-      sessionId: data['sessionId'] ?? '',
-      clientUid: data['clientUid'] ?? '',
-      guestName: data['guestName'] ?? '',
-      type: GuestCallTypeX.fromCode(data['type'] as String?),
-      comment: data['comment'] ?? '',
-      status: data['status'] ?? 'new',
+      tableId: asText(data['tableId']),
+      tableName: asText(data['tableName']),
+      sessionId: asText(data['sessionId']),
+      clientUid: asText(data['clientUid']),
+      guestName: asText(data['guestName']),
+      type: GuestCallTypeX.fromCode(asTextOrNull(data['type'])),
+      comment: asText(data['comment']),
+      status: asText(data['status'], 'new'),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       doneAt: done is Timestamp ? done.toDate() : null,
-      doneBy: data['doneBy'] ?? '',
+      doneBy: asText(data['doneBy']),
     );
   }
 
@@ -523,20 +524,20 @@ class GuestOrder {
     final handled = data['handledAt'];
     return GuestOrder(
       id: doc.id,
-      sessionId: data['sessionId'] ?? '',
-      tableId: data['tableId'] ?? '',
-      tableName: data['tableName'] ?? '',
-      clientUid: data['clientUid'] ?? '',
-      guestName: data['guestName'] ?? '',
-      items: ((data['items'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
+      sessionId: asText(data['sessionId']),
+      tableId: asText(data['tableId']),
+      tableName: asText(data['tableName']),
+      clientUid: asText(data['clientUid']),
+      guestName: asText(data['guestName']),
+      items: asList(data['items'])
+          .whereType<Map>().map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
-      comment: data['comment'] ?? '',
-      status: data['status'] ?? 'new',
-      rejectReason: data['rejectReason'] ?? '',
+      comment: asText(data['comment']),
+      status: asText(data['status'], 'new'),
+      rejectReason: asText(data['rejectReason']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       handledAt: handled is Timestamp ? handled.toDate() : null,
-      handledBy: data['handledBy'] ?? '',
+      handledBy: asText(data['handledBy']),
     );
   }
 
@@ -586,12 +587,12 @@ class GuestReview {
     final created = data['createdAt'];
     return GuestReview(
       id: doc.id,
-      sessionId: data['sessionId'] ?? '',
-      clientUid: data['clientUid'] ?? '',
-      guestName: data['guestName'] ?? '',
-      rating: (data['rating'] as num?)?.toInt() ?? 5,
-      text: data['text'] ?? '',
-      aiSummary: data['aiSummary'] ?? '',
+      sessionId: asText(data['sessionId']),
+      clientUid: asText(data['clientUid']),
+      guestName: asText(data['guestName']),
+      rating: asNum(data['rating'])?.toInt() ?? 5,
+      text: asText(data['text']),
+      aiSummary: asText(data['aiSummary']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
     );
   }

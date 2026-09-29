@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/models/menu_models.dart';
 import 'package:hookah_pos/models/session_model.dart';
 import 'package:hookah_pos/utils/guest_items.dart';
+import 'package:hookah_pos/utils/parse.dart';
 
 void main() {
   final menu = {
@@ -43,5 +44,13 @@ void main() {
     final i = OrderItem.fromMap({'menuItemId': 'tea', 'name': 'Чай', 'price': '1', 'qty': 1.5});
     expect(i.qty, 1);
     expect(i.price, 0);
+  });
+
+  test('поля от гостя неверного типа не роняют разбор', () {
+    expect(asText(42), '42');
+    expect(asText(null, 'new'), 'new');
+    expect(asTextOrNull(5), isNull);
+    expect(asNum('5'), isNull);
+    expect(asList({'a': 1}), isEmpty);
   });
 }

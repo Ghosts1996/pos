@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../utils/promo_policy.dart';
+import '../utils/parse.dart';
 
 class OrderItem {
   // Id позиции меню, из которой добавлена эта строка заказа.
@@ -154,29 +155,29 @@ class SessionModel {
     final now = DateTime.now();
     return SessionModel(
       id: doc.id,
-      tableId: data['tableId'] ?? '',
-      tableName: data['tableName'] ?? '',
-      employeeName: data['employeeName'] ?? '',
-      employeeId: data['employeeId'] ?? '',
-      guestTag: data['guestTag'] ?? '',
+      tableId: asText(data['tableId']),
+      tableName: asText(data['tableName']),
+      employeeName: asText(data['employeeName']),
+      employeeId: asText(data['employeeId']),
+      guestTag: asText(data['guestTag']),
       startTime: start is Timestamp ? start.toDate() : now,
       plannedEnd: end is Timestamp ? end.toDate() : now,
       refillCount: data['refillCount'] ?? 0,
-      refillHistory: ((data['refillHistory'] ?? []) as List)
-          .map((e) => RefillEvent.fromMap(Map<String, dynamic>.from(e as Map)))
+      refillHistory: asList(data['refillHistory'])
+          .whereType<Map>().map((e) => RefillEvent.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
       discountCardId: data['discountCardId'],
       discountPercent: (data['discountPercent'] ?? 0).toDouble(),
-      orderItems: ((data['orderItems'] ?? []) as List)
-          .map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e as Map)))
+      orderItems: asList(data['orderItems'])
+          .whereType<Map>().map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
-      status: data['status'] ?? 'active',
+      status: asText(data['status'], 'active'),
       closedAt: data['closedAt'] != null ? (data['closedAt'] as Timestamp).toDate() : null,
       paymentCash: (data['paymentCash'] ?? 0).toDouble(),
       paymentCard: (data['paymentCard'] ?? 0).toDouble(),
       paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
-      guestContact: data['guestContact'] ?? '',
+      guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
       fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
