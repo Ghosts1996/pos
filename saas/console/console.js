@@ -1465,7 +1465,8 @@ function publicFooterLinksHtml() {
       <a href="#/legal/payment">Оплата и возврат</a> ·
       <a href="#/legal/privacy">Конфиденциальность</a> ·
       <a href="#/status">Статус</a> ·
-      <a href="#/faq">FAQ</a>
+      <a href="#/faq">FAQ</a> ·
+      <a href="/demo-menu/CREDITS.txt" target="_blank" rel="noopener">Фото в демо</a>
     </p>
     <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
     <p class="small center muted legal-footer" style="margin-top:4px"></p>
