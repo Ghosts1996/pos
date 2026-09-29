@@ -1491,12 +1491,28 @@ async function loadPlatformLegal() {
   return legalCache;
 }
 
+/** Исполнитель для текстов: ФИО из выписки ЕГРИП приходит заглавными и с
+ *  «ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ» в начале — без этого в оферте было
+ *  «Индивидуальный предприниматель ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ …».
+ *  full — для документов, short — для подвала («ИП Иванов Иван Иванович»).
+ *  Название организации — как записано. */
+function legalParty(l) {
+  const raw = String(l.fullName || '').trim();
+  const isOrg = !/^ИП\s|индивидуальн/i.test(raw) && (l.ogrnip || '').length === 13;
+  if (isOrg) return { isOrg, full: raw, short: raw };
+  let name = raw.replace(/^(ИП|индивидуальный\s+предприниматель)\s+/i, '').trim();
+  if (name === name.toUpperCase()) {
+    name = name.toLowerCase().replace(/(^|[\s\-.])([a-zа-яё])/g, (m, p, c) => p + c.toUpperCase());
+  }
+  return { isOrg, full: `Индивидуальный предприниматель ${name}`, short: `ИП ${name}` };
+}
+
 async function fillLegalFooter() {
   const els = document.querySelectorAll('.legal-footer');
   if (!els.length) return;
   const l = await loadPlatformLegal();
   if (!l.fullName) return;
-  const parts = [l.fullName, l.inn ? `ИНН ${l.inn}` : '', l.ogrnip ? `ОГРНИП ${l.ogrnip}` : '', l.email, l.phone].filter(Boolean);
+  const parts = [legalParty(l).short, l.inn ? `ИНН ${l.inn}` : '', l.ogrnip ? `${legalParty(l).isOrg ? 'ОГРН' : 'ОГРНИП'} ${l.ogrnip}` : '', l.email, l.phone].filter(Boolean);
   els.forEach((el) => { el.textContent = parts.join(' · '); });
 }
 
@@ -1522,16 +1538,33 @@ async function fillLegalRequisites() {
   const l = l0;
   if (!l.fullName) return;
   const v = (x) => esc(x || '—');
-  const isOrg = !/^ИП\s|индивидуальн/i.test(l.fullName) && (l.ogrnip || '').length === 13;
-  const who = (isOrg ? v(l.fullName) : `Индивидуальный предприниматель ${v(l.fullName.replace(/^ИП\s+/i, ''))}`)
+  const party = legalParty(l);
+  const who = esc(party.full)
     + (l.taxRegime === 'npd' ? ', применяющий специальный налоговый режим «Налог на профессиональный доход»' : '');
-  el.innerHTML = el.dataset.kind === 'privacy'
-    ? `${who}. ${isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}. ИНН: ${v(l.inn)}. Адрес: ${v(l.address)}. `
-      + `Номер в реестре операторов персональных данных Роскомнадзора: ${v(l.rknNumber)}. `
-      + `Email для обращений по вопросам персональных данных: ${v(l.email)}.`
-    : `${who}. ${isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}. ИНН: ${v(l.inn)}. Адрес места жительства/для корреспонденции: ${v(l.address)}. `
-      + `Банковские реквизиты: р/с ${v(l.bankAccount)}, банк ${v(l.bankName)}, БИК ${v(l.bik)}, к/с ${v(l.corrAccount)}. `
-      + `Контактный email для претензий: ${v(l.email)}.${l.phone ? ` Телефон: ${v(l.phone)}.` : ''}`;
+  // По строке на реквизит — в одном абзаце номера счетов и адрес рвались
+  // посреди строки, и нужное было трудно найти глазами.
+  const lines = el.dataset.kind === 'privacy'
+    ? [
+        who,
+        `${party.isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}`,
+        `ИНН: ${v(l.inn)}`,
+        `Адрес: ${v(l.address)}`,
+        `Номер в реестре операторов персональных данных Роскомнадзора: ${v(l.rknNumber)}`,
+        `Email для обращений по вопросам персональных данных: ${v(l.email)}`,
+      ]
+    : [
+        who,
+        `${party.isOrg ? 'ОГРН' : 'ОГРНИП'}: ${v(l.ogrnip)}`,
+        `ИНН: ${v(l.inn)}`,
+        `Адрес места жительства и для корреспонденции: ${v(l.address)}`,
+        `Расчётный счёт: ${v(l.bankAccount)}`,
+        `Банк: ${v(l.bankName)}`,
+        `БИК: ${v(l.bik)}`,
+        `Корреспондентский счёт: ${v(l.corrAccount)}`,
+        `Email для претензий: ${v(l.email)}`,
+        ...(l.phone ? [`Телефон: ${v(l.phone)}`] : []),
+      ];
+  el.innerHTML = lines.join('<br>');
 }
 
 function publicPageWrapHtml(title, bodyHtml) {
