@@ -8,7 +8,6 @@
  *   cd saas/test && npm i
  *   npx firebase emulators:exec --project hookah-saas-rules-test \
  *     --only firestore "npm test"
- * (или см. saas/test/run.sh — обёртка с тем же вызовом)
  */
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require("@firebase/rules-unit-testing");
 const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where } = require("firebase/firestore");
@@ -254,6 +253,17 @@ describe("Ролевая модель внутри одного заведени
   it("manager тоже не может менять брендинг (только owner/admin)", async () => {
     const db = ctxFor("managerA");
     await assertFails(setDoc(doc(db, "tenants/tenantA/branding/config"), { primaryColor: "#000000" }));
+  });
+
+  it("админ убирает рядовых участников, но не владельца", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenantMembers/tenantA_adminA"), {
+        tenantId: "tenantA", userId: "adminA", role: "admin", status: "active",
+      });
+    });
+    const db = ctxFor("adminA");
+    await assertFails(deleteDoc(doc(db, "tenantMembers/tenantA_ownerA")));
+    await assertSucceeds(deleteDoc(doc(db, "tenantMembers/tenantA_empA")));
   });
 
   it("owner может менять брендинг своего заведения", async () => {
