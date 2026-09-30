@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/client_models.dart';
 import '../../models/employee.dart';
+import '../../models/hall_wall.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
@@ -45,6 +46,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
   // Стримы создаются один раз: StreamBuilder сравнивает стримы по ссылке, и
   // стрим, созданный прямо в build, переподписывался бы на каждый кадр.
   late final Stream<List<TableModel>> _tables = _fs.tablesStream();
+  late final Stream<List<HallWall>> _walls = _fs.hallWallsStream();
   late final Stream<List<WaiterCall>> _calls = GuestLinkService().openCallsStream();
   // Окно броней считается от момента подписки, а зал открыт всю смену —
   // подписку сдвигаем раз в полчаса (см. таймер в initState), иначе к
@@ -284,7 +286,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
             ),
           ),
         ),
-        Expanded(child: plan ? _plan(inZone, states, callTables, reservations) : _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
+        Expanded(child: plan ? _plan(inZone, zone ?? '', states, callTables, reservations) : _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
       ],
     );
   }
@@ -346,13 +348,18 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
 
   /// Вид «Схема»: часть зала со столами на весь экран, её можно двигать и
   /// приближать. Списка под ней нет — для него есть вид «Список».
-  Widget _plan(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,
+  Widget _plan(List<TableModel> tables, String zone, Map<String, TableState> states, Set<String> calls,
       Map<String, ReservationModel> reservations) {
-    final map = HallPlanView(
-      tables: tables,
-      fitToTables: true,
-      showHint: false,
-      tileBuilder: (t) => _tile(t, states, calls, reservations),
+    // Стены зоны — как нарисовал администратор в редакторе зала.
+    final map = StreamBuilder<List<HallWall>>(
+      stream: _walls,
+      builder: (context, snap) => HallPlanView(
+        tables: tables,
+        walls: [for (final w in snap.data ?? const <HallWall>[]) if (w.zone == zone) w],
+        fitToTables: true,
+        showHint: false,
+        tileBuilder: (t) => _tile(t, states, calls, reservations),
+      ),
     );
     return Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 8), child: _mapFrame(map));
   }

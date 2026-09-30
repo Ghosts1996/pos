@@ -3087,8 +3087,88 @@ function hallTileGeom(t) {
   return { rot, kind, w, h, left, top };
 }
 
-/// Часть площадки со столами и полями вокруг — не меньше 3.2×2.4 плитки,
-/// чтобы два-три стола не раздувались на весь экран.
+/// Стена зала (коллекция hallWalls) — ломаная по углам на площадке, как её
+/// нарисовал администратор в редакторе зала на кассе (lib/models/hall_wall.dart).
+/// Точки — плоский список [x0, y0, x1, y1, …].
+const HALL_WALL = 14;
+function parseHallWall(doc) {
+  const v = doc.data() || {};
+  const raw = Array.isArray(v.points) ? v.points : [];
+  const pts = [];
+  for (let i = 0; i + 1 < raw.length && pts.length < 200; i += 2) {
+    const x = raw[i], y = raw[i + 1];
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    pts.push([Math.max(0, Math.min(HALL.canvasW, x)), Math.max(0, Math.min(HALL.canvasH, y))]);
+  }
+  return { zone: String(v.zone || '').trim(), pts, closed: v.closed === true && pts.length >= 3 };
+}
+
+/// Рамка стены — как плитка стола для hallContentRect: стены тоже в кадре.
+function hallWallGeom(w) {
+  const xs = w.pts.map((p) => p[0]), ys = w.pts.map((p) => p[1]);
+  const l = Math.min(...xs) - HALL_WALL / 2, t = Math.min(...ys) - HALL_WALL / 2;
+  return { left: l, top: t, w: Math.max(...xs) + HALL_WALL / 2 - l, h: Math.max(...ys) + HALL_WALL / 2 - t };
+}
+
+/// Углы тела стены для рисования встык (как hallWallBodyPoints на кассе):
+/// свободный конец продлён на половину толщины тела, конец, упёршийся в
+/// другую стену, — нет, иначе на её контуре осталась бы засечка.
+function hallWallBodyPts(w, all, extend) {
+  const pts = w.pts, n = pts.length;
+  if (w.closed || n < 2) return pts;
+  const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.5;
+  const segDist = (p, a, b) => {
+    const abx = b[0] - a[0], aby = b[1] - a[1], len2 = abx * abx + aby * aby;
+    const t = len2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2)) : 0;
+    return Math.hypot(p[0] - a[0] - abx * t, p[1] - a[1] - aby * t);
+  };
+  const distTo = (o, p) => {
+    let best = Infinity;
+    for (let i = 0; i + 1 < o.pts.length; i++) best = Math.min(best, segDist(p, o.pts[i], o.pts[i + 1]));
+    if (o.closed) best = Math.min(best, segDist(p, o.pts[o.pts.length - 1], o.pts[0]));
+    return best;
+  };
+  const abuts = (end) => all.some((o) => o !== w && o.pts.length >= 2 && distTo(o, end) <= 0.5 &&
+    !(!o.closed && (near(o.pts[0], end) || near(o.pts[o.pts.length - 1], end))));
+  const ext = (end, nb) => {
+    const dx = end[0] - nb[0], dy = end[1] - nb[1], len = Math.hypot(dx, dy);
+    return !len || abuts(end) ? end : [end[0] + dx / len * extend, end[1] + dy / len * extend];
+  };
+  return [ext(pts[0], pts[1]), ...pts.slice(1, n - 1), ext(pts[n - 1], pts[n - 2])];
+}
+
+/// Стены «как на чертеже» (SVG под столами): тень, светлый контур и тело
+/// стены между двумя линиями; внутри замкнутого (или почти, с проёмом
+/// входа) контура — лёгкая подсветка пола. Как HallWallsPainter на кассе.
+function hallWallsSvg(walls, area) {
+  if (!walls.length) return '';
+  const r = (v) => Math.round(v * 10) / 10;
+  const d = (pts, closed) => 'M' + pts.map(([x, y]) => `${r(x)} ${r(y)}`).join(' L') + (closed ? ' Z' : '');
+  const rooms = walls.filter((w) => w.pts.length >= 3 && (w.closed ||
+    Math.hypot(w.pts[0][0] - w.pts[w.pts.length - 1][0], w.pts[0][1] - w.pts[w.pts.length - 1][1]) <= HALL.tile * 3));
+  // Области фильтра и градиента — в координатах площадки: у прямой
+  // горизонтальной стены «рамка» нулевой высоты, и в долях она пропала бы.
+  const fx = area.l - 60, fy = area.t - 60, fw = area.w + 120, fh = area.h + 120;
+  return `<svg class="hall-walls" viewBox="${r(area.l)} ${r(area.t)} ${r(area.w)} ${r(area.h)}"
+      preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <filter id="hwShadow" filterUnits="userSpaceOnUse" x="${fx}" y="${fy}" width="${fw}" height="${fh}">
+        <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#000" flood-opacity=".45"/>
+      </filter>
+      <linearGradient id="hwBody" gradientUnits="userSpaceOnUse"
+          x1="${r(area.l)}" y1="${r(area.t)}" x2="${r(area.l + area.w)}" y2="${r(area.t + area.h)}">
+        <stop offset="0" class="hw-s1"/><stop offset="1" class="hw-s2"/>
+      </linearGradient>
+    </defs>
+    ${rooms.map((w) => `<path class="hw-room" d="${d(w.pts, true)}"/>`).join('')}
+    <g filter="url(#hwShadow)">${walls.map((w) => `<path class="hw-edge" d="${d(w.pts, w.closed)}"/>`).join('')}</g>
+    ${walls.map((w) => `<path class="hw-body" stroke="url(#hwBody)"
+        d="${d(hallWallBodyPts(w, walls, (HALL_WALL - 4.5) / 2), w.closed)}"/>`).join('')}
+  </svg>`;
+}
+
+/// Часть площадки со столами (и стенами) и полями вокруг — не меньше
+/// 3.2×2.4 плитки, чтобы два-три стола не раздувались на весь экран.
 function hallContentRect(geoms) {
   let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
   geoms.forEach((g) => {
@@ -3139,6 +3219,8 @@ function screenHall(pickMode) {
   let tablesLoaded = false;
   // Зона зала (терраса, VIP…): у каждой зоны своя схема, как на кассе.
   let hallZone = null;
+  // Стены всех зон (hallWalls).
+  let walls = [];
 
   const draw = (allTables) => {
     const box = $('hall');
@@ -3171,13 +3253,14 @@ function screenHall(pickMode) {
     // Показываем часть площадки со столами, как касса (hallContentRect):
     // площадка больше прежней, и целиком столы на ней были бы мелкими.
     const geoms = new Map(tables.map((t) => [t.id, hallTileGeom(t)]));
-    const area = hallContentRect([...geoms.values()]);
+    const zoneWalls = walls.filter((w) => w.zone === (zones.length ? hallZone : ''));
+    const area = hallContentRect([...geoms.values(), ...zoneWalls.map(hallWallGeom)]);
     const pct = (v, total) => `${(v / total * 100).toFixed(3)}%`;
     box.style.aspectRatio = `${area.w} / ${area.h}`;
     // Плитка не мельче прежних ~62 px: узкий экран листает схему вбок.
     box.style.minWidth = `${Math.round(area.w * 0.6)}px`;
     box.style.backgroundSize = `${pct(40, area.w)} ${pct(40, area.h)}`;
-    box.innerHTML = tables.map((t) => {
+    box.innerHTML = hallWallsSvg(zoneWalls, area) + tables.map((t) => {
       // Карта зала показывает, кто сидит сейчас. Выбор стола для брони —
       // про будущее: важно, дотянется ли текущий сеанс до брони (busyUntil)
       // и нет ли на это время чужой брони.
@@ -3244,6 +3327,13 @@ function screenHall(pickMode) {
     const box = $('hall');
     if (box) box.innerHTML = `<p class="muted small" style="padding:20px">Не удалось загрузить карту зала.</p>`;
   }));
+
+  // Стены зала — как нарисовал администратор. Нет доступа (старые правила)
+  // — схема просто без стен.
+  sub(onSnapshot(collection(state.root, 'hallWalls'), (snap) => {
+    walls = snap.docs.map(parseHallWall).filter((w) => w.pts.length >= 2);
+    draw(tables);
+  }, () => {}));
 
   // Обезличенное зеркало броней: стол и интервал, без имён и телефонов.
   // Самих броней гостю читать нельзя — там чужие контакты.

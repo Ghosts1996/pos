@@ -3,9 +3,11 @@ import 'dart:ui' show PointMode;
 
 import 'package:flutter/material.dart';
 
+import '../models/hall_wall.dart';
 import '../models/table_model.dart';
 import '../theme/app_colors.dart';
 import '../utils/hall_layout.dart';
+import 'hall_walls_painter.dart';
 
 /// Схема зала на логическом холсте [kHallCanvas] (см. hall_layout.dart),
 /// вписанная в доступное место.
@@ -30,6 +32,19 @@ class HallPlanView extends StatefulWidget {
   /// Цвета «пола» — у приложения гостя своя палитра.
   final Color floorColor;
   final Color lineColor;
+
+  /// Стены зоны (см. HallWall) — рисуются под столами.
+  final List<HallWall> walls;
+
+  /// Цвет контура стен.
+  final Color wallColor;
+
+  /// Выбранная в редакторе стена — её контур цветом [AppColors.primary].
+  final String? highlightedWallId;
+
+  /// Схему двигают одним пальцем. В редакторе при рисовании стен палец
+  /// рисует, а схему двигают и приближают двумя.
+  final bool panEnabled;
 
   /// Показывать область, где стоят столы (см. hallContentRect), а не весь
   /// холст: столы крупнее, без пустых полей. Схему по-прежнему можно
@@ -60,6 +75,10 @@ class HallPlanView extends StatefulWidget {
     this.overlay,
     this.floorColor = AppColors.surface,
     this.lineColor = AppColors.border,
+    this.walls = const [],
+    this.wallColor = HallPlanView.kHallWallColor,
+    this.highlightedWallId,
+    this.panEnabled = true,
     this.fitToTables = false,
     this.showHint = true,
     this.transformationController,
@@ -83,6 +102,9 @@ class HallPlanView extends StatefulWidget {
 
   /// Масштаб, при котором схему удобно нажимать пальцем: плитка ≥ ~64 px.
   static const double comfortableScale = 0.62;
+
+  /// Цвет стен на кассе: светлый «бетон» на тёмном полу.
+  static const Color kHallWallColor = Color(0xFFCBD5E1);
 
   @override
   State<HallPlanView> createState() => _HallPlanViewState();
@@ -108,32 +130,46 @@ class _HallPlanViewState extends State<HallPlanView> {
       height: kHallCanvas.height,
       child: CustomPaint(
         painter: _FloorPainter(widget.floorColor, widget.lineColor, framed: widget.fitToTables),
-        // Таймеры на плитках тикают каждую секунду — без границы
-        // перерисовки вместе с ними перерисовывался бы и «пол» с сеткой.
-        child: RepaintBoundary(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              for (final t in sorted)
-                Positioned(
-                  key: ValueKey(t.id),
-                  left: hallTileOffset(t).left,
-                  top: hallTileOffset(t).top,
-                  child: widget.tileBuilder(t),
-                ),
-              if (widget.overlay != null) Positioned.fill(child: widget.overlay!),
-            ],
+        // Стены — под столами, на одном слое с полом.
+        child: CustomPaint(
+          painter: HallWallsPainter(
+            walls: widget.walls,
+            line: widget.wallColor,
+            floor: widget.floorColor,
+            highlighted: {if (widget.highlightedWallId != null) widget.highlightedWallId!},
+            highlightColor: AppColors.primary,
+          ),
+          // Таймеры на плитках тикают каждую секунду — без границы
+          // перерисовки вместе с ними перерисовывались бы и «пол» с сеткой,
+          // и стены.
+          child: RepaintBoundary(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (final t in sorted)
+                  Positioned(
+                    key: ValueKey(t.id),
+                    left: hallTileOffset(t).left,
+                    top: hallTileOffset(t).top,
+                    child: widget.tileBuilder(t),
+                  ),
+                if (widget.overlay != null) Positioned.fill(child: widget.overlay!),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  /// Часть холста со столами и стенами.
+  Rect _content() => hallContentRect(widget.tables, extra: hallWallBounds(widget.walls));
+
   /// Схема «по столам»: область столов по центру в удобном масштабе.
   Widget _fitted(BoxConstraints box) {
     const pad = 8.0;
     final viewport = Size(box.maxWidth, box.maxHeight);
-    final content = hallContentRect(widget.tables);
+    final content = _content();
     final scale = HallPlanView.fitScale(content, viewport, pad: pad);
     // Начальное положение ставим, только когда поменялся экран или
     // расстановка столов, — иначе каждое обновление стола сбрасывало бы
@@ -156,6 +192,7 @@ class _HallPlanViewState extends State<HallPlanView> {
       constrained: false,
       minScale: math.min(scale, whole) * 0.9,
       maxScale: 2.5,
+      panEnabled: widget.panEnabled,
       boundaryMargin: EdgeInsets.all(math.max(viewport.width, viewport.height)),
       child: _canvas(),
     );
@@ -181,7 +218,7 @@ class _HallPlanViewState extends State<HallPlanView> {
       // Узкий экран: схему можно двигать и приближать. Начальный масштаб —
       // удобный для пальца; видно угол, где начинаются столы, а не пустой
       // левый верхний угол холста.
-      final content = hallContentRect(widget.tables);
+      final content = _content();
       final start = widget.fitWidth
           ? math.max(fit, math.min(HallPlanView.comfortableScale, math.min(w / content.width, h / content.height)))
           : math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvas.height));
@@ -203,6 +240,7 @@ class _HallPlanViewState extends State<HallPlanView> {
               constrained: false,
               minScale: fit,
               maxScale: 2.5,
+              panEnabled: widget.panEnabled,
               boundaryMargin: const EdgeInsets.all(pad),
               child: _canvas(),
             ),

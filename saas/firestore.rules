@@ -429,6 +429,23 @@ service cloud.firestore {
       allow write: if isStaff(tenantId);
     }
 
+    // Стены на схеме зала (рисует администратор в редакторе зала): гость
+    // видит их на карте зала. Точки — плоский список чисел, не больше 200
+    // углов на стену.
+    function hallWallOk() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['zone', 'points', 'closed', 'createdAt']) &&
+        d.zone is string && d.zone.size() <= 60 &&
+        d.points is list && d.points.size() >= 4 && d.points.size() <= 400 &&
+        d.get('closed', false) is bool;
+    }
+
+    match /tenants/{tenantId}/hallWalls/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create, update: if isStaff(tenantId) && hallWallOk();
+      allow delete: if isStaff(tenantId);
+    }
+
     // Чек гостя. У гостя сети профиль лежит в chains/{chainId}/clients, а
     // чек — в конкретной точке, поэтому сверяем и activeTenantId.
     function myActiveSession(tenantId) {
