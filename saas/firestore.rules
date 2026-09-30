@@ -440,6 +440,34 @@ service cloud.firestore {
             : '');
     }
 
+    // Гость занял этот чек (sessionClaims) — только тогда он заказывает,
+    // зовёт персонал и оставляет чаевые на этот счёт. Иначе кто угодно с
+    // приложением заведения мог бы сделать это для чужого стола удалённо.
+    function ownsSession(tenantId, sid) {
+      return sid is string && sid != '' &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(sid)) &&
+        get(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(sid)).data.uid == request.auth.uid;
+    }
+
+    // Занять чек гость может только с секретом стола из QR на самом столе:
+    // номер стола гостю виден, а секрет — только на наклейке. Чек должен
+    // быть открыт и стоять именно на этом столе. Пока касса не выпустила
+    // секрет столу (tableKeys), работает как раньше — старые наклейки не
+    // ломаются до обновления кассы.
+    function tableKeyOk(tenantId, sessionId) {
+      let tid = request.resource.data.get('tableId', '');
+      let session = get(/databases/$(database)/documents/tenants/$(tenantId)/sessions/$(sessionId)).data;
+      let keyPath = /databases/$(database)/documents/tenants/$(tenantId)/tableKeys/$(tid);
+      return tid is string && tid != '' &&
+        session.get('tableId', '') == tid &&
+        session.get('status', '') == 'active' &&
+        (!exists(keyPath) || request.resource.data.get('key', '') == get(keyPath).data.key);
+    }
+
+    match /tenants/{tenantId}/tableKeys/{tableId} {
+      allow read, write: if isStaff(tenantId);
+    }
+
     match /tenants/{tenantId}/sessions/{doc} {
       allow read: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) && myActiveSession(tenantId) == doc);
@@ -515,7 +543,9 @@ service cloud.firestore {
     match /tenants/{tenantId}/sessionClaims/{sessionId} {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow create: if isStaff(tenantId) ||
-        (isTenantGuest(tenantId) && request.resource.data.uid == request.auth.uid);
+        (isTenantGuest(tenantId) &&
+         request.resource.data.uid == request.auth.uid &&
+         tableKeyOk(tenantId, sessionId));
       allow update: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          resource.data.uid == request.auth.uid &&
@@ -565,7 +595,9 @@ service cloud.firestore {
     match /tenants/{tenantId}/waiterCalls/{doc} {
       allow read: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
-      allow create: if isTenantGuest(tenantId) && request.resource.data.clientUid == request.auth.uid;
+      allow create: if isTenantGuest(tenantId) &&
+        request.resource.data.clientUid == request.auth.uid &&
+        ownsSession(tenantId, request.resource.data.get('sessionId', ''));
       allow update, delete: if isStaff(tenantId);
     }
 
@@ -576,6 +608,7 @@ service cloud.firestore {
       allow create: if isTenantGuest(tenantId) &&
         request.resource.data.clientUid == request.auth.uid &&
         request.resource.data.status == 'new' &&
+        ownsSession(tenantId, request.resource.data.get('sessionId', '')) &&
         request.resource.data.items is list &&
         request.resource.data.items.size() > 0 &&
         request.resource.data.items.size() <= 50;
@@ -606,6 +639,7 @@ service cloud.firestore {
       allow create: if isStaff(tenantId) || (isTenantGuest(tenantId) &&
         request.resource.data.clientUid == request.auth.uid &&
         request.resource.data.status == 'pending' &&
+        ownsSession(tenantId, request.resource.data.get('sessionId', '')) &&
         request.resource.data.amount is number &&
         request.resource.data.amount > 0 &&
         request.resource.data.amount <= 100000);

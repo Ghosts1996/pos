@@ -488,7 +488,8 @@ function nextTier(spent) {
 function route() {
   clearScreen();
   const hash = location.hash || '#/';
-  const bind = hash.match(/^#\/t\/(.+)$/);
+  // #/t/{стол} или #/t/{стол}/{секрет стола из QR}.
+  const bind = hash.match(/^#\/t\/([^/]+)(?:\/([^/]+))?$/);
   const tab = bind ? 'table' : (hash.replace('#/', '') || 'home');
 
   // «Ещё» — подраздел профиля, отдельной вкладки у него нет: пусть в
@@ -499,7 +500,7 @@ function route() {
   });
   window.scrollTo(0, 0);
 
-  if (bind) return bindToTable(decodeURIComponent(bind[1]));
+  if (bind) return bindToTable(decodeURIComponent(bind[1]), bind[2] ? decodeURIComponent(bind[2]) : '');
   const hall = hash.match(/^#\/hall(\/pick)?$/);
   if (hall) return screenHall(!!hall[1]);
 
@@ -835,12 +836,13 @@ async function placeOrder(items, redraw) {
 
 // ---------- МОЙ СТОЛ ----------
 
-/// Привязка к столу по ссылке из QR: /app/#/t/{tableId}
+/// Привязка к столу по ссылке из QR: /app/#/t/{tableId}/{секрет стола}
 ///
 /// Логика та же, что в приложении на Android, и та же защита: чек
 /// закрепляется за первым, кто его занял (документ sessionClaims), и
-/// второму телефону база просто откажет в записи.
-async function bindToTable(tableId) {
+/// второму телефону база просто откажет в записи. Секрет стола есть только
+/// на наклейке: без него чужой чек удалённо не занять.
+async function bindToTable(tableId, tableKey = '') {
   screenEl().innerHTML = `<h1>Открываем стол…</h1><div class="spinner"></div>`;
   try {
     // Без номера за стол не пускаем, как и в приложении: по нему кассир
@@ -871,11 +873,11 @@ async function bindToTable(tableId) {
     // но выбрать не даём: так же, как в приложении на Android.
     if (checks.length > 1) {
       const marked = await markTakenChecks(checks);
-      return chooseCheck(tableId, data.name || '', marked);
+      return chooseCheck(tableId, data.name || '', marked, tableKey);
     }
 
     const sessionId = checks.length === 1 ? checks[0].id : ids[ids.length - 1];
-    await claimSession(tableId, sessionId);
+    await claimSession(tableId, sessionId, tableKey);
   } catch (e) {
     failBind('Не удалось открыть стол. Проверьте интернет и попробуйте ещё раз.');
   }
@@ -909,7 +911,7 @@ function tableTitle(name) {
   return /^стол/i.test(n) ? n : 'Стол ' + n;
 }
 
-function chooseCheck(tableId, tableName, checks) {
+function chooseCheck(tableId, tableName, checks, tableKey = '') {
   screenEl().innerHTML = `
     <h1>${esc(tableTitle(tableName))}</h1>
     <p class="muted small">За этим столом открыто несколько счетов.
@@ -932,21 +934,27 @@ function chooseCheck(tableId, tableName, checks) {
     }).join('')}`;
 
   screenEl().querySelectorAll('[data-check]').forEach((el) => {
-    el.onclick = () => claimSession(tableId, el.dataset.check);
+    el.onclick = () => claimSession(tableId, el.dataset.check, tableKey);
   });
 }
 
-async function claimSession(tableId, sessionId) {
+async function claimSession(tableId, sessionId, tableKey = '') {
   try {
     // Документ создаётся, только если его ещё нет: правила базы не дадут
     // переписать чужой. Поэтому при одновременном сканировании с двух
-    // телефонов выигрывает ровно один.
-    await setDoc(doc(state.root, 'sessionClaims', sessionId), { uid: state.uid });
+    // телефонов выигрывает ровно один. Стол и его секрет сверяют правила.
+    await setDoc(doc(state.root, 'sessionClaims', sessionId),
+      { uid: state.uid, tableId, ...(tableKey ? { key: tableKey } : {}) });
   } catch (e) {
-    // Отказ правил — счёт действительно чужой. Любая другая ошибка это
-    // просто нет связи, и говорить гостю «стол занят» неправда: он пойдёт
-    // разбираться к кальянщику вместо того, чтобы повторить попытку.
+    // Отказ правил: счёт уже чужой или код со стола устарел. Любая другая
+    // ошибка это просто нет связи, и говорить гостю «стол занят» неправда:
+    // он пойдёт разбираться к кальянщику вместо того, чтобы повторить попытку.
     if (e && e.code === 'permission-denied') {
+      const [taken] = await markTakenChecks([{ id: sessionId }]);
+      if (!taken.taken) {
+        return failBind('Код на этом столе устарел — отсканируйте QR прямо на столе ещё раз. '
+          + `Если не выходит, попросите ${staffWord('acc')} открыть вам счёт.`);
+      }
       return failBind('Этот счёт уже открыт у другого гостя. '
         + `Если это ваш стол — попросите ${staffWord('acc')} открыть вам свой счёт.`);
     }
@@ -2997,7 +3005,8 @@ async function startScanner() {
         if (tableId) {
           done = true;
           stopScanner();
-          location.hash = '#/t/' + encodeURIComponent(tableId);
+          const key = tableKeyFrom(raw);
+          location.hash = '#/t/' + encodeURIComponent(tableId) + (key ? '/' + encodeURIComponent(key) : '');
           return;
         }
         if (hint) hint.textContent = 'Это не код стола — наведите на код на столе.';
@@ -3028,6 +3037,15 @@ function loadScript(src) {
 
 /// Номер стола из любого формата наклейки: kolibri://table/5,
 /// https://…/table/5, ссылка веб-версии или просто номер.
+/// Секрет стола из кода: ?k=… в ссылке с наклейки или /t/{стол}/{секрет}.
+function tableKeyFrom(raw) {
+  const v = String(raw || '').trim();
+  const param = v.match(/[?&]k=([^&#\s]+)/);
+  if (param) return decodeURIComponent(param[1]);
+  const path = v.match(/[#/]t\/[^/?#\s]+\/([^/?#\s]+)/);
+  return path ? decodeURIComponent(path[1]) : '';
+}
+
 function tableIdFrom(raw) {
   const v = String(raw || '').trim();
   if (!v) return null;

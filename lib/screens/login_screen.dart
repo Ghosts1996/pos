@@ -11,6 +11,7 @@ import '../services/push_service.dart';
 import '../services/reservation_service.dart';
 import '../services/staff_device_service.dart';
 import '../services/staff_session_store.dart';
+import '../services/table_key_service.dart';
 import '../services/hall_watch_service.dart';
 import '../utils/constants.dart';
 import '../widgets/shift_open_dialog.dart';
@@ -151,6 +152,8 @@ class _LoginScreenState extends State<LoginScreen> {
     // Проверка стоит один документ и ничего не делает, если всё на месте.
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
+    // Секреты столов для QR-наклеек — столам, у которых их ещё нет.
+    unawaited(TableKeyService.instance.ensureKeys().catchError((_) => 0));
     unawaited(GuestLinkService().backfillGuestIndexes());
     await _enter(loggedInEmployee);
   }
