@@ -15,6 +15,7 @@ import '../models/inventory_models.dart';
 import '../utils/constants.dart';
 import 'venue_service.dart';
 import 'tips_service.dart';
+import 'table_key_service.dart';
 import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
 import '../utils/guest_items.dart';
@@ -49,8 +50,14 @@ class FirestoreService {
           .snapshots()
           .map((snap) => snap.docs.map((d) => TableModel.fromDoc(d)).toList()));
 
-  Future<void> addTable(TableModel table) {
-    return AppScope.col('tables').doc(table.id).set(table.toMap());
+  Future<void> addTable(TableModel table) async {
+    await AppScope.col('tables').doc(table.id).set(table.toMap());
+    // Секрет стола для QR-наклейки (см. TableKeyService).
+    try {
+      await TableKeyService.instance.ensureKey(table.id);
+    } catch (_) {
+      // Выпустится при следующем входе на кассу (ensureKeys).
+    }
   }
 
   Future<void> updateTable(TableModel table) {
@@ -99,8 +106,9 @@ class FirestoreService {
     return AppScope.col('tables').doc(tableId).update({'rotation': rotation, 'x': x, 'y': y});
   }
 
-  Future<void> deleteTable(String tableId) {
-    return AppScope.col('tables').doc(tableId).delete();
+  Future<void> deleteTable(String tableId) async {
+    await AppScope.col('tables').doc(tableId).delete();
+    await TableKeyService.instance.remove(tableId);
   }
 
   /// Стрим ОДНОГО стола по id. В отличие от [tablesStream] не тянет всю
@@ -1511,6 +1519,7 @@ class FirestoreService {
       throw TableOccupiedDeleteException();
     }
     await AppScope.col('tables').doc(tableId).delete();
+    await TableKeyService.instance.remove(tableId);
   }
 
   /// Удаляет категорию меню вместе со всеми её позициями (каскадно),

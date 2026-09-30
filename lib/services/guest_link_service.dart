@@ -387,7 +387,10 @@ class GuestLinkService {
   /// гость выбрал свой.
   /// Без номера в профиле за стол не пускаем: по нему кассир находит гостя.
   /// Проверяем до обращения к столу.
-  Future<TableBindResult> bindToTable(String uid, String tableId) async {
+  ///
+  /// [tableKey] — секрет стола из QR (параметр `k`, см. TableKeyService):
+  /// без него правила базы не дают занять чек.
+  Future<TableBindResult> bindToTable(String uid, String tableId, {String tableKey = ''}) async {
     final profile = await _clients.doc(uid).get();
     final phone = (profile.data()?['phone'] as String?) ?? '';
     if (phone.isEmpty) return const TableBindResult.needsPhone();
@@ -414,7 +417,7 @@ class GuestLinkService {
         table.name,
       );
     }
-    await bindToSession(uid, tableId, sessionId);
+    await bindToSession(uid, tableId, sessionId, tableKey: tableKey);
     return TableBindResult.bound(sessionId);
   }
 
@@ -454,19 +457,27 @@ class GuestLinkService {
   /// Привязывает гостя к выбранному чеку стола и закрепляет чек за ним:
   /// с другого телефона или профиля его уже не открыть.
   ///
-  /// [SessionTakenException] — чек занят кем-то другим.
-  Future<void> bindToSession(String uid, String tableId, String sessionId) async {
+  /// [SessionTakenException] — чек занят кем-то другим,
+  /// [TableCodeException] — код со стола устарел или не от этого стола.
+  Future<void> bindToSession(String uid, String tableId, String sessionId, {String tableKey = ''}) async {
     if (await isSessionTakenByOther(sessionId, uid)) {
       throw SessionTakenException();
     }
     try {
       // Документ создаётся только если его ещё нет, поэтому при одновременном
       // сканировании с двух телефонов выигрывает ровно один: второму правила
-      // откажут в записи.
-      await _sessionClaims.doc(sessionId).set({'uid': uid});
+      // откажут в записи. В SaaS правила сверяют стол и его секрет из QR.
+      await _sessionClaims.doc(sessionId).set({
+        'uid': uid,
+        if (AppScope.isSaasMode) 'tableId': tableId,
+        if (AppScope.isSaasMode && tableKey.isNotEmpty) 'key': tableKey,
+      });
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') throw SessionTakenException();
-      rethrow;
+      if (e.code != 'permission-denied') rethrow;
+      // Отказ правил: либо чек успел занять другой, либо код со стола
+      // старый (наклейку не заменили после выпуска секретов).
+      if (await isSessionTakenByOther(sessionId, uid)) throw SessionTakenException();
+      throw TableCodeException();
     }
 
     await _clients.doc(uid).set({
@@ -1019,6 +1030,15 @@ class GuestLinkService {
 }
 
 /// Чек уже открыт у другого гостя.
+/// Код со стола не подошёл: наклейка старая (до секретов столов или после
+/// «Новый код» на кассе) либо сфотографирована с другого стола.
+class TableCodeException implements Exception {
+  @override
+  String toString() =>
+      'Код на этом столе устарел — отсканируйте QR прямо на столе ещё раз. '
+      'Если не выходит, попросите ${VenueService.instance.terms.staffAcc} открыть вам счёт.';
+}
+
 class SessionTakenException implements Exception {
   @override
   String toString() =>
