@@ -3878,6 +3878,130 @@ async function handleDeleteDemoTenant(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+// ------------------------------------------------ бэкап заведения или сети
+//
+// Кнопка «Скачать бэкап» в кабинете (владелец — своё заведение или сеть) и
+// в панели платформы (супер-админ — любое). Формат тот же, что у ночной
+// копии всей базы (format: 1, docs: путь → данные), поэтому одно заведение
+// восстанавливается тем же restore-backup.js. Чтения идут из общей квоты
+// базы — большие заведения не выгружаем целиком, а просим написать нам.
+const EXPORT_MAX_DOCS = Math.max(100, Number(process.env.EXPORT_MAX_DOCS) || 15000);
+// Вложенные коллекции внутри коллекций заведения и сети (см. firestore.rules).
+const EXPORT_NESTED = { clients: ["visits"] };
+
+class ExportTooLarge extends HttpError {
+  constructor(count) {
+    super(413, `В копии больше ${EXPORT_MAX_DOCS} документов (${count}) — напишите в поддержку, выгрузим с сервера`);
+  }
+}
+
+/** Документ со всеми вложенными коллекциями — в docs (путь → данные). */
+async function exportDocTree(ref, docs) {
+  const snap = await ref.get();
+  if (snap.exists) docs[ref.path] = serializeFirestoreValue(snap.data());
+  for (const col of await ref.listCollections()) {
+    const all = await col.get();
+    if (Object.keys(docs).length + all.size > EXPORT_MAX_DOCS) throw new ExportTooLarge(Object.keys(docs).length + all.size);
+    all.docs.forEach((d) => { docs[d.ref.path] = serializeFirestoreValue(d.data()); });
+    const nested = EXPORT_NESTED[col.id] || [];
+    for (let i = 0; nested.length && i < all.docs.length; i += 20) {
+      await Promise.all(all.docs.slice(i, i + 20).map(async (d) => {
+        for (const name of nested) {
+          const sub = await d.ref.collection(name).get();
+          sub.docs.forEach((x) => { docs[x.ref.path] = serializeFirestoreValue(x.data()); });
+        }
+      }));
+      if (Object.keys(docs).length > EXPORT_MAX_DOCS) throw new ExportTooLarge(Object.keys(docs).length);
+    }
+  }
+}
+
+/** Корневые документы, которые относятся к заведению или сети по полю. */
+async function exportWhere(collection, field, value, docs) {
+  const snap = await db().collection(collection).where(field, "==", value).get();
+  snap.docs.forEach((d) => { docs[d.ref.path] = serializeFirestoreValue(d.data()); });
+}
+
+async function exportTenant(tenantId, docs) {
+  const firestore = db();
+  await exportDocTree(firestore.collection("tenants").doc(tenantId), docs);
+  const sub = await firestore.collection("subscriptions").doc(tenantId).get();
+  if (sub.exists) docs[sub.ref.path] = serializeFirestoreValue(sub.data());
+  await exportWhere("tenantMembers", "tenantId", tenantId, docs);
+  await exportWhere("billingInvoices", "tenantId", tenantId, docs);
+  await exportWhere("bankInvoices", "tenantId", tenantId, docs);
+}
+
+async function handleExportBackup(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, chainId } = await parseJsonBody(req);
+  const id = typeof chainId === "string" && chainId ? chainId : typeof tenantId === "string" ? tenantId : "";
+  if (!id || id.includes("/")) throw new HttpError(400, "Не указано заведение или сеть");
+  const isChain = id === chainId;
+  // Свои данные выгружает владелец; чужие — только супер-админ и только
+  // сразу после ввода пароля: в файле телефоны и бонусы гостей.
+  let superAdmin = false;
+  try {
+    if (isChain) await requireChainRole(id, decoded.uid, ["owner"]);
+    else {
+      // Точку сети выгружает и владелец сети.
+      const pointChainId = (await db().collection("tenants").doc(id).get()).data()?.chainId;
+      await requireTenantRole(id, decoded.uid, ["owner"]).catch(async (e) => {
+        if (!pointChainId) throw e;
+        await requireChainRole(pointChainId, decoded.uid, ["owner"]);
+      });
+    }
+  } catch (e) {
+    if (!(e instanceof HttpError) || e.status !== 403) throw e;
+    superAdmin = await isSuperAdmin(decoded);
+    if (!superAdmin) throw e;
+    requireRecentAuth(decoded);
+  }
+  const firestore = db();
+  const root = await firestore.collection(isChain ? "chains" : "tenants").doc(id).get();
+  if (!root.exists) throw new HttpError(404, isChain ? "Сеть не найдена" : "Заведение не найдено");
+
+  const docs = {};
+  const tenantIds = [];
+  if (isChain) {
+    await exportDocTree(root.ref, docs);
+    const sub = await firestore.collection("subscriptions").doc(id).get();
+    if (sub.exists) docs[sub.ref.path] = serializeFirestoreValue(sub.data());
+    await exportWhere("chainMembers", "chainId", id, docs);
+    await exportWhere("billingInvoices", "chainId", id, docs);
+    await exportWhere("bankInvoices", "chainId", id, docs);
+    const locations = await firestore.collection("tenants").where("chainId", "==", id).get();
+    for (const t of locations.docs) {
+      tenantIds.push(t.id);
+      await exportTenant(t.id, docs);
+    }
+  } else {
+    tenantIds.push(id);
+    await exportTenant(id, docs);
+  }
+
+  const name = String(root.data().name || root.data().slug || id);
+  await writeSecurityEvent(req, decoded, isChain ? "chainBackupExported" : "tenantBackupExported", {
+    tenantId: isChain ? null : id,
+    metadata: { name, chainId: isChain ? id : null, docs: Object.keys(docs).length, bySuperAdmin: superAdmin },
+  });
+  const body = zlib.gzipSync(JSON.stringify({
+    format: 1, kind: isChain ? "chain" : "tenant", id, name, tenantIds,
+    createdAt: new Date().toISOString(), docs,
+  }));
+  // Сжатый JSON: браузер сам распакует его (Content-Encoding), и владелец
+  // сохранит обычный .json, который открывается чем угодно.
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Encoding": "gzip",
+    "Content-Length": body.length,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  });
+  res.end(body);
+}
+
 /**
  * Ручная правка подписки из карточки заведения (статус, «оплачено до»,
  * «триал до») с записью «было → стало» в журнал безопасности. У точки сети
@@ -5524,6 +5648,8 @@ const ROUTES = {
   "/completeBuildJob": handleCompleteBuildJob,
   "/rolloutApps": handleRolloutApps,
   "/createDemoTenant": handleCreateDemoTenant,
+  // Бэкап заведения или сети: владелец — своё, супер-админ — любое.
+  "/exportBackup": handleExportBackup,
   // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
   "/sendAuthEmail": handleSendAuthEmail,
   "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
