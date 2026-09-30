@@ -839,6 +839,51 @@ const LANDING_FEATURES = [
   { icon: '💻', title: 'Работает везде', desc: 'Android-планшет и телефон, компьютер с Windows; при обрыве интернета касса продолжает работать' },
 ];
 
+// Форматы заведений на лендинге. Касса умеет тип заведения (venueType):
+// от него зависят слова и кнопки у персонала и гостя.
+const LANDING_FORMATS = [
+  {
+    id: 'cafe', icon: '☕', title: 'Кафе',
+    lead: 'Меньше беготни в час пик — гости заказывают сами, а касса считает всё за персонал.',
+    points: [
+      'Гости заказывают со стола по QR-коду — заказ сразу появляется на кассе',
+      'Оплата наличными, картой или через терминал, раздельный счёт на компанию',
+      'Склад списывается с каждой продажи — видно, чего не хватит к утру',
+      'Бонусы и уровни гостя возвращают его снова',
+    ],
+  },
+  {
+    id: 'restaurant', icon: '🍽', title: 'Ресторан',
+    lead: 'Зал, брони и кухня под контролем — от первого гостя до закрытия смены.',
+    points: [
+      'Карта зала по зонам, несколько чеков на одном столе, пересадка без потери заказа',
+      'Брони и лист ожидания в одном календаре с залом, подбор свободного стола',
+      'Техкарты, автосписание и инвентаризация с расхождениями',
+      'Зарплата официантов с процентом от продаж, чаевые по сменам',
+    ],
+  },
+  {
+    id: 'bar', icon: '🍸', title: 'Бар',
+    lead: 'Быстро у стойки и прозрачно по остаткам — каждая продажа видна.',
+    points: [
+      'Быстрые продажи у стойки и заказы гостей со столов',
+      'ЕГАИС: приём накладных через ваш УТМ',
+      'Остатки напитков обновляются с каждой продажей',
+      'Касса смены: внесение, инкассация, X-отчёт и пересчёт наличных',
+    ],
+  },
+  {
+    id: 'lounge', icon: '🛋', title: 'Лаунж',
+    lead: 'Сеансы по времени и внимание к каждому столу — даже в полном зале.',
+    points: [
+      'Сеансы по времени: таймер на каждом столе, продление в одно нажатие',
+      'Гость зовёт персонал за стол из приложения — стол подсвечивается на кассе',
+      'Брони на вечер с подбором свободного стола и напоминаниями',
+      'Программа лояльности и подарки ко дню рождения',
+    ],
+  },
+];
+
 function landingPlanCardHtml(p, selected, popular) {
   const priceText = Number(p.priceRub) > 0
     ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
@@ -936,7 +981,8 @@ function screenLanding() {
       <div class="landing-inner landing-nav-inner">
         <div class="landing-logo">◆ ZalPOS</div>
         <div class="landing-nav-links">
-          <button type="button" data-scroll="landing-features">Возможности</button>
+          <button type="button" data-scroll="landing-pains">Возможности</button>
+          <button type="button" data-scroll="landing-formats">Для кого</button>
           <button type="button" data-scroll="landing-pricing">Тарифы</button>
           <button type="button" data-scroll="landing-faq">Вопросы</button>
         </div>
@@ -952,22 +998,26 @@ function screenLanding() {
       <div class="landing-inner landing-hero-grid">
         <div class="landing-hero-copy">
           <div class="hero-badge">Для кафе, ресторанов, баров и лаунжей</div>
-          <h1>Касса и управление заведением — от зала до отчётов</h1>
-          <p class="muted landing-hero-lede">Карта зала и заказы, оплата и фискальные чеки, склад и ЕГАИС,
-          брони и лист ожидания, программа лояльности, смены и зарплата персонала, гостевое
-          приложение с меню и заказом со стола — всё в одной системе. Работает на обычном
-          Android-планшете или телефоне и на компьютере с Windows, запускается за 10–15 минут
-          без покупки специального оборудования.</p>
+          <h1>Всё заведение — в&nbsp;одном планшете. <span class="landing-grad">Без хаоса, потерь и&nbsp;тетрадок.</span></h1>
+          <p class="muted landing-hero-lede">Официант принимает заказ за секунды, гость сам заказывает и зовёт
+          персонал со стола, склад списывается сам, зарплата считается сама — а вы видите выручку и смену
+          с телефона, даже когда вас нет в зале.</p>
 
-          <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">
-            <span class="small landing-pill">⚡ Запуск за 10–15 минут</span>
-            <span class="small landing-pill">🔒 Данные гостей — сначала на сервер в РФ</span>
-            <span class="small landing-pill">💳 Без карты — только email для теста</span>
+          <ul class="landing-hero-points">
+            <li><span>✓</span> Запуск за 15 минут на обычном Android-планшете, телефоне или компьютере с Windows — без покупки оборудования</li>
+            <li><span>✓</span> Приложение для гостей под вашим названием и логотипом — меню, заказ со стола, бонусы, бронь</li>
+            <li><span>✓</span> Бесплатный тест: нужен только email, банковская карта не нужна</li>
+          </ul>
+          <div class="row landing-hero-actions">
+            <button class="btn btn-primary" id="f-landing-hero-cta">Попробовать бесплатно</button>
+            <button class="btn btn-ghost" id="f-landing-hero-demo">Посмотреть, как это выглядит ↓</button>
           </div>
         </div>
 
         <div class="landing-hero-form-wrap">
           <div class="card landing-hero-card">
+            <div class="landing-form-title">Начните бесплатно</div>
+            <p class="small muted" style="margin:-4px 0 14px">Кабинет откроется по ссылке из письма — без пароля.</p>
             <p id="f-landing-skip-trial-note" class="small" style="display:none;color:var(--primary);margin-bottom:10px">
               Выбрана оплата сразу, без пробного периода — после регистрации откроется страница оплаты.
             </p>
@@ -1002,6 +1052,116 @@ function screenLanding() {
       </div>
     </section>
 
+    <section class="landing-section landing-showcase" id="landing-showcase">
+      <div class="landing-inner">
+        <h2 class="landing-h2 center">Так выглядит смена в ZalPOS</h2>
+        <p class="landing-h2-sub center-block">Касса у персонала и приложение у гостя работают вместе в реальном времени:
+        гость нажал «Позвать официанта» — стол на кассе сразу подсвечивается.</p>
+        <div class="showcase" aria-hidden="true">
+          <div class="mock-tablet">
+            <div class="mock-bar">
+              <b>Зал · Основной</b>
+              <span class="mock-chip free">Свободны 4</span>
+              <span class="mock-chip busy">Заняты 5</span>
+            </div>
+            <div class="mock-hall">
+              ${[
+                ['Стол 1', 'busy', '1 ч 12 мин', '2 450 ₽'],
+                ['Стол 2', 'free', '4 места', ''],
+                ['Стол 3', 'call', 'Зовёт', '1 180 ₽'],
+                ['Стол 4', 'busy', '38 мин', '3 920 ₽'],
+                ['Стол 5', 'ending', 'через 8 мин', '1 640 ₽'],
+                ['Стол 6', 'free', '2 места', ''],
+                ['VIP', 'busy', '2 ч 05 мин', '8 700 ₽'],
+                ['Стол 8', 'reserved', 'Бронь 19:30', ''],
+                ['Стол 9', 'free', '6 мест', ''],
+              ].map(([n, st, a, b]) => `
+                <div class="mock-table ${st}">
+                  <div class="mt-name">${n}</div>
+                  <div class="mt-a">${a}</div>
+                  ${b ? `<div class="mt-b">${b}</div>` : ''}
+                </div>`).join('')}
+            </div>
+          </div>
+          <div class="mock-phone">
+            <div class="mp-notch"></div>
+            <div class="mp-title">Стол 3</div>
+            <div class="mp-timer"><span>С вами</span><b>47 мин</b></div>
+            <div class="mp-btns">
+              <div class="mp-btn on">🙋 Позвать официанта</div>
+              <div class="mp-btn">💳 Счёт, пожалуйста</div>
+            </div>
+            <div class="mp-bill">
+              <div><span>Лимонад манго</span><span>390 ₽</span></div>
+              <div><span>Паста карбонара</span><span>690 ₽</span></div>
+              <div><span>Чизкейк</span><span>100 ₽</span></div>
+              <div class="mp-total"><span>Итого</span><span>1 180 ₽</span></div>
+            </div>
+            <div class="mp-bonus">+ 59 бонусов за визит</div>
+          </div>
+          <div class="mock-toast t1">🔔 Стол 3 зовёт официанта</div>
+          <div class="mock-toast t2">📅 Новая бронь: сегодня 19:30, 4 гостя</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-section-alt" id="landing-pains">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Узнаёте своё заведение?</h2>
+        <p class="landing-h2-sub">Каждая из этих мелочей каждый месяц забирает деньги и нервы. ZalPOS закрывает их все сразу.</p>
+        <div class="pain-grid">
+          ${[
+            ['💸', 'Выручка не сходится с кассой', 'Каждый чек, скидка и возврат записаны с именем сотрудника. При закрытии смены — X-отчёт и пересчёт наличных.'],
+            ['📦', 'Продукты заканчиваются внезапно', 'Склад списывается с каждой продажи по техкартам, остатки видны всегда, инвентаризация показывает расхождения.'],
+            ['🏃', 'Гости ждут официанта', 'Гость сам заказывает и зовёт персонал со стола по QR-коду, а на кассе стол сразу подсвечивается.'],
+            ['📅', 'Брони теряются в переписке', 'Все брони — в одном календаре с картой зала: свободный стол подбирается сам, персонал получает напоминание.'],
+            ['🔁', 'Гости приходят один раз', 'Кешбэк бонусами, уровни, подарки ко дню рождения и сертификаты — у гостя в приложении с вашим логотипом.'],
+            ['🧮', 'Зарплату считаете вечером в Excel', 'Смены отмечаются на кассе, зарплата по часам, окладу и проценту с продаж считается сама, чаевые — тоже.'],
+            ['📵', 'Не знаете, что происходит без вас', 'В кабинете владельца с телефона: выручка за сегодня, открытые столы, кто на смене, сколько чеков закрыто.'],
+            ['🧾', 'Отчёт по смене — полчаса вручную', 'Выручка, средний чек, продажи по сотрудникам и позициям — в пару нажатий, с печатью X-отчёта.'],
+          ].map(([icon, pain, fix]) => `
+            <div class="pain-card">
+              <div class="pain-top"><span class="pain-icon">${icon}</span><span class="pain-text">${pain}</span></div>
+              <div class="pain-fix"><b>Решение:</b> ${fix}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section" id="landing-formats">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Под ваш формат заведения</h2>
+        <p class="landing-h2-sub">Выберите свой — касса и приложение гостя сами подстраивают слова и кнопки под тип заведения.</p>
+        <div class="format-tabs" role="tablist">
+          ${LANDING_FORMATS.map((f, i) => `<button type="button" class="format-tab${i === 0 ? ' active' : ''}" data-format="${f.id}">${f.icon} ${f.title}</button>`).join('')}
+        </div>
+        <div class="card format-body" id="landing-format-body"></div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-section-alt">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Три приложения — одна система</h2>
+        <div class="apps-grid">
+          <div class="app-card">
+            <div class="app-icon">🧾</div>
+            <div class="app-title">Касса для персонала</div>
+            <div class="app-desc">Android-планшет, телефон или компьютер с Windows. Вход по PIN-коду, у каждого своя роль: официант, бармен, администратор.</div>
+          </div>
+          <div class="app-card">
+            <div class="app-icon">📱</div>
+            <div class="app-title">Приложение для гостей</div>
+            <div class="app-desc">Меню с фото, заказ со стола, вызов персонала, счёт, чаевые, бонусы и бронь — под вашим названием и логотипом. На iPhone открывается в браузере без установки.</div>
+          </div>
+          <div class="app-card">
+            <div class="app-icon">💼</div>
+            <div class="app-title">Кабинет владельца</div>
+            <div class="app-desc">Выручка за сегодня, кто на смене, брендинг, устройства и оплата — с телефона или компьютера, откуда угодно.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="landing-section" id="landing-how">
       <div class="landing-inner">
         <h2 class="landing-h2">Как это работает</h2>
@@ -1021,7 +1181,8 @@ function screenLanding() {
 
     <section class="landing-section landing-section-alt" id="landing-features">
       <div class="landing-inner">
-        <h2 class="landing-h2">Что умеет система</h2>
+        <h2 class="landing-h2">Всё, что есть в системе</h2>
+        <p class="landing-h2-sub">Тарифы отличаются лимитами сотрудников, столов и устройств и дополнительными функциями — подробно в карточках тарифов ниже.</p>
         <div class="feature-grid">
           ${LANDING_FEATURES.map((f) => `
             <div class="feature-card">
@@ -1030,30 +1191,6 @@ function screenLanding() {
               <div class="feature-desc">${esc(f.desc)}</div>
             </div>
           `).join('')}
-        </div>
-      </div>
-    </section>
-
-    <section class="landing-section">
-      <div class="landing-inner">
-        <h2 class="landing-h2">Почему не тетрадь и Excel</h2>
-        <div class="compare-grid">
-          <div class="card compare-card bad">
-            <div style="font-weight:700;margin-bottom:10px">❌ Как обычно бывает</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Чек и скидка считаются на калькуляторе — время и ошибки</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Остатки склада — в отдельной таблице, обновляется, когда вспомнят</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони — в блокноте или переписке, иногда теряются</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Кто сколько отработал и сколько заработал — считают вручную в конце месяца</div>
-            <div class="small" style="padding:6px 0">Отчёт по смене — вручную, полчаса и дольше</div>
-          </div>
-          <div class="card compare-card good">
-            <div style="font-weight:700;margin-bottom:10px">✅ С ZalPOS</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Касса сама считает чек, скидки и бонусы применяются автоматически</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Склад обновляется при каждой продаже, инвентаризация — с историей расхождений</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Брони из гостевого приложения сразу попадают в общий календарь зала</div>
-            <div class="small" style="padding:6px 0;border-bottom:1px solid var(--border)">Смены отмечаются на кассе, зарплата по часам, окладу и проценту считается сама</div>
-            <div class="small" style="padding:6px 0">X-отчёт и пересчёт кассы по смене — в пару нажатий, с печатью</div>
-          </div>
         </div>
       </div>
     </section>
@@ -1102,6 +1239,18 @@ function screenLanding() {
       </div>
     </section>
 
+    <section class="landing-section landing-section-alt">
+      <div class="landing-inner">
+        <h2 class="landing-h2">Попробовать — без риска</h2>
+        <div class="risk-grid">
+          <div class="risk-item"><b>🆓 Бесплатный тест</b><span>Нужен только email — ни карты, ни договора, чтобы начать.</span></div>
+          <div class="risk-item"><b>↩️ Без обязательств</b><span>Автопродление отключается в любой момент в личном кабинете.</span></div>
+          <div class="risk-item"><b>🔄 Обновления сами</b><span>Новые версии приходят на все планшеты заведения автоматически и бесплатно.</span></div>
+          <div class="risk-item"><b>🇷🇺 Данные гостей в России</b><span>Имена и телефоны гостей сначала записываются на сервер в РФ (152-ФЗ).</span></div>
+        </div>
+      </div>
+    </section>
+
     <section class="landing-section" id="landing-faq">
       <div class="landing-inner">
         <h2 class="landing-h2">Частые вопросы</h2>
@@ -1119,9 +1268,13 @@ function screenLanding() {
 
     <section class="landing-section landing-cta-band">
       <div class="landing-inner landing-cta-inner">
-        <h3>Готовы попробовать?</h3>
-        <p>Бесплатный доступ по email, без карты — уже сегодня.</p>
-        <button class="btn" id="f-landing-cta-bottom">Оставить заявку</button>
+        <h3>Откройте своё заведение в ZalPOS уже сегодня</h3>
+        <p>Бесплатный доступ по email, без карты. Или скачайте кассу и нажмите «Демо» — готовое заведение
+        с залом, меню и гостями откроется за минуту.</p>
+        <div class="landing-cta-buttons">
+          <button class="btn" id="f-landing-cta-bottom">Попробовать бесплатно</button>
+          <button class="btn landing-cta-ghost" id="f-landing-cta-demo">⬇ Скачать демо-кассу</button>
+        </div>
       </div>
     </section>
 
@@ -1192,6 +1345,26 @@ function screenLanding() {
     $('f-landing-email')?.focus();
   };
   if ($('f-landing-cta-bottom')) $('f-landing-cta-bottom').onclick = scrollToEmail;
+  if ($('f-landing-hero-cta')) $('f-landing-hero-cta').onclick = scrollToEmail;
+  if ($('f-landing-hero-demo')) {
+    $('f-landing-hero-demo').onclick = () =>
+      $('landing-showcase')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if ($('f-landing-cta-demo')) $('f-landing-cta-demo').onclick = downloadPublicApk;
+
+  // Форматы заведения: вкладки с тем, что даёт система именно такому заведению.
+  const renderFormat = (id) => {
+    const f = LANDING_FORMATS.find((x) => x.id === id) || LANDING_FORMATS[0];
+    const body = $('landing-format-body');
+    if (body) {
+      body.innerHTML = `
+        <div class="format-lead">${esc(f.lead)}</div>
+        <ul class="format-list">${f.points.map((p) => `<li><span>✓</span>${esc(p)}</li>`).join('')}</ul>`;
+    }
+    document.querySelectorAll('.format-tab').forEach((b) => b.classList.toggle('active', b.dataset.format === f.id));
+  };
+  document.querySelectorAll('.format-tab').forEach((b) => { b.onclick = () => renderFormat(b.dataset.format); });
+  renderFormat(LANDING_FORMATS[0].id);
   if ($('f-landing-sticky-btn')) $('f-landing-sticky-btn').onclick = scrollToEmail;
   if ($('f-landing-nav-cta')) $('f-landing-nav-cta').onclick = scrollToEmail;
 
