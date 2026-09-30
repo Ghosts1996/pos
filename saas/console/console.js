@@ -5319,7 +5319,8 @@ function watchAllTenants() {
         </div>
 
         <div style="margin-top:14px">
-          <div class="small muted" style="margin-bottom:6px">Бэкап — все данные одним файлом (восстановление: saas-gateway/restore-backup.js)</div>
+          <div class="small muted" style="margin-bottom:6px">Бэкап — все данные одним файлом, без ограничения по объёму
+          (восстановление: saas-gateway/restore-backup.js). Каждый документ — одно чтение из дневной квоты базы (50 000).</div>
           <button class="btn btn-ghost f-tenant-backup" data-id="${esc(t.id)}">Скачать бэкап ${t.chainId ? 'точки' : 'заведения'}</button>
           ${t.chainId ? `<button class="btn btn-ghost f-chain-backup" data-chain="${esc(t.chainId)}" data-id="${esc(t.id)}" style="margin-top:8px">Скачать бэкап всей сети</button>` : ''}
         </div>
@@ -5480,8 +5481,8 @@ function watchAllTenants() {
       el.onclick = () => {
         const t = allTenants.find((x) => x.id === el.dataset.id) || {};
         exportVenueBackup(el.dataset.chain
-          ? { chainId: el.dataset.chain, fileKey: t.chainSlug || t.chainName || el.dataset.chain, label: t.chainName || 'сеть', asAdmin: true }
-          : { tenantId: t.id, fileKey: t.slug, label: t.name || t.id, asAdmin: true });
+          ? { chainId: el.dataset.chain, fileKey: t.chainSlug || t.chainName || el.dataset.chain, label: t.chainName || 'сеть', asAdmin: true, unlimited: true }
+          : { tenantId: t.id, fileKey: t.slug, label: t.name || t.id, asAdmin: true, unlimited: true });
       };
     });
   };
@@ -6820,8 +6821,9 @@ async function downloadBackup(name) {
 /** Бэкап заведения или сети одним .json: все данные (меню, залы, чеки,
  *  гости, сотрудники, склад, настройки) в формате ночной копии базы —
  *  восстанавливается saas-gateway/restore-backup.js. Своё скачивает
- *  владелец; чужое — супер-админ, после ввода пароля. */
-async function exportVenueBackup({ tenantId, chainId, fileKey, label, asAdmin = false }) {
+ *  владелец; чужое — супер-админ, после ввода пароля. [unlimited] — из
+ *  панели платформы, без предела числа документов. */
+async function exportVenueBackup({ tenantId, chainId, fileKey, label, asAdmin = false, unlimited = false }) {
   if (asAdmin && !(await reauthenticate(`скачать бэкап «${label}»`))) return;
   toast('Собираем бэкап — это может занять до минуты…');
   try {
@@ -6829,7 +6831,7 @@ async function exportVenueBackup({ tenantId, chainId, fileKey, label, asAdmin = 
     const res = await fetch(`${SAAS_GATEWAY_URL}/exportBackup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify(chainId ? { chainId } : { tenantId }),
+      body: JSON.stringify({ ...(chainId ? { chainId } : { tenantId }), ...(unlimited ? { unlimited: true } : {}) }),
     });
     if (!res.ok) {
       const json = await res.json().catch(() => null);
