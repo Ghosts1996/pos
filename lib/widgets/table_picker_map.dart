@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../models/hall_wall.dart';
 import '../models/table_model.dart';
+import '../services/firestore_service.dart';
 import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
 import 'hall_plan_view.dart';
@@ -64,6 +66,9 @@ class _TablePickerMapState extends State<TablePickerMap> {
   /// Зона зала — у каждой своя схема (см. TableModel.zone).
   String? _zone;
 
+  /// Стены зала — как нарисовал администратор.
+  late final Stream<List<HallWall>> _walls = FirestoreService().hallWallsStream();
+
   List<TableModel> get tables => widget.tables;
   List<TableBusyInterval> get busyIntervals => widget.busyIntervals;
   ValueChanged<TableModel> get onSelect => widget.onSelect;
@@ -101,43 +106,53 @@ class _TablePickerMapState extends State<TablePickerMap> {
         Expanded(
           // Та же схема, что у администратора (логический холст, см.
           // hall_layout.dart), — на телефоне её можно двигать пальцем.
-          child: HallPlanView(
-            tables: shown,
-            floorColor: Theme.of(context).colorScheme.surface,
-            lineColor: Theme.of(context).dividerColor,
-            tileBuilder: (t) {
-              final free = widget.freeTableIds.contains(t.id);
-              final selected = t.id == widget.selectedTableId;
-              final color = selected
-                  ? TablePickerMap._selectedColor
-                  : (free ? TablePickerMap._freeColor : TablePickerMap._busyColor);
-              return GestureDetector(
-                onTap: () => _openInfo(context, t, free),
-                child: TableShapeBox(
-                  table: t,
-                  size: hallTileSize(t),
-                  fill: color.withValues(alpha: 0.18),
-                  borderColor: color,
-                  borderWidth: selected ? 3 : 2,
-                  cornerRadius: 16,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(selected ? Icons.check_circle : Icons.table_restaurant, color: color, size: 22),
-                      const SizedBox(height: 4),
-                      Text(t.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                      Text(seatsLabel(t.seats), style: const TextStyle(fontSize: 11.5)),
-                    ],
-                  ),
-                ),
-              );
-            },
+          child: StreamBuilder<List<HallWall>>(
+            stream: _walls,
+            builder: (context, wallsSnap) => _plan(context, shown, zone, wallsSnap.data ?? const []),
           ),
         ),
       ],
+    );
+  }
+
+  /// Схема зоны [zone]: её стены и столы цветом свободности.
+  Widget _plan(BuildContext context, List<TableModel> shown, String? zone, List<HallWall> walls) {
+    return HallPlanView(
+      tables: shown,
+      walls: [for (final w in walls) if (w.zone == (zone ?? '')) w],
+      wallColor: Color.lerp(Theme.of(context).colorScheme.onSurface, Theme.of(context).colorScheme.surface, 0.2)!,
+      floorColor: Theme.of(context).colorScheme.surface,
+      lineColor: Theme.of(context).dividerColor,
+      tileBuilder: (t) {
+        final free = widget.freeTableIds.contains(t.id);
+        final selected = t.id == widget.selectedTableId;
+        final color = selected
+            ? TablePickerMap._selectedColor
+            : (free ? TablePickerMap._freeColor : TablePickerMap._busyColor);
+        return GestureDetector(
+          onTap: () => _openInfo(context, t, free),
+          child: TableShapeBox(
+            table: t,
+            size: hallTileSize(t),
+            fill: color.withValues(alpha: 0.18),
+            borderColor: color,
+            borderWidth: selected ? 3 : 2,
+            cornerRadius: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(selected ? Icons.check_circle : Icons.table_restaurant, color: color, size: 22),
+                const SizedBox(height: 4),
+                Text(t.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                Text(seatsLabel(t.seats), style: const TextStyle(fontSize: 11.5)),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -64,6 +64,11 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if isStaff();
     }
+    // Стены на схеме зала — гость видит их на карте зала.
+    match /hallWalls/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
 
     // ---- Чеки ----
     // Гость видит ТОЛЬКО тот чек, к которому сам привязан (свой стол).

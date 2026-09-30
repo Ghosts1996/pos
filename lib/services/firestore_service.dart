@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import '../utils/shared_stream.dart';
 import '../utils/shift_crew.dart';
 import 'package:uuid/uuid.dart';
 import '../models/table_model.dart';
+import '../models/hall_wall.dart';
 import '../models/session_model.dart';
 import '../models/menu_models.dart';
 import '../models/discount_card.dart';
@@ -31,6 +34,7 @@ class FirestoreService {
   // поэтому перерисовка экрана не переподписывается на базу.
   static final _tablesS = SharedStreams<List<TableModel>>();
   static final _tableS = SharedStreams<TableModel?>();
+  static final _wallsS = SharedStreams<List<HallWall>>();
   static final _sessionS = SharedStreams<SessionModel?>();
   static final _activeSessionsS = SharedStreams<List<SessionModel>>();
   static final _openShiftS = SharedStreams<ShiftModel?>();
@@ -92,6 +96,39 @@ class FirestoreService {
       final batch = _db.batch();
       for (final id in tableIds.skip(i).take(400)) {
         batch.update(AppScope.col('tables').doc(id), {'zone': zone});
+      }
+      await batch.commit();
+    }
+  }
+
+  // ---------- СТЕНЫ ЗАЛА ----------
+
+  /// Стены всех зон (см. HallWall). Нет доступа (правила ещё не обновлены)
+  /// — схема просто без стен, а не ошибка на весь зал.
+  Stream<List<HallWall>> hallWallsStream() => _wallsS.get(
+      _k(),
+      () => AppScope.col('hallWalls')
+          .snapshots()
+          .map((snap) => snap.docs.map(HallWall.fromDoc).where((w) => w.isValid).toList())
+          .transform(StreamTransformer.fromHandlers(handleError: (e, st, sink) => sink.add(const <HallWall>[]))));
+
+  /// Id новой стены — известен сразу, до ответа базы: «Отменить» может
+  /// убрать стену, даже пока она сохраняется.
+  String newHallWallId() => AppScope.col('hallWalls').doc().id;
+
+  Future<void> saveHallWall(String id, HallWall wall) =>
+      AppScope.col('hallWalls').doc(id).set({...wall.toMap(), 'createdAt': FieldValue.serverTimestamp()});
+
+  Future<void> deleteHallWall(String id) => AppScope.col('hallWalls').doc(id).delete();
+
+  /// Стены зоны [from] переезжают в зону [to] (переименование зоны); с
+  /// [to] == null — удаляются вместе с зоной.
+  Future<void> moveHallWalls(String from, String? to) async {
+    final snap = await AppScope.col('hallWalls').where('zone', isEqualTo: from).get();
+    for (var i = 0; i < snap.docs.length; i += 400) {
+      final batch = _db.batch();
+      for (final d in snap.docs.skip(i).take(400)) {
+        to == null ? batch.delete(d.reference) : batch.update(d.reference, {'zone': to});
       }
       await batch.commit();
     }

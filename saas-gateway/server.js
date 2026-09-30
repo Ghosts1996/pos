@@ -82,7 +82,7 @@ const RESERVED_SLUGS = new Set([
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
-  "giftCardClaims", "giftCards", "guestOrders", "happyHours", "inventory",
+  "giftCardClaims", "giftCards", "guestOrders", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
@@ -2950,6 +2950,19 @@ const DEMO_TABLES = [
   { name: "Стол 17", zone: "Терраса", shape: "corner", rotation: 2, seats: 8, left: 676, top: 52 },
 ];
 
+// Стены залов (как рисует редактор зала): углы в точках холста, кратные
+// шагу сетки 26. Проём в контуре — вход.
+const DEMO_WALLS = [
+  { zone: "Основной зал", points: [[520, 650], [26, 650], [26, 26], [884, 26], [884, 650], [650, 650]] },
+  { zone: "2 этаж", points: [[416, 494], [26, 494], [26, 26], [936, 26], [936, 494], [546, 494]] },
+  // Перегородки VIP-кабинетов.
+  { zone: "2 этаж", points: [[312, 26], [312, 286]] },
+  { zone: "2 этаж", points: [[598, 26], [598, 286]] },
+  { zone: "2 этаж", points: [[754, 26], [754, 286]] },
+  // Терраса: стена здания с двух сторон, дальше перила.
+  { zone: "Терраса", points: [[26, 390], [26, 26], [910, 26]] },
+];
+
 /** Доли x/y стола: левый верхний угол / свободное место (холст минус плитка). */
 function demoTableFraction(t) {
   const { width, height, tile } = DEMO_HALL;
@@ -3346,6 +3359,10 @@ function seedDemoData(tenantRef, batch, nowMs) {
       employeeId: staff[key].id, employeeName: staff[key].name,
       startedAt: ts(DEMO_SHIFT_OPENED_MINUTES_AGO - 5), endedAt: null, status: "open", manual: false,
     });
+  });
+
+  DEMO_WALLS.forEach((w) => {
+    batch.set(col("hallWalls").doc(), { zone: w.zone, points: w.points.flat(), closed: false, createdAt: ts(60 * 24) });
   });
 
   const tables = {};
