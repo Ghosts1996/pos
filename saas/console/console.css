@@ -337,9 +337,14 @@ a:hover { filter: brightness(1.2); }
 .sticky-cta.show { opacity: 1; transform: none; pointer-events: auto; }
 
 /* Калькулятор окупаемости на лендинге */
-.calc-result { font-size: 28px; font-weight: 800; color: var(--primary); margin: 8px 0 2px; }
 
 /* FAQ — простой аккордеон, без библиотек */
+/* Авторы фото демо-меню (#/demo-photos). */
+.credits-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
+.credit-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.credit-card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--surface-2); }
+.credit-text { padding: 8px 10px 10px; }
+.credit-author { font-size: 12.5px; font-weight: 700; margin-bottom: 2px; overflow-wrap: anywhere; }
 .faq-item { border-bottom: 1px solid var(--border); padding: 13px 0; }
 .faq-item:last-child { border-bottom: none; }
 .faq-question {
@@ -543,32 +548,16 @@ a:hover { filter: brightness(1.2); }
 .center-block { margin-left: auto !important; margin-right: auto !important; text-align: center; }
 .showcase { position: relative; display: flex; justify-content: center; align-items: flex-end; gap: 18px; margin-top: 8px; padding: 10px 0 30px; }
 .mock-tablet {
-  flex: 1 1 auto; max-width: 640px; background: #0A1322; border: 1px solid var(--border);
+  flex: 1 1 600px; min-width: 0; max-width: 640px; background: #0A1322; border: 1px solid var(--border);
   border-radius: 26px; padding: 14px; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 8px #0E1829;
 }
 .mock-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 .mock-bar b { margin-right: auto; }
 .mock-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .mock-chip.free::before, .mock-chip.busy::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.mock-chip i { font-style: normal; font-variant-numeric: tabular-nums; }
 .mock-chip.free::before { background: #34C27A; }
 .mock-chip.busy::before { background: #3D8CFF; }
-.mock-hall { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.mock-table {
-  border-radius: 14px; padding: 12px 10px; min-height: 76px; text-align: center; border: 1.5px solid;
-  display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 12px;
-}
-.mock-table .mt-name { font-weight: 800; font-size: 13.5px; }
-.mock-table .mt-a { color: var(--muted); }
-.mock-table .mt-b { font-weight: 700; }
-.mock-table.free { border-color: rgba(52,194,122,.55); background: rgba(52,194,122,.06); }
-.mock-table.free .mt-a { color: #6FD9A3; }
-.mock-table.busy { border-color: rgba(61,140,255,.6); background: rgba(61,140,255,.12); }
-.mock-table.ending { border-color: rgba(231,178,78,.7); background: rgba(231,178,78,.12); }
-.mock-table.ending .mt-a { color: #F0C674; }
-.mock-table.reserved { border-color: rgba(167,139,250,.6); background: rgba(167,139,250,.1); }
-.mock-table.reserved .mt-a { color: #C4B5FD; }
-.mock-table.call { border-color: #FF7A59; background: rgba(255,122,89,.16); animation: mock-pulse 1.6s ease-in-out infinite; }
-.mock-table.call .mt-a { color: #FFB199; font-weight: 700; }
 @keyframes mock-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,122,89,.0); } 50% { box-shadow: 0 0 0 6px rgba(255,122,89,.25); } }
 .mock-phone {
   flex: none; width: 200px; background: #0A1322; border: 1px solid var(--border); border-radius: 30px;
@@ -594,15 +583,68 @@ a:hover { filter: brightness(1.2); }
 .mock-toast.t1 { top: -6px; left: 4%; }
 .mock-toast.t2 { bottom: 0; right: 30%; animation-delay: 1.2s; }
 @keyframes mock-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+/* Живая схема зала: стены «как на чертеже» (как HallWallsPainter на кассе),
+   столы по форме, статусы меняются — см. hallDemoHtml/startHallDemo. */
+.hall-demo {
+  position: relative; aspect-ratio: 624 / 580; container-type: inline-size; border-radius: 16px; overflow: hidden;
+  background: radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1.4px) 0 0 / 4.1667% 4.4828%, #0B1526;
+}
+.hd-layer { position: absolute; inset: 0; transition: opacity .6s ease; }
+.hall-demo.out .hd-layer { opacity: 0; }
+.hd-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hd-room { fill: url(#hdRoom); opacity: 0; }
+.hd-edge, .hd-body { fill: none; stroke-linejoin: miter; stroke-miterlimit: 4; stroke-dasharray: 1 1; stroke-dashoffset: 1; opacity: 0; }
+.hd-edge { stroke: #CBD5E1; stroke-width: 14; stroke-linecap: square; }
+.hd-body { stroke: url(#hdBody); stroke-width: 9.5; stroke-linecap: butt; }
+.hd-label { fill: #64748B; font-size: 14px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; opacity: 0; }
+.hd-slot { position: absolute; opacity: 0; transform: scale(.82); }
+.hd-table {
+  width: 100%; height: 100%; box-sizing: border-box; padding: 2px; border: 1.5px solid; border-radius: 16%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12em;
+  text-align: center; white-space: nowrap; overflow: hidden; line-height: 1.15;
+  font-size: clamp(8px, 2cqw, 12.5px); transition: background-color .5s, border-color .5s;
+}
+.hd-table b { font-size: 1.14em; font-weight: 800; }
+.hd-table .a { color: var(--muted); transition: color .5s; }
+.hd-table .b { font-weight: 700; }
+.hd-table .b:empty { display: none; }
+.hd-table.circle { border-radius: 50%; }
+.hd-table.long { border-radius: 8% / 16%; }
+.hd-table.oval { border-radius: 999px; }
+.hd-table.bar { border-radius: 5% / 16%; box-shadow: inset 0 5px 0 rgba(0,0,0,.3); }
+.hd-table.free { border-color: rgba(52,194,122,.55); background: rgba(52,194,122,.07); }
+.hd-table.free .a { color: #6FD9A3; }
+.hd-table.busy { border-color: rgba(61,140,255,.65); background: rgba(61,140,255,.14); }
+.hd-table.ending { border-color: rgba(231,178,78,.75); background: rgba(231,178,78,.13); }
+.hd-table.ending .a { color: #F0C674; }
+.hd-table.reserved { border-color: rgba(167,139,250,.65); background: rgba(167,139,250,.11); }
+.hd-table.reserved .a { color: #C4B5FD; }
+.hd-table.call { border-color: #FF7A59; background: rgba(255,122,89,.18); animation: mock-pulse 1.4s ease-in-out infinite; }
+.hd-table.call .a { color: #FFB199; font-weight: 700; }
+/* На телефоне плитки мелкие — без суммы чека, только название и статус. */
+@container (max-width: 380px) { .hd-table .b { display: none; } }
+@keyframes hd-draw { 0% { stroke-dashoffset: 1; opacity: 0; } 2% { opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes hd-fade { to { opacity: 1; } }
+@keyframes hd-pop { 0% { opacity: 0; transform: scale(.82); } 70% { opacity: 1; transform: scale(1.04); } 100% { opacity: 1; transform: scale(1); } }
+.hall-demo.play .hd-w1 { animation: hd-draw 1.7s cubic-bezier(.45,0,.25,1) .2s forwards; }
+.hall-demo.play .hd-w2 { animation: hd-draw .7s cubic-bezier(.45,0,.25,1) 1.6s forwards; }
+.hall-demo.play .hd-room { animation: hd-fade .9s ease 1.3s forwards; }
+.hall-demo.play .hd-label { animation: hd-fade .6s ease 2.1s forwards; }
+.hall-demo.play .hd-slot { animation: hd-pop .5s cubic-bezier(.2,.8,.3,1) calc(1.9s + var(--d)) forwards; }
+.hall-demo.static .hd-edge, .hall-demo.static .hd-body { stroke-dashoffset: 0; opacity: 1; }
+.hall-demo.static .hd-room, .hall-demo.static .hd-label, .hall-demo.static .hd-slot { opacity: 1; transform: none; }
+/* Уведомления на витрине появляются вместе с событиями на схеме. */
+.showcase.live .mock-toast { opacity: 0; transition: opacity .4s ease; }
+.showcase.live .mock-toast.show { opacity: 1; }
+.showcase.live .mp-btn { transition: border-color .4s, background-color .4s; }
 @media (max-width: 720px) {
   .showcase { flex-direction: column; align-items: center; }
-  .mock-tablet { width: 100%; }
+  .mock-tablet { width: 100%; flex: none; }
   .mock-phone { margin: 0; }
   .mock-toast { display: none; }
-  .mock-table { min-height: 64px; padding: 8px 6px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mock-table.call, .mock-toast { animation: none; }
+  .mock-toast, .hd-table.call { animation: none; }
 }
 
 /* ---- Лендинг: боли владельца ---- */

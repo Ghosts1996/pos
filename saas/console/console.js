@@ -776,6 +776,7 @@ const PUBLIC_ROUTES = {
   '#/legal/consent': () => screenLegalConsent(),
   '#/status': () => screenStatus(),
   '#/faq': () => screenPublicFaq(),
+  '#/demo-photos': () => screenDemoPhotos(),
 };
 
 function route() {
@@ -825,7 +826,7 @@ boot();
 
 // Возможности для лендинга — коротко, для человека, который видит систему впервые.
 const LANDING_FEATURES = [
-  { icon: '🗺️', title: 'Карта зала', desc: 'столы по зонам, статусы и таймеры, несколько чеков на одном столе, пересадка гостей без потери заказа' },
+  { icon: '🗺️', title: 'Карта зала', desc: 'стены и зоны как в вашем помещении, столы любой формы, статусы и таймеры, несколько чеков на одном столе, пересадка гостей без потери заказа' },
   { icon: '💳', title: 'Оплата и чеки', desc: 'наличные, карта, терминал, раздельный счёт, чаевые; фискальные чеки через онлайн-кассу АТОЛ' },
   { icon: '📦', title: 'Склад и ЕГАИС', desc: 'автосписание по техкартам, остатки, инвентаризация с расхождениями, приём накладных ЕГАИС' },
   { icon: '📅', title: 'Брони и лист ожидания', desc: 'из гостевого приложения и по телефону, подбор свободного стола, напоминания персоналу' },
@@ -964,6 +965,135 @@ function landingChainPlanCardHtml(p, selected) {
   `;
 }
 
+// ---- Витрина: живая схема зала ----
+//
+// Как на кассе (lib/widgets/hall_plan_view.dart): холст в точках, плитка
+// стола 104, шаг сетки 26, стены «как на чертеже» (HallWallsPainter).
+// Ролик: стены прорисовываются, столы расставляются, дальше смена живёт —
+// гость зовёт официанта, садятся новые гости, приходит бронь; и заново.
+const HALL_DEMO = {
+  w: 624, h: 580,
+  tables: [
+    { id: 'bar', name: 'Бар', shape: 'bar', x: 52, y: 52, w: 312, st: 'busy', a: '2 чека', b: '1 640 ₽' },
+    { id: 'vip', name: 'VIP', shape: 'rect', x: 442, y: 52, st: 'busy', a: '2 ч 05 мин', b: '8 700 ₽' },
+    { id: 't1', name: 'Стол 1', shape: 'rect', x: 52, y: 234, st: 'busy', a: '1 ч 12 мин', b: '2 450 ₽' },
+    { id: 't2', name: 'Стол 2', shape: 'circle', x: 208, y: 234, st: 'free', a: '4 места', b: '' },
+    { id: 't3', name: 'Стол 3', shape: 'long', x: 364, y: 234, w: 208, st: 'busy', a: '47 мин', b: '1 180 ₽' },
+    { id: 't4', name: 'Стол 4', shape: 'rect', x: 52, y: 390, st: 'ending', a: 'через 8 мин', b: '3 920 ₽' },
+    { id: 't5', name: 'Стол 5', shape: 'rect', x: 208, y: 390, st: 'reserved', a: 'Бронь 19:30', b: '' },
+    { id: 't6', name: 'Стол 6', shape: 'oval', x: 364, y: 390, w: 208, st: 'free', a: '6 мест', b: '' },
+  ],
+};
+
+function hallDemoHtml() {
+  const { w: W, h: H } = HALL_DEMO;
+  const pct = (v, total) => `${(v / total * 100).toFixed(3)}%`;
+  // Внешние стены с проёмом входа и перегородка VIP-зала. Тело стены —
+  // встык: у свободного конца продлено на полтолщины, у упора в стену — нет.
+  const walls = [
+    { edge: 'M286 546 L26 546 L26 26 L598 26 L598 546 L390 546', body: 'M290.75 546 L26 546 L26 26 L598 26 L598 546 L385.25 546' },
+    { edge: 'M390 26 L390 208 L494 208', body: 'M390 26 L390 208 L498.75 208' },
+  ];
+  return `
+    <div class="hall-demo" id="hall-demo" aria-hidden="true">
+      <div class="hd-layer">
+        <svg class="hd-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id="hdBody" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="${H}">
+              <stop offset="0" stop-color="#4C5666"/><stop offset="1" stop-color="#2E3848"/>
+            </linearGradient>
+            <linearGradient id="hdRoom" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="${H}">
+              <stop offset="0" stop-color="#CBD5E1" stop-opacity=".08"/><stop offset="1" stop-color="#CBD5E1" stop-opacity=".02"/>
+            </linearGradient>
+            <filter id="hdShadow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="${W + 80}" height="${H + 80}">
+              <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#000" flood-opacity=".5"/>
+            </filter>
+          </defs>
+          <path class="hd-room" d="M26 26 H598 V546 H26 Z"/>
+          <g filter="url(#hdShadow)">
+            ${walls.map((x, i) => `<path class="hd-edge hd-w${i + 1}" pathLength="1" d="${x.edge}"/>`).join('')}
+          </g>
+          ${walls.map((x, i) => `<path class="hd-body hd-w${i + 1}" pathLength="1" d="${x.body}"/>`).join('')}
+          <text class="hd-label" x="338" y="574" text-anchor="middle">вход</text>
+          <text class="hd-label" x="404" y="196">VIP-зал</text>
+        </svg>
+        ${HALL_DEMO.tables.map((t, i) => `
+          <div class="hd-slot" style="left:${pct(t.x, W)};top:${pct(t.y, H)};width:${pct(t.w || 104, W)};height:${pct(104, H)};--d:${(i * 0.09).toFixed(2)}s">
+            <div class="hd-table ${t.shape} ${t.st}" data-hd="${t.id}">
+              <b>${t.name}</b><span class="a">${t.a}</span><span class="b">${t.b}</span>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+let hallDemoTimers = [];
+function startHallDemo() {
+  const box = $('hall-demo');
+  if (!box) return;
+  const showcase = box.closest('.showcase');
+  const table = (id) => box.querySelector(`[data-hd="${id}"]`);
+  const setTable = (id, st, a, b) => {
+    const el = table(id);
+    if (!el) return;
+    el.classList.remove('free', 'busy', 'ending', 'reserved', 'call');
+    el.classList.add(st);
+    el.querySelector('.a').textContent = a;
+    el.querySelector('.b').textContent = b;
+  };
+  const setCounts = (free, busy) => {
+    showcase.querySelector('[data-hd-count="free"]').textContent = free;
+    showcase.querySelector('[data-hd-count="busy"]').textContent = busy;
+  };
+  const toggle = (id, cls, on) => $(id)?.classList.toggle(cls, on);
+  const reset = () => {
+    HALL_DEMO.tables.forEach((t) => setTable(t.id, t.st, t.a, t.b));
+    setCounts(3, 5);
+    toggle('hd-phone-call', 'on', false);
+    toggle('hd-toast-call', 'show', false);
+    toggle('hd-toast-booking', 'show', false);
+  };
+  const stop = () => {
+    hallDemoTimers.forEach(clearTimeout);
+    hallDemoTimers = [];
+  };
+  // Без анимаций (так настроено в системе) — сразу готовая схема.
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    box.classList.add('static');
+    setTable('t3', 'call', 'Зовёт', '1 180 ₽');
+    return;
+  }
+  showcase?.classList.add('live');
+  const at = (ms, fn) => hallDemoTimers.push(setTimeout(fn, ms));
+  const play = () => {
+    stop();
+    if (!document.body.contains(box)) return; // ушли с лендинга
+    reset();
+    box.classList.remove('play', 'out');
+    void box.offsetWidth; // перезапуск CSS-анимаций
+    box.classList.add('play');
+    at(3600, () => { toggle('hd-phone-call', 'on', true); setTable('t3', 'call', 'Зовёт', '1 180 ₽'); toggle('hd-toast-call', 'show', true); });
+    at(6600, () => { toggle('hd-phone-call', 'on', false); setTable('t3', 'busy', '48 мин', '1 180 ₽'); toggle('hd-toast-call', 'show', false); });
+    at(8200, () => { setTable('t2', 'busy', 'только что', '0 ₽'); setCounts(2, 6); });
+    at(10600, () => { setTable('t6', 'reserved', 'Бронь 20:00', ''); toggle('hd-toast-booking', 'show', true); });
+    at(13600, () => toggle('hd-toast-booking', 'show', false));
+    at(14600, () => box.classList.add('out'));
+    at(15300, play);
+  };
+  // Играет, только пока схему видно: не тратит батарею, а при возврате
+  // к ней показывает ролик с начала.
+  if (!('IntersectionObserver' in window)) return play();
+  const io = new IntersectionObserver((entries) => {
+    if (!document.body.contains(box)) { io.disconnect(); stop(); return; }
+    if (entries.some((e) => e.isIntersecting)) {
+      if (!hallDemoTimers.length) play();
+    } else {
+      stop();
+    }
+  }, { threshold: 0.35 });
+  io.observe(box);
+}
+
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
   // Тёмно-синяя тема только у лендинга, кабинет остаётся в своей.
@@ -1055,40 +1185,24 @@ function screenLanding() {
     <section class="landing-section landing-showcase" id="landing-showcase">
       <div class="landing-inner">
         <h2 class="landing-h2 center">Так выглядит смена в ZalPOS</h2>
-        <p class="landing-h2-sub center-block">Касса у персонала и приложение у гостя работают вместе в реальном времени:
+        <p class="landing-h2-sub center-block">Схема зала — как ваше помещение: стены, зоны и столы любой формы вы
+        рисуете в редакторе за пару минут. Касса у персонала и приложение у гостя работают вместе в реальном времени:
         гость нажал «Позвать официанта» — стол на кассе сразу подсвечивается.</p>
         <div class="showcase" aria-hidden="true">
           <div class="mock-tablet">
             <div class="mock-bar">
               <b>Зал · Основной</b>
-              <span class="mock-chip free">Свободны 4</span>
-              <span class="mock-chip busy">Заняты 5</span>
+              <span class="mock-chip free">Свободны <i data-hd-count="free">3</i></span>
+              <span class="mock-chip busy">Заняты <i data-hd-count="busy">5</i></span>
             </div>
-            <div class="mock-hall">
-              ${[
-                ['Стол 1', 'busy', '1 ч 12 мин', '2 450 ₽'],
-                ['Стол 2', 'free', '4 места', ''],
-                ['Стол 3', 'call', 'Зовёт', '1 180 ₽'],
-                ['Стол 4', 'busy', '38 мин', '3 920 ₽'],
-                ['Стол 5', 'ending', 'через 8 мин', '1 640 ₽'],
-                ['Стол 6', 'free', '2 места', ''],
-                ['VIP', 'busy', '2 ч 05 мин', '8 700 ₽'],
-                ['Стол 8', 'reserved', 'Бронь 19:30', ''],
-                ['Стол 9', 'free', '6 мест', ''],
-              ].map(([n, st, a, b]) => `
-                <div class="mock-table ${st}">
-                  <div class="mt-name">${n}</div>
-                  <div class="mt-a">${a}</div>
-                  ${b ? `<div class="mt-b">${b}</div>` : ''}
-                </div>`).join('')}
-            </div>
+            ${hallDemoHtml()}
           </div>
           <div class="mock-phone">
             <div class="mp-notch"></div>
             <div class="mp-title">Стол 3</div>
             <div class="mp-timer"><span>С вами</span><b>47 мин</b></div>
             <div class="mp-btns">
-              <div class="mp-btn on">🙋 Позвать официанта</div>
+              <div class="mp-btn on" id="hd-phone-call">🙋 Позвать официанта</div>
               <div class="mp-btn">💳 Счёт, пожалуйста</div>
             </div>
             <div class="mp-bill">
@@ -1099,8 +1213,8 @@ function screenLanding() {
             </div>
             <div class="mp-bonus">+ 59 бонусов за визит</div>
           </div>
-          <div class="mock-toast t1">🔔 Стол 3 зовёт официанта</div>
-          <div class="mock-toast t2">📅 Новая бронь: сегодня 19:30, 4 гостя</div>
+          <div class="mock-toast t1" id="hd-toast-call">🔔 Стол 3 зовёт официанта</div>
+          <div class="mock-toast t2" id="hd-toast-booking">📅 Новая бронь: сегодня 20:00, Стол 6</div>
         </div>
       </div>
     </section>
@@ -1208,25 +1322,6 @@ function screenLanding() {
       </div>
     </section>
 
-    <section class="landing-section" id="landing-calc">
-      <div class="landing-inner">
-        <h2 class="landing-h2">Калькулятор окупаемости</h2>
-        <div class="card">
-          <label class="field"><span>Средняя выручка заведения в месяц, ₽</span>
-            <input id="f-calc-revenue" type="number" inputmode="numeric" min="0" placeholder="500000">
-          </label>
-          <label class="field"><span>Тариф</span>
-            <select id="f-calc-plan"><option value="">Загрузка тарифов…</option></select>
-          </label>
-          <label class="field"><span>Ваша оценка потерь от ручного учёта, пересортицы и ошибок на кассе, %</span>
-            <input id="f-calc-loss" type="number" value="3" min="0" max="30" step="0.5">
-          </label>
-          <div class="small muted">Считаем строго по цифрам, которые вы укажете сами, — без наших предположений о «типичной» экономии.</div>
-          <div id="f-calc-output" style="margin-top:14px"></div>
-        </div>
-      </div>
-    </section>
-
     <section class="landing-section landing-section-alt">
       <div class="landing-inner">
         <h2 class="landing-h2">Безопасность и соответствие</h2>
@@ -1245,8 +1340,8 @@ function screenLanding() {
         <div class="risk-grid">
           <div class="risk-item"><b>🆓 Бесплатный тест</b><span>Нужен только email — ни карты, ни договора, чтобы начать.</span></div>
           <div class="risk-item"><b>↩️ Без обязательств</b><span>Автопродление отключается в любой момент в личном кабинете.</span></div>
-          <div class="risk-item"><b>🔄 Обновления сами</b><span>Новые версии приходят на все планшеты заведения автоматически и бесплатно.</span></div>
-          <div class="risk-item"><b>🇷🇺 Данные гостей в России</b><span>Имена и телефоны гостей сначала записываются на сервер в РФ (152-ФЗ).</span></div>
+          <div class="risk-item"><b>💰 Без процентов с продаж</b><span>Только фиксированная цена тарифа — сколько бы вы ни продали, комиссии с чеков и выручки нет.</span></div>
+          <div class="risk-item"><b>📲 Демо без регистрации</b><span>Скачайте кассу и нажмите «Демо» — готовое заведение с залом, меню, бронями и гостями, всё можно нажимать.</span></div>
         </div>
       </div>
     </section>
@@ -1365,6 +1460,7 @@ function screenLanding() {
   };
   document.querySelectorAll('.format-tab').forEach((b) => { b.onclick = () => renderFormat(b.dataset.format); });
   renderFormat(LANDING_FORMATS[0].id);
+  startHallDemo();
   if ($('f-landing-sticky-btn')) $('f-landing-sticky-btn').onclick = scrollToEmail;
   if ($('f-landing-nav-cta')) $('f-landing-nav-cta').onclick = scrollToEmail;
 
@@ -1459,41 +1555,6 @@ function screenLanding() {
       el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: true, buyNow: true });
     });
     updateSkipTrialNote();
-
-    const calcPlanSelect = $('f-calc-plan');
-    if (calcPlanSelect) {
-      calcPlanSelect.innerHTML = sellable.length
-        ? sellable.map((p) => `<option value="${Number(p.priceRub) || 0}">${esc(p.name || p.id)} — ${(Number(p.priceRub) || 0).toLocaleString('ru-RU')} ₽/мес</option>`).join('')
-        : '<option value="">Тарифы скоро появятся</option>';
-    }
-    const runCalc = () => {
-      const out = $('f-calc-output');
-      if (!out) return;
-      const revenue = Number($('f-calc-revenue')?.value) || 0;
-      const lossPercent = Number($('f-calc-loss')?.value) || 0;
-      const planPrice = Number($('f-calc-plan')?.value) || 0;
-      const monthlySavings = revenue * (lossPercent / 100);
-      if (revenue <= 0 || planPrice <= 0) {
-        out.innerHTML = '<p class="small muted">Укажите выручку и тариф — покажем расчёт.</p>';
-        return;
-      }
-      const daysToPayback = monthlySavings > 0 ? (planPrice / monthlySavings) * 30 : Infinity;
-      const paybackText = !isFinite(daysToPayback)
-        ? '—'
-        : daysToPayback <= 30
-          ? `${Math.max(1, Math.round(daysToPayback))} дн.`
-          : `${(daysToPayback / 30).toFixed(1)} мес.`;
-      out.innerHTML = `
-        <div class="calc-result">${paybackText}</div>
-        <div class="small muted">окупаемость тарифа при экономии ${Math.round(monthlySavings).toLocaleString('ru-RU')} ₽/мес</div>
-        <div class="small muted" style="margin-top:10px">Это ориентировочный расчёт по введённым вами цифрам, а не гарантия конкретной экономии.</div>
-      `;
-    };
-    ['f-calc-revenue', 'f-calc-loss', 'f-calc-plan'].forEach((id) => {
-      $(id)?.addEventListener('input', runCalc);
-      $(id)?.addEventListener('change', runCalc);
-    });
-    runCalc();
   }, () => {
     const body = $('landing-plans');
     if (body) body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
@@ -1513,8 +1574,7 @@ function publicFooterLinksHtml() {
       <a href="#/legal/payment">Оплата и возврат</a> ·
       <a href="#/legal/privacy">Конфиденциальность</a> ·
       <a href="#/status">Статус</a> ·
-      <a href="#/faq">FAQ</a> ·
-      <a href="/demo-menu/CREDITS.txt" target="_blank" rel="noopener">Фото в демо</a>
+      <a href="#/faq">FAQ</a>
     </p>
     <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
     <p class="small center muted legal-footer" style="margin-top:4px"></p>
@@ -1857,13 +1917,54 @@ function screenPublicFaq() {
       ${FAQ_ITEMS.map((item, i) => `
         <div class="faq-item" data-faq="${i}">
           <div class="faq-question"><span>${esc(item.q)}</span><span class="faq-toggle">+</span></div>
-          <div class="faq-answer">${esc(item.a)}</div>
+          <div class="faq-answer">${esc(item.a)}${item.link ? ` <a href="${item.link.href}">${esc(item.link.text)}</a>` : ''}</div>
         </div>
       `).join('')}
     </div>
   `);
   document.querySelectorAll('.faq-item').forEach((el) => {
     el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
+  });
+}
+
+// Авторы фото демо-меню (лицензии CC BY/BY-SA требуют указывать авторство).
+// Список ведётся в demo-menu/CREDITS.txt рядом с самими фото, здесь — в
+// читаемом виде: фото, автор, источник и лицензия.
+function screenDemoPhotos() {
+  screenEl().innerHTML = publicPageWrapHtml('Фото блюд в демо-заведении', `
+    <p class="small muted">Фото в демо-меню — только для примера, со свободных фотостоков. В вашем заведении
+    гости увидят ваши фото и ваше меню. Фото обрезаны до квадрата и уменьшены; изменённые фото под
+    лицензией CC BY-SA распространяются на тех же условиях.</p>
+    <div class="credits-grid" id="credits-grid"><div class="spinner"></div></div>
+  `);
+  const licenseUrl = {
+    'CC0 1.0': 'https://creativecommons.org/publicdomain/zero/1.0/deed.ru',
+    'PDM 1.0': 'https://creativecommons.org/publicdomain/mark/1.0/deed.ru',
+    'BY 2.0': 'https://creativecommons.org/licenses/by/2.0/deed.ru',
+    'BY-SA 2.0': 'https://creativecommons.org/licenses/by-sa/2.0/deed.ru',
+  };
+  fetch('/demo-menu/CREDITS.txt').then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))).then((text) => {
+    const box = $('credits-grid');
+    if (!box) return;
+    const rows = text.split('\n').map((line) => line.match(/^(\S+\.jpg) — (.*), (https?:\/\/\S+), (.+)$/)).filter(Boolean);
+    box.innerHTML = rows.map(([, file, author, source, license]) => {
+      const lic = license.trim();
+      const licHref = licenseUrl[lic];
+      return `
+        <div class="credit-card">
+          <img src="/demo-menu/${esc(file)}" alt="" loading="lazy">
+          <div class="credit-text">
+            <div class="credit-author">${author === 'автор не указан' ? 'Автор не указан' : esc(author)}</div>
+            <div class="small muted">
+              <a href="${esc(source)}" target="_blank" rel="noopener nofollow">Источник</a> ·
+              ${licHref ? `<a href="${licHref}" target="_blank" rel="noopener nofollow">${esc(lic.startsWith('C') || lic.startsWith('P') ? lic : 'CC ' + lic)}</a>` : esc(lic)}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }).catch(() => {
+    const box = $('credits-grid');
+    if (box) box.innerHTML = '<p class="small muted">Не удалось загрузить список — попробуйте обновить страницу.</p>';
   });
 }
 
@@ -2287,6 +2388,7 @@ const FAQ_ITEMS = [
   { q: 'Где хранятся данные заведения?', a: 'Имена и телефоны гостей сначала записываются на наш сервер в России, остальные данные — в облаке с резервированием. Данные заведений разделены правилами доступа: другие заведения платформы не могут увидеть ваши данные — это проверяется автоматическими тестами защиты.' },
   { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Зависит от тарифа — лимиты указаны в разделе «Тарифы». При превышении лимита приложение продолжает работать, но администратора платформы попросят предложить тариф выше.' },
   { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Экспортировать данные до удаления можно, обратившись в поддержку.' },
+  { q: 'Откуда фото блюд в демо-заведении?', a: 'Это фото со свободных фотостоков — для примера, в вашем заведении будут ваши фото и ваше меню. Авторы и лицензии указаны на отдельной странице.', link: { href: '#/demo-photos', text: 'Авторы фото →' } },
 ];
 
 function screenDashboard() {
