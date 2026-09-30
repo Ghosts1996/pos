@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/venue_terms.dart';
 import '../utils/parse.dart';
+import '../build_info.dart';
 
 export '../utils/venue_terms.dart';
 
@@ -100,7 +101,9 @@ class VenueProfile {
       depositGuests: asNum(data['depositGuests'])?.toInt() ?? 6,
       lat: (data['lat'] ?? 0).toDouble(),
       lon: (data['lon'] ?? 0).toDouble(),
-      cloudFunctionsEnabled: data['cloudFunctionsEnabled'] == true,
+      // На платформе функций нет: флаг, включённый по ошибке, глушил бы
+      // фоновые задания кассы и уведомления гостя.
+      cloudFunctionsEnabled: !kSaasMode && data['cloudFunctionsEnabled'] == true,
       venueType: VenueTerms.normalize(asTextOrNull(data['venueType'])),
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
