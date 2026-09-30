@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../../models/venue_models.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
@@ -215,22 +216,26 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 ),
               ),
 
-            const Divider(height: 32),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _cloudFunctions,
-              onChanged: (v) => setState(() => _cloudFunctions = v),
-              title: const Text('Cloud Functions подключены (тариф Blaze)'),
-              subtitle: const Text(
-                'Выключено — приложение работает полностью само: POS ведёт '
-                'фоновые задания (снимает брони без гостя, поздравляет '
-                'именинников), а гость получает локальные уведомления вместо '
-                'push. Включайте ТОЛЬКО после «firebase deploy --only '
-                'functions», иначе гость получит по два одинаковых '
-                'уведомления, а очередь push будет копиться впустую.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            // Только сборка одного заведения на своём Firebase: на
+            // платформе Cloud Functions нет, владельцу этот выбор не нужен.
+            if (!kSaasMode) ...[
+              const Divider(height: 32),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _cloudFunctions,
+                onChanged: (v) => setState(() => _cloudFunctions = v),
+                title: const Text('Cloud Functions подключены (тариф Blaze)'),
+                subtitle: const Text(
+                  'Выключено — приложение работает полностью само: POS ведёт '
+                  'фоновые задания (снимает брони без гостя, поздравляет '
+                  'именинников), а гость получает локальные уведомления вместо '
+                  'push. Включайте ТОЛЬКО после «firebase deploy --only '
+                  'functions», иначе гость получит по два одинаковых '
+                  'уведомления, а очередь push будет копиться впустую.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
               ),
-            ),
+            ],
 
             const Divider(height: 32),
             const Text('Часы работы', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
