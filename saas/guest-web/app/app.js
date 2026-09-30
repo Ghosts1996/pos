@@ -145,12 +145,18 @@ function venueType() {
   const t = (state.venue || {}).venueType;
   return ['hookah', 'restaurant', 'cafe', 'bar'].includes(t) ? t : 'hookah';
 }
-const isHookah = () => venueType() === 'hookah';
+/// Кальяны в заведении — переключатель «Заведение с кальянами» (hookahEnabled,
+/// как VenueTerms.isHookah): только с ним у гостя кнопки «Позвать
+/// кальянщика», «Поменять угли» и «Перезабивка». Не задан — по типу.
+function isHookah() {
+  const v = (state.venue || {}).hookahEnabled;
+  return typeof v === 'boolean' ? v : venueType() === 'hookah';
+}
 /// Кто обслуживает стол: form — 'nom' («кальянщик подтвердит»), 'acc'
 /// («позовите кальянщика») или 'dat' («скажите кальянщику»).
 function staffWord(form) {
   const t = venueType();
-  const w = t === 'hookah' ? ['кальянщик', 'кальянщика', 'кальянщику']
+  const w = t === 'hookah' && isHookah() ? ['кальянщик', 'кальянщика', 'кальянщику']
     : t === 'bar' ? ['бармен', 'бармена', 'бармену']
       : ['официант', 'официанта', 'официанту'];
   return w[{ nom: 0, acc: 1, dat: 2 }[form] || 0];
@@ -427,10 +433,12 @@ function watchVenue() {
   state.accountSubs.push(onSnapshot(doc(state.root, 'meta', 'venueProfile'), (d) => {
     const had = !!state.venue;
     const prevType = venueType();
+    const prevHookah = isHookah();
     state.venue = d.exists() ? d.data() : null;
     applyVenueTypeChrome();
-    // Сменили тип заведения — перерисовать экраны со словами и кнопками.
-    if (had && prevType !== venueType()) route();
+    // Сменили тип заведения или кальяны — перерисовать экраны со словами и
+    // кнопками.
+    if (had && (prevType !== venueType() || prevHookah !== isHookah())) route();
     // Профиль заведения обычно приходит после первой отрисовки — экраны с
     // часами работы и правилами перерисовываем.
     if (!had && state.venue) {
