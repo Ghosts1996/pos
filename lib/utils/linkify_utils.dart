@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/app_lock.dart';
+
 final RegExp _urlPattern = RegExp(
   r'(https?://[^\s]+|www\.[^\s]+)',
   caseSensitive: false,
@@ -40,7 +42,8 @@ List<InlineSpan> linkifySpans(String text, {TextStyle? style, TextStyle? linkSty
         decoration: TextDecoration.underline,
       ),
       recognizer: TapGestureRecognizer()
-        ..onTap = () => launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication),
+        ..onTap = () => AppLock.instance
+            .whileAway(() => launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication)),
     ));
     if (trail.isNotEmpty) {
       spans.add(TextSpan(text: trail, style: style));

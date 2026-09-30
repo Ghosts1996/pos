@@ -12,6 +12,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart' as mlkit;
 import 'package:google_mlkit_commons/google_mlkit_commons.dart' as mlkit_commons;
 
+import 'app_lock.dart';
+
 /// Сканирование штрихкодов и кодов маркировки — результат один, [onCode]:
 ///  1. HID-сканер («пистолет» по USB или Bluetooth) для системы —
 ///     клавиатура: быстро «печатает» код и жмёт Enter. Ловим через
@@ -147,12 +149,12 @@ class _PhotoScanNoCodeException implements Exception {
 /// Фото без сжатия: модули DataMatrix мелкие, а у разового снимка нет
 /// второго шанса, как у живого сканера. Файл никуда не загружается.
 Future<String?> _scanBarcodeFromCameraPhoto() async {
-  final photo = await ImagePicker().pickImage(
-    source: ImageSource.camera,
-    maxWidth: 4032,
-    maxHeight: 4032,
-    imageQuality: 100,
-  );
+  final photo = await AppLock.instance.whileAway(() => ImagePicker().pickImage(
+        source: ImageSource.camera,
+        maxWidth: 4032,
+        maxHeight: 4032,
+        imageQuality: 100,
+      ));
   if (photo == null) return null;
   // ML Kit напрямую, а не MobileScannerController.analyzeImage: тот падает
   // с NPE, если контроллер не запускали, а поднимать превью ради одного

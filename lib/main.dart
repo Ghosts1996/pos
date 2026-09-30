@@ -9,8 +9,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'build_info.dart';
 import 'firebase_options.dart';
+import 'models/employee.dart';
 import 'models/tenant_models.dart';
 import 'services/app_bootstrap.dart';
+import 'services/app_lock.dart';
 import 'services/app_scope.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
@@ -19,6 +21,7 @@ import 'services/saas_device_join_service.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
+import 'screens/pin_lock_screen.dart';
 import 'screens/saas/demo_reset_screen.dart';
 import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
@@ -37,6 +40,9 @@ const _supabaseAnonKey =
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Свернули кассу — при возвращении PIN (AppLock). До runApp: «Назад» под
+  // блокировкой должен достаться ему раньше, чем навигатору.
+  AppLock.instance.start();
 
   String? startupError;
   var ready = false;
@@ -200,24 +206,49 @@ class HookahPosApp extends StatelessWidget {
       // Снаружи всего — AdaptiveAppFrame: предел системного шрифта и
       // вертикальная ориентация на телефоне (планшет — любая).
       //
+      // Кассу свернули (AppLock) — поверх ввод PIN того, кто в ней работал.
+      //
       // Демо прожило 3 дня (DemoGate) — поверх всего экран сброса: он
       // открывает новое демо в исходном виде.
-      // Экран сброса накрывает кассу, а не заменяет её: навигатор остаётся
-      // на месте, и сброс открывает вход в новое демо с чистого стека.
+      // Оба экрана накрывают кассу, а не заменяют её: навигатор остаётся
+      // на месте — под блокировкой недонабранный чек не теряется, а сброс
+      // открывает вход в новое демо с чистого стека.
       builder: (context, child) => AdaptiveAppFrame(
         child: AppUpdateBanner(
           child: ValueListenableBuilder<bool>(
             valueListenable: DemoGate.expired,
-            builder: (context, demoExpired, _) => Stack(children: [
-              ValueListenableBuilder<bool>(
-                valueListenable: SubscriptionGate.blocked,
-                builder: (context, isBlocked, _) =>
-                    isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
-              ),
-              // Scaffold экрана сброса непрозрачен и для касаний — касса
-              // под ним недоступна.
-              if (demoExpired) const Positioned.fill(child: DemoResetScreen()),
-            ]),
+            builder: (context, demoExpired, _) => ValueListenableBuilder<Employee?>(
+              valueListenable: AppLock.instance.locked,
+              builder: (context, lockedBy, _) {
+                final covered = demoExpired || lockedBy != null;
+                // Scaffold экранов блокировки и сброса непрозрачен для
+                // касаний, а касса под ними ещё и выключена для фокуса и
+                // диктора (TalkBack): иначе её кнопки нажимались бы из-под
+                // блокировки. Обёртки не меняют дерево — состояние кассы
+                // сохраняется.
+                return Stack(children: [
+                  ExcludeFocus(
+                    excluding: covered,
+                    child: ExcludeSemantics(
+                      excluding: covered,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: SubscriptionGate.blocked,
+                        builder: (context, isBlocked, _) =>
+                            isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+                      ),
+                    ),
+                  ),
+                  if (lockedBy != null)
+                    Positioned.fill(
+                      child: ExcludeSemantics(
+                        excluding: demoExpired,
+                        child: PinLockScreen(key: ValueKey(lockedBy.id), employee: lockedBy),
+                      ),
+                    ),
+                  if (demoExpired) const Positioned.fill(child: DemoResetScreen()),
+                ]);
+              },
+            ),
           ),
         ),
       ),

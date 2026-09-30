@@ -25,7 +25,7 @@ body {
 .wrap { max-width: 480px; margin: 0 auto; padding: 32px 16px 40px; }
 @media (min-width: 860px) {
   .wrap { max-width: 640px; }
-  .feature-grid, .quick-actions { grid-template-columns: repeat(3, 1fr); }
+  .feature-grid { grid-template-columns: repeat(3, 1fr); }
   .palette-grid { grid-template-columns: repeat(4, 1fr); }
 }
 .brand {
@@ -220,13 +220,6 @@ a:hover { filter: brightness(1.2); }
 }
 .nav-item:hover { color: var(--text); background: var(--surface-2); }
 .nav-item.active { color: var(--text); background: var(--surface-2); }
-.nav-item .nav-icon {
-  width: 30px; height: 30px; border-radius: 9px; flex: none;
-  /* --icon-bg задаётся инлайном у каждого значка (navIconHtml). */
-  background: var(--icon-bg, var(--surface-2));
-  display: flex; align-items: center; justify-content: center;
-}
-.nav-item.active .nav-icon { background: var(--primary); }
 .nav-item .nav-dot { position: absolute; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .nav-divider { height: 1px; background: var(--border); margin: 10px 4px; }
 
@@ -246,8 +239,6 @@ a:hover { filter: brightness(1.2); }
 .admin-tab-panel { display: none; }
 .admin-tab-panel.active { display: block; }
 
-.dash-greeting { font-size: 19px; font-weight: 700; margin-bottom: 14px; }
-
 /* Прогресс загрузки логотипа — на мобильной сети файл грузится не сразу. */
 .upload-progress {
   height: 6px; border-radius: 999px; overflow: hidden;
@@ -257,23 +248,6 @@ a:hover { filter: brightness(1.2); }
   height: 100%; width: 0%;
   background: linear-gradient(135deg, var(--primary), var(--primary-2));
   transition: width .2s ease;
-}
-
-/* Живые цифры «Обзора»: две колонки на телефоне, четыре с планшета. */
-.live-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-@media (min-width: 640px) { .live-stats-grid { grid-template-columns: repeat(4, 1fr); } }
-.live-stat { text-align: center; padding: 16px 8px; margin-bottom: 0; }
-.live-stat-value { font-size: 21px; font-weight: 800; }
-.live-stat-label { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
-
-.quick-actions {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-.quick-actions .btn { flex-direction: row; justify-content: flex-start; padding: 14px; }
-/* Иконка — отдельным span, иначе эмодзи слипается с подписью. */
-.btn-icon {
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px; line-height: 1; flex: none;
 }
 
 /* Плитки статистики в панели платформы — 2 колонки на телефоне, до 6 в ряд
@@ -366,6 +340,222 @@ a:hover { filter: brightness(1.2); }
 .checklist-item.done .checklist-check { background: var(--primary); border-color: var(--primary); color: var(--text); }
 .checklist-label { flex: 1; font-size: 13.5px; }
 .checklist-item.done .checklist-label { color: var(--muted); text-decoration: line-through; }
+
+/* ================== КАБИНЕТ В ФИРМЕННОМ СТИЛЕ ==================
+   Кабинет владельца и панель платформы (.wrap.has-tabbar) — продолжение
+   лендинга, а не отдельная «админка»: та же ночь, синее свечение, стекло
+   и градиент акцента. Поверхности чуть светлее лендинга — в кабинете
+   весь день работают с формами и списками. */
+body:has(> .wrap.has-tabbar) { background: #02060E; }
+body:has(> .wrap.has-tabbar)::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 75% -160px, rgba(47, 111, 237, .24), transparent 70%),
+    radial-gradient(760px 460px at -12% 108%, rgba(139, 92, 246, .10), transparent 70%),
+    radial-gradient(rgba(255, 255, 255, .045) 1px, transparent 1.3px) 0 0 / 26px 26px;
+}
+.wrap.has-tabbar {
+  --bg: #02060E;
+  --surface: #0A1221;
+  --surface-2: #0F1A2E;
+  --border: rgba(148, 170, 220, .15);
+  --glass: rgba(255, 255, 255, .035);
+  --glass-border: rgba(255, 255, 255, .08);
+  --accent: linear-gradient(135deg, #0356C5 0%, #3D8CFF 100%);
+}
+.has-tabbar .card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .01)), var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), 0 24px 48px -30px rgba(0, 0, 0, .85);
+}
+.has-tabbar .card.danger { background: rgba(229, 72, 77, .10); border-color: rgba(255, 92, 108, .5); }
+.has-tabbar .card.sec-warn { background: rgba(231, 178, 78, .08); border-color: rgba(231, 178, 78, .55); }
+.has-tabbar h2 {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 15.5px; font-weight: 800; letter-spacing: -.005em; margin: 28px 0 12px;
+}
+.has-tabbar h2::before {
+  content: ''; flex: none; width: 4px; height: 16px; border-radius: 4px;
+  background: linear-gradient(180deg, #7DB6FF, #2F6FED); box-shadow: 0 0 12px rgba(47, 111, 237, .7);
+}
+.has-tabbar .btn-primary {
+  background: var(--accent);
+  box-shadow: 0 14px 30px -12px rgba(47, 111, 237, .8), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.has-tabbar .btn-ghost { background: var(--glass); border-color: var(--glass-border); }
+.has-tabbar .btn-ghost:not(:disabled):hover { filter: none; background: rgba(47, 111, 237, .10); border-color: rgba(89, 166, 255, .4); }
+.has-tabbar input, .has-tabbar select, .has-tabbar textarea { background: rgba(255, 255, 255, .03); border-color: var(--glass-border); }
+.has-tabbar input:focus, .has-tabbar select:focus, .has-tabbar textarea:focus {
+  border-color: #3D8CFF; box-shadow: 0 0 0 4px rgba(47, 111, 237, .18);
+}
+.has-tabbar select option, .has-tabbar select optgroup { background: #0F1A2E; }
+.has-tabbar input[type=file]::file-selector-button {
+  font: inherit; font-weight: 700; color: #fff; cursor: pointer;
+  background: var(--accent); border: 0; border-radius: 9px; padding: 7px 12px; margin-right: 10px;
+}
+.has-tabbar code { background: rgba(47, 111, 237, .12); border-color: rgba(89, 166, 255, .25); color: #BFD6FF; }
+.has-tabbar .btn-link { color: #5C9DFF; }
+
+/* Знак бренда — ромб с градиентом и свечением, как «◆ ZalPOS» на лендинге. */
+.brand-gem {
+  display: inline-block; flex: none; width: 11px; height: 11px; border-radius: 3px; transform: rotate(45deg);
+  background: linear-gradient(135deg, #7DB6FF, #2F6FED); box-shadow: 0 0 14px rgba(89, 166, 255, .85);
+}
+
+/* Верхняя панель телефона — стекло поверх свечения. */
+.has-tabbar .dash-topbar {
+  background: rgba(3, 7, 16, .72);
+  backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border-bottom: 1px solid var(--glass-border);
+}
+.has-tabbar .dash-topbar .brand-gem { margin: 0 6px 0 auto; }
+.has-tabbar .dash-topbar-tenant { font-size: 15px; font-weight: 800; }
+.has-tabbar .dash-topbar-tab { font-size: 12px; }
+.has-tabbar .hamburger-btn {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--glass); border-color: var(--glass-border); color: var(--text);
+}
+
+/* Меню: ночь с отсветом сверху; выбранный пункт — синяя подсветка слева. */
+.has-tabbar .nav-drawer {
+  background:
+    radial-gradient(320px 220px at 0% 0%, rgba(47, 111, 237, .20), transparent 70%),
+    linear-gradient(180deg, #081122 0%, #050A15 100%);
+  border-right: 1px solid var(--glass-border);
+}
+.has-tabbar .nav-drawer-brand {
+  display: flex; align-items: center; gap: 10px; color: var(--text);
+  font-size: 14px; font-weight: 800; letter-spacing: .18em; margin: 2px 0 6px;
+}
+.has-tabbar .nav-drawer-tenant { font-size: 13px; margin-bottom: 18px; }
+.has-tabbar .nav-item {
+  border: 1px solid transparent; padding: 8px 10px; margin-bottom: 2px;
+  transition: background .2s ease, color .2s ease, border-color .2s ease;
+}
+.has-tabbar .nav-item:hover { background: rgba(255, 255, 255, .04); }
+.has-tabbar .nav-item.active {
+  color: #fff; border-color: rgba(89, 166, 255, .22);
+  background: linear-gradient(90deg, rgba(47, 111, 237, .26), rgba(47, 111, 237, .05));
+  box-shadow: inset 3px 0 0 #3D8CFF;
+}
+.has-tabbar .nav-divider { background: var(--glass-border); }
+
+/* Цветной значок раздела (--icon-bg задаёт navIconHtml): заливка с бликом
+   и тенью своего цвета. */
+.nav-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 30px; height: 30px; border-radius: 9px; background: var(--icon-bg, var(--surface-2));
+}
+.has-tabbar .nav-icon {
+  background: linear-gradient(145deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 55%), var(--icon-bg, var(--surface-2));
+  box-shadow: 0 6px 16px -8px var(--icon-bg, transparent), inset 0 1px 0 rgba(255, 255, 255, .2);
+}
+
+/* «Обзор»: дата, приветствие с именем градиентом. */
+.dash-hero { margin: 2px 0 18px; }
+.dash-date { font-size: 11.5px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.dash-greeting { font-size: 27px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; margin-top: 6px; }
+@media (min-width: 860px) { .dash-greeting { font-size: 34px; } }
+.grad-text {
+  background: linear-gradient(100deg, #9CC8FF 0%, #3D8CFF 50%, #A78BFA 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Карточка заведения — главная на «Обзоре»: свечение в углу, логотип,
+   статус, код и тариф. */
+.has-tabbar .venue-card {
+  position: relative; overflow: hidden; padding: 20px;
+  background:
+    radial-gradient(420px 240px at 100% 0%, rgba(47, 111, 237, .26), transparent 70%),
+    linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .01)), var(--surface);
+  border-color: rgba(89, 166, 255, .26);
+}
+.venue-card-top { display: flex; align-items: center; gap: 14px; }
+.venue-avatar {
+  width: 54px; height: 54px; border-radius: 16px; flex: none; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 23px; font-weight: 800; color: #fff; background: var(--accent);
+  box-shadow: 0 12px 26px -10px rgba(47, 111, 237, .9), inset 0 1px 0 rgba(255, 255, 255, .25);
+}
+.venue-avatar img { width: 100%; height: 100%; object-fit: cover; background: #0F1A2E; }
+.venue-kicker { font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.venue-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 3px; }
+.venue-name {
+  font-size: 22px; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; min-width: 0; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere;
+}
+.venue-rename {
+  width: 30px; height: 30px; padding: 0; flex: none; border-radius: 9px;
+  background: var(--glass); border: 1px solid var(--glass-border); color: var(--muted);
+}
+.venue-rename:not(:disabled):hover { filter: none; color: #fff; border-color: rgba(89, 166, 255, .45); }
+.venue-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 14px; }
+.venue-chip {
+  display: inline-flex; align-items: center; gap: 7px; width: auto; padding: 6px 11px;
+  border-radius: 999px; font-size: 12.5px; font-weight: 700; line-height: 1.2; color: var(--text);
+  background: var(--glass); border: 1px solid var(--glass-border);
+}
+.venue-chip i { width: 7px; height: 7px; border-radius: 50%; background: #22C55E; box-shadow: 0 0 10px #22C55E; }
+.venue-chip.bad i { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+.venue-chip.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600; color: #BFD6FF; cursor: pointer; }
+.venue-chip.code:not(:disabled):hover { filter: none; border-color: rgba(89, 166, 255, .45); }
+.venue-plan {
+  display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%;
+  text-align: left; padding: 12px 14px; border-radius: 14px; font-weight: 400; color: var(--text);
+  background: rgba(255, 255, 255, .035); border: 1px solid var(--glass-border);
+}
+.venue-plan:not(:disabled):hover { filter: none; border-color: rgba(89, 166, 255, .4); }
+.venue-plan .nav-icon { width: 36px; height: 36px; border-radius: 11px; }
+.venue-plan .grow { display: flex; flex-direction: column; gap: 2px; }
+.venue-plan-title { font-size: 14px; font-weight: 800; }
+.venue-plan-detail { font-size: 12.5px; color: var(--muted); }
+.venue-plan-more { flex: none; font-size: 12.5px; font-weight: 700; color: #7DB6FF; white-space: nowrap; }
+.venue-plan-more::after { content: ' →'; }
+@media (max-width: 420px) { .venue-plan-more { display: none; } }
+
+/* Живые цифры: две колонки на телефоне, четыре с планшета. */
+.live-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+@media (min-width: 640px) { .live-stats-grid { grid-template-columns: repeat(4, 1fr); } }
+.live-stat { position: relative; overflow: hidden; padding: 14px 14px 16px; margin-bottom: 0; }
+.live-stat::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, var(--stat, #2F6FED), transparent 85%);
+}
+.live-stat-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.live-stat .nav-icon { width: 32px; height: 32px; border-radius: 10px; }
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #22C55E;
+  animation: live-pulse 2s ease-out infinite;
+}
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .55); }
+  75%, 100% { box-shadow: 0 0 0 9px rgba(34, 197, 94, 0); }
+}
+.live-stat-value { font-size: 26px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.live-stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.3; }
+
+/* Быстрый доступ: плитки со значком, подписью и стрелкой. */
+.quick-actions { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 560px) { .quick-actions { grid-template-columns: 1fr 1fr; } }
+.quick-action {
+  display: flex; align-items: center; justify-content: flex-start; gap: 12px;
+  text-align: left; padding: 13px 14px; border-radius: 16px; font-weight: 400; color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .01)), var(--surface);
+  border: 1px solid var(--glass-border);
+}
+.quick-action:not(:disabled):hover { filter: none; transform: translateY(-1px); border-color: rgba(89, 166, 255, .38); }
+.quick-action .nav-icon { width: 38px; height: 38px; border-radius: 12px; }
+.quick-action-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.quick-action-text b { font-size: 14.5px; font-weight: 800; }
+.quick-action-text span { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-action-arrow { flex: none; color: var(--muted); transition: transform .2s ease, color .2s ease; }
+.quick-action:hover .quick-action-arrow { transform: translateX(3px); color: #7DB6FF; }
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+  .quick-action:not(:disabled):hover { transform: none; }
+}
 
 /* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ ==================
    Почти все компоненты написаны через переменные --bg/--surface/--primary,

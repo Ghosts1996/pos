@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../build_info.dart';
+import 'app_lock.dart';
 import 'app_scope.dart';
 
 /// Загрузка фото категорий и позиций меню в Supabase Storage — Firebase
@@ -32,14 +33,15 @@ class StorageService {
 
   /// Открывает системный выбор фото (галерея/камера) с уменьшением размера,
   /// чтобы не грузить в Storage многометровые оригиналы с камеры телефона.
-  /// Возвращает null, если пользователь отменил выбор.
+  /// Возвращает null, если пользователь отменил выбор. Уход в галерею или
+  /// камеру не блокирует кассу (AppLock).
   Future<XFile?> pickImage({ImageSource source = ImageSource.gallery}) {
-    return _picker.pickImage(
-      source: source,
-      maxWidth: 1600,
-      maxHeight: 1600,
-      imageQuality: 85,
-    );
+    return AppLock.instance.whileAway(() => _picker.pickImage(
+          source: source,
+          maxWidth: 1600,
+          maxHeight: 1600,
+          imageQuality: 85,
+        ));
   }
 
   /// Загружает выбранное фото в Storage и возвращает публичный URL.
