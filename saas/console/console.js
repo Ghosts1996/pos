@@ -3390,6 +3390,17 @@ function watchDashboardData(tenantId) {
         <div id="f-hookah-mode-msg" class="small" style="margin-top:8px"></div>
       </div>
 
+      ${role === 'owner' ? `
+        <h2>Резервная копия</h2>
+        <div class="card">
+          <p class="small muted">Все данные ${tenant.chainId ? 'точки' : 'заведения'} одним файлом: меню, залы и столы,
+          чеки и смены, гости и бонусы, сотрудники, склад, брони и настройки. Храните его у себя —
+          по нему мы восстановим данные, если что-то случится.</p>
+          <button class="btn btn-ghost" id="f-backup-tenant">Скачать бэкап ${tenant.chainId ? 'точки' : 'заведения'}</button>
+          ${tenant.chainId ? `<button class="btn btn-ghost" id="f-backup-chain" style="margin-top:8px">Скачать бэкап всей сети</button>` : ''}
+        </div>
+      ` : ''}
+
       <h2>Системные требования</h2>
       <div class="card">
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет нужен постоянно — Wi-Fi или мобильный</div>
@@ -3590,6 +3601,11 @@ function watchDashboardData(tenantId) {
     // Название для кабинета и панели платформы; в приложениях — своё, из
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
+    if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
+    if ($('f-backup-chain')) $('f-backup-chain').onclick = () => {
+      const chain = state.tenants.find((t) => t.chainId === tenant.chainId) || {};
+      exportVenueBackup({ chainId: tenant.chainId, fileKey: chain.chainSlug || chain.chainName, label: chain.chainName || 'сеть' });
+    };
     const renameBtn = $('f-tenant-rename');
     if (renameBtn) renameBtn.onclick = async () => {
       const next = (window.prompt('Новое название заведения', tenant.name || '') || '').trim();
@@ -5303,6 +5319,12 @@ function watchAllTenants() {
         </div>
 
         <div style="margin-top:14px">
+          <div class="small muted" style="margin-bottom:6px">Бэкап — все данные одним файлом (восстановление: saas-gateway/restore-backup.js)</div>
+          <button class="btn btn-ghost f-tenant-backup" data-id="${esc(t.id)}">Скачать бэкап ${t.chainId ? 'точки' : 'заведения'}</button>
+          ${t.chainId ? `<button class="btn btn-ghost f-chain-backup" data-chain="${esc(t.chainId)}" data-id="${esc(t.id)}" style="margin-top:8px">Скачать бэкап всей сети</button>` : ''}
+        </div>
+
+        <div style="margin-top:14px">
           <div class="small muted" style="margin-bottom:6px">История тарифа и статуса (последние 20 записей)</div>
           ${(d.history || []).length ? (d.history || []).map((e) => `
             <div class="small" style="padding:2px 0">${fmtDateTime(e.createdAt)} — ${esc(AUDIT_ACTION_LABELS[e.action] || e.action)}</div>
@@ -5453,6 +5475,14 @@ function watchAllTenants() {
     });
     document.querySelectorAll('.f-grant-bonus').forEach((el) => {
       el.onclick = () => grantBonusPeriod(el.dataset.id);
+    });
+    document.querySelectorAll('.f-tenant-backup, .f-chain-backup').forEach((el) => {
+      el.onclick = () => {
+        const t = allTenants.find((x) => x.id === el.dataset.id) || {};
+        exportVenueBackup(el.dataset.chain
+          ? { chainId: el.dataset.chain, fileKey: t.chainSlug || t.chainName || el.dataset.chain, label: t.chainName || 'сеть', asAdmin: true }
+          : { tenantId: t.id, fileKey: t.slug, label: t.name || t.id, asAdmin: true });
+      };
     });
   };
 
@@ -6787,6 +6817,38 @@ async function downloadBackup(name) {
   }
 }
 
+/** Бэкап заведения или сети одним .json: все данные (меню, залы, чеки,
+ *  гости, сотрудники, склад, настройки) в формате ночной копии базы —
+ *  восстанавливается saas-gateway/restore-backup.js. Своё скачивает
+ *  владелец; чужое — супер-админ, после ввода пароля. */
+async function exportVenueBackup({ tenantId, chainId, fileKey, label, asAdmin = false }) {
+  if (asAdmin && !(await reauthenticate(`скачать бэкап «${label}»`))) return;
+  toast('Собираем бэкап — это может занять до минуты…');
+  try {
+    const idToken = await state.auth.currentUser.getIdToken(asAdmin);
+    const res = await fetch(`${SAAS_GATEWAY_URL}/exportBackup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify(chainId ? { chainId } : { tenantId }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const key = slugify(fileKey) || (chainId || tenantId);
+    a.href = url;
+    a.download = `zalpos-backup-${chainId ? 'set-' : ''}${key}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('Бэкап скачан');
+  } catch (e) {
+    toast(`Не удалось скачать бэкап: ${e?.message || e}`);
+  }
+}
+
 /** Поля тарифа по-человечески — для записей «Изменён тариф» в журнале. */
 const PLAN_FIELD_LABELS = {
   name: 'название', priceRub: 'цена в месяц', priceRubSemiannual: 'цена за 6 мес',
@@ -6814,6 +6876,8 @@ const SECURITY_EVENT_LABELS = {
   planDeleted: 'Удалён тариф',
   backupCreated: 'Сделана резервная копия',
   backupDownloaded: 'Скачана резервная копия базы',
+  tenantBackupExported: 'Скачан бэкап заведения',
+  chainBackupExported: 'Скачан бэкап сети',
   platformLegalUpdated: 'Изменены реквизиты платформы',
   domainReprovisioned: 'Сертификат поддомена выпущен заново',
   ipBlocked: 'Заблокирован IP',
@@ -6860,6 +6924,9 @@ function securityEventDetails(e) {
       return m.status === 'ok' ? `${m.file || ''} · ${m.docs ?? '—'} документов` : 'не сделана (база больше лимита)';
     case 'backupDownloaded':
       return m.file || '';
+    case 'tenantBackupExported':
+    case 'chainBackupExported':
+      return `${m.name || ''} · ${m.docs ?? '—'} документов${m.bySuperAdmin ? ' · супер-админ' : ''}`;
     case 'domainReprovisioned':
       return m.host || '';
     case 'ipBlocked':

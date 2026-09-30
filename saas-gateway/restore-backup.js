@@ -7,6 +7,10 @@
  *   set -a; . /etc/saas-gateway.env; set +a
  *   node restore-backup.js backups/firestore-2026-09-26T03-00.json.gz --dry-run
  *   node restore-backup.js backups/firestore-...json.gz --only=tenants/abc --yes
+ *   node restore-backup.js zalpos-backup-kafe-leto-2026-09-30.json --dry-run
+ *
+ * Бэкап заведения или сети, скачанный в кабинете или панели платформы
+ * («Скачать бэкап»), — того же формата: восстанавливается так же.
  *
  * --dry-run  — только показать, сколько документов будет записано.
  * --only=P   — только документы, чей путь начинается с P (например одно
@@ -44,7 +48,10 @@ async function main() {
     console.error("Укажите файл копии: node restore-backup.js backups/firestore-....json.gz [--dry-run] [--only=путь] [--yes]");
     process.exit(2);
   }
-  const backup = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
+  // Ночная копия базы — .json.gz, бэкап заведения из кабинета — обычный .json.
+  const raw = fs.readFileSync(file);
+  const gzipped = raw[0] === 0x1f && raw[1] === 0x8b;
+  const backup = JSON.parse((gzipped ? zlib.gunzipSync(raw) : raw).toString("utf8"));
   if (backup.format !== 1) throw new Error("Неизвестный формат копии");
   const paths = Object.keys(backup.docs).filter((p) => !only || p === only || p.startsWith(only.endsWith("/") ? only : `${only}/`));
   console.log(`Копия от ${backup.createdAt}: всего ${Object.keys(backup.docs).length} документов, к восстановлению — ${paths.length}${only ? ` (только ${only})` : ""}.`);

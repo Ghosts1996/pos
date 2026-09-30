@@ -337,6 +337,16 @@ node restore-backup.js backups/firestore-...json.gz --only=tenants/ID --yes   # 
 node restore-backup.js backups/firestore-...json.gz --yes              # вся база
 ```
 
+Бэкап одного заведения или сети скачивается кнопкой «Скачать бэкап» — владелец
+в кабинете («Настройки»), супер-админ в карточке любого заведения или сети в
+панели платформы (`POST /exportBackup` с `tenantId` или `chainId`). Файл —
+обычный `.json` того же формата, восстанавливается тем же скриптом:
+
+```
+node restore-backup.js zalpos-backup-...json --dry-run
+node restore-backup.js zalpos-backup-...json --yes
+```
+
 Сертификаты HTTPS поддоменов заведений проверяются раз в сутки
 подключением к локальному nginx (`127.0.0.1:443` с нужным SNI) —
 предупреждение появляется за 14 дней до окончания или если сертификата
