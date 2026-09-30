@@ -348,8 +348,8 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
       ListTile(
         leading: const Icon(Icons.logout),
         title: const Text('Сменить сотрудника'),
-        // Забываем сохранённый вход — иначе экран PIN тут же
-        // вернул бы в приложение того же сотрудника.
+        // Забываем сохранённый вход: вызовы гостей больше не адресуются
+        // ушедшему сотруднику, а вход спросит PIN следующего.
         onTap: () async {
           await StaffSessionStore.instance.forget();
           if (!context.mounted) return;

@@ -355,14 +355,17 @@ function daysUntilTrialEnd(subscription) {
   return Math.ceil((end.getTime() - Date.now()) / 86400000);
 }
 
+const capitalize = (text) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : text);
+
 // Приветствие на «Обзоре»: время суток браузера и имя из email
-// (отдельного поля с именем при регистрации нет).
-function greetingLine() {
+// (отдельного поля с именем при регистрации нет). Имя — фирменным
+// градиентом.
+function greetingHtml() {
   const h = new Date().getHours();
   const greeting = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
   const local = (state.auth.currentUser?.email || '').split('@')[0] || '';
-  const name = local.split(/[.+_0-9]/)[0];
-  return name ? `${greeting}, ${name.charAt(0).toUpperCase()}${name.slice(1)}` : greeting;
+  const name = capitalize(local.split(/[.+_0-9]/)[0]);
+  return name ? `${greeting}, <span class="grad-text">${esc(name)}</span>` : greeting;
 }
 
 function planName(plans, planId) {
@@ -2575,15 +2578,18 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
   const activeMeta = DASHBOARD_NAV.find((t) => t.id === activeTab);
   return `
     <div class="dash-topbar">
-      <button class="hamburger-btn" id="f-nav-open">☰</button>
+      <button class="hamburger-btn" id="f-nav-open" aria-label="Меню">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      </button>
       <div class="dash-topbar-title">
         <div class="dash-topbar-tenant">${esc(tenantName || 'ZalPOS')}</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
+      <span class="brand-gem" aria-hidden="true"></span>
     </div>
     <div class="nav-backdrop" id="nav-backdrop"></div>
     <div class="nav-drawer" id="nav-drawer">
-      <div class="nav-drawer-brand">ZalPOS</div>
+      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS</div>
       ${state.tenants.length > 1 ? `
         <label class="field"><span>Заведение</span>
           <select id="f-nav-tenant-pick">
@@ -2786,24 +2792,33 @@ function watchDashboardData(tenantId) {
       });
     }
 
-    // Тариф и сколько осталось до конца триала или списания — одной строкой.
-    const subscriptionLine = (() => {
+    // Тариф и сколько осталось до конца триала или списания: название —
+    // крупно, срок — строкой под ним; tone красит значок тарифа.
+    const subscriptionInfo = (() => {
       const plan = planName(plans, subscription?.planId);
-      const planText = plan ? `Тариф «${plan}»` : 'Тариф не выбран';
-      if (!subscription?.status) return planText;
+      const title = plan ? `Тариф «${plan}»` : 'Тариф не выбран';
+      if (!subscription?.status) return { title, detail: 'Выберите тариф в разделе «Тарифы»', tone: 'warn' };
       if (subscription.status === 'trial') {
-        return `${planText} · пробный период${trialDaysLeft !== null
-          ? (trialDaysLeft > 0 ? `, осталось ${trialDaysLeft} ${pluralDays(trialDaysLeft)}` : ', заканчивается сегодня')
-          : ''}`;
+        return {
+          title,
+          detail: `Пробный период${trialDaysLeft !== null
+            ? (trialDaysLeft > 0 ? ` · осталось ${trialDaysLeft} ${pluralDays(trialDaysLeft)}` : ' · заканчивается сегодня')
+            : ''}`,
+          tone: trialDaysLeft !== null && trialDaysLeft <= 3 ? 'warn' : 'ok',
+        };
       }
       if (subscription.status === 'active' && subscription.currentPeriodEnd) {
         const periodDaysLeft = Math.ceil((subscription.currentPeriodEnd.toMillis() - Date.now()) / 86400000);
         const verb = subscription.cancelAtPeriodEnd ? 'закончится' : 'продлится';
-        return `${planText} · активна, ${verb} через ${periodDaysLeft > 0 ? `${periodDaysLeft} ${pluralDays(periodDaysLeft)}` : 'меньше дня'} (${fmtDate(subscription.currentPeriodEnd)})`;
+        return {
+          title,
+          detail: `Активна · ${verb} через ${periodDaysLeft > 0 ? `${periodDaysLeft} ${pluralDays(periodDaysLeft)}` : 'меньше дня'} (${fmtDate(subscription.currentPeriodEnd)})`,
+          tone: 'ok',
+        };
       }
-      if (subscription.status === 'past_due') return `${planText} · оплата просрочена`;
-      if (subscription.status === 'cancelled') return `${planText} · отменена`;
-      return `${planText} · ${SUB_STATUS_LABELS[subscription.status] || subscription.status}`;
+      if (subscription.status === 'past_due') return { title, detail: 'Оплата просрочена', tone: 'bad' };
+      if (subscription.status === 'cancelled') return { title, detail: 'Подписка отменена', tone: 'bad' };
+      return { title, detail: SUB_STATUS_LABELS[subscription.status] || subscription.status, tone: 'ok' };
     })();
 
     const visibleBroadcasts = (broadcasts || []).filter((b) => !dismissedBroadcastIds().has(b.id));
@@ -2839,43 +2854,71 @@ function watchDashboardData(tenantId) {
       `;
     };
 
+    // Живые цифры: значок, цифра, подпись; «сейчас» — с пульсирующей точкой.
+    const liveStat = (icon, color, value, label, live) => `
+      <div class="card live-stat" style="--stat:${color}">
+        <div class="live-stat-head">
+          ${navIconHtml(icon, color)}
+          ${live ? '<span class="live-dot" title="Обновляется в реальном времени"></span>' : ''}
+        </div>
+        <div class="live-stat-value">${value}</div>
+        <div class="live-stat-label">${label}</div>
+      </div>
+    `;
+    const quickAction = (tab, icon, color, title, hint) => `
+      <button class="quick-action f-dash-tab" data-tab="${tab}">
+        ${navIconHtml(icon, color)}
+        <span class="quick-action-text"><b>${title}</b><span>${hint}</span></span>
+        <svg class="quick-action-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    `;
+    const venueLogo = branding?.logoUrl || '';
+    const statusTone = tenant.status === 'active' || tenant.status === 'trial' ? 'ok' : 'bad';
+
     const overviewHtml = () => `
       ${broadcastsHtml}
-      <div class="dash-greeting">${esc(greetingLine())} 👋</div>
-      <div class="card">
-        <div class="muted small">Заведение</div>
-        <div class="row" style="align-items:center;gap:8px;margin:4px 0">
-          <div style="font-size:20px;font-weight:700">${esc(tenant.name || '')}</div>
-          ${role === 'owner' || role === 'admin' ? '<button type="button" class="btn-link small" id="f-tenant-rename">Переименовать</button>' : ''}
+      <div class="dash-hero">
+        <div class="dash-date">${esc(new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+        <div class="dash-greeting">${greetingHtml()}</div>
+      </div>
+      <div class="card venue-card">
+        <div class="venue-card-top">
+          <div class="venue-avatar">${venueLogo
+            ? `<img src="${esc(venueLogo)}" alt="">`
+            : esc((tenant.name || 'Z').trim().charAt(0).toUpperCase())}</div>
+          <div class="grow">
+            <div class="venue-kicker">Заведение</div>
+            <div class="venue-name-row">
+              <div class="venue-name">${esc(tenant.name || '')}</div>
+              ${role === 'owner' || role === 'admin' ? `<button type="button" class="venue-rename" id="f-tenant-rename" title="Переименовать" aria-label="Переименовать">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/></svg>
+              </button>` : ''}
+            </div>
+          </div>
         </div>
-        <div class="small muted">
-          Код: <code>${esc(tenant.slug || '')}</code> ·
-          статус: ${esc(TENANT_STATUS_LABELS[tenant.status] || tenant.status || '—')} ·
-          роль: ${esc(ROLE_LABELS[role] || role)}
+        <div class="venue-chips">
+          <span class="venue-chip ${statusTone}"><i></i>${esc(capitalize(TENANT_STATUS_LABELS[tenant.status] || tenant.status || '—'))}</span>
+          <span class="venue-chip">${esc(capitalize(ROLE_LABELS[role] || role || '—'))}</span>
+          <button type="button" class="venue-chip code" id="f-copy-slug" title="Код заведения — скопировать">
+            ${esc(tenant.slug || '')}
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>
+          </button>
         </div>
-        <div class="small muted" style="margin-top:6px">
-          ${esc(subscriptionLine)} ·
-          <button class="btn-link f-dash-tab" data-tab="billing" style="width:auto;display:inline-flex;padding:0;font-size:inherit">Подробнее</button>
-        </div>
+        <button type="button" class="venue-plan f-dash-tab" data-tab="billing">
+          ${navIconHtml('gem', subscriptionInfo.tone === 'bad' ? '#EF4444' : subscriptionInfo.tone === 'warn' ? '#F59E0B' : '#8B5CF6')}
+          <span class="grow">
+            <span class="venue-plan-title">${esc(subscriptionInfo.title)}</span>
+            <span class="venue-plan-detail">${esc(subscriptionInfo.detail)}</span>
+          </span>
+          <span class="venue-plan-more">Подробнее</span>
+        </button>
       </div>
       ${tenant.chainId ? chainLocationsHtml() : ''}
       <div class="live-stats-grid">
-        <div class="card live-stat">
-          <div class="live-stat-value">${liveOpenSessions === null ? '—' : liveOpenSessions}</div>
-          <div class="live-stat-label">Открытых столов сейчас</div>
-        </div>
-        <div class="card live-stat">
-          <div class="live-stat-value">${liveOnShift === null ? '—' : liveOnShift}</div>
-          <div class="live-stat-label">Сотрудников на смене</div>
-        </div>
-        <div class="card live-stat">
-          <div class="live-stat-value">${todayRevenue === null ? '—' : `${Number(todayRevenue).toLocaleString('ru-RU')} ₽`}</div>
-          <div class="live-stat-label">Выручка сегодня</div>
-        </div>
-        <div class="card live-stat">
-          <div class="live-stat-value">${todayChecksCount === null ? '—' : todayChecksCount}</div>
-          <div class="live-stat-label">Чеков закрыто сегодня</div>
-        </div>
+        ${liveStat('list', '#2F6FED', liveOpenSessions === null ? '—' : liveOpenSessions, 'Открытых столов сейчас', true)}
+        ${liveStat('users', '#10B981', liveOnShift === null ? '—' : liveOnShift, 'Сотрудников на смене', true)}
+        ${liveStat('card', '#F59E0B', todayRevenue === null ? '—' : `${Number(todayRevenue).toLocaleString('ru-RU')} ₽`, 'Выручка сегодня', false)}
+        ${liveStat('badge', '#A855F7', todayChecksCount === null ? '—' : todayChecksCount, 'Чеков закрыто сегодня', false)}
       </div>
       ${dangerBannerHtml}
       ${attentionItems.length ? `
@@ -2902,14 +2945,14 @@ function watchDashboardData(tenantId) {
           `).join('')}
         </div>
       ` : ''}
-      <div class="small muted" style="margin-bottom:8px">Быстрый доступ</div>
+      <h2>Быстрый доступ</h2>
       <div class="quick-actions">
-        <button class="btn btn-ghost f-dash-tab" data-tab="devices"><span class="btn-icon">📲</span> Устройства</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="billing"><span class="btn-icon">💳</span> Оплата</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="branding"><span class="btn-icon">🎨</span> Брендинг</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="team"><span class="btn-icon">👥</span> Команда</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="faq"><span class="btn-icon">❓</span> FAQ</button>
-        <button class="btn btn-ghost f-dash-tab" data-tab="support"><span class="btn-icon">💬</span> Поддержка</button>
+        ${quickAction('devices', 'device', '#0EA5E9', 'Устройства', 'Код приглашения и сборка APK')}
+        ${quickAction('billing', 'card', '#F59E0B', 'Оплата', 'Продление и счета')}
+        ${quickAction('branding', 'palette', '#EC4899', 'Брендинг', 'Логотип и цвета приложения')}
+        ${quickAction('team', 'users', '#10B981', 'Команда', 'Кто управляет заведением')}
+        ${quickAction('faq', 'question', '#EF4444', 'FAQ', 'Ответы на частые вопросы')}
+        ${quickAction('support', 'chat', '#22C55E', 'Поддержка', 'Напишите нам — ответим')}
       </div>
     `;
 
@@ -3546,6 +3589,7 @@ function watchDashboardData(tenantId) {
     });
     // Название для кабинета и панели платформы; в приложениях — своё, из
     // «Брендинга». Правила дают владельцу менять в документе только name.
+    if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
     const renameBtn = $('f-tenant-rename');
     if (renameBtn) renameBtn.onclick = async () => {
       const next = (window.prompt('Новое название заведения', tenant.name || '') || '').trim();
@@ -4570,15 +4614,18 @@ function adminNavHtml(activeTab) {
     : `<a href="#/onboarding" class="nav-item" style="text-decoration:none">${navIconHtml('plus', '#22C55E')}<span>Своё заведение</span></a>`;
   return `
     <div class="dash-topbar">
-      <button class="hamburger-btn" id="f-admin-nav-open">☰</button>
+      <button class="hamburger-btn" id="f-admin-nav-open" aria-label="Меню">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      </button>
       <div class="dash-topbar-title">
         <div class="dash-topbar-tenant">ZalPOS · платформа</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
+      <span class="brand-gem" aria-hidden="true"></span>
     </div>
     <div class="nav-backdrop" id="admin-nav-backdrop"></div>
     <div class="nav-drawer" id="admin-nav-drawer">
-      <div class="nav-drawer-brand">ZalPOS</div>
+      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS</div>
       <div class="nav-drawer-tenant">Панель платформы</div>
       ${ADMIN_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-admin-tab" data-tab="${t.id}">
