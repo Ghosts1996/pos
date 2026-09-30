@@ -1572,9 +1572,9 @@ function screenLanding() {
 // Доступны по прямой ссылке и без входа — см. PUBLIC_ROUTES выше.
 
 function publicFooterLinksHtml() {
-  // Строка с реквизитами (ИП, ИНН, e-mail) дорисовывается после загрузки
-  // platformConfig/legal — её требует модерация платёжного сервиса.
-  setTimeout(fillLegalFooter, 0);
+  // Реквизиты Исполнителя (ИП, ИНН, ОГРНИП, email) — в оферте (раздел 14)
+  // и политике конфиденциальности, ссылки на них здесь же; отдельной
+  // строкой в подвале их не дублируем.
   return `
     <p class="small center muted" style="margin-top:14px">
       <a href="#/legal/offer">Оферта</a> ·
@@ -1584,7 +1584,6 @@ function publicFooterLinksHtml() {
       <a href="#/faq">FAQ</a>
     </p>
     <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
-    <p class="small center muted legal-footer" style="margin-top:4px"></p>
   `;
 }
 
@@ -1619,15 +1618,6 @@ function legalParty(l) {
     name = name.toLowerCase().replace(/(^|[\s\-.])([a-zа-яё])/g, (m, p, c) => p + c.toUpperCase());
   }
   return { isOrg, full: `Индивидуальный предприниматель ${name}`, short: `ИП ${name}` };
-}
-
-async function fillLegalFooter() {
-  const els = document.querySelectorAll('.legal-footer');
-  if (!els.length) return;
-  const l = await loadPlatformLegal();
-  if (!l.fullName) return;
-  const parts = [legalParty(l).short, l.inn ? `ИНН ${l.inn}` : '', l.ogrnip ? `${legalParty(l).isOrg ? 'ОГРН' : 'ОГРНИП'} ${l.ogrnip}` : '', l.email, l.phone].filter(Boolean);
-  els.forEach((el) => { el.textContent = parts.join(' · '); });
 }
 
 /** Как выдаётся чек: самозанятый — из «Мой налог» (422-ФЗ), иначе —
