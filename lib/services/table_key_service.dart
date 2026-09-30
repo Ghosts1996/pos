@@ -78,9 +78,10 @@ class TableKeyService {
   Future<void> markPrinted() =>
       _state.set({'printedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
 
-  /// Есть коды, которые ещё не распечатаны.
+  /// Есть коды, которые ещё не распечатаны. В демо наклеек нет — не
+  /// напоминаем.
   Stream<bool> reprintNeededStream() {
-    if (!enabled) return Stream.value(false);
+    if (!enabled || AppScope.isDemo) return Stream.value(false);
     return _state.snapshots().map((d) {
       final issued = d.data()?['keysIssuedAt'];
       final printed = d.data()?['printedAt'];

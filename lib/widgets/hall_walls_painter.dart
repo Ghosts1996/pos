@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show listEquals, setEquals;
 import 'package:flutter/material.dart';
 
+import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../utils/hall_layout.dart';
 
@@ -10,9 +11,11 @@ import '../utils/hall_layout.dart';
 ///
 /// Все стены рисуются слоями разом — сначала тени, потом контуры, потом
 /// тела: там, где две стены сходятся, они сливаются в одну, без линий
-/// внахлёст.
+/// внахлёст. Поверх — подписи («Вход», «Кухня», заметки) заглавными с
+/// разрядкой, как на чертеже.
 class HallWallsPainter extends CustomPainter {
   final List<HallWall> walls;
+  final List<HallLabel> labels;
 
   /// Цвет контура стены.
   final Color line;
@@ -31,10 +34,36 @@ class HallWallsPainter extends CustomPainter {
     required this.walls,
     required this.line,
     required this.floor,
+    this.labels = const [],
     this.highlighted = const {},
     this.highlightColor,
     this.shadow = true,
   });
+
+  /// Надпись подписи [text] цветом [color] — заглавными с разрядкой.
+  static TextPainter labelPainter(String text, Color color) => TextPainter(
+        text: TextSpan(
+          text: text.toUpperCase(),
+          style: TextStyle(
+            color: color,
+            fontSize: kHallLabelFontSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: kHallLabelFontSize * 0.14,
+            height: 1.1,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+
+  /// Место подписи на холсте — для кадра схемы и касаний в редакторе.
+  static Rect labelRect(HallLabel l) {
+    final tp = labelPainter(l.text, const Color(0xFF000000));
+    return Rect.fromCenter(center: l.at, width: tp.width, height: tp.height);
+  }
+
+  /// Цвет подписи: приглушённый цвет стен.
+  static Color labelColorFor(Color line) => line.withValues(alpha: 0.55);
 
   static Path pathOf(HallWall w) {
     final p = Path()..moveTo(w.points.first.dx, w.points.first.dy);
@@ -60,6 +89,17 @@ class HallWallsPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    _paintWalls(canvas, size);
+    // Подписи — поверх стен: «Вход» у проёма, «Кухня» в комнате.
+    for (final l in labels) {
+      if (!l.isValid) continue;
+      final color = highlighted.contains(l.id) && highlightColor != null ? highlightColor! : labelColorFor(line);
+      final tp = labelPainter(l.text, color);
+      tp.paint(canvas, l.at - Offset(tp.width / 2, tp.height / 2));
+    }
+  }
+
+  void _paintWalls(Canvas canvas, Size size) {
     final shown = [
       for (final w in walls)
         if (w.isValid) w
@@ -130,8 +170,13 @@ class HallWallsPainter extends CustomPainter {
         old.highlightColor != highlightColor ||
         old.shadow != shadow ||
         !setEquals(old.highlighted, highlighted) ||
-        old.walls.length != walls.length) {
+        old.walls.length != walls.length ||
+        old.labels.length != labels.length) {
       return true;
+    }
+    for (var i = 0; i < labels.length; i++) {
+      final a = old.labels[i], b = labels[i];
+      if (a.id != b.id || a.text != b.text || a.at != b.at) return true;
     }
     for (var i = 0; i < walls.length; i++) {
       if (!_same(old.walls[i], walls[i])) return true;

@@ -14,10 +14,12 @@ import 'services/app_bootstrap.dart';
 import 'services/app_scope.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
+import 'services/demo_gate.dart';
 import 'services/saas_device_join_service.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
+import 'screens/saas/demo_reset_screen.dart';
 import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
@@ -44,6 +46,9 @@ void main() async {
   // флаг всегда false — экран регистрации устройства остаётся тем же, что
   // и был (StaffDeviceSetupScreen внутри LoginScreen), см. ниже.
   var needsPairing = false;
+  // Прежнее заведение — демо, которое за 3 дня удалилось на сервере:
+  // экран присоединения сразу откроет новое демо (см. DemoGate).
+  var lostDemo = false;
 
   // Если firebase_options.dart ещё не заполнен реальными ключами
   // (flutterfire configure не запускался), не пытаемся инициализировать
@@ -81,6 +86,7 @@ void main() async {
         // перезапуска оно уже есть, при первом запуске надо присоединиться.
         final tenantConfigService = TenantConfigService();
         await tenantConfigService.loadFromCache();
+        final cachedDemo = tenantConfigService.current?.tenant.demo == true;
         final uid = FirebaseAuth.instance.currentUser?.uid;
         TenantConfig? config;
         if (uid != null) {
@@ -101,6 +107,8 @@ void main() async {
           // без этого просрочка, наступившая посреди смены, ничего бы не
           // меняла до следующего перезапуска планшета).
           SubscriptionGate.watch(config.tenant.id, config);
+          // Демо живёт 3 дня, потом сбрасывается в исходный вид.
+          DemoGate.watch(config);
           final chainId = config.tenant.chainId;
           if (chainId != null && uid != null) {
             unawaited(SaasDeviceJoinService.ensureChainMembership(
@@ -110,6 +118,7 @@ void main() async {
           startBackgroundServices();
         } else {
           needsPairing = true;
+          lostDemo = cachedDemo;
         }
       } else {
         // Обычная (одно-арендная) сборка — поведение не изменилось ни на
@@ -128,6 +137,7 @@ void main() async {
   runApp(HookahPosApp(
     ready: ready,
     needsPairing: needsPairing,
+    lostDemo: lostDemo,
     startupError: startupError,
   ));
 }
@@ -135,12 +145,14 @@ void main() async {
 class HookahPosApp extends StatelessWidget {
   final bool ready;
   final bool needsPairing;
+  final bool lostDemo;
   final String? startupError;
 
   const HookahPosApp({
     super.key,
     required this.ready,
     this.needsPairing = false,
+    this.lostDemo = false,
     this.startupError,
   });
 
@@ -148,6 +160,7 @@ class HookahPosApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ZalPOS',
+      navigatorKey: appNavigatorKey,
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -171,7 +184,7 @@ class HookahPosApp extends StatelessWidget {
       // ImagePreloadScreen), чтобы дальше открытие меню не грузило фото по
       // сети и не подвисало на слабых POS-планшетах.
       home: needsPairing
-          ? const SaasDevicePairingScreen()
+          ? SaasDevicePairingScreen(lostDemo: lostDemo)
           : ready
               ? const ImagePreloadScreen()
               : SetupRequiredScreen(errorDetails: startupError),
@@ -186,12 +199,25 @@ class HookahPosApp extends StatelessWidget {
       //
       // Снаружи всего — AdaptiveAppFrame: предел системного шрифта и
       // вертикальная ориентация на телефоне (планшет — любая).
+      //
+      // Демо прожило 3 дня (DemoGate) — поверх всего экран сброса: он
+      // открывает новое демо в исходном виде.
+      // Экран сброса накрывает кассу, а не заменяет её: навигатор остаётся
+      // на месте, и сброс открывает вход в новое демо с чистого стека.
       builder: (context, child) => AdaptiveAppFrame(
         child: AppUpdateBanner(
           child: ValueListenableBuilder<bool>(
-            valueListenable: SubscriptionGate.blocked,
-            builder: (context, isBlocked, _) =>
-                isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+            valueListenable: DemoGate.expired,
+            builder: (context, demoExpired, _) => Stack(children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SubscriptionGate.blocked,
+                builder: (context, isBlocked, _) =>
+                    isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+              ),
+              // Scaffold экрана сброса непрозрачен и для касаний — касса
+              // под ним недоступна.
+              if (demoExpired) const Positioned.fill(child: DemoResetScreen()),
+            ]),
           ),
         ),
       ),

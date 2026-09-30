@@ -69,6 +69,10 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if isStaff();
     }
+    match /hallLabels/{doc} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
 
     // ---- Чеки ----
     // Гость видит ТОЛЬКО тот чек, к которому сам привязан (свой стол).

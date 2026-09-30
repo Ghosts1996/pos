@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../services/venue_service.dart';
-import '../../models/hall_wall.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
+import '../../widgets/hall_drawing_builder.dart';
 import '../../widgets/hall_plan_view.dart';
 import '../../widgets/table_shape.dart';
 
@@ -25,7 +25,6 @@ class KolibriHallMapScreen extends StatefulWidget {
 
 class _KolibriHallMapScreenState extends State<KolibriHallMapScreen> {
   late final Stream<List<TableModel>> _tables = FirestoreService().tablesStream();
-  late final Stream<List<HallWall>> _walls = FirestoreService().hallWallsStream();
 
   /// Выбранная зона зала (терраса, VIP…): у каждой зоны своя схема.
   String? _zone;
@@ -104,16 +103,14 @@ class _KolibriHallMapScreenState extends State<KolibriHallMapScreen> {
                 // одном логическом холсте для всех экранов (см.
                 // hall_layout.dart): на телефоне её можно двигать пальцем.
                 // По столам, а не по всей площадке: площадка теперь
-                // больше, и целиком столы на ней были бы мелкими. Стены —
-                // как нарисовал администратор.
-                child: StreamBuilder<List<HallWall>>(
-                  stream: _walls,
-                  builder: (context, wallsSnap) => HallPlanView(
+                // больше, и целиком столы на ней были бы мелкими. Стены и
+                // подписи — как нарисовал администратор.
+                child: HallDrawingBuilder(
+                  zone: zone ?? '',
+                  builder: (context, walls, labels) => HallPlanView(
                     tables: tables,
-                    walls: [
-                      for (final w in wallsSnap.data ?? const <HallWall>[])
-                        if (w.zone == (zone ?? '')) w,
-                    ],
+                    walls: walls,
+                    labels: labels,
                     wallColor: Color.lerp(KolibriColors.textMuted, KolibriColors.textPrimary, 0.5)!,
                     fitToTables: true,
                     floorColor: KolibriColors.surface,

@@ -3,6 +3,7 @@ import 'dart:ui' show PointMode;
 
 import 'package:flutter/material.dart';
 
+import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/table_model.dart';
 import '../theme/app_colors.dart';
@@ -36,10 +37,13 @@ class HallPlanView extends StatefulWidget {
   /// Стены зоны (см. HallWall) — рисуются под столами.
   final List<HallWall> walls;
 
+  /// Подписи зоны («Вход», «Кухня», заметки) — см. HallLabel.
+  final List<HallLabel> labels;
+
   /// Цвет контура стен.
   final Color wallColor;
 
-  /// Выбранная в редакторе стена — её контур цветом [AppColors.primary].
+  /// Выбранная в редакторе стена или подпись — цветом [AppColors.primary].
   final String? highlightedWallId;
 
   /// Схему двигают одним пальцем. В редакторе при рисовании стен палец
@@ -76,6 +80,7 @@ class HallPlanView extends StatefulWidget {
     this.floorColor = AppColors.surface,
     this.lineColor = AppColors.border,
     this.walls = const [],
+    this.labels = const [],
     this.wallColor = HallPlanView.kHallWallColor,
     this.highlightedWallId,
     this.panEnabled = true,
@@ -134,6 +139,7 @@ class _HallPlanViewState extends State<HallPlanView> {
         child: CustomPaint(
           painter: HallWallsPainter(
             walls: widget.walls,
+            labels: widget.labels,
             line: widget.wallColor,
             floor: widget.floorColor,
             highlighted: {if (widget.highlightedWallId != null) widget.highlightedWallId!},
@@ -162,8 +168,12 @@ class _HallPlanViewState extends State<HallPlanView> {
     );
   }
 
-  /// Часть холста со столами и стенами.
-  Rect _content() => hallContentRect(widget.tables, extra: hallWallBounds(widget.walls));
+  /// Часть холста со столами, стенами и подписями.
+  Rect _content() => hallContentRect(widget.tables, extra: [
+        ...hallWallBounds(widget.walls),
+        for (final l in widget.labels)
+          if (l.isValid) HallWallsPainter.labelRect(l),
+      ]);
 
   /// Схема «по столам»: область столов по центру в удобном масштабе.
   Widget _fitted(BoxConstraints box) {

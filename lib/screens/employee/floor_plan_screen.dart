@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/client_models.dart';
 import '../../models/employee.dart';
-import '../../models/hall_wall.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../models/table_model.dart';
@@ -19,6 +18,7 @@ import '../../utils/hall_layout.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/employee_drawer.dart';
 import '../../widgets/guest_requests_banner.dart';
+import '../../widgets/hall_drawing_builder.dart';
 import '../../widgets/hall_plan_view.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/table_tile.dart';
@@ -46,7 +46,6 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
   // Стримы создаются один раз: StreamBuilder сравнивает стримы по ссылке, и
   // стрим, созданный прямо в build, переподписывался бы на каждый кадр.
   late final Stream<List<TableModel>> _tables = _fs.tablesStream();
-  late final Stream<List<HallWall>> _walls = _fs.hallWallsStream();
   late final Stream<List<WaiterCall>> _calls = GuestLinkService().openCallsStream();
   // Окно броней считается от момента подписки, а зал открыт всю смену —
   // подписку сдвигаем раз в полчаса (см. таймер в initState), иначе к
@@ -350,12 +349,13 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
   /// приближать. Списка под ней нет — для него есть вид «Список».
   Widget _plan(List<TableModel> tables, String zone, Map<String, TableState> states, Set<String> calls,
       Map<String, ReservationModel> reservations) {
-    // Стены зоны — как нарисовал администратор в редакторе зала.
-    final map = StreamBuilder<List<HallWall>>(
-      stream: _walls,
-      builder: (context, snap) => HallPlanView(
+    // Стены и подписи зоны — как нарисовал администратор в редакторе зала.
+    final map = HallDrawingBuilder(
+      zone: zone,
+      builder: (context, walls, labels) => HallPlanView(
         tables: tables,
-        walls: [for (final w in snap.data ?? const <HallWall>[]) if (w.zone == zone) w],
+        walls: walls,
+        labels: labels,
         fitToTables: true,
         showHint: false,
         tileBuilder: (t) => _tile(t, states, calls, reservations),

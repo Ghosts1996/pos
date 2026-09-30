@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/table_model.dart';
-import '../services/firestore_service.dart';
 import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
+import 'hall_drawing_builder.dart';
 import 'hall_plan_view.dart';
 import 'table_shape.dart';
 
@@ -66,9 +67,6 @@ class _TablePickerMapState extends State<TablePickerMap> {
   /// Зона зала — у каждой своя схема (см. TableModel.zone).
   String? _zone;
 
-  /// Стены зала — как нарисовал администратор.
-  late final Stream<List<HallWall>> _walls = FirestoreService().hallWallsStream();
-
   List<TableModel> get tables => widget.tables;
   List<TableBusyInterval> get busyIntervals => widget.busyIntervals;
   ValueChanged<TableModel> get onSelect => widget.onSelect;
@@ -106,20 +104,22 @@ class _TablePickerMapState extends State<TablePickerMap> {
         Expanded(
           // Та же схема, что у администратора (логический холст, см.
           // hall_layout.dart), — на телефоне её можно двигать пальцем.
-          child: StreamBuilder<List<HallWall>>(
-            stream: _walls,
-            builder: (context, wallsSnap) => _plan(context, shown, zone, wallsSnap.data ?? const []),
+          // Стены и подписи зала — как нарисовал администратор.
+          child: HallDrawingBuilder(
+            zone: zone ?? '',
+            builder: (context, walls, labels) => _plan(context, shown, walls, labels),
           ),
         ),
       ],
     );
   }
 
-  /// Схема зоны [zone]: её стены и столы цветом свободности.
-  Widget _plan(BuildContext context, List<TableModel> shown, String? zone, List<HallWall> walls) {
+  /// Схема зоны: её стены, подписи и столы цветом свободности.
+  Widget _plan(BuildContext context, List<TableModel> shown, List<HallWall> walls, List<HallLabel> labels) {
     return HallPlanView(
       tables: shown,
-      walls: [for (final w in walls) if (w.zone == (zone ?? '')) w],
+      walls: walls,
+      labels: labels,
       wallColor: Color.lerp(Theme.of(context).colorScheme.onSurface, Theme.of(context).colorScheme.surface, 0.2)!,
       floorColor: Theme.of(context).colorScheme.surface,
       lineColor: Theme.of(context).dividerColor,

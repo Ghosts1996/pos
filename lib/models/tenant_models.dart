@@ -136,8 +136,12 @@ class Tenant {
   final String? chainId;
 
   /// Одноразовое демо-заведение (createDemoTenant): вход по известным PIN,
-  /// стирается само через несколько часов.
+  /// через 3 дня стирается само, а касса открывает новое (DemoGate).
   final bool demo;
+
+  /// Когда демо сбросится в исходный вид; у старых демо поля нет — тогда
+  /// считается от [createdAt] (DemoGate.expiryOf).
+  final DateTime? demoExpiresAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -150,6 +154,7 @@ class Tenant {
     required this.ownerUserId,
     this.chainId,
     this.demo = false,
+    this.demoExpiresAt,
     this.createdAt,
     this.updatedAt,
   });
@@ -158,6 +163,7 @@ class Tenant {
     final d = doc.data() as Map<String, dynamic>? ?? {};
     final created = d['createdAt'];
     final updated = d['updatedAt'];
+    final demoExpires = d['demoExpiresAt'];
     final chainId = d['chainId'] as String?;
     return Tenant(
       id: doc.id,
@@ -168,6 +174,7 @@ class Tenant {
       ownerUserId: d['ownerUserId'] as String? ?? '',
       chainId: (chainId != null && chainId.isNotEmpty) ? chainId : null,
       demo: d['demo'] == true,
+      demoExpiresAt: demoExpires is Timestamp ? demoExpires.toDate() : null,
       createdAt: created is Timestamp ? created.toDate() : null,
       updatedAt: updated is Timestamp ? updated.toDate() : null,
     );

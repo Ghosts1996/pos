@@ -446,6 +446,21 @@ service cloud.firestore {
       allow delete: if isStaff(tenantId);
     }
 
+    // Подписи на схеме зала («Вход», «Кухня», заметки) — тоже видны гостю.
+    function hallLabelOk() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['zone', 'text', 'x', 'y', 'createdAt']) &&
+        d.zone is string && d.zone.size() <= 60 &&
+        d.text is string && d.text.size() > 0 && d.text.size() <= 60 &&
+        d.x is number && d.y is number;
+    }
+
+    match /tenants/{tenantId}/hallLabels/{doc} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow create, update: if isStaff(tenantId) && hallLabelOk();
+      allow delete: if isStaff(tenantId);
+    }
+
     // Чек гостя. У гостя сети профиль лежит в chains/{chainId}/clients, а
     // чек — в конкретной точке, поэтому сверяем и activeTenantId.
     function myActiveSession(tenantId) {

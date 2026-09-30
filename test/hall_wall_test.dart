@@ -1,6 +1,7 @@
 import 'dart:ui' show Offset, Rect;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/models/hall_label.dart';
 import 'package:hookah_pos/models/hall_wall.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/utils/hall_layout.dart';
@@ -103,5 +104,23 @@ void main() {
     // Только стены, столов ещё нет, — тоже не весь холст.
     final wallsOnly = hallContentRect(const [], extra: [const Rect.fromLTRB(100, 100, 400, 300)]);
     expect(wallsOnly.width, lessThan(kHallCanvas.width));
+  });
+
+  group('Подписи на схеме', () {
+    test('текст, место и зона из базы', () {
+      final l = HallLabel.fromMap('l1', const {'zone': ' Терраса ', 'text': '  Курящая   зона ', 'x': 585, 'y': 684.5});
+      expect(l.zone, 'Терраса');
+      expect(l.text, 'Курящая зона');
+      expect(l.at, const Offset(585, 684.5));
+      expect(l.toMap(), {'zone': 'Терраса', 'text': 'Курящая зона', 'x': 585.0, 'y': 684.5});
+    });
+
+    test('мусор не роняет разбор: пустой текст — не подпись, место — в пределах холста', () {
+      expect(HallLabel.fromMap('l2', const {'text': 42}).isValid, isTrue);
+      expect(HallLabel.fromMap('l3', const {}).isValid, isFalse);
+      final far = HallLabel.fromMap('l4', const {'text': 'Вход', 'x': -10, 'y': 99999});
+      expect(far.at, Offset(0, kHallCanvas.height));
+      expect(HallLabel.fromMap('l5', {'text': 'x' * 80}).text.length, HallLabel.maxLength);
+    });
   });
 }
