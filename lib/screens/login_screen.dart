@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../build_info.dart';
 import '../models/employee.dart';
 import '../services/app_scope.dart';
@@ -202,8 +203,19 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _pin = _pin.substring(0, _pin.length - 1));
   }
 
+  // Под экраном входа в стеке только заставка запуска: системный жест
+  // «Назад» закрывал вход и оставлял пустую заставку, откуда не выйти.
+  // «Назад» здесь сворачивает кассу, как любое приложение на главном экране.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) SystemNavigator.pop();
+        },
+        child: _content(context),
+      );
+
+  Widget _content(BuildContext context) {
     if (_restoring) {
       return const Scaffold(
         backgroundColor: Color(0xFF1B1B1F),

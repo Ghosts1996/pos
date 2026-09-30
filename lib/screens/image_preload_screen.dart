@@ -12,6 +12,8 @@ class ImagePreloadScreen extends StatefulWidget {
 }
 
 class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
+  bool _loginShown = false;
+
   @override
   void initState() {
     super.initState();
@@ -21,12 +23,15 @@ class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
     // под экраном входа) — иначе его BuildContext уничтожился бы вместе с
     // виджетом, а фоновому прогреву кэша (precacheImage) нужен живой
     // context на всё время скачивания.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LoginScreen()));
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showLogin());
     // Прогрев кэша фото — полностью в фоне, не блокирует UI.
     _warmUpInBackground();
+  }
+
+  void _showLogin() {
+    if (!mounted) return;
+    _loginShown = true;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
   Future<void> _warmUpInBackground() async {
@@ -43,11 +48,17 @@ class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Экран, лежавший поверх, закрыли (жест «Назад» и т.п.) — заставка не
+    // должна оставаться тупиком: снова открываем вход.
+    if (_loginShown && (ModalRoute.of(context)?.isCurrent ?? false)) {
+      _loginShown = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showLogin());
+    }
     // Виден долю секунды — хватает логотипа, без прогресс-бара.
-    return const Scaffold(
-      backgroundColor: Color(0xFF1B1B1F),
+    return Scaffold(
+      backgroundColor: const Color(0xFF1B1B1F),
       body: Center(
-        child: Icon(Icons.smoking_rooms, color: Colors.white70, size: 56),
+        child: Image.asset('assets/icon/icon.png', width: 72, height: 72),
       ),
     );
   }
