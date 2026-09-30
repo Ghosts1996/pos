@@ -520,6 +520,141 @@ a:hover { filter: brightness(1.2); }
 
 .landing-footer { padding-top: 36px; padding-bottom: 60px; }
 
+/* ---- Лендинг: первый экран ---- */
+.landing-grad {
+  background: linear-gradient(120deg, #59A6FF 0%, #8FD3FF 55%, #3D8CFF 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.landing-hero-points { list-style: none; padding: 0; margin: 18px 0 22px; display: grid; gap: 10px; }
+.landing-hero-points li { display: flex; gap: 10px; font-size: 14.5px; line-height: 1.45; color: var(--text); }
+.landing-hero-points li span {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(61, 140, 255, .16); color: #7DB6FF; font-weight: 800; font-size: 12px; margin-top: 1px;
+}
+.landing-hero-actions { gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+.landing-hero-actions .btn { width: auto; padding: 13px 20px; }
+.landing-form-title { font-size: 19px; font-weight: 800; margin-bottom: 6px; }
+@media (min-width: 960px) {
+  .landing-hero-points li { font-size: 15.5px; }
+}
+
+/* ---- Лендинг: как выглядит смена (макеты кассы и приложения гостя) ---- */
+.center { text-align: center; }
+.center-block { margin-left: auto !important; margin-right: auto !important; text-align: center; }
+.showcase { position: relative; display: flex; justify-content: center; align-items: flex-end; gap: 18px; margin-top: 8px; padding: 10px 0 30px; }
+.mock-tablet {
+  flex: 1 1 auto; max-width: 640px; background: #0A1322; border: 1px solid var(--border);
+  border-radius: 26px; padding: 14px; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 8px #0E1829;
+}
+.mock-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+.mock-bar b { margin-right: auto; }
+.mock-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.mock-chip.free::before, .mock-chip.busy::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.mock-chip.free::before { background: #34C27A; }
+.mock-chip.busy::before { background: #3D8CFF; }
+.mock-hall { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.mock-table {
+  border-radius: 14px; padding: 12px 10px; min-height: 76px; text-align: center; border: 1.5px solid;
+  display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 12px;
+}
+.mock-table .mt-name { font-weight: 800; font-size: 13.5px; }
+.mock-table .mt-a { color: var(--muted); }
+.mock-table .mt-b { font-weight: 700; }
+.mock-table.free { border-color: rgba(52,194,122,.55); background: rgba(52,194,122,.06); }
+.mock-table.free .mt-a { color: #6FD9A3; }
+.mock-table.busy { border-color: rgba(61,140,255,.6); background: rgba(61,140,255,.12); }
+.mock-table.ending { border-color: rgba(231,178,78,.7); background: rgba(231,178,78,.12); }
+.mock-table.ending .mt-a { color: #F0C674; }
+.mock-table.reserved { border-color: rgba(167,139,250,.6); background: rgba(167,139,250,.1); }
+.mock-table.reserved .mt-a { color: #C4B5FD; }
+.mock-table.call { border-color: #FF7A59; background: rgba(255,122,89,.16); animation: mock-pulse 1.6s ease-in-out infinite; }
+.mock-table.call .mt-a { color: #FFB199; font-weight: 700; }
+@keyframes mock-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,122,89,.0); } 50% { box-shadow: 0 0 0 6px rgba(255,122,89,.25); } }
+.mock-phone {
+  flex: none; width: 200px; background: #0A1322; border: 1px solid var(--border); border-radius: 30px;
+  padding: 16px 14px 18px; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 7px #0E1829;
+  font-size: 12px; margin-bottom: -10px;
+}
+.mp-notch { width: 60px; height: 6px; border-radius: 6px; background: #1C2940; margin: 0 auto 12px; }
+.mp-title { font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+.mp-timer { background: var(--surface-2); border-radius: 12px; padding: 8px; text-align: center; margin-bottom: 10px; }
+.mp-timer span { display: block; color: var(--muted); font-size: 11px; }
+.mp-timer b { font-size: 20px; color: #6FD9A3; }
+.mp-btns { display: grid; gap: 6px; margin-bottom: 10px; }
+.mp-btn { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 7px 8px; font-weight: 600; font-size: 11.5px; text-align: center; }
+.mp-btn.on { border-color: #FF7A59; background: rgba(255,122,89,.16); }
+.mp-bill div { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
+.mp-bill .mp-total { color: var(--text); font-weight: 800; border-bottom: none; }
+.mp-bonus { margin-top: 8px; text-align: center; color: #7DB6FF; font-weight: 700; font-size: 11.5px; }
+.mock-toast {
+  position: absolute; background: rgba(16,27,48,.96); border: 1px solid var(--border); border-radius: 14px;
+  padding: 10px 14px; font-size: 12.5px; font-weight: 600; box-shadow: 0 16px 40px -12px rgba(0,0,0,.7);
+  white-space: nowrap; animation: mock-float 5s ease-in-out infinite;
+}
+.mock-toast.t1 { top: -6px; left: 4%; }
+.mock-toast.t2 { bottom: 0; right: 30%; animation-delay: 1.2s; }
+@keyframes mock-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@media (max-width: 720px) {
+  .showcase { flex-direction: column; align-items: center; }
+  .mock-tablet { width: 100%; }
+  .mock-phone { margin: 0; }
+  .mock-toast { display: none; }
+  .mock-table { min-height: 64px; padding: 8px 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mock-table.call, .mock-toast { animation: none; }
+}
+
+/* ---- Лендинг: боли владельца ---- */
+.pain-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 700px) { .pain-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1100px) { .pain-grid { grid-template-columns: repeat(4, 1fr); } }
+.pain-card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px;
+  transition: border-color .18s ease, transform .18s ease;
+}
+.pain-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+.pain-top { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.pain-icon { font-size: 22px; flex: none; }
+.pain-text { font-weight: 800; font-size: 15px; line-height: 1.3; }
+.pain-fix { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.pain-fix b { color: #6FD9A3; font-weight: 700; }
+
+/* ---- Лендинг: форматы заведения ---- */
+.format-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.format-tab {
+  width: auto; display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  font: inherit; font-weight: 700; font-size: 14px; cursor: pointer;
+}
+.format-tab:hover { color: var(--text); }
+.format-tab.active { background: linear-gradient(135deg, var(--primary) 0%, #3D8CFF 100%); border-color: transparent; color: #fff; }
+.format-lead { font-size: 17px; font-weight: 700; margin-bottom: 12px; line-height: 1.4; }
+.format-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+@media (min-width: 760px) { .format-list { grid-template-columns: 1fr 1fr; } }
+.format-list li { display: flex; gap: 10px; font-size: 14px; line-height: 1.45; }
+.format-list li span { color: #6FD9A3; font-weight: 800; flex: none; }
+
+/* ---- Лендинг: три приложения ---- */
+.apps-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 760px) { .apps-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
+.app-card { background: var(--bg); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
+.app-icon { font-size: 28px; margin-bottom: 10px; }
+.app-title { font-weight: 800; font-size: 17px; margin-bottom: 6px; }
+.app-desc { color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+
+/* ---- Лендинг: без риска ---- */
+.risk-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 700px) { .risk-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1100px) { .risk-grid { grid-template-columns: repeat(4, 1fr); } }
+.risk-item { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px; display: grid; gap: 6px; }
+.risk-item b { font-size: 15px; }
+.risk-item span { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+
+/* ---- Финальный призыв: две кнопки ---- */
+.landing-cta-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.landing-cta-inner .btn.landing-cta-ghost { background: rgba(255,255,255,.12); color: #fff; box-shadow: none; border: 1px solid rgba(255,255,255,.4); }
+
 /* ---- Панель платформы → «Безопасность» ---- */
 .sec-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
 .sec-tab {
