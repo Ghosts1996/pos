@@ -1561,3 +1561,32 @@ describe("Стены на схеме зала", () => {
     await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b5"), wall({ closed: "yes" })));
   });
 });
+
+describe("Подписи на схеме зала", () => {
+  const label = (over = {}) => ({ zone: "Основной зал", text: "Вход", x: 585, y: 684, ...over });
+
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/hallLabels/l1"), label());
+    });
+  });
+
+  it("персонал подписывает, двигает и удаляет; гость своего заведения видит", async () => {
+    const owner = ctxFor("ownerA");
+    await assertSucceeds(setDoc(doc(owner, "tenants/tenantA/hallLabels/l2"), label({ text: "Кухня" })));
+    await assertSucceeds(updateDoc(doc(owner, "tenants/tenantA/hallLabels/l1"), { x: 600, y: 700 }));
+    await assertSucceeds(deleteDoc(doc(owner, "tenants/tenantA/hallLabels/l2")));
+    await assertSucceeds(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/hallLabels/l1")));
+    await assertFails(getDoc(doc(ctxFor("guestB"), "tenants/tenantA/hallLabels/l1")));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/hallLabels/l3"), label()));
+  });
+
+  it("пустая, слишком длинная подпись или лишние поля не сохраняются", async () => {
+    const owner = ctxFor("ownerA");
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallLabels/b1"), label({ text: "" })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallLabels/b2"), label({ text: "x".repeat(61) })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallLabels/b3"), label({ x: "585" })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallLabels/b4"), label({ color: "red" })));
+  });
+});

@@ -6,6 +6,7 @@ import '../utils/shared_stream.dart';
 import '../utils/shift_crew.dart';
 import 'package:uuid/uuid.dart';
 import '../models/table_model.dart';
+import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/session_model.dart';
 import '../models/menu_models.dart';
@@ -35,6 +36,7 @@ class FirestoreService {
   static final _tablesS = SharedStreams<List<TableModel>>();
   static final _tableS = SharedStreams<TableModel?>();
   static final _wallsS = SharedStreams<List<HallWall>>();
+  static final _labelsS = SharedStreams<List<HallLabel>>();
   static final _sessionS = SharedStreams<SessionModel?>();
   static final _activeSessionsS = SharedStreams<List<SessionModel>>();
   static final _openShiftS = SharedStreams<ShiftModel?>();
@@ -121,16 +123,33 @@ class FirestoreService {
 
   Future<void> deleteHallWall(String id) => AppScope.col('hallWalls').doc(id).delete();
 
-  /// Стены зоны [from] переезжают в зону [to] (переименование зоны); с
-  /// [to] == null — удаляются вместе с зоной.
-  Future<void> moveHallWalls(String from, String? to) async {
-    final snap = await AppScope.col('hallWalls').where('zone', isEqualTo: from).get();
-    for (var i = 0; i < snap.docs.length; i += 400) {
-      final batch = _db.batch();
-      for (final d in snap.docs.skip(i).take(400)) {
-        to == null ? batch.delete(d.reference) : batch.update(d.reference, {'zone': to});
+  /// Подписи на схеме (см. HallLabel). Нет доступа — схема без подписей.
+  Stream<List<HallLabel>> hallLabelsStream() => _labelsS.get(
+      _k(),
+      () => AppScope.col('hallLabels')
+          .snapshots()
+          .map((snap) => snap.docs.map(HallLabel.fromDoc).where((l) => l.isValid).toList())
+          .transform(StreamTransformer.fromHandlers(handleError: (e, st, sink) => sink.add(const <HallLabel>[]))));
+
+  String newHallLabelId() => AppScope.col('hallLabels').doc().id;
+
+  Future<void> saveHallLabel(HallLabel label) =>
+      AppScope.col('hallLabels').doc(label.id).set({...label.toMap(), 'createdAt': FieldValue.serverTimestamp()});
+
+  Future<void> deleteHallLabel(String id) => AppScope.col('hallLabels').doc(id).delete();
+
+  /// Стены и подписи зоны [from] переезжают в зону [to] (переименование
+  /// зоны); с [to] == null — удаляются вместе с зоной.
+  Future<void> moveHallDrawing(String from, String? to) async {
+    for (final name in const ['hallWalls', 'hallLabels']) {
+      final snap = await AppScope.col(name).where('zone', isEqualTo: from).get();
+      for (var i = 0; i < snap.docs.length; i += 400) {
+        final batch = _db.batch();
+        for (final d in snap.docs.skip(i).take(400)) {
+          to == null ? batch.delete(d.reference) : batch.update(d.reference, {'zone': to});
+        }
+        await batch.commit();
       }
-      await batch.commit();
     }
   }
 

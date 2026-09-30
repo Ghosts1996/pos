@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../build_info.dart';
 import '../models/employee.dart';
 import '../services/app_scope.dart';
+import '../services/demo_gate.dart';
 import '../services/firestore_service.dart';
 import '../services/guest_link_service.dart';
 import '../services/push_service.dart';
@@ -315,6 +316,16 @@ class _LoginScreenState extends State<LoginScreen> {
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
+          // Демо живёт 3 дня, потом сбрасывается в исходный вид (DemoGate).
+          if (DemoGate.remainingText() case final left?)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Демо сбросится в исходный вид $left',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+              ),
+            ),
         ],
       ],
     );

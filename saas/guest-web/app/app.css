@@ -252,6 +252,9 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
 .hall-walls .hw-body { stroke-width: 9.5; stroke-linecap: butt; }
 .hall-walls .hw-s1 { stop-color: var(--surface-2); stop-color: color-mix(in srgb, var(--surface) 66%, var(--text)); }
 .hall-walls .hw-s2 { stop-color: var(--surface-2); stop-color: color-mix(in srgb, var(--surface) 82%, var(--text)); }
+.hall-walls .hw-label {
+  fill: var(--muted); font-size: 18px; font-weight: 800; letter-spacing: .14em; opacity: .8;
+}
 .hall-walls .hw-room { fill: rgba(255, 255, 255, .04); fill: color-mix(in srgb, var(--text) 5%, transparent); stroke: none; }
 .table-dot {
   position: absolute;

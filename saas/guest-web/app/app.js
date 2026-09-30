@@ -3111,6 +3111,26 @@ function parseHallWall(doc) {
   return { zone: String(v.zone || '').trim(), pts, closed: v.closed === true && pts.length >= 3 };
 }
 
+/// Подпись на схеме (коллекция hallLabels): «Вход», «Кухня», заметка —
+/// центр подписи на площадке, как рисует касса (lib/models/hall_label.dart).
+const HALL_LABEL_SIZE = 18;
+function parseHallLabel(doc) {
+  const v = doc.data() || {};
+  const num = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  return {
+    zone: String(v.zone || '').trim(),
+    text: String(v.text || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+    x: Math.max(0, Math.min(HALL.canvasW, num(v.x))),
+    y: Math.max(0, Math.min(HALL.canvasH, num(v.y))),
+  };
+}
+
+/// Рамка подписи для hallContentRect: заглавные с разрядкой ~0.86 кегля на знак.
+function hallLabelGeom(l) {
+  const w = l.text.length * HALL_LABEL_SIZE * 0.86, h = HALL_LABEL_SIZE * 1.2;
+  return { left: l.x - w / 2, top: l.y - h / 2, w, h };
+}
+
 /// Рамка стены — как плитка стола для hallContentRect: стены тоже в кадре.
 function hallWallGeom(w) {
   const xs = w.pts.map((p) => p[0]), ys = w.pts.map((p) => p[1]);
@@ -3148,8 +3168,8 @@ function hallWallBodyPts(w, all, extend) {
 /// Стены «как на чертеже» (SVG под столами): тень, светлый контур и тело
 /// стены между двумя линиями; внутри замкнутого (или почти, с проёмом
 /// входа) контура — лёгкая подсветка пола. Как HallWallsPainter на кассе.
-function hallWallsSvg(walls, area) {
-  if (!walls.length) return '';
+function hallWallsSvg(walls, area, labels = []) {
+  if (!walls.length && !labels.length) return '';
   const r = (v) => Math.round(v * 10) / 10;
   const d = (pts, closed) => 'M' + pts.map(([x, y]) => `${r(x)} ${r(y)}`).join(' L') + (closed ? ' Z' : '');
   const rooms = walls.filter((w) => w.pts.length >= 3 && (w.closed ||
@@ -3172,6 +3192,8 @@ function hallWallsSvg(walls, area) {
     <g filter="url(#hwShadow)">${walls.map((w) => `<path class="hw-edge" d="${d(w.pts, w.closed)}"/>`).join('')}</g>
     ${walls.map((w) => `<path class="hw-body" stroke="url(#hwBody)"
         d="${d(hallWallBodyPts(w, walls, (HALL_WALL - 4.5) / 2), w.closed)}"/>`).join('')}
+    ${labels.map((l) => `<text class="hw-label" x="${r(l.x)}" y="${r(l.y)}" text-anchor="middle"
+        dominant-baseline="central">${esc(l.text.toUpperCase())}</text>`).join('')}
   </svg>`;
 }
 
@@ -3227,8 +3249,9 @@ function screenHall(pickMode) {
   let tablesLoaded = false;
   // Зона зала (терраса, VIP…): у каждой зоны своя схема, как на кассе.
   let hallZone = null;
-  // Стены всех зон (hallWalls).
+  // Стены и подписи всех зон (hallWalls, hallLabels).
   let walls = [];
+  let labels = [];
 
   const draw = (allTables) => {
     const box = $('hall');
@@ -3262,13 +3285,14 @@ function screenHall(pickMode) {
     // площадка больше прежней, и целиком столы на ней были бы мелкими.
     const geoms = new Map(tables.map((t) => [t.id, hallTileGeom(t)]));
     const zoneWalls = walls.filter((w) => w.zone === (zones.length ? hallZone : ''));
-    const area = hallContentRect([...geoms.values(), ...zoneWalls.map(hallWallGeom)]);
+    const zoneLabels = labels.filter((l) => l.zone === (zones.length ? hallZone : ''));
+    const area = hallContentRect([...geoms.values(), ...zoneWalls.map(hallWallGeom), ...zoneLabels.map(hallLabelGeom)]);
     const pct = (v, total) => `${(v / total * 100).toFixed(3)}%`;
     box.style.aspectRatio = `${area.w} / ${area.h}`;
     // Плитка не мельче прежних ~62 px: узкий экран листает схему вбок.
     box.style.minWidth = `${Math.round(area.w * 0.6)}px`;
     box.style.backgroundSize = `${pct(40, area.w)} ${pct(40, area.h)}`;
-    box.innerHTML = hallWallsSvg(zoneWalls, area) + tables.map((t) => {
+    box.innerHTML = hallWallsSvg(zoneWalls, area, zoneLabels) + tables.map((t) => {
       // Карта зала показывает, кто сидит сейчас. Выбор стола для брони —
       // про будущее: важно, дотянется ли текущий сеанс до брони (busyUntil)
       // и нет ли на это время чужой брони.
@@ -3340,6 +3364,10 @@ function screenHall(pickMode) {
   // — схема просто без стен.
   sub(onSnapshot(collection(state.root, 'hallWalls'), (snap) => {
     walls = snap.docs.map(parseHallWall).filter((w) => w.pts.length >= 2);
+    draw(tables);
+  }, () => {}));
+  sub(onSnapshot(collection(state.root, 'hallLabels'), (snap) => {
+    labels = snap.docs.map(parseHallLabel).filter((l) => l.text);
     draw(tables);
   }, () => {}));
 
