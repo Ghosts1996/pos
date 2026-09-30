@@ -55,6 +55,10 @@ class VenueProfile {
   /// перезабивка — только у кальянной. Без поля считаем кальянной.
   final String venueType;
 
+  /// Переключатель «Заведение с кальянами» (см. VenueTerms.isHookah).
+  /// null — владелец его ещё не трогал: кальяны включены у кальянной.
+  final bool? hookahEnabled;
+
   /// Гость может оставить чаевые из приложения.
   final bool tipsEnabled;
 
@@ -78,6 +82,7 @@ class VenueProfile {
     this.lon = 0,
     this.cloudFunctionsEnabled = false,
     this.venueType = VenueTerms.hookah,
+    this.hookahEnabled,
     this.tipsEnabled = true,
     this.tipsTeamEnabled = true,
   });
@@ -105,6 +110,7 @@ class VenueProfile {
       // фоновые задания кассы и уведомления гостя.
       cloudFunctionsEnabled: !kSaasMode && data['cloudFunctionsEnabled'] == true,
       venueType: VenueTerms.normalize(asTextOrNull(data['venueType'])),
+      hookahEnabled: data['hookahEnabled'] is bool ? data['hookahEnabled'] as bool : null,
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
     );
@@ -124,11 +130,12 @@ class VenueProfile {
         'lon': lon,
         'cloudFunctionsEnabled': cloudFunctionsEnabled,
         'venueType': venueType,
+        if (hookahEnabled != null) 'hookahEnabled': hookahEnabled,
         'tipsEnabled': tipsEnabled,
         'tipsTeamEnabled': tipsTeamEnabled,
       };
 
-  VenueTerms get terms => VenueTerms(venueType);
+  VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
 
   /// Часы работы на сегодня — строкой, как их показывают гостю.
   String get todayHours => workingHours[DateTime.now().weekday] ?? 'выходной';
@@ -147,6 +154,7 @@ class VenueProfile {
     double? lon,
     bool? cloudFunctionsEnabled,
     String? venueType,
+    bool? hookahEnabled,
     bool? tipsEnabled,
     bool? tipsTeamEnabled,
   }) =>
@@ -164,6 +172,7 @@ class VenueProfile {
         lon: lon ?? this.lon,
         cloudFunctionsEnabled: cloudFunctionsEnabled ?? this.cloudFunctionsEnabled,
         venueType: venueType ?? this.venueType,
+        hookahEnabled: hookahEnabled ?? this.hookahEnabled,
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
       );

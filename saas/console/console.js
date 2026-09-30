@@ -965,6 +965,13 @@ function landingChainPlanCardHtml(p, selected) {
   `;
 }
 
+/// Кальяны в заведении — как VenueTerms.isHookah в приложении: переключатель
+/// hookahEnabled, а пока его не трогали — по типу (кальянная или нет).
+function venueHookahOn(vp) {
+  if (typeof vp?.hookahEnabled === 'boolean') return vp.hookahEnabled;
+  return !['restaurant', 'cafe', 'bar'].includes(vp?.venueType);
+}
+
 // ---- Витрина: живая схема зала ----
 //
 // Как на кассе (lib/widgets/hall_plan_view.dart): холст в точках, плитка
@@ -2531,6 +2538,7 @@ function watchDashboardData(tenantId) {
   let plans = null;
   let buildJobs = null;
   let generalSettings = null;
+  let venueProfile = null;
   // ИИ: публичные настройки, ключи и несохранённые правки формы. draw()
   // перерисовывает экран целиком, поэтому правки держим в aiDraft.
   let aiPub = null;
@@ -3236,6 +3244,19 @@ function watchDashboardData(tenantId) {
         <div id="f-settings-error" class="small" style="color:var(--danger);margin-top:8px"></div>
       </div>
 
+      <h2>Функции заведения</h2>
+      <div class="card">
+        <label class="field-checkbox" style="display:flex;align-items:flex-start;gap:10px">
+          <input type="checkbox" id="f-hookah-mode" style="width:auto;margin-top:3px"
+            ${venueHookahOn(venueProfile) ? 'checked' : ''} ${canManage ? '' : 'disabled'}>
+          <span><b>Заведение с кальянами</b><br>
+          <span class="small muted">Только с этой функцией гость видит за столом кнопки «Позвать кальянщика»,
+          «Поменять угли» и «Перезабивка» и таймер сеанса, а касса — перезабивку и напоминания про угли.
+          Без неё у гостя «Позвать официанта» и «Счёт, пожалуйста».</span></span>
+        </label>
+        <div id="f-hookah-mode-msg" class="small" style="margin-top:8px"></div>
+      </div>
+
       <h2>Системные требования</h2>
       <div class="card">
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет нужен постоянно — Wi-Fi или мобильный</div>
@@ -3706,6 +3727,22 @@ function watchDashboardData(tenantId) {
         el.classList.toggle('open');
       });
     });
+    if ($('f-hookah-mode')) {
+      $('f-hookah-mode').onchange = async (e) => {
+        const on = e.target.checked;
+        const msg = $('f-hookah-mode-msg');
+        e.target.disabled = true;
+        try {
+          await setDoc(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), { hookahEnabled: on }, { merge: true });
+          toast(on ? 'Кальяны включены — кнопки появятся у гостей' : 'Кальяны выключены — кальянных кнопок у гостей нет');
+        } catch (err) {
+          e.target.checked = !on;
+          if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = `Не удалось сохранить: ${err?.message || err}`; }
+        } finally {
+          e.target.disabled = false;
+        }
+      };
+    }
     if ($('f-save-settings')) {
       $('f-save-settings').onclick = async () => {
         const btn = $('f-save-settings');
@@ -4083,6 +4120,10 @@ function watchDashboardData(tenantId) {
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'general'), (d) => {
     generalSettings = d.exists() ? d.data() : null;
+    draw();
+  }, () => {}));
+  sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), (d) => {
+    venueProfile = d.exists() ? d.data() : null;
     draw();
   }, () => {}));
   sub(onSnapshot(query(collection(state.db, 'broadcasts'), where('active', '==', true), orderBy('createdAt', 'desc'), limit(5)), (snap) => {

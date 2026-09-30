@@ -94,6 +94,22 @@ void main() {
       expect(const VenueTerms(VenueTerms.cafe).staffDat, 'официанту');
       expect(const VenueTerms(VenueTerms.bar).staff, 'бармен');
     });
+    test('переключатель «Заведение с кальянами»', () {
+      // Не трогали — как раньше: кальяны только у кальянной.
+      expect(VenueProfile.fromMap(const {}).terms.isHookah, isTrue);
+      expect(VenueProfile.fromMap(const {'venueType': 'restaurant'}).terms.isHookah, isFalse);
+      // Кальянная без кальянов (лаунж-бар): кнопок кальянщика нет, стол ведёт официант.
+      final lounge = VenueProfile.fromMap(const {'venueType': 'hookah', 'hookahEnabled': false});
+      expect(lounge.terms.isHookah, isFalse);
+      expect(lounge.terms.staffAcc, 'официанта');
+      // Ресторан с кальянами: кнопки кальянщика есть, стол ведёт официант.
+      final restaurant = VenueProfile.fromMap(const {'venueType': 'restaurant', 'hookahEnabled': true});
+      expect(restaurant.terms.isHookah, isTrue);
+      expect(restaurant.terms.staff, 'официант');
+      expect(restaurant.toMap()['hookahEnabled'], isTrue);
+      expect(VenueProfile.fromMap(const {}).toMap().containsKey('hookahEnabled'), isFalse);
+      expect(VenueProfile.fromMap(const {'hookahEnabled': 'yes'}).hookahEnabled, isNull);
+    });
     test('настройки чаевых по умолчанию включены и сохраняются', () {
       final p = VenueProfile.fromMap(const {'venueType': 'restaurant', 'tipsTeamEnabled': false});
       expect(p.tipsEnabled, isTrue);
