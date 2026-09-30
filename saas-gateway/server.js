@@ -3887,6 +3887,12 @@ async function handleDeleteDemoTenant(req, res) {
 // базы — из кабинета большие заведения не выгружаем целиком, а просим
 // написать нам; супер-админ в панели платформы выгружает без ограничения.
 const EXPORT_MAX_DOCS = Math.max(100, Number(process.env.EXPORT_MAX_DOCS) || 15000);
+// Владелец скачивает бэкап заведения (или сети) не чаще раза в 3 дня:
+// каждая выгрузка — тысячи чтений из общей квоты базы. Когда была
+// последняя — backupExports/{tenant_|chain_}{id}, только для сервера (в
+// firestore.rules правила для неё нет — клиентам закрыта). Супер-админа
+// ограничение не касается.
+const EXPORT_OWNER_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 // Вложенные коллекции внутри коллекций заведения и сети (см. firestore.rules).
 const EXPORT_NESTED = { clients: ["visits"] };
 
@@ -3970,6 +3976,18 @@ async function handleExportBackup(req, res) {
   const root = await firestore.collection(isChain ? "chains" : "tenants").doc(id).get();
   if (!root.exists) throw new HttpError(404, isChain ? "Сеть не найдена" : "Заведение не найдено");
 
+  const throttleRef = firestore.collection("backupExports").doc(`${isChain ? "chain" : "tenant"}_${id}`);
+  if (!superAdmin) {
+    const last = (await throttleRef.get()).data()?.lastAt;
+    const nextAt = last ? last.toMillis() + EXPORT_OWNER_INTERVAL_MS : 0;
+    if (nextAt > Date.now()) {
+      const when = new Date(nextAt).toLocaleString("ru-RU", {
+        timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+      });
+      throw new HttpError(429, `Бэкап можно скачивать раз в 3 дня — следующий будет доступен ${when} (МСК)`);
+    }
+  }
+
   const docs = {};
   const tenantIds = [];
   const limit = unlimited === true ? Infinity : EXPORT_MAX_DOCS;
@@ -3991,6 +4009,9 @@ async function handleExportBackup(req, res) {
   }
 
   const name = String(root.data().name || root.data().slug || id);
+  if (!superAdmin) {
+    await throttleRef.set({ lastAt: admin.firestore.FieldValue.serverTimestamp(), byUid: decoded.uid });
+  }
   await writeSecurityEvent(req, decoded, isChain ? "chainBackupExported" : "tenantBackupExported", {
     tenantId: isChain ? null : id,
     metadata: { name, chainId: isChain ? id : null, docs: Object.keys(docs).length, bySuperAdmin: superAdmin, unlimited: unlimited === true },

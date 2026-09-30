@@ -3395,7 +3395,7 @@ function watchDashboardData(tenantId) {
         <div class="card">
           <p class="small muted">Все данные ${tenant.chainId ? 'точки' : 'заведения'} одним файлом: меню, залы и столы,
           чеки и смены, гости и бонусы, сотрудники, склад, брони и настройки. Храните его у себя —
-          по нему мы восстановим данные, если что-то случится.</p>
+          по нему мы восстановим данные, если что-то случится. Скачать можно раз в 3 дня.</p>
           <button class="btn btn-ghost" id="f-backup-tenant">Скачать бэкап ${tenant.chainId ? 'точки' : 'заведения'}</button>
           ${tenant.chainId ? `<button class="btn btn-ghost" id="f-backup-chain" style="margin-top:8px">Скачать бэкап всей сети</button>` : ''}
         </div>
