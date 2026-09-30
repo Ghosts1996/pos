@@ -51,7 +51,7 @@ void main() {
   });
 
   test('длинный стол у правого края не уезжает за холст', () {
-    final o = hallTileOffset(_t('long', x: 1, y: 1));
+    final o = hallTileOffset(_t('long', x: 99, y: 99));
     expect(o.left + kHallTile * 2, kHallCanvas.width);
     expect(o.top + kHallTile, kHallCanvas.height);
   });

@@ -8,7 +8,16 @@ import 'constants.dart';
 /// Схема зала рисуется на логическом холсте одного размера на всех
 /// устройствах и масштабируется под экран: редактор и зал видят одну
 /// картинку, на телефоне столы не налезают друг на друга.
-const Size kHallCanvas = Size(1000, 640);
+///
+/// Координаты столов (x/y) — доли «базовый холст минус плитка», и базовый
+/// холст не меняется: иначе уехали бы все уже расставленные залы.
+const Size kHallBasis = Size(1000, 640);
+
+/// Площадка зала — шире и заметно выше базового холста (на телефоне
+/// столам не хватало места вниз): столы правее и ниже прежней границы
+/// получают x/y больше 1, уже расставленные остаются на местах. Прежние
+/// версии приложений такие столы прижимают к краю схемы.
+const Size kHallCanvas = Size(1248, 1040);
 
 /// Размер плитки стола на логическом холсте.
 const double kHallTile = 104;
@@ -46,8 +55,9 @@ Size hallTileSize(TableModel t) {
 /// с привязкой к сетке и в пределах холста.
 ({double x, double y}) hallFractionForTopLeft(double left, double top, Size size) {
   double snap(double v) => (v / kHallGridStep).round() * kHallGridStep;
-  final freeW = kHallCanvas.width - size.width, freeH = kHallCanvas.height - size.height;
-  final l = snap(left).clamp(0.0, freeW), t = snap(top).clamp(0.0, freeH);
+  final freeW = kHallBasis.width - size.width, freeH = kHallBasis.height - size.height;
+  final l = snap(left).clamp(0.0, kHallCanvas.width - size.width);
+  final t = snap(top).clamp(0.0, kHallCanvas.height - size.height);
   return (x: freeW <= 0 ? 0.0 : l / freeW, y: freeH <= 0 ? 0.0 : t / freeH);
 }
 
@@ -62,13 +72,14 @@ TableModel hallRefit(TableModel before, TableModel after) {
 /// Стол, повёрнутый на четверть оборота по часовой стрелке.
 TableModel hallRotated(TableModel t) => hallRefit(t, t.copyWith(rotation: (t.rotation + 1) % 4));
 
-/// Левый верхний угол плитки стола на холсте: x/y — доли 0..1 свободного
-/// места (холст минус плитка), чтобы крайние столы не уезжали за край.
+/// Левый верхний угол плитки стола на холсте: x/y — доли свободного места
+/// базового холста (холст минус плитка), см. [kHallBasis]; плитка не
+/// выходит за край площадки.
 ({double left, double top}) hallTileOffset(TableModel t) {
   final s = hallTileSize(t);
   return (
-    left: t.x.clamp(0.0, 1.0) * (kHallCanvas.width - s.width),
-    top: t.y.clamp(0.0, 1.0) * (kHallCanvas.height - s.height),
+    left: (t.x * (kHallBasis.width - s.width)).clamp(0.0, kHallCanvas.width - s.width),
+    top: (t.y * (kHallBasis.height - s.height)).clamp(0.0, kHallCanvas.height - s.height),
   );
 }
 
@@ -98,8 +109,8 @@ bool hallTablesOverlap(TableModel a, TableModel b) {
 
 /// Обратное преобразование: центр плитки на холсте → доли x/y стола.
 ({double x, double y}) hallFractionForCenter(double cx, double cy, [Size size = const Size(kHallTile, kHallTile)]) => (
-      x: ((cx - size.width / 2) / (kHallCanvas.width - size.width)).clamp(0.0, 1.0),
-      y: ((cy - size.height / 2) / (kHallCanvas.height - size.height)).clamp(0.0, 1.0),
+      x: (cx - size.width / 2).clamp(0.0, kHallCanvas.width - size.width) / (kHallBasis.width - size.width),
+      y: (cy - size.height / 2).clamp(0.0, kHallCanvas.height - size.height) / (kHallBasis.height - size.height),
     );
 
 /// Часть холста со столами и полями вокруг — её и показываем, чтобы столы

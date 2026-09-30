@@ -3066,6 +3066,48 @@ function tableIdFrom(raw) {
 
 // ---------- КАРТА ЗАЛА ----------
 //
+// Геометрия — как на кассе (lib/utils/hall_layout.dart): x/y стола — доли
+// «базовый холст 1000×640 минус плитка», а сама площадка больше (1248×1040):
+// столы правее и ниже прежней границы получают x/y больше 1.
+const HALL = { basisW: 1000, basisH: 640, canvasW: 1248, canvasH: 1040, tile: 104, margin: 36 };
+
+/// Размер и место плитки стола на площадке. Форма как в редакторе зала:
+/// длинный и овальный — две клетки, барная стойка — три, вдоль или поперёк
+/// (поворот); угловой — буква «Г» на 2×2 клетки, поворот выбирает угол
+/// сгиба. 'triangle' — прежнее название углового.
+function hallTileGeom(t) {
+  const rot = (((Number(t.rotation) || 0) % 4) + 4) % 4;
+  const kind = t.shape === 'triangle' ? 'corner' : t.shape;
+  const cells = kind === 'bar' ? 3 : (kind === 'long' || kind === 'oval' || kind === 'corner') ? 2 : 1;
+  const w = HALL.tile * (kind === 'corner' || rot % 2 === 0 ? cells : 1);
+  const h = HALL.tile * (kind === 'corner' || rot % 2 === 1 ? cells : 1);
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0.1);
+  const left = Math.max(0, Math.min(HALL.canvasW - w, num(t.x) * (HALL.basisW - w)));
+  const top = Math.max(0, Math.min(HALL.canvasH - h, num(t.y) * (HALL.basisH - h)));
+  return { rot, kind, w, h, left, top };
+}
+
+/// Часть площадки со столами и полями вокруг — не меньше 3.2×2.4 плитки,
+/// чтобы два-три стола не раздувались на весь экран.
+function hallContentRect(geoms) {
+  let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+  geoms.forEach((g) => {
+    l = Math.min(l, g.left); t = Math.min(t, g.top);
+    r = Math.max(r, g.left + g.w); b = Math.max(b, g.top + g.h);
+  });
+  l -= HALL.margin; t -= HALL.margin; r += HALL.margin; b += HALL.margin;
+  const gx = Math.max(0, HALL.tile * 3.2 - (r - l)) / 2;
+  const gy = Math.max(0, HALL.tile * 2.4 - (b - t)) / 2;
+  l -= gx; r += gx; t -= gy; b += gy;
+  // Сдвигаем внутрь площадки, сохраняя размер.
+  if (l < 0) { r -= l; l = 0; }
+  if (t < 0) { b -= t; t = 0; }
+  if (r > HALL.canvasW) { l -= r - HALL.canvasW; r = HALL.canvasW; }
+  if (b > HALL.canvasH) { t -= b - HALL.canvasH; b = HALL.canvasH; }
+  l = Math.max(0, l); t = Math.max(0, t);
+  return { l, t, w: r - l, h: b - t };
+}
+//
 // Схема столов с кассы в реальном времени. Сесть за стол отсюда нельзя —
 // только по коду на самом столе, чтобы счёт не занимали удалённо.
 
@@ -3126,6 +3168,15 @@ function screenHall(pickMode) {
       box.innerHTML = `<p class="muted small" style="padding:20px">Карта зала пока не настроена.</p>`;
       return;
     }
+    // Показываем часть площадки со столами, как касса (hallContentRect):
+    // площадка больше прежней, и целиком столы на ней были бы мелкими.
+    const geoms = new Map(tables.map((t) => [t.id, hallTileGeom(t)]));
+    const area = hallContentRect([...geoms.values()]);
+    const pct = (v, total) => `${(v / total * 100).toFixed(3)}%`;
+    box.style.aspectRatio = `${area.w} / ${area.h}`;
+    // Плитка не мельче прежних ~62 px: узкий экран листает схему вбок.
+    box.style.minWidth = `${Math.round(area.w * 0.6)}px`;
+    box.style.backgroundSize = `${pct(40, area.w)} ${pct(40, area.h)}`;
     box.innerHTML = tables.map((t) => {
       // Карта зала показывает, кто сидит сейчас. Выбор стола для брони —
       // про будущее: важно, дотянется ли текущий сеанс до брони (busyUntil)
@@ -3142,22 +3193,11 @@ function screenHall(pickMode) {
           : st === 'risky' ? 'risky' : 'free';
       // «Впритык» выбрать можно — это решение гостя, но он должен знать.
       const canPick = pickMode && (cls === 'free' || cls === 'risky');
-      // Координаты 0..1 с кассы, раскладываем на «ширину минус плитку» —
-      // иначе крайние столы уезжали за границу карты.
-      const x = Math.max(0, Math.min(1, Number(t.x) || 0.1));
-      const y = Math.max(0, Math.min(1, Number(t.y) || 0.1));
-      // Форма как в редакторе зала на кассе (lib/utils/hall_layout.dart):
-      // длинный и овальный — две клетки, барная стойка — три, вдоль или
-      // поперёк (поворот); угловой — буква «Г» на 2×2 клетки, поворот
-      // выбирает угол сгиба. 'triangle' — прежнее название углового.
-      const rot = (((Number(t.rotation) || 0) % 4) + 4) % 4;
-      const kind = t.shape === 'triangle' ? 'corner' : t.shape;
+      const g = geoms.get(t.id);
+      const { rot, kind } = g;
       const shape = kind === 'circle' || kind === 'oval' ? 'round'
           : kind === 'corner' ? `corner corner-r${rot}`
           : kind === 'bar' ? `bar bar-r${rot}` : '';
-      const cells = kind === 'bar' ? 3 : (kind === 'long' || kind === 'oval' || kind === 'corner') ? 2 : 1;
-      const wm = kind === 'corner' || rot % 2 === 0 ? cells : 1;
-      const hm = kind === 'corner' || rot % 2 === 1 ? cells : 1;
       const label = `<span class="tn">${esc(t.name || '')}</span>
           <small>${Number(t.seats) || 0} ${plural(Number(t.seats) || 0, 'место', 'места', 'мест')}${tooSmall ? ' · мало' : ''}</small>`;
       // Нажатие по недоступному столу объясняет, почему он недоступен:
@@ -3174,9 +3214,8 @@ function screenHall(pickMode) {
                ? `data-pick="${esc(t.id)}" data-name="${esc(t.name || '')}"
                   ${cls === 'risky' ? 'data-risky="1"' : ''}`
                : (pickMode ? `data-why="${esc(why)}"` : '')}
-             style="width:calc(var(--tile-w) * ${wm}); height:calc(var(--tile-h) * ${hm});
-                    left:calc(${x} * (100% - var(--tile-w) * ${wm}));
-                    top:calc(${y} * (100% - var(--tile-h) * ${hm}))">
+             style="width:${pct(g.w, area.w)}; height:${pct(g.h, area.h)};
+                    left:${pct(g.left - area.l, area.w)}; top:${pct(g.top - area.t, area.h)}">
           ${kind === 'corner' ? `<span class="cl">${label}</span>` : label}
         </div>`;
     }).join('');

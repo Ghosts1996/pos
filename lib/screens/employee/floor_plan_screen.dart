@@ -354,7 +354,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
       showHint: false,
       tileBuilder: (t) => _tile(t, states, calls, reservations),
     );
-    return Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 12), child: _mapFrame(map));
+    return Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 8), child: _mapFrame(map));
   }
 
   Widget _grid(List<TableModel> tables, Map<String, TableState> states, Set<String> calls,

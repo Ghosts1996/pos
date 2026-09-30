@@ -101,8 +101,11 @@ class _KolibriHallMapScreenState extends State<KolibriHallMapScreen> {
                 // Та же схема, что расставил администратор на кассе, — на
                 // одном логическом холсте для всех экранов (см.
                 // hall_layout.dart): на телефоне её можно двигать пальцем.
+                // По столам, а не по всей площадке: площадка теперь
+                // больше, и целиком столы на ней были бы мелкими.
                 child: HallPlanView(
                   tables: tables,
+                  fitToTables: true,
                   floorColor: KolibriColors.surface,
                   lineColor: KolibriColors.border,
                   tileBuilder: (t) => _tableTile(context, t),
