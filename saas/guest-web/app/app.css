@@ -225,6 +225,8 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
   --tile-h: 16.25%;
   position: relative;
   width: 100%;
+  /* Пропорции, минимальная ширина и шаг сетки — по столам зала,
+     их выставляет app.js (screenHall). */
   min-width: 600px;
   aspect-ratio: 1000 / 640;
   background:

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:ui' show Size;
 import 'package:hookah_pos/models/reservation_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/utils/constants.dart';
@@ -101,7 +102,17 @@ void main() {
     test('за край холста стол не уезжает', () {
       final f = hallFractionForCenter(-500, 99999);
       expect(f.x, 0);
-      expect(f.y, 1);
+      final o = hallTileOffset(_t('1', x: f.x, y: f.y));
+      expect(o.top + kHallTile, kHallCanvas.height);
+    });
+
+    test('площадка больше прежней: уже расставленные столы остаются на местах', () {
+      // x/y = 1 — прежняя граница холста, теперь стол можно поставить дальше.
+      final o = hallTileOffset(_t('1', x: 1, y: 1));
+      expect(o.left + kHallTile, kHallBasis.width);
+      expect(o.top + kHallTile, kHallBasis.height);
+      final lower = hallFractionForTopLeft(500, kHallCanvas.height - kHallTile, const Size(kHallTile, kHallTile));
+      expect(lower.y, greaterThan(1));
     });
   });
 
