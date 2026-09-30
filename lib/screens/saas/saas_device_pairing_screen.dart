@@ -2,13 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../build_info.dart';
-import '../../services/app_bootstrap.dart';
-import '../../services/app_scope.dart';
-import '../../services/hall_watch_service.dart';
 import '../../services/saas_device_join_service.dart';
-import '../../services/session_alerts_service.dart';
-import '../../services/subscription_gate.dart';
-import '../../services/tenant_config_service.dart';
+import '../../services/tenant_join_flow.dart';
 import '../../theme/app_colors.dart';
 import '../image_preload_screen.dart';
 import '../../utils/human_error.dart';
@@ -19,16 +14,18 @@ import '../../utils/human_error.dart';
 /// приглашения устройства, свой у каждого заведения (см. saas/README.md,
 /// раздел про tenants/{tenantId}/settings/deviceInvite).
 ///
-/// Сюда же касса возвращается, когда планшет отвязали от заведения или
-/// демо-заведение удалилось по истечении срока: [lostVenueName] и
-/// [lostDemo] объясняют, что случилось.
+/// Сюда же касса возвращается, когда планшет отвязали от заведения
+/// ([lostVenueName] объясняет, что случилось) или демо-заведение удалилось
+/// по истечении 3 дней — тогда ([lostDemo]) сразу открывается новое демо в
+/// исходном виде.
 class SaasDevicePairingScreen extends StatefulWidget {
   const SaasDevicePairingScreen({super.key, this.lostVenueName, this.lostDemo = false});
 
   /// Заведение, к которому планшет был привязан до этого.
   final String? lostVenueName;
 
-  /// Прежнее заведение — демо, которое удалилось само.
+  /// Прежнее заведение — демо, которое удалилось само: сразу открываем
+  /// новое.
   final bool lostDemo;
 
   @override
@@ -54,7 +51,12 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   @override
   void initState() {
     super.initState();
-    if (kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty) {
+    if (widget.lostDemo) {
+      // Демо прожило свои 3 дня — новое в исходном виде, без лишних
+      // нажатий. Не вышло (нет сети) — обычный экран с кнопкой «Демо».
+      _autoJoining = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryDemo());
+    } else if (kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty) {
       _autoJoining = true;
       _slug.text = kSaasPresetSlug;
       _code.text = kSaasPresetInviteCode;
@@ -89,7 +91,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     });
     try {
       final resolved = await _service.resolveTenantIdBySlug(slug);
-      await _completeJoin(tenantId: resolved.tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
+      await joinAndEnterTenant(tenantId: resolved.tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
+      _openApp();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -120,55 +123,19 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       _error = null;
     });
     try {
-      final demo = await _service.createDemoTenant();
-      await _completeJoin(
-        tenantId: demo.tenantId,
-        inviteCode: demo.inviteCode,
-        uid: uid,
-        deviceName: 'Демо',
-      );
+      await startFreshDemo(uid);
+      _openApp();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
+        _autoJoining = false;
         _error = 'Не удалось запустить демо: ${humanError(e, lower: true)}';
       });
     }
   }
 
-  /// Общий хвост и для обычного присоединения, и для демо: записать
-  /// устройство в заведение, забрать конфигурацию (брендинг, длительность
-  /// кальяна и т.п.), запустить фоновые службы и перейти в приложение.
-  Future<void> _completeJoin({
-    required String tenantId,
-    required String inviteCode,
-    required String uid,
-    required String deviceName,
-  }) async {
-    await _service.joinAsDevice(
-      tenantId: tenantId,
-      inviteCode: inviteCode,
-      uid: uid,
-      deviceName: deviceName,
-    );
-
-    final config = await TenantConfigService().refresh(uid, preferredTenantId: tenantId);
-    if (config == null) {
-      throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
-    }
-    AppScope.enterTenant(tenantId,
-        branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
-    SubscriptionGate.watch(tenantId, config);
-    final chainId = config.tenant.chainId;
-    if (chainId != null) {
-      await SaasDeviceJoinService.ensureChainMembership(chainId: chainId, tenantId: tenantId, uid: uid);
-    }
-    // Планшет мог работать в другом заведении (например, в удалённом демо):
-    // фоновые службы следят за прежним — перезапускаем под новое.
-    await HallWatchService.instance.stop();
-    await SessionAlertsService.instance.stop();
-    startBackgroundServices();
-
+  void _openApp() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const ImagePreloadScreen()),
@@ -179,8 +146,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     const where = 'Код заведения и код приглашения устройства — в личном кабинете '
         'владельца, раздел «Устройства».';
     if (widget.lostDemo) {
-      return 'Демо-заведение закрылось: оно удаляется само через 3 часа вместе '
-          'со всеми данными. Откройте новое демо или присоедините планшет '
+      return 'Демо-заведение прожило 3 дня и сбросилось вместе со всеми данными. '
+          'Откройте новое демо в исходном виде или присоедините планшет '
           'к своему заведению. $where';
     }
     final venue = widget.lostVenueName?.trim() ?? '';
@@ -194,19 +161,31 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   @override
   Widget build(BuildContext context) {
     if (_autoJoining) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF1B1B1F),
+      return Scaffold(
+        backgroundColor: const Color(0xFF1B1B1F),
         body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: Colors.white70),
-              SizedBox(height: 16),
-              Text(
-                'Подключаем ваше заведение…',
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: Colors.white70),
+                const SizedBox(height: 16),
+                Text(
+                  widget.lostDemo ? 'Демо обновляется — возвращаем исходный вид…' : 'Подключаем ваше заведение…',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+                if (widget.lostDemo) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Демо-заведение живёт 3 дня, потом всё введённое стирается.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54, fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       );

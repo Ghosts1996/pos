@@ -82,7 +82,7 @@ const RESERVED_SLUGS = new Set([
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
-  "giftCardClaims", "giftCards", "guestOrders", "hallWalls", "happyHours", "inventory",
+  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
@@ -91,8 +91,11 @@ const TENANT_SUBCOLLECTIONS = [
   "waiterCalls", "waitlist",
 ];
 
-// Демо-заведения создаются анонимно и удаляются сами по расписанию.
-const DEMO_TTL_MS = 3 * 60 * 60 * 1000; // 3 часа с момента создания
+// Демо-заведения создаются анонимно и живут 3 дня с момента запуска демо
+// на телефоне: потом удаляются, а касса сама открывает новое демо в
+// исходном виде (DemoGate в приложении). Так демо нельзя превратить в
+// бесплатную рабочую кассу — всё введённое через 3 дня исчезает.
+const DEMO_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const DEMO_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // проверка каждые 30 минут
 const DEMO_RATE_LIMIT_MAX = 5; // создание демо-заведений с одного IP
 const DEMO_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // за час — защита от накрутки
@@ -2950,17 +2953,38 @@ const DEMO_TABLES = [
   { name: "Стол 17", zone: "Терраса", shape: "corner", rotation: 2, seats: 8, left: 676, top: 52 },
 ];
 
-// Стены залов (как рисует редактор зала): углы в точках холста, кратные
-// шагу сетки 26. Проём в контуре — вход.
+// Стены залов для презентации (как рисует редактор зала): углы в точках
+// холста, кратные шагу сетки 26; проёмы в стенах — двери и входы.
+// Основной зал: справа кухня и туалет за перегородкой с дверями, вход
+// снизу. 2 этаж: три закрытых VIP-кабинета с дверями и открытый лаунж.
+// Терраса: стена здания и перила с выходом на улицу.
 const DEMO_WALLS = [
-  { zone: "Основной зал", points: [[520, 650], [26, 650], [26, 26], [884, 26], [884, 650], [650, 650]] },
-  { zone: "2 этаж", points: [[416, 494], [26, 494], [26, 26], [936, 26], [936, 494], [546, 494]] },
-  // Перегородки VIP-кабинетов.
-  { zone: "2 этаж", points: [[312, 26], [312, 286]] },
-  { zone: "2 этаж", points: [[598, 26], [598, 286]] },
-  { zone: "2 этаж", points: [[754, 26], [754, 286]] },
-  // Терраса: стена здания с двух сторон, дальше перила.
-  { zone: "Терраса", points: [[26, 390], [26, 26], [910, 26]] },
+  { zone: "Основной зал", points: [[520, 650], [26, 650], [26, 26], [1092, 26], [1092, 650], [650, 650]] },
+  { zone: "Основной зал", points: [[884, 26], [884, 182]] },
+  { zone: "Основной зал", points: [[884, 260], [884, 442]] },
+  { zone: "Основной зал", points: [[884, 520], [884, 650]] },
+  { zone: "Основной зал", points: [[884, 338], [1092, 338]] },
+  { zone: "2 этаж", points: [[416, 520], [26, 520], [26, 26], [936, 26], [936, 520], [546, 520]] },
+  { zone: "2 этаж", points: [[26, 312], [130, 312]] },
+  { zone: "2 этаж", points: [[312, 26], [312, 312]] },
+  { zone: "2 этаж", points: [[208, 312], [416, 312]] },
+  { zone: "2 этаж", points: [[598, 26], [598, 312]] },
+  { zone: "2 этаж", points: [[494, 312], [650, 312]] },
+  { zone: "2 этаж", points: [[754, 26], [754, 312]] },
+  { zone: "2 этаж", points: [[728, 312], [754, 312]] },
+  { zone: "Терраса", points: [[390, 442], [26, 442], [26, 26], [910, 26], [910, 442], [520, 442]] },
+];
+
+// Подписи на схемах: входы, служебные помещения и заметка.
+const DEMO_LABELS = [
+  { zone: "Основной зал", text: "Вход", x: 585, y: 684 },
+  { zone: "Основной зал", text: "Хостес", x: 585, y: 598 },
+  { zone: "Основной зал", text: "Кухня", x: 988, y: 182 },
+  { zone: "Основной зал", text: "WC", x: 988, y: 494 },
+  { zone: "2 этаж", text: "Вход", x: 481, y: 554 },
+  { zone: "2 этаж", text: "Лаунж-зона", x: 845, y: 338 },
+  { zone: "Терраса", text: "Выход на улицу", x: 455, y: 476 },
+  { zone: "Терраса", text: "Курящая зона", x: 780, y: 338 },
 ];
 
 /** Доли x/y стола: левый верхний угол / свободное место (холст минус плитка). */
@@ -3364,6 +3388,9 @@ function seedDemoData(tenantRef, batch, nowMs) {
   DEMO_WALLS.forEach((w) => {
     batch.set(col("hallWalls").doc(), { zone: w.zone, points: w.points.flat(), closed: false, createdAt: ts(60 * 24) });
   });
+  DEMO_LABELS.forEach((l) => {
+    batch.set(col("hallLabels").doc(), { ...l, createdAt: ts(60 * 24) });
+  });
 
   const tables = {};
   DEMO_TABLES.forEach((t) => {
@@ -3642,6 +3669,8 @@ async function handleCreateDemoTenant(req, res) {
     planId: "start",
     ownerUserId: "",
     demo: true,
+    // Когда демо сбросится — касса показывает обратный отсчёт.
+    demoExpiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEMO_TTL_MS),
     createdAt: now,
     updatedAt: now,
   });

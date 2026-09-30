@@ -548,6 +548,7 @@ a:hover { filter: brightness(1.2); }
 .center-block { margin-left: auto !important; margin-right: auto !important; text-align: center; }
 .showcase { position: relative; display: flex; justify-content: center; align-items: flex-end; gap: 18px; margin-top: 8px; padding: 10px 0 30px; }
 .mock-tablet {
+  position: relative;
   flex: 1 1 600px; min-width: 0; max-width: 640px; background: #0A1322; border: 1px solid var(--border);
   border-radius: 26px; padding: 14px; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 8px #0E1829;
 }
@@ -633,6 +634,90 @@ a:hover { filter: brightness(1.2); }
 .hall-demo.play .hd-slot { animation: hd-pop .5s cubic-bezier(.2,.8,.3,1) calc(1.9s + var(--d)) forwards; }
 .hall-demo.static .hd-edge, .hall-demo.static .hd-body { stroke-dashoffset: 0; opacity: 1; }
 .hall-demo.static .hd-room, .hall-demo.static .hd-label, .hall-demo.static .hd-slot { opacity: 1; transform: none; }
+/* Переключатель «Схема / Список» — как на кассе. */
+.hd-view { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; }
+.hd-view-btn {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px;
+  font-size: 11.5px; color: var(--muted); transition: background-color .3s, color .3s, transform .15s;
+}
+.hd-view-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.hd-view-btn.on { background: rgba(61,140,255,.2); color: #D6E6FF; }
+.hd-view-btn.pressed { transform: scale(.94); }
+/* Тот же зал списком — карточки столов, как на кассе в режиме «Список». */
+.hd-list {
+  position: absolute; inset: 0; padding: 3.5%; display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: 2.4cqw; align-content: start; opacity: 0; transform: translateY(8px); pointer-events: none;
+  transition: opacity .45s ease, transform .45s ease;
+}
+@container (min-width: 460px) { .hd-list { grid-template-columns: repeat(4, 1fr); } }
+.hall-demo.list-mode .hd-layer { opacity: 0; }
+.hall-demo.list-mode .hd-list { opacity: 1; transform: none; }
+.hall-demo.out .hd-list, .hall-demo.out .hd-check { opacity: 0; }
+.hd-card {
+  border: 1.5px solid; border-radius: 12px; padding: 2.2cqw 2.4cqw; min-height: 16cqw; box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center; gap: .2em; white-space: nowrap; overflow: hidden;
+  font-size: clamp(9px, 2.1cqw, 13px); line-height: 1.2; transition: background-color .5s, border-color .5s, transform .15s;
+}
+.hd-card b { font-size: 1.12em; font-weight: 800; }
+.hd-card .a { color: var(--muted); }
+.hd-card .b { font-weight: 700; }
+.hd-card .b:empty { display: none; }
+.hd-card.pressed { transform: scale(.96); }
+.hd-card.free { border-color: rgba(52,194,122,.55); background: rgba(52,194,122,.07); }
+.hd-card.free .a { color: #6FD9A3; }
+.hd-card.busy { border-color: rgba(61,140,255,.65); background: rgba(61,140,255,.14); }
+.hd-card.ending { border-color: rgba(231,178,78,.75); background: rgba(231,178,78,.13); }
+.hd-card.ending .a { color: #F0C674; }
+.hd-card.reserved { border-color: rgba(167,139,250,.65); background: rgba(167,139,250,.11); }
+.hd-card.reserved .a { color: #C4B5FD; }
+.hd-card.call { border-color: #FF7A59; background: rgba(255,122,89,.18); }
+/* Чек стола — выезжает справа: позиции, меню с фото, итог. */
+.hd-check {
+  position: absolute; top: 0; right: 0; bottom: 0; width: clamp(236px, 58%, 100%); box-sizing: border-box;
+  padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px;
+  background: linear-gradient(180deg, #111C31, #0C1526); border-left: 1px solid var(--border);
+  box-shadow: -24px 0 48px -18px rgba(0,0,0,.75); transform: translateX(104%);
+  transition: transform .45s cubic-bezier(.2,.8,.2,1), opacity .5s;
+}
+.hall-demo.check-open .hd-check { transform: none; }
+.hdc-head { display: flex; flex-direction: column; }
+.hdc-head b { font-size: 15px; font-weight: 800; }
+.hdc-head span { color: var(--muted); font-size: 11px; }
+.hdc-lines { display: flex; flex-direction: column; gap: 3px; min-height: 22px; }
+.hdc-empty { color: var(--muted); font-size: 11px; }
+.hdc-line { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--border); animation: hd-line-in .45s ease; }
+.hdc-line b { font-weight: 700; }
+@keyframes hd-line-in { from { opacity: 0; transform: translateX(14px); background: rgba(61,140,255,.25); } to { opacity: 1; transform: none; background: transparent; } }
+.hdc-menu { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.hdc-item {
+  display: grid; grid-template-columns: 28px 1fr; grid-template-rows: auto auto; column-gap: 6px; align-items: center;
+  padding: 5px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border);
+  transition: transform .15s, border-color .25s;
+}
+.hdc-item img { grid-row: 1 / span 2; width: 28px; height: 28px; border-radius: 7px; object-fit: cover; background: #1C2940; }
+.hdc-item span {
+  min-width: 0; font-size: 10.5px; line-height: 1.15; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere;
+}
+.hdc-item b { font-size: 10.5px; color: #7DB6FF; }
+.hdc-item.pressed { transform: scale(.95); border-color: #3D8CFF; }
+.hdc-foot { margin-top: auto; display: flex; flex-direction: column; gap: 7px; }
+.hdc-total { display: flex; justify-content: space-between; font-weight: 800; font-size: 13px; }
+.hdc-total b.bump { animation: hd-bump .5s ease; }
+@keyframes hd-bump { 40% { transform: scale(1.18); color: #7DB6FF; } }
+.hdc-save {
+  text-align: center; padding: 8px; border-radius: 10px; font-weight: 800; font-size: 12.5px;
+  background: linear-gradient(135deg, #2F6FED, #3D8CFF); box-shadow: 0 8px 20px -8px rgba(61,140,255,.7);
+  transition: transform .15s;
+}
+.hdc-save.pressed { transform: scale(.96); }
+/* Касание — кружок, как в записи экрана. */
+.hd-tap {
+  position: absolute; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
+  background: rgba(255,255,255,.28); border: 2px solid rgba(255,255,255,.85); opacity: 0; pointer-events: none; z-index: 5;
+}
+.hd-tap.go { animation: hd-tap .75s ease-out; }
+@keyframes hd-tap { 0% { opacity: 0; transform: scale(.4); } 18% { opacity: 1; transform: scale(.8); } 100% { opacity: 0; transform: scale(1.9); } }
 /* Уведомления на витрине появляются вместе с событиями на схеме. */
 .showcase.live .mock-toast { opacity: 0; transition: opacity .4s ease; }
 .showcase.live .mock-toast.show { opacity: 1; }

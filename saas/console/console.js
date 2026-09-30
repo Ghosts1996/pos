@@ -977,7 +977,9 @@ function venueHookahOn(vp) {
 // Как на кассе (lib/widgets/hall_plan_view.dart): холст в точках, плитка
 // стола 104, шаг сетки 26, стены «как на чертеже» (HallWallsPainter).
 // Ролик: стены прорисовываются, столы расставляются, дальше смена живёт —
-// гость зовёт официанта, садятся новые гости, приходит бронь; и заново.
+// гость зовёт официанта, садятся новые гости, приходит бронь; потом
+// официант переключает зал на список, открывает стол, добавляет в чек
+// позиции из меню и возвращается к схеме; и заново.
 const HALL_DEMO = {
   w: 624, h: 580,
   tables: [
@@ -990,6 +992,18 @@ const HALL_DEMO = {
     { id: 't5', name: 'Стол 5', shape: 'rect', x: 208, y: 390, st: 'reserved', a: 'Бронь 19:30', b: '' },
     { id: 't6', name: 'Стол 6', shape: 'oval', x: 364, y: 390, w: 208, st: 'free', a: '6 мест', b: '' },
   ],
+  // Меню в чеке — фото из демо-меню (demo-menu/, авторы — #/demo-photos).
+  menu: [
+    { id: 'lemonade', name: 'Лимонад манго', price: 390, img: 'lemonade' },
+    { id: 'pasta', name: 'Паста карбонара', price: 690, img: 'carbonara' },
+    { id: 'cake', name: 'Чизкейк', price: 350, img: 'cheesecake' },
+    { id: 'tea', name: 'Улун', price: 290, img: 'oolong' },
+  ],
+};
+
+const HALL_DEMO_ICONS = {
+  plan: '<svg viewBox="0 0 24 24"><path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5 9 4Z"/><path d="M9 4v13M15 6.5v13"/></svg>',
+  list: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="7" height="7" rx="1.5"/><rect x="13.5" y="4" width="7" height="7" rx="1.5"/><rect x="3.5" y="13" width="7" height="7" rx="1.5"/><rect x="13.5" y="13" width="7" height="7" rx="1.5"/></svg>',
 };
 
 function hallDemoHtml() {
@@ -1031,6 +1045,27 @@ function hallDemoHtml() {
             </div>
           </div>`).join('')}
       </div>
+      <div class="hd-list">
+        ${HALL_DEMO.tables.map((t) => `
+          <div class="hd-card ${t.st}" data-hd="${t.id}">
+            <b>${t.name}</b><span class="a">${t.a}</span><span class="b">${t.b}</span>
+          </div>`).join('')}
+      </div>
+      <div class="hd-check">
+        <div class="hdc-head"><b>Стол 2</b><span>Чек № 57 · Алина</span></div>
+        <div class="hdc-lines" id="hd-check-lines"><div class="hdc-empty">Добавьте позиции из меню</div></div>
+        <div class="hdc-menu">
+          ${HALL_DEMO.menu.map((m) => `
+            <div class="hdc-item" data-hd-item="${m.id}">
+              <img src="/demo-menu/${m.img}.jpg" alt="" loading="lazy">
+              <span>${m.name}</span><b>${m.price.toLocaleString('ru-RU')} ₽</b>
+            </div>`).join('')}
+        </div>
+        <div class="hdc-foot">
+          <div class="hdc-total"><span>Итого</span><b id="hd-check-total">0 ₽</b></div>
+          <div class="hdc-save" id="hd-check-save">Сохранить</div>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -1039,14 +1074,58 @@ function startHallDemo() {
   const box = $('hall-demo');
   if (!box) return;
   const showcase = box.closest('.showcase');
-  const table = (id) => box.querySelector(`[data-hd="${id}"]`);
+  const tablet = box.closest('.mock-tablet');
+  // Стол на схеме и его карточка в списке — одно состояние.
   const setTable = (id, st, a, b) => {
-    const el = table(id);
-    if (!el) return;
-    el.classList.remove('free', 'busy', 'ending', 'reserved', 'call');
-    el.classList.add(st);
-    el.querySelector('.a').textContent = a;
-    el.querySelector('.b').textContent = b;
+    box.querySelectorAll(`[data-hd="${id}"]`).forEach((el) => {
+      el.classList.remove('free', 'busy', 'ending', 'reserved', 'call');
+      el.classList.add(st);
+      el.querySelector('.a').textContent = a;
+      el.querySelector('.b').textContent = b;
+    });
+  };
+  // Касание — кружок, как в записи экрана, и лёгкое нажатие самой кнопки.
+  const tap = (el) => {
+    const dot = tablet?.querySelector('.hd-tap');
+    if (!el || !dot) return;
+    const r = el.getBoundingClientRect(), p = tablet.getBoundingClientRect();
+    dot.style.left = `${r.left - p.left + r.width / 2}px`;
+    dot.style.top = `${r.top - p.top + r.height / 2}px`;
+    dot.classList.remove('go');
+    void dot.offsetWidth;
+    dot.classList.add('go');
+    el.classList.add('pressed');
+    setTimeout(() => el.classList.remove('pressed'), 260);
+  };
+  const viewBtn = (v) => tablet?.querySelector(`[data-hd-view="${v}"]`);
+  const setView = (v) => {
+    box.classList.toggle('list-mode', v === 'list');
+    ['plan', 'list'].forEach((x) => viewBtn(x)?.classList.toggle('on', x === v));
+  };
+  let checkSum = 0;
+  const lines = () => $('hd-check-lines');
+  const addLine = (id) => {
+    const m = HALL_DEMO.menu.find((x) => x.id === id);
+    const box2 = lines();
+    if (!m || !box2) return;
+    box2.querySelector('.hdc-empty')?.remove();
+    box2.insertAdjacentHTML('beforeend',
+      `<div class="hdc-line"><span>${m.name}</span><b>${m.price.toLocaleString('ru-RU')} ₽</b></div>`);
+    checkSum += m.price;
+    const total = $('hd-check-total');
+    if (total) {
+      total.textContent = `${checkSum.toLocaleString('ru-RU')} ₽`;
+      total.classList.remove('bump');
+      void total.offsetWidth;
+      total.classList.add('bump');
+    }
+  };
+  const resetCheck = () => {
+    checkSum = 0;
+    box.classList.remove('check-open');
+    if (lines()) lines().innerHTML = '<div class="hdc-empty">Добавьте позиции из меню</div>';
+    const total = $('hd-check-total');
+    if (total) total.textContent = '0 ₽';
   };
   const setCounts = (free, busy) => {
     showcase.querySelector('[data-hd-count="free"]').textContent = free;
@@ -1056,6 +1135,8 @@ function startHallDemo() {
   const reset = () => {
     HALL_DEMO.tables.forEach((t) => setTable(t.id, t.st, t.a, t.b));
     setCounts(3, 5);
+    setView('plan');
+    resetCheck();
     toggle('hd-phone-call', 'on', false);
     toggle('hd-toast-call', 'show', false);
     toggle('hd-toast-booking', 'show', false);
@@ -1084,8 +1165,21 @@ function startHallDemo() {
     at(8200, () => { setTable('t2', 'busy', 'только что', '0 ₽'); setCounts(2, 6); });
     at(10600, () => { setTable('t6', 'reserved', 'Бронь 20:00', ''); toggle('hd-toast-booking', 'show', true); });
     at(13600, () => toggle('hd-toast-booking', 'show', false));
-    at(14600, () => box.classList.add('out'));
-    at(15300, play);
+    // Тот же зал списком: открыть стол и добавить в чек позиции из меню.
+    at(14300, () => tap(viewBtn('list')));
+    at(14600, () => setView('list'));
+    at(16000, () => tap(box.querySelector('.hd-card[data-hd="t2"]')));
+    at(16300, () => box.classList.add('check-open'));
+    at(17500, () => tap(box.querySelector('[data-hd-item="lemonade"]')));
+    at(17700, () => addLine('lemonade'));
+    at(18700, () => tap(box.querySelector('[data-hd-item="pasta"]')));
+    at(18900, () => addLine('pasta'));
+    at(19900, () => tap($('hd-check-save')));
+    at(20200, () => { box.classList.remove('check-open'); setTable('t2', 'busy', '2 мин', `${checkSum.toLocaleString('ru-RU')} ₽`); });
+    at(21600, () => tap(viewBtn('plan')));
+    at(21900, () => setView('plan'));
+    at(24000, () => box.classList.add('out'));
+    at(24700, play);
   };
   // Играет, только пока схему видно: не тратит батарею, а при возврате
   // к ней показывает ролик с начала.
@@ -1179,8 +1273,8 @@ function screenLanding() {
           </div>
           <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
           попросит код заведения и код приглашения устройства из личного кабинета — или нажмите «Демо» прямо в
-          приложении, и оно само создаст тестовое заведение: основной зал, терраса и 2 этаж со столами, меню с фото, открытая смена с чеками,
-          брони, гости с бонусами, склад и зарплата сотрудников.</p>
+          приложении, и оно само создаст тестовое заведение: основной зал, терраса и 2 этаж со стенами и столами, меню с фото, открытая смена с чеками,
+          брони, гости с бонусами, склад и зарплата сотрудников. Демо живёт 3 дня, потом само возвращается в исходный вид.</p>
           <p class="small muted landing-demo-pins" style="text-align:center;margin-top:8px">
             Вход в демо: кальянщик — PIN <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>,
             администратор — <code>111111</code>
@@ -1192,17 +1286,23 @@ function screenLanding() {
     <section class="landing-section landing-showcase" id="landing-showcase">
       <div class="landing-inner">
         <h2 class="landing-h2 center">Так выглядит смена в ZalPOS</h2>
-        <p class="landing-h2-sub center-block">Схема зала — как ваше помещение: стены, зоны и столы любой формы вы
-        рисуете в редакторе за пару минут. Касса у персонала и приложение у гостя работают вместе в реальном времени:
-        гость нажал «Позвать официанта» — стол на кассе сразу подсвечивается.</p>
+        <p class="landing-h2-sub center-block">Схема зала — как ваше помещение: стены, подписи и столы любой формы вы
+        рисуете в редакторе за пару минут, а удобнее списком — зал переключается одним нажатием. Касса у персонала и
+        приложение у гостя работают вместе в реальном времени: гость нажал «Позвать официанта» — стол на кассе сразу
+        подсвечивается.</p>
         <div class="showcase" aria-hidden="true">
           <div class="mock-tablet">
             <div class="mock-bar">
               <b>Зал · Основной</b>
               <span class="mock-chip free">Свободны <i data-hd-count="free">3</i></span>
               <span class="mock-chip busy">Заняты <i data-hd-count="busy">5</i></span>
+              <span class="hd-view">
+                <span class="hd-view-btn on" data-hd-view="plan">${HALL_DEMO_ICONS.plan}Схема</span>
+                <span class="hd-view-btn" data-hd-view="list">${HALL_DEMO_ICONS.list}Список</span>
+              </span>
             </div>
             ${hallDemoHtml()}
+            <div class="hd-tap"></div>
           </div>
           <div class="mock-phone">
             <div class="mp-notch"></div>
