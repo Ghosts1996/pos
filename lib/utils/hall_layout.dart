@@ -115,13 +115,15 @@ bool hallTablesOverlap(TableModel a, TableModel b) {
 
 /// Часть холста со столами и полями вокруг — её и показываем, чтобы столы
 /// в одном углу не выглядели мелкими. Не меньше [minSize], чтобы два-три
-/// стола не раздувались на весь экран.
+/// стола не раздувались на весь экран. [extra] — что ещё должно попасть
+/// в кадр (стены зала, см. hallWallBounds).
 Rect hallContentRect(
   List<TableModel> tables, {
   double margin = 36,
   Size minSize = const Size(kHallTile * 3.2, kHallTile * 2.4),
+  List<Rect> extra = const [],
 }) {
-  if (tables.isEmpty) return kHallCanvasRect;
+  if (tables.isEmpty && extra.isEmpty) return kHallCanvasRect;
   var l = double.infinity, t = double.infinity, r = -double.infinity, b = -double.infinity;
   for (final x in tables) {
     final o = hallTileOffset(x);
@@ -130,6 +132,12 @@ Rect hallContentRect(
     t = math.min(t, o.top);
     r = math.max(r, o.left + s.width);
     b = math.max(b, o.top + s.height);
+  }
+  for (final x in extra) {
+    l = math.min(l, x.left);
+    t = math.min(t, x.top);
+    r = math.max(r, x.right);
+    b = math.max(b, x.bottom);
   }
   l -= margin;
   t -= margin;

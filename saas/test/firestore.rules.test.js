@@ -1525,3 +1525,39 @@ describe("Секрет стола в QR: чужой чек удалённо не
     await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/tableKeys/table2"), { key: "NewKey" }));
   });
 });
+
+describe("Стены на схеме зала", () => {
+  const wall = (over = {}) => ({ zone: "Основной зал", points: [26, 26, 520, 26, 520, 390], closed: false, ...over });
+
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/hallWalls/w1"), wall());
+    });
+  });
+
+  it("персонал рисует, переносит в другую зону и удаляет стены", async () => {
+    const owner = ctxFor("ownerA");
+    await assertSucceeds(setDoc(doc(owner, "tenants/tenantA/hallWalls/w2"), wall({ closed: true })));
+    await assertSucceeds(updateDoc(doc(owner, "tenants/tenantA/hallWalls/w1"), { zone: "Терраса" }));
+    await assertSucceeds(deleteDoc(doc(owner, "tenants/tenantA/hallWalls/w2")));
+  });
+
+  it("гость своего заведения видит стены, но не меняет; чужой — не видит", async () => {
+    await assertSucceeds(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/hallWalls/w1")));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/hallWalls/w3"), wall()));
+    await assertFails(deleteDoc(doc(ctxFor("guestA"), "tenants/tenantA/hallWalls/w1")));
+    await assertFails(getDoc(doc(ctxFor("guestB"), "tenants/tenantA/hallWalls/w1")));
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/hallWalls/w1")));
+  });
+
+  it("стена без точек, с лишними полями или на тысячи углов не сохраняется", async () => {
+    const owner = ctxFor("ownerA");
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b1"), wall({ points: [1, 2] })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b2"), wall({ points: "26,26" })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b3"), wall({ points: new Array(402).fill(26) })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b4"), wall({ color: "red" })));
+    await assertFails(setDoc(doc(owner, "tenants/tenantA/hallWalls/b5"), wall({ closed: "yes" })));
+  });
+});

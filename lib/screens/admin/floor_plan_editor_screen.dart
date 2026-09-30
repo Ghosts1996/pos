@@ -1,19 +1,24 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, PointerHoverEvent;
 import 'package:flutter/material.dart';
 
+import '../../models/hall_wall.dart';
 import '../../models/table_model.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/hall_layout.dart';
 import '../../utils/table_label.dart';
 import '../../widgets/hall_plan_view.dart';
+import '../../widgets/hall_walls_painter.dart';
 import '../../widgets/table_shape.dart';
 import '../../widgets/table_tile.dart';
 import '../../utils/human_error.dart';
 
 /// Редактор карты зала: зоны, расстановка столов перетаскиванием,
-/// добавление, переименование и удаление.
+/// добавление, переименование и удаление, стены помещения.
 ///
 /// Схема — та же, что видят сотрудники (логический холст, см.
 /// hall_layout.dart): как расставили здесь, так и будет в зале на любом
@@ -51,9 +56,48 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   Timer? _panTimer;
   Offset _panSpeed = Offset.zero;
 
+  /// Стены всех зон (см. HallWall).
+  List<HallWall> _walls = [];
+  StreamSubscription<List<HallWall>>? _wallsSub;
+
+  // ---- Рисование стен ----
+  /// Режим «Стены»: палец рисует стены, столы не трогаются.
+  bool _wallMode = false;
+
+  /// Углы стены, которую сейчас рисуют (ещё не сохранена).
+  List<Offset> _draft = [];
+
+  /// Куда встанет следующий угол: палец ведут по схеме или мышь над ней.
+  Offset? _preview;
+
+  /// Стены ровно по горизонтали, вертикали или под 45°.
+  bool _straight = true;
+
+  /// Выбранная стена — её можно удалить.
+  String? _selectedWallId;
+
+  /// Стены, нарисованные за этот заход, — для «Отменить».
+  final List<String> _drawnIds = [];
+
+  /// Пальцы на схеме: двумя схему двигают и приближают, а не рисуют.
+  final Set<int> _pointers = {};
+  bool _multiTouch = false;
+  Offset? _wallDownGlobal;
+  Offset? _wallDownLocal;
+  bool _stroking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _wallsSub = _fs.hallWallsStream().listen((w) {
+      if (mounted) setState(() => _walls = w);
+    });
+  }
+
   @override
   void dispose() {
     _panTimer?.cancel();
+    _wallsSub?.cancel();
     _transform.dispose();
     super.dispose();
   }
@@ -72,9 +116,12 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
   final Map<String, GlobalKey> _zoneKeys = {};
 
   void _showZone(String zone) {
+    // Недорисованная стена остаётся в своей зоне.
+    if (zone != _zone) unawaited(_finishDraft());
     setState(() {
       _zone = zone;
       _selectedId = null;
+      _selectedWallId = null;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _zoneKeys[zone]?.currentContext;
@@ -82,12 +129,18 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     });
   }
 
-  /// Все зоны: из столов и только что заведённые.
+  /// Все зоны: из столов, из стен (зона, где пока только стены) и только
+  /// что заведённые.
   List<String> get _allZones {
     final zones = hallZones(_tables);
+    for (final w in _walls) {
+      if (w.zone.isNotEmpty && !zones.contains(w.zone)) zones.add(w.zone);
+    }
     _newZones.removeWhere(zones.contains);
     return [...zones, ..._newZones];
   }
+
+  List<HallWall> get _zoneWalls => _walls.where((w) => w.zone == _zone).toList();
 
   /// Только что перетащенный стол — показываем на новом месте сразу, не
   /// дожидаясь ответа базы (иначе плитка на миг прыгала обратно).
@@ -243,6 +296,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     final ctrl = TextEditingController(text: zone ?? '');
     final existing = _allZones;
     final inZone = isNew ? <TableModel>[] : _tables.where((t) => t.zone == zone).toList();
+    final wallCount = isNew ? 0 : _walls.where((w) => w.zone == zone).length;
     String? error;
     final result = await showDialog<String>(
       context: context,
@@ -280,7 +334,9 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
               Text(
                 isNew
                     ? 'У каждой зоны своя схема. Новые столы кнопкой «Стол» добавятся в неё.'
-                    : 'Новое имя получат все столы этой зоны (${inZone.length}). Если такая зона уже есть — столы переедут в неё.',
+                    : inZone.isEmpty && wallCount > 0
+                        ? 'Столов в зоне нет. «Удалить» уберёт зону вместе с её стенами.'
+                        : 'Новое имя получат все столы этой зоны (${inZone.length}). Если такая зона уже есть — столы переедут в неё.',
                 style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ]),
@@ -300,9 +356,20 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     ctrl.dispose();
     if (result == null || !mounted) return;
     if (result == _deleteZone) {
+      if (wallCount > 0) {
+        try {
+          await _fs.moveHallWalls(zone!, null);
+        } catch (e) {
+          _snack('Не удалось удалить стены зоны: ${humanError(e, lower: true)}');
+          return;
+        }
+      }
+      if (!mounted) return;
+      unawaited(_finishDraft(save: false));
       setState(() {
         _newZones.remove(zone);
         _zone = '';
+        _selectedWallId = null;
       });
       return;
     }
@@ -312,14 +379,25 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
       return;
     }
     if (result == zone) return;
+    // Стены зоны переезжают вместе с ней — и недорисованная тоже.
+    await _finishDraft().timeout(const Duration(seconds: 5), onTimeout: () {});
     if (inZone.isEmpty) {
+      if (wallCount > 0) {
+        try {
+          await _fs.moveHallWalls(zone, result);
+        } catch (e) {
+          _snack('Не удалось переименовать зону: ${humanError(e, lower: true)}');
+          return;
+        }
+      }
       final i = _newZones.indexOf(zone);
       if (i >= 0) _newZones[i] = result;
-      _showZone(result);
+      if (mounted) _showZone(result);
       return;
     }
     try {
       await _fs.setTablesZone([for (final t in inZone) t.id], result);
+      if (wallCount > 0) await _fs.moveHallWalls(zone, result);
       if (mounted) _showZone(result);
     } catch (e) {
       _snack('Не удалось переименовать зону: ${humanError(e, lower: true)}');
@@ -670,6 +748,347 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
     );
   }
 
+  // ---------- Стены ----------
+
+  void _enterWallMode() {
+    setState(() {
+      _wallMode = true;
+      _selectedId = null;
+      _selectedWallId = null;
+      _drawnIds.clear();
+    });
+  }
+
+  void _exitWallMode() {
+    unawaited(_finishDraft());
+    setState(() {
+      _wallMode = false;
+      _selectedWallId = null;
+      _drawnIds.clear();
+    });
+  }
+
+  /// Радиус «примагничивания» к углам — ~24 экранных точки при любом
+  /// масштабе схемы.
+  double get _magnet => math.max(14.0, 24 / _canvasScale());
+
+  /// Углы стен зоны и нарисованной стены — к ним примагничивается палец,
+  /// чтобы стены сходились точно.
+  List<Offset> get _corners => [for (final w in _zoneWalls) ...w.points, ..._draft];
+
+  /// Начало стены: угол рядом или узел сетки.
+  Offset _snapStart(Offset raw) => hallNearestCorner(raw, _corners, _magnet) ?? hallSnapToGrid(raw);
+
+  /// Следующий угол от [from]: первый угол контура (замкнуть), угол другой
+  /// стены рядом или ровное продолжение по сетке.
+  Offset _snapNext(Offset from, Offset raw) {
+    final near = hallNearestCorner(raw, [if (_draft.length >= 3) _draft.first, ..._corners], _magnet);
+    if (near != null && near != from) return near;
+    return hallWallEnd(from, raw, straight: _straight);
+  }
+
+  /// Сохранить нарисованную стену ([closed] — контур замкнут) и начать
+  /// следующую с чистого листа.
+  Future<void> _finishDraft({bool closed = false, bool save = true}) async {
+    final points = _draft;
+    if (points.isEmpty && _preview == null) return;
+    setState(() {
+      _draft = [];
+      _preview = null;
+      _stroking = false;
+    });
+    if (!save || points.length < 2) return;
+    final id = _fs.newHallWallId();
+    final wall = HallWall(id: id, zone: _zone, points: points, closed: closed && points.length >= 3);
+    _drawnIds.add(id);
+    try {
+      await _fs.saveHallWall(id, wall);
+    } catch (e) {
+      _drawnIds.remove(id);
+      _snack('Не удалось сохранить стену: ${humanError(e, lower: true)}');
+    }
+  }
+
+  void _addCorner(Offset p) {
+    if (_draft.isEmpty) {
+      setState(() => _draft = [p]);
+      return;
+    }
+    if ((p - _draft.last).distance < 1) return;
+    if (_draft.length >= 3 && (p - _draft.first).distance < 1) {
+      unawaited(_finishDraft(closed: true));
+      return;
+    }
+    setState(() => _draft = [..._draft, p]);
+    // Очень длинный контур — сохраняем кусок и продолжаем из его конца.
+    if (_draft.length >= HallWall.maxPoints) {
+      final last = _draft.last;
+      unawaited(_finishDraft());
+      setState(() => _draft = [last]);
+    }
+  }
+
+  /// Касание без движения: угол стены, а если стена ещё не начата — выбор
+  /// существующей стены (чтобы удалить) или начало новой.
+  void _wallTap(Offset local) {
+    if (_draft.isNotEmpty) {
+      _addCorner(_snapNext(_draft.last, local));
+      return;
+    }
+    HallWall? hit;
+    var best = math.max(kHallWallWidth, _magnet * 0.8);
+    for (final w in _zoneWalls) {
+      final d = w.distanceTo(local);
+      if (d <= best) {
+        hit = w;
+        best = d;
+      }
+    }
+    if (hit != null) {
+      setState(() => _selectedWallId = _selectedWallId == hit!.id ? null : hit.id);
+      return;
+    }
+    if (_selectedWallId != null) {
+      setState(() => _selectedWallId = null);
+      return;
+    }
+    _addCorner(_snapStart(local));
+  }
+
+  void _wallPointerDown(PointerDownEvent e) {
+    _pointers.add(e.pointer);
+    if (_pointers.length > 1) {
+      // Второй палец — схему двигают и приближают, начатый штрих отменяем.
+      _multiTouch = true;
+      _stroking = false;
+      _wallDownLocal = null;
+      if (_preview != null) setState(() => _preview = null);
+      return;
+    }
+    _multiTouch = false;
+    _wallDownGlobal = e.position;
+    _wallDownLocal = e.localPosition;
+  }
+
+  void _wallPointerMove(PointerMoveEvent e) {
+    final downLocal = _wallDownLocal, downGlobal = _wallDownGlobal;
+    if (_multiTouch || downLocal == null || downGlobal == null) return;
+    if (!_stroking) {
+      if ((e.position - downGlobal).distance < 8) return;
+      // Повели пальцем — рисуем стену. Из конца нарисованной — продолжаем
+      // её, из другого места — начинаем новую.
+      final start = _snapStart(downLocal);
+      if (_draft.isNotEmpty && (start - _draft.last).distance > 0.5) unawaited(_finishDraft());
+      if (_draft.isEmpty) _draft = [start];
+      _stroking = true;
+      _selectedWallId = null;
+    }
+    setState(() => _preview = _snapNext(_draft.last, e.localPosition));
+  }
+
+  void _wallPointerUp(PointerUpEvent e) {
+    _pointers.remove(e.pointer);
+    if (_multiTouch) {
+      if (_pointers.isEmpty) _multiTouch = false;
+      return;
+    }
+    final local = _wallDownLocal;
+    _wallDownLocal = null;
+    _wallDownGlobal = null;
+    if (_stroking) {
+      final end = _preview;
+      _stroking = false;
+      setState(() => _preview = null);
+      if (end != null) _addCorner(end);
+    } else if (local != null) {
+      _wallTap(local);
+    }
+  }
+
+  void _wallPointerCancel(PointerCancelEvent e) {
+    _pointers.remove(e.pointer);
+    if (_pointers.isEmpty) _multiTouch = false;
+    _wallDownLocal = null;
+    _stroking = false;
+    if (_preview != null) setState(() => _preview = null);
+  }
+
+  /// Мышь: следующая стена тянется за курсором. От пальца «наведение»
+  /// тоже приходит — сразу после того, как его убрали, — и подсказка
+  /// повисала бы там, где палец оторвался.
+  void _wallHover(PointerHoverEvent e) {
+    if (_draft.isEmpty || e.kind == PointerDeviceKind.touch) return;
+    setState(() => _preview = _snapNext(_draft.last, e.localPosition));
+  }
+
+  /// «Отменить»: последний угол; если стена уже сохранена — она снова
+  /// становится черновиком без последнего отрезка.
+  Future<void> _undoWall() async {
+    if (_draft.isNotEmpty) {
+      setState(() {
+        _draft = _draft.sublist(0, _draft.length - 1);
+        _preview = null;
+      });
+      return;
+    }
+    if (_drawnIds.isEmpty) return;
+    final id = _drawnIds.removeLast();
+    final wall = _walls.where((w) => w.id == id).firstOrNull;
+    setState(() {
+      _selectedWallId = null;
+      if (wall != null && wall.zone == _zone) {
+        _draft = wall.closed ? [...wall.points] : wall.points.sublist(0, wall.points.length - 1);
+        if (_draft.length < 2) _draft = [];
+      }
+    });
+    try {
+      await _fs.deleteHallWall(id);
+    } catch (e) {
+      _snack('Не удалось отменить: ${humanError(e, lower: true)}');
+    }
+  }
+
+  Future<void> _deleteSelectedWall() async {
+    final wall = _walls.where((w) => w.id == _selectedWallId).firstOrNull;
+    if (wall == null) return;
+    setState(() => _selectedWallId = null);
+    try {
+      await _fs.deleteHallWall(wall.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Стена удалена'),
+        action: SnackBarAction(label: 'Вернуть', onPressed: () => _fs.saveHallWall(wall.id, wall)),
+      ));
+    } catch (e) {
+      _snack('Не удалось удалить стену: ${humanError(e, lower: true)}');
+    }
+  }
+
+  Future<void> _clearZoneWalls() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Убрать все стены зоны?'),
+        content: const Text('Столы останутся на местах, стены можно будет нарисовать заново.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Убрать'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    unawaited(_finishDraft(save: false));
+    setState(() {
+      _selectedWallId = null;
+      _drawnIds.clear();
+    });
+    try {
+      await _fs.moveHallWalls(_zone, null);
+    } catch (e) {
+      _snack('Не удалось убрать стены: ${humanError(e, lower: true)}');
+    }
+  }
+
+  /// Слой рисования стен поверх схемы: ловит пальцы и мышь, рисует
+  /// черновик стены, углы и направляющие.
+  Widget _wallOverlay() => MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: _wallPointerDown,
+          onPointerMove: _wallPointerMove,
+          onPointerUp: _wallPointerUp,
+          onPointerCancel: _wallPointerCancel,
+          onPointerHover: _wallHover,
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _WallDraftPainter(
+              draft: _draft,
+              preview: _preview,
+              guides: [for (final w in _zoneWalls) ...w.points, ..._draft],
+              color: AppColors.primary,
+              floor: AppColors.surface,
+            ),
+          ),
+        ),
+      );
+
+  /// Панель рисования стен.
+  Widget _wallBar() {
+    final selected = _selectedWallId != null;
+    final String hint;
+    if (selected) {
+      hint = 'Стена выбрана — её можно удалить. Коснитесь пустого места, чтобы снять выбор.';
+    } else if (_draft.isEmpty) {
+      hint = 'Ведите пальцем по схеме — стена ляжет ровно по сетке. Или касайтесь углов помещения по очереди. '
+          'Схему двигайте двумя пальцами.';
+    } else if (_draft.length >= 3) {
+      hint = 'Продолжайте из синей точки или коснитесь первой точки — контур замкнётся.';
+    } else {
+      hint = 'Ведите дальше из синей точки — стены соединятся. Из другого места начнётся новая стена.';
+    }
+    return Material(
+      color: AppColors.surfaceElevated,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(Icons.architecture, color: AppColors.primary, size: 20),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(hint, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.end, children: [
+              FilterChip(
+                avatar: const Icon(Icons.straighten, size: 16),
+                label: const Text('Ровные углы'),
+                tooltip: 'Стены строго по горизонтали, вертикали или под 45°',
+                selected: _straight,
+                onSelected: (v) => setState(() => _straight = v),
+              ),
+              if (selected)
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
+                  onPressed: _deleteSelectedWall,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Удалить стену'),
+                ),
+              if (!selected && _draft.isEmpty && _zoneWalls.isNotEmpty)
+                TextButton(onPressed: _clearZoneWalls, child: const Text('Убрать все')),
+              OutlinedButton.icon(
+                onPressed: _draft.isNotEmpty || _drawnIds.isNotEmpty ? _undoWall : null,
+                icon: const Icon(Icons.undo, size: 18),
+                label: const Text('Отменить'),
+              ),
+              if (_draft.length >= 3)
+                OutlinedButton.icon(
+                  onPressed: () => _finishDraft(closed: true),
+                  icon: const Icon(Icons.crop_square, size: 18),
+                  label: const Text('Замкнуть'),
+                ),
+              FilledButton.icon(
+                onPressed: _exitWallMode,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Готово'),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
   /// Панель выбранного стола: стрелки, поворот, настройки.
   Widget _selectionBar(TableModel t) {
     Widget arrow(IconData icon, String tip, double dx, double dy) => IconButton.filledTonal(
@@ -717,17 +1136,46 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // «Назад» в режиме стен — выход из рисования (стена сохраняется), а не
+    // из редактора.
+    return PopScope(
+      canPop: !_wallMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _exitWallMode();
+      },
+      child: _scaffold(context),
+    );
+  }
+
+  Widget _scaffold(BuildContext context) {
     final selected = _selectedId == null ? null : _tables.where((t) => t.id == _selectedId).firstOrNull;
     return Scaffold(
-      appBar: AppBar(title: const Text('Карта зала')),
-      floatingActionButton: selected != null
+      appBar: AppBar(title: Text(_wallMode ? 'Стены зала' : 'Карта зала')),
+      floatingActionButton: selected != null || _wallMode
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _addTable,
-              icon: const Icon(Icons.add),
-              label: const Text('Стол'),
-            ),
-      bottomNavigationBar: selected != null && selected.zone == _zone ? _selectionBar(selected) : null,
+          : Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+              FloatingActionButton.extended(
+                heroTag: 'walls',
+                tooltip: 'Нарисовать стены помещения',
+                backgroundColor: AppColors.surfaceElevated,
+                foregroundColor: AppColors.textPrimary,
+                onPressed: _enterWallMode,
+                icon: const Icon(Icons.architecture),
+                label: const Text('Стены'),
+              ),
+              const SizedBox(height: 12),
+              FloatingActionButton.extended(
+                heroTag: 'table',
+                onPressed: _addTable,
+                icon: const Icon(Icons.add),
+                label: const Text('Стол'),
+              ),
+            ]),
+      bottomNavigationBar: _wallMode
+          ? _wallBar()
+          : selected != null && selected.zone == _zone
+              ? _selectionBar(selected)
+              : null,
       body: StreamBuilder<List<TableModel>>(
         stream: _stream,
         builder: (context, snap) {
@@ -746,7 +1194,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             return t.copyWith(x: m.x, y: m.y, rotation: m.rotation);
           }).toList();
           final zones = _allZones;
-          final hasNoZone = _tables.any((t) => t.zone.isEmpty);
+          final hasNoZone = _tables.any((t) => t.zone.isEmpty) || _walls.any((w) => w.zone.isEmpty);
           final zoneKeys = [...zones, if (hasNoZone || zones.isEmpty) ''];
           // Пока зон нет, все столы — один зал.
           String zoneLabel(String z) => z.isNotEmpty ? z : (zones.isEmpty ? 'Весь зал' : kNoZoneLabel);
@@ -798,13 +1246,16 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      _tables.isEmpty
-                          ? 'Добавьте первый стол кнопкой «Стол» внизу. Зоны (терраса, 2 этаж) — кнопкой «+ Зона».'
-                          : _inZone.isEmpty
-                              ? 'В зоне «${zoneLabel(_zone)}» пока нет столов — добавьте их кнопкой «Стол» внизу.'
-                              : 'Нажмите на стол — появятся стрелки, поворот и настройки. '
-                                  '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
-                                  'Зоны — вкладки сверху: «+ Зона» добавит новую, нажмите на выбранную — переименовать.',
+                      _wallMode
+                          ? 'Стены зоны «${zoneLabel(_zone)}» увидят сотрудники в зале и гости на карте.'
+                          : _tables.isEmpty
+                              ? 'Добавьте первый стол кнопкой «Стол» внизу. Зоны (терраса, 2 этаж) — кнопкой «+ Зона».'
+                              : _inZone.isEmpty
+                                  ? 'В зоне «${zoneLabel(_zone)}» пока нет столов — добавьте их кнопкой «Стол» внизу.'
+                                  : 'Нажмите на стол — появятся стрелки, поворот и настройки. '
+                                      '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
+                                      'Контур помещения — кнопкой «Стены». '
+                                      'Зоны — вкладки сверху: «+ Зона» добавит новую, нажмите на выбранную — переименовать.',
                       style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                     ),
                   ),
@@ -818,11 +1269,19 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     child: HallPlanView(
                       canvasKey: _canvasKey,
                       tables: _inZone,
+                      walls: _zoneWalls,
+                      highlightedWallId: _selectedWallId,
+                      panEnabled: !_wallMode,
+                      showHint: !_wallMode,
                       transformationController: _transform,
                       frameKey: _zone,
                       fitWidth: true,
-                      overlay: _overlay(),
+                      overlay: _wallMode ? _wallOverlay() : _overlay(),
                       tileBuilder: (t) {
+                        // Рисуют стены — столы приглушены и не мешают пальцу.
+                        if (_wallMode) {
+                          return Opacity(opacity: 0.4, child: TableTile(table: t, editorMode: true));
+                        }
                         final tile = TableTile(
                           table: t,
                           editorMode: true,
@@ -947,4 +1406,104 @@ class _TableForm {
         maxOpenSessions = 0,
         zone = '',
         delete = true;
+}
+
+/// Черновик стены в редакторе: нарисованные отрезки, следующий отрезок за
+/// пальцем, точки углов (первая — крупнее, в неё замыкают контур) и
+/// пунктирные направляющие, когда угол встаёт вровень с другим углом.
+class _WallDraftPainter extends CustomPainter {
+  final List<Offset> draft;
+  final Offset? preview;
+  final List<Offset> guides;
+  final Color color;
+  final Color floor;
+
+  _WallDraftPainter({
+    required this.draft,
+    required this.preview,
+    required this.guides,
+    required this.color,
+    required this.floor,
+  });
+
+  void _dashed(Canvas canvas, Offset a, Offset b, Paint paint) {
+    const dash = 9.0, gap = 7.0;
+    final total = (b - a).distance;
+    if (total < 1) return;
+    final dir = (b - a) / total;
+    for (var d = 0.0; d < total; d += dash + gap) {
+      canvas.drawLine(a + dir * d, a + dir * math.min(d + dash, total), paint);
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = preview;
+    if (p != null) {
+      // Направляющие: угол вровень с другим углом по вертикали или
+      // горизонтали — видно, что стены встанут ровно.
+      final guide = Paint()
+        ..color = color.withValues(alpha: 0.55)
+        ..strokeWidth = 1.6;
+      var vertical = false, horizontal = false;
+      for (final c in guides) {
+        if (c == p || (draft.isNotEmpty && c == draft.last)) continue;
+        if (!vertical && (c.dx - p.dx).abs() < 0.5) {
+          _dashed(canvas, c, p, guide);
+          vertical = true;
+        }
+        if (!horizontal && (c.dy - p.dy).abs() < 0.5) {
+          _dashed(canvas, c, p, guide);
+          horizontal = true;
+        }
+      }
+    }
+    if (draft.length >= 2) {
+      HallWallsPainter(
+        walls: [HallWall(id: 'draft', zone: '', points: draft)],
+        line: color,
+        floor: floor,
+        shadow: false,
+      ).paint(canvas, size);
+    }
+    if (p != null && draft.isNotEmpty && p != draft.last) {
+      canvas.drawLine(
+        draft.last,
+        p,
+        Paint()
+          ..color = color.withValues(alpha: 0.5)
+          ..strokeWidth = kHallWallWidth
+          ..strokeCap = StrokeCap.square,
+      );
+    }
+    if (draft.length >= 3) {
+      // Первая точка: сюда — и контур замкнётся.
+      canvas.drawCircle(draft.first, 18, Paint()..color = color.withValues(alpha: 0.2));
+      canvas.drawCircle(
+        draft.first,
+        18,
+        Paint()
+          ..color = color.withValues(alpha: 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
+    final ring = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    for (final c in draft) {
+      canvas.drawCircle(c, 7, Paint()..color = Colors.white);
+      canvas.drawCircle(c, 7, ring);
+    }
+    if (draft.isNotEmpty) canvas.drawCircle(draft.last, 4, Paint()..color = color);
+    if (p != null) {
+      canvas.drawCircle(p, 9, Paint()..color = color.withValues(alpha: 0.35));
+      canvas.drawCircle(p, 5, Paint()..color = Colors.white);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WallDraftPainter old) =>
+      old.preview != preview || !listEquals(old.draft, draft) || old.color != color || old.guides.length != guides.length;
 }

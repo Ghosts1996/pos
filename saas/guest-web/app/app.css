@@ -236,6 +236,23 @@ button.chip.on { color: var(--on-primary, #04140E); background: var(--primary); 
   border-radius: 18px;
   overflow: hidden;
 }
+/* Стены зала (рисует администратор в редакторе зала на кассе) — SVG под
+   столами, как на чертеже: тень, светлый контур, тело стены между двумя
+   линиями. См. hallWallsSvg в app.js и HallWallsPainter на кассе. */
+.hall-walls {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+.hall-walls path { fill: none; stroke-linejoin: miter; stroke-miterlimit: 4; stroke-linecap: square; }
+.hall-walls .hw-edge {
+  stroke: var(--muted);
+  stroke: color-mix(in srgb, var(--muted) 50%, var(--text));
+  stroke-width: 14;
+}
+.hall-walls .hw-body { stroke-width: 9.5; stroke-linecap: butt; }
+.hall-walls .hw-s1 { stop-color: var(--surface-2); stop-color: color-mix(in srgb, var(--surface) 66%, var(--text)); }
+.hall-walls .hw-s2 { stop-color: var(--surface-2); stop-color: color-mix(in srgb, var(--surface) 82%, var(--text)); }
+.hall-walls .hw-room { fill: rgba(255, 255, 255, .04); fill: color-mix(in srgb, var(--text) 5%, transparent); stroke: none; }
 .table-dot {
   position: absolute;
   width: var(--tile-w);
