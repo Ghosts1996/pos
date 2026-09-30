@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../widgets/about_app_dialog.dart';
 import '../../services/staff_session_store.dart';
+import '../../services/table_key_service.dart';
+import '../../theme/app_colors.dart';
 import '../../models/employee.dart';
 import 'floor_plan_editor_screen.dart';
 import 'menu_editor_screen.dart';
@@ -105,6 +107,26 @@ class AdminHomeScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Секреты столов выпущены, а наклейки ещё старые — старые коды
+          // больше не открывают счёт гостя (см. TableKeyService).
+          StreamBuilder<bool>(
+            stream: TableKeyService.instance.reprintNeededStream(),
+            builder: (context, snap) => snap.data != true
+                ? const SizedBox.shrink()
+                : Card(
+                    color: AppColors.warning.withValues(alpha: 0.15),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: ListTile(
+                      leading: const Icon(Icons.qr_code_2, color: AppColors.warning),
+                      title: const Text('Распечатайте новые QR-коды столов'),
+                      subtitle: const Text(
+                          'Старые наклейки больше не открывают счёт гостя: в новых есть секрет стола.'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => const TableQrScreen())),
+                    ),
+                  ),
+          ),
           for (final entry in groups.entries) ...[
             Padding(
               padding: const EdgeInsets.only(bottom: 10, top: 6),

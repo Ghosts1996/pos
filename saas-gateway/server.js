@@ -87,8 +87,8 @@ const TENANT_SUBCOLLECTIONS = [
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
-  "staffShifts", "stories", "tables", "tips", "usage", "waiterCalls",
-  "waitlist",
+  "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
+  "waiterCalls", "waitlist",
 ];
 
 // Демо-заведения создаются анонимно и удаляются сами по расписанию.

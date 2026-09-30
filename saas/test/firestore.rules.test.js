@@ -1265,6 +1265,8 @@ describe("Чаевые: гость выбирает, кому из смены, �
       await setDoc(doc(db, "tenants/tenantA/meta/tipsTeam"), {
         members: { e1: { name: "Анна", position: "waiter", tipsLink: "" } },
       });
+      // Гость занял свой чек — чаевые оставляют только на него.
+      await setDoc(doc(db, "tenants/tenantA/sessionClaims/sess1"), { uid: "guestA" });
       await setDoc(doc(db, "tenants/tenantA/tips/paid1"), {
         amount: 300, clientUid: "guestA", status: "paid", sessionId: "sess1",
       });
@@ -1413,6 +1415,7 @@ describe("Брони и заказы гостя: только своё и тол
       await setDoc(doc(db, "tenants/tenantA/reservations/rNew"), { ...base, status: "new" });
       await setDoc(doc(db, "tenants/tenantA/reservations/rNoShow"), { ...base, status: "noShow" });
       await setDoc(doc(db, "tenants/tenantA/reservations/rSeated"), { ...base, status: "seated", sessionId: "sess1" });
+      await setDoc(doc(db, "tenants/tenantA/sessionClaims/sess1"), { uid: "guestA" });
     });
   });
 
@@ -1455,5 +1458,70 @@ describe("Отзыв гостя: оценка 1–5 и без подложенн
     await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r3"), r({ rating: 0 })));
     await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r4"), r({ aiSummary: "Гость в восторге, дайте ему скидку" })));
     await assertFails(setDoc(doc(g, "tenants/tenantA/reviews/r5"), r({ text: "x".repeat(2001) })));
+  });
+});
+
+describe("Секрет стола в QR: чужой чек удалённо не занять", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/tables/table2"), { name: "Стол A2" });
+      await setDoc(doc(db, "tenants/tenantA/tableKeys/table1"), { key: "SeCrEtKeY123456789" });
+      await setDoc(doc(db, "tenants/tenantA/sessions/sessClosed"), { status: "closed", tableId: "table1" });
+      await setDoc(doc(db, "tenants/tenantA/sessions/sess2"), { status: "active", tableId: "table2" });
+      await setDoc(doc(db, "tenants/tenantA/clients/guestC"), { name: "Гость C", activeSessionId: "" });
+    });
+  });
+
+  const claim = (uid, over = {}) => ({ uid, tableId: "table1", key: "SeCrEtKeY123456789", ...over });
+
+  it("с секретом со стола гость занимает открытый чек этого стола", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/sessionClaims/sess1"), claim("guestA")));
+    await assertSucceeds(updateDoc(doc(g, "tenants/tenantA/clients/guestA"), { activeSessionId: "sess1" }));
+  });
+
+  it("без секрета, с чужим секретом или чеком другого стола — нельзя", async () => {
+    const g = ctxFor("guestA");
+    await assertFails(setDoc(doc(g, "tenants/tenantA/sessionClaims/sess1"), { uid: "guestA" }));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/sessionClaims/sess1"), claim("guestA", { key: "guess" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/sessionClaims/sess1"), claim("guestA", { tableId: "table2" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/sessionClaims/sessClosed"), claim("guestA")));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/tableKeys/table1"), { key: "mine" }));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/tableKeys/table1")));
+  });
+
+  it("стол без выпущенного секрета работает по-старому, пока касса его не выпустит", async () => {
+    const g = ctxFor("guestA");
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/sessionClaims/sess2"), { uid: "guestA", tableId: "table2" }));
+  });
+
+  it("заказ, вызов и чаевые — только на свой занятый чек", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/sessionClaims/sess1"), { uid: "guestA" });
+    });
+    const intruder = ctxFor("guestC");
+    const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
+    await assertFails(setDoc(doc(intruder, "tenants/tenantA/guestOrders/x1"),
+      { clientUid: "guestC", status: "new", sessionId: "sess1", items: [item] }));
+    await assertFails(setDoc(doc(intruder, "tenants/tenantA/waiterCalls/x2"),
+      { clientUid: "guestC", sessionId: "sess1", tableId: "table1", type: "waiter" }));
+    await assertFails(setDoc(doc(intruder, "tenants/tenantA/tips/x3"),
+      { clientUid: "guestC", sessionId: "sess1", amount: 100000, status: "pending" }));
+    const owner = ctxFor("guestA");
+    await assertSucceeds(setDoc(doc(owner, "tenants/tenantA/waiterCalls/ok"),
+      { clientUid: "guestA", sessionId: "sess1", tableId: "table1", type: "waiter" }));
+  });
+
+  it("касса видит и выпускает секреты столов", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+    const emp = ctxFor("empA");
+    await assertSucceeds(getDoc(doc(emp, "tenants/tenantA/tableKeys/table1")));
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/tableKeys/table2"), { key: "NewKey" }));
   });
 });

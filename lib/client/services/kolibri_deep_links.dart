@@ -34,7 +34,8 @@ class KolibriDeepLinks {
   void Function()? onNeedsPhone;
 
   /// За столом несколько открытых чеков — нужно спросить гостя, какой его.
-  void Function(String tableId, String tableName, List<TableCheck> checks)?
+  /// [tableKey] — секрет стола из QR, нужен для привязки к выбранному.
+  void Function(String tableId, String tableName, List<TableCheck> checks, String tableKey)?
       onChooseCheck;
 
   Future<void> start() async {
@@ -61,10 +62,12 @@ class KolibriDeepLinks {
   Future<void> _handle(Uri uri) async {
     final tableId = _extractTableId(uri);
     if (tableId == null) return;
+    // Секрет стола из QR (см. TableKeyService).
+    final tableKey = uri.queryParameters['k'] ?? '';
 
     try {
       await _auth.ensureGuest();
-      final result = await _guest.bindToTable(_auth.uid, tableId);
+      final result = await _guest.bindToTable(_auth.uid, tableId, tableKey: tableKey);
       if (result.phoneRequired) {
         onNeedsPhone?.call();
         return;
@@ -75,11 +78,13 @@ class KolibriDeepLinks {
         return;
       }
       if (result.needsChoice) {
-        onChooseCheck?.call(tableId, result.tableName, result.choices);
+        onChooseCheck?.call(tableId, result.tableName, result.choices, tableKey);
         return;
       }
       onTableBound?.call(result.sessionId!);
     } on SessionTakenException catch (e) {
+      onFailed?.call(humanError(e));
+    } on TableCodeException catch (e) {
       onFailed?.call(humanError(e));
     } catch (e) {
       onFailed?.call('Не удалось открыть стол: ${humanError(e, lower: true)}');

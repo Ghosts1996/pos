@@ -62,6 +62,8 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
     if (raw == null) return;
 
     final tableId = _extractTableId(raw);
+    // Секрет стола из QR (параметр k, см. TableKeyService).
+    final tableKey = Uri.tryParse(raw.trim())?.queryParameters['k'] ?? '';
     if (tableId == null) {
       setState(() => _error = 'Это не код стола');
       return;
@@ -74,7 +76,7 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
 
     try {
       await _auth.ensureGuest();
-      final result = await _link.bindToTable(_auth.uid, tableId);
+      final result = await _link.bindToTable(_auth.uid, tableId, tableKey: tableKey);
       if (!mounted) return;
       if (result.phoneRequired) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -107,8 +109,8 @@ class _KolibriQrScanScreenState extends State<KolibriQrScanScreen> {
           return;
         }
         try {
-          await _link.bindToSession(_auth.uid, tableId, picked.id);
-        } on SessionTakenException catch (e) {
+          await _link.bindToSession(_auth.uid, tableId, picked.id, tableKey: tableKey);
+        } on Exception catch (e) {
           if (!mounted) return;
           setState(() {
             _handling = false;

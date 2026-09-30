@@ -81,7 +81,7 @@ class _KolibriShellState extends State<KolibriShell> {
         );
       }
       // За столом несколько счетов — спрашиваем, какой из них гостя.
-      ..onChooseCheck = (tableId, tableName, checks) async {
+      ..onChooseCheck = (tableId, tableName, checks, tableKey) async {
         if (!mounted) return;
         final picked = await CheckPickerSheet.show(
           context,
@@ -90,7 +90,7 @@ class _KolibriShellState extends State<KolibriShell> {
         );
         if (picked == null || !mounted) return;
         try {
-          await _link.bindToSession(_auth.uid, tableId, picked.id);
+          await _link.bindToSession(_auth.uid, tableId, picked.id, tableKey: tableKey);
         } catch (e) {
           // «Чек занят» и обрыв сети — одинаково: сказать гостю, что не так.
           if (!mounted) return;

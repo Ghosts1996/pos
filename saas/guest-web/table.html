@@ -158,6 +158,13 @@
   var parts = location.pathname.split('/').filter(Boolean);
   var tableId = parts.length ? parts[parts.length - 1] : '';
   var query = location.search || '';
+  // Секрет стола из QR (?k=…): без него счёт стола не открыть. Передаём
+  // его дальше — в приложение и в веб-версию.
+  var keyMatch = query.match(/[?&]k=([^&#]+)/);
+  var tableKey = keyMatch ? decodeURIComponent(keyMatch[1]) : '';
+  var keyQuery = tableKey ? '?k=' + encodeURIComponent(tableKey) : '';
+  var webLink = '/app/#/t/' + encodeURIComponent(tableId) +
+    (tableKey ? '/' + encodeURIComponent(tableKey) : '');
 
   var opening = document.getElementById('opening');
   var install = document.getElementById('install');
@@ -186,11 +193,12 @@
   // На Android — intent:// с запасным адресом: голый kolibri:// без
   // установленного приложения молча ничего не делает.
   var appLink = tableId
-    ? 'kolibri://table/' + encodeURIComponent(tableId)
+    ? 'kolibri://table/' + encodeURIComponent(tableId) + keyQuery
     : 'kolibri://';
 
-  var fallback = location.origin + location.pathname + '?noapp=1';
-  var intentLink = 'intent://table/' + encodeURIComponent(tableId) +
+  var fallback = location.origin + location.pathname + '?noapp=1' +
+    (tableKey ? '&k=' + encodeURIComponent(tableKey) : '');
+  var intentLink = 'intent://table/' + encodeURIComponent(tableId) + keyQuery +
     '#Intent;scheme=kolibri;package=com.kolibriloungesaas;' +
     'S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
 
@@ -218,7 +226,7 @@
 
   var webBtn = document.getElementById('web');
   if (webBtn && tableId) {
-    webBtn.href = '/app/#/t/' + encodeURIComponent(tableId);
+    webBtn.href = webLink;
   }
 
   document.getElementById('retry').addEventListener('click', function (e) {
@@ -234,7 +242,7 @@
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   if (isIOS && tableId) {
-    window.location.replace('/app/#/t/' + encodeURIComponent(tableId));
+    window.location.replace(webLink);
   } else if (query.indexOf('noapp=1') !== -1 || !tableId) {
     showInstall();
   } else {

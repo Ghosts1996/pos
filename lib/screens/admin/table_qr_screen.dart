@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/table_model.dart';
 import '../../services/app_scope.dart';
 import '../../services/firestore_service.dart';
+import '../../services/table_key_service.dart';
 import '../../theme/app_colors.dart';
 
 /// QR-коды столов для печати.
@@ -13,7 +14,11 @@ import '../../theme/app_colors.dart';
 /// `kolibri://table/{id}`, а без приложения предлагает его скачать. Голую
 /// `kolibri://` телефону без приложения нечем открыть. Старые наклейки с
 /// `kolibri://table/{id}` приложение понимает по-прежнему.
-class TableQrScreen extends StatelessWidget {
+///
+/// В SaaS в ссылке ещё и секрет стола (`?k=`, см. TableKeyService): без
+/// него чек стола не занять, поэтому наклейки с прежними кодами после
+/// выпуска секретов больше не открывают счёт.
+class TableQrScreen extends StatefulWidget {
   const TableQrScreen({super.key});
 
   /// Домен Firebase Hosting. Это отдельный сайт `colibri-lounge` внутри
@@ -36,10 +41,11 @@ class TableQrScreen extends StatelessWidget {
   /// Ссылка для НОВЫХ наклеек — через страницу-прослойку. В SaaS-режиме
   /// без AppScope.slug (например демо-заведение без человекочитаемого кода)
   /// откатываемся на tenantId — работает как адрес, просто менее красиво.
-  static String linkFor(String tableId) {
+  static String linkFor(String tableId, {String key = ''}) {
     if (AppScope.isSaasMode) {
       final host = (AppScope.slug?.isNotEmpty ?? false) ? AppScope.slug! : AppScope.tenantId!;
-      return 'https://$host.$saasDomain/table/$tableId';
+      final k = key.isEmpty ? '' : '?k=${Uri.encodeQueryComponent(key)}';
+      return 'https://$host.$saasDomain/table/$tableId$k';
     }
     return '$hostingDomain/table/$tableId';
   }
@@ -49,8 +55,85 @@ class TableQrScreen extends StatelessWidget {
   static String legacyLinkFor(String tableId) => 'kolibri://table/$tableId';
 
   @override
+  State<TableQrScreen> createState() => _TableQrScreenState();
+}
+
+class _TableQrScreenState extends State<TableQrScreen> {
+  final _fs = FirestoreService();
+  final _keys = TableKeyService.instance;
+  late final Stream<Map<String, String>> _keysStream =
+      _keys.enabled ? _keys.keysStream() : Stream.value(const <String, String>{});
+  late final Stream<bool> _reprint = _keys.reprintNeededStream();
+
+  @override
+  void initState() {
+    super.initState();
+    // Столы, добавленные до секретов или с другой кассы, — выпускаем сразу.
+    _keys.ensureKeys().catchError((_) => 0);
+  }
+
+  Future<void> _rotate(TableModel table) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Новый код для «${table.name}»?'),
+        content: const Text('Наклейка, которая сейчас на столе, перестанет открывать счёт. '
+            'Нужно, если её сфотографировали или она попала в чужие руки. '
+            'После этого распечатайте и наклейте новый код.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Выпустить новый')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _keys.rotate(table.id);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось — проверьте интернет')));
+    }
+  }
+
+  Widget _reprintBanner() => StreamBuilder<bool>(
+        stream: _reprint,
+        builder: (context, snap) {
+          if (snap.data != true) return const SizedBox.shrink();
+          return Container(
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.warning.withValues(alpha: 0.6)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Распечатайте новые коды', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                const SizedBox(height: 4),
+                const Text(
+                  'В кодах теперь есть секрет стола — без него чужой счёт не открыть удалённо. '
+                  'Старые наклейки больше не открывают счёт гостя: замените их на эти.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => _keys.markPrinted().catchError((_) {}),
+                    child: const Text('Наклейки заменены'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+  @override
   Widget build(BuildContext context) {
-    final fs = FirestoreService();
+    final fs = _fs;
 
     return Scaffold(
       appBar: AppBar(
@@ -67,6 +150,9 @@ class TableQrScreen extends StatelessWidget {
                     'Распечатайте коды и наклейте на столы. Гость сканирует код '
                     'обычной камерой телефона и сразу видит свой счёт, таймер и '
                     'кнопки вызова кальянщика.\n\n'
+                    'В каждом коде — секрет стола: счёт открывается только у того, '
+                    'кто сканировал код на самом столе. Если наклейку сфотографировали, '
+                    'нажмите «Новый код» у стола и замените её.\n\n'
                     'Если приложения у гостя нет, код открывает страницу с '
                     'предложением установить его — с Яндекс.Диска или Google '
                     'Диска.\n\n'
@@ -90,40 +176,47 @@ class TableQrScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<List<TableModel>>(
-        stream: fs.tablesStream(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final tables = snap.data!..sort((a, b) => a.name.compareTo(b.name));
-          if (tables.isEmpty) {
-            return const Center(
-              child: Text('Сначала добавьте столы в карту зала',
-                  style: TextStyle(color: AppColors.textMuted)),
-            );
-          }
-          // Колонки по ширине экрана (карточка ~240 dp), высота — QR во всю
-          // ширину плюс подписи с поправкой на крупный системный шрифт.
-          return LayoutBuilder(builder: (context, box) {
-            const pad = 16.0, gap = 16.0;
-            final cols = math.max(2, ((box.maxWidth - 2 * pad + gap) / (240 + gap)).floor());
-            final cellWidth = (box.maxWidth - 2 * pad - gap * (cols - 1)) / cols;
-            return GridView(
-              padding: const EdgeInsets.all(pad),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: cols,
-                mainAxisSpacing: gap,
-                crossAxisSpacing: gap,
-                mainAxisExtent: cellWidth + MediaQuery.textScalerOf(context).scale(96),
-              ),
-              children: tables.map(_qrCard).toList(),
-            );
-          });
-        },
-      ),
+      body: Column(children: [
+        _reprintBanner(),
+        Expanded(
+            child: StreamBuilder<Map<String, String>>(
+                stream: _keysStream,
+                builder: (context, keysSnap) => StreamBuilder<List<TableModel>>(
+                      stream: fs.tablesStream(),
+                      builder: (context, snap) {
+                        final keys = keysSnap.data ?? const <String, String>{};
+                        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                        final tables = snap.data!..sort((a, b) => a.name.compareTo(b.name));
+                        if (tables.isEmpty) {
+                          return const Center(
+                            child: Text('Сначала добавьте столы в карту зала',
+                                style: TextStyle(color: AppColors.textMuted)),
+                          );
+                        }
+                        // Колонки по ширине экрана (карточка ~240 dp), высота — QR во всю
+                        // ширину плюс подписи с поправкой на крупный системный шрифт.
+                        return LayoutBuilder(builder: (context, box) {
+                          const pad = 16.0, gap = 16.0;
+                          final cols = math.max(2, ((box.maxWidth - 2 * pad + gap) / (240 + gap)).floor());
+                          final cellWidth = (box.maxWidth - 2 * pad - gap * (cols - 1)) / cols;
+                          return GridView(
+                            padding: const EdgeInsets.all(pad),
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: cols,
+                              mainAxisSpacing: gap,
+                              crossAxisSpacing: gap,
+                              mainAxisExtent: cellWidth + MediaQuery.textScalerOf(context).scale(96),
+                            ),
+                            children: [for (final t in tables) _qrCard(t, keys[t.id] ?? '')],
+                          );
+                        });
+                      },
+                    ))),
+      ]),
     );
   }
 
-  Widget _qrCard(TableModel table) => Container(
+  Widget _qrCard(TableModel table, String key) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -135,22 +228,31 @@ class TableQrScreen extends StatelessWidget {
             Text(AppScope.branding?.appName ?? 'ZalPOS',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13)),
+                style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13)),
             const SizedBox(height: 8),
             Expanded(
               child: QrImageView(
-                data: linkFor(table.id),
+                data: TableQrScreen.linkFor(table.id, key: key),
                 version: QrVersions.auto,
                 backgroundColor: Colors.white,
               ),
             ),
             const SizedBox(height: 8),
-            Text(table.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: Colors.black, fontSize: 18, fontWeight: FontWeight.w700)),
+            Row(children: [
+              Expanded(
+                child: Text(table.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.w700)),
+              ),
+              if (_keys.enabled)
+                IconButton(
+                  tooltip: 'Новый код',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.autorenew, color: Colors.black54, size: 20),
+                  onPressed: () => _rotate(table),
+                ),
+            ]),
             const Text('Наведите камеру — откроется приложение',
                 textAlign: TextAlign.center,
                 maxLines: 3,
