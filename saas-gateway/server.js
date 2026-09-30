@@ -3884,7 +3884,8 @@ async function handleDeleteDemoTenant(req, res) {
 // в панели платформы (супер-админ — любое). Формат тот же, что у ночной
 // копии всей базы (format: 1, docs: путь → данные), поэтому одно заведение
 // восстанавливается тем же restore-backup.js. Чтения идут из общей квоты
-// базы — большие заведения не выгружаем целиком, а просим написать нам.
+// базы — из кабинета большие заведения не выгружаем целиком, а просим
+// написать нам; супер-админ в панели платформы выгружает без ограничения.
 const EXPORT_MAX_DOCS = Math.max(100, Number(process.env.EXPORT_MAX_DOCS) || 15000);
 // Вложенные коллекции внутри коллекций заведения и сети (см. firestore.rules).
 const EXPORT_NESTED = { clients: ["visits"] };
@@ -3895,13 +3896,14 @@ class ExportTooLarge extends HttpError {
   }
 }
 
-/** Документ со всеми вложенными коллекциями — в docs (путь → данные). */
-async function exportDocTree(ref, docs) {
+/** Документ со всеми вложенными коллекциями — в docs (путь → данные).
+ *  [limit] — сколько документов всего можно выгрузить. */
+async function exportDocTree(ref, docs, limit) {
   const snap = await ref.get();
   if (snap.exists) docs[ref.path] = serializeFirestoreValue(snap.data());
   for (const col of await ref.listCollections()) {
     const all = await col.get();
-    if (Object.keys(docs).length + all.size > EXPORT_MAX_DOCS) throw new ExportTooLarge(Object.keys(docs).length + all.size);
+    if (Object.keys(docs).length + all.size > limit) throw new ExportTooLarge(Object.keys(docs).length + all.size);
     all.docs.forEach((d) => { docs[d.ref.path] = serializeFirestoreValue(d.data()); });
     const nested = EXPORT_NESTED[col.id] || [];
     for (let i = 0; nested.length && i < all.docs.length; i += 20) {
@@ -3911,7 +3913,7 @@ async function exportDocTree(ref, docs) {
           sub.docs.forEach((x) => { docs[x.ref.path] = serializeFirestoreValue(x.data()); });
         }
       }));
-      if (Object.keys(docs).length > EXPORT_MAX_DOCS) throw new ExportTooLarge(Object.keys(docs).length);
+      if (Object.keys(docs).length > limit) throw new ExportTooLarge(Object.keys(docs).length);
     }
   }
 }
@@ -3922,9 +3924,9 @@ async function exportWhere(collection, field, value, docs) {
   snap.docs.forEach((d) => { docs[d.ref.path] = serializeFirestoreValue(d.data()); });
 }
 
-async function exportTenant(tenantId, docs) {
+async function exportTenant(tenantId, docs, limit) {
   const firestore = db();
-  await exportDocTree(firestore.collection("tenants").doc(tenantId), docs);
+  await exportDocTree(firestore.collection("tenants").doc(tenantId), docs, limit);
   const sub = await firestore.collection("subscriptions").doc(tenantId).get();
   if (sub.exists) docs[sub.ref.path] = serializeFirestoreValue(sub.data());
   await exportWhere("tenantMembers", "tenantId", tenantId, docs);
@@ -3934,28 +3936,35 @@ async function exportTenant(tenantId, docs) {
 
 async function handleExportBackup(req, res) {
   const decoded = await verifyAuth(req);
-  const { tenantId, chainId } = await parseJsonBody(req);
+  const { tenantId, chainId, unlimited } = await parseJsonBody(req);
   const id = typeof chainId === "string" && chainId ? chainId : typeof tenantId === "string" ? tenantId : "";
   if (!id || id.includes("/")) throw new HttpError(400, "Не указано заведение или сеть");
   const isChain = id === chainId;
   // Свои данные выгружает владелец; чужие — только супер-админ и только
   // сразу после ввода пароля: в файле телефоны и бонусы гостей.
   let superAdmin = false;
-  try {
-    if (isChain) await requireChainRole(id, decoded.uid, ["owner"]);
-    else {
-      // Точку сети выгружает и владелец сети.
-      const pointChainId = (await db().collection("tenants").doc(id).get()).data()?.chainId;
-      await requireTenantRole(id, decoded.uid, ["owner"]).catch(async (e) => {
-        if (!pointChainId) throw e;
-        await requireChainRole(pointChainId, decoded.uid, ["owner"]);
-      });
-    }
-  } catch (e) {
-    if (!(e instanceof HttpError) || e.status !== 403) throw e;
-    superAdmin = await isSuperAdmin(decoded);
-    if (!superAdmin) throw e;
+  // Без ограничения по числу документов — только из панели платформы.
+  if (unlimited === true) {
+    await requireSuperAdmin(decoded);
     requireRecentAuth(decoded);
+    superAdmin = true;
+  } else {
+    try {
+      if (isChain) await requireChainRole(id, decoded.uid, ["owner"]);
+      else {
+        // Точку сети выгружает и владелец сети.
+        const pointChainId = (await db().collection("tenants").doc(id).get()).data()?.chainId;
+        await requireTenantRole(id, decoded.uid, ["owner"]).catch(async (e) => {
+          if (!pointChainId) throw e;
+          await requireChainRole(pointChainId, decoded.uid, ["owner"]);
+        });
+      }
+    } catch (e) {
+      if (!(e instanceof HttpError) || e.status !== 403) throw e;
+      superAdmin = await isSuperAdmin(decoded);
+      if (!superAdmin) throw e;
+      requireRecentAuth(decoded);
+    }
   }
   const firestore = db();
   const root = await firestore.collection(isChain ? "chains" : "tenants").doc(id).get();
@@ -3963,8 +3972,9 @@ async function handleExportBackup(req, res) {
 
   const docs = {};
   const tenantIds = [];
+  const limit = unlimited === true ? Infinity : EXPORT_MAX_DOCS;
   if (isChain) {
-    await exportDocTree(root.ref, docs);
+    await exportDocTree(root.ref, docs, limit);
     const sub = await firestore.collection("subscriptions").doc(id).get();
     if (sub.exists) docs[sub.ref.path] = serializeFirestoreValue(sub.data());
     await exportWhere("chainMembers", "chainId", id, docs);
@@ -3973,17 +3983,17 @@ async function handleExportBackup(req, res) {
     const locations = await firestore.collection("tenants").where("chainId", "==", id).get();
     for (const t of locations.docs) {
       tenantIds.push(t.id);
-      await exportTenant(t.id, docs);
+      await exportTenant(t.id, docs, limit);
     }
   } else {
     tenantIds.push(id);
-    await exportTenant(id, docs);
+    await exportTenant(id, docs, limit);
   }
 
   const name = String(root.data().name || root.data().slug || id);
   await writeSecurityEvent(req, decoded, isChain ? "chainBackupExported" : "tenantBackupExported", {
     tenantId: isChain ? null : id,
-    metadata: { name, chainId: isChain ? id : null, docs: Object.keys(docs).length, bySuperAdmin: superAdmin },
+    metadata: { name, chainId: isChain ? id : null, docs: Object.keys(docs).length, bySuperAdmin: superAdmin, unlimited: unlimited === true },
   });
   const body = zlib.gzipSync(JSON.stringify({
     format: 1, kind: isChain ? "chain" : "tenant", id, name, tenantIds,
