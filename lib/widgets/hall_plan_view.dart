@@ -131,7 +131,7 @@ class _HallPlanViewState extends State<HallPlanView> {
 
   /// Схема «по столам»: область столов по центру в удобном масштабе.
   Widget _fitted(BoxConstraints box) {
-    const pad = 12.0;
+    const pad = 8.0;
     final viewport = Size(box.maxWidth, box.maxHeight);
     final content = hallContentRect(widget.tables);
     final scale = HallPlanView.fitScale(content, viewport, pad: pad);
