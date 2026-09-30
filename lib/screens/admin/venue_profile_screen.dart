@@ -32,6 +32,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   bool _loading = true;
   bool _cloudFunctions = false;
   String _venueType = VenueTerms.hookah;
+  bool _hookah = true;
   bool _tipsEnabled = true;
   bool _tipsTeamEnabled = true;
 
@@ -55,6 +56,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _lon.text = p.lon == 0 ? '' : p.lon.toString();
     _cloudFunctions = p.cloudFunctionsEnabled;
     _venueType = p.venueType;
+    _hookah = p.terms.isHookah;
     _tipsEnabled = p.tipsEnabled;
     _tipsTeamEnabled = p.tipsTeamEnabled;
     for (var i = 1; i <= 7; i++) {
@@ -74,6 +76,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       lon: double.tryParse(_lon.text.trim().replaceAll(',', '.')) ?? 0,
       cloudFunctionsEnabled: _cloudFunctions,
       venueType: _venueType,
+      hookahEnabled: _hookah,
       tipsEnabled: _tipsEnabled,
       tipsTeamEnabled: _tipsTeamEnabled,
       workingHours: {
@@ -118,15 +121,33 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               initialValue: _venueType,
               decoration: const InputDecoration(
                 labelText: 'Тип заведения',
-                helperText: 'От него зависят слова в приложении гостя («позвать '
-                    'кальянщика» или «позвать официанта») и кнопки вызова за столом.',
+                helperText: 'От него зависят слова в приложении гостя: кто обслуживает '
+                    'стол — официант, бармен или кальянщик.',
                 helperMaxLines: 3,
               ),
               items: [
                 for (final t in VenueTerms.types)
                   DropdownMenuItem(value: t, child: Text(VenueTerms.typeLabel(t))),
               ],
-              onChanged: (v) => setState(() => _venueType = v ?? VenueTerms.hookah),
+              // Сменили тип — кальяны по умолчанию для него; поправить
+              // можно переключателем ниже (ресторан с кальянами и т. п.).
+              onChanged: (v) => setState(() {
+                _venueType = v ?? VenueTerms.hookah;
+                _hookah = _venueType == VenueTerms.hookah;
+              }),
+            ),
+            const SizedBox(height: 8),
+            const Text('Функции', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _hookah,
+              onChanged: (v) => setState(() => _hookah = v),
+              title: const Text('Заведение с кальянами'),
+              subtitle: Text(_hookah
+                  ? 'У гостя за столом есть кнопки «Позвать кальянщика», «Поменять угли» и '
+                      '«Перезабивка», на кассе — перезабивка и напоминания про угли.'
+                  : 'Кальянных кнопок у гостя нет: только «Позвать официанта» и «Счёт». '
+                      'Включите, если подаёте кальяны.'),
             ),
             const SizedBox(height: 12),
             TextField(controller: _address, decoration: const InputDecoration(labelText: 'Адрес')),

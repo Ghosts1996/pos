@@ -363,11 +363,20 @@ class AiToolRegistry {
           final tableDoc = await AppScope.col('tables').doc(tableId).get();
           tableName = tableDoc.exists ? TableModel.fromDoc(tableDoc).name : '';
         }
+        var type = GuestCallTypeX.fromCode(args['type']?.toString());
+        // Без кальянов (переключатель «Заведение с кальянами») звать
+        // кальянщика некому: «waiter» — это официант, угли и перезабивки нет.
+        if (!VenueService.instance.terms.isHookah) {
+          if (type == GuestCallType.coal || type == GuestCallType.refill) {
+            return 'В этом заведении нет кальянов — можно позвать официанта или попросить счёт.';
+          }
+          if (type == GuestCallType.waiter) type = GuestCallType.callWaiter;
+        }
         await _link.callStaff(
           tableId: tableId,
           tableName: tableName,
           sessionId: profile.activeSessionId,
-          type: GuestCallTypeX.fromCode(args['type']?.toString()),
+          type: type,
           clientUid: ctx.guestUid,
           guestName: profile.name,
           comment: args['comment']?.toString() ?? '',
