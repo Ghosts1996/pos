@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/app_lock.dart';
+
 /// Приводит любой российский номер к единому формату без «+»: 79995061580.
 ///
 /// Поддерживаемые форматы ввода:
@@ -68,7 +70,8 @@ Future<void> callGuest(BuildContext context, String phone) async {
   // path как обычный сегмент и может потерять ведущий «+».
   bool opened = false;
   try {
-    opened = await launchUrl(Uri.parse('tel:$e164'));
+    // Звонок — дело кассы: вернувшись, сотрудник продолжает без PIN.
+    opened = await AppLock.instance.whileAway(() => launchUrl(Uri.parse('tel:$e164')));
   } catch (_) {
     opened = false;
   }

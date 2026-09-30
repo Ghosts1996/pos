@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../build_info.dart';
+import 'app_lock.dart';
 import 'app_scope.dart';
 
 /// Что сейчас с обновлением — по этому рисуется плашка (AppUpdateBanner).
@@ -471,7 +472,9 @@ class AppUpdateService {
       // неизвестных приложений» для этого приложения — один раз, дальше
       // обновления идут без этого шага.
       if (!await Permission.requestInstallPackages.isGranted) {
-        final status = await Permission.requestInstallPackages.request();
+        // Настройки и установщик — выходы самой кассы, PIN после них
+        // не спрашиваем (AppLock).
+        final status = await AppLock.instance.whileAway(() => Permission.requestInstallPackages.request());
         if (!status.isGranted) {
           state.value = AppUpdateState(AppUpdatePhase.ready,
               info: info,
@@ -480,7 +483,8 @@ class AppUpdateService {
           return;
         }
       }
-      final result = await OpenFilex.open(file.path, type: 'application/vnd.android.package-archive');
+      final result = await AppLock.instance
+          .whileAway(() => OpenFilex.open(file.path, type: 'application/vnd.android.package-archive'));
       if (result.type != ResultType.done) throw _UpdateError(result.message);
       // Открылся системный установщик. Отменили его — плашка остаётся с
       // кнопкой «Установить»; подтвердили — Android заменит приложение.

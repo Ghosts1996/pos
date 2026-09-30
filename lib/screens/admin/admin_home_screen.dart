@@ -93,8 +93,8 @@ class AdminHomeScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Выйти',
-            // Забываем сохранённый вход — иначе экран PIN тут же вернул
-            // бы в приложение того же сотрудника.
+            // Забываем сохранённый вход: вызовы гостей больше не адресуются
+            // ушедшему сотруднику, а вход спросит PIN следующего.
             onPressed: () async {
               await StaffSessionStore.instance.forget();
               if (!context.mounted) return;
