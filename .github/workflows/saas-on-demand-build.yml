@@ -62,7 +62,7 @@ jobs:
             default_adaptive_icon: assets/icon/icon_foreground.png
             default_adaptive_bg: assets/icon/icon_background.png
             default_label: 'ZalPOS'
-            artifact_prefix: hookah-pos-saas
+            artifact_prefix: zalpos-kassa
           - app: kolibri
             entrypoint: lib/client/kolibri_main.dart
             project_name: kolibriloungesaas       # applicationId = com.kolibriloungesaas
@@ -75,7 +75,7 @@ jobs:
             default_adaptive_icon: assets/icon/guest_icon_foreground.png
             default_adaptive_bg: assets/icon/icon_background.png
             default_label: 'ZalPOS'
-            artifact_prefix: colibri-lounge-saas
+            artifact_prefix: zalpos-guest
     name: Build ${{ matrix.app }}
 
     steps:
@@ -871,7 +871,7 @@ jobs:
       - name: Upload Windows build artifact (GitHub Actions run log)
         uses: actions/upload-artifact@v4
         with:
-          name: hookah-pos-windows-${{ inputs.job_id_pos_windows }}
+          name: zalpos-kassa-windows-${{ inputs.job_id_pos_windows }}
           path: ${{ steps.zip.outputs.path }}
 
       # Тот же сервер и скрипт deploy-tenant-apk.sh: файл на диске всегда

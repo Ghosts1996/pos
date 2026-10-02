@@ -15,6 +15,7 @@ import '../services/app_update_service.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
 import '../utils/adaptive.dart';
+import '../utils/release_error_widget.dart';
 import '../widgets/app_update_banner.dart';
 import 'screens/kolibri_shell.dart';
 import 'screens/kolibri_venue_picker_screen.dart';
@@ -30,6 +31,7 @@ import 'theme/kolibri_theme.dart';
 /// это отдельный путь запуска, см. _KolibriChainBootstrap.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  installReleaseErrorWidget();
   // Гость в SaaS-сборке не видит ключей ИИ (meta/aiSecrets читает только
   // персонал) — ИИ-консьерж ходит к модели через saas-gateway, который
   // подставляет ключ заведения и ограничивает число запросов гостя.

@@ -28,6 +28,7 @@ import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
 import 'utils/adaptive.dart';
+import 'utils/release_error_widget.dart';
 import 'widgets/app_update_banner.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
@@ -40,6 +41,7 @@ const _supabaseAnonKey =
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  installReleaseErrorWidget();
   // Свернули кассу — при возвращении PIN (AppLock). До runApp: «Назад» под
   // блокировкой должен достаться ему раньше, чем навигатору.
   AppLock.instance.start();
@@ -92,7 +94,7 @@ void main() async {
         // перезапуска оно уже есть, при первом запуске надо присоединиться.
         final tenantConfigService = TenantConfigService();
         await tenantConfigService.loadFromCache();
-        final cachedDemo = tenantConfigService.current?.tenant.demo == true;
+        var cachedDemo = tenantConfigService.current?.tenant.demo == true;
         final uid = FirebaseAuth.instance.currentUser?.uid;
         TenantConfig? config;
         if (uid != null) {
@@ -103,6 +105,12 @@ void main() async {
             // см. TenantConfigService.isStale), а не блокируем POS.
             config = tenantConfigService.current;
           }
+        }
+        // Касса заведения поставлена поверх другой (обычно поверх демо с
+        // сайта) — сначала присоединяемся к заведению этой сборки.
+        if (config != null && await PresetJoinMarker.pending(config.tenant.slug)) {
+          config = null;
+          cachedDemo = false;
         }
         if (config != null) {
           AppScope.enterTenant(config.tenant.id,

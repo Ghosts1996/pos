@@ -25,6 +25,8 @@ Future<void> joinAndEnterTenant({
   if (config == null) {
     throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
   }
+  // Сотрудники у каждого заведения свои: вход прежнего здесь не действует.
+  if (AppScope.tenantId != tenantId) await StaffSessionStore.instance.forget();
   AppScope.enterTenant(tenantId,
       branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
   SubscriptionGate.watch(tenantId, config);
