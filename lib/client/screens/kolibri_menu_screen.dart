@@ -26,7 +26,11 @@ class KolibriMenuScreen extends StatefulWidget {
   /// отправляется на кухню.
   final bool preOrderMode;
 
-  const KolibriMenuScreen({super.key, this.preOrderMode = false});
+  /// Открыто кнопкой «Сделать заказ» с экрана «Мой стол»: после отправки
+  /// гость возвращается к своему столу и видит там статус заказа.
+  final bool tableOrderMode;
+
+  const KolibriMenuScreen({super.key, this.preOrderMode = false, this.tableOrderMode = false});
 
   @override
   State<KolibriMenuScreen> createState() => _KolibriMenuScreenState();
@@ -750,7 +754,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// Справа оставляем под неё место, чтобы кнопка «Заказать» не пряталась
   /// под кружком консьержа.
   Widget _cartBar() => Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 72, 24),
+        padding: EdgeInsets.fromLTRB(16, 12, widget.tableOrderMode ? 16 : 72, 24),
         decoration: BoxDecoration(
           color: KolibriColors.surfaceElevated,
           border: Border(top: BorderSide(color: KolibriColors.border)),
@@ -812,6 +816,10 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Заказ отправлен — ${VenueService.instance.terms.staff} подтвердит его')),
       );
+      if (widget.tableOrderMode) {
+        Navigator.of(context).pop(true);
+        return;
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
@@ -819,6 +827,21 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     }
     if (mounted) setState(() => _sending = false);
   }
+}
+
+/// «Сделать заказ» с экрана «Мой стол»: меню с корзиной поверх стола.
+/// true — заказ отправлен.
+Future<bool> openTableOrder(BuildContext context, {String tableName = ''}) async {
+  final sent = await Navigator.push<bool>(
+    context,
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: Text(tableName.isEmpty ? 'Заказ за стол' : 'Заказ · ${tableLabel(tableName)}')),
+        body: const KolibriMenuScreen(tableOrderMode: true),
+      ),
+    ),
+  );
+  return sent == true;
 }
 
 /// Открыть меню как выбор предзаказа к брони.
