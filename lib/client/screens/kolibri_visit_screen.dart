@@ -11,6 +11,7 @@ import '../widgets/kolibri_tips_panel.dart';
 import '../../widgets/clock_ticker.dart';
 import '../services/kolibri_auth_service.dart';
 import 'kolibri_hall_map_screen.dart';
+import 'kolibri_menu_screen.dart';
 import 'kolibri_qr_scan_screen.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/table_label.dart';
@@ -187,6 +188,30 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
 
         const SizedBox(height: 20),
 
+        // ---- Заказ со стола ----
+        // Главное действие за столом — дозаказать самому, не дожидаясь
+        // персонала: меню с корзиной, заказ уходит на кассу, персонал
+        // подтверждает его, и позиции появляются в счёте ниже.
+        SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: FilledButton.icon(
+            onPressed: () => openTableOrder(context, tableName: s.tableName),
+            icon: const Icon(Icons.restaurant_menu),
+            label: const Text('Сделать заказ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: FilledButton.styleFrom(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Блюда и напитки — прямо к столу: ${terms.staff} подтвердит заказ, и он появится в счёте.',
+          style: TextStyle(color: KolibriColors.textMuted, fontSize: 12.5, height: 1.4),
+        ),
+
+        const SizedBox(height: 24),
+
         // ---- Кнопки обращений ----
         // Угли, перезабивка и кальянщик — только в кальянной. В ресторане,
         // кафе и баре гость зовёт официанта и просит счёт.
@@ -264,7 +289,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         const Text('Ваш счёт', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
         if (s.orderItems.isEmpty)
-          Text('Пока пусто — закажите в разделе «Меню»',
+          Text('Пока пусто — нажмите «Сделать заказ»',
               style: TextStyle(color: KolibriColors.textMuted))
         else
           Container(
