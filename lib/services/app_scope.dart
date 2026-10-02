@@ -32,6 +32,14 @@ class AppScope {
   static bool _demo = false;
   static bool get isDemo => _demo;
 
+  /// PIN-коды сотрудников демо — у каждой точки демо-сети свои.
+  static DemoPins _demoPins = DemoPins.standard;
+  static DemoPins get demoPins => _demoPins;
+
+  /// Код демо-сети для демо-приложения гостя.
+  static String _demoCode = '';
+  static String get demoCode => _demoCode;
+
   /// Брендинг текущего заведения (имя, логотип, цвета) — задаётся вместе с
   /// [enterTenant]. Касса оформлена в едином стиле ZalPOS и берёт отсюда
   /// только название заведения: подпись на экране входа, чек, QR-коды
@@ -52,7 +60,7 @@ class AppScope {
   /// вызывает это на старте — решает main.dart/kolibri_main.dart, сам
   /// AppScope ничего не знает про Auth/логины.
   static void enterTenant(String tenantId,
-      {BrandingConfig? branding, String? slug, String? chainId, bool demo = false}) {
+      {BrandingConfig? branding, String? slug, String? chainId, bool demo = false, DemoPins demoPins = DemoPins.standard, String demoCode = ''}) {
     if (tenantId.trim().isEmpty) {
       throw ArgumentError('tenantId не может быть пустым');
     }
@@ -61,6 +69,8 @@ class AppScope {
     _slug = slug;
     _chainId = (chainId != null && chainId.isNotEmpty) ? chainId : null;
     _demo = demo;
+    _demoPins = demoPins;
+    _demoCode = demoCode;
   }
 
   /// Возврат в одно-арендный режим (например, выход из SaaS-аккаунта или
@@ -71,6 +81,8 @@ class AppScope {
     _slug = null;
     _chainId = null;
     _demo = false;
+    _demoPins = DemoPins.standard;
+    _demoCode = '';
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому

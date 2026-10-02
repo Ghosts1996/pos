@@ -35,7 +35,36 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build public demo APK
+    # Две демо-сборки для сайта: касса (выбор «Демо» или код заведения) и
+    # приложение гостя (код демо-сети из кассы или новое демо, см.
+    # kSaasGuestDemo в lib/build_info.dart).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: pos
+            entrypoint: lib/main.dart
+            project_name: hookahpossaas
+            application_id: com.hookahpossaas
+            gservices_secret: GOOGLE_SERVICES_JSON_SAAS
+            appid_secret: SAAS_FIREBASE_APP_ID
+            label: 'ZalPOS (демо)'
+            icon: assets/icon/icon.png
+            icon_foreground: assets/icon/icon_foreground.png
+            guest_demo: 'false'
+            apk_name: zalpos-kassa-demo.apk
+          - app: kolibri
+            entrypoint: lib/client/kolibri_main.dart
+            project_name: kolibriloungesaas
+            application_id: com.kolibriloungesaas
+            gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
+            appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
+            label: 'ZalPOS Гость (демо)'
+            icon: assets/icon/guest_icon.png
+            icon_foreground: assets/icon/guest_icon_foreground.png
+            guest_demo: 'true'
+            apk_name: zalpos-guest-demo.apk
+    name: Build public demo APK (${{ matrix.app }})
 
     steps:
       - name: Checkout
@@ -69,7 +98,7 @@ jobs:
           # и у персональных сборок saas-on-demand-build.yml: это ОДНА и та
           # же общая для всех арендаторов кодовая база, разница только в
           # запечённых SAAS_PRESET_*.
-          flutter create . --platforms=android --org com --project-name hookahpossaas
+          flutter create . --platforms=android --org com --project-name ${{ matrix.project_name }}
           test -d android && echo "android/ готова" || (echo "не удалось создать android/" && exit 1)
           rm -f test/widget_test.dart
 
@@ -83,15 +112,17 @@ jobs:
 
       - name: Add google-services.json (SaaS Firebase project)
         env:
-          GSERVICES: ${{ secrets.GOOGLE_SERVICES_JSON_SAAS }}
+          GSERVICES: ${{ secrets[matrix.gservices_secret] }}
+          APP_ID: ${{ matrix.application_id }}
+          SECRET_NAME: ${{ matrix.gservices_secret }}
         run: |
           if [ -z "$GSERVICES" ]; then
-            echo "::error::Секрет GOOGLE_SERVICES_JSON_SAAS не задан (Settings → Secrets and variables → Actions)."
+            echo "::error::Секрет $SECRET_NAME не задан (Settings → Secrets and variables → Actions)."
             exit 1
           fi
           printf '%s' "$GSERVICES" > android/app/google-services.json
-          grep -q "com.hookahpossaas" android/app/google-services.json \
-            || (echo "::error::В GOOGLE_SERVICES_JSON_SAAS нет приложения com.hookahpossaas" && exit 1)
+          grep -q "$APP_ID" android/app/google-services.json \
+            || (echo "::error::В $SECRET_NAME нет приложения $APP_ID" && exit 1)
 
       - name: Apply Google Services Gradle plugin
         run: |
@@ -119,6 +150,8 @@ jobs:
           fi
 
       - name: Ensure required permissions and manifest entries
+        env:
+          APP_LABEL: ${{ matrix.label }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           add_permission() {
@@ -191,10 +224,10 @@ jobs:
               open(path, 'w', encoding='utf-8').write(xml)
 
           # Лейбл под иконкой — общий, эта сборка не привязана к заведению.
+          import os, re
+          label = os.environ['APP_LABEL']
           xml = open(path, encoding='utf-8').read()
-          xml = xml.replace('android:label="hookahpossaas"', 'android:label="ZalPOS (демо)"')
-          import re
-          xml = re.sub(r'android:label="[^"]*"', 'android:label="ZalPOS (демо)"', xml, count=1)
+          xml = re.sub(r'android:label="[^"]*"', 'android:label="' + label + '"', xml, count=1)
           open(path, 'w', encoding='utf-8').write(xml)
           PYEOF
 
@@ -381,17 +414,19 @@ jobs:
 
       - name: Generate app launcher icon
         run: |
-          sed -i -E 's|image_path: ".*"|image_path: "assets/icon/icon.png"|' pubspec.yaml
-          sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "assets/icon/icon_foreground.png"|' pubspec.yaml
+          sed -i -E 's|image_path: ".*"|image_path: "${{ matrix.icon }}"|' pubspec.yaml
+          sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "${{ matrix.icon_foreground }}"|' pubspec.yaml
           dart run flutter_launcher_icons
 
+      # Код у сборок общий — тесты один раз.
       - name: Unit tests
+        if: matrix.app == 'pos'
         run: flutter test
 
       - name: Build APK (release, SaaS mode, без привязки к заведению)
         env:
           SAAS_FIREBASE_API_KEY: ${{ secrets.SAAS_FIREBASE_API_KEY }}
-          SAAS_FIREBASE_APP_ID: ${{ secrets.SAAS_FIREBASE_APP_ID }}
+          SAAS_FIREBASE_APP_ID: ${{ secrets[matrix.appid_secret] }}
           SAAS_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.SAAS_FIREBASE_MESSAGING_SENDER_ID }}
           SAAS_FIREBASE_PROJECT_ID: ${{ secrets.SAAS_FIREBASE_PROJECT_ID }}
           SAAS_FIREBASE_STORAGE_BUCKET: ${{ secrets.SAAS_FIREBASE_STORAGE_BUCKET }}
@@ -403,8 +438,9 @@ jobs:
             exit 1
           fi
           flutter build apk --release \
-            -t lib/main.dart \
+            -t ${{ matrix.entrypoint }} \
             --dart-define=SAAS_MODE=true \
+            --dart-define=SAAS_GUEST_DEMO=${{ matrix.guest_demo }} \
             --dart-define=BUILD_NUMBER=${{ github.run_number }} \
             --dart-define=SAAS_FIREBASE_API_KEY="$SAAS_FIREBASE_API_KEY" \
             --dart-define=SAAS_FIREBASE_APP_ID="$SAAS_FIREBASE_APP_ID" \
@@ -419,14 +455,20 @@ jobs:
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-             build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
+             build/app/outputs/flutter-apk/${{ matrix.apk_name }}
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=public-apk
-          FILE=build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
+          FILE=build/app/outputs/flutter-apk/${{ matrix.apk_name }}
+          if [ "${{ matrix.app }}" != "pos" ]; then
+            # Релиз заводит сборка кассы; приложение гостя только кладёт файл.
+            gh release upload "$TAG" "$FILE" --repo "${{ github.repository }}" --clobber \
+              || echo "::warning::Релиза public-apk ещё нет — файл гостя попадёт в него со следующей сборкой"
+            exit 0
+          fi
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             # Файл со старым названием платформы больше не обновляется.
             gh release delete-asset "$TAG" hookah-pos-public.apk --repo "${{ github.repository }}" -y 2>/dev/null || true
@@ -442,6 +484,7 @@ jobs:
       # в России скачивание зависало. Ключ ограничен forced-command
       # deploy-public-apk.sh — он может только записать этот файл.
       - name: Deploy to own server (pii.zalpos.ru)
+        if: matrix.app == 'pos'
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           SSH_HOST: pii.zalpos.ru
@@ -455,3 +498,22 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@"$SSH_HOST" \
             < build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
+
+      # Демо приложения гостя — тем же скриптом, что и личные сборки
+      # (deploy-tenant-apk.sh): папка publicdemo, файл guestdemo.apk. Отдаёт
+      # его всем saas-gateway (GET /guestDemoApk) через nginx.
+      - name: Deploy guest demo to own server (pii.zalpos.ru)
+        if: matrix.app == 'kolibri'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
+          SSH_HOST: pii.zalpos.ru
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "::warning::DEPLOY_SSH_KEY_TENANT не задан — демо гостя осталось только в GitHub Release."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_tenant_key
+          chmod 600 ~/.ssh/deploy_tenant_key
+          ssh -i ~/.ssh/deploy_tenant_key -o StrictHostKeyChecking=no root@"$SSH_HOST" "publicdemo guestdemo" \
+            < build/app/outputs/flutter-apk/zalpos-guest-demo.apk

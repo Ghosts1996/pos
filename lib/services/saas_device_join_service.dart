@@ -73,15 +73,35 @@ class SaasDeviceJoinService {
   /// Создаёт одноразовое демо-заведение (без email/пароля, само стирается
   /// через несколько часов) и сразу возвращает всё нужное для
   /// присоединения — см. docstring [handleCreateDemoTenant] на сервере.
-  Future<({String tenantId, String inviteCode})> createDemoTenant() async {
+  Future<({String tenantId, String inviteCode, String chainSlug})> createDemoTenant() async {
     final json = await _callGateway('createDemoTenant', {}, requireAuth: false);
     final tenantId = json['tenantId'] as String?;
     final inviteCode = json['inviteCode'] as String?;
     if (tenantId == null || tenantId.isEmpty || inviteCode == null || inviteCode.isEmpty) {
       throw StateError('Сервис не вернул данные демо-заведения');
     }
-    return (tenantId: tenantId, inviteCode: inviteCode);
+    return (tenantId: tenantId, inviteCode: inviteCode, chainSlug: json['chainSlug'] as String? ?? '');
   }
+
+  /// Точки сети [chainId] для выбора кассы при входе (только кассе,
+  /// которая уже работает в одной из точек этой сети).
+  Future<List<ChainPoint>> chainPoints(String chainId) async {
+    final json = await _callGateway('chainPoints', {'chainId': chainId}, requireAuth: true);
+    return ((json['points'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .map((e) => ChainPoint(
+              tenantId: e['tenantId'] as String? ?? '',
+              name: e['name'] as String? ?? '',
+              status: e['status'] as String? ?? 'active',
+            ))
+        .where((p) => p.tenantId.isNotEmpty)
+        .toList();
+  }
+
+  /// Подключить эту кассу к другой точке той же сети (без кода
+  /// приглашения — см. handleChainPointJoin на сервере).
+  Future<void> joinChainPoint(String tenantId) =>
+      _callGateway('chainPointJoin', {'tenantId': tenantId}, requireAuth: true);
 
   Future<Map<String, dynamic>> _callGateway(
     String path,
@@ -121,6 +141,9 @@ class SaasDeviceJoinService {
       json = jsonDecode(resp.body) as Map<String, dynamic>;
     } catch (_) {
       json = const {};
+    }
+    if (resp.statusCode == 404) {
+      throw GatewayNotFound((json['error'] as String?) ?? 'Не найдено');
     }
     if (resp.statusCode != 200) {
       throw StateError((json['error'] as String?) ?? 'Сервис ответил ошибкой (${resp.statusCode})');
@@ -197,6 +220,25 @@ class SaasDeviceJoinService {
       });
     } catch (_) {}
   }
+}
+
+/// Сервер ответил «не найдено» (сети или заведения с таким кодом нет —
+/// например, демо уже сбросилось).
+class GatewayNotFound implements Exception {
+  final String message;
+  const GatewayNotFound(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// Точка сети в выборе кассы при входе.
+class ChainPoint {
+  final String tenantId;
+  final String name;
+  final String status;
+
+  const ChainPoint({required this.tenantId, required this.name, this.status = 'active'});
 }
 
 /// Одна точка сети — то, что нужно показать гостю в списке выбора
