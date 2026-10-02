@@ -35,6 +35,8 @@ import 'theme/kolibri_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   installReleaseErrorWidget();
+  // Цвета заведения с прошлого запуска — экран загрузки сразу в них.
+  await KolibriColors.restoreCachedBranding();
   // Гость в SaaS-сборке не видит ключей ИИ (meta/aiSecrets читает только
   // персонал) — ИИ-консьерж ходит к модели через saas-gateway, который
   // подставляет ключ заведения и ограничивает число запросов гостя.
@@ -182,6 +184,7 @@ Future<BrandingConfig?> _applyTenantBranding() async {
     final doc = await AppScope.col('branding').doc('config').get();
     final branding = BrandingConfig.fromMap(doc.data());
     KolibriColors.applyBranding(branding);
+    unawaited(KolibriColors.cacheBranding(branding));
     return branding;
   } catch (_) {
     return null;
@@ -198,6 +201,7 @@ Future<BrandingConfig?> _applyChainBranding(String chainId) async {
     final doc = await FirebaseFirestore.instance.collection('chains/$chainId/branding').doc('config').get();
     final branding = BrandingConfig.fromMap(doc.data());
     KolibriColors.applyBranding(branding);
+    unawaited(KolibriColors.cacheBranding(branding));
     return branding;
   } catch (_) {
     return null;
@@ -278,6 +282,11 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
         await _enterLocation(live.single.tenantId, directory.chainId);
         return;
       }
+      // Выбор заведения — уже в цветах сети (брендинг сети читается без
+      // входа), а не в нейтральных.
+      final branding = await _applyChainBranding(directory.chainId);
+      if (!mounted) return;
+      if (branding != null && branding.appName.isNotEmpty) _appTitle = branding.appName;
       setState(() {
         _directory = directory;
         _phase = _ChainBootPhase.picking;

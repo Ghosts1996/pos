@@ -367,7 +367,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                   : _venue?.workingHours[_day.weekday]?.isNotEmpty == true
                       ? 'На этот день свободного времени нет — выберите другую дату'
                       : 'В этот день мы закрыты — выберите другую дату',
-              style: const TextStyle(color: KolibriColors.warning),
+              style: TextStyle(color: KolibriColors.warning),
             ),
           )
         else

@@ -63,7 +63,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                   const Text(
                     'Подписка не оплачена',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 14),
                   const Text(
@@ -88,7 +88,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                             ? 'Если подписку не продлить, данные заведения будут безвозвратно удалены через $days ${_pluralDays(days)}.'
                             : 'Льготный период закончился — данные заведения будут удалены при ближайшей проверке.',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, height: 1.4),
+                        style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, height: 1.4),
                       ),
                     ),
                   ],

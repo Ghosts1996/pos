@@ -1,11 +1,15 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/tenant_models.dart';
 
-/// Палитра приложения гостя. По умолчанию «Графит и медь» (как у кассы и
-/// веб-версии гостя), но отдельными полями: брендинг заведения меняет
-/// только гостевое приложение, касса остаётся в фирменных цветах.
+/// Палитра приложения гостя — только цвета заведения (раздел «Брендинг»
+/// в личном кабинете). Цветов ZalPOS здесь нет: пока брендинг не
+/// загружен или владелец какой-то цвет не задал, палитра нейтральная
+/// (графитово-серая), а недостающие цвета выводятся из основного цвета
+/// заведения. Касса остаётся в своих фирменных цветах (AppColors).
 ///
 /// Поля не `const`: экраны гостя берут цвета напрямую из KolibriColors, а
 /// не из Theme, и [applyBranding] подменяет их до первого runApp(). В
@@ -13,12 +17,10 @@ import '../../models/tenant_models.dart';
 class KolibriColors {
   KolibriColors._();
 
-  static const _defaultBackground = Color(0xFF15120F);
-  static const _defaultPrimary = Color(0xFFB35C30);
-  static const _defaultPrimaryPressed = Color(0xFF974B26);
-  static const _defaultGold = Color(0xFFCFA567);
-  static const _defaultAccent = Color(0xFFB35C30);
-  static const _defaultTextPrimary = Color(0xFFF2EADF);
+  // Нейтральная палитра: без оттенка — ни меди, ни синего.
+  static const _defaultBackground = Color(0xFF141414);
+  static const _defaultPrimary = Color(0xFFE8E6E3);
+  static const _defaultTextPrimary = Color(0xFFF2F2F2);
   /// Название, когда у заведения нет своего: в SaaS — бренд платформы (не
   /// имя чужого заведения), в одно-арендной сборке — само заведение.
   static String get _defaultAppName => 'ZalPOS';
@@ -28,30 +30,27 @@ class KolibriColors {
   static Color surfaceElevated = _mix(_defaultBackground, Colors.white, 0.10);
   static Color border = _mix(_defaultBackground, Colors.white, 0.16);
 
-  /// Медь — основной акцент по умолчанию, branding.primaryColor у заведения с брендингом.
+  /// Основной цвет заведения (branding.primaryColor): кнопки, выбранное.
   static Color primary = _defaultPrimary;
-  static Color primaryPressed = _defaultPrimaryPressed;
+  static Color primaryPressed = _mix(_defaultPrimary, Colors.black, 0.18);
 
-  /// Латунь — бонусы, уровни лояльности, «премиальные» акценты по
-  /// умолчанию; branding.secondaryColor у заведения с брендингом.
-  static Color gold = _defaultGold;
+  /// Цвет бонусов и уровней лояльности — второстепенный цвет заведения,
+  /// если он читается, иначе основной.
+  static Color gold = _defaultPrimary;
 
-  /// Акцент кнопок вызова («позвать» и т.п.) — по умолчанию та же медь;
-  /// branding.accentColor у заведения с брендингом.
-  static Color accent = _defaultAccent;
+  /// Акцент кнопок вызова («позвать» и т.п.) — цвет «Кнопки» (buttonColor).
+  static Color accent = _defaultPrimary;
 
   static Color textPrimary = _defaultTextPrimary;
 
   /// Приглушённый текст (подписи, вторичные строки). НЕ `const`, как и всё
-  /// выше: на светлом фоне заведения (пресет «Песочный светлый» в консоли)
-  /// прежняя константа под тёмную тему читалась с контрастом ~2.3:1 —
-  /// [applyBranding] выводит его из пары фон/текст владельца.
-  static Color textMuted = _defaultTextMuted;
-  static const _defaultTextMuted = Color(0xFFA39A8E);
+  /// выше: на светлом фоне заведения прежняя константа под тёмную тему
+  /// читалась бы плохо — [applyBranding] выводит его из пары фон/текст.
+  static Color textMuted = const Color(0xFF9E9E9E);
 
   /// Текст и иконки поверх [primary] — белый или почти чёрный, что
   /// контрастнее на фирменном цвете.
-  static Color onPrimary = Colors.white;
+  static Color onPrimary = const Color(0xFF141414);
 
   /// Подложка «врезок» внутри карточки (ID устройства в профиле) — тёмная
   /// полупрозрачная на тёмной теме, еле заметная на светлой.
@@ -63,39 +62,90 @@ class KolibriColors {
   static bool isLight = false;
 
   /// Название заведения из брендинга (раздел «Брендинг», поле «Имя
-  /// приложения») — как и цвета выше, это НЕ то же самое, что заголовок окна
-  /// (MaterialApp.title в kolibri_main.dart): тот виден только в диспетчере
-  /// задач Android, а этот текст читают прямо на главном экране и в профиле
-  /// (см. applyBranding). Без него после ребрендинга шапка экрана продолжала
-  /// бы показывать название по умолчанию, даже когда заголовок окна уже сменился.
+  /// приложения») — его читают прямо на главном экране и в профиле.
   static String appName = _defaultAppName;
 
+  // ---- Состояния ----
+  // Успех и предупреждение — тоже из цветов заведения (основной и
+  // второстепенный), чтобы в приложении не было чужих оттенков. Красный
+  // остаётся только у ошибок и отмены: его гость должен узнать сразу.
+  static Color success = _defaultPrimary;
+  static Color warning = _defaultPrimary;
+  static const danger = Color(0xFFE5484D);
+
+  // ---- Уровни программы лояльности ----
+  // Ступени одного фирменного цвета: от приглушённого к самому яркому.
+  static Color tierBronze = _defaultPrimary;
+  static Color tierSilver = _defaultPrimary;
+  static Color tierPlatinum = _defaultPrimary;
+  static Color tierDiamond = _defaultPrimary;
+
+  /// Цвет карточки/акцента под текущий уровень гостя (см. ClientProfile.tier).
+  static Color tierColor(String tier) {
+    switch (tier) {
+      case 'Алмаз':
+        return tierDiamond;
+      case 'Платина':
+        return tierPlatinum;
+      case 'Золото':
+        return gold;
+      case 'Серебро':
+        return tierSilver;
+      default:
+        return tierBronze;
+    }
+  }
+
+  static const _cacheKey = 'kolibri.branding.v1';
+
+  /// Последний брендинг заведения с диска — до первого кадра, пока сеть
+  /// ещё не ответила: экран загрузки сразу в цветах заведения, а не в
+  /// нейтральных. Первый запуск — нейтральная палитра.
+  static Future<void> restoreCachedBranding() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cacheKey);
+      if (raw == null) return;
+      final map = jsonDecode(raw);
+      if (map is Map<String, dynamic>) applyBranding(BrandingConfig.fromMap(map));
+    } catch (_) {}
+  }
+
+  static Future<void> cacheBranding(BrandingConfig branding) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cacheKey, jsonEncode(branding.toMap()));
+    } catch (_) {}
+  }
+
   /// Накладывает фирменную палитру заведения (см. saas/console/console.js,
-  /// раздел «Брендинг») поверх дефолтной — вызывается ОДИН раз при старте
-  /// (см. kolibri_main.dart), до runApp(). Защита от нечитаемой пары
-  /// фон/текст — WCAG, порог 3:1: если владелец в консоли выбрал слишком
-  /// похожие фон и текст, откатываемся на дефолтную пару целиком, а не
-  /// показываем нечитаемый экран гостю.
+  /// раздел «Брендинг»). Защита от нечитаемой пары фон/текст — WCAG,
+  /// порог 3:1: если владелец выбрал слишком похожие фон и текст, берём
+  /// нейтральную пару, а не показываем нечитаемый экран гостю.
   static void applyBranding(BrandingConfig branding) {
-    // branding.appName по умолчанию (когда документ пуст/не найден) — общий
-    // для всего приложения дефолт BrandingConfig ("ZalPOS", бренд
-    // кассы) — гостю его показывать нельзя, поэтому здесь свой дефолт, а не
-    // прямое присваивание.
+    // branding.appName по умолчанию — общий для всего приложения дефолт
+    // BrandingConfig ("ZalPOS", бренд кассы) — гостю его показывать нельзя,
+    // поэтому здесь свой дефолт, а не прямое присваивание.
     final name = branding.appName.trim();
     appName = name.isEmpty ? _defaultAppName : name;
 
-    primary = _parseHexColor(branding.primaryColor) ?? _defaultPrimary;
-    primaryPressed = Color.lerp(primary, Colors.black, 0.18) ?? _defaultPrimaryPressed;
-    accent = _parseHexColor(branding.accentColor) ?? _defaultAccent;
-
     var bg = _parseHexColor(branding.backgroundColor) ?? _defaultBackground;
-    var text = _parseHexColor(branding.textColor) ?? _defaultTextPrimary;
+    var text = _parseHexColor(branding.textColor) ??
+        (_relativeLuminance(bg) > 0.4 ? const Color(0xFF1A1A1A) : _defaultTextPrimary);
     if (_contrastRatio(bg, text) < 3.0) {
       bg = _defaultBackground;
       text = _defaultTextPrimary;
     }
     background = bg;
     textPrimary = text;
+
+    // Нет основного цвета — нейтральный: цвет текста заведения.
+    primary = _parseHexColor(branding.primaryColor) ?? text;
+    primaryPressed = Color.lerp(primary, Colors.black, 0.18) ?? primary;
+    // Кнопки вызова — цвет «Кнопки» из «Брендинга». accentColor в кабинете
+    // не настраивается и остаётся от значений по умолчанию (у старых
+    // заведений — синий) — его не берём, иначе в приложении чужой цвет.
+    accent = _parseHexColor(branding.buttonColor) ?? primary;
 
     // Дальше — ровно тот же расчёт, что и в saas/guest-web/app/palette.js
     // (см. его шапку: почему нельзя просто подставить цвета владельца).
@@ -116,20 +166,21 @@ class KolibriColors {
     final surfaces = [bg, surface, surfaceElevated];
     textMuted = _readable(_mix(text, bg, 0.42), surfaces, text, 4.5);
 
-    // «Золото» — бонусы и уровни. Во всех тёмных пресетах консоли
-    // второстепенный цвет — тёмный тон (#162A4A и т.п.), и баланс бонусов
-    // читался с контрастом ~1.2:1. Берём его, только если он читается,
-    // иначе основной, и лишь в крайнем случае — основной, подтянутый к
-    // цвету текста.
+    // «Золото» — бонусы и уровни. Во многих тёмных пресетах второстепенный
+    // цвет — тёмный тон (#162A4A и т.п.), и баланс бонусов читался бы с
+    // контрастом ~1.2:1. Берём его, только если он читается, иначе
+    // основной, и лишь в крайнем случае — основной, подтянутый к тексту.
     final secondary = _parseHexColor(branding.secondaryColor);
     bool readsOnAll(Color c) => surfaces.every((s) => _contrastRatio(c, s) >= 3.0);
-    if (secondary != null && readsOnAll(secondary)) {
-      gold = secondary;
-    } else if (readsOnAll(primary)) {
-      gold = primary;
-    } else {
-      gold = _readable(primary, surfaces, text, 3.0);
-    }
+    final primaryReadable = readsOnAll(primary) ? primary : _readable(primary, surfaces, text, 3.0);
+    gold = secondary != null && readsOnAll(secondary) ? secondary : primaryReadable;
+
+    success = primaryReadable;
+    warning = gold;
+    tierBronze = _readable(_mix(gold, textMuted, 0.55), surfaces, text, 3.0);
+    tierSilver = _readable(_mix(gold, text, 0.45), surfaces, text, 3.0);
+    tierPlatinum = _readable(_mix(primaryReadable, text, 0.30), surfaces, text, 3.0);
+    tierDiamond = primaryReadable;
 
     const darkOnPrimary = Color(0xFF17110C);
     onPrimary = _contrastRatio(primary, Colors.white) >= _contrastRatio(primary, darkOnPrimary)
@@ -174,36 +225,6 @@ class KolibriColors {
   static double _srgbChannel(double c) =>
       c <= 0.03928 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
 
-  // Приглушённые, а не «светофор»: читаются и на тёмном, и на светлом фоне.
-  static const success = Color(0xFF5E9E74);
-  static const warning = Color(0xFFD39A3A);
-  static const danger = Color(0xFFD4553F);
-
-  // ---- Уровни программы лояльности ----
-  // Металлы, а не неон: бронза, сталь, платина, холодный лёд.
-  static const tierBronze = Color(0xFFC08552);
-  static const tierSilver = Color(0xFFB7B9BD);
-  static const tierPlatinum = Color(0xFFDAD4C8);
-  static const tierDiamond = Color(0xFFA9C3DA);
-
-  /// Цвет карточки/акцента под текущий уровень гостя (см. ClientProfile.tier).
-  /// Уровень «Золото» намеренно ссылается на живое поле [gold], а не на
-  /// отдельную константу — он и есть тот самый фирменный акцент лояльности,
-  /// который меняет [applyBranding].
-  static Color tierColor(String tier) {
-    switch (tier) {
-      case 'Алмаз':
-        return tierDiamond;
-      case 'Платина':
-        return tierPlatinum;
-      case 'Золото':
-        return gold;
-      case 'Серебро':
-        return tierSilver;
-      default:
-        return tierBronze;
-    }
-  }
 }
 
 class KolibriTheme {

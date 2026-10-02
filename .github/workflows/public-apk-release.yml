@@ -51,6 +51,7 @@ jobs:
             label: 'ZalPOS (демо)'
             icon: assets/icon/icon.png
             icon_foreground: assets/icon/icon_foreground.png
+            icon_background: assets/icon/icon_background.png
             guest_demo: 'false'
             apk_name: zalpos-kassa-demo.apk
           - app: kolibri
@@ -62,6 +63,7 @@ jobs:
             label: 'ZalPOS Гость (демо)'
             icon: assets/icon/guest_icon.png
             icon_foreground: assets/icon/guest_icon_foreground.png
+            icon_background: assets/icon/guest_icon_background.png
             guest_demo: 'true'
             apk_name: zalpos-guest-demo.apk
     name: Build public demo APK (${{ matrix.app }})
@@ -416,6 +418,7 @@ jobs:
         run: |
           sed -i -E 's|image_path: ".*"|image_path: "${{ matrix.icon }}"|' pubspec.yaml
           sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "${{ matrix.icon_foreground }}"|' pubspec.yaml
+          sed -i -E 's|adaptive_icon_background: ".*"|adaptive_icon_background: "${{ matrix.icon_background }}"|' pubspec.yaml
           dart run flutter_launcher_icons
 
       # Код у сборок общий — тесты один раз.

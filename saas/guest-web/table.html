@@ -29,15 +29,17 @@
 -->
 <link rel="stylesheet" href="/app/fonts.css">
 <style>
-  /* Палитра по умолчанию — «Графит и медь», как в app.css. */
+  /* Нейтральная палитра до загрузки брендинга, как в app.css: гость
+     видит только цвета заведения. */
   :root {
-    --bg: #15120F;
-    --surface: #1E1A16;
-    --border: #36302A;
-    --text: #F2EADF;
-    --muted: #A39A8E;
-    --primary: #B35C30;
-    --gold: #CFA567;
+    --bg: #141414;
+    --surface: #1E1E1E;
+    --border: #383838;
+    --text: #F2F2F2;
+    --muted: #A0A0A0;
+    --primary: #E8E6E3;
+    --on-primary: #17110C;
+    --gold: #D9D9D9;
   }
   * { box-sizing: border-box; }
   body {
@@ -311,8 +313,8 @@
       try {
         localStorage.setItem('brand:' + slug, JSON.stringify({
           primaryColor: b.primaryColor, secondaryColor: b.secondaryColor,
-          backgroundColor: b.backgroundColor, textColor: b.textColor,
-          appName: b.appName,
+          buttonColor: b.buttonColor, backgroundColor: b.backgroundColor,
+          textColor: b.textColor, appName: b.appName,
         }));
       } catch (_) {}
     } catch (e) {

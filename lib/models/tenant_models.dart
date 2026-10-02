@@ -336,13 +336,10 @@ class BrandingConfig {
   final bool darkMode;
   final String logoUrl;
 
-  // Значения по умолчанию — РОВНО палитра «Графит и медь» из
-  // lib/theme/app_colors.dart (AppColors.primary/background/textPrimary/
-  // brass), а не какие-то отдельные цвета: свежее заведение без
-  // кастомного брендинга должно выглядеть БАЙТ-В-БАЙТ как проверенный
-  // одно-арендный продукт, а не как случайно другая палитра. (Строковые
-  // литералы, а не импорт AppColors, — эта модель намеренно не зависит от
-  // слоя темы/UI, см. заголовок файла.)
+  // Значения по умолчанию — палитра «Графит и медь», с которой создаются
+  // новые заведения (saas-gateway, createTenant): владелец меняет её в
+  // разделе «Брендинг». Строковые литералы, а не импорт AppColors, — эта
+  // модель намеренно не зависит от слоя темы/UI, см. заголовок файла.
   const BrandingConfig({
     this.appName = 'ZalPOS',
     this.shortName = 'ZalPOS',
@@ -356,21 +353,50 @@ class BrandingConfig {
     this.logoUrl = '',
   });
 
+  /// Документа брендинга нет (или он не прочитался): цвета пустые, и
+  /// приложение гостя берёт нейтральную палитру — без цветов ZalPOS, ведь
+  /// гость видит только бренд заведения (KolibriColors.applyBranding).
+  static const empty = BrandingConfig(
+    primaryColor: '', secondaryColor: '', accentColor: '',
+    backgroundColor: '', textColor: '', buttonColor: '',
+  );
+
+  /// Брендинг из базы. Поля, которых владелец не задал, остаются пустыми
+  /// (не подставляются медь и латунь платформы): приложение гостя выводит
+  /// недостающие цвета из основного цвета заведения.
   factory BrandingConfig.fromMap(Map<String, dynamic>? d) {
-    if (d == null) return const BrandingConfig();
+    if (d == null) return empty;
+    String color(String key) {
+      final v = d[key];
+      return v is String ? v.trim() : '';
+    }
+    final primary = color('primaryColor');
     return BrandingConfig(
       appName: _appNameOf(d['appName'] as String?),
       shortName: d['shortName'] as String? ?? 'ZalPOS',
-      primaryColor: d['primaryColor'] as String? ?? '#B35C30',
-      secondaryColor: d['secondaryColor'] as String? ?? '#CFA567',
-      accentColor: d['accentColor'] as String? ?? '#B35C30',
-      backgroundColor: d['backgroundColor'] as String? ?? '#15120F',
-      textColor: d['textColor'] as String? ?? '#F2EADF',
-      buttonColor: d['buttonColor'] as String? ?? '#B35C30',
+      primaryColor: primary,
+      secondaryColor: color('secondaryColor'),
+      accentColor: color('accentColor').isEmpty ? primary : color('accentColor'),
+      backgroundColor: color('backgroundColor'),
+      textColor: color('textColor'),
+      buttonColor: color('buttonColor').isEmpty ? primary : color('buttonColor'),
       darkMode: d['darkMode'] as bool? ?? true,
       logoUrl: d['logoUrl'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toMap() => {
+        'appName': appName,
+        'shortName': shortName,
+        'primaryColor': primaryColor,
+        'secondaryColor': secondaryColor,
+        'accentColor': accentColor,
+        'backgroundColor': backgroundColor,
+        'textColor': textColor,
+        'buttonColor': buttonColor,
+        'darkMode': darkMode,
+        'logoUrl': logoUrl,
+      };
 }
 
 /// Лимиты и включённые модули тарифа (ТЗ §32).

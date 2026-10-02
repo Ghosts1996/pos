@@ -685,7 +685,7 @@ class _TipsTotalLineState extends State<_TipsTotalLine> {
           final sum = onBill.fold<double>(0, (a, t) => a + t.amount);
           if (sum <= 0) return const SizedBox.shrink();
           return Text('Чаевые к счёту: ${rub(sum)} — возьмём вместе с оплатой',
-              style: const TextStyle(color: KolibriColors.success, fontSize: 13));
+              style: TextStyle(color: KolibriColors.success, fontSize: 13));
         },
       );
 }
@@ -713,7 +713,7 @@ class _RatingBarState extends State<_RatingBar> {
   @override
   Widget build(BuildContext context) {
     if (_sent) {
-      return const Text('Отзыв отправлен. До встречи!',
+      return Text('Отзыв отправлен. До встречи!',
           style: TextStyle(color: KolibriColors.success));
     }
     return Column(

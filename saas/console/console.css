@@ -507,16 +507,17 @@ a:hover { color: var(--primary-2); }
 .l-dark .btn-primary { background: #F1EBE1; color: #1C1915; }
 .l-dark .btn-primary:not(:disabled):hover { background: #fff; }
 
-/* Подзаголовок-надпись над заголовком секции. */
-.l-overline {
-  display: flex; align-items: center; gap: 12px;
-  font-size: 11.5px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--primary);
-  margin-bottom: 18px;
-}
-.l-overline::before { content: ''; width: 28px; height: 1px; background: currentColor; }
+/* Фирменный приём: строки «как в меню ресторана» — название, отточие,
+   значение табличными цифрами. Им набраны цифры первого экрана, строки
+   тарифов и счёт «Из чего складывается цена». */
+.menu-lines { margin: 0; border-top: 1px solid var(--border); }
+.menu-lines > div { display: flex; align-items: baseline; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.menu-lines dt { display: flex; align-items: baseline; gap: 10px; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; }
+.menu-lines dt::after { content: ''; flex: 1 1 24px; min-width: 24px; border-bottom: 1px dotted var(--border-strong); transform: translateY(-4px); }
+.menu-lines dd { flex: none; margin: 0; font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums lining-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .l-head { margin-bottom: 40px; max-width: 720px; }
 .l-head-center { margin-left: auto; margin-right: auto; text-align: center; }
-.l-head-center .l-overline { justify-content: center; }
 .l-head-center .landing-h2-sub { margin-left: auto; margin-right: auto; }
 .l-head-row { max-width: none; }
 @media (min-width: 960px) {
@@ -579,21 +580,18 @@ a:hover { color: var(--primary-2); }
 .landing-hero-points li .li { color: var(--primary); margin-top: 2px; }
 .landing-hero-actions { gap: 22px; flex-wrap: wrap; margin-bottom: 36px; }
 .landing-hero-actions .btn-primary { width: auto; padding: 15px 26px; }
-.hero-facts { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; max-width: 580px; }
-.hero-fact { padding: 0 16px; border-left: 1px solid var(--border); }
-.hero-fact:first-child { padding-left: 0; border-left: none; }
-.hero-fact dt { font-family: var(--serif); font-size: 26px; font-weight: 600; line-height: 1.05; font-variant-numeric: lining-nums; white-space: nowrap; }
-.hero-fact dd { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.hero-menu { max-width: 580px; }
+.hero-menu dd { font-family: var(--serif); font-size: 21px; font-weight: 600; letter-spacing: .005em; }
 @media (min-width: 960px) {
   .landing-hero-section { padding-top: 88px; padding-bottom: 120px; }
   .landing-hero-grid { display: grid; grid-template-columns: 1.22fr .78fr; gap: 72px; align-items: start; }
   .landing h1 { font-size: 76px; }
-  .hero-fact dt { font-size: 34px; }
+  .hero-menu dd { font-size: 23px; }
 }
 @media (max-width: 420px) {
   .landing h1 { font-size: 40px; }
-  .hero-fact { padding: 0 10px; }
-  .hero-fact dt { font-size: 22px; }
+  .hero-menu dt { font-size: 13px; }
+  .hero-menu dd { font-size: 18px; }
 }
 
 .landing-hero-form-wrap { margin-top: 48px; }
@@ -806,27 +804,31 @@ a:hover { color: var(--primary-2); }
 }
 
 /* ---- Демо без регистрации ---- */
-.demo-cards { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.demo-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 26px;
-  display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow);
+/* Две колонки на тонких линиях, без карточек-в-карточках. */
+.demo-cols { display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--ink); }
+@media (min-width: 760px) { .demo-cols { grid-template-columns: 1fr 1fr; } }
+.demo-col { display: flex; flex-direction: column; gap: 12px; padding: 24px 0 28px; border-bottom: 1px solid var(--border-strong); }
+@media (min-width: 760px) {
+  .demo-col { padding: 26px 28px 8px; border-bottom: none; border-left: 1px solid var(--border-strong); }
+  .demo-col:first-child { padding-left: 0; border-left: none; }
 }
-.demo-card-icon { color: var(--primary); }
-.demo-card-icon .li { width: 28px; height: 28px; stroke-width: 1.3; }
-.demo-card-title { font-family: var(--serif); font-size: 26px; font-weight: 600; line-height: 1.1; margin-top: 4px; }
-.demo-card-text { color: var(--muted); font-size: 14.5px; line-height: 1.6; flex: 1; }
-.demo-card .btn { width: 100%; margin-top: 6px; }
+.demo-col-title { display: flex; align-items: center; gap: 12px; font-family: var(--serif); font-size: 26px; font-weight: 600; line-height: 1.1; }
+.demo-col-title .li { width: 24px; height: 24px; stroke-width: 1.3; color: var(--primary); flex: none; }
+.demo-col-text { color: var(--muted); font-size: 14.5px; line-height: 1.6; flex: 1; margin: 0; }
+.demo-col .btn { width: 100%; margin-top: 4px; }
 .demo-pins { font-size: 13px; color: var(--muted); line-height: 1.75; margin-top: 4px; }
 .demo-pins summary { cursor: pointer; color: var(--text); font-weight: 500; margin-bottom: 6px; }
 .demo-pins code { background: var(--surface-2); border-radius: 5px; padding: 1px 6px; color: var(--text); }
 
-/* ---- Боли владельца: нумерованный список, без карточек ---- */
-.pain-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--border-strong); }
-@media (min-width: 760px) { .pain-list { grid-template-columns: 1fr 1fr; column-gap: 56px; } }
-.pain-item { display: grid; grid-template-columns: 44px 1fr; column-gap: 12px; padding: 22px 0; border-bottom: 1px solid var(--border-strong); }
-.pain-num { grid-row: 1 / span 2; font-family: var(--serif); font-size: 22px; font-weight: 600; color: var(--primary); line-height: 1.2; font-variant-numeric: lining-nums; }
-.pain-text { font-weight: 600; font-size: 16px; line-height: 1.35; margin-bottom: 6px; }
-.pain-fix { color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+/* ---- Боли владельца: две колонки «как было → как стало», без нумерации ---- */
+.pain-ledger { margin: 0; border-top: 1px solid var(--ink); }
+.pain-row { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 20px 0; border-bottom: 1px solid var(--border-strong); }
+.pain-row dt { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 23px; line-height: 1.2; }
+.pain-row dd { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 620px; }
+@media (min-width: 860px) {
+  .pain-row { grid-template-columns: 5fr 7fr; gap: 72px; padding: 24px 0; align-items: baseline; }
+  .pain-row dt { font-size: 27px; }
+}
 
 /* ---- Форматы заведения: вкладки-строки ---- */
 .format-tabs { display: flex; flex-wrap: wrap; gap: 0 26px; margin-bottom: 26px; border-bottom: 1px solid var(--border-strong); }
@@ -849,9 +851,8 @@ a:hover { color: var(--primary-2); }
   .app-card { padding: 32px 32px 8px; border-bottom: none; border-left: 1px solid var(--border-strong); }
   .app-card:first-child { padding-left: 0; border-left: none; }
 }
-.app-icon { color: var(--primary); margin-bottom: 18px; }
-.app-icon .li { width: 34px; height: 34px; stroke-width: 1.2; }
-.app-title { font-family: var(--serif); font-weight: 600; font-size: 28px; line-height: 1.1; margin-bottom: 10px; }
+.app-title { display: flex; align-items: center; gap: 12px; font-family: var(--serif); font-weight: 600; font-size: 28px; line-height: 1.1; margin-bottom: 10px; }
+.app-title .li { width: 24px; height: 24px; stroke-width: 1.3; color: var(--primary); flex: none; }
 .app-desc { color: var(--muted); font-size: 14.5px; line-height: 1.65; }
 
 /* ---- Как это работает: три шага с крупными цифрами ---- */
@@ -871,17 +872,45 @@ a:hover { color: var(--primary-2); }
 .feature-desc { font-size: 14px; color: var(--muted); line-height: 1.55; }
 .feature-desc::first-letter { text-transform: uppercase; }
 
-/* ---- Почему выгодно: большие цифры на тёмной полосе ---- */
-.value-grid { display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--border-strong); }
-@media (min-width: 760px) { .value-grid { grid-template-columns: repeat(3, 1fr); } }
-.value-card { padding: 30px 0; border-bottom: 1px solid var(--border); }
-@media (min-width: 760px) {
-  .value-card { padding: 34px 32px 6px; border-bottom: none; border-left: 1px solid var(--border); }
-  .value-card:first-child { padding-left: 0; border-left: none; }
+/* ---- Из чего складывается цена: счёт на бумаге поверх тёмной полосы ----
+   Касса печатает чеки, поэтому цена показана чеком: строки с отточием,
+   итог за месяц и за год рядом (цена за день без годовой суммы не
+   показывается нигде). Рядом честно — что оплачивается отдельно. */
+.value-layout { display: grid; grid-template-columns: 1fr; gap: 40px; align-items: start; }
+@media (min-width: 960px) { .value-layout { grid-template-columns: 6fr 5fr; gap: 80px; } }
+.value-extra { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border-strong); max-width: 520px; }
+.value-extra-title { font-size: 11.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+.value-extra ul { margin: 0; padding: 0 0 0 18px; color: var(--muted); font-size: 14.5px; line-height: 1.6; display: grid; gap: 8px; }
+.bill {
+  --paper: #F6F1E8; --ink-soft: #6F665A;
+  position: relative; background: var(--paper); color: #1D1A16; padding: 28px 26px 34px;
+  border-radius: 6px 6px 0 0; max-width: 440px; width: 100%; justify-self: center;
+  box-shadow: 0 40px 70px -40px rgba(0, 0, 0, .8);
+  transform: rotate(-.6deg);
 }
-.value-card b { display: block; font-family: var(--serif); font-size: 64px; font-weight: 500; line-height: 1; color: #E9C9A8; font-variant-numeric: lining-nums; white-space: nowrap; }
-.value-card span { display: block; color: var(--muted); font-size: 14.5px; line-height: 1.55; margin-top: 14px; max-width: 300px; }
-@media (min-width: 1000px) { .value-card b { font-size: 76px; } }
+/* Отрывной край чека — зубцы из фона полосы. */
+.bill::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -7px; height: 7px;
+  background: conic-gradient(from -45deg at bottom, var(--paper) 90deg, transparent 0) 0 0 / 14px 100% repeat-x;
+}
+.bill:empty { display: none; }
+.bill-head { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-soft); padding-bottom: 14px; border-bottom: 1px dashed #CABDA8; }
+.bill-head span:first-child { font-family: var(--serif); font-size: 17px; letter-spacing: .02em; text-transform: none; color: #1D1A16; font-weight: 600; }
+.bill-title { font-family: var(--serif); font-size: 30px; font-weight: 600; line-height: 1.1; margin: 16px 0 10px; }
+.bill-lines { list-style: none; margin: 0; padding: 4px 0 10px; display: grid; gap: 0; }
+.bill-lines li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; font-size: 14px; line-height: 1.35; }
+.bill-lines li span { flex: 0 1 auto; }
+.bill-lines li i { flex: 1 1 16px; min-width: 16px; border-bottom: 1px dotted #B9AC97; transform: translateY(-4px); }
+.bill-lines li b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums lining-nums; text-align: right; max-width: 60%; }
+.bill-total { border-top: 1px dashed #CABDA8; padding-top: 10px; }
+.bill-total li.total span, .bill-total li.total b { font-family: var(--serif); font-size: 26px; font-weight: 600; }
+.bill-total li.yearly { font-size: 13px; color: var(--ink-soft); }
+.bill-total li.yearly b { font-weight: 500; }
+.bill-foot { margin-top: 6px; padding-top: 12px; border-top: 1px dashed #CABDA8; font-size: 12px; color: var(--ink-soft); text-align: center; letter-spacing: .04em; }
+@media (prefers-reduced-motion: no-preference) {
+  .bill { transition: transform .4s ease; }
+  .bill:hover { transform: rotate(0deg); }
+}
 
 /* ---- Тарифы ---- */
 .landing-pricing-section .l-head { margin-bottom: 28px; }
@@ -937,11 +966,17 @@ a:hover { color: var(--primary-2); }
 .plan-price-unit { font-size: 14px; color: var(--muted); font-weight: 500; }
 .plan-price-note { font-size: 13px; color: var(--muted); margin-top: 8px; }
 .plan-price-add { font-size: 13px; color: var(--text); margin-top: 6px; font-weight: 500; }
-.plan-feats { list-style: none; padding: 0; margin: 22px 0 20px; display: grid; gap: 10px; flex: 1; }
-.plan-feats li { display: flex; gap: 10px; font-size: 14px; line-height: 1.45; }
-.plan-feats li .li { color: var(--primary); width: 16px; height: 16px; margin-top: 2px; }
+/* Строки тарифа — как в меню: название · отточие · значение. */
+.plan-feats { list-style: none; padding: 0; margin: 22px 0 20px; display: grid; gap: 9px; flex: 1; align-content: start; }
+.plan-feats li { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 1.4; }
+.plan-feats .pf-label { flex: 0 1 auto; min-width: 0; }
+.plan-feats .pf-dots { flex: 1 1 14px; min-width: 14px; border-bottom: 1px dotted var(--border-strong); transform: translateY(-4px); }
+.plan-feats .pf-val { flex: none; font-weight: 600; font-variant-numeric: tabular-nums lining-nums; display: inline-flex; align-items: center; }
+.plan-feats li .li { color: var(--primary); width: 16px; height: 16px; }
 .plan-feats li.off { color: var(--muted); }
-.plan-feats li .li-off { width: 16px; flex: none; text-align: center; color: var(--muted); }
+.plan-feats li.off .pf-label { text-decoration: none; opacity: .75; }
+.plan-feats li .li-off { width: 16px; text-align: center; color: var(--muted); font-weight: 400; }
+.plan-card.recommended .plan-feats .pf-dots { border-bottom-color: rgba(241, 235, 225, .25); }
 .plan-feats.compact { margin: 12px 0 14px; gap: 7px; }
 .plan-feats.compact li { font-size: 13px; }
 .plan-trial { font-size: 12.5px; color: var(--muted); font-weight: 500; margin-bottom: 14px; }

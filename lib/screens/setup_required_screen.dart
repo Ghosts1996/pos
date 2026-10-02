@@ -17,7 +17,7 @@ class SetupRequiredScreen extends StatelessWidget {
     'В консоли Firebase включите Firestore Database (production mode) и Authentication → Sign-in method → Anonymous',
     'Вставьте содержимое firestore.rules в Firestore → Rules',
     'Добавьте первого администратора вручную: коллекция employees, документ с полями name, pinCode, role: "admin"',
-    'Закоммитьте и запушьте изменения — GitHub Actions соберёт новый APK уже с рабочим подключением',
+    'Отправьте изменения в репозиторий (commit и push) — GitHub Actions соберёт новый APK уже с рабочим подключением',
   ];
 
   @override
@@ -36,7 +36,7 @@ class SetupRequiredScreen extends StatelessWidget {
               const Text(
                 'Firebase ещё не настроен',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
@@ -55,12 +55,12 @@ class SetupRequiredScreen extends StatelessWidget {
                           radius: 12,
                           backgroundColor: AppColors.brass.withValues(alpha: 0.25),
                           child: Text('${e.key + 1}',
-                              style: const TextStyle(color: Colors.white, fontSize: 12)),
+                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 12)),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(e.value,
-                              style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.3)),
+                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.3)),
                         ),
                       ],
                     ),

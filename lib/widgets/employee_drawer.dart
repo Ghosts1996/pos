@@ -21,6 +21,8 @@ import '../models/client_models.dart';
 import 'ai_assistant_sheet.dart';
 import '../utils/human_error.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+import '../utils/constants.dart';
 import '../utils/shift_crew.dart';
 import 'shift_flow.dart';
 import 'about_app_dialog.dart';
@@ -155,21 +157,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
   @override
   Widget build(BuildContext context) {
     final top = <Widget>[
-      DrawerHeader(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primaryContainer,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            const Icon(Icons.person, size: 36),
-            const SizedBox(height: 8),
-            Text(widget.employee.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            const Text('Сотрудник', style: TextStyle(fontSize: 12)),
-          ],
-        ),
-      ),
+      _StaffHeader(employee: widget.employee),
 
       // «Моя смена» — первой: это то, что нужно каждому сотруднику
       // (пришёл — начал, уходит домой — закончил).
@@ -259,7 +247,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                   : CircleAvatar(
                       radius: 12,
                       backgroundColor: AppColors.danger,
-                      child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.white)),
+                      child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
                     ),
               onTap: () => _go(KdsScreen(employee: widget.employee)),
             );
@@ -290,7 +278,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
       ListTile(
         leading: const Icon(Icons.point_of_sale_outlined),
         title: const Text('Касса'),
-        subtitle: const Text('Наличные, инкассация, внесение и выплата'),
+        subtitle: const Text('Наличные, инкассация, внесение и выплата', style: TextStyle(fontSize: 11)),
         onTap: () => _go(CashScreen(employee: widget.employee)),
       ),
       ListTile(
@@ -381,6 +369,68 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+/// Шапка меню: монограмма, имя антиквой и должность капителью — на той же
+/// графитовой поверхности, что и меню. Без медной заливки: медь в кассе —
+/// только кнопки действий.
+class _StaffHeader extends StatelessWidget {
+  final Employee employee;
+  const _StaffHeader({required this.employee});
+
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '·';
+    final first = parts.first.characters.first;
+    final second = parts.length > 1 ? parts[1].characters.first : '';
+    return (first + second).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final position = employee.role == AppConstants.roleAdmin
+        ? 'Администратор'
+        : AppConstants.positionShortLabel(AppConstants.normalizePosition(employee.position));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 22),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.background,
+              border: Border.all(color: AppColors.brass.withValues(alpha: 0.7)),
+            ),
+            child: Text(_initials(employee.name), style: AppFonts.display(22, color: AppColors.brass)),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  employee.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppFonts.display(26),
+                ),
+                const SizedBox(height: 6),
+                Text(position.toUpperCase(), style: AppFonts.overline),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

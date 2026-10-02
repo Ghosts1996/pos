@@ -92,7 +92,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                     'Рабочее устройство',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                        color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                        color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   const Text(
@@ -107,7 +107,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                     controller: _secret,
                     autofocus: true,
                     obscureText: true,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Ключ заведения',
                       helperText: 'Firebase → Firestore → meta/staffSecret → value',
@@ -118,7 +118,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _label,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Название устройства (необязательно)',
                       hintText: 'Планшет у бара',

@@ -4630,7 +4630,7 @@ const PLAN_NUMBER_FIELDS = [
   "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly",
   "maxEmployees", "maxDevices", "maxTables", "maxStorageMb", "trialDays",
 ];
-const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain", "archived"];
+const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain", "prioritySupport", "archived"];
 const PLAN_FEATURE_FIELDS = ["reservations", "loyalty", "guestApp", "advancedReports"];
 function sanitizePlanFields(raw) {
   const out = {};
@@ -4832,42 +4832,55 @@ function scheduleCapabilitiesCron() {
  * «Применить рекомендованную сетку»), увидев список изменений. Дальше цены
  * правятся в той же панели как обычно.
  *
- * Цены — ниже облачных касс для общепита (iiko, r_keeper, Quick Resto,
- * Saby Presto), при том что приложение гостя, меню по QR, брони, бонусы и
- * число касс входят в тариф, а не продаются модулями. Устройства — без
- * лимита во всех тарифах.
+ * Три тарифа для одного заведения и два для сети. Ступени — по размеру
+ * команды: приложение гостя под брендом заведения есть во всех тарифах
+ * (у облачных касс для общепита его продают отдельным модулем за 2,5–5 тыс.
+ * ₽ в месяц), ИИ-помощник — с «Бизнеса», приоритетная поддержка — в «Про».
+ * Рабочие места (планшеты, телефоны, компьютеры) не ограничены — касса их
+ * и не ограничивает. Скидка за 6 месяцев ≈ 10 %, за год ≈ 20 %. Каждая
+ * следующая точка сети дешевле первой: две точки на «Сети» дешевле двух
+ * заведений на «Бизнесе».
  */
 const PLAN_BASE = {
   maxDevices: 0, maxTables: 0, maxStorageMb: 0, trialDays: 14, archived: false,
-  isChainPlan: false, customAdditionalPrice: false,
+  isChainPlan: false, customAdditionalPrice: false, prioritySupport: false,
   priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0,
+  customBranding: true, customDomain: true,
 };
 const PLAN_CATALOG = {
   start: {
     ...PLAN_BASE, name: "Старт",
-    priceRub: 990, priceRubSemiannual: 5290, priceRubYearly: 9490,
-    maxEmployees: 5, aiEnabled: false, customBranding: false, customDomain: false,
-    features: { reservations: true, loyalty: true, guestApp: false, advancedReports: false },
+    priceRub: 1990, priceRubSemiannual: 10690, priceRubYearly: 19090,
+    maxEmployees: 5, aiEnabled: false,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   standard: {
     ...PLAN_BASE, name: "Бизнес",
-    priceRub: 1990, priceRubSemiannual: 10690, priceRubYearly: 18990,
-    maxEmployees: 15, aiEnabled: true, customBranding: true, customDomain: true,
+    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
+    maxEmployees: 15, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   pro: {
     ...PLAN_BASE, name: "Про",
-    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
-    maxEmployees: 0, aiEnabled: true, customBranding: true, customDomain: true,
-    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: true },
+    priceRub: 4490, priceRubSemiannual: 24190, priceRubYearly: 43090,
+    maxEmployees: 0, aiEnabled: true, prioritySupport: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   chain: {
     ...PLAN_BASE, name: "Сеть",
     isChainPlan: true, customAdditionalPrice: true,
     priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
-    priceRubAdditional: 1490, priceRubAdditionalSemiannual: 7990, priceRubAdditionalYearly: 14290,
-    maxEmployees: 0, aiEnabled: true, customBranding: true, customDomain: true,
-    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: true },
+    priceRubAdditional: 2290, priceRubAdditionalSemiannual: 12290, priceRubAdditionalYearly: 21890,
+    maxEmployees: 15, aiEnabled: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
+  },
+  "chain-pro": {
+    ...PLAN_BASE, name: "Сеть Про",
+    isChainPlan: true, customAdditionalPrice: true,
+    priceRub: 4490, priceRubSemiannual: 24190, priceRubYearly: 43090,
+    priceRubAdditional: 3490, priceRubAdditionalSemiannual: 18790, priceRubAdditionalYearly: 33490,
+    maxEmployees: 0, aiEnabled: true, prioritySupport: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
 };
 // Тарифы вне сетки уходят в архив: с сайта и из выбора пропадают, а кто
@@ -4884,15 +4897,16 @@ async function planCatalogDiff() {
       name: before.name || planId, priceRub: Number(before.priceRub) || 0, archived: before.archived === true,
     }, after: { name: fields.name, priceRub: fields.priceRub, priceRubYearly: fields.priceRubYearly,
       priceRubAdditional: fields.priceRubAdditional, maxEmployees: fields.maxEmployees,
-      guestApp: fields.features.guestApp, ai: fields.aiEnabled } });
+      guestApp: fields.features.guestApp, ai: fields.aiEnabled, prioritySupport: fields.prioritySupport === true } });
   }
   for (const [planId, p] of plans) {
     if (PLAN_CATALOG_KEEP.has(planId) || p.archived === true) continue;
     rows.push({ planId, action: "archive", before: { name: p.name || planId, priceRub: Number(p.priceRub) || 0 }, after: null });
   }
   // Заведения без выбранного тарифа заводились с planId «start», которого
-  // не было, — и получали всё. Теперь «Старт» — без приложения гостя, поэтому
-  // их пробный период переносится на тариф по умолчанию («Бизнес»).
+  // не было, — и получали всё. Теперь у «Старта» нет ИИ и сотрудников до
+  // пяти, поэтому их пробный период переносится на тариф по умолчанию
+  // («Бизнес»), а не урезается молча.
   if (!plans.has("start")) {
     const orphans = (await db().collection("subscriptions").where("planId", "==", "start").get()).docs
       .filter((d) => !d.data().chainId);

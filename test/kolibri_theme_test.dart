@@ -36,6 +36,8 @@ const _presets = <String, BrandingConfig>{
   'graphite': BrandingConfig(primaryColor: '#5B6472', secondaryColor: '#1D2024', backgroundColor: '#0E0F11', textColor: '#F2F3F5'),
   'sandstone': BrandingConfig(primaryColor: '#B5652E', secondaryColor: '#E4D8C4', backgroundColor: '#F3ECE1', textColor: '#2B1D12'),
   'по умолчанию': BrandingConfig(),
+  'без брендинга': BrandingConfig.empty,
+  'только основной цвет': BrandingConfig(primaryColor: '#7A4FB0', secondaryColor: '', accentColor: '', backgroundColor: '', textColor: '', buttonColor: ''),
 };
 
 void main() {
@@ -70,5 +72,45 @@ void main() {
     KolibriColors.applyBranding(const BrandingConfig(
         primaryColor: '#12B981', secondaryColor: '#E0B354', backgroundColor: '#07100D', textColor: '#F2F7F4'));
     expect(KolibriColors.gold, const Color(0xFFE0B354));
+  });
+
+  // Гость видит только цвета заведения: ни меди, ни латуни, ни синего
+  // платформы, если владелец их не выбирал.
+  test('без брендинга — нейтральная палитра без цветов ZalPOS', () {
+    KolibriColors.applyBranding(BrandingConfig.empty);
+    for (final c in [KolibriColors.primary, KolibriColors.gold, KolibriColors.accent, KolibriColors.background,
+        KolibriColors.success, KolibriColors.warning, KolibriColors.tierColor('Бронза')]) {
+      final spread = [c.r, c.g, c.b].reduce(math.max) - [c.r, c.g, c.b].reduce(math.min);
+      expect(spread, lessThan(0.04), reason: 'цвет $c с оттенком');
+    }
+  });
+
+  test('недостающие цвета выводятся из основного цвета заведения', () {
+    final b = BrandingConfig.fromMap({'primaryColor': '#7A4FB0', 'backgroundColor': '#0D0714', 'textColor': '#F3EAFB'});
+    expect(b.secondaryColor, isEmpty);
+    expect(b.buttonColor, '#7A4FB0');
+    KolibriColors.applyBranding(b);
+    expect(KolibriColors.accent, const Color(0xFF7A4FB0));
+    expect(KolibriColors.gold, isNot(const Color(0xFFCFA567)));
+  });
+
+  test('accentColor из базы (синий по умолчанию у старых заведений) не берётся', () {
+    KolibriColors.applyBranding(BrandingConfig.fromMap({
+      'primaryColor': '#7A4FB0', 'accentColor': '#0B5ED7', 'buttonColor': '#7A4FB0',
+      'backgroundColor': '#0D0714', 'textColor': '#F3EAFB',
+    }));
+    expect(KolibriColors.accent, const Color(0xFF7A4FB0));
+  });
+
+  test('уровни лояльности — оттенки цветов заведения и читаются', () {
+    KolibriColors.applyBranding(_presets['amethyst']!);
+    final surfaces = [KolibriColors.background, KolibriColors.surface, KolibriColors.surfaceElevated];
+    for (final tier in ['Бронза', 'Серебро', 'Золото', 'Платина', 'Алмаз']) {
+      final c = KolibriColors.tierColor(tier);
+      expect(c, isNot(const Color(0xFFC08552)), reason: 'бронза платформы');
+      for (final s in surfaces) {
+        expect(_contrast(c, s), greaterThanOrEqualTo(3.0), reason: tier);
+      }
+    }
   });
 }

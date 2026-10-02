@@ -344,11 +344,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(Icons.notifications_off, color: KolibriColors.warning, size: 20),
-                    SizedBox(width: 8),
-                    Text('Уведомления выключены',
+                    const SizedBox(width: 8),
+                    const Text('Уведомления выключены',
                         style: TextStyle(fontWeight: FontWeight.w600)),
                   ],
                 ),
@@ -733,7 +733,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 if (v.bonusEarned > 0) '+${bonusesLabel(v.bonusEarned)}',
                 if (v.bonusSpent > 0) 'списано ${rub(v.bonusSpent)} бонусами',
               ].join(' · '),
-              style: const TextStyle(color: KolibriColors.success, fontSize: 12),
+              style: TextStyle(color: KolibriColors.success, fontSize: 12),
             ),
           ],
         ],

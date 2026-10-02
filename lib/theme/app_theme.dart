@@ -87,6 +87,12 @@ class AppTheme {
       colorScheme: const ColorScheme.dark(
         surface: AppColors.surface,
         primary: AppColors.primary,
+        // Без этого ColorScheme.dark берёт контейнером саму медь, и
+        // карточки/шапки на primaryContainer заливались оранжевым.
+        primaryContainer: AppColors.selectionStrong,
+        onPrimaryContainer: AppColors.textPrimary,
+        tertiaryContainer: AppColors.surfaceElevated,
+        onTertiaryContainer: AppColors.brass,
         secondary: AppColors.selection,
         // Без этих трёх ColorScheme.dark подставляет чёрный текст на
         // «вторичном» фоне: выбранный ChoiceChip (вкладки X-отчёта, фильтры)

@@ -187,7 +187,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                 Text(
                   _resettingDemo ? 'Демо обновляется — возвращаем исходный вид…' : 'Подключаем ваше заведение…',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 16),
                 ),
                 if (_resettingDemo) ...[
                   const SizedBox(height: 8),
@@ -233,7 +233,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   TextField(
                     controller: _slug,
                     autofocus: true,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Код заведения',
                       hintText: 'kafe-leto',
@@ -243,7 +243,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _code,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Код приглашения устройства',
                     ),
@@ -252,7 +252,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _label,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Название устройства (необязательно)',
                       hintText: 'Планшет у бара',
