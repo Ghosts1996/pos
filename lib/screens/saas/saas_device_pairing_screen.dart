@@ -286,8 +286,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Одноразовое тестовое заведение: зал, терраса и 2 этаж, меню с фото, брони, '
-                    'гости и отчёты — без регистрации, ничего не сохраняется.',
+                    'Демо-сеть из двух заведений: залы со столами, меню с фото, брони, гости '
+                    'и отчёты, у каждой точки свои сотрудники — без регистрации, сбрасывается через 3 дня.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),

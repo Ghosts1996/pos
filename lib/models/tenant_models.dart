@@ -124,6 +124,40 @@ extension TenantRoleX on TenantRole {
   }
 }
 
+/// PIN-коды сотрудников демо-заведения — их подсказывают экраны входа и
+/// блокировки. У двух точек демо-сети они разные (createDemoTenant в
+/// saas-gateway): видно, что сотрудники у каждой точки свои.
+class DemoPins {
+  final String admin;
+  final String hookah;
+  final String waiter;
+  final String bar;
+
+  const DemoPins({this.admin = '111111', this.hookah = '1111', this.waiter = '2222', this.bar = '3333'});
+
+  static const standard = DemoPins();
+
+  factory DemoPins.fromMap(Object? raw) {
+    if (raw is! Map) return standard;
+    String pick(String key, String fallback) {
+      final v = raw[key];
+      return v is String && RegExp(r'^\d{4,6}$').hasMatch(v) ? v : fallback;
+    }
+
+    return DemoPins(
+      admin: pick('admin', standard.admin),
+      hookah: pick('hookah', standard.hookah),
+      waiter: pick('waiter', standard.waiter),
+      bar: pick('bar', standard.bar),
+    );
+  }
+
+  Map<String, String> toMap() => {'admin': admin, 'hookah': hookah, 'waiter': waiter, 'bar': bar};
+
+  String get adminHint => 'Демо: администратор — $admin';
+  String get staffHint => 'Демо: кальянщик — $hookah, официант — $waiter, бармен — $bar';
+}
+
 class Tenant {
   final String id;
   final String name;
@@ -142,6 +176,13 @@ class Tenant {
   /// Когда демо сбросится в исходный вид; у старых демо поля нет — тогда
   /// считается от [createdAt] (DemoGate.expiryOf).
   final DateTime? demoExpiresAt;
+
+  /// PIN-коды сотрудников демо (см. [DemoPins]).
+  final DemoPins demoPins;
+
+  /// Код демо-сети для демо-приложения гостя (касса показывает его на
+  /// экране входа); пусто у обычного заведения.
+  final String demoCode;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -155,6 +196,8 @@ class Tenant {
     this.chainId,
     this.demo = false,
     this.demoExpiresAt,
+    this.demoPins = DemoPins.standard,
+    this.demoCode = '',
     this.createdAt,
     this.updatedAt,
   });
@@ -175,6 +218,8 @@ class Tenant {
       chainId: (chainId != null && chainId.isNotEmpty) ? chainId : null,
       demo: d['demo'] == true,
       demoExpiresAt: demoExpires is Timestamp ? demoExpires.toDate() : null,
+      demoPins: DemoPins.fromMap(d['demoPins']),
+      demoCode: d['demoCode'] is String ? d['demoCode'] as String : '',
       createdAt: created is Timestamp ? created.toDate() : null,
       updatedAt: updated is Timestamp ? updated.toDate() : null,
     );

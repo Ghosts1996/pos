@@ -192,6 +192,8 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
         if (c.tenant.demo && c.tenant.demoExpiresAt != null)
           'demoExpiresAt': c.tenant.demoExpiresAt!.toIso8601String(),
         if (c.tenant.demo && c.tenant.createdAt != null) 'createdAt': c.tenant.createdAt!.toIso8601String(),
+        if (c.tenant.demo) 'demoPins': c.tenant.demoPins.toMap(),
+        if (c.tenant.demo && c.tenant.demoCode.isNotEmpty) 'demoCode': c.tenant.demoCode,
       },
       if (c.chain != null)
         'chain': {'id': c.chain!.id, 'name': c.chain!.name, 'status': c.chain!.status.id},
@@ -257,6 +259,8 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
       chainId: t['chainId'] as String?,
       demo: t['demo'] == true,
       demoExpiresAt: DateTime.tryParse(t['demoExpiresAt'] as String? ?? ''),
+      demoPins: DemoPins.fromMap(t['demoPins']),
+      demoCode: t['demoCode'] as String? ?? '',
       createdAt: DateTime.tryParse(t['createdAt'] as String? ?? ''),
     ),
     member: TenantMember(

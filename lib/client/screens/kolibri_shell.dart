@@ -22,7 +22,11 @@ import '../../utils/human_error.dart';
 /// Корневой каркас приложения гостя: 5 вкладок + плавающая кнопка
 /// ИИ-консьержа снизу справа, доступная с любого экрана.
 class KolibriShell extends StatefulWidget {
-  const KolibriShell({super.key});
+  const KolibriShell({super.key, this.initialIndex = 0});
+
+  /// Вкладка при открытии (после смены заведения сети из бронирования —
+  /// сразу «Бронь»).
+  final int initialIndex;
 
   @override
   State<KolibriShell> createState() => _KolibriShellState();
@@ -31,7 +35,7 @@ class KolibriShell extends StatefulWidget {
 class _KolibriShellState extends State<KolibriShell> {
   final _auth = KolibriAuthService();
   final _link = GuestLinkService();
-  int _index = 0;
+  late int _index = widget.initialIndex;
 
   /// Стрим профиля кэшируется и пересоздаётся только при смене аккаунта:
   /// StreamBuilder сравнивает стримы по ссылке, и новый стрим на каждом

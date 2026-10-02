@@ -58,6 +58,15 @@ const String kSaasPresetInviteCode = String.fromEnvironment('SAAS_PRESET_INVITE_
 /// [kSaasPresetSlug] или этот код.
 const String kSaasPresetChainSlug = String.fromEnvironment('SAAS_PRESET_CHAIN_SLUG');
 
+/// Публичное демо приложения гостя (кнопка на сайте): без заведения в
+/// сборке — гость вводит код демо-сети из кассы в демо-режиме или
+/// открывает новую демо-сеть (kolibri_main.dart, KolibriDemoEntryScreen).
+const bool kSaasGuestDemo = bool.fromEnvironment('SAAS_GUEST_DEMO');
+
+/// Код сети, к которой привязан сохранённый выбор заведения: приложение
+/// другой сети (или демо), поставленное поверх, чужой выбор не берёт.
+const String kChainSlugCacheKey = 'saas_kolibri_chain_slug_v1';
+
 /// Ключи SharedPreferences, под которыми гостевая сборка для сети хранит
 /// выбранную гостем точку (см. kolibri_main.dart, _KolibriChainBootstrap) —
 /// вынесены сюда (а не private-константы в kolibri_main.dart), потому что

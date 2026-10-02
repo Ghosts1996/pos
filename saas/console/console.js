@@ -1275,17 +1275,22 @@ function screenLanding() {
             <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
           </div>
 
-          <div class="row" style="justify-content:center;margin-top:14px">
-            <button class="btn-link" id="f-landing-download-apk">⬇ Скачать приложение кассы (APK)</button>
+          <div class="row" style="justify-content:center;gap:6px 18px;flex-wrap:wrap;margin-top:14px">
+            <button class="btn-link" id="f-landing-download-apk" style="width:auto">⬇ Касса — демо (APK)</button>
+            <button class="btn-link" id="f-landing-download-guest-demo" style="width:auto">⬇ Приложение гостя — демо (APK)</button>
           </div>
-          <p class="small muted" style="text-align:center;margin-top:2px">Универсальная версия — при первом запуске
-          попросит код заведения и код приглашения устройства из личного кабинета — или нажмите «Демо» прямо в
-          приложении, и оно само создаст тестовое заведение: основной зал, терраса и 2 этаж со стенами и столами, меню с фото, открытая смена с чеками,
-          брони, гости с бонусами, склад и зарплата сотрудников. Демо живёт 3 дня, потом само возвращается в исходный вид.</p>
-          <p class="small muted landing-demo-pins" style="text-align:center;margin-top:8px">
-            Вход в демо: кальянщик — PIN <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>,
-            администратор — <code>111111</code>
-          </p>
+          <p class="small muted" style="text-align:center;margin-top:2px">Касса — универсальная: при первом запуске
+          попросит код заведения и код приглашения устройства из личного кабинета, или нажмите «Демо» — касса сама
+          создаст демо-сеть из двух заведений: залы со стенами и столами, меню с фото, открытая смена с чеками, брони,
+          гости с бонусами, склад и зарплата. При входе касса спросит, в какую точку войти, — у каждой точки свои
+          сотрудники и PIN-коды. Демо живёт 3 дня, потом само возвращается в исходный вид.</p>
+          <div class="small muted landing-demo-pins" style="text-align:center;margin-top:8px;line-height:1.7">
+            <div><b>«Демо · Центр»:</b> кальянщик — PIN <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>, администратор — <code>111111</code></div>
+            <div><b>«Демо · Набережная»:</b> кальянщик — PIN <code>4444</code>, официант — <code>5555</code>, бармен — <code>6666</code>, администратор — <code>222222</code></div>
+          </div>
+          <p class="small muted" style="text-align:center;margin-top:8px">Приложение гостя — введите код демо с экрана
+          входа кассы (вида <code>demo-ab12cd</code>): гость выберет заведение сети, закажет, позовёт официанта или
+          забронирует стол — и касса сразу это увидит. Бонусы гостя общие во всех заведениях сети.</p>
         </div>
       </div>
     </section>
@@ -1548,6 +1553,7 @@ function screenLanding() {
   $('f-landing-start').onclick = submit;
   $('f-landing-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
   if ($('f-landing-download-apk')) $('f-landing-download-apk').onclick = downloadPublicApk;
+  if ($('f-landing-download-guest-demo')) $('f-landing-download-guest-demo').onclick = downloadGuestDemoApk;
 
   const scrollToEmail = () => {
     $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7318,6 +7324,13 @@ const PUBLIC_APK_URL = 'https://pii.zalpos.ru/downloads/zalpos.apk';
 
 function downloadPublicApk() {
   window.open(PUBLIC_APK_URL, '_blank', 'noopener');
+}
+
+// Демо приложения гостя — тот же сервер, отдаёт saas-gateway через nginx.
+const GUEST_DEMO_APK_URL = 'https://pii.zalpos.ru/saas/guestDemoApk';
+
+function downloadGuestDemoApk() {
+  window.open(GUEST_DEMO_APK_URL, '_blank', 'noopener');
 }
 
 // Сборку заведения отдаёт сервер по одноразовой ссылке на 60 секунд, её

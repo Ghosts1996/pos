@@ -10,13 +10,13 @@ import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/notification_service.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/pii_gateway_service.dart';
 import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
+import '../services/chain_venue_switch.dart';
 import '../theme/kolibri_theme.dart';
 import '../widgets/privacy_notice.dart';
 import 'kolibri_extras_screen.dart';
@@ -97,14 +97,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     await _checkNotifications();
   }
 
-  /// Гость пришёл в ДРУГОЕ заведение той же сети — сбрасывает
-  /// кэшированный выбор точки (см. _KolibriChainBootstrap в
-  /// kolibri_main.dart) и просит перезапустить приложение, чтобы снова
-  /// показался экран выбора заведения. Полноценный live-переход без
-  /// перезапуска потребовал бы аккуратно остановить все активные подписки
-  /// текущей точки (VenueService, вызовы персонала и т.д.) и поднять их
-  /// заново на новой — риск незакрытых стримов ощутимо выше пользы одного
-  /// лишнего перезапуска, который и так уже случается у гостя каждый день.
+  /// Гость пришёл в другое заведение той же сети — снова выбор заведения,
+  /// без перезапуска (ChainVenueSwitch, kolibri_main.dart).
   Future<void> _switchChainVenue() async {
     // Профиль гостя общий на всю сеть, а activeSessionId — это ссылка на
     // стол именно в ТЕКУЩЕМ заведении: после смены точки касса нового
@@ -116,43 +110,27 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     // чтобы это не было неожиданностью для гостя, который забыл отвязать
     // стол перед тем как нажать эту кнопку.
     final hasOpenTable = (widget.profile?.activeSessionId ?? '').isNotEmpty;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        backgroundColor: KolibriColors.surface,
-        title: const Text('Сменить заведение сети'),
-        content: Text(
-          hasOpenTable
-              ? 'У вас сейчас открыт стол в этом заведении. Приложение '
-                  'забудет текущее заведение и после перезапуска перестанет '
-                  'его показывать — сам счёт при этом останется открытым, '
-                  'закрыть его сможет ${VenueService.instance.terms.staff}. Сменить всё равно?'
-              : 'Приложение забудет текущее заведение и после перезапуска снова '
-                  'спросит, в каком заведении сети вы находитесь.',
+    if (hasOpenTable) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          scrollable: true,
+          backgroundColor: KolibriColors.surface,
+          title: const Text('Другое заведение сети'),
+          content: Text(
+            'У вас открыт стол в этом заведении. Счёт останется открытым — '
+            'закрыть его сможет ${VenueService.instance.terms.staff}, а в приложении он снова '
+            'появится, когда вы вернётесь в это заведение. Перейти всё равно?',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Перейти')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сменить')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(kChainLocationCacheKey);
-    await prefs.remove(kChainIdCacheKey);
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        backgroundColor: KolibriColors.surface,
-        title: const Text('Готово'),
-        content: const Text('Закройте и снова откройте приложение, чтобы выбрать заведение.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
-      ),
-    );
+      );
+      if (confirmed != true) return;
+    }
+    ChainVenueSwitch.ask();
   }
 
   Future<void> _enableNotifications() async {
@@ -633,7 +611,17 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             child: TextButton.icon(
               onPressed: _switchChainVenue,
               icon: const Icon(Icons.storefront_outlined, size: 18),
-              label: const Text('Сменить заведение сети'),
+              label: const Text('Другое заведение сети'),
+            ),
+          ),
+
+        // Демо приложения гостя: открыть другую демо-сеть (по коду из кассы).
+        if (kSaasGuestDemo)
+          Center(
+            child: TextButton.icon(
+              onPressed: () => ChainVenueSwitch.leaveDemo.value++,
+              icon: const Icon(Icons.qr_code_2_rounded, size: 18),
+              label: const Text('Другой код демо'),
             ),
           ),
 

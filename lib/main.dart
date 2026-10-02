@@ -114,7 +114,7 @@ void main() async {
         }
         if (config != null) {
           AppScope.enterTenant(config.tenant.id,
-              branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo);
+              branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo, demoPins: config.tenant.demoPins, demoCode: config.tenant.demoCode);
           // Живой сторож жёсткой блокировки — держит смену
           // tenants/subscriptions под наблюдением всё время работы
           // приложения, а не только на старте (см. subscription_gate.dart:

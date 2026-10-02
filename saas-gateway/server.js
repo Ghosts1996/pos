@@ -375,9 +375,10 @@ async function handleResolveChainBySlug(req, res) {
 
   const locationsSnap = await firestore.collection("tenants").where("chainId", "==", chain.id).get();
   const locations = locationsSnap.docs
-    .map((d) => ({ tenantId: d.id, name: d.data().name, slug: d.data().slug, status: d.data().status }))
-    .filter((t) => t.status !== "deleted")
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
+    .filter((d) => d.data().status !== "deleted")
+    // Порядок, в котором точки открывали: первая — обычно главная.
+    .sort((a, b) => (a.data().createdAt?.toMillis?.() || 0) - (b.data().createdAt?.toMillis?.() || 0) || String(a.data().name || "").localeCompare(String(b.data().name || ""), "ru"))
+    .map((d) => ({ tenantId: d.id, name: d.data().name, slug: d.data().slug, status: d.data().status }));
 
   const brandingDoc = await firestore.collection("chains").doc(chain.id).collection("branding").doc("config").get();
 
@@ -388,6 +389,97 @@ async function handleResolveChainBySlug(req, res) {
     branding: brandingDoc.exists ? brandingDoc.data() : null,
     locations,
   });
+}
+
+// ------------------------------------------- chain points for the kassa
+
+/**
+ * Сеть, в которой работает этот планшет кассы (или участник): активное
+ * членство в точке сети. Отключённый в кабинете планшет членства не имеет —
+ * и к другим точкам не попадёт.
+ */
+async function callerChainMembership(uid, chainId) {
+  const firestore = db();
+  const snap = await firestore.collection("tenantMembers").where("userId", "==", uid).where("status", "==", "active").get();
+  for (const m of snap.docs) {
+    const tenantId = m.data().tenantId;
+    const t = (await firestore.collection("tenants").doc(tenantId).get()).data();
+    if (t && t.chainId === chainId && t.status !== "deleted") return { tenantId, member: m.data(), tenant: t };
+  }
+  return null;
+}
+
+/** Точки сети для выбора кассы при входе: название, код, подключена ли
+ *  уже эта касса к точке. */
+async function handleChainPoints(req, res) {
+  const decoded = await verifyAuth(req);
+  const { chainId } = await parseJsonBody(req);
+  if (typeof chainId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(chainId)) throw new HttpError(400, "Не указана сеть");
+  const own = await callerChainMembership(decoded.uid, chainId);
+  if (!own) throw new HttpError(403, "Эта касса не подключена к точкам сети");
+  const firestore = db();
+  const chain = (await firestore.collection("chains").doc(chainId).get()).data();
+  if (!chain || chain.status === "deleted") throw new HttpError(404, "Сеть заведений не найдена");
+  const [points, mine] = await Promise.all([
+    firestore.collection("tenants").where("chainId", "==", chainId).get(),
+    firestore.collection("tenantMembers").where("userId", "==", decoded.uid).where("status", "==", "active").get(),
+  ]);
+  const joined = new Set(mine.docs.map((d) => d.data().tenantId));
+  sendJson(res, 200, {
+    chainId,
+    name: chain.name || "",
+    points: points.docs
+      .filter((d) => !["deleted"].includes(d.data().status))
+      // Порядок, в котором точки открывали: первая — обычно главная.
+      .sort((a, b) => (a.data().createdAt?.toMillis?.() || 0) - (b.data().createdAt?.toMillis?.() || 0) || String(a.data().name || "").localeCompare(String(b.data().name || ""), "ru"))
+      .map((d) => ({ tenantId: d.id, name: d.data().name || "", slug: d.data().slug || "", status: d.data().status, joined: joined.has(d.id) })),
+  });
+}
+
+/**
+ * Касса точки сети заходит в кассу другой точки той же сети: устройство
+ * записывается в неё так же, как по коду приглашения, только код не нужен
+ * — владелец сети уже пустил планшет в одну из своих точек. Сотрудники у
+ * каждой точки свои: PIN другой точки здесь не подойдёт.
+ */
+async function handleChainPointJoin(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указана точка");
+  const firestore = db();
+  const target = (await firestore.collection("tenants").doc(tenantId).get()).data();
+  if (!target || !target.chainId || target.status === "deleted") throw new HttpError(404, "Точка сети не найдена");
+  const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`);
+  const existing = (await memberRef.get()).data();
+  if (existing?.status === "active") {
+    sendJson(res, 200, { ok: true, tenantId });
+    return;
+  }
+  // Отключённого владельцем в этой точке планшет сам не возвращает.
+  if (existing) throw new HttpError(403, "Эту кассу отключили в этой точке — подключите её заново в кабинете");
+  const own = await callerChainMembership(decoded.uid, target.chainId);
+  if (!own) throw new HttpError(403, "Эта касса не подключена к точкам этой сети");
+  const sourceDevice = (await firestore.collection("tenants").doc(own.tenantId).collection("devices").doc(decoded.uid).get()).data();
+  if (!sourceDevice || sourceDevice.status === "disabled") throw new HttpError(403, "Эта касса отключена в кабинете");
+  const invite = (await firestore.collection("tenants").doc(tenantId).collection("settings").doc("deviceInvite").get()).data();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = firestore.batch();
+  batch.set(firestore.collection("tenants").doc(tenantId).collection("devices").doc(decoded.uid), {
+    inviteCode: invite?.code || "",
+    deviceName: sourceDevice.deviceName || "",
+    deviceType: "pos",
+    platform: sourceDevice.platform || null,
+    userId: decoded.uid,
+    joinedVia: "chain",
+    joinedFromTenantId: own.tenantId,
+    createdAt: now,
+    lastSeenAt: now,
+    status: "active",
+  });
+  batch.set(memberRef, { tenantId, userId: decoded.uid, role: "employee", status: "active", createdAt: now });
+  await batch.commit();
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceJoinedFromChain", metadata: { fromTenantId: own.tenantId } });
+  sendJson(res, 200, { ok: true, tenantId });
 }
 
 // ------------------------------------------------------ firebaseConfig
@@ -453,6 +545,28 @@ async function handlePublicGuestApk(req, res) {
   // срезает его перед проксированием, а браузер считает Location от корня.
   const url = `/saas/downloadBuild?jobId=${encodeURIComponent(guestJob.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
   res.writeHead(302, { Location: url });
+  res.end();
+}
+
+/**
+ * Демо приложения гостя для кнопки на сайте. Файл кладёт workflow
+ * «Публичный APK» (deploy-tenant-apk.sh, папка publicdemo), отдаёт nginx
+ * (location /internal-tenant-builds/), как и личные сборки.
+ */
+const PUBLIC_DEMO_DIR = "publicdemo";
+async function handleGuestDemoApk(req, res) {
+  const filePath = path.join(TENANT_BUILDS_DIR, PUBLIC_DEMO_DIR, "guestdemo.apk");
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK);
+  } catch (_) {
+    throw new HttpError(404, "Демо приложения гостя ещё не собрано — загляните чуть позже");
+  }
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.android.package-archive",
+    "Content-Disposition": 'attachment; filename="zalpos-guest-demo.apk"',
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Redirect": `/internal-tenant-builds/${PUBLIC_DEMO_DIR}/guestdemo.apk`,
+  });
   res.end();
 }
 
@@ -1098,7 +1212,7 @@ async function handleSetBillingEventTest(req, res) {
 
 // ----------------------------------------------------- createBuildJob
 
-async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode }) {
+async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode, chainSlug }) {
   const token = process.env.GITHUB_PAT;
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
   // Один запуск workflow, три job_id: касса и гость под Android, касса под
@@ -1110,6 +1224,7 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
   if (logoUrl) inputs.logo_url = logoUrl;
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
   if (inviteCode) inputs.invite_code = inviteCode;
+  if (chainSlug) inputs.chain_slug = chainSlug;
   const res = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_SAAS_WORKFLOW}/dispatches`,
     {
@@ -1236,8 +1351,26 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
     // сборка пойдёт без автопривязки
   }
 
+  // Точка сети: приложение гостя общее на сеть — с выбором заведения при
+  // запуске, названием и логотипом сети.
+  let chainSlug = "";
+  if (chainId) {
+    try {
+      const chainDoc = await firestore.collection("chains").doc(chainId).get();
+      chainSlug = chainDoc.data()?.slug || "";
+      const chainBranding = (await firestore.collection("chains").doc(chainId).collection("branding").doc("config").get()).data() || {};
+      const chainName = [chainBranding.appName, chainDoc.data()?.name]
+        .map((v) => String(v || "").trim())
+        .find((v) => v && !["ZalPOS", "Hookah POS", "HookahPOS"].includes(v));
+      if (chainName) appLabel = chainName;
+      if (chainBranding.logoUrl) logoUrl = chainBranding.logoUrl;
+    } catch (_) {
+      // Без сети в сборке приложение гостя будет только этой точки.
+    }
+  }
+
   try {
-    await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode });
+    await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode, chainSlug });
   } catch (e) {
     const failUpdate = {
       status: "failed",
@@ -2575,6 +2708,8 @@ async function sweepTenantBuilds() {
   const dirs = await fs.promises.readdir(TENANT_BUILDS_DIR, { withFileTypes: true }).catch(() => []);
   for (const dirent of dirs) {
     if (!dirent.isDirectory() || !/^[A-Za-z0-9_-]+$/.test(dirent.name)) continue;
+    // Демо приложения гостя для сайта — не заведение, не трогаем.
+    if (dirent.name === PUBLIC_DEMO_DIR) continue;
     const tenantId = dirent.name;
     const dir = path.join(TENANT_BUILDS_DIR, tenantId);
     const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
@@ -3461,6 +3596,24 @@ const DEMO_STAFF = [
     hourlyRateEnabled: true, hourlyRate: 220 },
 ];
 
+// Вторая точка демо-сети: свои сотрудники и PIN-коды — видно, что PIN одной
+// точки в другой не подходит. PIN администратора — 6 цифр, как везде.
+const DEMO_STAFF_RIVER = [
+  { key: "admin", name: "Демо-админ «Набережной»", pinCode: "222222", role: "admin", position: "universal" },
+  { key: "hookah", name: "Артём", pinCode: "4444", role: "employee", position: "hookah_master",
+    hourlyRateEnabled: true, hourlyRate: 260, salesPercentEnabled: true, salesPercentRate: 5 },
+  { key: "waiter", name: "Вика", pinCode: "5555", role: "employee", position: "waiter",
+    shiftRateEnabled: true, shiftRate: 2200, salesPercentEnabled: true, salesPercentRate: 3 },
+  { key: "bar", name: "Олег", pinCode: "6666", role: "employee", position: "bartender",
+    hourlyRateEnabled: true, hourlyRate: 230 },
+];
+
+/** PIN-коды для подсказки на экранах входа кассы (tenants.demoPins). */
+function demoPinsOf(staff) {
+  const pin = (key) => staff.find((e) => e.key === key)?.pinCode || "";
+  return { admin: pin("admin"), hookah: pin("hookah"), waiter: pin("waiter"), bar: pin("bar") };
+}
+
 // Смена открыта столько минут назад — в неё попадают все закрытые чеки
 // ниже, и X-отчёт сразу показывает выручку, наличные и чаевые.
 const DEMO_SHIFT_OPENED_MINUTES_AGO = 360;
@@ -3514,8 +3667,10 @@ const DEMO_CLIENTS = [
   { uid: "demo-guest-5", name: "Ольга", totalSpent: 112000, visits: 61, bonusBalance: 9800, lastVisitDays: 2, sinceDays: 420 },
 ];
 
-function seedDemoData(tenantRef, batch, nowMs) {
+function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1" } = {}) {
   const col = (name) => tenantRef.collection(name);
+  // Точка сети: гости и бонусы общие на сеть (chains/{chainId}/clients).
+  const loyaltyCol = (name) => (loyaltyRef || tenantRef).collection(name);
   const ts = (minutesAgo) => admin.firestore.Timestamp.fromMillis(nowMs - minutesAgo * 60000);
   const image = (slug) => (slug ? new URL(`demo-menu/${slug}.jpg`, CONSOLE_URL).href : "");
 
@@ -3572,7 +3727,7 @@ function seedDemoData(tenantRef, batch, nowMs) {
 
   // Сотрудники
   const staff = {};
-  DEMO_STAFF.forEach(({ key, ...e }) => {
+  staffList.forEach(({ key, ...e }) => {
     const ref = col("employees").doc();
     staff[key] = { id: ref.id, name: e.name, position: e.position };
     batch.set(ref, {
@@ -3599,8 +3754,8 @@ function seedDemoData(tenantRef, batch, nowMs) {
   const demoHours = {};
   for (let d = 1; d <= 7; d++) demoHours[String(d)] = "12:00-02:00";
   batch.set(col("meta").doc("venueProfile"), {
-    name: "Демо-заведение",
-    address: "Москва, ул. Примерная, 1",
+    name: venueName,
+    address,
     phone: "+7 900 000-00-00",
     about: "Лаундж-бар: основной зал, летняя терраса и второй этаж с VIP-кабинетами. Тестовое заведение платформы — все данные вымышленные.",
     workingHours: demoHours,
@@ -3752,9 +3907,9 @@ function seedDemoData(tenantRef, batch, nowMs) {
   });
 
   // Гости с бонусами
-  DEMO_CLIENTS.forEach((c) => {
+  if (seedClients) DEMO_CLIENTS.forEach((c) => {
     const atTable = clientAtTable[c.uid];
-    batch.set(col("clients").doc(c.uid), {
+    batch.set(loyaltyCol("clients").doc(c.uid), {
       name: c.name, phone: "", bonusBalance: c.bonusBalance, totalSpent: c.totalSpent, visits: c.visits,
       discountCardId: "", discountPercent: 0, lastVisitId: "", ratedVisitId: "",
       activeSessionId: atTable ? atTable.sessionId : "", activeTableId: atTable ? atTable.tableId : "",
@@ -3889,6 +4044,13 @@ function seedDemoData(tenantRef, batch, nowMs) {
  * (SaasDeviceJoinService.joinAsDevice). По флагу demo его потом удаляет
  * scheduleDemoCleanup.
  */
+/**
+ * Демо — сеть из двух точок одного заведения («Центр» и «Набережная»):
+ * касса показывает выбор точки при входе, у каждой точки свои сотрудники и
+ * PIN-коды, гости и бонусы — общие на сеть. Приложение гостя открывает ту
+ * же сеть по коду демо (chainSlug), который касса показывает на экране
+ * входа. Через DEMO_TTL_MS сеть стирается целиком.
+ */
 async function handleCreateDemoTenant(req, res) {
   try {
     checkDemoRateLimit(clientIp(req));
@@ -3899,36 +4061,13 @@ async function handleCreateDemoTenant(req, res) {
   await requireNotBlocked(req, null, "demo");
 
   const firestore = db();
-  const slug = `demo-${randomDemoSuffix()}`;
-  const tenantRef = firestore.collection("tenants").doc();
-  const tenantId = tenantRef.id;
+  const chainSlug = `demo-${randomDemoSuffix()}`;
+  const chainRef = firestore.collection("chains").doc();
+  const chainId = chainRef.id;
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const inviteCode = randomInviteCode();
-
-  const batch = firestore.batch();
-  batch.set(tenantRef, {
-    name: "Демо-заведение",
-    slug,
-    status: "active",
-    subscriptionStatus: "active",
-    planId: "start",
-    ownerUserId: "",
-    demo: true,
-    // Когда демо сбросится — касса показывает обратный отсчёт.
-    demoExpiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEMO_TTL_MS),
-    createdAt: now,
-    updatedAt: now,
-  });
-  batch.set(tenantRef.collection("settings").doc("general"), {
-    name: "Демо-заведение", timezone: "Europe/Moscow", currency: "RUB", language: "ru",
-  });
-  batch.set(tenantRef.collection("settings").doc("session"), {
-    defaultHookahDurationMinutes: 90,
-    minimumHookahDurationMinutes: 30,
-    maximumHookahDurationMinutes: 360,
-    quickExtensions: [15, 30, 60],
-  });
-  batch.set(tenantRef.collection("branding").doc("config"), {
+  const nowMs = Date.now();
+  const expiresAt = admin.firestore.Timestamp.fromMillis(nowMs + DEMO_TTL_MS);
+  const branding = {
     appName: "ZalPOS (демо)",
     shortName: "Демо",
     primaryColor: "#0B5ED7",
@@ -3938,25 +4077,72 @@ async function handleCreateDemoTenant(req, res) {
     textColor: "#F8FAFC",
     buttonColor: "#0B5ED7",
     darkMode: true,
-  });
-  batch.set(tenantRef.collection("settings").doc("deviceInvite"), { code: inviteCode, rotatedAt: now });
-  batch.set(firestore.collection("subscriptions").doc(tenantId), {
-    tenantId,
-    planId: "start",
-    status: "trial",
-    provider: null,
-    externalSubscriptionId: null,
-    startedAt: now,
-    trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + 7 * 86400000),
-    currentPeriodStart: now,
-    currentPeriodEnd: null,
-    cancelAtPeriodEnd: false,
-  });
-  seedDemoData(tenantRef, batch, Date.now());
-  await batch.commit();
+  };
 
-  recordSignupEvent(req, "demo", { tenantId, slug });
-  sendJson(res, 200, { tenantId, slug, inviteCode });
+  const head = firestore.batch();
+  head.set(chainRef, {
+    name: "Демо-сеть", slug: chainSlug, status: "active", planId: "chain", ownerUserId: "",
+    demo: true, demoExpiresAt: expiresAt, createdAt: now, updatedAt: now,
+  });
+  head.set(chainRef.collection("branding").doc("config"), branding);
+  head.set(firestore.collection("subscriptions").doc(chainId), {
+    chainId, planId: "chain", status: "trial", provider: null, externalSubscriptionId: null,
+    startedAt: now, trialEndsAt: admin.firestore.Timestamp.fromMillis(nowMs + 7 * 86400000),
+    currentPeriodStart: now, currentPeriodEnd: null, cancelAtPeriodEnd: false,
+  });
+  await head.commit();
+
+  const points = [
+    { key: "center", name: "Демо · Центр", address: "Москва, ул. Примерная, 1", staffList: DEMO_STAFF },
+    { key: "river", name: "Демо · Набережная", address: "Москва, Набережная ул., 7", staffList: DEMO_STAFF_RIVER },
+  ];
+  const created = [];
+  for (const point of points) {
+    const tenantRef = firestore.collection("tenants").doc();
+    const inviteCode = randomInviteCode();
+    const batch = firestore.batch();
+    batch.set(tenantRef, {
+      name: point.name,
+      slug: `${chainSlug}-${point.key}`,
+      status: "active",
+      subscriptionStatus: "active",
+      planId: "start",
+      ownerUserId: "",
+      chainId,
+      demo: true,
+      // Код демо для приложения гостя и PIN-коды точки — подсказки кассы.
+      demoCode: chainSlug,
+      demoPins: demoPinsOf(point.staffList),
+      // Когда демо сбросится — касса показывает обратный отсчёт.
+      demoExpiresAt: expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    batch.set(tenantRef.collection("settings").doc("general"), {
+      name: point.name, timezone: "Europe/Moscow", currency: "RUB", language: "ru",
+    });
+    batch.set(tenantRef.collection("settings").doc("session"), {
+      defaultHookahDurationMinutes: 90,
+      minimumHookahDurationMinutes: 30,
+      maximumHookahDurationMinutes: 360,
+      quickExtensions: [15, 30, 60],
+    });
+    batch.set(tenantRef.collection("branding").doc("config"), branding);
+    batch.set(tenantRef.collection("settings").doc("deviceInvite"), { code: inviteCode, rotatedAt: now });
+    seedDemoData(tenantRef, batch, nowMs, {
+      staffList: point.staffList,
+      // Гости и бонусы общие на сеть — записываем один раз, с первой точкой.
+      loyaltyRef: chainRef,
+      seedClients: created.length === 0,
+      venueName: point.name,
+      address: point.address,
+    });
+    await batch.commit();
+    created.push({ tenantId: tenantRef.id, inviteCode });
+  }
+
+  recordSignupEvent(req, "demo", { tenantId: created[0].tenantId, chainId, slug: chainSlug });
+  sendJson(res, 200, { tenantId: created[0].tenantId, inviteCode: created[0].inviteCode, chainId, chainSlug, slug: chainSlug });
 }
 
 // -------------------------------------------------------- demo cleanup
@@ -3964,12 +4150,29 @@ async function handleCreateDemoTenant(req, res) {
 async function purgeDemoTenant(tenantId) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const chainId = (await tenantRef.get()).data()?.chainId || null;
   for (const name of TENANT_SUBCOLLECTIONS) {
     await firestore.recursiveDelete(tenantRef.collection(name));
   }
   await tenantRef.delete();
   await firestore.collection("subscriptions").doc(tenantId).delete().catch(() => {});
   await removeTenantUploads(tenantId);
+  // Демо-сеть: последняя точка ушла — стираем и сеть (гости, бонусы,
+  // членства, подписку).
+  if (chainId) {
+    const chainRef = firestore.collection("chains").doc(chainId);
+    const chain = (await chainRef.get()).data();
+    const left = await firestore.collection("tenants").where("chainId", "==", chainId).limit(1).get();
+    if (chain?.demo === true && left.empty) {
+      for (const name of CHAIN_SUBCOLLECTIONS) {
+        await firestore.recursiveDelete(chainRef.collection(name));
+      }
+      const members = await firestore.collection("chainMembers").where("chainId", "==", chainId).get();
+      for (const d of members.docs) await d.ref.delete();
+      await chainRef.delete();
+      await firestore.collection("subscriptions").doc(chainId).delete().catch(() => {});
+    }
+  }
 }
 
 // ----------------------------------------- super-admin: enable/disable/plan
@@ -5922,6 +6125,8 @@ const ROUTES = {
   "/inviteTenantMember": handleInviteTenantMember,
   "/createBuildJob": handleCreateBuildJob,
   "/setBillingEventTest": handleSetBillingEventTest,
+  "/chainPoints": handleChainPoints,
+  "/chainPointJoin": handleChainPointJoin,
   "/chainLocationQuote": handleChainLocationQuote,
   "/chainLocationCheckout": handleChainLocationCheckout,
   "/completeBuildJob": handleCompleteBuildJob,
@@ -6014,6 +6219,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
   // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
+  if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
   // «Технических настройках» магазина).

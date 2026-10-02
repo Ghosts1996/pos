@@ -54,6 +54,20 @@ class PushService {
     await _fcm.subscribeToTopic(_allStaffTopic);
   }
 
+  /// Касса уходит в другое заведение (точка сети, новое демо): вызовы и
+  /// брони прежнего сюда больше не должны приходить.
+  Future<void> leaveStaff() async {
+    if (kIsWeb || Platform.isWindows) return;
+    try {
+      await _fcm.unsubscribeFromTopic(_allStaffTopic);
+      for (final p in _allPositions) {
+        await _fcm.unsubscribeFromTopic(_positionTopic(p));
+      }
+    } catch (_) {
+      // Нет сети — отписка не критична: топики прежнего заведения молчат.
+    }
+  }
+
   /// Переподписывает устройство на топики специализации после PIN-входа.
   /// Сначала отписывается от всех: после «Сменить сотрудника» вызовы
   /// прошлого не должны приходить следующему. Универсал и админ получают

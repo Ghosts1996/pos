@@ -146,9 +146,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
       // PIN демо-сотрудников задаёт createDemoTenant (saas-gateway).
       if (AppScope.isDemo)
         Text(
-          _employee.role == AppConstants.roleAdmin
-              ? 'Демо: администратор — 111111'
-              : 'Демо: кальянщик — 1111, официант — 2222, бармен — 3333',
+          _employee.role == AppConstants.roleAdmin ? AppScope.demoPins.adminHint : AppScope.demoPins.staffHint,
           textAlign: TextAlign.center,
           style: const TextStyle(color: Colors.white38, fontSize: 11.5),
         ),

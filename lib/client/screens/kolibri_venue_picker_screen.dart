@@ -14,11 +14,24 @@ class KolibriVenuePickerScreen extends StatelessWidget {
   final ChainDirectory chain;
   final ValueChanged<ChainLocation> onSelected;
 
-  const KolibriVenuePickerScreen({super.key, required this.chain, required this.onSelected});
+  /// Где гость был в прошлый раз — отмечено и стоит первым.
+  final String? lastTenantId;
+
+  /// Выбор из бронирования: «где забронировать стол».
+  final bool forBooking;
+
+  const KolibriVenuePickerScreen({
+    super.key,
+    required this.chain,
+    required this.onSelected,
+    this.lastTenantId,
+    this.forBooking = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final locations = chain.locations.where((l) => l.status != 'suspended' && l.status != 'deleted').toList();
+    final locations = chain.locations.where((l) => l.status != 'suspended' && l.status != 'deleted').toList()
+      ..sort((a, b) => (b.tenantId == lastTenantId ? 1 : 0) - (a.tenantId == lastTenantId ? 1 : 0));
     return Scaffold(
       backgroundColor: KolibriColors.background,
       body: SafeArea(
@@ -40,7 +53,10 @@ class KolibriVenuePickerScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'В каком заведении сети вы сейчас находитесь?',
+                    forBooking
+                        ? 'В каком заведении сети забронировать стол?'
+                        : 'В каком заведении вы сейчас или где хотите забронировать стол? '
+                            'Бонусы и уровень общие во всех заведениях сети.',
                     style: TextStyle(color: KolibriColors.textMuted, fontSize: 14),
                   ),
                 ],
@@ -62,6 +78,7 @@ class KolibriVenuePickerScreen extends StatelessWidget {
                         final loc = locations[i];
                         return _VenueCard(
                           location: loc,
+                          last: loc.tenantId == lastTenantId,
                           onTap: () => onSelected(loc),
                         );
                       },
@@ -76,9 +93,10 @@ class KolibriVenuePickerScreen extends StatelessWidget {
 
 class _VenueCard extends StatelessWidget {
   final ChainLocation location;
+  final bool last;
   final VoidCallback onTap;
 
-  const _VenueCard({required this.location, required this.onTap});
+  const _VenueCard({required this.location, required this.onTap, this.last = false});
 
   @override
   Widget build(BuildContext context) {
@@ -103,13 +121,24 @@ class _VenueCard extends StatelessWidget {
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  location.name.isNotEmpty ? location.name : location.slug,
-                  style: TextStyle(
-                    color: KolibriColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      location.name.isNotEmpty ? location.name : location.slug,
+                      style: TextStyle(
+                        color: KolibriColors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (last)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text('Вы были здесь в прошлый раз',
+                            style: TextStyle(color: KolibriColors.textMuted, fontSize: 12.5)),
+                      ),
+                  ],
                 ),
               ),
               Icon(Icons.chevron_right_rounded, color: KolibriColors.textMuted),
