@@ -4832,14 +4832,14 @@ function scheduleCapabilitiesCron() {
  * «Применить рекомендованную сетку»), увидев список изменений. Дальше цены
  * правятся в той же панели как обычно.
  *
- * Три тарифа для одного заведения и два для сети. Ступени — по размеру
- * команды: приложение гостя под брендом заведения есть во всех тарифах
- * (у облачных касс для общепита его продают отдельным модулем за 2,5–5 тыс.
- * ₽ в месяц), ИИ-помощник — с «Бизнеса», приоритетная поддержка — в «Про».
- * Рабочие места (планшеты, телефоны, компьютеры) не ограничены — касса их
- * и не ограничивает. Скидка за 6 месяцев ≈ 10 %, за год ≈ 20 %. Каждая
- * следующая точка сети дешевле первой: две точки на «Сети» дешевле двух
- * заведений на «Бизнесе».
+ * Три тарифа для одного заведения и два для сети. От «Старта» за 1 790 ₽
+ * каждая ступень дороже на 600 ₽ и даёт больше команды: приложение гостя под
+ * брендом заведения есть во всех тарифах (у облачных касс для общепита его
+ * продают отдельным модулем за 2,5–5 тыс. ₽ в месяц), ИИ-помощник — с
+ * «Бизнеса», приоритетная поддержка — в «Про». Рабочие места (планшеты,
+ * телефоны, компьютеры) не ограничены — касса их и не ограничивает. Скидка
+ * за 6 месяцев ≈ 10 %, за год ≈ 20 %. Следующая точка сети намного дешевле
+ * первой: две точки на «Сети» дешевле двух заведений на «Бизнесе».
  */
 const PLAN_BASE = {
   maxDevices: 0, maxTables: 0, maxStorageMb: 0, trialDays: 14, archived: false,
@@ -4850,35 +4850,35 @@ const PLAN_BASE = {
 const PLAN_CATALOG = {
   start: {
     ...PLAN_BASE, name: "Старт",
-    priceRub: 1990, priceRubSemiannual: 10690, priceRubYearly: 19090,
+    priceRub: 1790, priceRubSemiannual: 9590, priceRubYearly: 17190,
     maxEmployees: 5, aiEnabled: false,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   standard: {
     ...PLAN_BASE, name: "Бизнес",
-    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
-    maxEmployees: 15, aiEnabled: true,
+    priceRub: 2390, priceRubSemiannual: 12890, priceRubYearly: 22890,
+    maxEmployees: 10, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   pro: {
     ...PLAN_BASE, name: "Про",
-    priceRub: 4490, priceRubSemiannual: 24190, priceRubYearly: 43090,
+    priceRub: 2990, priceRubSemiannual: 16090, priceRubYearly: 28690,
     maxEmployees: 0, aiEnabled: true, prioritySupport: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   chain: {
     ...PLAN_BASE, name: "Сеть",
     isChainPlan: true, customAdditionalPrice: true,
-    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
-    priceRubAdditional: 2290, priceRubAdditionalSemiannual: 12290, priceRubAdditionalYearly: 21890,
-    maxEmployees: 15, aiEnabled: true,
+    priceRub: 2590, priceRubSemiannual: 13890, priceRubYearly: 24790,
+    priceRubAdditional: 990, priceRubAdditionalSemiannual: 5290, priceRubAdditionalYearly: 9490,
+    maxEmployees: 10, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   "chain-pro": {
     ...PLAN_BASE, name: "Сеть Про",
     isChainPlan: true, customAdditionalPrice: true,
-    priceRub: 4490, priceRubSemiannual: 24190, priceRubYearly: 43090,
-    priceRubAdditional: 3490, priceRubAdditionalSemiannual: 18790, priceRubAdditionalYearly: 33490,
+    priceRub: 3990, priceRubSemiannual: 21490, priceRubYearly: 38290,
+    priceRubAdditional: 1290, priceRubAdditionalSemiannual: 6890, priceRubAdditionalYearly: 12390,
     maxEmployees: 0, aiEnabled: true, prioritySupport: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
