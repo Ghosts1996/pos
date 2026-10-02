@@ -113,6 +113,8 @@ jobs:
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
           rm -f test/widget_test.dart
           node .github/windows-smoke/patch-emulators.js
+          # Flutter 3.41 закрепляет intl 0.20.2 — ограничение ^0.20.3 не сходится.
+          sed -i 's/intl: ^0.20.3/intl: ^0.20.2/' pubspec.yaml
           flutter pub get
 
       - name: Build Windows (release, SaaS, код заведения win-smoke)
