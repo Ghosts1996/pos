@@ -851,8 +851,13 @@ async function placeOrder(items, redraw) {
       createdAt: Timestamp.fromDate(new Date()),
     });
     state.cart = {};
-    redraw();
     toast(`Заказ передан ${staffWord('dat')}`);
+    if (state.orderFromTable) {
+      state.orderFromTable = false;
+      location.hash = '#/table';
+    } else {
+      redraw();
+    }
   } catch (e) {
     toast('Не удалось отправить заказ');
   }
@@ -1073,6 +1078,10 @@ function drawTable(s) {
 
     ${showTimer ? `<div class="card timer" id="timer"><div class="value">—</div></div>` : ''}
 
+    <button class="btn-primary" id="orderFromTable">🍽 Сделать заказ</button>
+    <p class="small muted" style="margin:8px 0 0">Блюда и напитки — прямо к столу:
+    ${staffWord('nom')} подтвердит заказ, и он появится в счёте.</p>
+
     <h2>Позвать</h2>
     ${hookah ? `
     <div class="btn-row">
@@ -1105,7 +1114,7 @@ function drawTable(s) {
         <div class="bill-total"><span>Итого</span><span>${money(total * (1 - discount / 100))}</span></div>
         ${bonus >= 1 ? `<div class="small" style="color:var(--gold);margin-top:10px">
           Доступно бонусов: ${money(bonus)} — скажите ${staffWord('dat')}, чтобы списать при оплате</div>` : ''}
-      ` : `<p class="muted small" style="margin:0">Пока пусто — закажите в разделе «Меню»</p>`}
+      ` : `<p class="muted small" style="margin:0">Пока пусто — нажмите «Сделать заказ»</p>`}
     </div>
 
     ${tipsOn ? `<h2>Чаевые</h2><div class="card"><div id="tipsPanel"></div></div>` : ''}
@@ -1134,6 +1143,9 @@ function drawTable(s) {
   }
 
   $('unbind').onclick = unbind;
+  // Заказ со стола — меню с корзиной; после отправки гость вернётся к
+  // столу и увидит статус заказа.
+  $('orderFromTable').onclick = () => { state.orderFromTable = true; location.hash = '#/menu'; };
   screenEl().querySelectorAll('[data-call]').forEach((el) => {
     el.onclick = () => callStaff(el.dataset.call, s, el);
   });
