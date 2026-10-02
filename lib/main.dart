@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -81,10 +81,20 @@ void main() async {
       // Офлайн-режим кассы: при обрыве интернета зал продолжает работать
       // на локальном кэше, изменения уезжают в облако при восстановлении
       // связи. Ставится до первого обращения к Firestore.
-      FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      );
+      //
+      // Windows — без cacheSizeBytes: кодек плагина cloud_firestore для
+      // Windows (FirestoreCodec, FIRESTORE_SETTINGS) читает размер кэша
+      // только как 64-битное число, а -1 (CACHE_SIZE_UNLIMITED) и любое
+      // значение меньше 2^31 Dart передаёт 32-битным. Настройки уходят в
+      // нативный код вместе с каждой ссылкой на документ — и касса
+      // закрывалась без сообщения сразу после «Подключаем ваше заведение…»
+      // (std::bad_variant_access). Без размера плагин берёт свои 100 МБ.
+      FirebaseFirestore.instance.settings = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+          ? const Settings(persistenceEnabled: true)
+          : const Settings(
+              persistenceEnabled: true,
+              cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+            );
 
       // Вход в Firebase Auth и инициализация Supabase не зависят друг от
       // друга — запускаем параллельно, чтобы старт приложения ждал только

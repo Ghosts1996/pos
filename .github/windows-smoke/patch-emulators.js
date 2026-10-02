@@ -6,8 +6,10 @@ const path = require('path');
 const file = path.join(__dirname, '..', '..', 'lib', 'main.dart');
 // На Windows checkout отдаёт файлы с CRLF — сравниваем по LF.
 let s = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-const anchor = '        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,\n      );\n';
-if (!s.includes(anchor)) throw new Error('не нашли настройки Firestore в lib/main.dart');
+// Сразу после присваивания настроек Firestore (оператор целиком, до «;»).
+const m = s.match(/\n( *)FirebaseFirestore\.instance\.settings = [\s\S]*?;\n/);
+if (!m) throw new Error('не нашли настройки Firestore в lib/main.dart');
+const anchor = m[0];
 s = s.replace(anchor, anchor +
   "      FirebaseFirestore.instance.useFirestoreEmulator('127.0.0.1', 8080);\n" +
   "      await FirebaseAuth.instance.useAuthEmulator('127.0.0.1', 9099);\n");
