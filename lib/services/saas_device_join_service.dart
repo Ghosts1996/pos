@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../build_info.dart';
+import '../models/tenant_models.dart';
 
 /// Присоединение планшета кассы к заведению по коду приглашения (вместо
 /// общего staffSecret сборки одного заведения).
@@ -271,20 +272,22 @@ class ChainDirectory {
 /// своему заведению. Отметка нужна, когда её ставят поверх другой кассы на
 /// том же телефоне — чаще всего поверх демо с сайта: данные приложения
 /// сохраняются, и без отметки касса открыла бы прежнее демо вместо
-/// заведения, для которого собрана. Точку сети, выбранную позже при входе,
-/// отметка не трогает.
+/// заведения, для которого собрана. Точку сети не трогаем: касса могла
+/// перейти в другую точку («Другая точка сети»), а обновление приходит
+/// сборкой любой точки той же сети.
 class PresetJoinMarker {
   PresetJoinMarker._();
 
   static const _key = 'saas_preset_joined_slug_v1';
 
   /// Нужно ли ещё присоединиться к заведению этой сборки, если сейчас
-  /// касса в заведении с кодом [currentSlug].
-  static Future<bool> pending(String? currentSlug) async {
+  /// касса в заведении [current].
+  static Future<bool> pending(Tenant current) async {
     if (kSaasPresetSlug.isEmpty) return false;
+    if (current.demo) return current.slug != kSaasPresetSlug;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getString(_key) == kSaasPresetSlug) return false;
-    if (currentSlug == kSaasPresetSlug) {
+    if (current.slug == kSaasPresetSlug || current.chainId != null) {
       await prefs.setString(_key, kSaasPresetSlug);
       return false;
     }
