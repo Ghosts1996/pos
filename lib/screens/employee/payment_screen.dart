@@ -20,6 +20,7 @@ import '../../services/referral_service.dart';
 import '../../widgets/bonus_redeem_panel.dart';
 import '../../services/tips_service.dart';
 import '../../utils/human_error.dart';
+import '../../utils/checkout_checks.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / за счёт заведения,
@@ -335,9 +336,61 @@ class _PaymentScreenState extends State<PaymentScreen> {
   double get _revenueCard => _card.parse() - _tipsSplit.card;
   double get _revenueTerminal => _terminal.parse() - _tipsSplit.terminal;
 
+  /// Кассир уже согласился закрыть чек, хотя остатка на складе не хватает.
+  bool _stockConfirmed = false;
+
+  /// Остатка склада не хватает на проданное — говорим, чего именно, и
+  /// спрашиваем, закрывать ли чек (остаток уйдёт в минус). Нет сети —
+  /// проверку пропускаем: оплату это не должно останавливать.
+  Future<bool> _confirmStock() async {
+    if (_stockConfirmed || widget.session.orderItems.isEmpty) return true;
+    List<StockShortage> short;
+    try {
+      short = await _fs.stockShortagesFor(widget.session.orderItems).timeout(const Duration(seconds: 6));
+    } catch (_) {
+      return true;
+    }
+    if (short.isEmpty || !mounted) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        icon: const Icon(Icons.inventory_2_outlined, color: AppColors.warning),
+        title: const Text('На складе не хватает'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final s in short)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text('• ${s.text}'),
+              ),
+            const SizedBox(height: 8),
+            const Text(
+              'Если товар на самом деле есть — после оплаты поправьте остаток в «Склад» '
+              '(приход или инвентаризация). Закрыть чек сейчас? Остаток уйдёт в минус.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Закрыть чек')),
+        ],
+      ),
+    );
+    if (ok == true) _stockConfirmed = true;
+    return ok == true;
+  }
+
   Future<void> _pay() async {
     if (!_canPay || _busy) return;
     setState(() => _busy = true);
+    if (!await _confirmStock()) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
     try {
       final split = _tipsSplit;
       final tipsVia = split.cash >= _tipsTotal - 0.004
@@ -363,6 +416,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
         expectedTotal: widget.session.totalWithDiscount,
+        seenDiscountPercent: widget.session.discountPercent,
         loyaltyClientUid: _clientUid,
       );
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
@@ -396,8 +450,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось провести оплату: ${humanError(e, lower: true)}')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Не удалось провести оплату: ${humanError(e, lower: true)}'),
+          duration: const Duration(seconds: 10),
+          showCloseIcon: true,
+        ));
       }
     } finally {
       if (mounted) setState(() => _busy = false);

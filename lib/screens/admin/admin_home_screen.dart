@@ -3,6 +3,7 @@ import '../../widgets/about_app_dialog.dart';
 import '../../services/staff_session_store.dart';
 import '../../services/table_key_service.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_theme.dart';
 import '../../models/employee.dart';
 import 'floor_plan_editor_screen.dart';
 import 'menu_editor_screen.dart';
@@ -111,21 +112,7 @@ class AdminHomeScreen extends StatelessWidget {
           // больше не открывают счёт гостя (см. TableKeyService).
           StreamBuilder<bool>(
             stream: TableKeyService.instance.reprintNeededStream(),
-            builder: (context, snap) => snap.data != true
-                ? const SizedBox.shrink()
-                : Card(
-                    color: AppColors.warning.withValues(alpha: 0.15),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: ListTile(
-                      leading: const Icon(Icons.qr_code_2, color: AppColors.warning),
-                      title: const Text('Распечатайте новые QR-коды столов'),
-                      subtitle: const Text(
-                          'Старые наклейки больше не открывают счёт гостя: в новых есть секрет стола.'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context)
-                          .push(MaterialPageRoute(builder: (_) => const TableQrScreen())),
-                    ),
-                  ),
+            builder: (context, snap) => snap.data == true ? const _ReprintBanner() : const SizedBox.shrink(),
           ),
           for (final entry in groups.entries) ...[
             Padding(
@@ -170,6 +157,52 @@ class AdminHomeScreen extends StatelessWidget {
             const SizedBox(height: 20),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Напоминание распечатать QR-коды. Простые Row/Text вместо ListTile:
+/// плашка переносит строки на любом шрифте и ширине экрана.
+class _ReprintBanner extends StatelessWidget {
+  const _ReprintBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: Color.alphaBlend(AppColors.warning.withValues(alpha: 0.14), AppColors.surface),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: BorderSide(color: AppColors.warning.withValues(alpha: 0.45)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TableQrScreen())),
+          child: const Padding(
+            padding: EdgeInsets.fromLTRB(16, 14, 10, 14),
+            child: Row(children: [
+              Icon(Icons.qr_code_2, color: AppColors.warning, size: 28),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Распечатайте новые QR-коды столов',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    SizedBox(height: 4),
+                    Text('Старые наклейки больше не открывают счёт гостя: в новых есть секрет стола.',
+                        style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                  ],
+                ),
+              ),
+              SizedBox(width: 6),
+              Icon(Icons.chevron_right),
+            ]),
+          ),
+        ),
       ),
     );
   }

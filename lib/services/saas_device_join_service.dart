@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../build_info.dart';
 
 /// Присоединение планшета кассы к заведению по коду приглашения (вместо
@@ -221,4 +223,35 @@ class ChainDirectory {
   final List<ChainLocation> locations;
 
   const ChainDirectory({required this.chainId, required this.name, required this.locations});
+}
+
+/// Личная сборка заведения (kSaasPresetSlug) один раз присоединяется к
+/// своему заведению. Отметка нужна, когда её ставят поверх другой кассы на
+/// том же телефоне — чаще всего поверх демо с сайта: данные приложения
+/// сохраняются, и без отметки касса открыла бы прежнее демо вместо
+/// заведения, для которого собрана. Точку сети, выбранную позже при входе,
+/// отметка не трогает.
+class PresetJoinMarker {
+  PresetJoinMarker._();
+
+  static const _key = 'saas_preset_joined_slug_v1';
+
+  /// Нужно ли ещё присоединиться к заведению этой сборки, если сейчас
+  /// касса в заведении с кодом [currentSlug].
+  static Future<bool> pending(String? currentSlug) async {
+    if (kSaasPresetSlug.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_key) == kSaasPresetSlug) return false;
+    if (currentSlug == kSaasPresetSlug) {
+      await prefs.setString(_key, kSaasPresetSlug);
+      return false;
+    }
+    return true;
+  }
+
+  static Future<void> markJoined() async {
+    if (kSaasPresetSlug.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, kSaasPresetSlug);
+  }
 }

@@ -48,19 +48,25 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   /// не видел эти поля в обычном случае.
   bool _autoJoining = false;
 
+  static bool get _presetBuild => kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty;
+
+  /// Пересоздаём демо (а не подключаем заведение сборки).
+  bool get _resettingDemo => widget.lostDemo && !_presetBuild;
+
   @override
   void initState() {
     super.initState();
-    if (widget.lostDemo) {
-      // Демо прожило свои 3 дня — новое в исходном виде, без лишних
-      // нажатий. Не вышло (нет сети) — обычный экран с кнопкой «Демо».
-      _autoJoining = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _tryDemo());
-    } else if (kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty) {
+    if (_presetBuild) {
+      // Сборка заведения — к нему, даже если до неё на телефоне было демо.
       _autoJoining = true;
       _slug.text = kSaasPresetSlug;
       _code.text = kSaasPresetInviteCode;
       WidgetsBinding.instance.addPostFrameCallback((_) => _join());
+    } else if (widget.lostDemo) {
+      // Демо прожило свои 3 дня — новое в исходном виде, без лишних
+      // нажатий. Не вышло (нет сети) — обычный экран с кнопкой «Демо».
+      _autoJoining = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryDemo());
     }
   }
 
@@ -92,6 +98,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     try {
       final resolved = await _service.resolveTenantIdBySlug(slug);
       await joinAndEnterTenant(tenantId: resolved.tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
+      if (slug == kSaasPresetSlug) await PresetJoinMarker.markJoined();
       _openApp();
     } catch (e) {
       if (!mounted) return;
@@ -145,7 +152,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   String get _intro {
     const where = 'Код заведения и код приглашения устройства — в личном кабинете '
         'владельца, раздел «Устройства».';
-    if (widget.lostDemo) {
+    if (_resettingDemo) {
       return 'Демо-заведение прожило 3 дня и сбросилось вместе со всеми данными. '
           'Откройте новое демо в исходном виде или присоедините планшет '
           'к своему заведению. $where';
@@ -172,11 +179,11 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                 const CircularProgressIndicator(color: Colors.white70),
                 const SizedBox(height: 16),
                 Text(
-                  widget.lostDemo ? 'Демо обновляется — возвращаем исходный вид…' : 'Подключаем ваше заведение…',
+                  _resettingDemo ? 'Демо обновляется — возвращаем исходный вид…' : 'Подключаем ваше заведение…',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                 ),
-                if (widget.lostDemo) ...[
+                if (_resettingDemo) ...[
                   const SizedBox(height: 8),
                   const Text(
                     'Демо-заведение живёт 3 дня, потом всё введённое стирается.',
