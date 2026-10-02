@@ -16,6 +16,7 @@ on:
     paths:
       - '.github/workflows/windows-smoke.yml'
       - '.github/windows-smoke/**'
+      - '.github/scripts/patch-firestore-windows.js'
       - 'pubspec.yaml'
       - 'pubspec.lock'
 
@@ -84,6 +85,8 @@ jobs:
           rm -f test/widget_test.dart
           node .github/windows-smoke/patch-emulators.js
           flutter pub get
+          # Как в сборке заведений: исправление плагина cloud_firestore.
+          node .github/scripts/patch-firestore-windows.js
 
       - name: Build Windows (release, SaaS, код заведения win-smoke)
         shell: bash

@@ -735,6 +735,12 @@ jobs:
         shell: bash
         run: flutter pub get
 
+      # Ошибка плагина cloud_firestore для Windows: транзакции и ссылки на
+      # документы роняли кассу (подробности — в самом скрипте).
+      - name: Patch cloud_firestore (Windows)
+        shell: bash
+        run: node .github/scripts/patch-firestore-windows.js
+
       - name: Unit tests
         shell: bash
         run: flutter test
