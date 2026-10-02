@@ -4,7 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 const file = path.join(__dirname, '..', '..', 'lib', 'main.dart');
-let s = fs.readFileSync(file, 'utf8');
+// На Windows checkout отдаёт файлы с CRLF — сравниваем по LF.
+let s = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const anchor = '        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,\n      );\n';
 if (!s.includes(anchor)) throw new Error('не нашли настройки Firestore в lib/main.dart');
 s = s.replace(anchor, anchor +
