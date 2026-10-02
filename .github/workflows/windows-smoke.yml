@@ -72,39 +72,6 @@ jobs:
           npm install -g firebase-tools@14
           cd saas-gateway && npm ci --omit=dev
 
-      - name: Start emulators and saas-gateway
-        shell: pwsh
-        timeout-minutes: 15
-        run: |
-          $dir = "${{ github.workspace }}\.github\windows-smoke"
-          # Эмулятор берёт правила только из папки своего firebase.json.
-          Copy-Item "${{ github.workspace }}\saas\firestore.rules" "$dir\firestore.rules"
-          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
-          # Фиктивный сервисный ключ: шлюз с эмуляторами подпись не проверяет.
-          $sa = node -e "const {generateKeyPairSync}=require('crypto');const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});console.log(Buffer.from(JSON.stringify({type:'service_account',project_id:'demo-hookah',private_key_id:'x',private_key:privateKey.export({type:'pkcs8',format:'pem'}),client_email:'smoke@demo-hookah.iam.gserviceaccount.com',client_id:'1',token_uri:'https://oauth2.googleapis.com/token'})).toString('base64'))"
-          $env:FIREBASE_SERVICE_ACCOUNT_B64 = $sa
-          $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
-          $env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
-          $env:GCLOUD_PROJECT = 'demo-hookah'
-          $env:PORT = '8095'
-          $env:FIREBASE_WEB_CONFIG_JSON = '{"apiKey":"fake-api-key","authDomain":"demo-hookah.firebaseapp.com","projectId":"demo-hookah","appId":"1:1:web:1","messagingSenderId":"1"}'
-          $up = $false
-          for ($i = 0; $i -lt 90; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
-          }
-          if (-not $up) { Write-Host '::error::эмулятор Firestore не запустился'; Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 60; exit 1 }
-          Write-Host 'эмуляторы отвечают'
-          Start-Process -FilePath 'node' -ArgumentList "`"${{ github.workspace }}\saas-gateway\server.js`"" -RedirectStandardOutput "$env:RUNNER_TEMP\gateway.log" -RedirectStandardError "$env:RUNNER_TEMP\gateway.err.log" -WindowStyle Hidden
-          $up = $false
-          for ($i = 0; $i -lt 30; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
-          }
-          if (-not $up) { Write-Host '::error::saas-gateway не запустился'; Get-Content "$env:RUNNER_TEMP\gateway.log", "$env:RUNNER_TEMP\gateway.err.log" -Tail 60; exit 1 }
-          Write-Host 'шлюз отвечает'
-          Write-Host 'данные: демо-сеть через шлюз'
-          node "$dir\seed.js" demo
-          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 40; Get-Content "$env:RUNNER_TEMP\gateway.err.log" -Tail 40; exit 1 }
-
       - name: Generate Windows platform files
         shell: bash
         run: |
@@ -136,10 +103,41 @@ jobs:
             --dart-define=SAAS_PRESET_SLUG=win-smoke \
             --dart-define=SAAS_PRESET_INVITE_CODE=SMOKE1234
 
-      - name: Run scenarios
+      # Эмуляторы и шлюз — в том же шаге, что и касса: процессы, запущенные
+      # в отдельном шаге, раннер Windows завершает вместе с ним.
+      - name: Run scenarios (эмуляторы, шлюз, касса)
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
+          $dir = "${{ github.workspace }}\.github\windows-smoke"
+          # Эмулятор берёт правила только из папки своего firebase.json.
+          Copy-Item "${{ github.workspace }}\saas\firestore.rules" "$dir\firestore.rules"
+          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
+          # Фиктивный сервисный ключ: шлюз с эмуляторами подпись не проверяет.
+          $sa = node -e "const {generateKeyPairSync}=require('crypto');const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});console.log(Buffer.from(JSON.stringify({type:'service_account',project_id:'demo-hookah',private_key_id:'x',private_key:privateKey.export({type:'pkcs8',format:'pem'}),client_email:'smoke@demo-hookah.iam.gserviceaccount.com',client_id:'1',token_uri:'https://oauth2.googleapis.com/token'})).toString('base64'))"
+          $env:FIREBASE_SERVICE_ACCOUNT_B64 = $sa
+          $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+          $env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
+          $env:GCLOUD_PROJECT = 'demo-hookah'
+          $env:PORT = '8095'
+          $env:FIREBASE_WEB_CONFIG_JSON = '{"apiKey":"fake-api-key","authDomain":"demo-hookah.firebaseapp.com","projectId":"demo-hookah","appId":"1:1:web:1","messagingSenderId":"1"}'
+          $up = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          }
+          if (-not $up) { Write-Host '::error::эмулятор Firestore не запустился'; Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 60; exit 1 }
+          Write-Host 'эмуляторы отвечают'
+          Start-Process -FilePath 'node' -ArgumentList "`"${{ github.workspace }}\saas-gateway\server.js`"" -RedirectStandardOutput "$env:RUNNER_TEMP\gateway.log" -RedirectStandardError "$env:RUNNER_TEMP\gateway.err.log" -WindowStyle Hidden
+          $up = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          }
+          if (-not $up) { Write-Host '::error::saas-gateway не запустился'; Get-Content "$env:RUNNER_TEMP\gateway.log", "$env:RUNNER_TEMP\gateway.err.log" -Tail 60; exit 1 }
+          Write-Host 'шлюз отвечает'
+          Write-Host 'данные: демо-сеть через шлюз'
+          node "$dir\seed.js" demo
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 40; Get-Content "$env:RUNNER_TEMP\gateway.err.log" -Tail 40; exit 1 }
+
           $exe = Get-ChildItem -Recurse -Path build\windows -Filter hookah_pos.exe | Where-Object { $_.FullName -match '\\runner\\Release\\' } | Select-Object -First 1
           if (-not $exe) { Write-Host '::error::hookah_pos.exe не найден'; exit 1 }
           $syms = (Get-ChildItem -Recurse -Path build\windows -Filter *.pdb | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique) -join ';'
