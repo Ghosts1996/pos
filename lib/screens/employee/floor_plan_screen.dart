@@ -16,6 +16,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/hall_layout.dart';
 import '../../widgets/ai_assistant_sheet.dart';
+import '../../widgets/plan_upsell.dart';
 import '../../widgets/employee_drawer.dart';
 import '../../widgets/guest_requests_banner.dart';
 import '../../widgets/hall_drawing_builder.dart';
@@ -159,7 +160,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
           IconButton(
             tooltip: 'Ассистент зала',
             icon: const Icon(Icons.auto_awesome),
-            onPressed: () => AiAssistantSheet.show(
+            onPressed: () => openAiOrUpsell(context, () => AiAssistantSheet.show(
               context,
               agent: AiAgents.hall,
               // Данные зала кладём в промпт заранее: иначе ассистент
@@ -170,7 +171,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
                 'Куда посадить компанию из шести человек?',
                 'Что заканчивается на складе?',
               ],
-            ),
+            )),
           ),
         ],
       ),

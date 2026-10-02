@@ -7,6 +7,7 @@ import '../../models/client_models.dart';
 import '../../models/reservation_model.dart';
 import '../../models/session_model.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/plan_capabilities.dart';
 import '../../services/reservation_service.dart';
 import '../services/kolibri_auth_service.dart';
 import '../theme/kolibri_theme.dart';
@@ -201,38 +202,44 @@ class KolibriHomeScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            // ИИ-помощник — один для любого заведения: меню и состав,
-            // популярное, столы и брони, бонусы. Про кальян сам не
-            // заговаривает — только отвечает на вопрос гостя (15-ФЗ).
-            Expanded(
-              child: _action(
-                icon: Icons.auto_awesome,
-                title: 'ИИ-помощник',
-                subtitle: 'Меню, столы, советы',
-                color: KolibriColors.gold,
-                onTap: () => KolibriAiChat.show(context, guestUid: auth.uid),
+        // ИИ-помощника нет в тарифе заведения — остаётся только «Я за столом».
+        ValueListenableBuilder<PlanCapabilities>(
+          valueListenable: PlanCapabilitiesService.current,
+          builder: (context, caps, _) => Row(
+            children: [
+              if (caps.ai) ...[
+                // ИИ-помощник — один для любого заведения: меню и состав,
+                // популярное, столы и брони, бонусы. Про кальян сам не
+                // заговаривает — только отвечает на вопрос гостя (15-ФЗ).
+                Expanded(
+                  child: _action(
+                    icon: Icons.auto_awesome,
+                    title: 'ИИ-помощник',
+                    subtitle: 'Меню, столы, советы',
+                    color: KolibriColors.gold,
+                    onTap: () => KolibriAiChat.show(context, guestUid: auth.uid),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: _action(
+                  icon: Icons.qr_code_scanner,
+                  title: 'Я за столом',
+                  subtitle: 'Сканировать QR стола',
+                  color: KolibriColors.accent,
+                  onTap: () async {
+                    // QR со стола сразу привязывает гостя к открытому чеку —
+                    // быстрее, чем искать стол в списке.
+                    final sessionId = await Navigator.of(context).push<String>(
+                      MaterialPageRoute(builder: (_) => const KolibriQrScanScreen()),
+                    );
+                    if (sessionId != null) onOpenTab(3);
+                  },
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _action(
-                icon: Icons.qr_code_scanner,
-                title: 'Я за столом',
-                subtitle: 'Сканировать QR стола',
-                color: KolibriColors.accent,
-                onTap: () async {
-                  // QR со стола сразу привязывает гостя к открытому чеку —
-                  // быстрее, чем искать стол в списке.
-                  final sessionId = await Navigator.of(context).push<String>(
-                    MaterialPageRoute(builder: (_) => const KolibriQrScanScreen()),
-                  );
-                  if (sessionId != null) onOpenTab(3);
-                },
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );

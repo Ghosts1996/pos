@@ -7,6 +7,7 @@ import '../../services/tenant_join_flow.dart';
 import '../../theme/app_colors.dart';
 import '../image_preload_screen.dart';
 import '../../utils/human_error.dart';
+import '../../utils/startup_log.dart';
 
 /// Присоединение планшета к заведению SaaS-платформы — SaaS-аналог
 /// [StaffDeviceSetupScreen] из одно-арендной версии. Отличие: вместо
@@ -96,11 +97,14 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       _error = null;
     });
     try {
+      StartupLog.step('присоединение: поиск заведения по коду');
       final resolved = await _service.resolveTenantIdBySlug(slug);
       await joinAndEnterTenant(tenantId: resolved.tenantId, inviteCode: code, uid: uid, deviceName: _label.text.trim());
       if (slug == kSaasPresetSlug) await PresetJoinMarker.markJoined();
+      StartupLog.step('присоединение завершено — экран входа');
       _openApp();
     } catch (e) {
+      StartupLog.step('присоединение не удалось: $e');
       if (!mounted) return;
       setState(() {
         _busy = false;

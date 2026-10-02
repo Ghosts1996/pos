@@ -18,6 +18,7 @@ import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/demo_gate.dart';
 import 'services/saas_device_join_service.dart';
+import 'services/plan_capabilities.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
@@ -29,6 +30,7 @@ import 'screens/setup_required_screen.dart';
 import 'theme/app_theme.dart';
 import 'utils/adaptive.dart';
 import 'utils/release_error_widget.dart';
+import 'utils/startup_log.dart';
 import 'widgets/app_update_banner.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
@@ -42,6 +44,7 @@ const _supabaseAnonKey =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   installReleaseErrorWidget();
+  StartupLog.installErrorHooks();
   // Свернули кассу — при возвращении PIN (AppLock). До runApp: «Назад» под
   // блокировкой должен достаться ему раньше, чем навигатору.
   AppLock.instance.start();
@@ -70,8 +73,10 @@ void main() async {
       // currentPlatform ниже бросит StateError.
       if (kSaasMode && defaultTargetPlatform == TargetPlatform.windows) {
         await DefaultFirebaseOptions.resolveWindowsOptions();
+        StartupLog.step('конфигурация Firebase получена');
       }
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      StartupLog.step('Firebase инициализирован');
 
       // Офлайн-режим кассы: при обрыве интернета зал продолжает работать
       // на локальном кэше, изменения уезжают в облако при восстановлении
@@ -88,6 +93,7 @@ void main() async {
         AuthService().ensureSignedIn(),
         Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
       ]);
+      StartupLog.step('вход выполнен');
 
       if (kSaasMode) {
         // SaaS: доступ — членство в заведении, а не общий секрет. После
@@ -99,6 +105,7 @@ void main() async {
         TenantConfig? config;
         if (uid != null) {
           try {
+            StartupLog.step('чтение заведения');
             config = await tenantConfigService.refresh(uid);
           } catch (_) {
             // Сети нет — доверяем локальному кэшу (офлайн-грейс-период,
@@ -112,6 +119,7 @@ void main() async {
           config = null;
           cachedDemo = false;
         }
+        StartupLog.step(config == null ? 'заведение не выбрано — экран присоединения' : 'заведение ${config.tenant.id}');
         if (config != null) {
           AppScope.enterTenant(config.tenant.id,
               branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo, demoPins: config.tenant.demoPins, demoCode: config.tenant.demoCode);
@@ -121,6 +129,8 @@ void main() async {
           // без этого просрочка, наступившая посреди смены, ничего бы не
           // меняла до следующего перезапуска планшета).
           SubscriptionGate.watch(config.tenant.id, config);
+          // Что входит в тариф: приложение гостя, ИИ, лимит сотрудников.
+          PlanCapabilitiesService.watch(config.tenant.id);
           // Демо живёт 3 дня, потом сбрасывается в исходный вид.
           DemoGate.watch(config);
           final chainId = config.tenant.chainId;
@@ -142,6 +152,7 @@ void main() async {
       }
     } catch (e) {
       startupError = e.toString();
+      StartupLog.step('ошибка запуска: $e');
     }
   }
 

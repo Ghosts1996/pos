@@ -99,13 +99,21 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/chains/$(chainId)/clients/$(request.auth.uid));
     }
 
+    // Приложение гостя и меню по QR есть в тарифе заведения. guestAppOff
+    // ставит только сервер (syncTenantCapabilities); нет поля — есть. Тот же
+    // документ, что читает chainIdOf, — лишнего чтения нет.
+    function guestAppOn(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)).data.get('guestAppOff', false) != true;
+    }
+
     // Гость этого заведения — у кого есть профиль clients в его поддереве или
     // в сети. Анонимный вход валиден для любого заведения платформы, так что
     // без этой проверки гость одного заведения читал бы меню и зал другого.
-    // Профиль приложение гостя создаёт при запуске, до показа меню.
+    // Профиль приложение гостя создаёт при запуске, до показа меню. Без
+    // приложения гостя в тарифе гостей заведение не обслуживает.
     function isTenantGuest(tenantId) {
       let cId = chainIdOf(tenantId);
-      return signedIn() && (
+      return signedIn() && guestAppOn(tenantId) && (
         exists(/databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid)) ||
         (cId != '' && exists(/databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid)))
       );
@@ -887,6 +895,13 @@ service cloud.firestore {
     }
 
     // ---- Счётчики для лимитов тарифа — сервер пересчитывает раз в сутки ----
+    // Что даёт тариф заведения (приложение гостя, ИИ, лимит сотрудников) —
+    // пишет сервер, читают касса и приложения гостя ещё до входа.
+    match /tenants/{tenantId}/public/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /tenants/{tenantId}/usage/{doc} {
       allow read: if isSuperAdmin() || hasRole(tenantId, ['owner', 'admin']);
       allow write: if false;

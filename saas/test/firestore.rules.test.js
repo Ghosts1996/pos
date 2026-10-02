@@ -144,6 +144,49 @@ describe("Изоляция арендаторов — гости", () => {
   });
 });
 
+describe("Тариф без приложения гостя", () => {
+  beforeEach(seedTwoTenants);
+
+  async function turnGuestAppOff(tenantId) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), `tenants/${tenantId}`), { guestAppOff: true });
+    });
+  }
+
+  it("гость не видит меню и зал, если приложения гостя нет в тарифе", async () => {
+    await turnGuestAppOff("tenantA");
+    const db = ctxFor("guestA");
+    await assertFails(getDoc(doc(db, "tenants/tenantA/tables/table1")));
+    await assertFails(getDoc(doc(db, "tenants/tenantA/menuItems/item1")));
+  });
+
+  it("и не может позвать персонал или сделать заказ", async () => {
+    await turnGuestAppOff("tenantA");
+    const db = ctxFor("guestA");
+    await assertFails(setDoc(doc(db, "tenants/tenantA/waiterCalls/call1"), { clientUid: "guestA", type: "waiter", sessionId: "sess1" }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/guestOrders/o1"), { clientUid: "guestA", status: "new", sessionId: "sess1", items: [{ id: "x" }] }));
+  });
+
+  it("персонал заведения работает как обычно", async () => {
+    await turnGuestAppOff("tenantA");
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "tenants/tenantA/tables/table1")));
+  });
+
+  it("гость другого заведения не затронут", async () => {
+    await turnGuestAppOff("tenantA");
+    await assertSucceeds(getDoc(doc(ctxFor("guestB"), "tenants/tenantB/tables/table1")));
+  });
+
+  it("возможности тарифа читает кто угодно, а пишет только сервер", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/public/features"), { guestApp: false, ai: false, maxEmployees: 5 });
+    });
+    await assertSucceeds(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "tenants/tenantA/public/features")));
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/public/features"), { guestApp: true, ai: true, maxEmployees: 0 }));
+    await assertFails(updateDoc(doc(ctxFor("ownerA"), "tenants/tenantA"), { guestAppOff: false }));
+  });
+});
+
 describe("Нельзя обойти бэкенд для создания/эскалации tenant", () => {
   beforeEach(seedTwoTenants);
 
