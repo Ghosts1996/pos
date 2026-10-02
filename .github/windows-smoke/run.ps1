@@ -23,7 +23,9 @@ if (Test-Path $cdb) {
   # Касса не должна завершаться сама: строка «Last event:» (вывод
   # .lastevent после возврата из g) и есть признак падения. По тексту
   # команды не ищем — cdb повторяет его в журнале.
-  $cmd = "sxd av; sxd eh; .symopt+ 0x40; g; .lastevent; .ecxr; kn 80; ~*kn 30; !analyze -v; q"
+  # Для исключения C++ (e06d7363) печатаем и его текст: объект исключения —
+  # второй параметр записи, строка what() у std::exception — по смещению 8.
+  $cmd = "sxd av; sxd eh; .symopt+ 0x40; g; .lastevent; .exr -1; .echo WHAT:; da poi(@`$exr_param1+8) L200; .ecxr; kn 80; ~*kn 30; !analyze -v; q"
   $env:_NT_SYMBOL_PATH = "$SymbolDirs;srv*$env:RUNNER_TEMP\syms*https://msdl.microsoft.com/download/symbols"
   $p = Start-Process -FilePath $cdb -ArgumentList @('-G', '-lines', '-logo', "`"$cdbLog`"", '-c', "`"$cmd`"", "`"$Exe`"") -PassThru
 } else {
