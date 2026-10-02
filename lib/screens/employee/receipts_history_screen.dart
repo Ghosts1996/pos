@@ -277,7 +277,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                         final s = sessions[index];
                         return ListTile(
                           leading: Icon(s.refunded ? Icons.undo : Icons.receipt_long,
-                              color: s.refunded ? Colors.orange : null),
+                              color: s.refunded ? AppColors.warning : null),
                           title: Text('${s.tableName} · ${s.employeeName}'),
                           subtitle: Text(
                             '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}'

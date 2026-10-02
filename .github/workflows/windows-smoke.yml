@@ -108,13 +108,14 @@ jobs:
       - name: Generate Windows platform files
         shell: bash
         run: |
+          # Flutter 3.41 закрепляет intl 0.20.2 — ограничение ^0.20.3 не
+          # сходится; flutter create сам вызывает pub get, поэтому до него.
+          sed -i 's/intl: ^0.20.3/intl: ^0.20.2/' pubspec.yaml
           flutter config --enable-windows-desktop
           flutter create . --platforms=windows
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
           rm -f test/widget_test.dart
           node .github/windows-smoke/patch-emulators.js
-          # Flutter 3.41 закрепляет intl 0.20.2 — ограничение ^0.20.3 не сходится.
-          sed -i 's/intl: ^0.20.3/intl: ^0.20.2/' pubspec.yaml
           flutter pub get
 
       - name: Build Windows (release, SaaS, код заведения win-smoke)
@@ -122,8 +123,10 @@ jobs:
         env:
           CMAKE_POLICY_VERSION_MINIMUM: '3.5'
           # Как у сборки заведений + отладочные символы (PDB) для стека.
-          CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /Zi /FS
-          LDFLAGS: /DEBUG
+          # Ключи через «-», не «/»: Git Bash превращает «/DEBUG» в путь
+          # C:/Program Files/Git/DEBUG, а MSVC понимает обе формы.
+          CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS -Zi -FS
+          LDFLAGS: -DEBUG
         run: |
           flutter build windows --release \
             -t lib/main.dart \

@@ -8,10 +8,12 @@
 //
 // Классический скрипт без import/const — для старых браузеров Android.
 (function () {
-  var DEFAULT_BG = '#0E1512';
-  var DEFAULT_TEXT = '#EAF3EF';
-  var DEFAULT_PRIMARY = '#12B886';
-  var DARK_ON_PRIMARY = '#04140E';
+  // «Графит и медь» — как BrandingConfig в lib/models/tenant_models.dart.
+  var DEFAULT_BG = '#15120F';
+  var DEFAULT_TEXT = '#F2EADF';
+  var DEFAULT_PRIMARY = '#B35C30';
+  var DEFAULT_GOLD = '#CFA567';
+  var DARK_ON_PRIMARY = '#17110C';
 
   function isHex(c) {
     return typeof c === 'string' && /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim());
@@ -95,7 +97,10 @@
     // основной (он и так фирменный акцент), и лишь в крайнем случае —
     // основной, подтянутый к цвету текста.
     var gold = null;
-    [b.secondaryColor, primary].some(function (c) {
+    // Без своих цветов у заведения — латунь палитры по умолчанию.
+    var secondary = isHex(b.secondaryColor) ? b.secondaryColor
+      : (isHex(b.primaryColor) ? null : DEFAULT_GOLD);
+    [secondary, primary].some(function (c) {
       if (!isHex(c)) return false;
       var ok = surfaces.every(function (s) { return contrast(c.trim(), s) >= 3; });
       if (ok) gold = c.trim();

@@ -1002,7 +1002,7 @@ class _MoveTableScreen extends StatelessWidget {
                   enabled: !full,
                   leading: Icon(
                     t.status == 'occupied' ? Icons.event_seat : Icons.chair_outlined,
-                    color: t.status == 'occupied' ? AppColors.danger : Colors.green,
+                    color: t.status == 'occupied' ? AppColors.danger : AppColors.success,
                   ),
                   title: Text(t.name),
                   subtitle: Text(t.status == 'occupied'

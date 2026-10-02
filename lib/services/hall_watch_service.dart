@@ -140,7 +140,7 @@ class HallWatchService {
   /// брала цветную иконку приложения, и в шторке было мутное пятно.
   static const _icon = NotificationIcon(
     metaDataName: 'com.zalpos.notification_icon',
-    backgroundColor: Color(0xFF2F5BEA),
+    backgroundColor: Color(0xFFB35C30),
   );
 
   Future<void> stop() async {

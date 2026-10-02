@@ -6,6 +6,7 @@ import '../../utils/adaptive.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../theme/app_colors.dart';
 
 enum _Period { today, week, month, custom }
 
@@ -163,7 +164,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
-                            textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+                            textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
                       ),
                     );
                   }
@@ -221,7 +222,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           _sectionTitle('Закрыто без оплаты'),
                           Card(
                             child: ListTile(
-                              leading: const Icon(Icons.money_off, color: Colors.orange),
+                              leading: const Icon(Icons.money_off, color: AppColors.warning),
                               title: Text('${stats.unpaidClosed} ${pluralRu(stats.unpaidClosed, 'чек', 'чека', 'чеков')}'),
                               subtitle: Text(
                                   'На сумму ${rub(stats.unpaidAmount)} (не входит в выручку)'),
@@ -233,7 +234,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           _sectionTitle('Возвраты'),
                           Card(
                             child: ListTile(
-                              leading: const Icon(Icons.undo, color: Colors.orange),
+                              leading: const Icon(Icons.undo, color: AppColors.warning),
                               title: Text('${stats.refunds} возвратов'),
                               subtitle: Text(
                                   'На сумму ${rub(stats.refundedAmount)} (не входит в выручку)'),
@@ -293,7 +294,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            Icon(icon, color: Colors.purpleAccent),
+            Icon(icon, color: AppColors.brass),
             const SizedBox(width: 10),
             Expanded(
               child: Column(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import '../theme/app_colors.dart';
 
 /// Кнопка голосового ввода для чатов с ИИ.
 ///
@@ -24,7 +25,7 @@ class AiVoiceInput extends StatefulWidget {
     super.key,
     required this.onResult,
     this.onPartial,
-    this.color = Colors.blue,
+    this.color = AppColors.primary,
     this.localeId = 'ru_RU',
   });
 
@@ -105,7 +106,7 @@ class _AiVoiceInputState extends State<AiVoiceInput> {
       onPressed: _available ? _toggle : null,
       icon: Icon(
         _listening ? Icons.mic : Icons.mic_none,
-        color: _listening ? Colors.redAccent : widget.color,
+        color: _listening ? AppColors.danger : widget.color,
       ),
     );
   }

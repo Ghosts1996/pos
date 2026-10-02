@@ -11,6 +11,7 @@ import '../../services/scanner_service.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../theme/app_colors.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
 /// ЕГАИС. Значения хранятся в Firestore (settings/integrations), чтобы не
@@ -602,7 +603,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       leading: Icon(d.isWaybill ? Icons.local_shipping_outlined : Icons.description_outlined,
-                          color: d.isWaybill ? Colors.orange : null),
+                          color: d.isWaybill ? AppColors.warning : null),
                       title: Text(d.label),
                       subtitle: Text(d.type, style: const TextStyle(fontSize: 11)),
                     )),

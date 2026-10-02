@@ -26,6 +26,7 @@ double _contrast(Color a, Color b) {
 }
 
 const _presets = <String, BrandingConfig>{
+  'graphite-copper': BrandingConfig(primaryColor: '#B35C30', secondaryColor: '#CFA567', backgroundColor: '#15120F', textColor: '#F2EADF'),
   'midnight': BrandingConfig(primaryColor: '#0B5ED7', secondaryColor: '#162A4A', backgroundColor: '#02050B', textColor: '#F8FAFC'),
   'emerald': BrandingConfig(primaryColor: '#9C7A22', secondaryColor: '#0E2A20', backgroundColor: '#071510', textColor: '#F4EFDD'),
   'bordeaux': BrandingConfig(primaryColor: '#9C4A57', secondaryColor: '#3B0D14', backgroundColor: '#170406', textColor: '#F7E9E9'),
@@ -52,7 +53,7 @@ void main() {
       // Текст на кнопке — лучший из белого/тёмного.
       final onP = _contrast(KolibriColors.onPrimary, KolibriColors.primary);
       expect(onP, greaterThanOrEqualTo(_contrast(Colors.white, KolibriColors.primary) - 0.001));
-      expect(onP, greaterThanOrEqualTo(_contrast(const Color(0xFF04140E), KolibriColors.primary) - 0.001));
+      expect(onP, greaterThanOrEqualTo(_contrast(const Color(0xFF17110C), KolibriColors.primary) - 0.001));
     });
   }
 

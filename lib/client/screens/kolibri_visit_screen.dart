@@ -75,8 +75,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   Widget _notAtTable() => ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
         children: [
-          const Text('Мой стол',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+          Text('Мой стол', style: KolibriFonts.display(34)),
           const SizedBox(height: 8),
           Text(
             VenueService.instance.terms.isHookah
@@ -170,13 +169,12 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               const SizedBox(height: 8),
               Text(
                 '$minutes:$seconds',
-                style: TextStyle(
-                  fontSize: 44,
-                  fontWeight: FontWeight.w700,
+                style: KolibriFonts.display(
+                  60,
                   color: over
                       ? KolibriColors.danger
-                      : (left.inMinutes <= 15 ? KolibriColors.warning : KolibriColors.primary),
-                ),
+                      : (left.inMinutes <= 15 ? KolibriColors.warning : KolibriColors.textPrimary),
+                ).copyWith(fontFeatures: const [FontFeature.liningFigures(), FontFeature.tabularFigures()]),
               ),
               if (s.refillCount > 0)
                 Text('Перезабивок: ${s.refillCount}',
@@ -544,8 +542,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
       ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
         children: [
-          const Text('Спасибо за визит!',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+          Text('Спасибо за визит!', style: KolibriFonts.display(34)),
           const SizedBox(height: 8),
           Text('Счёт (${tableLabel(tableName)}) закрыт на '
               '${rub(total)}.',

@@ -43,15 +43,17 @@ class KolibriHomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(KolibriColors.appName,
-                      style: TextStyle(
-                          fontSize: 13,
-                          letterSpacing: 2,
-                          color: KolibriColors.primary,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text('${_greeting()}, $name',
-                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                  Text(KolibriColors.appName.toUpperCase(), style: KolibriFonts.overline()),
+                  const SizedBox(height: 8),
+                  Text.rich(
+                    TextSpan(children: [
+                      TextSpan(text: '${_greeting()},\n'),
+                      TextSpan(
+                          text: name,
+                          style: KolibriFonts.display(38, color: KolibriColors.gold, style: FontStyle.italic)),
+                    ]),
+                    style: KolibriFonts.display(38),
+                  ),
                 ],
               ),
             ),
@@ -177,8 +179,7 @@ class KolibriHomeScreen extends StatelessWidget {
         KolibriStoriesScreen(onOpenTab: onOpenTab),
 
         const SizedBox(height: 24),
-        const Text('Быстрые действия',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const KolibriSectionLabel('Быстрые действия'),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -254,13 +255,13 @@ class KolibriHomeScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         gradient: LinearGradient(
-          colors: [KolibriColors.surfaceElevated, KolibriColors.surface],
+          colors: [Color.lerp(KolibriColors.surface, tierColor, 0.10)!, KolibriColors.surface],
           begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          end: Alignment.center,
         ),
-        border: Border.all(color: tierColor.withValues(alpha: 0.45)),
+        border: Border.all(color: tierColor.withValues(alpha: 0.38)),
       ),
       child: Row(
         children: [
@@ -270,15 +271,12 @@ class KolibriHomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Бонусный счёт',
-                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
-                const SizedBox(height: 6),
+                Text('БОНУСНЫЙ СЧЁТ', style: KolibriFonts.overline(color: tierColor)),
+                const SizedBox(height: 10),
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: Text(rub(bonus),
-                      style: TextStyle(
-                          fontSize: 30, fontWeight: FontWeight.w700, color: tierColor)),
+                  child: Text(rub(bonus), style: KolibriFonts.display(48, color: tierColor)),
                 ),
                 const SizedBox(height: 4),
                 Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
@@ -287,7 +285,7 @@ class KolibriHomeScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Icon(Icons.card_giftcard, color: tierColor, size: 36),
+          Icon(Icons.card_giftcard_outlined, color: tierColor.withValues(alpha: 0.7), size: 30),
         ],
       ),
     );
