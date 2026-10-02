@@ -460,34 +460,13 @@ async function handlePublicGuestApk(req, res) {
 
 const VENUE_TYPES = ["hookah", "restaurant", "cafe", "bar"];
 
-async function handleCreateTenant(req, res) {
-  const decoded = await verifyAuth(req);
-  if (!decoded.email_verified) {
-    throw new HttpError(412, "Подтвердите email, прежде чем создавать заведение");
-  }
-  await requireNotBlocked(req, decoded.email, "tenant");
-
-  const body = await parseJsonBody(req);
-  const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
-  // От типа заведения зависят слова в приложении гостя.
-  const venueType = VENUE_TYPES.includes(body.venueType) ? body.venueType : "hookah";
-  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
-    throw new HttpError(400, "Название заведения: от 2 до 80 символов");
-  }
-  const slug = normalizeSlug(rawSlug || name);
-  const uid = decoded.uid;
-
+/**
+ * Записи нового заведения (или точки сети [chainId]): само заведение,
+ * владелец, настройки, брендинг, код приглашения, подписка одиночного
+ * заведения. Права и оплату проверяет вызывающий.
+ */
+async function createTenantRecords({ name, slug, chainId = null, uid, email = null, planId = null, venueType = "hookah" }) {
   const firestore = db();
-  let chainId = null;
-  if (typeof rawChainId === "string" && rawChainId.trim()) {
-    chainId = rawChainId.trim();
-    const chainDoc = await firestore.collection("chains").doc(chainId).get();
-    if (!chainDoc.exists || chainDoc.data().status === "deleted") {
-      throw new HttpError(404, "Сеть заведений не найдена");
-    }
-    await requireChainRole(chainId, uid, ["owner", "admin"]);
-  }
-
   await assertSlugFree(firestore, slug, "Этот код заведения уже занят, выберите другой");
 
   const tenantRef = firestore.collection("tenants").doc();
@@ -520,7 +499,7 @@ async function handleCreateTenant(req, res) {
   });
   batch.set(firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`), {
     // email — чтобы в «Команде» владелец был подписан адресом, а не «Устройство».
-    tenantId, userId: uid, email: decoded.email || null, role: "owner", status: "active", createdAt: now,
+    tenantId, userId: uid, email: email || null, role: "owner", status: "active", createdAt: now,
   });
   batch.set(tenantRef.collection("settings").doc("general"), {
     name: name.trim(), timezone: "Europe/Moscow", currency: "RUB", language: "ru",
@@ -573,7 +552,51 @@ async function handleCreateTenant(req, res) {
     console.error(`provisionTenantDomain(${slug}) не удался:`, e.message || e);
   });
 
-  recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
+  return { tenantId, slug, chainId };
+}
+
+async function handleCreateTenant(req, res) {
+  const decoded = await verifyAuth(req);
+  if (!decoded.email_verified) {
+    throw new HttpError(412, "Подтвердите email, прежде чем создавать заведение");
+  }
+  await requireNotBlocked(req, decoded.email, "tenant");
+
+  const body = await parseJsonBody(req);
+  const { name, slug: rawSlug, planId, chainId: rawChainId } = body;
+  // От типа заведения зависят слова в приложении гостя.
+  const venueType = VENUE_TYPES.includes(body.venueType) ? body.venueType : "hookah";
+  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
+    throw new HttpError(400, "Название заведения: от 2 до 80 символов");
+  }
+  const slug = normalizeSlug(rawSlug || name);
+  const uid = decoded.uid;
+
+  const firestore = db();
+  let chainId = null;
+  if (typeof rawChainId === "string" && rawChainId.trim()) {
+    chainId = rawChainId.trim();
+    const chainDoc = await firestore.collection("chains").doc(chainId).get();
+    if (!chainDoc.exists || chainDoc.data().status === "deleted") {
+      throw new HttpError(404, "Сеть заведений не найдена");
+    }
+    await requireChainRole(chainId, uid, ["owner", "admin"]);
+    // Новая точка оплаченной сети — только через оплату доп. точки
+    // (handleChainLocationCheckout): иначе владелец получал бы точку даром.
+    if (!(await isSuperAdmin(decoded))) {
+      const quote = await chainLocationQuote(chainId);
+      if (!quote.free) {
+        throw new HttpError(402, `Новая точка сети — после оплаты доп. точки (${quote.amount.toLocaleString("ru-RU")} ₽): кнопка «Добавить точку сети» в кабинете`);
+      }
+    }
+  }
+
+  const created = await createTenantRecords({
+    name: name.trim(), slug, chainId, uid, email: decoded.email || null, planId, venueType,
+  });
+  const tenantId = created.tenantId;
+  // Точка своей сети — не новая регистрация.
+  if (!chainId) recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
   sendJson(res, 200, { tenantId, slug, chainId });
 }
 
@@ -887,6 +910,190 @@ async function provisionTenantDomain(slug) {
       },
     );
   });
+}
+
+// ------------------------------------------------- chain location payment
+
+/**
+ * Сколько стоит новая точка сети прямо сейчас. Подписка сети оплачена
+ * вперёд за точки, что были на момент оплаты, — за новую доплачивают
+ * цену доп. точки за дни, оставшиеся до конца оплаченного периода; со
+ * следующего продления она входит в цену тарифа (chainPriceForPeriod
+ * считает точки). Пробный период, сеть без точек и последний день периода
+ * — бесплатно. Просрочка — сначала оплатить сеть.
+ */
+async function chainLocationQuote(chainId) {
+  const firestore = db();
+  const [chainSnap, subSnap, locationCount] = await Promise.all([
+    firestore.collection("chains").doc(chainId).get(),
+    firestore.collection("subscriptions").doc(chainId).get(),
+    countChainLocations(chainId),
+  ]);
+  if (!chainSnap.exists || chainSnap.data().status === "deleted") throw new HttpError(404, "Сеть заведений не найдена");
+  const sub = subSnap.data() || {};
+  const plan = (await firestore.collection("plans").doc(sub.planId || chainSnap.data().planId || "chain").get()).data() || {};
+  const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
+  const monthlyAdditional = additionalLocationPriceForPeriod(plan, "monthly");
+  const base = { locationCount, monthlyAdditional, billingPeriod, planName: plan.name || null };
+  if (chainSnap.data().demo === true) return { ...base, free: true, reason: "demo", amount: 0 };
+  if (locationCount === 0) return { ...base, free: true, reason: "firstLocation", amount: 0 };
+  if (sub.status === "trial") return { ...base, free: true, reason: "trial", amount: 0 };
+  if (sub.status !== "active") {
+    throw new HttpError(402, "Подписка сети не оплачена — сначала продлите её во вкладке «Оплата»");
+  }
+  const endMs = sub.currentPeriodEnd?.toMillis ? sub.currentPeriodEnd.toMillis() : 0;
+  const remainingDays = Math.max(0, Math.ceil((endMs - Date.now()) / 86400000));
+  const periodPrice = additionalLocationPriceForPeriod(plan, billingPeriod);
+  const amount = Math.round((periodPrice / BILLING_PERIOD_DAYS[billingPeriod]) * remainingDays);
+  if (amount < 1) return { ...base, free: true, reason: "periodEnds", amount: 0, remainingDays };
+  return {
+    ...base, free: false, amount, remainingDays,
+    periodEnd: endMs ? new Date(endMs).toISOString() : null,
+  };
+}
+
+async function handleChainLocationQuote(req, res) {
+  const decoded = await verifyAuth(req);
+  const { chainId } = await parseJsonBody(req);
+  if (typeof chainId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(chainId)) throw new HttpError(400, "Не указана сеть");
+  await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
+  sendJson(res, 200, await chainLocationQuote(chainId));
+}
+
+/**
+ * «Добавить точку сети»: бесплатно (см. chainLocationQuote) — точка сразу,
+ * иначе ссылка на оплату; точку создаёт подтверждённая оплата
+ * (applyChainLocationPayment).
+ */
+async function handleChainLocationCheckout(req, res) {
+  const decoded = await verifyAuth(req);
+  if (!decoded.email_verified) throw new HttpError(412, "Подтвердите email, прежде чем добавлять точку");
+  const body = await parseJsonBody(req);
+  const { chainId, name, returnUrl } = body;
+  if (typeof chainId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(chainId)) throw new HttpError(400, "Не указана сеть");
+  if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
+    throw new HttpError(400, "Название точки: от 2 до 80 символов");
+  }
+  await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
+  const slug = normalizeSlug(body.slug || name);
+  const venueType = VENUE_TYPES.includes(body.venueType) ? body.venueType : "hookah";
+  const firestore = db();
+  await assertSlugFree(firestore, slug, "Этот код точки уже занят, выберите другой");
+  const quote = await chainLocationQuote(chainId);
+  if (quote.free) {
+    const created = await createTenantRecords({ name: name.trim(), slug, chainId, uid: decoded.uid, email: decoded.email || null, venueType });
+    sendJson(res, 200, { created: true, tenantId: created.tenantId, slug: created.slug });
+    return;
+  }
+  if (typeof returnUrl !== "string" || !returnUrl) throw new HttpError(400, "Не передан адрес возврата после оплаты");
+  const location = { name: name.trim(), slug, venueType };
+  const email = decoded.email || await billingOwnerEmail(true, chainId);
+  const description = `ZalPOS: новая точка сети «${location.name}» до конца оплаченного периода (${quote.remainingDays} дн.)`;
+  if (billingProvider() === "robokassa") {
+    const invoice = await createRobokassaInvoice({
+      tenantId: null, chainId, planId: null, billingPeriod: quote.billingPeriod, purpose: "chainLocation",
+      amount: quote.amount, email, returnUrl, requestedBy: decoded.uid, recurring: false, location,
+    });
+    const url = robokassaPaymentUrl({
+      invId: invoice.invId, outSum: invoice.outSum, description, email, recurring: false,
+      receipt: robokassaReceipt(description, quote.amount),
+    });
+    sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId), amount: quote.amount });
+    return;
+  }
+  const payment = await yookassaRequest("payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: { value: quote.amount.toFixed(2), currency: "RUB" },
+      capture: true,
+      confirmation: { type: "redirect", return_url: returnUrl },
+      description,
+      receipt: yookassaReceipt(description, quote.amount, email),
+      metadata: {
+        chainId, purpose: "chainLocation", requestedBy: decoded.uid,
+        locName: location.name, locSlug: location.slug, venueType: location.venueType,
+      },
+    },
+  });
+  sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id, amount: quote.amount });
+}
+
+/**
+ * Оплата новой точки сети подтверждена — создаём точку. Повторное
+ * уведомление о той же оплате точку второй раз не создаст: событие
+ * billingEvents/{eventId} и отметка createdTenantId в счёте.
+ */
+async function applyChainLocationPayment({ eventId, provider, chainId, amount, location, requestedBy, test = false, invRef = null }) {
+  const firestore = db();
+  const eventRef = firestore.collection("billingEvents").doc(eventId);
+  const already = await firestore.runTransaction(async (tx) => {
+    const seen = await tx.get(eventRef);
+    if (seen.exists && seen.data().applied !== false) return true;
+    tx.set(eventRef, {
+      tenantId: null, chainId, planId: null, billingPeriod: null, status: "succeeded", provider,
+      amount, purpose: "chainLocation", test: test === true,
+      receivedAt: admin.firestore.FieldValue.serverTimestamp(), applied: false,
+    });
+    return false;
+  });
+  if (already) return;
+  let tenantId = invRef ? ((await invRef.get()).data()?.createdTenantId || null) : null;
+  const chain = (await firestore.collection("chains").doc(chainId).get()).data();
+  if (!tenantId && chain && chain.status !== "deleted" && location?.name && requestedBy) {
+    let email = null;
+    try { email = (await admin.auth().getUser(requestedBy)).email || null; } catch (_) {}
+    const baseSlug = normalizeSlug(location.slug || location.name);
+    // Код могли занять, пока шла оплата, — тогда с хвостом.
+    for (let attempt = 0; attempt < 5 && !tenantId; attempt += 1) {
+      const slug = attempt === 0 ? baseSlug : `${baseSlug.slice(0, 56)}-${crypto.randomInt(1000, 9999)}`;
+      try {
+        const created = await createTenantRecords({
+          name: String(location.name).slice(0, 80), slug, chainId, uid: requestedBy, email,
+          venueType: VENUE_TYPES.includes(location.venueType) ? location.venueType : "hookah",
+        });
+        tenantId = created.tenantId;
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 409)) throw e;
+      }
+    }
+    if (invRef && tenantId) await invRef.set({ createdTenantId: tenantId }, { merge: true });
+  }
+  await eventRef.set({ applied: true, tenantId }, { merge: true });
+  await writeAuditLog({
+    tenantId, actorId: requestedBy || null,
+    action: tenantId ? "chainLocationPaid" : "chainLocationPaymentUnapplied",
+    metadata: { chainId, eventId, amount, ...(test ? { test: true } : {}) },
+  });
+}
+
+// ------------------------------------------------- setBillingEventTest
+
+/**
+ * Супер-админ отмечает оплату тестовой (или снимает отметку): проверочные
+ * оплаты до запуска не должны попадать в выручку и MRR панели. Если этим
+ * платежом оплачена текущая подписка — отметка и у заведения (сети).
+ */
+async function handleSetBillingEventTest(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { eventId, test } = await parseJsonBody(req);
+  if (typeof eventId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(eventId)) throw new HttpError(400, "Не указан платёж");
+  const firestore = db();
+  const ref = firestore.collection("billingEvents").doc(eventId);
+  const ev = (await ref.get()).data();
+  if (!ev) throw new HttpError(404, "Платёж не найден");
+  const flag = test === true;
+  await ref.set({ test: flag, testMarkedBy: decoded.uid, testMarkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const billingId = ev.chainId || ev.tenantId;
+  if (billingId && ev.status === "succeeded") {
+    const sub = (await firestore.collection("subscriptions").doc(billingId).get()).data();
+    if (sub?.externalSubscriptionId === eventId) {
+      await firestore.collection(ev.chainId ? "chains" : "tenants").doc(billingId).set({ testPayment: flag }, { merge: true });
+    }
+  }
+  await writeAuditLog({ tenantId: ev.tenantId || null, actorId: decoded.uid, action: flag ? "billingMarkedTest" : "billingMarkedReal", metadata: { eventId } });
+  sendJson(res, 200, { ok: true });
 }
 
 // ----------------------------------------------------- createBuildJob
@@ -1597,13 +1804,18 @@ function safeReturnUrl(raw) {
   return "https://zalpos.ru/#/";
 }
 
-async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null, recurring = null, payerType = "individual" }) {
+async function createRobokassaInvoice({ tenantId, chainId, planId, billingPeriod, purpose, amount, email, returnUrl, locationCount = null, parentInvId = null, requestedBy = null, recurring = null, payerType = "individual", location = null }) {
   const invId = await nextRobokassaInvId();
   const outSum = amount.toFixed(2);
   await db().collection("billingInvoices").doc(String(invId)).set({
     provider: "robokassa", invId, tenantId, chainId, planId, billingPeriod, purpose,
     amount, outSum, email: email || null, returnUrl: safeReturnUrl(returnUrl),
     locationCount, parentInvId, requestedBy, recurring, payerType,
+    // Новая точка сети (purpose chainLocation) создаётся после оплаты.
+    ...(location ? { location } : {}),
+    // Тестовый режим Робокассы (ROBOKASSA_TEST=1): деньги не списываются —
+    // такую оплату панель платформы не считает выручкой.
+    test: robokassaConfig().test === true,
     status: "pending", createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   return { invId, outSum };
@@ -1685,6 +1897,19 @@ async function handleRobokassaResult(req, res) {
     return sendPlain(res, 200, `OK${invId}`);
   }
 
+  if (inv.purpose === "chainLocation") {
+    await applyChainLocationPayment({
+      eventId: `robokassa_${invId}`, provider: "robokassa", chainId: inv.chainId,
+      amount: Number(inv.amount) || 0, location: inv.location, requestedBy: inv.requestedBy,
+      test: inv.test === true || String(p.IsTest || "") === "1", invRef,
+    });
+    await invRef.set({
+      status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      paymentMethod: p.PaymentMethod || null, fee: p.Fee || null,
+    }, { merge: true });
+    return sendPlain(res, 200, `OK${invId}`);
+  }
+
   // Первая оплата с Recurring=true — «родитель» будущих автосписаний.
   // recurring == null — счёт создан до галочки согласия (старая логика).
   const withConsent = inv.recurring == null ? c.recurring : inv.recurring === true;
@@ -1699,6 +1924,7 @@ async function handleRobokassaResult(req, res) {
     billingPeriod: normalizeBillingPeriod(inv.billingPeriod),
     amount: Number(inv.amount) || 0,
     purpose: inv.purpose || "subscription",
+    test: inv.test === true || String(p.IsTest || "") === "1",
     extra: parent
       ? { robokassaParentInvId: parent, ...(inv.parentInvId ? {} : { autoRenewConsentAt: admin.firestore.FieldValue.serverTimestamp() }) }
       : noAutoRenew ? { robokassaParentInvId: null, cancelAtPeriodEnd: true } : {},
@@ -1795,6 +2021,18 @@ async function handleBillingWebhook(req, res) {
   const planId = payment.metadata?.planId;
   // У старых платежей периода нет — тогда они были только помесячные.
   const billingPeriod = normalizeBillingPeriod(payment.metadata?.billingPeriod);
+  if (payment.metadata?.purpose === "chainLocation" && chainId) {
+    if (payment.status === "succeeded") {
+      await applyChainLocationPayment({
+        eventId: paymentId, provider: "yookassa", chainId,
+        amount: Number(payment.amount?.value) || 0,
+        location: { name: payment.metadata.locName, slug: payment.metadata.locSlug, venueType: payment.metadata.venueType },
+        requestedBy: payment.metadata.requestedBy || null, test: payment.test === true,
+      });
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (!billingId || !planId) {
     // Не наш платёж. Отвечаем 200, иначе ЮKassa будет присылать его снова.
     sendJson(res, 200, { ok: true, ignored: true });
@@ -1828,7 +2066,7 @@ async function handleBillingWebhook(req, res) {
  * продлевает подписку дважды. [extra] — поля провайдера для автопродления
  * (paymentMethodId у ЮKassa, robokassaParentInvId у Робокассы).
  */
-async function applySubscriptionPayment({ eventId, provider, status, tenantId, chainId, planId, billingPeriod, amount, purpose, extra = {} }) {
+async function applySubscriptionPayment({ eventId, provider, status, tenantId, chainId, planId, billingPeriod, amount, purpose, test = false, extra = {} }) {
   const billingId = chainId || tenantId;
   const paymentId = eventId;
   const firestore = db();
@@ -1844,6 +2082,7 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
       // Сумма — для выручки в панели платформы без запросов к провайдеру.
       amount,
       purpose,
+      test: test === true,
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
       applied: false,
     });
@@ -1886,9 +2125,11 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
     await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).set({
       status: "active",
       planId,
+      // Подписка оплачена тестовым платежом — в MRR платформы не идёт.
+      testPayment: test === true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId } });
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId, ...(test ? { test: true } : {}) } });
   } else {
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
   }
@@ -2190,20 +2431,24 @@ async function runCalculatePlatformMetrics() {
   // Точки сети считаем через сеть: у точки status всегда active, а planId —
   // заглушка «start», настоящий тариф и цена — у сети.
   const locationCountByChain = new Map();
+  // Демо-заведения и подписки, оплаченные тестовым платежом, — не клиенты.
+  let totalTenants = 0;
   tenantsSnap.docs.forEach((d) => {
     const t = d.data();
+    if (t.demo === true) return;
+    if (t.status !== "deleted") totalTenants += 1;
     if (t.chainId) {
       // Как в countChainLocations: платят за все неудалённые точки, включая приостановленные.
       if (t.status !== "deleted") locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
       return;
     }
-    if (t.status !== "active") return;
+    if (t.status !== "active" || t.testPayment === true) return;
     activeCount += 1;
     mrr += priceByPlanId.get(t.planId) || 0;
   });
   chainsSnap.docs.forEach((d) => {
     const c = d.data();
-    if (c.status !== "active") return;
+    if (c.status !== "active" || c.demo === true || c.testPayment === true) return;
     const plan = plansById.get(c.planId);
     if (!plan) return;
     const locationCount = Math.max(1, locationCountByChain.get(d.id) || 0);
@@ -2215,7 +2460,7 @@ async function runCalculatePlatformMetrics() {
   const dateId = new Date().toISOString().slice(0, 10);
   await firestore.collection("platformMetrics").doc(dateId).set({
     date: dateId,
-    totalTenants: tenantsSnap.size,
+    totalTenants,
     activeCount,
     mrr,
     calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -5676,6 +5921,9 @@ const ROUTES = {
   "/convertTenantToChain": handleConvertTenantToChain,
   "/inviteTenantMember": handleInviteTenantMember,
   "/createBuildJob": handleCreateBuildJob,
+  "/setBillingEventTest": handleSetBillingEventTest,
+  "/chainLocationQuote": handleChainLocationQuote,
+  "/chainLocationCheckout": handleChainLocationCheckout,
   "/completeBuildJob": handleCompleteBuildJob,
   "/rolloutApps": handleRolloutApps,
   "/createDemoTenant": handleCreateDemoTenant,
