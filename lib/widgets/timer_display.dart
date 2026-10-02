@@ -39,8 +39,8 @@ class TimerDisplay extends StatelessWidget {
   /// Цвет остатка: зелёный → оранжевый (< 15 мин) → красный (время вышло).
   static Color colorFor(Duration remaining) {
     if (remaining.isNegative) return AppColors.danger;
-    if (remaining.inMinutes < AppConstants.warningThresholdMinutes) return Colors.orange;
-    return Colors.green;
+    if (remaining.inMinutes < AppConstants.warningThresholdMinutes) return AppColors.warning;
+    return AppColors.success;
   }
 
   @override
@@ -71,7 +71,7 @@ class TimerDisplay extends StatelessWidget {
             style: TextStyle(
               fontSize: compact ? fontSize : fontSize * 0.5,
               fontWeight: FontWeight.bold,
-              color: Colors.green,
+              color: AppColors.success,
             ),
           );
         }

@@ -74,6 +74,43 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const screenEl = () => $('screen');
 
+// ---------- ИКОНКИ ----------
+
+// Линейные иконки 24×24 одной толщины линии вместо эмодзи: эмодзи на
+// каждом телефоне свои и спорят с цветами заведения, а линия берёт цвет
+// текста (currentColor). Те же контуры — во вкладках index.html.
+const IC = {
+  user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5c1-4 4-6 7.5-6s6.5 2 7.5 6"/>',
+  home: '<path d="M3.5 10.5 12 4l8.5 6.5"/><path d="M5.5 9v10.5h13V9"/><path d="M10 19.5v-5h4v5"/>',
+  menu: '<path d="M7 3v8"/><path d="M4.5 3v5a2.5 2.5 0 0 0 5 0V3"/><path d="M7 11v10"/><path d="M17 21V3c-2.2 1.3-3.5 3.8-3.5 7v3H17"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
+  plan: '<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 13h7v7M13.5 4v5.5h7"/>',
+  cloche: '<path d="M3 18h18"/><path d="M5 18a7 7 0 0 1 14 0"/><path d="M12 11V9M10.5 9h3"/>',
+  flame: '<path d="M12 21c-3.6 0-6-2.4-6-5.6 0-3.2 2.3-5 3.4-7.4.4 1.5 1.3 2.4 2.2 2.8C12 7.6 13 5 15.2 3c-.3 3 1.2 4.8 2 6.4.7 1.3.8 2.6.8 3.8 0 4.3-2.4 7.8-6 7.8Z"/>',
+  refresh: '<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/>',
+  hand: '<path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 11V6a1.5 1.5 0 0 1 3 0v8c0 4-2.5 7-6 7-2.6 0-4-1.3-5.4-3.3L3.8 15a1.5 1.5 0 0 1 2.5-1.7L8 15.5"/>',
+  bell: '<path d="M4.5 17h15"/><path d="M6 17a6 6 0 0 1 12 0"/><path d="M12 11V9.5M10.5 9.5h3"/><path d="M3.5 20h17"/>',
+  receipt: '<path d="M6 3.5h12v17l-2.5-1.5-2 1.5-1.5-1.5-1.5 1.5-2-1.5L6 20.5Z"/><path d="M9 8h6M9 11.5h6M9 15h3.5"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.4"/>',
+  card: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.8 15.5c.6-1.3 1.6-2 2.7-2s2.1.7 2.7 2M14 10h4M14 13.5h3"/>',
+  heart: '<path d="M12 19.5s-7.5-4.4-7.5-10A4 4 0 0 1 12 7.2a4 4 0 0 1 7.5 2.3c0 5.6-7.5 10-7.5 10Z"/>',
+  gift: '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M3 9h18M12 9v11"/><path d="M12 9c-1.5-3.5-5.5-4-5.5-1.5S10 9 12 9Zm0 0c1.5-3.5 5.5-4 5.5-1.5S14 9 12 9Z"/>',
+  hourglass: '<path d="M7 3.5h10M7 20.5h10"/><path d="M8 3.5c0 4 4 5 4 8.5s-4 4.5-4 8.5M16 3.5c0 4-4 5-4 8.5s4 4.5 4 8.5"/>',
+  users: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19.5c.8-3.3 3-5 5.5-5s4.7 1.7 5.5 5"/><path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17 14.7c1.8.6 3 2.2 3.5 4.8"/>',
+  back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  out: '<path d="M7 17 17 7M9 7h8v8"/>',
+  next: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+  star: '<path d="m12 3.8 2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8Z"/>',
+};
+
+function ic(name, cls = '') {
+  return `<svg class="i${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${IC[name] || ''}</svg>`;
+}
+
 // ---------- МЕЛОЧИ ----------
 
 function esc(s) {
@@ -220,7 +257,7 @@ function renderVenuePicker(chain) {
         <div class="card" data-venue="${esc(l.tenantId)}" style="cursor:pointer">
           <div class="row">
             <div class="grow" style="font-weight:600">${esc(l.name || l.slug)}</div>
-            <div class="muted">›</div>
+            <div class="muted">${ic('chevron')}</div>
           </div>
         </div>`).join('')}`;
     screenEl().querySelectorAll('[data-venue]').forEach((el) => {
@@ -439,19 +476,12 @@ function watchProfile() {
   }, () => {}));
 }
 
-/// Иконка вкладки «Мой стол»: огонёк — кальянной, тарелка — остальным.
-function applyVenueTypeChrome() {
-  const ico = document.querySelector('[data-tab="table"] .ico');
-  if (ico) ico.textContent = isHookah() ? '🔥' : '🍽';
-}
-
 function watchVenue() {
   state.accountSubs.push(onSnapshot(doc(state.root, 'meta', 'venueProfile'), (d) => {
     const had = !!state.venue;
     const prevType = venueType();
     const prevHookah = isHookah();
     state.venue = d.exists() ? d.data() : null;
-    applyVenueTypeChrome();
     // Сменили тип заведения или кальяны — перерисовать экраны со словами и
     // кнопками.
     if (had && (prevType !== venueType() || prevHookah !== isHookah())) route();
@@ -554,13 +584,11 @@ function screenHome() {
     : hour < 18 ? 'Добрый день' : 'Добрый вечер';
 
   screenEl().innerHTML = `
-    <div class="small" style="color:var(--primary);letter-spacing:.14em;text-transform:uppercase;font-weight:600">
-      ${esc(brandDisplayName())}
-    </div>
-    <h1>${esc(hello)}${name ? ', ' + esc(name) : ''}</h1>
+    <div class="overline">${esc(brandDisplayName())}</div>
+    <h1 class="display">${esc(hello)}${name ? ',<br><em>' + esc(name) + '</em>' : ''}</h1>
 
     <div class="card tier">
-      <div class="muted small">Бонусный счёт</div>
+      <div class="overline">Бонусный счёт</div>
       <div class="bonus">${money(p.bonusBalance)}</div>
       <div class="small muted">Уровень «${esc(tier.name)}» · кешбэк ${tier.cashback}%</div>
       ${next ? `
@@ -575,11 +603,11 @@ function screenHome() {
 
     <h2>Быстрые действия</h2>
     <div class="btn-row">
-      <a class="btn btn-ghost" href="#/booking">📅 Забронировать</a>
-      <a class="btn btn-ghost" href="#/menu">🍽 Меню</a>
+      <a class="btn btn-ghost" href="#/booking">${ic('calendar')}Забронировать</a>
+      <a class="btn btn-ghost" href="#/menu">${ic('menu')}Меню</a>
     </div>
     <div style="height:10px"></div>
-    <a class="btn btn-primary" href="#/scan">📷 Я за столом — сканировать QR</a>
+    <a class="btn btn-primary" href="#/scan">${ic('scan')}Я за столом — сканировать QR</a>
   `;
 
   renderStories();
@@ -615,7 +643,7 @@ function renderStories() {
         style="${s.action && s.action !== 'none' ? 'cursor:pointer' : ''}">
         <div style="font-weight:600;margin-bottom:6px">${esc(s.title)}</div>
         <div class="small muted">${linkify(s.text)}</div>
-        ${s.actionLabel ? `<div class="small" style="color:var(--primary);margin-top:10px;font-weight:600">${esc(s.actionLabel)} →</div>` : ''}
+        ${s.actionLabel ? `<div class="small link-more">${esc(s.actionLabel)} ${ic('next')}</div>` : ''}
       </div>
     `).join('');
   }, () => { box.innerHTML = ''; }));
@@ -707,7 +735,7 @@ function screenMenu() {
           </div>`).join('')}
       </div>`;
     const backBar = (title) => `
-      <div class="backbar"><button data-back aria-label="Все категории">←</button><h2>${esc(title)}</h2></div>`;
+      <div class="backbar"><button data-back aria-label="Все категории">${ic('back')}</button><h2>${esc(title)}</h2></div>`;
 
     const q = search.trim().toLowerCase();
     let body;
@@ -733,7 +761,7 @@ function screenMenu() {
         <div class="cgrid">${sections.map((s) => {
           const img = s.imageUrl || (s.items.find((i) => i.imageUrl) || {}).imageUrl || '';
           return `<button class="ctile" data-cat="${esc(s.id)}">
-            ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : ''}
+            ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<span class="cinitial" aria-hidden="true">${esc((s.name || '').trim().charAt(0))}</span>`}
             <span class="cname">${esc(s.name)}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
           </button>`;
         }).join('')}</div>
@@ -942,7 +970,7 @@ function tableTitle(name) {
 
 function chooseCheck(tableId, tableName, checks, tableKey = '') {
   screenEl().innerHTML = `
-    <h1>${esc(tableTitle(tableName))}</h1>
+    <h1 class="t-title">${esc(tableTitle(tableName))}</h1>
     <p class="muted small">За этим столом открыто несколько счетов.
     Выберите свой — если ошибётесь, можно будет отвязаться.</p>
     ${checks.map((c, i) => {
@@ -957,7 +985,7 @@ function chooseCheck(tableId, tableName, checks, tableKey = '') {
                 ? 'Уже открыт у другого гостя'
                 : (opened ? 'Открыт в ' + hhmm(opened) : 'Время открытия неизвестно')}</div>
             </div>
-            <div class="muted">${c.taken ? '🔒' : '›'}</div>
+            <div class="muted">${ic(c.taken ? 'lock' : 'chevron')}</div>
           </div>
         </div>`;
     }).join('')}`;
@@ -1044,16 +1072,16 @@ function tableEmpty() {
     <h1>Мой стол</h1>
     <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт${isHookah() ? `,
     таймер сеанса` : ''} и кнопки вызова ${staffWord('acc')}.</p>
-    <a class="btn btn-primary" href="#/scan">📷 Сканировать QR стола</a>
+    <a class="btn btn-primary" href="#/scan">${ic('scan')}Сканировать QR стола</a>
     <div style="height:10px"></div>
-    <a class="btn btn-ghost" href="#/hall">🗺 Карта зала</a>
+    <a class="btn btn-ghost" href="#/hall">${ic('plan')}Карта зала</a>
     <div style="height:14px"></div>
     <p class="small muted">Стол открывается только по коду с самого стола —
     так вы наверняка попадёте на свой счёт, а не на соседний. Если код не
     сканируется, позовите ${staffWord('acc')}: он откроет стол сам.</p>
     ${rules.length ? `
       <div class="card" style="margin-top:22px">
-        <div style="font-weight:600;margin-bottom:12px">ⓘ Правила заведения</div>
+        <div class="row" style="font-weight:600;margin-bottom:12px">${ic('info', 'gold')}Правила заведения</div>
         ${rules.map((r) => `<div class="rule"><i></i><div class="small muted">${esc(r)}</div></div>`).join('')}
       </div>` : ''}`;
 }
@@ -1072,32 +1100,32 @@ function drawTable(s) {
 
   screenEl().innerHTML = `
     <div class="row">
-      <h1 class="grow ellipsis">${esc(tableTitle(s.tableName))}</h1>
+      <h1 class="t-title grow ellipsis">${esc(tableTitle(s.tableName))}</h1>
       <button class="btn-link" id="unbind">Это не мой стол</button>
     </div>
 
     ${showTimer ? `<div class="card timer" id="timer"><div class="value">—</div></div>` : ''}
 
-    <button class="btn-primary" id="orderFromTable">🍽 Сделать заказ</button>
+    <button class="btn-primary" id="orderFromTable">${ic('cloche')}Сделать заказ</button>
     <p class="small muted" style="margin:8px 0 0">Блюда и напитки — прямо к столу:
     ${staffWord('nom')} подтвердит заказ, и он появится в счёте.</p>
 
     <h2>Позвать</h2>
     ${hookah ? `
     <div class="btn-row">
-      <button class="btn-ghost" data-call="coal">🔥 Поменять угли</button>
-      <button class="btn-ghost" data-call="refill">🔄 Перезабивка</button>
+      <button class="btn-ghost" data-call="coal">${ic('flame')}Поменять угли</button>
+      <button class="btn-ghost" data-call="refill">${ic('refresh')}Перезабивка</button>
     </div>
     <div style="height:10px"></div>
     <div class="btn-row">
-      <button class="btn-ghost" data-call="waiter">🙋 Позвать кальянщика</button>
-      <button class="btn-ghost" data-call="bill">💸 Счёт, пожалуйста</button>
+      <button class="btn-ghost" data-call="waiter">${ic('hand')}Позвать кальянщика</button>
+      <button class="btn-ghost" data-call="bill">${ic('receipt')}Счёт, пожалуйста</button>
     </div>
     <div style="height:10px"></div>
-    <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>` : `
+    <button class="btn-ghost" data-call="callWaiter">${ic('bell')}Позвать официанта</button>` : `
     <div class="btn-row">
-      <button class="btn-ghost" data-call="callWaiter">🛎️ Позвать официанта</button>
-      <button class="btn-ghost" data-call="bill">💸 Счёт, пожалуйста</button>
+      <button class="btn-ghost" data-call="callWaiter">${ic('bell')}Позвать официанта</button>
+      <button class="btn-ghost" data-call="bill">${ic('receipt')}Счёт, пожалуйста</button>
     </div>`}
     <div id="calls"></div>
 
@@ -1218,7 +1246,7 @@ function paintCalls() {
   box.innerHTML = list.map((c) => {
     const t = toDate(c.createdAt);
     return `<div class="row small muted" style="margin-top:8px">
-      <span style="color:var(--primary)">✓</span>
+      <span style="color:var(--primary)">${ic('check')}</span>
       <span>${esc(CALL_LABELS[c.type] || 'Вызов')} — передали в ${t ? hhmm(t) : ''}</span>
     </div>`;
   }).join('');
@@ -1285,8 +1313,8 @@ function tableFinished(s) {
     <p class="muted">Счёт (${esc(tableTitle(s.tableName))}) закрыт на ${money(total)}.</p>
     <h2>Как всё прошло?</h2>
     <div class="card">
-      <div class="center" id="stars" style="font-size:30px;letter-spacing:6px">
-        ${[1, 2, 3, 4, 5].map((i) => `<span data-star="${i}" style="cursor:pointer">☆</span>`).join('')}
+      <div class="stars" id="stars">
+        ${[1, 2, 3, 4, 5].map((i) => `<button type="button" data-star="${i}" aria-label="${i} из 5">${ic('star')}</button>`).join('')}
       </div>
       <textarea id="reviewText" rows="3" maxlength="2000" placeholder="Что понравилось, что нет (необязательно)" style="margin-top:14px"></textarea>
       <button class="btn-primary" id="sendReview" disabled>Отправить отзыв</button>
@@ -1295,8 +1323,7 @@ function tableFinished(s) {
   let rating = 0;
   const paint = () => {
     screenEl().querySelectorAll('[data-star]').forEach((el) => {
-      el.textContent = Number(el.dataset.star) <= rating ? '★' : '☆';
-      el.style.color = Number(el.dataset.star) <= rating ? 'var(--gold)' : 'var(--muted)';
+      el.classList.toggle('on', Number(el.dataset.star) <= rating);
     });
     $('sendReview').disabled = rating === 0;
   };
@@ -1417,13 +1444,13 @@ function screenBooking() {
           placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
       <p class="small muted" style="margin:-4px 0 12px">
         ${p.phone
-          ? '🔒 Номер привязан — сменить его можно только через администратора'
+          ? ic('lock', 'inline') + 'Номер привязан — сменить его можно только через администратора'
           : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
 
       <label class="field"><span>Стол</span></label>
       <div class="row" style="margin:-6px 0 12px">
         <div class="grow small ${pickedTable ? '' : 'muted'}">
-          ${pickedTable ? '🪑 ' + esc(pickedTable.name) : 'Любой свободный — подберём сами'}
+          ${pickedTable ? esc(pickedTable.name) : 'Любой свободный — подберём сами'}
         </div>
         <a class="btn-link" href="#/hall/pick" style="width:auto">
           ${pickedTable ? 'Изменить' : 'Выбрать на карте'}</a>
@@ -1970,7 +1997,7 @@ function renderSoonCard(boxId, docs) {
   box.innerHTML = `
     <div class="card" style="border-color:var(--gold)">
       <div class="row">
-        <span style="color:var(--gold)">📅</span>
+        <span style="color:var(--gold)">${ic('calendar')}</span>
         <div class="grow" style="font-weight:700">
           ${left > 0 ? `Бронь через ${left} ${minutesWord(left)}` : 'Ваша бронь уже началась'}
         </div>
@@ -2045,7 +2072,7 @@ function screenProfile() {
           placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
       <p class="small muted" style="margin:-4px 0 12px">
         ${p.phone
-          ? '🔒 Сменить номер можно только через администратора'
+          ? ic('lock', 'inline') + 'Сменить номер можно только через администратора'
           : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
       <button class="btn-primary" id="pSave">Сохранить</button>
       ${privacyNotice('Сохранить')}
@@ -2053,7 +2080,7 @@ function screenProfile() {
 
     <div class="card" style="border-color:color-mix(in srgb, var(--gold) 45%, transparent)">
       <div class="row" style="align-items:flex-start">
-        <span style="color:var(--gold)">ⓘ</span>
+        <span style="color:var(--gold)">${ic('info')}</span>
         <div class="grow small muted">
           Бонусы копятся на этом устройстве и находятся по вашему номеру на
           кассе. Сменили телефон — назовите номер и покажите ID устройства
@@ -2063,7 +2090,7 @@ function screenProfile() {
       <div id="deviceId" style="margin-top:12px;background:var(--inset, rgba(0,0,0,.25));
         border-radius:10px;padding:11px 12px;display:flex;align-items:center;
         gap:8px;cursor:pointer">
-        <span class="muted">🪪</span>
+        <span class="muted">${ic('card')}</span>
         <span class="grow" style="font-weight:700;letter-spacing:2px;color:var(--muted)">
           ID устройства: ${esc(shortDeviceId())}</span>
         <span class="muted small">копировать</span>
@@ -2355,18 +2382,18 @@ const INVITEE_BONUS = 200;
 function screenExtras() {
   screenEl().innerHTML = `
     <div class="row" style="margin-bottom:6px">
-      <a class="btn-ghost" href="#/profile" style="padding:6px 10px">←</a>
+      <a class="btn btn-ghost icon-btn" href="#/profile" aria-label="Назад">${ic('back')}</a>
       <h1 style="margin:0">Ещё</h1>
     </div>
 
     ${(state.venue || {}).tipsEnabled !== false ? `<div class="card">
-      <div class="row"><span style="color:var(--primary)">🫶</span>
+      <div class="row"><span style="color:var(--primary)">${ic('heart')}</span>
         <b class="grow">Чаевые</b></div>
       <div id="xTips" style="margin-top:12px"></div>
     </div>` : ''}
 
     <div class="card">
-      <div class="row"><span style="color:var(--primary)">🎁</span>
+      <div class="row"><span style="color:var(--primary)">${ic('gift')}</span>
         <b class="grow">Подарочный сертификат</b></div>
       <p class="small muted" style="margin:12px 0 0">Введите код с сертификата —
         бонусы начислим на ваш счёт.</p>
@@ -2380,13 +2407,13 @@ function screenExtras() {
     </div>
 
     <div class="card">
-      <div class="row"><span style="color:var(--primary)">⏳</span>
+      <div class="row"><span style="color:var(--primary)">${ic('hourglass')}</span>
         <b class="grow">Занять очередь</b></div>
       <div id="xQueue" style="margin-top:12px"><div class="spinner"></div></div>
     </div>
 
     <div class="card">
-      <div class="row"><span style="color:var(--primary)">👥</span>
+      <div class="row"><span style="color:var(--primary)">${ic('users')}</span>
         <b class="grow">Пригласить друга</b></div>
       <div style="margin-top:12px">
         <div id="xMyCode" style="font-size:18px;font-weight:700">Ваш код: …</div>
@@ -2532,7 +2559,7 @@ function paintTips() {
       ${preset === -1 ? `<input id="tipCustom" inputmode="numeric" maxlength="6" placeholder="Сумма, ₽"
         value="${esc(t.custom)}" style="margin-top:10px;max-width:180px">` : ''}
       <button class="btn-primary" id="tipAdd" style="margin-top:16px"></button>
-      ${link ? `<button class="btn-ghost" id="tipLink" style="margin-top:8px">↗ Перевести напрямую: ${esc(sel.name)}</button>` : ''}
+      ${link ? `<button class="btn-ghost" id="tipLink" style="margin-top:8px">${ic('out')}Перевести напрямую: ${esc(sel.name)}</button>` : ''}
       <p class="small muted" style="margin:8px 0 0">Чаевые не входят в счёт заведения — их получит
         ${sel ? esc(sel.name) : 'смена, поровну'}.</p>
       <div id="tipsMine"></div>`;
@@ -3264,9 +3291,9 @@ function screenHall(pickMode) {
     <div class="chips" id="hallZones"></div>
     <div class="hall-scroll"><div class="hall" id="hall"><div class="spinner"></div></div></div>
     <div class="legend">
-      <span><i style="background:#3F9D5B"></i> свободен</span>
-      <span><i style="background:#D9A441"></i> впритык</span>
-      <span><i style="background:#C24A4A"></i> занят</span>
+      <span><i style="background:var(--t-free)"></i> свободен</span>
+      <span><i style="background:var(--t-risky)"></i> впритык</span>
+      <span><i style="background:var(--t-busy)"></i> занят</span>
     </div>
     <div style="height:16px"></div>
     <a class="btn btn-ghost" href="${pickMode ? '#/booking' : '#/table'}">${pickMode ? 'Отмена' : 'Назад'}</a>`;

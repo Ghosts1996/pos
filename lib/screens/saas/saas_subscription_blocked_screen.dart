@@ -45,7 +45,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
     final appName = branding?.appName ?? 'ZalPOS';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF1B1B1F),
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(

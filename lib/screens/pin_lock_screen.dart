@@ -9,6 +9,7 @@ import '../services/demo_gate.dart';
 import '../services/firestore_service.dart';
 import '../services/staff_session_store.dart';
 import '../utils/constants.dart';
+import '../theme/app_theme.dart';
 import '../widgets/pin_pad.dart';
 import 'login_screen.dart';
 
@@ -94,29 +95,27 @@ class _PinLockScreenState extends State<PinLockScreen> {
     final venue = (AppScope.branding?.appName ?? '').trim();
     final header = Column(mainAxisSize: MainAxisSize.min, children: [
       Container(
-        width: 64,
-        height: 64,
+        width: 56,
+        height: 56,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: BrandPalette.accent,
-          boxShadow: const [BoxShadow(color: Color(0x882F6FED), blurRadius: 30, spreadRadius: -2)],
-          border: Border.all(color: const Color(0x55FFFFFF)),
+          border: Border.all(color: const Color(0x66CFA567)),
         ),
-        child: const Icon(Icons.lock_rounded, color: Colors.white, size: 30),
+        child: const Icon(Icons.lock_outline_rounded, color: BrandPalette.brass, size: 24),
       ),
       const SizedBox(height: 18),
-      const Text(
+      Text(
         'Касса заблокирована',
         textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+        style: AppFonts.display(32, color: BrandPalette.ivory),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 10),
       Text(
         _employee.name,
         textAlign: TextAlign.center,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+        style: const TextStyle(color: BrandPalette.ivory, fontSize: 16, fontWeight: FontWeight.w600),
       ),
       const SizedBox(height: 2),
       Text(
@@ -124,7 +123,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
         textAlign: TextAlign.center,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: BrandPalette.muted, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.8),
+        style: AppFonts.overline.copyWith(color: BrandPalette.muted),
       ),
       const SizedBox(height: 22),
       PinDots(length: _length, filled: _pin.length, errorTick: _errorTick),
@@ -136,7 +135,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
             _error ?? 'Введите PIN, чтобы продолжить',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: _error == null ? BrandPalette.muted : const Color(0xFFFF7A86),
+              color: _error == null ? BrandPalette.muted : BrandPalette.error,
               fontSize: 13,
               fontWeight: _error == null ? FontWeight.w400 : FontWeight.w600,
             ),
@@ -154,15 +153,15 @@ class _PinLockScreenState extends State<PinLockScreen> {
 
     final switchButton = TextButton.icon(
       onPressed: _checking ? null : _switchEmployee,
-      style: TextButton.styleFrom(foregroundColor: BrandPalette.sky),
+      style: TextButton.styleFrom(foregroundColor: BrandPalette.brass),
       icon: const Icon(Icons.swap_horiz_rounded, size: 20),
-      label: const Text('Сменить сотрудника', style: TextStyle(fontWeight: FontWeight.w700)),
+      label: const Text('Сменить сотрудника', style: TextStyle(fontWeight: FontWeight.w600)),
     );
 
     // Непрозрачный экран поверх кассы — касания до неё не доходят;
     // «Назад» забирает AppLock.
     return Scaffold(
-      backgroundColor: BrandPalette.night,
+      backgroundColor: BrandPalette.ink,
       body: BrandBackdrop(
         child: SafeArea(
           child: LayoutBuilder(builder: (context, box) {
@@ -171,7 +170,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
             final keypad = _checking
                 ? const Padding(
                     padding: EdgeInsets.all(24),
-                    child: CircularProgressIndicator(color: BrandPalette.sky),
+                    child: CircularProgressIndicator(color: BrandPalette.brass),
                   )
                 : PinKeypad(width: keypadWidth, onDigit: _tap, onBackspace: _backspace);
             return Center(

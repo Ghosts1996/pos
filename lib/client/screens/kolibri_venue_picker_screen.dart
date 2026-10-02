@@ -45,11 +45,7 @@ class KolibriVenuePickerScreen extends StatelessWidget {
                 children: [
                   Text(
                     chain.name.isNotEmpty ? chain.name : 'Выберите заведение',
-                    style: TextStyle(
-                      color: KolibriColors.textPrimary,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: KolibriFonts.display(34),
                   ),
                   const SizedBox(height: 6),
                   Text(

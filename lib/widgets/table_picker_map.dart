@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../theme/app_colors.dart';
 import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/table_model.dart';
@@ -55,9 +57,9 @@ class TablePickerMap extends StatefulWidget {
     this.selectedTableId,
   });
 
-  static const _freeColor = Color(0xFF22C55E);
-  static const _busyColor = Color(0xFFEF4444);
-  static const _selectedColor = Color(0xFF0B5ED7);
+  static const _freeColor = Color(0xFF7FB894);
+  static const _busyColor = AppColors.danger;
+  static const _selectedColor = AppColors.primary;
 
   @override
   State<TablePickerMap> createState() => _TablePickerMapState();

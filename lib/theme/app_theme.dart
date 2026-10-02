@@ -1,25 +1,58 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
+/// Шрифты (assets/fonts, OFL): Onest — интерфейс и суммы,
+/// Cormorant Garamond — крупные заголовки (экран входа, PIN, названия
+/// разделов). Суммы и номера столов — только гротеском: у антиквы «1»
+/// похожа на римскую «I», а кассир читает цифры на бегу.
+class AppFonts {
+  AppFonts._();
+  static const String sans = 'Onest';
+  static const String serif = 'CormorantGaramond';
+
+  /// Крупный заголовок антиквой.
+  static TextStyle display(double size, {Color color = AppColors.textPrimary, FontStyle? style}) => TextStyle(
+        fontFamily: serif,
+        fontSize: size,
+        fontWeight: FontWeight.w600,
+        fontStyle: style,
+        height: 1.08,
+        letterSpacing: -0.2,
+        color: color,
+        fontFeatures: const [FontFeature.liningFigures()],
+      );
+
+  /// Подпись капителью над блоком («ИТОГО», «ЗАЛ»).
+  static const TextStyle overline = TextStyle(
+    fontFamily: sans,
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 1.8,
+    color: AppColors.textMuted,
+  );
+
+  /// Цифры одной ширины — суммы в чеке не «пляшут» при пересчёте.
+  static const List<FontFeature> tabular = [FontFeature.tabularFigures()];
+}
+
 /// Радиусы скруглений — единая шкала на всё приложение.
 class AppRadius {
   AppRadius._();
   static const double sm = 8;
   static const double md = 12; // карточки, поля ввода
-  static const double lg = 16; // основные кнопки, панель чека
+  static const double lg = 14; // основные кнопки, панель чека
   static const double pill = 999;
 }
 
-/// Тени — используются точечно, только для primary-действий,
-/// чтобы не "зашумлять" тёмный интерфейс.
+/// Тени — почти без них: глубину дают тон поверхности и тонкая линия.
 class AppShadows {
   AppShadows._();
 
   static List<BoxShadow> primaryButton = [
-    BoxShadow(
-      color: AppColors.primary.withValues(alpha: 0.35),
-      blurRadius: 20,
-      offset: const Offset(0, 8),
+    const BoxShadow(
+      color: Color(0x40000000),
+      blurRadius: 10,
+      offset: Offset(0, 3),
     ),
   ];
 
@@ -65,9 +98,17 @@ class AppTheme {
         error: AppColors.danger,
         onSurface: AppColors.textPrimary,
         onPrimary: AppColors.textPrimary,
+        tertiary: AppColors.brass,
         outline: AppColors.border,
+        outlineVariant: AppColors.border,
+        surfaceContainerHighest: AppColors.surfaceElevated,
+        surfaceContainerHigh: AppColors.surfaceElevated,
+        surfaceContainer: AppColors.surface,
+        surfaceContainerLow: AppColors.surface,
+        surfaceContainerLowest: AppColors.background,
+        onSurfaceVariant: AppColors.textMuted,
       ),
-      fontFamily: 'Inter',
+      fontFamily: AppFonts.sans,
     );
 
     return base.copyWith(
@@ -75,27 +116,47 @@ class AppTheme {
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,
       ).copyWith(
-        // Суммы в чеке, цена блюда — крупно и жирно.
+        // Крупные заголовки — антиквой (экран входа, PIN, пустые состояния).
+        displayLarge: AppFonts.display(52),
+        displayMedium: AppFonts.display(44),
+        displaySmall: AppFonts.display(36),
+        headlineLarge: AppFonts.display(32),
+        headlineMedium: AppFonts.display(28),
+        // Суммы в чеке, цена блюда — крупно, гротеском, цифры одной ширины.
         headlineSmall: const TextStyle(
+          fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w700,
           fontSize: 22,
+          letterSpacing: -0.3,
+          fontFeatures: AppFonts.tabular,
+        ),
+        titleLarge: const TextStyle(
+          fontFamily: AppFonts.sans,
+          color: AppColors.textPrimary,
+          fontWeight: FontWeight.w600,
+          fontSize: 20,
+          letterSpacing: -0.2,
         ),
         titleMedium: const TextStyle(
+          fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w600,
           fontSize: 16,
         ),
         bodyMedium: const TextStyle(
+          fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontSize: 14,
         ),
         // Модификаторы, вес, таймстемпы.
         bodySmall: const TextStyle(
+          fontFamily: AppFonts.sans,
           color: AppColors.textMuted,
           fontSize: 12,
         ),
         labelLarge: const TextStyle(
+          fontFamily: AppFonts.sans,
           color: AppColors.textMuted,
           fontSize: 13,
           fontWeight: FontWeight.w500,
@@ -107,7 +168,16 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
+        titleTextStyle: TextStyle(
+          fontFamily: AppFonts.sans,
+          color: AppColors.textPrimary,
+          fontSize: 19,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+        ),
+        shape: Border(bottom: BorderSide(color: AppColors.border, width: 1)),
       ),
 
       cardTheme: CardThemeData(
@@ -138,8 +208,10 @@ class AppTheme {
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
           textStyle: const TextStyle(
+            fontFamily: AppFonts.sans,
             fontSize: 16,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.1,
           ),
           elevation: 0,
         ).copyWith(
@@ -177,6 +249,20 @@ class AppTheme {
         ),
       ),
 
+      // FilledButton — то же основное действие, что ElevatedButton, но
+      // обычной высоты (диалоги, формы).
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.textPrimary,
+          disabledBackgroundColor: AppColors.disabled,
+          disabledForegroundColor: AppColors.disabledText,
+          minimumSize: const Size(64, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+          textStyle: const TextStyle(fontFamily: AppFonts.sans, fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+      ),
+
       // Та же причина, что у outlinedButtonTheme: «Отмена» в диалогах
       // растягивалась во всю ширину и выталкивала основную кнопку вниз.
       textButtonTheme: TextButtonThemeData(
@@ -205,6 +291,94 @@ class AppTheme {
         ),
       ),
 
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        focusElevation: 0,
+        hoverElevation: 0,
+        highlightElevation: 0,
+        shape: StadiumBorder(),
+      ),
+
+      chipTheme: ChipThemeData(
+        backgroundColor: AppColors.surface,
+        selectedColor: AppColors.selectionStrong,
+        side: const BorderSide(color: AppColors.border),
+        labelStyle: const TextStyle(fontFamily: AppFonts.sans, color: AppColors.textPrimary, fontSize: 13.5),
+        checkmarkColor: AppColors.brass,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.pill)),
+      ),
+
+      tabBarTheme: const TabBarThemeData(
+        labelColor: AppColors.textPrimary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        dividerColor: AppColors.border,
+        indicatorSize: TabBarIndicatorSize.label,
+        labelStyle: TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w600, fontSize: 14),
+        unselectedLabelStyle: TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w500, fontSize: 14),
+      ),
+
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? AppColors.textPrimary : AppColors.textMuted),
+        trackColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? AppColors.primary : AppColors.surfaceElevated),
+        trackOutlineColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? AppColors.primary : AppColors.border),
+      ),
+
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? AppColors.primary : Colors.transparent),
+        checkColor: const WidgetStatePropertyAll(AppColors.textPrimary),
+        side: const BorderSide(color: AppColors.textMuted, width: 1.4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      ),
+
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? AppColors.primary : AppColors.textMuted),
+      ),
+
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppColors.brass,
+        linearTrackColor: AppColors.border,
+        circularTrackColor: Colors.transparent,
+      ),
+
+      listTileTheme: const ListTileThemeData(
+        iconColor: AppColors.textMuted,
+        textColor: AppColors.textPrimary,
+        titleTextStyle: TextStyle(fontFamily: AppFonts.sans, fontSize: 15, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+        subtitleTextStyle: TextStyle(fontFamily: AppFonts.sans, fontSize: 12.5, color: AppColors.textMuted),
+      ),
+
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.surfaceElevated,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: const BorderSide(color: AppColors.border),
+        ),
+      ),
+
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: AppColors.surfaceElevated,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: false,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      ),
+
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: AppColors.textPrimary,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        textStyle: const TextStyle(fontFamily: AppFonts.sans, color: AppColors.background, fontSize: 12),
+      ),
+
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.surfaceElevated,
         contentTextStyle: const TextStyle(color: AppColors.textPrimary),
@@ -216,8 +390,11 @@ class AppTheme {
 
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.surfaceElevated,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: const TextStyle(fontFamily: AppFonts.sans, fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: AppColors.textPrimary),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppColors.border),
         ),
         // Поля по бокам 20 вместо 40: на узком телефоне (320–360 dp) окну
         // с формой не хватало ширины. Планшет не меняется — ширину диалога
@@ -227,6 +404,11 @@ class AppTheme {
 
       navigationDrawerTheme: const NavigationDrawerThemeData(
         backgroundColor: AppColors.background,
+        indicatorColor: AppColors.selection,
+      ),
+      drawerTheme: const DrawerThemeData(
+        backgroundColor: AppColors.background,
+        surfaceTintColor: Colors.transparent,
       ),
 
       iconTheme: const IconThemeData(color: AppColors.textPrimary),

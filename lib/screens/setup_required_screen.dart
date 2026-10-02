@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/app_colors.dart';
 
 /// Показывается вместо аварийного закрытия приложения, если Firebase ещё
 /// не настроен (firebase_options.dart содержит заглушку) или подключение
@@ -22,7 +23,7 @@ class SetupRequiredScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1B1B1F),
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
@@ -30,7 +31,7 @@ class SetupRequiredScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 12),
-              const Icon(Icons.cloud_off, color: Colors.orangeAccent, size: 48),
+              const Icon(Icons.cloud_off, color: AppColors.warning, size: 48),
               const SizedBox(height: 12),
               const Text(
                 'Firebase ещё не настроен',
@@ -52,7 +53,7 @@ class SetupRequiredScreen extends StatelessWidget {
                       children: [
                         CircleAvatar(
                           radius: 12,
-                          backgroundColor: Colors.purpleAccent.withValues(alpha: 0.25),
+                          backgroundColor: AppColors.brass.withValues(alpha: 0.25),
                           child: Text('${e.key + 1}',
                               style: const TextStyle(color: Colors.white, fontSize: 12)),
                         ),
@@ -69,15 +70,15 @@ class SetupRequiredScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.12),
+                    color: AppColors.danger.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
+                    border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text('Техническая информация об ошибке:',
-                          style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: TextStyle(color: AppColors.danger, fontSize: 12, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 4),
                       SelectableText(errorDetails!,
                           style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace')),

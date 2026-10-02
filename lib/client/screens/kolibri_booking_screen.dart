@@ -220,8 +220,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         // могут не заметить или отключить, а это видно всякому, кто
         // открыл приложение.
         BookingSoonCard(clientUid: _auth.uid),
-        const Text('Бронь стола',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+        Text('Бронь стола', style: KolibriFonts.display(34)),
         const SizedBox(height: 4),
         Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),

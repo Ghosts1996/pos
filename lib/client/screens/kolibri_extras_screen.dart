@@ -67,7 +67,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
-        const Text('Ещё', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+        Text('Ещё', style: KolibriFonts.display(34)),
         const SizedBox(height: 20),
 
         // Владелец мог выключить чаевые в профиле заведения.

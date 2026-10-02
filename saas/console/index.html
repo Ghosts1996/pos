@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>ZalPOS — касса и управление заведением: зал, склад, брони, лояльность</title>
-<meta name="theme-color" content="#0A0909">
+<meta name="theme-color" content="#F3EEE6">
 <meta name="description" content="Облачная касса для кафе, ресторанов, баров и лаунжей: карта зала, оплата и фискальные чеки, склад, брони, программа лояльности, смены и зарплата, гостевое приложение. Бесплатный тестовый период, запуск за 10–15 минут.">
 <!-- Без входа здесь лендинг — его индексируем; кабинет краулер не увидит. -->
 <meta name="robots" content="index, follow">
@@ -17,6 +17,9 @@
 <meta name="twitter:card" content="summary">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="favicon.png">
+<link rel="preload" href="fonts/onest-cyrillic-4c7562.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/cormorant-cyrillic-4f4a82.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="console.css">
 <!-- SDK Firebase качаем параллельно с console.js, а не после его разбора:
      иначе на мобильной сети первая отрисовка ждала лишний последовательный
