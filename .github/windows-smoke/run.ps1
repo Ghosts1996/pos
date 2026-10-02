@@ -20,7 +20,10 @@ $cdbLog = Join-Path $out 'cdb.txt'
 if (Test-Path $cdb) {
   # Под отладчиком: первое-шансовые исключения не трогаем (их ловит сам
   # Firestore), на необработанном — стек всех потоков и разбор.
-  $cmd = "sxd av; sxd eh; .symopt+ 0x40; g; .echo ===CRASH===; .lastevent; .ecxr; kn 80; ~*kn 30; !analyze -v; q"
+  # Касса не должна завершаться сама: строка «Last event:» (вывод
+  # .lastevent после возврата из g) и есть признак падения. По тексту
+  # команды не ищем — cdb повторяет его в журнале.
+  $cmd = "sxd av; sxd eh; .symopt+ 0x40; g; .lastevent; .ecxr; kn 80; ~*kn 30; !analyze -v; q"
   $env:_NT_SYMBOL_PATH = "$SymbolDirs;srv*$env:RUNNER_TEMP\syms*https://msdl.microsoft.com/download/symbols"
   $p = Start-Process -FilePath $cdb -ArgumentList @('-G', '-lines', '-logo', "`"$cdbLog`"", '-c', "`"$cmd`"", "`"$Exe`"") -PassThru
 } else {
@@ -33,13 +36,12 @@ for ($i = 0; $i -lt $Seconds; $i++) {
   Start-Sleep -Seconds 1
   if ($p.HasExited) { $alive = $false; break }
 }
-$crashed = (Test-Path $cdbLog) -and (Select-String -Path $cdbLog -Pattern '===CRASH===' -Quiet)
+if (-not $alive) { Start-Sleep -Seconds 3 }
+$crashed = (Test-Path $cdbLog) -and (Select-String -Path $cdbLog -Pattern 'Last event:' -SimpleMatch -Quiet)
 if ($crashed) { $alive = $false }
 if ($alive) {
   Get-Process -Name 'hookah_pos' -ErrorAction SilentlyContinue | Stop-Process -Force
   Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-} else {
-  Start-Sleep -Seconds 3
 }
 
 $lines = if (Test-Path $log) { Get-Content $log | Select-Object -Skip $before } else { @('(журнала нет)') }

@@ -34,11 +34,15 @@ async function makeTarget(tenantId) {
   await db.doc(`tenants/${tenantId}/settings/deviceInvite`).set({ code: INVITE, rotatedAt: Timestamp.now() });
 }
 
+// Эмулятор не ответил — не висим до таймаута задания.
+setTimeout(() => { console.error('seed.js: нет ответа за 3 минуты'); process.exit(1); }, 180000).unref();
+
 (async () => {
   const mode = process.argv[2];
   if (mode === 'demo') {
     const r = await fetch('http://127.0.0.1:8095/createDemoTenant', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      signal: AbortSignal.timeout(90000),
     });
     const json = await r.json();
     if (!r.ok || !json.chainId) throw new Error(`createDemoTenant: ${r.status} ${JSON.stringify(json)}`);
