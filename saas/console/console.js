@@ -7312,6 +7312,7 @@ async function requestBuild(tenantId) {
     toast('Сборка запущена — обычно занимает 5–10 минут');
   } catch (e) {
     if (errEl) errEl.textContent = `Не удалось запустить сборку: ${e?.message || e}`;
+    toast(`Не удалось запустить сборку: ${e?.message || e}`);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -7335,12 +7336,29 @@ function downloadGuestDemoApk() {
 
 // Сборку заведения отдаёт сервер по одноразовой ссылке на 60 секунд, её
 // выдают только участнику заведения. Скачивание через fetch с заголовком
-// Authorization на телефонах молча не срабатывало — поэтому window.open.
+// Authorization на телефонах молча не срабатывало — поэтому новая вкладка.
+// Открываем её сразу по нажатию: window.open после ожидания ссылки
+// мобильные браузеры молча блокируют. Не открылась (встроенный браузер
+// мессенджера) — скачиваем в этой же вкладке: сервер отдаёт файл как
+// вложение, страница кабинета остаётся на месте.
 async function downloadBuild(jobId) {
+  let tab = null;
+  try {
+    tab = window.open('', '_blank');
+    if (tab) {
+      tab.opener = null;
+      tab.document.title = 'ZalPOS';
+      tab.document.body.textContent = 'Готовим файл…';
+    }
+  } catch (_) {}
   try {
     const { data } = await callSaasGateway('getDownloadUrl', { jobId });
-    window.open(`${SAAS_GATEWAY_URL}${data.url}`, '_blank', 'noopener');
+    const url = `${SAAS_GATEWAY_URL}${data.url}`;
+    if (tab && !tab.closed) tab.location.href = url;
+    else window.location.href = url;
+    toast('Скачивание началось — файл появится в «Загрузках»');
   } catch (e) {
+    if (tab && !tab.closed) tab.close();
     toast(`Не удалось получить файл: ${e?.message || e}`);
   }
 }

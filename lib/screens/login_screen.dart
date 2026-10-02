@@ -62,14 +62,23 @@ class _LoginScreenState extends State<LoginScreen> {
 
   /// Касса точки сети: при запуске приложения она спрашивает, в кассу
   /// какой точки войти, — у каждой точки свои сотрудники и PIN-коды. Один
-  /// раз за запуск; дальше точку меняют кнопкой «Сменить» над клавиатурой.
+  /// раз за запуск; дальше точку меняют кнопкой «Другая точка сети» над
+  /// клавиатурой.
   static bool _pointAskedThisRun = false;
   List<ChainPoint>? _points;
   bool _choosingPoint = false;
   String? _switchingTo;
   String? _pointError;
+  bool _loadingPoints = false;
+  String? _pointsLoadError;
 
   bool get _hasPoints => (_points?.length ?? 0) >= 2;
+
+  /// Кнопка «Другая точка сети» видна у любой точки сети, пока список точек
+  /// не загрузился (плохая связь — загрузим по нажатию), и пропадает, только
+  /// если в сети действительно одна точка.
+  bool get _showPointSwitch =>
+      kSaasMode && AppScope.chainId != null && (_points == null || _hasPoints);
 
   /// Планшет ещё не отмечен как рабочее устройство — до регистрации база не
   /// отдаёт ему ни сотрудников, ни столы, ни чеки (см. firestore.rules).
@@ -97,18 +106,41 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Точки сети с сервера. Нет сети — касса остаётся в своей точке.
-  Future<void> _loadPoints() async {
+  /// Точки сети с сервера. Нет сети — касса остаётся в своей точке, а по
+  /// нажатию «Другая точка сети» ([open]) пробуем ещё раз и говорим, что не так.
+  Future<void> _loadPoints({bool open = false}) async {
     final chainId = AppScope.chainId;
-    if (!kSaasMode || chainId == null) return;
+    if (!kSaasMode || chainId == null || _loadingPoints) return;
+    setState(() {
+      _loadingPoints = true;
+      _pointsLoadError = null;
+    });
     try {
       final points = await SaasDeviceJoinService().chainPoints(chainId).timeout(const Duration(seconds: 12));
       if (!mounted) return;
       setState(() {
+        _loadingPoints = false;
         _points = points;
-        if (points.length >= 2 && !_pointAskedThisRun) _choosingPoint = true;
+        if (points.length >= 2 && (open || !_pointAskedThisRun)) _choosingPoint = true;
       });
-    } catch (_) {}
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingPoints = false;
+        if (open) _pointsLoadError = 'Не удалось загрузить точки сети: ${humanError(e, lower: true)}';
+      });
+    }
+  }
+
+  void _openPointSwitch() {
+    if (_hasPoints) {
+      setState(() {
+        _pointError = null;
+        _choosingPoint = true;
+      });
+    } else {
+      _loadPoints(open: true);
+    }
   }
 
   Future<void> _choosePoint(ChainPoint point) async {
@@ -321,14 +353,23 @@ class _LoginScreenState extends State<LoginScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         BrandMark(caption: caption),
-        if (_hasPoints) ...[
+        if (_showPointSwitch) ...[
           const SizedBox(height: 10),
           TextButton.icon(
-            onPressed: _loading ? null : () => setState(() => _choosingPoint = true),
+            onPressed: _loading || _loadingPoints ? null : _openPointSwitch,
             style: TextButton.styleFrom(foregroundColor: BrandPalette.sky, visualDensity: VisualDensity.compact),
-            icon: const Icon(Icons.storefront_rounded, size: 18),
+            icon: _loadingPoints
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.storefront_rounded, size: 18),
             label: const Text('Другая точка сети', style: TextStyle(fontWeight: FontWeight.w700)),
           ),
+          if (_pointsLoadError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(_pointsLoadError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFFF7A86), fontSize: 12.5, fontWeight: FontWeight.w600)),
+            ),
         ],
         const SizedBox(height: 22),
         // Сотрудник — режим по умолчанию (частый вход в течение смены,

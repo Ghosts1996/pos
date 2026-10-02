@@ -108,7 +108,7 @@ void main() async {
         }
         // Касса заведения поставлена поверх другой (обычно поверх демо с
         // сайта) — сначала присоединяемся к заведению этой сборки.
-        if (config != null && await PresetJoinMarker.pending(config.tenant.slug)) {
+        if (config != null && await PresetJoinMarker.pending(config.tenant)) {
           config = null;
           cachedDemo = false;
         }
