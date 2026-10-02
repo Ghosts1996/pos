@@ -12,6 +12,7 @@ import '../services/ai/ai_settings.dart';
 import '../services/ai/tooken_client.dart';
 import '../services/app_scope.dart';
 import '../services/app_update_service.dart';
+import '../services/plan_capabilities.dart';
 import '../services/saas_device_join_service.dart';
 import '../services/venue_service.dart';
 import '../utils/adaptive.dart';
@@ -75,6 +76,7 @@ void main() async {
 
   String? startupError;
   var ready = false;
+  var guestAppOff = false;
   var appTitle = 'ZalPOS';
 
   if (DefaultFirebaseOptions.isConfigured) {
@@ -87,10 +89,13 @@ void main() async {
           startupError = 'Это приложение не привязано ни к одному заведению — обратитесь к администратору заведения.';
         } else {
           AppScope.enterTenant(resolved.tenantId, chainId: resolved.chainId);
+          // Приложения гостя нет в тарифе заведения — база гостя не пустит,
+          // говорим об этом сразу, а не ошибками на каждом экране.
+          guestAppOff = !(await PlanCapabilitiesService.fetch(resolved.tenantId)).guestApp;
         }
       }
 
-      if (startupError == null) {
+      if (startupError == null && !guestAppOff) {
         await KolibriAuthService().ensureGuest();
         // Бренд заведения (имя, лого, цвета — раздел «Брендинг» в личном
         // кабинете) применяется ДО первого runApp(), чтобы первый же кадр
@@ -126,7 +131,7 @@ void main() async {
   // Обновления изнутри — только у сборок из «Собрать APK» (см. AppUpdateService).
   if (ready) AppUpdateService.start(app: 'guest');
 
-  runApp(KolibriApp(ready: ready, startupError: startupError, title: appTitle));
+  runApp(KolibriApp(ready: ready, startupError: startupError, title: appTitle, guestAppOff: guestAppOff));
 }
 
 /// kSaasPresetSlug превращается в tenantId один раз и сохраняется на диск:
@@ -199,7 +204,7 @@ Future<BrandingConfig?> _applyChainBranding(String chainId) async {
   }
 }
 
-enum _ChainBootPhase { loading, picking, ready, error }
+enum _ChainBootPhase { loading, picking, ready, error, off }
 
 /// Точка входа гостевой сборки для СЕТИ заведений (kSaasPresetChainSlug) —
 /// см. её докстринг у [main] выше. В отличие от одиночной сборки, здесь
@@ -321,6 +326,11 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   Future<void> _enterLocation(String tenantId, String chainId) async {
     try {
       AppScope.enterTenant(tenantId, chainId: chainId);
+      if (!(await PlanCapabilitiesService.fetch(tenantId)).guestApp) {
+        if (!mounted) return;
+        setState(() => _phase = _ChainBootPhase.off);
+        return;
+      }
       await KolibriAuthService().ensureGuest();
       final branding = await _applyChainBranding(chainId);
       if (!mounted) return;
@@ -368,6 +378,9 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
       case _ChainBootPhase.error:
         home = _StartupError(details: _error);
         break;
+      case _ChainBootPhase.off:
+        home = const _GuestAppOff();
+        break;
     }
     return MaterialApp(
       title: _appTitle,
@@ -392,12 +405,14 @@ class KolibriApp extends StatelessWidget {
   final bool ready;
   final String? startupError;
   final String title;
+  final bool guestAppOff;
 
   const KolibriApp({
     super.key,
     required this.ready,
     this.startupError,
     this.title = 'ZalPOS',
+    this.guestAppOff = false,
   });
 
   @override
@@ -415,10 +430,48 @@ class KolibriApp extends StatelessWidget {
       theme: KolibriTheme.dark,
       darkTheme: KolibriTheme.dark,
       themeMode: ThemeMode.dark,
-      home: ready ? const KolibriShell() : _StartupError(details: startupError),
+      home: guestAppOff
+          ? const _GuestAppOff()
+          : ready
+              ? const KolibriShell()
+              : _StartupError(details: startupError),
       // Плашка «Вышла новая версия» поверх любого экрана гостя.
       builder: (context, child) =>
           AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink())),
+    );
+  }
+}
+
+/// Заведение не подключило приложение для гостей (нет в тарифе).
+class _GuestAppOff extends StatelessWidget {
+  const _GuestAppOff();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.storefront_outlined, size: 48, color: KolibriColors.textMuted),
+              const SizedBox(height: 16),
+              const Text(
+                'Приложение заведения пока не работает',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Заведение не подключило приложение для гостей. Меню, заказ и бронь — у персонала заведения.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: KolibriColors.textMuted),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

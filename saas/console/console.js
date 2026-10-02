@@ -892,82 +892,120 @@ const LANDING_FORMATS = [
   },
 ];
 
-function landingPlanCardHtml(p, selected, popular) {
-  const priceText = Number(p.priceRub) > 0
-    ? `${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
-    : 'По запросу';
-  const yearlyDiscountPercent = Number(p.priceRub) > 0 && Number(p.priceRubYearly) > 0
-    ? Math.round((1 - Number(p.priceRubYearly) / (Number(p.priceRub) * 12)) * 100)
-    : 0;
-  const yearlyText = Number(p.priceRubYearly) > 0
-    ? `${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год${yearlyDiscountPercent > 0 ? ` (−${yearlyDiscountPercent}%)` : ''}`
-    : null;
-  const limits = [
-    p.maxEmployees ? `до ${p.maxEmployees} ${plural(p.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')}` : 'сотрудников без лимита',
-    p.maxTables ? `до ${p.maxTables} ${plural(p.maxTables, 'стола', 'столов', 'столов')}` : 'столов без лимита',
-    p.maxDevices ? `до ${p.maxDevices} устройств` : 'устройств без лимита',
-  ];
-  const perks = [];
-  if (p.aiEnabled) perks.push('ИИ-помощники');
-  if (p.customBranding) perks.push('свой брендинг');
-  if (p.customDomain) perks.push('свой домен');
-  if (p.features?.advancedReports) perks.push('расширенные отчёты');
-  return `
-    <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
-      ${popular ? '<div class="plan-badge">Популярный выбор</div>' : ''}
-      <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
-      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}${yearlyText ? ` <span class="small muted" style="font-weight:400">или ${esc(yearlyText)}</span>` : ''}</div>
-      <div class="small muted">${limits.join(' · ')}</div>
-      ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
-      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 7} дней бесплатно</div>
-      <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
-        ${selected ? 'Тариф выбран ✓' : 'Выбрать и попробовать'}
-      </button>
-      ${Number(p.priceRub) > 0 ? `
-        <button class="btn-link f-landing-plan-buy" data-id="${esc(p.id)}" style="margin-top:6px">
-          Купить сразу, без пробного периода
-        </button>
-      ` : ''}
-    </div>
-  `;
+// ---- Тарифы: возможности, цены за период, карточки ----
+
+// Что даёт тариф — как planCapabilities в saas-gateway: нет поля —
+// возможность есть (старые тарифы до появления этих полей давали всё).
+function planCaps(p) {
+  return {
+    guestApp: !p?.features || p.features.guestApp !== false,
+    ai: p?.aiEnabled !== false,
+    maxEmployees: Math.max(0, Math.floor(Number(p?.maxEmployees) || 0)),
+  };
 }
 
-// Карточка тарифа сети: цены и лимиты за каждую точку, первая может стоить
-// иначе, чем следующие (customAdditionalPrice).
-function landingChainPlanCardHtml(p, selected) {
-  const priceText = Number(p.priceRub) > 0
-    ? `от ${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`
-    : 'По запросу';
-  const additionalPriceRub = p.customAdditionalPrice ? (Number(p.priceRubAdditional) || 0) : (Number(p.priceRub) || 0);
-  const additionalText = Number(p.priceRub) > 0 && additionalPriceRub > 0
-    ? `+ ${additionalPriceRub.toLocaleString('ru-RU')} ₽/мес за каждую следующую точку`
-    : null;
-  const limits = [
-    p.maxEmployees ? `до ${p.maxEmployees} ${plural(p.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')} на точку` : 'сотрудников без лимита',
-    p.maxTables ? `до ${p.maxTables} ${plural(p.maxTables, 'стола', 'столов', 'столов')} на точку` : 'столов без лимита',
-    p.maxDevices ? `до ${p.maxDevices} устройств на точку` : 'устройств без лимита',
+// Тарифы, которые можно выбрать: не в архиве, с ценой, одного вида
+// (сеть или одно заведение), по возрастанию цены.
+function sellablePlans(plans, chain) {
+  return (plans || [])
+    .filter((p) => p.archived !== true && !!p.isChainPlan === !!chain && Number(p.priceRub) > 0)
+    .sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
+}
+
+const BILLING_PERIODS = {
+  monthly: { months: 1, field: 'priceRub', addField: 'priceRubAdditional', label: 'Помесячно', short: 'мес' },
+  semiannual: { months: 6, field: 'priceRubSemiannual', addField: 'priceRubAdditionalSemiannual', label: '6 месяцев', short: '6 мес' },
+  yearly: { months: 12, field: 'priceRubYearly', addField: 'priceRubAdditionalYearly', label: 'Год', short: 'год' },
+};
+
+// Цена тарифа за период (0 — на этот период не продаётся) и скидка к
+// помесячной оплате, %.
+function planPeriodPrice(p, period) {
+  return Number(p?.[BILLING_PERIODS[period]?.field]) || 0;
+}
+function planPeriodDiscount(p, period) {
+  const months = BILLING_PERIODS[period]?.months || 1;
+  const total = planPeriodPrice(p, period);
+  const monthly = Number(p?.priceRub) || 0;
+  if (!total || !monthly || months === 1) return 0;
+  return Math.max(0, Math.round((1 - total / (monthly * months)) * 100));
+}
+// Цена каждой следующей точки сети за период (как additionalLocationPriceForPeriod).
+function planAdditionalPrice(p, period) {
+  if (!p?.customAdditionalPrice) return planPeriodPrice(p, period);
+  return Number(p?.[BILLING_PERIODS[period]?.addField]) || 0;
+}
+
+const rub = (n) => `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`;
+
+function planTagline(p) {
+  const c = planCaps(p);
+  if (p.isChainPlan) return 'Несколько точек: один кабинет, общие бонусы гостей и приложение на всю сеть';
+  if (!c.guestApp) return 'Касса, зал, склад и брони — всё для работы смены';
+  if (c.maxEmployees > 0) return 'Касса и приложение для гостей с вашим логотипом';
+  return 'Без ограничений — для большого зала и команды';
+}
+
+// Список возможностей карточки: [есть ли, текст].
+function planFeatureRows(p) {
+  const c = planCaps(p);
+  const perPoint = p.isChainPlan ? ' на каждой точке' : '';
+  return [
+    [true, 'Касса, карта зала, брони и склад'],
+    [true, 'Смены, зарплата, отчёты, ЕГАИС'],
+    [true, 'Кассы и устройства — без лимита'],
+    [true, c.maxEmployees
+      ? `До ${c.maxEmployees} ${plural(c.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')}${perPoint}`
+      : `Сотрудники — без лимита${perPoint}`],
+    [c.guestApp, 'Приложение гостя с вашим логотипом'],
+    [c.guestApp, 'Меню по QR, заказ со стола, вызов персонала'],
+    [c.ai, 'ИИ-помощник для гостей и разборы смены'],
   ];
-  const perks = [];
-  if (p.aiEnabled) perks.push('ИИ-помощники');
-  if (p.customBranding) perks.push('свой брендинг');
-  if (p.customDomain) perks.push('свой домен');
-  if (p.features?.advancedReports) perks.push('расширенные отчёты');
+}
+
+/**
+ * Карточка тарифа на сайте. [period] — выбранный период оплаты: цена
+ * показывается за месяц, итог за период — строкой ниже.
+ */
+function planCardHtml(p, { period = 'monthly', selected = false, recommended = false } = {}) {
+  const isChain = !!p.isChainPlan;
+  const usePeriod = planPeriodPrice(p, period) > 0 ? period : 'monthly';
+  const months = BILLING_PERIODS[usePeriod].months;
+  const total = planPeriodPrice(p, usePeriod);
+  const perMonth = total / months;
+  const discount = planPeriodDiscount(p, usePeriod);
+  let note;
+  if (usePeriod === 'monthly') {
+    const yearly = planPeriodPrice(p, 'yearly');
+    note = yearly ? `или ${rub(yearly / 12)}/мес при оплате за год` : 'оплата помесячно';
+  } else {
+    note = `${rub(total)} за ${usePeriod === 'yearly' ? 'год' : '6 месяцев'}${discount ? ` · выгода ${discount}%` : ''}`;
+  }
+  const additional = isChain ? planAdditionalPrice(p, usePeriod) / months : 0;
+  const trialDays = Number(p.trialDays) || 14;
   return `
-    <div class="card" style="${selected ? 'border-color:var(--primary)' : ''}">
-      <div style="font-weight:700;font-size:17px">${esc(p.name || p.id)}</div>
-      <div style="font-size:22px;font-weight:700;margin:6px 0">${priceText}</div>
-      ${additionalText ? `<div class="small muted">${esc(additionalText)}</div>` : ''}
-      <div class="small muted" style="margin-top:4px">${limits.join(' · ')}</div>
-      ${perks.length ? `<div class="small muted" style="margin-top:4px">${esc(perks.join(' · '))}</div>` : ''}
-      <div class="small" style="margin-top:6px;color:var(--primary)">${Number(p.trialDays) || 7} дней бесплатно на первую точку · общий биллинг и лояльность на всю сеть</div>
-      <button class="btn ${selected ? 'btn-primary' : 'btn-ghost'} f-landing-chain-plan-pick" data-id="${esc(p.id)}" style="margin-top:12px">
-        ${selected ? 'Тариф выбран ✓' : 'Выбрать тариф сети'}
+    <div class="plan-card${recommended ? ' recommended' : ''}${selected ? ' selected' : ''}" data-plan-card="${esc(p.id)}">
+      ${recommended ? '<div class="plan-ribbon">Рекомендуем</div>' : ''}
+      <div class="plan-name">${esc(p.name || p.id)}</div>
+      <div class="plan-tagline">${esc(planTagline(p))}</div>
+      <div class="plan-price">
+        ${isChain ? '<span class="plan-price-from">первая точка</span>' : ''}
+        <span class="plan-price-num">${Math.round(perMonth).toLocaleString('ru-RU')}</span>
+        <span class="plan-price-unit">₽/мес</span>
+      </div>
+      <div class="plan-price-note">${esc(note)}</div>
+      ${isChain && additional > 0 ? `<div class="plan-price-add">+ ${rub(additional)}/мес за каждую следующую точку</div>
+        <div class="plan-price-note">например, 3 точки — ${rub(perMonth + additional * 2)}/мес</div>` : ''}
+      <ul class="plan-feats">
+        ${planFeatureRows(p).map(([on, text]) => `<li class="${on ? 'on' : 'off'}"><span>${on ? '✓' : '—'}</span>${esc(text)}</li>`).join('')}
+      </ul>
+      <div class="plan-trial">${trialDays} ${pluralDays(trialDays)} бесплатно${isChain ? ' на первую точку' : ''} · без карты</div>
+      <button class="btn ${selected || recommended ? 'btn-primary' : 'btn-ghost'} ${isChain ? 'f-landing-chain-plan-pick' : 'f-landing-plan-pick'}" data-id="${esc(p.id)}">
+        ${selected ? 'Тариф выбран ✓' : 'Попробовать бесплатно'}
       </button>
-      ${Number(p.priceRub) > 0 ? `
-        <button class="btn-link f-landing-chain-plan-buy" data-id="${esc(p.id)}" style="margin-top:6px">
-          Купить сразу, без пробного периода
-        </button>
-      ` : ''}
+      <button class="btn-link ${isChain ? 'f-landing-chain-plan-buy' : 'f-landing-plan-buy'}" data-id="${esc(p.id)}">
+        Купить сразу, без пробного периода
+      </button>
     </div>
   `;
 }
@@ -1250,6 +1288,11 @@ function screenLanding() {
             <button class="btn btn-primary" id="f-landing-hero-cta">Попробовать бесплатно</button>
             <button class="btn btn-ghost" id="f-landing-hero-demo">Посмотреть, как это выглядит ↓</button>
           </div>
+          <div class="hero-facts">
+            <div class="hero-fact"><b id="landing-hero-price">от 990 ₽</b><span>в месяц за всё заведение</span></div>
+            <div class="hero-fact"><b>0 %</b><span>комиссии с продаж</span></div>
+            <div class="hero-fact"><b>∞</b><span>касс и устройств</span></div>
+          </div>
         </div>
 
         <div class="landing-hero-form-wrap">
@@ -1275,22 +1318,18 @@ function screenLanding() {
             <p class="small muted" style="margin-top:8px">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
           </div>
 
-          <div class="row" style="justify-content:center;gap:6px 18px;flex-wrap:wrap;margin-top:14px">
-            <button class="btn-link" id="f-landing-download-apk" style="width:auto">⬇ Касса — демо (APK)</button>
-            <button class="btn-link" id="f-landing-download-guest-demo" style="width:auto">⬇ Приложение гостя — демо (APK)</button>
+          <div class="owner-mock" aria-hidden="true">
+            <div class="owner-mock-head"><span class="live-dot"></span> Кабинет владельца · сегодня</div>
+            <div class="owner-mock-grid">
+              <div><b>48 320 ₽</b><span>выручка</span></div>
+              <div><b>37</b><span>чеков</span></div>
+              <div><b>6</b><span>столов открыто</span></div>
+            </div>
+            <div class="owner-mock-row"><span>На смене</span><span>Анна · Илья · Марат</span></div>
+            <div class="owner-mock-note">Пример экрана — так кабинет выглядит с телефона</div>
           </div>
-          <p class="small muted" style="text-align:center;margin-top:2px">Касса — универсальная: при первом запуске
-          попросит код заведения и код приглашения устройства из личного кабинета, или нажмите «Демо» — касса сама
-          создаст демо-сеть из двух заведений: залы со стенами и столами, меню с фото, открытая смена с чеками, брони,
-          гости с бонусами, склад и зарплата. При входе касса спросит, в какую точку войти, — у каждой точки свои
-          сотрудники и PIN-коды. Демо живёт 3 дня, потом само возвращается в исходный вид.</p>
-          <div class="small muted landing-demo-pins" style="text-align:center;margin-top:8px;line-height:1.7">
-            <div><b>«Демо · Центр»:</b> кальянщик — PIN <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>, администратор — <code>111111</code></div>
-            <div><b>«Демо · Набережная»:</b> кальянщик — PIN <code>4444</code>, официант — <code>5555</code>, бармен — <code>6666</code>, администратор — <code>222222</code></div>
-          </div>
-          <p class="small muted" style="text-align:center;margin-top:8px">Приложение гостя — введите код демо с экрана
-          входа кассы (вида <code>demo-ab12cd</code>): гость выберет заведение сети, закажет, позовёт официанта или
-          забронирует стол — и касса сразу это увидит. Бонусы гостя общие во всех заведениях сети.</p>
+          <p class="small muted center" style="margin-top:14px">Хотите сначала потрогать?
+            <button class="btn-link" id="f-landing-goto-demo" style="width:auto;display:inline">Демо без регистрации ↓</button></p>
         </div>
       </div>
     </section>
@@ -1335,6 +1374,37 @@ function screenLanding() {
           <div class="mock-toast t1" id="hd-toast-call">🔔 Стол 3 зовёт официанта</div>
           <div class="mock-toast t2" id="hd-toast-booking">📅 Новая бронь: сегодня 20:00, Стол 6</div>
         </div>
+      </div>
+    </section>
+
+    <section class="landing-section" id="landing-demo">
+      <div class="landing-inner">
+        <h2 class="landing-h2 center">Демо без регистрации</h2>
+        <p class="landing-h2-sub center-block">Скачайте кассу на Android, нажмите «Демо» — откроется готовая сеть из двух
+        заведений: залы, меню с фото, открытая смена, брони и гости с бонусами. Демо живёт 3 дня, потом само
+        возвращается в исходный вид.</p>
+        <div class="demo-cards">
+          <div class="demo-card">
+            <div class="demo-card-icon">🧾</div>
+            <div class="demo-card-title">Касса — для персонала</div>
+            <div class="demo-card-text">При запуске нажмите «Демо» и выберите точку. У каждой точки свои сотрудники и PIN-коды.</div>
+            <button class="btn btn-primary" id="f-landing-download-apk">⬇ Скачать демо-кассу (APK)</button>
+            <details class="demo-pins landing-demo-pins">
+              <summary>PIN-коды сотрудников демо</summary>
+              <div><b>«Демо · Центр»:</b> кальянщик — <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>, администратор — <code>111111</code></div>
+              <div><b>«Демо · Набережная»:</b> кальянщик — <code>4444</code>, официант — <code>5555</code>, бармен — <code>6666</code>, администратор — <code>222222</code></div>
+            </details>
+          </div>
+          <div class="demo-card">
+            <div class="demo-card-icon">📱</div>
+            <div class="demo-card-title">Приложение гостя</div>
+            <div class="demo-card-text">Введите код демо с экрана входа кассы (вида <code>demo-ab12cd</code>) — закажите со
+            стола, позовите официанта или забронируйте: касса увидит это сразу.</div>
+            <button class="btn btn-ghost" id="f-landing-download-guest-demo">⬇ Скачать демо приложения гостя (APK)</button>
+          </div>
+        </div>
+        <p class="small muted center" style="margin-top:14px">Та же касса при первом запуске присоединяется и к вашему
+        заведению — по коду заведения и коду приглашения из личного кабинета.</p>
       </div>
     </section>
 
@@ -1415,7 +1485,8 @@ function screenLanding() {
     <section class="landing-section landing-section-alt" id="landing-features">
       <div class="landing-inner">
         <h2 class="landing-h2">Всё, что есть в системе</h2>
-        <p class="landing-h2-sub">Тарифы отличаются лимитами сотрудников, столов и устройств и дополнительными функциями — подробно в карточках тарифов ниже.</p>
+        <p class="landing-h2-sub">Касса, зал, склад, брони, лояльность и зарплата — во всех тарифах. Приложение для гостей
+        и ИИ-помощник — с тарифа «Бизнес». Подробно — в карточках тарифов ниже.</p>
         <div class="feature-grid">
           ${LANDING_FEATURES.map((f) => `
             <div class="feature-card">
@@ -1428,18 +1499,59 @@ function screenLanding() {
       </div>
     </section>
 
-    <section class="landing-section landing-section-alt" id="landing-pricing">
+    <section class="landing-section landing-section-alt" id="landing-value">
       <div class="landing-inner">
-        <h2 class="landing-h2">Тарифы</h2>
-        <p class="landing-h2-sub" id="landing-pricing-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.</p>
-        <div id="landing-pricing-toggle" class="landing-pricing-toggle" style="display:none">
-          <button type="button" class="landing-pricing-toggle-btn active" data-mode="single">🏠 Одно заведение</button>
-          <button type="button" class="landing-pricing-toggle-btn" data-mode="chain">🏢 Сеть заведений</button>
+        <h2 class="landing-h2 center">Почему это выгодно</h2>
+        <p class="landing-h2-sub center-block">То, что в кассовых системах для общепита часто продают отдельными модулями
+        и лицензиями, здесь уже входит в тариф.</p>
+        <div class="value-grid">
+          <div class="value-card"><b id="landing-value-day">от 52 ₽</b><span>в день — касса и приложение для гостей при оплате за год</span></div>
+          <div class="value-card"><b>0 ₽</b><span>за каждую дополнительную кассу, планшет официанта или компьютер</span></div>
+          <div class="value-card"><b>0 %</b><span>с выручки — сколько бы вы ни продали, цена тарифа не растёт</span></div>
+        </div>
+        <div class="value-list">
+          ${[
+            ['📱', 'Приложение для гостей', 'со своим названием и логотипом — Android, а на iPhone в браузере'],
+            ['🔳', 'Меню по QR-коду стола', 'с фото, заказ со стола без официанта'],
+            ['🙋', 'Кнопка вызова персонала', 'стол сразу подсвечивается на кассе'],
+            ['🎁', 'Бонусы и уровни гостей', 'кешбэк, подарки ко дню рождения, сертификаты'],
+            ['📅', 'Брони и лист ожидания', 'в одном календаре с картой зала'],
+            ['👥', 'Смены и зарплата', 'по часам, окладу и проценту с продаж, чаевые'],
+          ].map(([icon, title, text]) => `
+            <div class="value-item"><span class="value-icon">${icon}</span><div><b>${esc(title)}</b><span>${esc(text)}</span></div></div>`).join('')}
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-pricing-section" id="landing-pricing">
+      <div class="landing-inner">
+        <h2 class="landing-h2 center">Тарифы без доплат за модули</h2>
+        <p class="landing-h2-sub center-block" id="landing-pricing-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.</p>
+        <div class="pricing-switches">
+          <div id="landing-pricing-toggle" class="landing-pricing-toggle" style="display:none">
+            <button type="button" class="landing-pricing-toggle-btn active" data-mode="single">🏠 Одно заведение</button>
+            <button type="button" class="landing-pricing-toggle-btn" data-mode="chain">🏢 Сеть заведений</button>
+          </div>
+          <div id="landing-period-toggle" class="landing-pricing-toggle">
+            <button type="button" class="landing-pricing-toggle-btn active" data-period="monthly">Помесячно</button>
+            <button type="button" class="landing-pricing-toggle-btn" data-period="semiannual">6 месяцев <span class="period-save" data-save="semiannual"></span></button>
+            <button type="button" class="landing-pricing-toggle-btn" data-period="yearly">Год <span class="period-save" data-save="yearly"></span></button>
+          </div>
         </div>
         <div id="landing-plans" class="landing-plans-grid"><div class="spinner"></div></div>
         <div id="landing-chain-plans" class="landing-plans-grid" style="display:none"></div>
+        <div class="pricing-included">
+          <div class="pricing-included-title">Во всех тарифах</div>
+          <div class="pricing-chips">
+            ${['Касса на Android и Windows', 'Кассы и устройства без лимита', 'Карта зала и брони', 'Склад и техкарты',
+              'Чеки через вашу ККТ АТОЛ', 'ЕГАИС через ваш УТМ', 'Бонусы и скидочные карты', 'Смены и зарплата',
+              'Отчёты и кабинет владельца', 'Обновления без доплат', 'Без процентов с продаж']
+              .map((t) => `<span class="pricing-chip">✓ ${esc(t)}</span>`).join('')}
+          </div>
+        </div>
       </div>
     </section>
+
 
     <section class="landing-section landing-section-alt">
       <div class="landing-inner">
@@ -1561,6 +1673,9 @@ function screenLanding() {
   };
   if ($('f-landing-cta-bottom')) $('f-landing-cta-bottom').onclick = scrollToEmail;
   if ($('f-landing-hero-cta')) $('f-landing-hero-cta').onclick = scrollToEmail;
+  if ($('f-landing-goto-demo')) {
+    $('f-landing-goto-demo').onclick = () => $('landing-demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   if ($('f-landing-hero-demo')) {
     $('f-landing-hero-demo').onclick = () =>
       $('landing-showcase')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1597,71 +1712,78 @@ function screenLanding() {
   window.addEventListener('scroll', onLandingScroll, { passive: true });
   sub(() => window.removeEventListener('scroll', onLandingScroll));
 
-  sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
-    const allPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(a.priceRub) || 0) - (Number(b.priceRub) || 0));
-    // Тарифы сети — отдельной вкладкой: цены у них за точку, и выбрать такой
-    // тариф можно только вместе с созданием сети (presetIsChain в онбординге).
-    const plans = allPlans.filter((p) => !p.isChainPlan);
-    const chainPlans = allPlans.filter((p) => !!p.isChainPlan);
+  // Период оплаты и выбранный тариф переживают перезагрузку страницы.
+  let landingPeriod = ['monthly', 'semiannual', 'yearly'].includes(window.localStorage.getItem('selectedBillingPeriod'))
+    ? window.localStorage.getItem('selectedBillingPeriod') : 'monthly';
+  let latestPlans = [];
+
+  const renderLandingPlans = () => {
+    const plans = sellablePlans(latestPlans, false);
+    const chainPlans = sellablePlans(latestPlans, true);
     const body = $('landing-plans');
     if (!body) return;
-    // «Популярный» — средний по цене из продаваемых, если их хотя бы три.
-    const sellable = plans.filter((p) => Number(p.priceRub) > 0);
-    const popularId = sellable.length >= 3 ? sellable[1].id : null;
+    // «Рекомендуем» — средний из трёх и больше, у двух — дорогой.
+    const recommendedId = plans.length >= 3 ? plans[Math.floor(plans.length / 2)].id : plans.length === 2 ? plans[1].id : null;
     body.innerHTML = plans.length
-      ? plans.map((p) => landingPlanCardHtml(p, p.id === selectedPlanId, p.id === popularId)).join('')
+      ? plans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId, recommended: p.id === recommendedId })).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
+    body.classList.toggle('three', plans.length === 3);
     const chainBody = $('landing-chain-plans');
-    if (chainBody) chainBody.innerHTML = chainPlans.map((p) => landingChainPlanCardHtml(p, p.id === selectedPlanId)).join('');
-    // Переключатель «Одно заведение / Сеть» — только если есть тарифы сети.
-    const toggle = $('landing-pricing-toggle');
-    const subEl = $('landing-pricing-sub');
-    const SINGLE_SUB = 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна, чтобы попробовать.';
-    const CHAIN_SUB = 'Несколько точек одного владельца — общий биллинг, общая программа лояльности и бонусы, гость выбирает точку сети прямо в приложении.';
-    if (toggle) {
-      toggle.style.display = chainPlans.length ? '' : 'none';
-      const setMode = (mode) => {
-        toggle.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
-          btn.classList.toggle('active', btn.dataset.mode === mode);
-        });
-        body.style.display = mode === 'single' ? '' : 'none';
-        chainBody.style.display = mode === 'chain' ? '' : 'none';
-        if (subEl) subEl.textContent = mode === 'chain' ? CHAIN_SUB : SINGLE_SUB;
-      };
-      toggle.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
-        btn.onclick = () => setMode(btn.dataset.mode);
-      });
-      // Выбирал тариф сети раньше — сразу открываем эту вкладку.
-      setMode(window.localStorage.getItem('presetIsChain') === '1' ? 'chain' : 'single');
+    if (chainBody) {
+      chainBody.innerHTML = chainPlans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId })).join('');
+      chainBody.classList.toggle('one', chainPlans.length === 1);
     }
-    const updateSkipTrialNote = () => {
-      const note = $('f-landing-skip-trial-note');
-      if (note) note.style.display = window.localStorage.getItem('skipTrial') === '1' ? 'block' : 'none';
-    };
-    const refreshPlanButtons = () => {
-      document.querySelectorAll('.f-landing-plan-pick, .f-landing-chain-plan-pick').forEach((btn) => {
-        const isSel = btn.dataset.id === selectedPlanId;
-        const isChainBtn = btn.classList.contains('f-landing-chain-plan-pick');
-        btn.textContent = isSel ? 'Тариф выбран ✓' : (isChainBtn ? 'Выбрать тариф сети' : 'Выбрать и попробовать');
-        btn.classList.toggle('btn-primary', isSel);
-        btn.classList.toggle('btn-ghost', !isSel);
-        btn.closest('.card').style.borderColor = isSel ? 'var(--primary)' : '';
-      });
-    };
-    // presetIsChain решает, откроется ли онбординг сразу с отметкой «Это сеть».
-    const selectLandingPlan = (id, { isChain, buyNow }) => {
-      selectedPlanId = id;
-      window.localStorage.setItem('selectedPlanId', selectedPlanId);
-      if (isChain) window.localStorage.setItem('presetIsChain', '1');
-      else window.localStorage.removeItem('presetIsChain');
-      // Выбрали тариф с пробным периодом — сбрасываем «Купить сразу» от
-      // другого тарифа, иначе после регистрации неожиданно откроется оплата.
-      if (buyNow) window.localStorage.setItem('skipTrial', '1');
-      else window.localStorage.removeItem('skipTrial');
-      refreshPlanButtons();
-      updateSkipTrialNote();
-      $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    };
+
+    // Выгода за период — по лучшему тарифу; периода нет ни у одного — прячем кнопку.
+    ['semiannual', 'yearly'].forEach((period) => {
+      const all = [...plans, ...chainPlans];
+      const best = Math.max(0, ...all.map((p) => planPeriodDiscount(p, period)));
+      const label = document.querySelector(`[data-save="${period}"]`);
+      if (label) label.textContent = best ? `−${best}%` : '';
+      const btn = document.querySelector(`#landing-period-toggle [data-period="${period}"]`);
+      if (btn) btn.style.display = all.some((p) => planPeriodPrice(p, period) > 0) ? '' : 'none';
+    });
+    document.querySelectorAll('#landing-period-toggle [data-period]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.period === landingPeriod);
+    });
+
+    // Цифры первого экрана и блока «Почему выгодно» — из настоящих цен.
+    const cheapest = plans[0];
+    if (cheapest && $('landing-hero-price')) $('landing-hero-price').textContent = `от ${rub(cheapest.priceRub)}`;
+    const withGuest = plans.filter((p) => planCaps(p).guestApp)
+      .map((p) => (planPeriodPrice(p, 'yearly') || (Number(p.priceRub) || 0) * 12) / 365)
+      .filter((v) => v > 0);
+    if (withGuest.length && $('landing-value-day')) $('landing-value-day').textContent = `от ${rub(Math.min(...withGuest))}`;
+    const trial = [...new Set(plans.map((p) => Number(p.trialDays) || 14))];
+    const subEl = $('landing-pricing-sub');
+    if (subEl && !subEl.dataset.chain) {
+      subEl.textContent = trial.length === 1
+        ? `${trial[0]} ${pluralDays(trial[0])} бесплатно на любом тарифе — банковская карта не нужна. Без процентов с продаж.`
+        : 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.';
+    }
+    bindPlanButtons();
+  };
+
+  const updateSkipTrialNote = () => {
+    const note = $('f-landing-skip-trial-note');
+    if (note) note.style.display = window.localStorage.getItem('skipTrial') === '1' ? 'block' : 'none';
+  };
+  // presetIsChain решает, откроется ли онбординг сразу с отметкой «Это сеть».
+  const selectLandingPlan = (id, { isChain, buyNow }) => {
+    selectedPlanId = id;
+    window.localStorage.setItem('selectedPlanId', selectedPlanId);
+    window.localStorage.setItem('selectedBillingPeriod', landingPeriod);
+    if (isChain) window.localStorage.setItem('presetIsChain', '1');
+    else window.localStorage.removeItem('presetIsChain');
+    // Выбрали тариф с пробным периодом — сбрасываем «Купить сразу» от
+    // другого тарифа, иначе после регистрации неожиданно откроется оплата.
+    if (buyNow) window.localStorage.setItem('skipTrial', '1');
+    else window.localStorage.removeItem('skipTrial');
+    renderLandingPlans();
+    updateSkipTrialNote();
+    $('f-landing-email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  function bindPlanButtons() {
     document.querySelectorAll('.f-landing-plan-pick').forEach((el) => {
       el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: false, buyNow: false });
     });
@@ -1674,6 +1796,54 @@ function screenLanding() {
     document.querySelectorAll('.f-landing-chain-plan-buy').forEach((el) => {
       el.onclick = () => selectLandingPlan(el.dataset.id, { isChain: true, buyNow: true });
     });
+  }
+
+  document.querySelectorAll('#landing-period-toggle [data-period]').forEach((btn) => {
+    btn.onclick = () => {
+      landingPeriod = btn.dataset.period;
+      try { window.localStorage.setItem('selectedBillingPeriod', landingPeriod); } catch (_) {}
+      renderLandingPlans();
+    };
+  });
+
+  // Переключатель «Одно заведение / Сеть» — только если есть тарифы сети.
+  const SINGLE_SUB_FALLBACK = 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.';
+  const CHAIN_SUB = 'Несколько точек одного владельца — общий кабинет и оплата, общая программа лояльности, гость выбирает точку сети прямо в приложении.';
+  const setMode = (mode) => {
+    const toggle = $('landing-pricing-toggle');
+    toggle?.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    if ($('landing-plans')) $('landing-plans').style.display = mode === 'single' ? '' : 'none';
+    if ($('landing-chain-plans')) $('landing-chain-plans').style.display = mode === 'chain' ? '' : 'none';
+    const subEl = $('landing-pricing-sub');
+    if (subEl) {
+      if (mode === 'chain') {
+        subEl.dataset.chain = '1';
+        subEl.textContent = CHAIN_SUB;
+      } else {
+        delete subEl.dataset.chain;
+        subEl.textContent = SINGLE_SUB_FALLBACK;
+        renderLandingPlans();
+      }
+    }
+  };
+  $('landing-pricing-toggle')?.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
+    btn.onclick = () => setMode(btn.dataset.mode);
+  });
+
+  let modeSet = false;
+  sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
+    latestPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const hasChain = sellablePlans(latestPlans, true).length > 0;
+    const toggle = $('landing-pricing-toggle');
+    if (toggle) toggle.style.display = hasChain ? '' : 'none';
+    renderLandingPlans();
+    // Выбирал тариф сети раньше — сразу открываем эту вкладку.
+    if (!modeSet) {
+      modeSet = true;
+      setMode(hasChain && window.localStorage.getItem('presetIsChain') === '1' ? 'chain' : 'single');
+    }
     updateSkipTrialNote();
   }, () => {
     const body = $('landing-plans');
@@ -2415,6 +2585,8 @@ function screenOnboarding() {
       // «Купить сразу»: заведение создаётся обычным путём, а оплата
       // открывается сразу, до кабинета.
       const skipTrial = window.localStorage.getItem('skipTrial') === '1';
+      const chosenPeriod = ['semiannual', 'yearly'].includes(window.localStorage.getItem('selectedBillingPeriod'))
+        ? window.localStorage.getItem('selectedBillingPeriod') : 'monthly';
 
       // Сеть: сначала пустая сеть, потом первая точка с её chainId.
       let chainId = isChain ? createdChainId : null;
@@ -2436,6 +2608,7 @@ function screenOnboarding() {
       window.localStorage.removeItem('selectedPlanId');
       window.localStorage.removeItem('skipTrial');
       window.localStorage.removeItem('presetIsChain');
+      window.localStorage.removeItem('selectedBillingPeriod');
       const tenantId = res.data.tenantId;
       state.activeTenantId = tenantId;
       // Сервер завёл брендинг по умолчанию — дописываем выбранные цвета и
@@ -2458,7 +2631,7 @@ function screenOnboarding() {
       // «Купить сразу» — на оплату до отрисовки кабинета. Не открылась —
       // говорим об этом: заведение уже создано, оплатить можно из кабинета.
       if (skipTrial && chosenPlanId) {
-        const paid = await startCheckout(tenantId, chosenPlanId, 'monthly', chainId);
+        const paid = await startCheckout(tenantId, chosenPlanId, chosenPeriod, chainId);
         if (!paid) {
           toast('Не удалось перейти к оплате — заведение создано, оплатите его во вкладке «Тарифы»');
         }
@@ -2490,13 +2663,13 @@ const TIMEZONE_OPTIONS = [
 
 // Вопросы, которые на самом деле задают при выборе и подключении.
 const FAQ_ITEMS = [
-  { q: 'Что входит в пробный период?', a: 'Все функции тарифа, на который вы регистрируетесь, без ограничений — оплата не запрашивается, пока пробный период не закончится. Длительность зависит от тарифа, обычно 7 дней.' },
+  { q: 'Что входит в пробный период?', a: 'Все функции выбранного тарифа — оплата не запрашивается, пока пробный период не закончится, банковская карта не нужна. Срок указан в карточке тарифа. Тариф в пробный период можно бесплатно поменять в разделе «Оплата» — например, попробовать «Бизнес» с приложением для гостей.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
   { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
-  { q: 'Можно ли сменить тариф позже?', a: 'Да, в любой момент в разделе «Тарифы» — повышение и понижение доступны в один клик, без обращения в поддержку.' },
+  { q: 'Можно ли сменить тариф позже?', a: 'Да. В пробный период — бесплатно и сразу, в разделе «Оплата». После оплаты — выберите другой тариф при следующей оплате: он начнёт действовать с неё, без обращения в поддержку.' },
   { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Да, через вашу онлайн-кассу АТОЛ: система отправляет в неё чек с позициями, ставками НДС и способами оплаты. Саму ККТ с фискальным накопителем, договор с ОФД и регистрацию в ФНС оформляете вы — система к ним подключается, но не заменяет. Приём карт — через ваш банковский терминал или эквайринг, подключение — в разделе «Интеграции» на кассе.' },
   { q: 'Где хранятся данные заведения?', a: 'Имена и телефоны гостей сначала записываются на наш сервер в России, остальные данные — в облаке с резервированием. Данные заведений разделены правилами доступа: другие заведения платформы не могут увидеть ваши данные — это проверяется автоматическими тестами защиты.' },
-  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Зависит от тарифа — лимиты указаны в разделе «Тарифы». При превышении лимита приложение продолжает работать, но администратора платформы попросят предложить тариф выше.' },
+  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Касс, планшетов и компьютеров — сколько нужно, во всех тарифах без доплат. Число сотрудников зависит от тарифа и указано в его карточке: когда лимит достигнут, касса предложит удалить уволенного сотрудника или перейти на тариф выше.' },
   { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Экспортировать данные до удаления можно, обратившись в поддержку.' },
   { q: 'Откуда фото блюд в демо-заведении?', a: 'Это фото со свободных фотостоков — для примера, в вашем заведении будут ваши фото и ваше меню. Авторы и лицензии указаны на отдельной странице.', link: { href: '#/demo-photos', text: 'Авторы фото →' } },
 ];
@@ -2985,9 +3158,13 @@ function watchDashboardData(tenantId) {
 
       <h2>Сборка APK</h2>
       <div class="card">
+        ${planCaps((plans || []).find((p) => p.id === subscription?.planId)).guestApp ? `
         <p class="small muted">Одна кнопка — сразу три личных приложения
         этого заведения: касса для Android-планшета, касса для Windows и
-        гостевое приложение для телефонов гостей.</p>
+        гостевое приложение для телефонов гостей.</p>` : `
+        <p class="small muted">Одна кнопка — кассы этого заведения для Android-планшета и для Windows.</p>
+        <p class="small" style="color:var(--warning)">Приложение для гостей и меню по QR не входят в ваш тариф —
+        их можно подключить, сменив тариф в разделе «Оплата» (в пробный период — бесплатно).</p>`}
         <p class="small muted">Обе кассы сами присоединяются к заведению по
         коду заведения и коду приглашения устройства выше — вводить их
         вручную не нужно. Windows-версия — обычный установщик: скачайте
@@ -3081,35 +3258,54 @@ function watchDashboardData(tenantId) {
     const plansHtml = () => `
       <h2>Тарифы</h2>
       ${tenant.chainId ? `
-        <p class="small muted" style="margin-top:-4px">Цена ниже — за ПЕРВУЮ точку сети; каждая
-        следующая точка обычно дешевле (её цену видно только в итоговом счёте на оплате).</p>
+        <p class="small muted" style="margin-top:-4px">Цена — за первую точку сети, каждая следующая — по своей
+        цене; итог за все точки — в счёте на оплате.</p>
       ` : ''}
       <div class="card">
         ${canManage && plans ? `
-          ${plans.filter((p) => Number(p.priceRub) > 0 && !!p.isChainPlan === !!tenant.chainId).map((p) => {
-            const priceParts = [`${Number(p.priceRub).toLocaleString('ru-RU')} ₽/мес`];
-            if (Number(p.priceRubSemiannual) > 0) priceParts.push(`${Number(p.priceRubSemiannual).toLocaleString('ru-RU')} ₽/6 мес`);
-            if (Number(p.priceRubYearly) > 0) priceParts.push(`${Number(p.priceRubYearly).toLocaleString('ru-RU')} ₽/год`);
-            return `
-            <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-              <div class="grow">
-                <div>${esc(p.name || p.id)}</div>
-                <div class="small muted">${priceParts.join(' · ')}</div>
-                ${Number(p.priceRubSemiannual) > 0 || Number(p.priceRubYearly) > 0 ? `
-                  <select class="f-plan-period" id="f-plan-period-${esc(p.id)}" data-plan="${esc(p.id)}" style="margin-top:6px;width:auto">
-                    <option value="monthly">Помесячно</option>
-                    ${Number(p.priceRubSemiannual) > 0 ? '<option value="semiannual">На 6 месяцев</option>' : ''}
-                    ${Number(p.priceRubYearly) > 0 ? '<option value="yearly">На год (выгоднее)</option>' : ''}
+          ${(() => {
+            // Продаваемые тарифы своего вида; архивный текущий — тоже, его можно продлить.
+            const isChain = !!tenant.chainId;
+            const list = sellablePlans(plans, isChain);
+            const current = plans.find((p) => p.id === subscription?.planId);
+            if (current && current.archived === true && !!current.isChainPlan === isChain) list.unshift(current);
+            const inTrial = subscription?.status === 'trial';
+            return `<div class="cab-plans">${list.map((p) => {
+              const isCurrent = subscription?.planId === p.id;
+              const paidCurrent = isCurrent && subscription?.status === 'active';
+              const yearly = planPeriodPrice(p, 'yearly');
+              const semi = planPeriodPrice(p, 'semiannual');
+              return `
+              <div class="cab-plan${isCurrent ? ' current' : ''}">
+                <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+                  <div style="font-weight:800;font-size:16px">${esc(p.name || p.id)}</div>
+                  ${isCurrent ? '<span class="cab-plan-badge">Ваш тариф</span>' : ''}
+                </div>
+                <div class="small muted" style="margin:2px 0 8px">${esc(planTagline(p))}</div>
+                <div class="cab-plan-price">${rub(p.priceRub)}<span>/мес${isChain ? ' за первую точку' : ''}</span></div>
+                ${isChain && planAdditionalPrice(p, 'monthly') > 0 ? `<div class="small muted">+ ${rub(planAdditionalPrice(p, 'monthly'))}/мес за каждую следующую точку</div>` : ''}
+                ${yearly || semi ? `<div class="small muted">${[semi ? `${rub(semi)} за 6 мес` : '', yearly ? `${rub(yearly)} за год${planPeriodDiscount(p, 'yearly') ? ` (−${planPeriodDiscount(p, 'yearly')}%)` : ''}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
+                <ul class="plan-feats compact">
+                  ${planFeatureRows(p).map(([on, text]) => `<li class="${on ? 'on' : 'off'}"><span>${on ? '✓' : '—'}</span>${esc(text)}</li>`).join('')}
+                </ul>
+                ${semi || yearly ? `
+                  <select class="f-plan-period" id="f-plan-period-${esc(p.id)}" data-plan="${esc(p.id)}" style="margin-bottom:8px">
+                    <option value="monthly">Оплатить на месяц</option>
+                    ${semi ? '<option value="semiannual">Оплатить на 6 месяцев</option>' : ''}
+                    ${yearly ? '<option value="yearly">Оплатить на год (выгоднее)</option>' : ''}
                   </select>
                 ` : ''}
+                ${inTrial && !isCurrent && p.archived !== true ? `
+                  <button class="btn btn-ghost f-plan-trial-switch" data-plan="${esc(p.id)}" style="margin-bottom:8px">Перейти на этот тариф — бесплатно до конца пробного периода</button>
+                ` : ''}
+                <button class="btn ${subscription?.status === 'past_due' || (inTrial && isCurrent) ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}"
+                  ${paidCurrent ? 'disabled' : ''}>
+                  ${paidCurrent ? 'Оплачен' : isCurrent ? 'Оплатить' : inTrial ? 'Оплатить этот тариф' : 'Перейти и оплатить'}
+                </button>
               </div>
-              <button class="btn ${subscription?.status === 'past_due' ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}" style="width:auto"
-                ${subscription?.planId === p.id && subscription?.status === 'active' ? 'disabled' : ''}>
-                ${subscription?.planId === p.id && subscription?.status === 'active' ? 'Текущий' : 'Продлить'}
-              </button>
-            </div>
-          `;
-          }).join('')}
+            `;
+            }).join('')}</div>`;
+          })()}
           <div style="margin-top:14px">
             <div class="small" style="font-weight:600;margin-bottom:6px">Кто платит</div>
             <label class="small" style="display:flex;gap:8px;align-items:flex-start">
@@ -4174,6 +4370,20 @@ function watchDashboardData(tenantId) {
           $('f-autorenew-consent')?.checked === true);
       };
     });
+    document.querySelectorAll('.f-plan-trial-switch').forEach((el) => {
+      el.onclick = async () => {
+        el.disabled = true;
+        try {
+          await callSaasGateway('changeTrialPlan', tenant?.chainId
+            ? { chainId: tenant.chainId, planId: el.dataset.plan }
+            : { tenantId, planId: el.dataset.plan });
+          toast('Тариф изменён — пробный период продолжается');
+        } catch (e) {
+          toast(`Не удалось сменить тариф: ${e?.message || e}`);
+          el.disabled = false;
+        }
+      };
+    });
     document.querySelectorAll('input[name="f-payer-mode"]').forEach((el) => {
       el.onchange = () => { payerDraft.mode = el.value; draw(); };
     });
@@ -4726,6 +4936,15 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="plans">
         <h1>Тарифы</h1>
+        <div class="card" style="margin-bottom:14px">
+          <div style="font-weight:700;margin-bottom:4px">Рекомендованная сетка к запуску продаж</div>
+          <p class="small muted">«Старт» 990 ₽/мес (касса, зал, склад, брони; до 5 сотрудников; без приложения гостя и ИИ),
+          «Бизнес» 1 990 ₽ (+ приложение гостя, меню по QR и ИИ; до 15 сотрудников), «Про» 2 990 ₽ (без лимитов),
+          «Сеть» 2 990 ₽ за первую точку + 1 490 ₽ за каждую следующую. Год — выгода 20%, полгода — 10%. Пробный период
+          14 дней. Тарифы вне сетки уходят в архив: с сайта пропадают, кто на них — остаётся на прежних условиях.
+          Тем, кто уже платит, подорожание начнёт действовать через 30 дней (так в оферте) — разошлите им объявление.</p>
+          <button class="btn btn-ghost" id="f-apply-plan-catalog" style="width:auto">Посмотреть изменения и применить</button>
+        </div>
         <div id="admin-plans"><div class="spinner"></div></div>
         <button class="btn btn-ghost" id="f-new-plan" style="width:auto;margin-bottom:14px">Добавить тариф</button>
       </div>
@@ -5449,7 +5668,13 @@ function watchAllTenants() {
           <div class="row" style="margin-top:10px;align-items:center">
             <div class="small muted">Тариф:</div>
             <select class="f-tenant-plan grow" data-id="${esc(t.id)}">
-              ${plans.map((p) => `<option value="${esc(p.id)}" ${p.id === t.planId ? 'selected' : ''}>${esc(p.name || p.id)}</option>`).join('')}
+              ${(() => {
+                // Тариф точки сети — тариф всей сети (сервер меняет его у сети).
+                const curId = t.subscription?.planId || t.planId;
+                return plans
+                  .filter((p) => !!p.isChainPlan === !!t.chainId && (p.archived !== true || p.id === curId))
+                  .map((p) => `<option value="${esc(p.id)}" ${p.id === curId ? 'selected' : ''}>${esc(p.name || p.id)}${t.chainId ? ' (у всей сети)' : ''}${p.archived ? ' — архив' : ''}</option>`).join('');
+              })()}
             </select>
           </div>
         ` : ''}
@@ -5749,6 +5974,12 @@ function watchPlans() {
           <label class="row" style="width:auto;gap:6px">
             <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="customDomain" ${p.customDomain ? 'checked' : ''}> Свой домен
           </label>
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="features.guestApp" ${planCaps(p).guestApp ? 'checked' : ''}> Приложение гостя и меню по QR
+          </label>
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="archived" ${p.archived ? 'checked' : ''}> В архиве (не продаётся, скрыт с сайта)
+          </label>
         </div>
         <div class="row">
           <button class="btn btn-primary f-plan-save" data-plan="${esc(p.id)}">Сохранить тариф</button>
@@ -5779,6 +6010,7 @@ function watchPlans() {
     body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
   }));
 
+  if ($('f-apply-plan-catalog')) $('f-apply-plan-catalog').onclick = () => applyPlanCatalog();
   $('f-new-plan').onclick = async () => {
     const id = prompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip; "chain" — для сети заведений):');
     if (!id || !/^[a-z0-9-]+$/.test(id)) {
@@ -5809,6 +6041,36 @@ function watchPlans() {
   };
 }
 
+// Рекомендованная сетка тарифов: сначала показываем, что изменится, и
+// только после подтверждения записываем (handleApplyPlanCatalog).
+async function applyPlanCatalog() {
+  const btn = $('f-apply-plan-catalog');
+  if (btn) btn.disabled = true;
+  try {
+    const { data } = await callSaasGateway('applyPlanCatalog', {});
+    const line = (r) => {
+      if (r.action === 'moveOrphans') return `• ${r.count} ${plural(r.count, 'заведение', 'заведения', 'заведений')} без выбранного тарифа (заглушка «start») перейдут на «${(data.diff || []).find((x) => x.planId === r.to)?.after?.name || r.to}» — у них сохранится приложение гостя`;
+      if (r.action === 'archive') return `• «${r.before.name}» (${r.planId}) — в архив, цена ${r.before.priceRub} ₽ для тех, кто на нём, не меняется`;
+      const from = r.before ? `«${r.before.name}» ${r.before.priceRub} ₽ → ` : 'новый: ';
+      const extra = [
+        r.after.priceRubAdditional ? `+${r.after.priceRubAdditional} ₽ за доп. точку` : '',
+        r.after.maxEmployees ? `до ${r.after.maxEmployees} сотр.` : 'без лимита сотрудников',
+        r.after.guestApp ? 'приложение гостя' : 'без приложения гостя',
+        r.after.ai ? 'ИИ' : 'без ИИ',
+      ].filter(Boolean).join(', ');
+      return `• ${r.planId}: ${from}«${r.after.name}» ${r.after.priceRub} ₽/мес (${extra})`;
+    };
+    const ok = confirm(`Применить сетку тарифов?\n\n${(data.diff || []).map(line).join('\n')}\n\nТем, кто уже платит, подорожание начнёт действовать через 30 дней. Отменить можно, поправив тарифы вручную.`);
+    if (!ok) return;
+    const res = await callSaasGateway('applyPlanCatalog', { confirm: true });
+    toast(`Сетка тарифов применена${res.data?.priceLocked ? ` — у ${res.data.priceLocked} подписчиков прежняя цена до ${new Date(res.data.priceLockUntil).toLocaleDateString('ru-RU')}` : ''}`);
+  } catch (e) {
+    toast(`Не удалось применить сетку тарифов: ${e?.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function savePlan(planId) {
   const btn = document.querySelector(`.f-plan-save[data-plan="${planId}"]`);
   if (btn) btn.disabled = true;
@@ -5818,7 +6080,12 @@ async function savePlan(planId) {
       payload[el.dataset.field] = el.type === 'number' ? Number(el.value) || 0 : el.value;
     });
     document.querySelectorAll(`.f-plan-checkbox[data-plan="${planId}"]`).forEach((el) => {
-      payload[el.dataset.field] = el.checked;
+      // features.* — вложенное поле: сервер сливает его с остальными возможностями.
+      if (el.dataset.field.startsWith('features.')) {
+        payload.features = { ...(payload.features || {}), [el.dataset.field.slice(9)]: el.checked };
+      } else {
+        payload[el.dataset.field] = el.checked;
+      }
     });
     await callSaasGateway('savePlan', { planId, fields: payload });
     toast('Тариф сохранён');

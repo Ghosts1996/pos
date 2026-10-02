@@ -25,6 +25,7 @@ import 'admin/admin_home_screen.dart';
 import 'employee/floor_plan_screen.dart';
 import 'saas/saas_device_pairing_screen.dart';
 import 'staff_device_setup_screen.dart';
+import '../utils/startup_log.dart';
 
 /// Вход по PIN-коду сотрудника. Длина кода зависит от роли — 4 цифры у
 /// сотрудника, 6 у администратора (см. AppConstants.pinLengthForRole) —
@@ -88,6 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    StartupLog.step('экран входа');
     // Экран входа — в кассе никто не работает, блокировать нечего.
     AppLock.instance.signedOut();
     _start();

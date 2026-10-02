@@ -329,6 +329,22 @@ async function boot() {
   state.db = getFirestore(app);
   state.root = doc(state.db, 'tenants', tenantId);
   state.loyaltyRoot = chainId ? doc(state.db, 'chains', chainId) : state.root;
+
+  // Меню по QR и заказ со стола — в тарифе заведения (пишет сервер,
+  // читается без входа). Нет — правила гостя всё равно не пустят:
+  // говорим сразу, а не ошибками на каждом экране.
+  try {
+    const caps = await getDoc(doc(state.root, 'public', 'features'));
+    if (caps.exists() && caps.data().guestApp === false) {
+      screenEl().innerHTML = `
+        <h1>Меню заведения пока не работает</h1>
+        <p class="muted">Заведение не подключило меню и заказ для гостей.
+        Меню, заказ и бронь — у персонала заведения.</p>`;
+      return;
+    }
+  } catch (_) {
+    // Нет связи — дальше скажут экраны входа.
+  }
   const auth = getAuth(app);
 
   state.auth = auth;
@@ -2215,8 +2231,10 @@ async function saveProfile() {
     // Firestore. Напрямую в облако эти поля не пишем.
     await piiPost({ tenantId: state.tenantId, uid: state.uid, ...patch });
     // Введённое сохранено — профиль можно перерисовать (номер станет
-    // «только для чтения»).
+    // «только для чтения»). Обновление профиля могло прийти, пока шло
+    // сохранение, и тогда было пропущено — перерисовываем сами.
     state.profileDirty = false;
+    if (location.hash === '#/profile' && patch.phone && (state.profile || {}).phone) route();
     if (patch.phone) {
       // Указатель «номер → гость» вторичен: его осечка профилю не мешает.
       try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}

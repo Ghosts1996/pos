@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/plan_capabilities.dart';
 import '../../services/venue_service.dart';
 import '../../models/venue_models.dart';
 import '../services/kolibri_auth_service.dart';
@@ -161,11 +162,17 @@ class _KolibriShellState extends State<KolibriShell> {
           // На планшете вкладки — колонкой по центру: карточки и меню,
           // растянутые на 1280 dp, читались хуже, чем на телефоне.
           body: SafeArea(bottom: false, child: CenteredBody(maxWidth: 760, child: pages[_index])),
-          floatingActionButton: FloatingActionButton.small(
-            backgroundColor: KolibriColors.primary,
-            onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),
-            tooltip: 'ИИ-помощник',
-            child: Icon(Icons.auto_awesome, color: KolibriColors.onPrimary, size: 18),
+          // ИИ-помощника нет в тарифе заведения — кнопку не показываем.
+          floatingActionButton: ValueListenableBuilder<PlanCapabilities>(
+            valueListenable: PlanCapabilitiesService.current,
+            builder: (context, caps, _) => caps.ai
+                ? FloatingActionButton.small(
+                    backgroundColor: KolibriColors.primary,
+                    onPressed: () => KolibriAiChat.show(context, guestUid: _auth.uid),
+                    tooltip: 'ИИ-помощник',
+                    child: Icon(Icons.auto_awesome, color: KolibriColors.onPrimary, size: 18),
+                  )
+                : const SizedBox.shrink(),
           ),
           // Штатное место кнопки — снизу справа, над панелью вкладок.
           // Было endTop: без AppBar эта позиция ставит кнопку центром ровно

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../widgets/about_app_dialog.dart';
+import '../../widgets/plan_upsell.dart';
+import '../../services/plan_capabilities.dart';
 import '../../services/staff_session_store.dart';
 import '../../services/table_key_service.dart';
 import '../../theme/app_colors.dart';
@@ -57,13 +59,13 @@ class AdminHomeScreen extends StatelessWidget {
             (ctx) => GiftCardsScreen(employee: employee)),
         _AdminTile('Отзывы', Icons.reviews_outlined, (ctx) => const ReviewsScreen()),
         _AdminTile('Лента для гостей', Icons.dynamic_feed, (ctx) => const StoriesEditorScreen()),
-        _AdminTile('QR-коды столов', Icons.qr_code_2, (ctx) => const TableQrScreen()),
+        _AdminTile('QR-коды столов', Icons.qr_code_2, (ctx) => const TableQrScreen(), needs: _Needs.guestApp),
         _AdminTile('Профиль заведения', Icons.storefront, (ctx) => const VenueProfileScreen()),
       ],
       'Искусственный интеллект': [
-        _AdminTile('ИИ-разборы', Icons.insights, (ctx) => const AiInsightsScreen()),
+        _AdminTile('ИИ-разборы', Icons.insights, (ctx) => const AiInsightsScreen(), needs: _Needs.ai),
         _AdminTile('Активность и журнал', Icons.fact_check, (ctx) => const ActivityLogScreen()),
-        _AdminTile('Настройки ИИ', Icons.auto_awesome, (ctx) => const AiSettingsScreen()),
+        _AdminTile('Настройки ИИ', Icons.auto_awesome, (ctx) => const AiSettingsScreen(), needs: _Needs.ai),
       ],
       'Настройки': [
         _AdminTile('Интеграции', Icons.settings_input_antenna,
@@ -112,7 +114,9 @@ class AdminHomeScreen extends StatelessWidget {
           // больше не открывают счёт гостя (см. TableKeyService).
           StreamBuilder<bool>(
             stream: TableKeyService.instance.reprintNeededStream(),
-            builder: (context, snap) => snap.data == true ? const _ReprintBanner() : const SizedBox.shrink(),
+            builder: (context, snap) => snap.data == true && PlanCapabilitiesService.current.value.guestApp
+                ? const _ReprintBanner()
+                : const SizedBox.shrink(),
           ),
           for (final entry in groups.entries) ...[
             Padding(
@@ -122,37 +126,57 @@ class AdminHomeScreen extends StatelessWidget {
             ),
             // Задаём ширину плитки, а не число колонок: на телефоне 2, на
             // планшете 5–6.
-            GridView(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 220,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                // Две строки подписи с поправкой на системный шрифт.
-                mainAxisExtent: context.scaledExtent(112, textPart: 40),
-              ),
-              children: entry.value
-                  .map((t) => Card(
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => Navigator.of(context)
-                              .push(MaterialPageRoute(builder: t.builder)),
+            // Что не входит в тариф — с замком: по нажатию объясняем, где
+            // подключить (см. PlanCapabilitiesService).
+            ValueListenableBuilder<PlanCapabilities>(
+              valueListenable: PlanCapabilitiesService.current,
+              builder: (context, caps, _) => GridView(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 220,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  // Две строки подписи с поправкой на системный шрифт.
+                  mainAxisExtent: context.scaledExtent(112, textPart: 40),
+                ),
+                children: entry.value.map((t) {
+                  final locked = !t.allowedBy(caps);
+                  return Card(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => locked
+                          ? showPlanUpsell(context, title: t.title, text: t.lockedText)
+                          : Navigator.of(context).push(MaterialPageRoute(builder: t.builder)),
+                      child: Stack(children: [
+                        Positioned.fill(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(t.icon, size: 34),
+                              Icon(t.icon, size: 34, color: locked ? AppColors.textMuted : null),
                               const SizedBox(height: 8),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 8),
                                 child: Text(t.title,
-                                    textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: locked ? const TextStyle(color: AppColors.textMuted) : null),
                               ),
                             ],
                           ),
                         ),
-                      ))
-                  .toList(),
+                        if (locked)
+                          const Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
+                          ),
+                      ]),
+                    ),
+                  );
+                }).toList(),
+              ),
             ),
             const SizedBox(height: 20),
           ],
@@ -208,9 +232,25 @@ class _ReprintBanner extends StatelessWidget {
   }
 }
 
+enum _Needs { none, guestApp, ai }
+
 class _AdminTile {
   final String title;
   final IconData icon;
   final Widget Function(BuildContext) builder;
-  _AdminTile(this.title, this.icon, this.builder);
+  final _Needs needs;
+  _AdminTile(this.title, this.icon, this.builder, {this.needs = _Needs.none});
+
+  bool allowedBy(PlanCapabilities caps) => switch (needs) {
+        _Needs.none => true,
+        _Needs.guestApp => caps.guestApp,
+        _Needs.ai => caps.ai,
+      };
+
+  String get lockedText => switch (needs) {
+        _Needs.guestApp => 'Меню по QR-коду стола и приложение гостя (заказ со стола, вызов персонала, '
+            'бонусы) не входят в тариф заведения.',
+        _Needs.ai => 'ИИ-помощник для гостей и ИИ-разборы смены не входят в тариф заведения.',
+        _Needs.none => '',
+      };
 }

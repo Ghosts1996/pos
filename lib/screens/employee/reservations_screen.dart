@@ -12,6 +12,7 @@ import '../../services/ai/ai_agents.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/phone_utils.dart';
 import '../../widgets/ai_assistant_sheet.dart';
+import '../../widgets/plan_upsell.dart';
 import '../../widgets/table_picker_map.dart';
 import 'table_detail_screen.dart';
 import '../../utils/human_error.dart';
@@ -148,7 +149,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           IconButton(
             tooltip: 'ИИ: разбор броней',
             icon: const Icon(Icons.auto_awesome),
-            onPressed: () => AiAssistantSheet.show(
+            onPressed: () => openAiOrUpsell(context, () => AiAssistantSheet.show(
               context,
               agent: AiAgents.hostess,
               initialQuestion: 'Разбери брони на ближайшую смену.',
@@ -158,7 +159,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                 'Кого лучше пересадить?',
                 'Какие брони рискуют не прийти?',
               ],
-            ),
+            )),
           ),
           IconButton(
             tooltip: 'Проверить уведомления',

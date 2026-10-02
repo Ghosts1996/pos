@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../app_scope.dart';
+import '../plan_capabilities.dart';
 
 /// Готовый провайдер ИИ: адрес API, формат и модели по умолчанию.
 ///
@@ -389,6 +390,10 @@ class AiSettingsStore {
   Map<String, dynamic>? _secrets;
   final List<StreamSubscription> _subs = [];
 
+  /// ИИ есть в тарифе заведения (см. PlanCapabilities): нет — помощник
+  /// выключен, что бы ни стояло в настройках, сервер его всё равно не пустит.
+  bool _planAllowsAi = true;
+
   /// Ключи отдельно — только в SaaS; сборка одного заведения хранит всё в
   /// одном документе по своим правилам.
   bool get _split => AppScope.isSaasMode;
@@ -409,6 +414,7 @@ class AiSettingsStore {
       useChain ? _chainData : _data,
       secrets: useChain ? _chainSecrets : _secrets,
     );
+    if (!_planAllowsAi) _current = _current.copyWith(enabled: false);
   }
 
   Future<Map<String, dynamic>?> _read(DocumentReference<Map<String, dynamic>> ref) async {
@@ -439,6 +445,8 @@ class AiSettingsStore {
       await s.cancel();
     }
     _subs.clear();
+    final tenantId = AppScope.tenantId;
+    _planAllowsAi = tenantId == null || (await PlanCapabilitiesService.fetch(tenantId)).ai;
     _data = await _read(AppScope.doc(_path));
     if (_split) _secrets = await _read(AppScope.doc(_secretsPath));
     if (isChainShared) {
