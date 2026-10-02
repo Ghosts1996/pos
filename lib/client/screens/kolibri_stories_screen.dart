@@ -42,8 +42,7 @@ class KolibriStoriesScreen extends StatelessWidget {
           children: [
             const Padding(
               padding: EdgeInsets.only(bottom: 12),
-              child: Text('Афиша',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              child: KolibriSectionLabel('Афиша'),
             ),
             SizedBox(
               height: 180,

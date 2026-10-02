@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/image_preload_service.dart';
 import 'login_screen.dart';
+import '../theme/app_colors.dart';
 
 /// Заставка на долю секунды: экран входа открывается сразу, а кэш фото
 /// меню прогревается в фоне (ImagePreloadService).
@@ -56,7 +57,7 @@ class _ImagePreloadScreenState extends State<ImagePreloadScreen> {
     }
     // Виден долю секунды — хватает логотипа, без прогресс-бара.
     return Scaffold(
-      backgroundColor: const Color(0xFF1B1B1F),
+      backgroundColor: AppColors.background,
       body: Center(
         child: Image.asset('assets/icon/icon.png', width: 72, height: 72),
       ),

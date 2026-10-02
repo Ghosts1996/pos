@@ -8,6 +8,7 @@ import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../theme/app_colors.dart';
 
 /// Расчёт зарплаты сотрудников за выбранный период: часы и смены (ставка
 /// за час или оклад за смену + переработка) — из «Смены сотрудников»,
@@ -227,7 +228,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 if (open.isEmpty) return const SizedBox.shrink();
                 return Container(
                   width: double.infinity,
-                  color: Colors.orange.withValues(alpha: 0.12),
+                  color: AppColors.warning.withValues(alpha: 0.12),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Text(
                     'Не закрыто смен: ${open.length} (${open.map((s) => s.employeeName).toSet().join(", ")}) — '

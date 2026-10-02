@@ -314,7 +314,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
                 if (open.isEmpty) return const SizedBox.shrink();
                 return Container(
                   width: double.infinity,
-                  color: Colors.orange.withValues(alpha: 0.12),
+                  color: AppColors.warning.withValues(alpha: 0.12),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

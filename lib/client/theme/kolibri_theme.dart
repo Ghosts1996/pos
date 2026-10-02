@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/tenant_models.dart';
 
-/// Палитра приложения гостя. По умолчанию изумрудно-золотая, отдельно от
-/// кассы («Midnight Blue»), чтобы правки кассы не задевали гостей.
+/// Палитра приложения гостя. По умолчанию «Графит и медь» (как у кассы и
+/// веб-версии гостя), но отдельными полями: брендинг заведения меняет
+/// только гостевое приложение, касса остаётся в фирменных цветах.
 ///
 /// Поля не `const`: экраны гостя берут цвета напрямую из KolibriColors, а
 /// не из Theme, и [applyBranding] подменяет их до первого runApp(). В
@@ -12,12 +13,12 @@ import '../../models/tenant_models.dart';
 class KolibriColors {
   KolibriColors._();
 
-  static const _defaultBackground = Color(0xFF07100D);
-  static const _defaultPrimary = Color(0xFF12B981);
-  static const _defaultPrimaryPressed = Color(0xFF0E9A6B);
-  static const _defaultGold = Color(0xFFE0B354);
-  static const _defaultAccent = Color(0xFFE0559B);
-  static const _defaultTextPrimary = Color(0xFFF2F7F4);
+  static const _defaultBackground = Color(0xFF15120F);
+  static const _defaultPrimary = Color(0xFFB35C30);
+  static const _defaultPrimaryPressed = Color(0xFF974B26);
+  static const _defaultGold = Color(0xFFCFA567);
+  static const _defaultAccent = Color(0xFFB35C30);
+  static const _defaultTextPrimary = Color(0xFFF2EADF);
   /// Название, когда у заведения нет своего: в SaaS — бренд платформы (не
   /// имя чужого заведения), в одно-арендной сборке — само заведение.
   static String get _defaultAppName => 'ZalPOS';
@@ -27,15 +28,15 @@ class KolibriColors {
   static Color surfaceElevated = _mix(_defaultBackground, Colors.white, 0.10);
   static Color border = _mix(_defaultBackground, Colors.white, 0.16);
 
-  /// Изумруд — основной акцент по умолчанию, branding.primaryColor у заведения с брендингом.
+  /// Медь — основной акцент по умолчанию, branding.primaryColor у заведения с брендингом.
   static Color primary = _defaultPrimary;
   static Color primaryPressed = _defaultPrimaryPressed;
 
-  /// Золото — бонусы, уровни лояльности, «премиальные» акценты по
+  /// Латунь — бонусы, уровни лояльности, «премиальные» акценты по
   /// умолчанию; branding.secondaryColor у заведения с брендингом.
   static Color gold = _defaultGold;
 
-  /// Фуксия — живой акцент для кнопок «позвать кальянщика» по умолчанию;
+  /// Акцент кнопок вызова («позвать» и т.п.) — по умолчанию та же медь;
   /// branding.accentColor у заведения с брендингом.
   static Color accent = _defaultAccent;
 
@@ -46,7 +47,7 @@ class KolibriColors {
   /// прежняя константа под тёмную тему читалась с контрастом ~2.3:1 —
   /// [applyBranding] выводит его из пары фон/текст владельца.
   static Color textMuted = _defaultTextMuted;
-  static const _defaultTextMuted = Color(0xFF8FA79C);
+  static const _defaultTextMuted = Color(0xFFA39A8E);
 
   /// Текст и иконки поверх [primary] — белый или почти чёрный, что
   /// контрастнее на фирменном цвете.
@@ -130,7 +131,7 @@ class KolibriColors {
       gold = _readable(primary, surfaces, text, 3.0);
     }
 
-    const darkOnPrimary = Color(0xFF04140E);
+    const darkOnPrimary = Color(0xFF17110C);
     onPrimary = _contrastRatio(primary, Colors.white) >= _contrastRatio(primary, darkOnPrimary)
         ? Colors.white
         : darkOnPrimary;
@@ -173,15 +174,17 @@ class KolibriColors {
   static double _srgbChannel(double c) =>
       c <= 0.03928 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
 
-  static const success = Color(0xFF22C55E);
-  static const warning = Color(0xFFF59E0B);
-  static const danger = Color(0xFFEF4444);
+  // Приглушённые, а не «светофор»: читаются и на тёмном, и на светлом фоне.
+  static const success = Color(0xFF5E9E74);
+  static const warning = Color(0xFFD39A3A);
+  static const danger = Color(0xFFD4553F);
 
   // ---- Уровни программы лояльности ----
-  static const tierBronze = Color(0xFFCD7F32);
-  static const tierSilver = Color(0xFFB4C4CC);
-  static const tierPlatinum = Color(0xFFAEEFE6);
-  static const tierDiamond = Color(0xFFB388FF);
+  // Металлы, а не неон: бронза, сталь, платина, холодный лёд.
+  static const tierBronze = Color(0xFFC08552);
+  static const tierSilver = Color(0xFFB7B9BD);
+  static const tierPlatinum = Color(0xFFDAD4C8);
+  static const tierDiamond = Color(0xFFA9C3DA);
 
   /// Цвет карточки/акцента под текущий уровень гостя (см. ClientProfile.tier).
   /// Уровень «Золото» намеренно ссылается на живое поле [gold], а не на
@@ -210,7 +213,11 @@ class KolibriTheme {
   /// фоном (KolibriColors.isLight) она строится от ThemeData.light.
   static ThemeData get dark {
     final light = KolibriColors.isLight;
-    final base = light ? ThemeData.light(useMaterial3: true) : ThemeData.dark(useMaterial3: true);
+    final base = ThemeData(
+      useMaterial3: true,
+      brightness: light ? Brightness.light : Brightness.dark,
+      fontFamily: KolibriFonts.sans,
+    );
     return base.copyWith(
       scaffoldBackgroundColor: KolibriColors.background,
       colorScheme: base.colorScheme.copyWith(
@@ -219,20 +226,36 @@ class KolibriTheme {
         secondary: KolibriColors.gold,
         surface: KolibriColors.surface,
         onSurface: KolibriColors.textPrimary,
+        onSurfaceVariant: KolibriColors.textMuted,
+        outline: KolibriColors.border,
+        outlineVariant: KolibriColors.border,
+        surfaceContainerHighest: KolibriColors.surfaceElevated,
+        surfaceContainerHigh: KolibriColors.surfaceElevated,
+        surfaceContainer: KolibriColors.surface,
         error: KolibriColors.danger,
       ),
       appBarTheme: AppBarTheme(
         backgroundColor: KolibriColors.background,
         foregroundColor: KolibriColors.textPrimary,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
+        titleTextStyle: TextStyle(
+          fontFamily: KolibriFonts.sans,
+          fontSize: 19,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+          color: KolibriColors.textPrimary,
+        ),
         systemOverlayStyle: light ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
       ),
       cardTheme: CardThemeData(
         color: KolibriColors.surface,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: KolibriColors.border),
         ),
       ),
@@ -241,8 +264,8 @@ class KolibriTheme {
           backgroundColor: KolibriColors.primary,
           foregroundColor: KolibriColors.onPrimary,
           minimumSize: const Size(0, 52),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(fontFamily: KolibriFonts.sans, fontSize: 15.5, fontWeight: FontWeight.w600),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -250,40 +273,156 @@ class KolibriTheme {
           foregroundColor: KolibriColors.textPrimary,
           side: BorderSide(color: KolibriColors.border),
           minimumSize: const Size(0, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(fontFamily: KolibriFonts.sans, fontSize: 15, fontWeight: FontWeight.w500),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: KolibriColors.primary,
+          textStyle: const TextStyle(fontFamily: KolibriFonts.sans, fontWeight: FontWeight.w600),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: KolibriColors.surface,
+        fillColor: KolibriColors.surfaceElevated,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: KolibriColors.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: KolibriColors.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: KolibriColors.primary),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: KolibriColors.primary, width: 1.4),
         ),
         labelStyle: TextStyle(color: KolibriColors.textMuted),
+        hintStyle: TextStyle(color: KolibriColors.textMuted),
       ),
+      // Нижние вкладки — тонкая линия сверху и цвет вместо «таблетки»
+      // подсветки.
       navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: KolibriColors.background,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: Colors.transparent,
+        elevation: 0,
+        height: 68,
+        iconTheme: WidgetStateProperty.resolveWith((states) => IconThemeData(
+              size: 24,
+              color: states.contains(WidgetState.selected) ? KolibriColors.primary : KolibriColors.textMuted,
+            )),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+              fontFamily: KolibriFonts.sans,
+              fontSize: 11,
+              fontWeight: states.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
+              letterSpacing: 0.2,
+              color: states.contains(WidgetState.selected) ? KolibriColors.textPrimary : KolibriColors.textMuted,
+            )),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: Colors.transparent,
+        selectedColor: KolibriColors.primary,
+        side: BorderSide(color: KolibriColors.border),
+        labelStyle: TextStyle(fontFamily: KolibriFonts.sans, color: KolibriColors.textPrimary, fontSize: 14),
+        secondaryLabelStyle: TextStyle(fontFamily: KolibriFonts.sans, color: KolibriColors.onPrimary, fontSize: 14),
+        checkmarkColor: KolibriColors.onPrimary,
+        shape: const StadiumBorder(),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: KolibriColors.gold,
+        linearTrackColor: KolibriColors.border,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: KolibriColors.surface,
-        indicatorColor: KolibriColors.primary.withValues(alpha: 0.18),
-        labelTextStyle: WidgetStateProperty.all(
-          TextStyle(fontSize: 12, color: KolibriColors.textMuted),
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: KolibriColors.surfaceElevated,
+        contentTextStyle: TextStyle(fontFamily: KolibriFonts.sans, color: KolibriColors.textPrimary),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: KolibriColors.border),
         ),
       ),
       // Поля по бокам 20 вместо 40 — на узком телефоне окнам не хватало ширины.
-      dialogTheme: const DialogThemeData(insetPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 24)),
-      dividerColor: KolibriColors.border,
-      textTheme: base.textTheme.apply(
-        bodyColor: KolibriColors.textPrimary,
-        displayColor: KolibriColors.textPrimary,
+      dialogTheme: DialogThemeData(
+        backgroundColor: KolibriColors.surface,
+        surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: KolibriColors.border),
+        ),
+        titleTextStyle: TextStyle(
+          fontFamily: KolibriFonts.sans,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+          color: KolibriColors.textPrimary,
+        ),
       ),
+      dividerColor: KolibriColors.border,
+      dividerTheme: DividerThemeData(color: KolibriColors.border, thickness: 1, space: 1),
+      textTheme: base.textTheme
+          .apply(
+            bodyColor: KolibriColors.textPrimary,
+            displayColor: KolibriColors.textPrimary,
+          )
+          .copyWith(
+            // Крупные заголовки (приветствие, баланс) — антиквой.
+            displayLarge: KolibriFonts.display(52),
+            displayMedium: KolibriFonts.display(44),
+            displaySmall: KolibriFonts.display(36),
+            headlineLarge: KolibriFonts.display(32),
+          ),
     );
   }
+}
+
+/// Шрифты приложения гостя — те же, что у кассы и веб-версии (assets/fonts):
+/// Onest — текст, Cormorant Garamond — крупные заголовки и баланс. Номера
+/// столов и суммы в чеке — гротеском: у антиквы «1» похожа на «I».
+class KolibriFonts {
+  KolibriFonts._();
+  static const String sans = 'Onest';
+  static const String serif = 'CormorantGaramond';
+
+  static TextStyle display(double size, {Color? color, FontStyle? style}) => TextStyle(
+        fontFamily: serif,
+        fontSize: size,
+        fontWeight: FontWeight.w600,
+        fontStyle: style,
+        height: 1.06,
+        letterSpacing: -0.2,
+        color: color ?? KolibriColors.textPrimary,
+        fontFeatures: const [FontFeature.liningFigures()],
+      );
+
+  /// Подпись капителью над блоком («БОНУСНЫЙ СЧЁТ»).
+  static TextStyle overline({Color? color}) => TextStyle(
+        fontFamily: sans,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 2,
+        color: color ?? KolibriColors.gold,
+      );
+}
+
+/// Заголовок раздела — капитель с тонкой линией до края (как на сайте
+/// гостя, h2 в saas/guest-web/app/app.css).
+class KolibriSectionLabel extends StatelessWidget {
+  const KolibriSectionLabel(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Text(text.toUpperCase(), style: KolibriFonts.overline(color: KolibriColors.textMuted)),
+        const SizedBox(width: 12),
+        Expanded(child: Container(height: 1, color: KolibriColors.border)),
+      ]);
 }

@@ -187,7 +187,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
           return ListTile(
             enabled: !_myShiftBusy,
             leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
-                color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.grey)),
+                color: stale ? AppColors.warning : (isOpen ? AppColors.success : Colors.grey)),
             title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
             subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
             trailing: _myShiftBusy
@@ -218,7 +218,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
             return ListTile(
               enabled: !_busy,
               leading: Icon(isOpen ? Icons.storefront_outlined : Icons.lock_outline,
-                  color: stale ? AppColors.warning : (isOpen ? Colors.green : Colors.redAccent)),
+                  color: stale ? AppColors.warning : (isOpen ? AppColors.success : AppColors.danger)),
               title: Text(isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта'),
               subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
               trailing: _busy
@@ -258,7 +258,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                   ? null
                   : CircleAvatar(
                       radius: 12,
-                      backgroundColor: Colors.redAccent,
+                      backgroundColor: AppColors.danger,
                       child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.white)),
                     ),
               onTap: () => _go(KdsScreen(employee: widget.employee)),
@@ -316,7 +316,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
       const Divider(height: 1),
 
       ListTile(
-        leading: const Icon(Icons.auto_awesome, color: Colors.lightBlueAccent),
+        leading: const Icon(Icons.auto_awesome, color: AppColors.brass),
         title: const Text('Ассистент зала'),
         subtitle: const Text('Спросить про столы, брони и остатки', style: TextStyle(fontSize: 11)),
         onTap: () {

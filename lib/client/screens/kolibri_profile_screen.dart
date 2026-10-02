@@ -330,7 +330,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
-        const Text('Профиль', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+        Text('Профиль', style: KolibriFonts.display(34)),
         const SizedBox(height: 20),
 
         if (!_notificationsOn) ...[
@@ -376,7 +376,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(color: tierColor.withValues(alpha: 0.5)),
             gradient: LinearGradient(
               colors: [tierColor.withValues(alpha: 0.16), KolibriColors.surface],
@@ -390,8 +390,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               Text('Уровень «$tier»',
                   style: TextStyle(color: tierColor, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text(bonusesLabel(p?.bonusBalance ?? 0),
-                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+              Text(bonusesLabel(p?.bonusBalance ?? 0), style: KolibriFonts.display(40)),
               const SizedBox(height: 6),
               Text(
                 'Визитов: ${p?.visits ?? 0} · потрачено '

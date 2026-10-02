@@ -195,7 +195,7 @@ class HookahPosApp extends StatelessWidget {
       supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
       locale: const Locale('ru', 'RU'),
       // POS-система работает на планшетах в зале с переменным освещением —
-      // фиксируем тёмную "Midnight Blue" тему как единственную, без
+      // фиксируем тёмную тему «Графит и медь» как единственную, без
       // системного light/dark переключения, чтобы кассир не терял привычную
       // контрастность в течение смены.
       //

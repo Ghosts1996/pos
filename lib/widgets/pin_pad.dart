@@ -3,25 +3,31 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+
 /// Фирменные цвета ZalPOS для экранов входа — те же, что у лендинга и
-/// кабинета (saas/console/console.css): глубокий тёмно-синий фон, синий
-/// градиент акцента и мягкое свечение.
+/// кабинета (saas/console/console.css): тёплый графит, медь и латунь.
 class BrandPalette {
   BrandPalette._();
-  static const Color night = Color(0xFF03060D);
-  static const Color navy = Color(0xFF070F20);
-  static const Color blue = Color(0xFF2F6FED);
-  static const Color sky = Color(0xFF59A6FF);
-  static const Color muted = Color(0xFF8DA0C7);
+  static const Color ink = AppColors.background;
+  static const Color copper = AppColors.primary;
+  static const Color brass = AppColors.brass;
+  static const Color muted = AppColors.textMuted;
+  static const Color ivory = AppColors.textPrimary;
+  static const Color error = Color(0xFFE0715E);
+  static const Color hairline = Color(0x1FF2EADF);
+
+  /// Почти ровная медь — градиент лишь снимает «пластиковость» заливки.
   static const LinearGradient accent = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [blue, sky],
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFFBC6536), copper],
   );
 }
 
-/// Фон экранов входа и блокировки: ночь с синим свечением сверху и
-/// тонкой сеткой точек, как схема зала на лендинге.
+/// Фон экранов входа и блокировки: ровный графит и тонкая двойная рамка
+/// по краю, как у карты меню, — без свечений и узоров.
 class BrandBackdrop extends StatelessWidget {
   const BrandBackdrop({super.key, required this.child});
 
@@ -29,101 +35,76 @@ class BrandBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [BrandPalette.navy, BrandPalette.night],
-        ),
-      ),
+    return ColoredBox(
+      color: BrandPalette.ink,
       child: Stack(fit: StackFit.expand, children: [
-        const IgnorePointer(child: CustomPaint(painter: _DotsPainter())),
-        const IgnorePointer(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0, -1.05),
-                radius: 1.1,
-                colors: [Color(0x552F6FED), Color(0x00070F20)],
-              ),
-            ),
-          ),
-        ),
-        const IgnorePointer(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(1.1, 1.1),
-                radius: 0.9,
-                colors: [Color(0x2259A6FF), Color(0x0003060D)],
-              ),
-            ),
-          ),
-        ),
+        const IgnorePointer(child: CustomPaint(painter: _FramePainter())),
         child,
       ]),
     );
   }
 }
 
-class _DotsPainter extends CustomPainter {
-  const _DotsPainter();
+class _FramePainter extends CustomPainter {
+  const _FramePainter();
 
   @override
   void paint(Canvas canvas, Size size) {
-    const step = 26.0;
-    final paint = Paint()..color = const Color(0x14FFFFFF);
-    for (var y = step / 2; y < size.height; y += step) {
-      for (var x = step / 2; x < size.width; x += step) {
-        canvas.drawCircle(Offset(x, y), 0.9, paint);
-      }
-    }
+    // На узком телефоне рамка съедает место — только на планшете и шире.
+    if (size.shortestSide < 520) return;
+    final outer = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0x33CFA567);
+    final inner = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0x17CFA567);
+    canvas.drawRect(Rect.fromLTWH(18, 18, size.width - 36, size.height - 36), outer);
+    canvas.drawRect(Rect.fromLTWH(24, 24, size.width - 48, size.height - 48), inner);
   }
 
   @override
-  bool shouldRepaint(covariant _DotsPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _FramePainter oldDelegate) => false;
 }
 
-/// Знак ZalPOS со свечением и надпись.
+/// Знак ZalPOS — набран антиквой, как на лендинге: «Zal» прямым,
+/// «POS» курсивом в меди. Под ним — заведение капителью между линиями.
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key, this.caption});
 
-  /// Строка под названием (заведение) — заглавными, как подписи на схеме.
+  /// Строка под названием (заведение) — заглавными.
   final String? caption;
 
   @override
   Widget build(BuildContext context) {
     final text = caption?.trim() ?? '';
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: const [BoxShadow(color: Color(0x662F6FED), blurRadius: 32, spreadRadius: -4)],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.asset('assets/icon/icon.png', fit: BoxFit.cover),
-        ),
-      ),
-      const SizedBox(height: 14),
-      const Text(
-        'ZalPOS',
+      Text.rich(
+        TextSpan(children: [
+          const TextSpan(text: 'Zal'),
+          TextSpan(text: 'POS', style: AppFonts.display(44, color: BrandPalette.copper, style: FontStyle.italic)),
+        ]),
         textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: 0.4),
+        style: AppFonts.display(44, color: BrandPalette.ivory),
       ),
       if (text.isNotEmpty) ...[
-        const SizedBox(height: 6),
-        Text(
-          text.toUpperCase(),
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-              color: BrandPalette.muted, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 2.2),
-        ),
+        const SizedBox(height: 10),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 22, height: 1, color: const Color(0x55CFA567)),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              text.toUpperCase(),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppFonts.overline.copyWith(color: BrandPalette.brass, letterSpacing: 2.4),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(width: 22, height: 1, color: const Color(0x55CFA567)),
+        ]),
       ],
     ]);
   }
@@ -157,16 +138,12 @@ class PinDots extends StatelessWidget {
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOut,
             margin: const EdgeInsets.symmetric(horizontal: 7),
-            width: on ? 15 : 13,
-            height: on ? 15 : 13,
+            width: 12,
+            height: 12,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: on && !error ? BrandPalette.accent : null,
-              color: error ? const Color(0xFFFF5C6C) : (on ? null : Colors.transparent),
-              border: on || error ? null : Border.all(color: Colors.white30, width: 1.4),
-              boxShadow: on && !error
-                  ? const [BoxShadow(color: Color(0x992F6FED), blurRadius: 12, spreadRadius: -2)]
-                  : null,
+              color: error ? BrandPalette.error : (on ? BrandPalette.brass : Colors.transparent),
+              border: on || error ? null : Border.all(color: const Color(0x66A39A8E), width: 1.2),
             ),
           );
         }),
@@ -175,8 +152,8 @@ class PinDots extends StatelessWidget {
   }
 }
 
-/// Цифровая клавиатура: стеклянные круглые клавиши с тонкой рамкой и
-/// синим откликом нажатия.
+/// Цифровая клавиатура: круглые клавиши тонкой линией, медный отклик
+/// нажатия.
 class PinKeypad extends StatelessWidget {
   const PinKeypad({super.key, required this.width, required this.onDigit, required this.onBackspace});
 
@@ -229,20 +206,24 @@ class _Key extends StatelessWidget {
       label: label,
       excludeSemantics: true,
       child: Material(
-        color: back ? Colors.transparent : const Color(0x0FFFFFFF),
-        shape: CircleBorder(side: BorderSide(color: back ? Colors.transparent : const Color(0x1FFFFFFF))),
+        color: Colors.transparent,
+        shape: CircleBorder(side: BorderSide(color: back ? Colors.transparent : BrandPalette.hairline)),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           customBorder: const CircleBorder(),
-          splashColor: const Color(0x552F6FED),
-          highlightColor: const Color(0x332F6FED),
+          splashColor: const Color(0x40B35C30),
+          highlightColor: const Color(0x26B35C30),
           onTap: onTap,
           child: Center(
             child: back
-                ? Icon(Icons.backspace_outlined, color: BrandPalette.muted, size: big ? 24 : 21)
+                ? Icon(Icons.backspace_outlined, color: BrandPalette.muted, size: big ? 23 : 20)
                 : Text(label,
                     style: TextStyle(
-                        color: Colors.white, fontSize: big ? 28 : 24, fontWeight: FontWeight.w300, height: 1)),
+                        fontFamily: AppFonts.sans,
+                        color: BrandPalette.ivory,
+                        fontSize: big ? 27 : 23,
+                        fontWeight: FontWeight.w400,
+                        height: 1)),
           ),
         ),
       ),
@@ -250,8 +231,8 @@ class _Key extends StatelessWidget {
   }
 }
 
-/// Переключатель «Сотрудник / Администратор» — капсула с синим
-/// градиентом под выбранным вариантом.
+/// Переключатель «Сотрудник / Администратор» — капсула тонкой линией,
+/// выбранный вариант залит медью.
 class RoleSwitch extends StatelessWidget {
   const RoleSwitch({super.key, required this.admin, required this.onChanged, this.enabled = true});
 
@@ -277,12 +258,14 @@ class RoleSwitch extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
-              gradient: on ? BrandPalette.accent : null,
-              boxShadow: on ? const [BoxShadow(color: Color(0x662F6FED), blurRadius: 16, spreadRadius: -4)] : null,
+              color: on ? BrandPalette.copper : null,
             ),
             child: Text(text,
                 style: TextStyle(
-                    color: on ? Colors.white : BrandPalette.muted, fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    fontFamily: AppFonts.sans,
+                    color: on ? BrandPalette.ivory : BrandPalette.muted,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600)),
           ),
         ),
       );
@@ -291,9 +274,8 @@ class RoleSwitch extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0x0DFFFFFF),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
+        border: Border.all(color: BrandPalette.hairline),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [seg('Сотрудник', false), seg('Администратор', true)]),
     );

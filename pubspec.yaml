@@ -22,7 +22,7 @@ dependencies:
   image_picker: ^1.1.2
   cached_network_image: ^3.4.1
   supabase_flutter: ^2.8.0
-  intl: ^0.20.3
+  intl: ^0.20.2                     # 0.20.2 — версия из flutter_localizations у Flutter 3.41
   uuid: ^4.4.2
 
   # --- приложение гостя, уведомления, ИИ ---
@@ -60,6 +60,25 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/
+  # Шрифты интерфейса (OFL, лицензии рядом): Onest — текст и суммы,
+  # Cormorant Garamond — крупные заголовки (см. AppFonts в lib/theme).
+  fonts:
+    - family: Onest
+      fonts:
+        - asset: assets/fonts/Onest-Regular.ttf
+        - asset: assets/fonts/Onest-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Onest-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Onest-Bold.ttf
+          weight: 700
+    - family: CormorantGaramond
+      fonts:
+        - asset: assets/fonts/CormorantGaramond-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/CormorantGaramond-SemiBoldItalic.ttf
+          weight: 600
+          style: italic
 
 # Конфигурация иконки приложения (пакет flutter_launcher_icons).
 # Сама иконка генерируется в CI (см. .github/workflows/build-apk.yml,

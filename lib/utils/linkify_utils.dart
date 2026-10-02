@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_lock.dart';
+import '../theme/app_colors.dart';
 
 final RegExp _urlPattern = RegExp(
   r'(https?://[^\s]+|www\.[^\s]+)',
@@ -38,7 +39,7 @@ List<InlineSpan> linkifySpans(String text, {TextStyle? style, TextStyle? linkSty
     spans.add(TextSpan(
       text: url,
       style: linkStyle ?? style?.copyWith(
-        color: Colors.blueAccent,
+        color: AppColors.brass,
         decoration: TextDecoration.underline,
       ),
       recognizer: TapGestureRecognizer()

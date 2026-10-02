@@ -19,6 +19,7 @@ import '../services/hall_watch_service.dart';
 import '../services/tenant_join_flow.dart';
 import '../utils/human_error.dart';
 import '../utils/constants.dart';
+import '../theme/app_theme.dart';
 import '../widgets/pin_pad.dart';
 import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
@@ -317,8 +318,8 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _content(BuildContext context) {
     if (_restoring) {
       return const Scaffold(
-        backgroundColor: BrandPalette.night,
-        body: BrandBackdrop(child: Center(child: CircularProgressIndicator(color: BrandPalette.sky))),
+        backgroundColor: BrandPalette.ink,
+        body: BrandBackdrop(child: Center(child: CircularProgressIndicator(color: BrandPalette.brass))),
       );
     }
 
@@ -359,18 +360,18 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 10),
           TextButton.icon(
             onPressed: _loading || _loadingPoints ? null : _openPointSwitch,
-            style: TextButton.styleFrom(foregroundColor: BrandPalette.sky, visualDensity: VisualDensity.compact),
+            style: TextButton.styleFrom(foregroundColor: BrandPalette.brass, visualDensity: VisualDensity.compact),
             icon: _loadingPoints
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.storefront_rounded, size: 18),
-            label: const Text('Другая точка сети', style: TextStyle(fontWeight: FontWeight.w700)),
+            label: const Text('Другая точка сети', style: TextStyle(fontWeight: FontWeight.w600)),
           ),
           if (_pointsLoadError != null)
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(_pointsLoadError!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFFF7A86), fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  style: const TextStyle(color: BrandPalette.error, fontSize: 12.5, fontWeight: FontWeight.w600)),
             ),
         ],
         const SizedBox(height: 22),
@@ -389,7 +390,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(_error!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Color(0xFFFF7A86), fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(color: BrandPalette.error, fontSize: 13, fontWeight: FontWeight.w600)),
                 ),
         ),
         // PIN демо-сотрудников задаёт createDemoTenant (saas-gateway).
@@ -406,7 +407,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Text(
                 'Код демо для приложения гостя: ${AppScope.demoCode}',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: BrandPalette.sky, fontSize: 12, fontWeight: FontWeight.w700),
+                style: const TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
               ),
             ),
           // Демо живёт 3 дня, потом сбрасывается в исходный вид (DemoGate).
@@ -424,7 +425,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     return Scaffold(
-      backgroundColor: BrandPalette.night,
+      backgroundColor: BrandPalette.ink,
       body: BrandBackdrop(
         child: SafeArea(
           child: LayoutBuilder(builder: (context, box) {
@@ -437,7 +438,7 @@ class _LoginScreenState extends State<LoginScreen> {
             final keypad = _loading
                 ? const Padding(
                     padding: EdgeInsets.all(24),
-                    child: CircularProgressIndicator(color: BrandPalette.sky),
+                    child: CircularProgressIndicator(color: BrandPalette.brass),
                   )
                 : PinKeypad(width: keypadWidth, onDigit: _tap, onBackspace: _backspace);
             return Center(
@@ -468,7 +469,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _pointPicker() {
     final points = _points ?? const <ChainPoint>[];
     return Scaffold(
-      backgroundColor: BrandPalette.night,
+      backgroundColor: BrandPalette.ink,
       body: BrandBackdrop(
         child: SafeArea(
           child: Center(
@@ -482,10 +483,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     const BrandMark(caption: 'Сеть заведений'),
                     const SizedBox(height: 22),
-                    const Text(
+                    Text(
                       'В какую кассу войти?',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+                      style: AppFonts.display(30, color: BrandPalette.ivory),
                     ),
                     const SizedBox(height: 6),
                     const Text(
@@ -509,7 +510,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(_pointError!,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(color: Color(0xFFFF7A86), fontSize: 13, fontWeight: FontWeight.w600)),
+                            style: const TextStyle(color: BrandPalette.error, fontSize: 13, fontWeight: FontWeight.w600)),
                       ),
                     if (AppScope.isDemo)
                       const Padding(
@@ -550,10 +551,10 @@ class _PointCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final suspended = point.status == 'suspended';
     return Material(
-      color: current ? const Color(0x262F6FED) : const Color(0x12FFFFFF),
+      color: current ? const Color(0x1FB35C30) : Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: current ? const Color(0x8859A6FF) : const Color(0x22FFFFFF)),
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: current ? const Color(0x99B35C30) : BrandPalette.hairline),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -565,11 +566,11 @@ class _PointCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                gradient: current ? BrandPalette.accent : null,
-                color: current ? null : const Color(0x1AFFFFFF),
+                shape: BoxShape.circle,
+                color: current ? BrandPalette.copper : null,
+                border: current ? null : Border.all(color: BrandPalette.hairline),
               ),
-              child: const Icon(Icons.storefront_rounded, color: Colors.white),
+              child: Icon(Icons.storefront_outlined, color: current ? BrandPalette.ivory : BrandPalette.brass, size: 21),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -578,9 +579,9 @@ class _PointCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: enabled || current ? Colors.white : Colors.white38,
+                        color: enabled || current ? BrandPalette.ivory : Colors.white38,
                         fontSize: 16,
-                        fontWeight: FontWeight.w700)),
+                        fontWeight: FontWeight.w600)),
                 if (current || suspended)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -593,9 +594,9 @@ class _PointCard extends StatelessWidget {
             ),
             if (busy)
               const SizedBox(
-                  width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: BrandPalette.sky))
+                  width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: BrandPalette.brass))
             else
-              Icon(Icons.chevron_right_rounded, color: enabled ? BrandPalette.sky : Colors.white24),
+              Icon(Icons.chevron_right_rounded, color: enabled ? BrandPalette.brass : Colors.white24),
           ]),
         ),
       ),

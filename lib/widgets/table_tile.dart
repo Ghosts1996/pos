@@ -12,9 +12,11 @@ import 'timer_display.dart';
 
 /// Цвета состояний стола — общие для схемы, списка и сводки зала.
 class TableStateColors {
-  static const free = AppColors.success;
-  static const reserved = Color(0xFFA78BFA);
-  static const occupied = Color(0xFF3B82F6);
+  // Приглушённые тона одной светлоты: шалфей, сирень, васильковый —
+  // «занят» остаётся синим, как привыкли сотрудники.
+  static const free = Color(0xFF7FB894);
+  static const reserved = Color(0xFFAA9BCB);
+  static const occupied = Color(0xFF7FA2D1);
   static const ending = AppColors.warning;
   static const overdue = AppColors.danger;
 

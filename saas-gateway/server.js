@@ -638,12 +638,12 @@ async function createTenantRecords({ name, slug, chainId = null, uid, email = nu
   batch.set(tenantRef.collection("branding").doc("config"), {
     appName: name.trim(),
     shortName: name.trim().slice(0, 12),
-    primaryColor: "#0B5ED7",
-    secondaryColor: "#162A4A",
-    accentColor: "#0B5ED7",
-    backgroundColor: "#02050B",
-    textColor: "#F8FAFC",
-    buttonColor: "#0B5ED7",
+    primaryColor: "#B35C30",
+    secondaryColor: "#CFA567",
+    accentColor: "#B35C30",
+    backgroundColor: "#15120F",
+    textColor: "#F2EADF",
+    buttonColor: "#B35C30",
     darkMode: true,
   });
   batch.set(tenantRef.collection("settings").doc("deviceInvite"), {
@@ -777,12 +777,12 @@ async function handleCreateChain(req, res) {
   batch.set(chainRef.collection("branding").doc("config"), {
     appName: name.trim(),
     shortName: name.trim().slice(0, 12),
-    primaryColor: "#0B5ED7",
-    secondaryColor: "#162A4A",
-    accentColor: "#0B5ED7",
-    backgroundColor: "#02050B",
-    textColor: "#F8FAFC",
-    buttonColor: "#0B5ED7",
+    primaryColor: "#B35C30",
+    secondaryColor: "#CFA567",
+    accentColor: "#B35C30",
+    backgroundColor: "#15120F",
+    textColor: "#F2EADF",
+    buttonColor: "#B35C30",
     darkMode: true,
   });
   batch.set(firestore.collection("subscriptions").doc(chainId), {
@@ -862,8 +862,8 @@ async function handleConvertTenantToChain(req, res) {
 
   const branding = brandingSnap.exists ? brandingSnap.data() : {
     appName: name.trim(), shortName: name.trim().slice(0, 12),
-    primaryColor: "#0B5ED7", secondaryColor: "#162A4A", accentColor: "#0B5ED7",
-    backgroundColor: "#02050B", textColor: "#F8FAFC", buttonColor: "#0B5ED7", darkMode: true,
+    primaryColor: "#B35C30", secondaryColor: "#CFA567", accentColor: "#B35C30",
+    backgroundColor: "#15120F", textColor: "#F2EADF", buttonColor: "#B35C30", darkMode: true,
   };
 
   const chainRef = firestore.collection("chains").doc();
@@ -4149,12 +4149,12 @@ async function handleCreateDemoTenant(req, res) {
   const branding = {
     appName: "ZalPOS (демо)",
     shortName: "Демо",
-    primaryColor: "#0B5ED7",
-    secondaryColor: "#162A4A",
-    accentColor: "#0B5ED7",
-    backgroundColor: "#02050B",
-    textColor: "#F8FAFC",
-    buttonColor: "#0B5ED7",
+    primaryColor: "#B35C30",
+    secondaryColor: "#CFA567",
+    accentColor: "#B35C30",
+    backgroundColor: "#15120F",
+    textColor: "#F2EADF",
+    buttonColor: "#B35C30",
     darkMode: true,
   };
 

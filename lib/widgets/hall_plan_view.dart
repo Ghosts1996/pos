@@ -108,8 +108,8 @@ class HallPlanView extends StatefulWidget {
   /// Масштаб, при котором схему удобно нажимать пальцем: плитка ≥ ~64 px.
   static const double comfortableScale = 0.62;
 
-  /// Цвет стен на кассе: светлый «бетон» на тёмном полу.
-  static const Color kHallWallColor = Color(0xFFCBD5E1);
+  /// Цвет стен на кассе: тёплый светлый камень на тёмном полу.
+  static const Color kHallWallColor = Color(0xFFD8CFC2);
 
   @override
   State<HallPlanView> createState() => _HallPlanViewState();
@@ -306,7 +306,7 @@ class _HallPlanViewState extends State<HallPlanView> {
                 child: Center(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Color(0xCC0C1424),
+                      color: Color(0xCC1E1A16),
                       borderRadius: BorderRadius.all(Radius.circular(999)),
                     ),
                     child: Padding(
