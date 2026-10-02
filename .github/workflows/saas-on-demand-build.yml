@@ -10,8 +10,8 @@ on:
         description: 'ID документа buildJobs/{jobId} для сборки кассы (matrix.app == pos)'
         required: true
       job_id_kolibri:
-        description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения (matrix.app == kolibri)'
-        required: true
+        description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения (matrix.app == kolibri); пусто — приложения гостя нет в тарифе заведения, собираются только кассы'
+        required: false
       job_id_pos_windows:
         description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
         required: true
@@ -46,39 +46,44 @@ on:
 # заведения): правка одного не должна задевать другой. Исправляя баг вроде
 # ML Kit, R8 или App Links в одном, проверьте и остальные.
 jobs:
+  # Какие Android-приложения собирать. Касса — всегда; приложение гостя —
+  # только если saas-gateway прислал для него job_id_kolibri (оно есть в
+  # тарифе заведения). Матрица строится здесь, потому что include-матрицу
+  # нельзя урезать exclude'ом.
+  #
+  # Поля матрицы: entrypoint — точка входа Flutter; project_name и
+  # application_id — applicationId (com.hookahpossaas у кассы,
+  # com.kolibriloungesaas у гостя); gservices_secret/appid_secret — свои
+  # Firebase-приложения; default_* — иконка и имя без брендинга (у гостя
+  # без логотипа в «Брендинге» — знак платформы «◆», свой логотип заменяет
+  # его в шаге "Generate app launcher icon"); artifact_prefix — имя
+  # артефакта.
+  apps:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          WITH_GUEST: ${{ inputs.job_id_kolibri != '' }}
+        run: |
+          pos='{"app":"pos","entrypoint":"lib/main.dart","project_name":"hookahpossaas","application_id":"com.hookahpossaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS","appid_secret":"SAAS_FIREBASE_APP_ID","default_icon":"assets/icon/icon.png","default_adaptive_icon":"assets/icon/icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-kassa"}'
+          guest='{"app":"kolibri","entrypoint":"lib/client/kolibri_main.dart","project_name":"kolibriloungesaas","application_id":"com.kolibriloungesaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS_KOLIBRI","appid_secret":"SAAS_FIREBASE_APP_ID_KOLIBRI","default_icon":"assets/icon/guest_icon.png","default_adaptive_icon":"assets/icon/guest_icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-guest"}'
+          if [ "$WITH_GUEST" = "true" ]; then
+            echo "include=[$pos,$guest]" >> "$GITHUB_OUTPUT"
+          else
+            echo "include=[$pos]" >> "$GITHUB_OUTPUT"
+            echo "Приложения гостя нет в тарифе заведения — собираем только кассу"
+          fi
+
   build:
-    # push-триггер выше — только чтобы GitHub зарегистрировал workflow (см.
-    # комментарий там же). Реальная сборка требует tenant_id/job_id_*,
-    # которых push-событие не передаёт — поэтому push-запуски пропускаются.
+    needs: apps
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - app: pos
-            entrypoint: lib/main.dart
-            project_name: hookahpossaas          # applicationId = com.hookahpossaas
-            application_id: com.hookahpossaas
-            gservices_secret: GOOGLE_SERVICES_JSON_SAAS
-            appid_secret: SAAS_FIREBASE_APP_ID
-            default_icon: assets/icon/icon.png
-            default_adaptive_icon: assets/icon/icon_foreground.png
-            default_adaptive_bg: assets/icon/icon_background.png
-            default_label: 'ZalPOS'
-            artifact_prefix: zalpos-kassa
-          - app: kolibri
-            entrypoint: lib/client/kolibri_main.dart
-            project_name: kolibriloungesaas       # applicationId = com.kolibriloungesaas
-            application_id: com.kolibriloungesaas
-            gservices_secret: GOOGLE_SERVICES_JSON_SAAS_KOLIBRI
-            appid_secret: SAAS_FIREBASE_APP_ID_KOLIBRI
-            # Без логотипа в «Брендинге» у приложения гостя знак платформы «◆»,
-            # свой логотип заменяет его (шаг "Generate app launcher icon").
-            default_icon: assets/icon/guest_icon.png
-            default_adaptive_icon: assets/icon/guest_icon_foreground.png
-            default_adaptive_bg: assets/icon/icon_background.png
-            default_label: 'ZalPOS'
-            artifact_prefix: zalpos-guest
+        include: ${{ fromJSON(needs.apps.outputs.include) }}
     name: Build ${{ matrix.app }}
 
     steps:

@@ -9,8 +9,10 @@ import 'push_service.dart';
 import 'saas_device_join_service.dart';
 import 'session_alerts_service.dart';
 import 'staff_session_store.dart';
+import 'plan_capabilities.dart';
 import 'subscription_gate.dart';
 import 'tenant_config_service.dart';
+import '../utils/startup_log.dart';
 
 /// Записать устройство в заведение, забрать конфигурацию (брендинг,
 /// длительность сеанса и т. п.), войти в него и перезапустить фоновые
@@ -23,6 +25,7 @@ Future<void> joinAndEnterTenant({
   required String deviceName,
 }) async {
   final service = SaasDeviceJoinService();
+  StartupLog.step('присоединение: запись устройства');
   await service.joinAsDevice(tenantId: tenantId, inviteCode: inviteCode, uid: uid, deviceName: deviceName);
   await enterJoinedTenant(tenantId: tenantId, uid: uid);
 }
@@ -43,15 +46,18 @@ Future<void> switchChainPoint(String tenantId) async {
 Future<void> enterJoinedTenant({required String tenantId, required String uid}) async {
   // Точка сети: подписку и документ сети правила отдают участнику сети —
   // записываемся в неё до того, как читать конфигурацию.
+  StartupLog.step('вход в заведение: документ заведения');
   try {
     final tenant = await FirebaseFirestore.instance.collection('tenants').doc(tenantId).get();
     final chainId = tenant.data()?['chainId'];
     if (chainId is String && chainId.isNotEmpty) {
+      StartupLog.step('вход в заведение: участник сети');
       await SaasDeviceJoinService.ensureChainMembership(chainId: chainId, tenantId: tenantId, uid: uid);
     }
   } catch (_) {
     // Не вышло — refresh ниже скажет, что именно не так.
   }
+  StartupLog.step('вход в заведение: конфигурация');
   final config = await TenantConfigService().refresh(uid, preferredTenantId: tenantId);
   if (config == null) {
     throw StateError('Заведение присоединилось, но конфигурация не загрузилась — попробуйте ещё раз');
@@ -64,7 +70,9 @@ Future<void> enterJoinedTenant({required String tenantId, required String uid}) 
   }
   AppScope.enterTenant(tenantId,
       branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo, demoPins: config.tenant.demoPins, demoCode: config.tenant.demoCode);
+  StartupLog.step('вход в заведение: слежение за подпиской');
   SubscriptionGate.watch(tenantId, config);
+  PlanCapabilitiesService.watch(tenantId);
   DemoGate.watch(config);
   final chainId = config.tenant.chainId;
   if (chainId != null) {
@@ -75,6 +83,7 @@ Future<void> enterJoinedTenant({required String tenantId, required String uid}) 
   await HallWatchService.instance.stop();
   await SessionAlertsService.instance.stop();
   startBackgroundServices();
+  StartupLog.step('вход в заведение: фоновые службы запущены');
 }
 
 /// Новое демо-заведение в исходном виде вместо прежнего (прошло 3 дня или

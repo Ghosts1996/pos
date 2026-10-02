@@ -1017,3 +1017,146 @@ body:has(> .wrap.has-tabbar)::before {
   .invoice-doc, .invoice-doc * { visibility: visible; }
   .invoice-doc { position: absolute; left: 0; top: 0; width: 100%; padding: 0; border-radius: 0; }
 }
+
+/* ================== ЛЕНДИНГ: тарифы, выгода, демо ================== */
+.landing .center { text-align: center; }
+.landing .center-block { margin-left: auto; margin-right: auto; text-align: center; }
+.landing h2.landing-h2.center { margin-bottom: 20px; }
+
+/* Цифры под кнопками первого экрана */
+.hero-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 560px; }
+.hero-fact {
+  border: 1px solid var(--border); border-radius: 14px; padding: 12px 12px 10px;
+  background: linear-gradient(180deg, rgba(61,140,255,.08), rgba(61,140,255,0));
+}
+.hero-fact b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.hero-fact span { display: block; font-size: 12px; color: var(--muted); line-height: 1.35; margin-top: 2px; }
+@media (min-width: 860px) { .hero-fact b { font-size: 24px; } .hero-fact span { font-size: 12.5px; } }
+
+/* Демо без регистрации */
+.demo-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 800px) { .demo-cards { grid-template-columns: 1fr 1fr; gap: 18px; } }
+.demo-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 22px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.demo-card-icon { font-size: 28px; }
+.demo-card-title { font-size: 18px; font-weight: 800; }
+.demo-card-text { color: var(--muted); font-size: 14px; line-height: 1.5; flex: 1; }
+.demo-card .btn { width: 100%; }
+.demo-pins { font-size: 13px; color: var(--muted); line-height: 1.7; margin-top: 4px; }
+.demo-pins summary { cursor: pointer; color: var(--text); font-weight: 600; margin-bottom: 6px; }
+.demo-pins code { background: var(--surface-2); border-radius: 6px; padding: 1px 6px; color: var(--text); }
+
+/* Тарифы */
+.landing-pricing-section { background: radial-gradient(1200px 500px at 50% -10%, rgba(3,86,197,.22), transparent 70%), var(--bg); }
+.pricing-switches { display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: center; margin-bottom: 26px; }
+.pricing-switches .landing-pricing-toggle { margin: 0; }
+.period-save {
+  display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 800;
+  background: rgba(46, 204, 113, .16); color: #6FD9A3;
+}
+.period-save:empty { display: none; }
+.landing-plans-grid.three { max-width: 1100px; margin: 0 auto; }
+@media (min-width: 900px) { .landing-plans-grid.three { grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: stretch; } }
+.plan-card {
+  position: relative; display: flex; flex-direction: column; height: 100%;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 24px 22px 20px;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.plan-card:hover { transform: translateY(-3px); border-color: #2d4a7c; }
+.plan-card.recommended {
+  border-color: transparent;
+  background: linear-gradient(var(--surface), var(--surface)) padding-box,
+              linear-gradient(135deg, #3D8CFF, #0356C5 55%, #6FD9A3) border-box;
+  border: 1.5px solid transparent;
+  box-shadow: 0 24px 60px -24px rgba(61, 140, 255, .55);
+}
+.plan-card.selected { border-color: var(--primary); }
+.plan-ribbon {
+  position: absolute; top: -12px; left: 22px; padding: 4px 12px; border-radius: 999px;
+  background: linear-gradient(135deg, #0356C5, #3D8CFF); color: #fff; font-size: 11.5px; font-weight: 800;
+  letter-spacing: .04em; text-transform: uppercase; box-shadow: 0 6px 16px rgba(3,86,197,.45);
+}
+.plan-name { font-size: 20px; font-weight: 800; }
+.plan-tagline { color: var(--muted); font-size: 13.5px; line-height: 1.45; margin: 4px 0 14px; min-height: 38px; }
+.plan-price { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.plan-price-from { width: 100%; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.plan-price-num { font-size: 42px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+.plan-price-unit { font-size: 15px; color: var(--muted); font-weight: 600; }
+.plan-price-note { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.plan-price-add { font-size: 13px; color: var(--text); margin-top: 4px; font-weight: 600; }
+.plan-feats { list-style: none; padding: 0; margin: 18px 0 16px; display: grid; gap: 9px; flex: 1; }
+.plan-feats li { display: flex; gap: 10px; font-size: 14px; line-height: 1.4; }
+.plan-feats li span { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; margin-top: 1px; }
+.plan-feats li.on span { background: rgba(46, 204, 113, .16); color: #6FD9A3; }
+.plan-feats li.off { color: var(--muted); }
+.plan-feats li.off span { background: var(--surface-2); color: var(--muted); }
+.plan-trial { font-size: 12.5px; color: #6FD9A3; font-weight: 600; margin-bottom: 12px; }
+.plan-card .btn { width: 100%; }
+.plan-card .btn-link { margin-top: 8px; font-size: 13px; }
+
+.pricing-included {
+  max-width: 1100px; margin: 26px auto 0; padding: 18px 20px; border: 1px dashed var(--border); border-radius: 18px;
+}
+.pricing-included-title { font-weight: 800; font-size: 14px; margin-bottom: 10px; text-align: center; }
+.pricing-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.pricing-chip {
+  font-size: 12.5px; padding: 6px 11px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+}
+
+/* Почему это выгодно */
+.value-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 22px; }
+@media (min-width: 760px) { .value-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
+.value-card {
+  border-radius: 20px; padding: 22px; text-align: center;
+  background: linear-gradient(160deg, rgba(3,86,197,.28), rgba(3,86,197,.04)); border: 1px solid #1d3a6c;
+}
+.value-card b { display: block; font-size: 38px; font-weight: 800; letter-spacing: -.02em; }
+.value-card span { display: block; color: var(--muted); font-size: 13.5px; line-height: 1.45; margin-top: 6px; }
+.value-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 700px) { .value-list { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1100px) { .value-list { grid-template-columns: repeat(3, 1fr); } }
+.value-item { display: flex; gap: 12px; align-items: flex-start; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; }
+.value-icon { font-size: 22px; flex: none; }
+.value-item b { display: block; font-size: 14.5px; }
+.value-item span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; margin-top: 2px; }
+
+/* На компьютере кнопка «Попробовать» есть в шапке — липкая снизу только мешает. */
+@media (min-width: 860px) { .sticky-cta { display: none; } }
+
+.landing-pricing-toggle-btn { white-space: nowrap; }
+.landing-plans-grid.one { max-width: 560px; margin: 0 auto; grid-template-columns: 1fr; }
+.owner-mock {
+  margin-top: 16px; border: 1px solid var(--border); border-radius: 18px; padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(16,27,48,.9), rgba(11,18,32,.9));
+}
+.owner-mock-head { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.owner-mock-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.owner-mock-grid div { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.owner-mock-grid b { display: block; font-size: 17px; font-weight: 800; }
+.owner-mock-grid span { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.owner-mock-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; margin-top: 10px; color: var(--muted); }
+.owner-mock-row span:last-child { color: var(--text); font-weight: 600; text-align: right; }
+.owner-mock-note { font-size: 11px; color: var(--muted); opacity: .75; margin-top: 8px; }
+@media (max-width: 859px) { .owner-mock { display: none; } }
+
+/* Кабинет: тарифы карточками */
+.cab-plans { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 900px) { .cab-plans { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
+.cab-plan { border: 1px solid var(--border); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; background: var(--surface); }
+.cab-plan.current { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.cab-plan-badge { font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px; background: var(--primary); color: #fff; white-space: nowrap; }
+.cab-plan-price { font-size: 22px; font-weight: 800; }
+.cab-plan-price span { font-size: 13px; font-weight: 600; color: var(--muted); }
+.plan-feats.compact { margin: 10px 0 12px; gap: 6px; }
+.plan-feats.compact li { font-size: 13px; }
+.plan-feats.compact li span { width: 18px; height: 18px; font-size: 11px; }
+.cab-plan .btn { width: 100%; }
+/* Узкие телефоны: переключатели тарифов — во всю ширину, без вылезания. */
+@media (max-width: 480px) {
+  .pricing-switches { flex-direction: column; align-items: stretch; }
+  .pricing-switches .landing-pricing-toggle { max-width: none; width: 100%; }
+  .landing-pricing-toggle-btn { padding: 9px 6px; font-size: 13px; gap: 4px; min-width: 0; }
+  .period-save { margin-left: 2px; padding: 1px 5px; font-size: 10.5px; }
+}

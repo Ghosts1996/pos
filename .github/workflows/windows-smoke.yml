@@ -1,0 +1,148 @@
+name: Windows-касса запускается (эмуляторы)
+
+# Касса на Windows работает поверх Firebase C++ SDK: его сбой закрывает окно
+# без сообщения. Проверка собирает кассу так же, как сборка заведения
+# (release, SaaS, код заведения в сборке), но против эмуляторов Firestore/Auth
+# и локального saas-gateway на этой же машине — к боевой базе не обращается.
+# Сценарии: первая установка → отдельное заведение; та же касса →
+# переподключение к точке сети; повторный запуск уже подключённой кассы.
+# Касса должна дойти до экрана входа и проработать минуту. Упала — в логе
+# журнал шагов запуска (StartupLog), стек из отладчика и запись Windows.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/**']
+    paths:
+      - '.github/workflows/windows-smoke.yml'
+      - '.github/windows-smoke/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Windows smoke (Flutter ${{ matrix.flutter }})
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # Как у сборки заведений (последний stable) и последняя версия до
+        # известной регрессии Firestore на Windows (flutterfire#18248).
+        flutter: ['3.47.6', '3.41.6']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: ${{ matrix.flutter }}
+          cache: true
+
+      - name: Setup Java (эмуляторы Firebase)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Firebase CLI and gateway deps
+        shell: bash
+        run: |
+          npm install -g firebase-tools@14
+          cd saas-gateway && npm ci --omit=dev
+
+      - name: Start emulators and saas-gateway
+        shell: pwsh
+        run: |
+          $dir = "${{ github.workspace }}\.github\windows-smoke"
+          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
+          # Фиктивный сервисный ключ: шлюз с эмуляторами подпись не проверяет.
+          $sa = node -e "const {generateKeyPairSync}=require('crypto');const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});console.log(Buffer.from(JSON.stringify({type:'service_account',project_id:'demo-hookah',private_key_id:'x',private_key:privateKey.export({type:'pkcs8',format:'pem'}),client_email:'smoke@demo-hookah.iam.gserviceaccount.com',client_id:'1',token_uri:'https://oauth2.googleapis.com/token'})).toString('base64'))"
+          $env:FIREBASE_SERVICE_ACCOUNT_B64 = $sa
+          $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+          $env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
+          $env:GCLOUD_PROJECT = 'demo-hookah'
+          $env:PORT = '8095'
+          $env:FIREBASE_WEB_CONFIG_JSON = '{"apiKey":"fake-api-key","authDomain":"demo-hookah.firebaseapp.com","projectId":"demo-hookah","appId":"1:1:web:1","messagingSenderId":"1"}'
+          for ($i = 0; $i -lt 90; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 2 }
+          }
+          Start-Process -FilePath 'node' -ArgumentList "`"${{ github.workspace }}\saas-gateway\server.js`"" -RedirectStandardOutput "$env:RUNNER_TEMP\gateway.log" -RedirectStandardError "$env:RUNNER_TEMP\gateway.err.log" -WindowStyle Hidden
+          for ($i = 0; $i -lt 30; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; Write-Host 'шлюз отвечает'; break } catch { Start-Sleep 2 }
+          }
+          node "$dir\seed.js" demo
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 40; Get-Content "$env:RUNNER_TEMP\gateway.err.log" -Tail 40; exit 1 }
+
+      - name: Generate Windows platform files
+        shell: bash
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create . --platforms=windows
+          sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          rm -f test/widget_test.dart
+          node .github/windows-smoke/patch-emulators.js
+          flutter pub get
+
+      - name: Build Windows (release, SaaS, код заведения win-smoke)
+        shell: bash
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+          # Как у сборки заведений + отладочные символы (PDB) для стека.
+          CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /Zi /FS
+          LDFLAGS: /DEBUG
+        run: |
+          flutter build windows --release \
+            -t lib/main.dart \
+            --dart-define=SAAS_MODE=true \
+            --dart-define=PII_GATEWAY_URL=http://127.0.0.1:8096/ \
+            --dart-define=SAAS_GATEWAY_URL=http://127.0.0.1:8095 \
+            --dart-define=SAAS_PRESET_SLUG=win-smoke \
+            --dart-define=SAAS_PRESET_INVITE_CODE=SMOKE1234
+
+      - name: Run scenarios
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse -Path build\windows -Filter hookah_pos.exe | Where-Object { $_.FullName -match '\\runner\\Release\\' } | Select-Object -First 1
+          if (-not $exe) { Write-Host '::error::hookah_pos.exe не найден'; exit 1 }
+          $syms = (Get-ChildItem -Recurse -Path build\windows -Filter *.pdb | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique) -join ';'
+          $dir = "${{ github.workspace }}\.github\windows-smoke"
+          node "$dir\seed.js" single
+          & "$dir\run.ps1" -Exe $exe.FullName -Name 'single-first-run' -SymbolDirs $syms
+          & "$dir\run.ps1" -Exe $exe.FullName -Name 'single-restart' -SymbolDirs $syms
+          node "$dir\seed.js" chain
+          & "$dir\run.ps1" -Exe $exe.FullName -Name 'chain-rejoin' -SymbolDirs $syms
+          & "$dir\run.ps1" -Exe $exe.FullName -Name 'chain-restart' -SymbolDirs $syms
+
+      - name: Server logs
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($f in 'gateway.log', 'gateway.err.log', 'emulators.log') {
+            $p = Join-Path $env:RUNNER_TEMP $f
+            if (Test-Path $p) { Write-Host "---- $f"; Get-Content $p -Tail 60 }
+          }
+
+      - name: Result
+        if: always()
+        shell: pwsh
+        run: |
+          $f = Join-Path $env:RUNNER_TEMP 'smoke-results.txt'
+          if (-not (Test-Path $f)) { Write-Host '::error::сценарии не запускались'; exit 1 }
+          Get-Content $f
+          if (Select-String -Path $f -Pattern '=fail' -Quiet) { Write-Host '::error::Windows-касса не дошла до экрана входа или упала'; exit 1 }

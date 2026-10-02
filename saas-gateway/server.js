@@ -523,6 +523,9 @@ async function handlePublicGuestApk(req, res) {
   if (tenantDoc.data().status === "deleted") {
     throw new HttpError(404, "Заведение с таким кодом не найдено");
   }
+  if (tenantDoc.data().guestAppOff === true) {
+    throw new HttpError(403, "Приложение гостя в этом заведении не подключено");
+  }
 
   // Индекс есть только на tenantId+createdAt, поэтому берём последние 20
   // сборок и ищем среди них успешную гостевую.
@@ -573,6 +576,7 @@ async function handleGuestDemoApk(req, res) {
 // ------------------------------------------------------- createTenant
 
 const VENUE_TYPES = ["hookah", "restaurant", "cafe", "bar"];
+const DEFAULT_TRIAL_PLAN_ID = "standard";
 
 /**
  * Записи нового заведения (или точки сети [chainId]): само заведение,
@@ -588,14 +592,21 @@ async function createTenantRecords({ name, slug, chainId = null, uid, email = nu
   const now = admin.firestore.FieldValue.serverTimestamp();
   // Тариф сети одиночному заведению не даём: иначе оно получит цену
   // «за точку» без самой сети. Обратная проверка — в handleCreateChain.
+  // Тариф не выбран (или снят с продажи) — пробный период на «Бизнесе»:
+  // владелец сразу видит и приложение гостя, а платит потом за любой.
+  const sellable = (snap) => snap.exists && !snap.data().isChainPlan && snap.data().archived !== true;
   let resolvedPlanId = "start";
-  if (!chainId && typeof planId === "string" && planId.trim()) {
-    const requestedSnap = await firestore.collection("plans").doc(planId.trim()).get();
-    if (requestedSnap.exists && !requestedSnap.data().isChainPlan) resolvedPlanId = planId.trim();
-  } else if (chainId) {
-    // У точки сети своего тарифа нет, биллинг — на chains/{chainId}.
-    resolvedPlanId = "start";
+  if (!chainId) {
+    const requestedSnap = typeof planId === "string" && /^[a-z0-9-]{1,40}$/.test(planId.trim())
+      ? await firestore.collection("plans").doc(planId.trim()).get() : null;
+    if (requestedSnap && sellable(requestedSnap)) {
+      resolvedPlanId = planId.trim();
+    } else if (sellable(await firestore.collection("plans").doc(DEFAULT_TRIAL_PLAN_ID).get())) {
+      resolvedPlanId = DEFAULT_TRIAL_PLAN_ID;
+    }
   }
+  // У точки сети своего тарифа нет, биллинг — на chains/{chainId}; «start» —
+  // заглушка, возможности точки считаются по тарифу сети.
   const planSnap = await firestore.collection("plans").doc(resolvedPlanId).get();
   const trialDays = Number(planSnap.data()?.trialDays) || 7;
 
@@ -659,6 +670,7 @@ async function createTenantRecords({ name, slug, chainId = null, uid, email = nu
 
   await batch.commit();
   if (chainId) await syncChainMembership(chainId, uid, "owner", "active");
+  await syncCapabilities({ tenantId }).catch((e) => console.error(`saas-gateway: возможности тарифа ${tenantId}:`, e.message || e));
   await writeAuditLog({ tenantId, actorId: uid, action: "tenantCreated", metadata: { slug, chainId } });
 
   // Сертификат выпускается несколько секунд — не ждём, ошибку только логируем.
@@ -896,6 +908,7 @@ async function handleConvertTenantToChain(req, res) {
     chainId, status: "active", subscriptionStatus: "active", planId: "start", updatedAt: now,
   });
   await batch.commit();
+  await syncCapabilities({ chainId }).catch((e) => console.error(`saas-gateway: возможности тарифа сети ${chainId}:`, e.message || e));
 
   // Весь персонал, не только владелец, должен видеть общую лояльность сети.
   await Promise.all(membersSnap.docs.map((d) => {
@@ -1047,7 +1060,8 @@ async function chainLocationQuote(chainId) {
   const sub = subSnap.data() || {};
   const plan = (await firestore.collection("plans").doc(sub.planId || chainSnap.data().planId || "chain").get()).data() || {};
   const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
-  const monthlyAdditional = additionalLocationPriceForPeriod(plan, "monthly");
+  const planId = sub.planId || chainSnap.data().planId || "chain";
+  const monthlyAdditional = billingPrice(plan, sub, planId, (p) => additionalLocationPriceForPeriod(p, "monthly"));
   const base = { locationCount, monthlyAdditional, billingPeriod, planName: plan.name || null };
   if (chainSnap.data().demo === true) return { ...base, free: true, reason: "demo", amount: 0 };
   if (locationCount === 0) return { ...base, free: true, reason: "firstLocation", amount: 0 };
@@ -1057,7 +1071,7 @@ async function chainLocationQuote(chainId) {
   }
   const endMs = sub.currentPeriodEnd?.toMillis ? sub.currentPeriodEnd.toMillis() : 0;
   const remainingDays = Math.max(0, Math.ceil((endMs - Date.now()) / 86400000));
-  const periodPrice = additionalLocationPriceForPeriod(plan, billingPeriod);
+  const periodPrice = billingPrice(plan, sub, planId, (p) => additionalLocationPriceForPeriod(p, billingPeriod));
   const amount = Math.round((periodPrice / BILLING_PERIOD_DAYS[billingPeriod]) * remainingDays);
   if (amount < 1) return { ...base, free: true, reason: "periodEnds", amount: 0, remainingDays };
   return {
@@ -1217,10 +1231,12 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
   if (!token) throw new Error("GITHUB_PAT не настроен на сервере");
   // Один запуск workflow, три job_id: касса и гость под Android, касса под
   // Windows. Каждая сборка отчитывается в свой buildJobs-документ.
+  // Без job_id_kolibri workflow не собирает приложение гостя (нет в тарифе).
   const inputs = {
-    tenant_id: tenantId, job_id_pos: jobIdPos, job_id_kolibri: jobIdKolibri,
+    tenant_id: tenantId, job_id_pos: jobIdPos,
     job_id_pos_windows: jobIdPosWindows, app_label: appLabel,
   };
+  if (jobIdKolibri) inputs.job_id_kolibri = jobIdKolibri;
   if (logoUrl) inputs.logo_url = logoUrl;
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
   if (inviteCode) inputs.invite_code = inviteCode;
@@ -1304,12 +1320,15 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
   }
 
   // Три приложения — три записи buildJobs, у каждой своя ссылка «Скачать».
+  // Приложение гостя — только если оно есть в тарифе заведения.
+  const caps = await syncTenantCapabilities(tenantDoc).catch(() => null);
+  const withGuest = !caps || caps.guestApp !== false;
   const firestoreNow = admin.firestore.FieldValue.serverTimestamp();
   const jobRefPos = firestore.collection("buildJobs").doc();
-  const jobRefKolibri = firestore.collection("buildJobs").doc();
+  const jobRefKolibri = withGuest ? firestore.collection("buildJobs").doc() : null;
   const jobRefPosWindows = firestore.collection("buildJobs").doc();
   const jobIdPos = jobRefPos.id;
-  const jobIdKolibri = jobRefKolibri.id;
+  const jobIdKolibri = jobRefKolibri ? jobRefKolibri.id : "";
   const jobIdPosWindows = jobRefPosWindows.id;
   const baseJob = {
     tenantId,
@@ -1324,7 +1343,7 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
   };
   const createBatch = firestore.batch();
   createBatch.set(jobRefPos, { ...baseJob, type: "pos", platform: "android" });
-  createBatch.set(jobRefKolibri, { ...baseJob, type: "guest", platform: "android" });
+  if (jobRefKolibri) createBatch.set(jobRefKolibri, { ...baseJob, type: "guest", platform: "android" });
   createBatch.set(jobRefPosWindows, { ...baseJob, type: "pos", platform: "windows" });
   await createBatch.commit();
 
@@ -1384,7 +1403,7 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
       errorMessage: String(e),
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    await Promise.all([jobRefPos.update(failUpdate), jobRefKolibri.update(failUpdate), jobRefPosWindows.update(failUpdate)]);
+    await Promise.all([jobRefPos, jobRefKolibri, jobRefPosWindows].filter(Boolean).map((r) => r.update(failUpdate)));
     throw new HttpError(500, "Не удалось запустить сборку в GitHub Actions — см. записи в buildJobs");
   }
 
@@ -1499,6 +1518,26 @@ function chainPriceForPeriod(plan, billingPeriod, locationCount) {
   return first + additional * extra;
 }
 
+/**
+ * Повышение цен по оферте действует через 30 дней после уведомления:
+ * подписчику, который уже платит, до subscriptions.priceLock.until цена
+ * считается по прежним ценам тарифа, если они ниже новых. Блокировку
+ * ставит «Применить рекомендованную сетку» (handleApplyPlanCatalog).
+ */
+const PRICE_LOCK_FIELDS = [
+  "priceRub", "priceRubSemiannual", "priceRubYearly",
+  "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly", "customAdditionalPrice",
+];
+const PRICE_LOCK_DAYS = 30;
+function billingPrice(plan, sub, planId, compute) {
+  const now = compute(plan);
+  const lock = sub && sub.priceLock;
+  const until = lock && lock.until && typeof lock.until.toMillis === "function" ? lock.until.toMillis() : 0;
+  if (!lock || until <= Date.now() || lock.planId !== planId || !lock.prices) return now;
+  const was = compute({ ...plan, ...lock.prices });
+  return was > 0 && was < now ? was : now;
+}
+
 async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = {}) {
   const shopId = process.env.YOOKASSA_SHOP_ID;
   const secretKey = process.env.YOOKASSA_SECRET_KEY;
@@ -1581,13 +1620,22 @@ async function resolveSubscriptionCheckout(decoded, { tenantId, chainId, planId,
   const planDoc = await db().collection("plans").doc(planId).get();
   if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
   const plan = planDoc.data();
+  if (!!plan.isChainPlan !== isChain) {
+    throw new HttpError(412, isChain ? "Сети подходит только тариф сети" : "Тариф сети — только для сети заведений");
+  }
+  // Архивный тариф не продаётся — продлить можно только тот, на котором уже есть.
+  if (plan.archived === true) {
+    const cur = (await db().collection("subscriptions").doc(isChain ? chainId : tenantId).get()).data();
+    if (!cur || cur.planId !== planId) throw new HttpError(412, "Этот тариф больше не продаётся — выберите другой");
+  }
   if (planPriceForPeriod(plan, billingPeriod) <= 0) {
     throw new HttpError(412, billingPeriod === "monthly"
       ? "Этот тариф не продаётся напрямую — свяжитесь с поддержкой платформы"
       : "Для этого тарифа не задана цена на выбранный период — оформите помесячную оплату или обратитесь в поддержку");
   }
   const locationCount = isChain ? Math.max(1, await countChainLocations(chainId)) : 1;
-  const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
+  const currentSub = (await db().collection("subscriptions").doc(isChain ? chainId : tenantId).get()).data() || null;
+  const price = billingPrice(plan, currentSub, planId, (p) => (isChain ? chainPriceForPeriod(p, billingPeriod, locationCount) : planPriceForPeriod(p, billingPeriod)));
   const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
   const email = decoded.email || await billingOwnerEmail(isChain, isChain ? chainId : tenantId);
   return {
@@ -2269,6 +2317,8 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
       testPayment: test === true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+    await syncCapabilities(chainId ? { chainId } : { tenantId })
+      .catch((e) => console.error(`saas-gateway: возможности тарифа ${billingId}:`, e.message || e));
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId, ...(test ? { test: true } : {}) } });
   } else {
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
@@ -2382,7 +2432,7 @@ async function runChargeRecurringSubscriptions() {
     const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
     // Сеть платит за число точек на момент продления: их могли добавить или закрыть.
     const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
-    const price = isChain ? chainPriceForPeriod(plan, billingPeriod, locationCount) : planPriceForPeriod(plan, billingPeriod);
+    const price = billingPrice(plan, sub, sub.planId, (p) => (isChain ? chainPriceForPeriod(p, billingPeriod, locationCount) : planPriceForPeriod(p, billingPeriod)));
     if (price <= 0) continue;
     const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
@@ -4256,17 +4306,26 @@ async function handleChangeTenantPlan(req, res) {
   const planDoc = await db().collection("plans").doc(planId).get();
   if (!planDoc.exists) throw new HttpError(404, "Тариф не найден");
 
-  const tenantRef = db().collection("tenants").doc(tenantId);
-  const before = (await tenantRef.get()).data() || {};
-  await tenantRef.update({
-    planId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const before = (await tenantRef.get()).data();
+  if (!before) throw new HttpError(404, "Заведение не найдено");
+  // Тариф точки сети — это тариф всей сети; заглушка planId у точки биллинг
+  // не отражает. Подписке тоже ставим новый тариф — по ней идёт продление.
+  const chainId = before.chainId || null;
+  if (!!planDoc.data().isChainPlan !== !!chainId) {
+    throw new HttpError(412, chainId ? "Точке сети подходит только тариф сети — он меняется у всей сети" : "Тариф сети — только для сети заведений");
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await firestore.collection(chainId ? "chains" : "tenants").doc(chainId || tenantId).set({ planId, updatedAt: now }, { merge: true });
+  const subRef = firestore.collection("subscriptions").doc(chainId || tenantId);
+  if ((await subRef.get()).exists) await subRef.set({ planId }, { merge: true });
+  await syncCapabilities(chainId ? { chainId } : { tenantId });
   await writeAuditLog({
     tenantId, actorId: decoded.uid, action: "planChangedBySuperAdmin", metadata: { planId },
   });
   await writeSecurityEvent(req, decoded, "planChangedBySuperAdmin", {
-    tenantId, metadata: { ...(await tenantLabel(tenantId, before)), fromPlanId: before.planId || null, planId },
+    tenantId, metadata: { ...(await tenantLabel(tenantId, before)), fromPlanId: before.planId || null, planId, chainId },
   });
   sendJson(res, 200, { ok: true });
 }
@@ -4571,7 +4630,7 @@ const PLAN_NUMBER_FIELDS = [
   "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly",
   "maxEmployees", "maxDevices", "maxTables", "maxStorageMb", "trialDays",
 ];
-const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain"];
+const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain", "archived"];
 const PLAN_FEATURE_FIELDS = ["reservations", "loyalty", "guestApp", "advancedReports"];
 function sanitizePlanFields(raw) {
   const out = {};
@@ -4592,9 +4651,13 @@ function sanitizePlanFields(raw) {
     if (src[f] === undefined) continue;
     out[f] = src[f] === true;
   }
+  // Только присланные ключи: set с merge сливает features с прежними, и
+  // форма может менять одну галочку, не зная про остальные.
   if (src.features && typeof src.features === "object") {
     out.features = {};
-    for (const f of PLAN_FEATURE_FIELDS) out.features[f] = src.features[f] === true;
+    for (const f of PLAN_FEATURE_FIELDS) {
+      if (src.features[f] !== undefined) out.features[f] = src.features[f] === true;
+    }
   }
   return out;
 }
@@ -4625,10 +4688,20 @@ async function handleSavePlan(req, res) {
       changes[k] = [was === undefined ? null : was, v];
     }
   }
+  if (fields.features) {
+    for (const [k, v] of Object.entries(fields.features)) {
+      const was = (before.features || {})[k];
+      if (was !== v && !(was === undefined && v === false)) changes[`features.${k}`] = [was === undefined ? null : was, v];
+    }
+  }
   if (create || Object.keys(changes).length) {
     await writeSecurityEvent(req, decoded, create ? "planCreated" : "planUpdated", {
       metadata: { planId, planName: fields.name || before.name || planId, changes, priceRub: fields.priceRub ?? before.priceRub ?? null },
     });
+  }
+  // Поменялись возможности тарифа — заведения на нём узнают сразу.
+  if (!create && ["aiEnabled", "maxEmployees", "features.guestApp"].some((k) => k in changes)) {
+    syncCapabilitiesForPlan(planId).catch((e) => console.error(`saas-gateway: возможности тарифа ${planId}:`, e.message || e));
   }
   sendJson(res, 200, { ok: true, changed: Object.keys(changes).length });
 }
@@ -4646,6 +4719,276 @@ async function handleDeletePlan(req, res) {
     metadata: { planId, planName: snap.data().name || planId, priceRub: snap.data().priceRub ?? null, wasInUse: !inUse.empty },
   });
   sendJson(res, 200, { ok: true });
+}
+
+// ------------------------------------------- тарифы: возможности и сетка
+
+/**
+ * Что даёт тариф заведению: приложение гостя (и меню по QR), ИИ-помощник,
+ * число сотрудников (0 — без лимита). Тарифа нет (удалили, ещё не
+ * заведён) — возможностей у заведения не отнимаем.
+ */
+const FULL_CAPABILITIES = Object.freeze({ guestApp: true, ai: true, maxEmployees: 0 });
+function planCapabilities(plan) {
+  if (!plan) return { ...FULL_CAPABILITIES };
+  return {
+    guestApp: !plan.features || plan.features.guestApp !== false,
+    ai: plan.aiEnabled !== false,
+    maxEmployees: Math.max(0, Math.floor(Number(plan.maxEmployees) || 0)),
+  };
+}
+
+/** Тариф, по которому работает заведение: у точки сети — тариф сети. */
+async function effectivePlanId(tenantDoc, subCache = null) {
+  const t = tenantDoc.data();
+  const billingId = t.chainId || tenantDoc.id;
+  let sub = subCache ? subCache.get(billingId) : undefined;
+  if (sub === undefined) {
+    sub = (await db().collection("subscriptions").doc(billingId).get()).data() || null;
+    if (subCache) subCache.set(billingId, sub);
+  }
+  if (sub && sub.planId) return sub.planId;
+  if (t.chainId) {
+    const chain = (await db().collection("chains").doc(t.chainId).get()).data();
+    return (chain && chain.planId) || "chain";
+  }
+  return t.planId || "start";
+}
+
+/**
+ * Возможности тарифа — в само заведение: tenants/{id}.guestAppOff (по нему
+ * правила базы пускают гостей, см. isTenantGuest) и
+ * tenants/{id}/public/features (его читают касса, приложение и веб гостя).
+ * Демо показывает всё.
+ */
+async function syncTenantCapabilities(tenantDoc, { plans = null, subCache = null } = {}) {
+  const t = tenantDoc.data();
+  if (!t || t.status === "deleted") return null;
+  let caps;
+  if (t.demo === true) {
+    caps = { ...FULL_CAPABILITIES };
+  } else {
+    const planId = await effectivePlanId(tenantDoc, subCache);
+    const plan = plans ? plans.get(planId) : (await db().collection("plans").doc(planId).get()).data();
+    caps = planCapabilities(plan);
+  }
+  const off = caps.guestApp === false;
+  const writes = [
+    tenantDoc.ref.collection("public").doc("features").set({
+      ...caps, updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }),
+  ];
+  if ((t.guestAppOff === true) !== off) writes.push(tenantDoc.ref.set({ guestAppOff: off }, { merge: true }));
+  await Promise.all(writes);
+  return caps;
+}
+
+/** Заведение или все точки сети — после смены тарифа или оплаты. */
+async function syncCapabilities({ tenantId = null, chainId = null }) {
+  const firestore = db();
+  const docs = chainId
+    ? (await firestore.collection("tenants").where("chainId", "==", chainId).get()).docs
+    : tenantId ? [await firestore.collection("tenants").doc(tenantId).get()].filter((d) => d.exists) : [];
+  for (const d of docs) await syncTenantCapabilities(d);
+}
+
+/** Возможности тарифа поменялись — у всех, кто на нём. */
+async function syncCapabilitiesForPlan(planId) {
+  const subs = await db().collection("subscriptions").where("planId", "==", planId).get();
+  for (const s of subs.docs) {
+    const sub = s.data();
+    if (sub.chainId) await syncCapabilities({ chainId: sub.chainId });
+    else await syncCapabilities({ tenantId: sub.tenantId || s.id });
+  }
+}
+
+/** Все заведения — раз в сутки, на случай пропущенной синхронизации. */
+async function syncAllCapabilities() {
+  const firestore = db();
+  const plans = new Map((await firestore.collection("plans").get()).docs.map((d) => [d.id, d.data()]));
+  const subCache = new Map();
+  const tenants = await firestore.collection("tenants").get();
+  let n = 0;
+  for (const d of tenants.docs) {
+    if (d.data().status === "deleted" || d.data().demo === true) continue;
+    try {
+      await syncTenantCapabilities(d, { plans, subCache });
+      n += 1;
+    } catch (e) {
+      console.error(`saas-gateway: возможности тарифа ${d.id}:`, e.message || e);
+    }
+  }
+  return n;
+}
+
+const CAPABILITIES_CRON_INTERVAL_MS = 24 * 3600 * 1000;
+function scheduleCapabilitiesCron() {
+  scheduleDailyJob("capabilities", CAPABILITIES_CRON_INTERVAL_MS, syncAllCapabilities, 25 * 60 * 1000);
+}
+
+/**
+ * Рекомендованная сетка тарифов к запуску продаж. Сама по себе ничего не
+ * меняет: записывает её супер-админ кнопкой в панели («Тарифы» →
+ * «Применить рекомендованную сетку»), увидев список изменений. Дальше цены
+ * правятся в той же панели как обычно.
+ *
+ * Цены — ниже облачных касс для общепита (iiko, r_keeper, Quick Resto,
+ * Saby Presto), при том что приложение гостя, меню по QR, брони, бонусы и
+ * число касс входят в тариф, а не продаются модулями. Устройства — без
+ * лимита во всех тарифах.
+ */
+const PLAN_BASE = {
+  maxDevices: 0, maxTables: 0, maxStorageMb: 0, trialDays: 14, archived: false,
+  isChainPlan: false, customAdditionalPrice: false,
+  priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0,
+};
+const PLAN_CATALOG = {
+  start: {
+    ...PLAN_BASE, name: "Старт",
+    priceRub: 990, priceRubSemiannual: 5290, priceRubYearly: 9490,
+    maxEmployees: 5, aiEnabled: false, customBranding: false, customDomain: false,
+    features: { reservations: true, loyalty: true, guestApp: false, advancedReports: false },
+  },
+  standard: {
+    ...PLAN_BASE, name: "Бизнес",
+    priceRub: 1990, priceRubSemiannual: 10690, priceRubYearly: 18990,
+    maxEmployees: 15, aiEnabled: true, customBranding: true, customDomain: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
+  },
+  pro: {
+    ...PLAN_BASE, name: "Про",
+    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
+    maxEmployees: 0, aiEnabled: true, customBranding: true, customDomain: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: true },
+  },
+  chain: {
+    ...PLAN_BASE, name: "Сеть",
+    isChainPlan: true, customAdditionalPrice: true,
+    priceRub: 2990, priceRubSemiannual: 15990, priceRubYearly: 28690,
+    priceRubAdditional: 1490, priceRubAdditionalSemiannual: 7990, priceRubAdditionalYearly: 14290,
+    maxEmployees: 0, aiEnabled: true, customBranding: true, customDomain: true,
+    features: { reservations: true, loyalty: true, guestApp: true, advancedReports: true },
+  },
+};
+// Тарифы вне сетки уходят в архив: с сайта и из выбора пропадают, а кто
+// на них уже есть — остаётся на прежних условиях.
+const PLAN_CATALOG_KEEP = new Set(Object.keys(PLAN_CATALOG));
+
+/** Что поменяет сетка: по каждому тарифу — было/станет (для подтверждения). */
+async function planCatalogDiff() {
+  const plans = new Map((await db().collection("plans").get()).docs.map((d) => [d.id, d.data()]));
+  const rows = [];
+  for (const [planId, fields] of Object.entries(PLAN_CATALOG)) {
+    const before = plans.get(planId) || null;
+    rows.push({ planId, action: before ? "update" : "create", before: before && {
+      name: before.name || planId, priceRub: Number(before.priceRub) || 0, archived: before.archived === true,
+    }, after: { name: fields.name, priceRub: fields.priceRub, priceRubYearly: fields.priceRubYearly,
+      priceRubAdditional: fields.priceRubAdditional, maxEmployees: fields.maxEmployees,
+      guestApp: fields.features.guestApp, ai: fields.aiEnabled } });
+  }
+  for (const [planId, p] of plans) {
+    if (PLAN_CATALOG_KEEP.has(planId) || p.archived === true) continue;
+    rows.push({ planId, action: "archive", before: { name: p.name || planId, priceRub: Number(p.priceRub) || 0 }, after: null });
+  }
+  // Заведения без выбранного тарифа заводились с planId «start», которого
+  // не было, — и получали всё. Теперь «Старт» — без приложения гостя, поэтому
+  // их пробный период переносится на тариф по умолчанию («Бизнес»).
+  if (!plans.has("start")) {
+    const orphans = (await db().collection("subscriptions").where("planId", "==", "start").get()).docs
+      .filter((d) => !d.data().chainId);
+    if (orphans.length) rows.push({ planId: "start", action: "moveOrphans", count: orphans.length, to: DEFAULT_TRIAL_PLAN_ID });
+  }
+  return rows;
+}
+
+async function handleApplyPlanCatalog(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const { confirm } = await parseJsonBody(req);
+  const diff = await planCatalogDiff();
+  // Без confirm — только показать изменения. Цены меняются у всех клиентов —
+  // как и прочие опасные действия панели, только сразу после входа.
+  if (confirm !== true) return sendJson(res, 200, { ok: true, diff });
+  requireRecentAuth(decoded);
+
+  const firestore = db();
+  const lockUntil = admin.firestore.Timestamp.fromMillis(Date.now() + PRICE_LOCK_DAYS * 86400000);
+  let locked = 0;
+  for (const row of diff) {
+    const ref = firestore.collection("plans").doc(row.planId);
+    // Подорожало — у тех, кто уже платит, прежние цены ещё 30 дней (оферта).
+    const before = (await ref.get()).data();
+    if (row.action === "update" && before && PRICE_LOCK_FIELDS.some((f) => f !== "customAdditionalPrice" &&
+        Number(PLAN_CATALOG[row.planId][f] || 0) > Number(before[f] || 0) && Number(before[f] || 0) > 0)) {
+      const prices = Object.fromEntries(PRICE_LOCK_FIELDS.filter((f) => before[f] !== undefined).map((f) => [f, before[f]]));
+      const subs = await firestore.collection("subscriptions").where("planId", "==", row.planId).get();
+      for (const sd of subs.docs) {
+        if (!["active", "past_due"].includes(sd.data().status)) continue;
+        await sd.ref.set({ priceLock: { planId: row.planId, until: lockUntil, prices } }, { merge: true });
+        locked += 1;
+      }
+    }
+    if (row.action === "moveOrphans") {
+      const orphans = (await firestore.collection("subscriptions").where("planId", "==", "start").get()).docs
+        .filter((d) => !d.data().chainId);
+      for (const d of orphans) {
+        await d.ref.set({ planId: row.to }, { merge: true });
+        await firestore.collection("tenants").doc(d.data().tenantId || d.id).set({ planId: row.to }, { merge: true });
+      }
+      await writeSecurityEvent(req, decoded, "planUpdated", {
+        metadata: { planId: "start", source: "planCatalog", movedTo: row.to, moved: orphans.length },
+      });
+      continue;
+    }
+    if (row.action === "archive") await ref.set({ archived: true }, { merge: true });
+    else await ref.set(PLAN_CATALOG[row.planId], { merge: true });
+    await writeSecurityEvent(req, decoded, row.action === "create" ? "planCreated" : "planUpdated", {
+      metadata: { planId: row.planId, planName: row.after?.name || row.before?.name || row.planId, source: "planCatalog",
+        changes: row.action === "archive" ? { archived: [false, true] } : { priceRub: [row.before?.priceRub ?? null, row.after.priceRub], name: [row.before?.name ?? null, row.after.name] },
+        priceRub: row.after?.priceRub ?? row.before?.priceRub ?? null },
+    });
+  }
+  const synced = await syncAllCapabilities();
+  sendJson(res, 200, { ok: true, diff, synced, priceLocked: locked, priceLockUntil: lockUntil.toDate().toISOString() });
+}
+
+/**
+ * Пока идёт пробный период, владелец меняет тариф сам, без оплаты: попробовал
+ * «Старт» — может включить «Бизнес» и проверить приложение гостя. Срок
+ * пробного периода не меняется. Сеть выбирает только тариф сети.
+ */
+async function handleChangeTrialPlan(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, chainId, planId } = await parseJsonBody(req);
+  if (typeof planId !== "string" || !/^[a-z0-9-]{1,40}$/.test(planId)) throw new HttpError(400, "Не указан тариф");
+  const isChain = typeof chainId === "string" && !!chainId;
+  if (isChain && !/^[A-Za-z0-9_-]{1,64}$/.test(chainId)) throw new HttpError(400, "Не указана сеть");
+  if (!isChain && (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId))) throw new HttpError(400, "Не указано заведение");
+  if (isChain) await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
+  else await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+
+  const firestore = db();
+  if (!isChain && (await firestore.collection("tenants").doc(tenantId).get()).data()?.chainId) {
+    throw new HttpError(412, "Тариф точки — это тариф всей сети: меняйте его у сети");
+  }
+  const plan = (await firestore.collection("plans").doc(planId).get()).data();
+  if (!plan || plan.archived === true) throw new HttpError(404, "Тариф не найден");
+  if (!!plan.isChainPlan !== isChain) {
+    throw new HttpError(412, isChain ? "Сети подходит только тариф сети" : "Тариф сети — только для сети заведений");
+  }
+  const billingId = isChain ? chainId : tenantId;
+  const subRef = firestore.collection("subscriptions").doc(billingId);
+  const sub = (await subRef.get()).data();
+  if (!sub || sub.status !== "trial") {
+    throw new HttpError(412, "Без оплаты тариф меняется только в пробный период — дальше выберите тариф при оплате");
+  }
+  if (sub.planId === planId) return sendJson(res, 200, { ok: true, planId });
+  await subRef.set({ planId }, { merge: true });
+  await firestore.collection(isChain ? "chains" : "tenants").doc(billingId)
+    .set({ planId, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await syncCapabilities(isChain ? { chainId } : { tenantId });
+  await writeAuditLog({ tenantId: isChain ? null : tenantId, actorId: decoded.uid, action: "trialPlanChanged", metadata: { chainId: isChain ? chainId : null, from: sub.planId || null, planId } });
+  sendJson(res, 200, { ok: true, planId });
 }
 
 /**
@@ -5909,6 +6252,13 @@ async function handleAiProxy(req, res) {
   if (!tenantDoc.exists || ["deleted", "suspended"].includes(tenantDoc.data().status)) {
     throw new HttpError(404, "Заведение не найдено");
   }
+  // ИИ-помощник — в тарифе заведения (syncTenantCapabilities); демо — всё.
+  if (tenantDoc.data().demo !== true) {
+    const caps = (await tenantRef.collection("public").doc("features").get()).data();
+    if (caps && caps.ai === false) {
+      throw new HttpError(403, "ИИ-помощник не входит в тариф заведения — его можно подключить, сменив тариф в личном кабинете");
+    }
+  }
   const chainId = tenantDoc.data().chainId || null;
   const loyaltyRoot = chainId ? firestore.collection("chains").doc(chainId) : tenantRef;
   // У сети один набор ключей на все точки (chains/{id}/meta/ai*); пока его
@@ -6186,6 +6536,8 @@ const ROUTES = {
   "/recalculateUsage": handleRecalculateUsage,
   "/overrideSubscription": handleOverrideSubscription,
   "/savePlan": handleSavePlan,
+  "/applyPlanCatalog": handleApplyPlanCatalog,
+  "/changeTrialPlan": handleChangeTrialPlan,
   "/deletePlan": handleDeletePlan,
   "/securityStatus": handleSecurityStatus,
   "/runCertificateCheck": handleRunCertificateCheck,
@@ -6264,6 +6616,7 @@ const server = http.createServer((req, res) => {
 scheduleDemoCleanup();
 scheduleBillingCron();
 scheduleUsageCron();
+scheduleCapabilitiesCron();
 schedulePlatformMetricsCron();
 scheduleCertificateCheck();
 scheduleFirestoreBackup();

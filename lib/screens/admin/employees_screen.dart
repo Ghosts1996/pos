@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/employee.dart';
 import '../../services/firestore_service.dart';
+import '../../services/plan_capabilities.dart';
 import '../../services/tips_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/bill_split.dart';
@@ -9,6 +10,7 @@ import '../../utils/constants.dart';
 import 'employee_edit_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../widgets/plan_upsell.dart';
 
 class EmployeesScreen extends StatefulWidget {
   const EmployeesScreen({super.key});
@@ -24,13 +26,15 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   // который вводит свой PIN на входе. Чтобы посмотреть чужой PIN в
   // админке, нужно осознанно нажать на значок глаза у конкретной строки.
   final Set<String> _revealed = {};
+  // Сколько сотрудников уже есть — для лимита тарифа (см. _add).
+  int _count = 0;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Сотрудники')),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _edit(null),
+        onPressed: _add,
         icon: const Icon(Icons.person_add_alt_1),
         label: const Text('Добавить'),
       ),
@@ -43,6 +47,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               return const Center(child: Text('Не удалось загрузить сотрудников — проверьте интернет'));
             }
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            _count = snap.data!.length;
             final employees = [...snap.data!]
               ..sort((a, b) {
                 // Сначала администраторы, дальше по имени.
@@ -179,6 +184,20 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first.characters.first.toUpperCase();
     return (parts[0].characters.first + parts[1].characters.first).toUpperCase();
+  }
+
+  /// Новый сотрудник — в пределах тарифа заведения.
+  Future<void> _add() async {
+    final caps = PlanCapabilitiesService.current.value;
+    if (!caps.canAddEmployee(_count)) {
+      final max = caps.maxEmployees;
+      await showPlanUpsell(context,
+          title: 'Достигнут лимит сотрудников',
+          text: 'На тарифе заведения — до $max ${employeesWord(max)}. Чтобы добавить ещё, '
+              'удалите того, кто больше не работает, или перейдите на тариф с большим лимитом.');
+      return;
+    }
+    await _edit(null);
   }
 
   Future<void> _edit(Employee? emp) async {

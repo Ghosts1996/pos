@@ -17,6 +17,7 @@ import 'session_alerts_service.dart';
 import 'ai/ai_settings.dart';
 import 'ai/ai_scheduler.dart';
 import 'background_jobs_service.dart';
+import '../utils/startup_log.dart';
 
 /// Всё, что не блокирует старт приложения — принтер/касса/ИИ подтянутся
 /// чуть позже, если настроены, а не настроены — ничего не сломается.
@@ -27,6 +28,7 @@ import 'background_jobs_service.dart';
 /// из main.dart отдельным файлом, чтобы экран присоединения мог вызвать её,
 /// не создавая циклический импорт main.dart ↔ экран.
 void startBackgroundServices() {
+  StartupLog.step('фон: настройки оборудования, ИИ, push');
   unawaited(loadSavedPrinterSettings());
   unawaited(loadSavedKassaSettings());
   unawaited(loadSavedTerminalSettings());
@@ -50,9 +52,11 @@ void startBackgroundServices() {
   //
   // Старт не привязан к результату init(): запрос точных будильников на
   // части прошивок бросает исключение и не должен отменять слежение.
+  StartupLog.step('фон: слежение за залом');
   unawaited(HallWatchService.instance.start().then((ok) {
     if (!ok) unawaited(SessionAlertsService.instance.start());
   }));
+  StartupLog.step('фон: заведение, смена, сертификаты');
   VenueService.instance.watch();
 
   // Кто сейчас на смене — для выбора «кому чаевые» у гостя. Чинит смены,
@@ -67,11 +71,13 @@ void startBackgroundServices() {
 
   // Автостоп-лист следит за остатками и сам убирает из меню то, чего
   // нет в зале, — иначе гость закажет это в приложении.
+  StartupLog.step('фон: автостоп-лист');
   AutoStopListService.instance.start();
 
   // Фоновые ИИ-задания. Замок внутри планировщика гарантирует, что
   // работу выполнит только одно устройство в зале.
   final uid = FirebaseAuth.instance.currentUser?.uid;
+  StartupLog.step('фон: ИИ-задания и дежурное устройство');
   if (uid != null) AiScheduler.instance.start(deviceId: uid);
 
   // Снятие неявок и поздравления с днём рождения ведёт касса под замком
