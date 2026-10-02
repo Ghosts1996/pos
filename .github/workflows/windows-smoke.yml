@@ -77,6 +77,8 @@ jobs:
         timeout-minutes: 15
         run: |
           $dir = "${{ github.workspace }}\.github\windows-smoke"
+          # Эмулятор берёт правила только из папки своего firebase.json.
+          Copy-Item "${{ github.workspace }}\saas\firestore.rules" "$dir\firestore.rules"
           Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
           # Фиктивный сервисный ключ: шлюз с эмуляторами подпись не проверяет.
           $sa = node -e "const {generateKeyPairSync}=require('crypto');const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});console.log(Buffer.from(JSON.stringify({type:'service_account',project_id:'demo-hookah',private_key_id:'x',private_key:privateKey.export({type:'pkcs8',format:'pem'}),client_email:'smoke@demo-hookah.iam.gserviceaccount.com',client_id:'1',token_uri:'https://oauth2.googleapis.com/token'})).toString('base64'))"
