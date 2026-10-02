@@ -1225,7 +1225,7 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
   if (inviteCode) inputs.invite_code = inviteCode;
   if (chainSlug) inputs.chain_slug = chainSlug;
-  const res = await fetch(
+  const dispatch = (withInputs) => fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_SAAS_WORKFLOW}/dispatches`,
     {
       method: "POST",
@@ -1234,13 +1234,20 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ref: GITHUB_REF, inputs }),
+      body: JSON.stringify({ ref: GITHUB_REF, inputs: withInputs }),
     }
   );
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GitHub API ${res.status}: ${text}`);
+  let res = await dispatch(inputs);
+  let text = res.ok ? "" : await res.text().catch(() => "");
+  // Workflow в ветке GITHUB_REF старше сетей и не знает chain_slug — без
+  // него кассы всё равно соберутся, а приложение гостя будет точки.
+  if (res.status === 422 && inputs.chain_slug && /chain_slug/.test(text)) {
+    console.error("saas-gateway: workflow сборки не знает chain_slug — собираем без него");
+    const { chain_slug: _, ...rest } = inputs;
+    res = await dispatch(rest);
+    text = res.ok ? "" : await res.text().catch(() => "");
   }
+  if (!res.ok) throw new Error(`GitHub API ${res.status}: ${text}`);
 }
 
 async function handleCreateBuildJob(req, res) {
@@ -2647,7 +2654,7 @@ async function handleCompleteBuildJob(req, res) {
     buildNumber: status === "success" && Number.isInteger(buildNumber) && buildNumber > 0 ? buildNumber : null,
   });
   const job = jobDoc.data();
-  appUpdateCache.delete(job.tenantId);
+  forgetAppUpdates(job.tenantId);
   if (status === "success") {
     await supersedeOldBuilds(job.tenantId).catch((e) => console.error("saas-gateway: чистка старых сборок:", e.message || e));
   } else if (job.rolloutSha) {
@@ -2688,7 +2695,7 @@ async function supersedeOldBuilds(tenantId) {
     await d.ref.update({ status: "superseded", downloadPath: null });
     await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId, `${d.id}.apk`), { force: true }).catch(() => {});
   }
-  if (old.length) appUpdateCache.delete(tenantId);
+  if (old.length) forgetAppUpdates(tenantId);
   return old.length;
 }
 
@@ -3079,7 +3086,14 @@ async function handleDownloadBuild(req, res) {
 const APP_UPDATE_TYPES = { pos: "pos", guest: "guest" };
 const APP_UPDATE_PLATFORMS = ["android", "windows"];
 const APP_UPDATE_CACHE_TTL_MS = 30 * 60 * 1000;
-const appUpdateCache = new Map(); // tenantId -> { at, jobs: [{ id, type, platform, buildNumber, completedAt }] | null }
+const appUpdateCache = new Map(); // tenantId -> { at, points: [tenantId], jobs: [{ id, tenantId, type, platform, buildNumber, completedAt }] | null }
+
+/** Сборка заведения изменилась — сбросить ответы его и всех точек его сети. */
+function forgetAppUpdates(tenantId) {
+  for (const [id, entry] of appUpdateCache) {
+    if (id === tenantId || entry.points.includes(tenantId)) appUpdateCache.delete(id);
+  }
+}
 
 async function latestTenantBuilds(tenantId) {
   const cached = appUpdateCache.get(tenantId);
@@ -3088,28 +3102,43 @@ async function latestTenantBuilds(tenantId) {
   const firestore = db();
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
   let jobs = null;
+  const points = [tenantId];
   if (tenantDoc.exists && tenantDoc.data().status !== "deleted") {
     // Тот же запрос, что и в handlePublicGuestApk: индекс только на
     // tenantId+createdAt, одно нажатие «Собрать APK» — три сборки.
-    const snap = await firestore
+    const buildsOf = async (id) => (await firestore
       .collection("buildJobs")
-      .where("tenantId", "==", tenantId)
+      .where("tenantId", "==", id)
       .orderBy("createdAt", "desc")
       .limit(20)
-      .get();
-    jobs = snap.docs
+      .get()).docs
       .map((d) => ({ id: d.id, ...d.data() }))
       .filter((j) => j.status === "success")
       .map((j) => ({
         id: j.id,
+        tenantId: j.tenantId,
         type: j.type,
         platform: j.platform || "android",
         buildNumber: Number.isInteger(j.buildNumber) ? j.buildNumber : 0,
         completedAt: j.completedAt && typeof j.completedAt.toDate === "function" ? j.completedAt.toDate().toISOString() : null,
       }));
+    jobs = await buildsOf(tenantId);
+    // Точка сети: касса могла перейти сюда из другой точки, а у этой своих
+    // сборок может не быть вовсе — берём свежие сборки любой точки сети
+    // (приложения у точек одинаковые, приложение гостя — общее на сеть).
+    const chainId = tenantDoc.data().chainId;
+    if (chainId) {
+      const chainPoints = await firestore.collection("tenants").where("chainId", "==", chainId).get();
+      for (const p of chainPoints.docs) {
+        if (p.id === tenantId || p.data().status === "deleted") continue;
+        points.push(p.id);
+        jobs.push(...await buildsOf(p.id));
+      }
+      jobs.sort((a, b) => b.buildNumber - a.buildNumber);
+    }
   }
   if (appUpdateCache.size > 5000) appUpdateCache.clear();
-  appUpdateCache.set(tenantId, { at: Date.now(), jobs });
+  appUpdateCache.set(tenantId, { at: Date.now(), points, jobs });
   return jobs;
 }
 
@@ -3140,7 +3169,7 @@ async function handleAppUpdate(req, res) {
 
   let sizeBytes;
   try {
-    sizeBytes = (await fs.promises.stat(path.join(TENANT_BUILDS_DIR, tenantId, `${latest.id}.apk`))).size;
+    sizeBytes = (await fs.promises.stat(path.join(TENANT_BUILDS_DIR, latest.tenantId || tenantId, `${latest.id}.apk`))).size;
   } catch (_) {
     // Файла на сервере нет (удалили, переносили диск) — предлагать нечего.
     return sendJson(res, 200, { update: false, buildNumber });
