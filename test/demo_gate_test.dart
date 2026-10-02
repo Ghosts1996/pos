@@ -39,5 +39,27 @@ void main() {
       expect(restored.tenant.demoExpiresAt, expires);
       expect(DemoGate.expiryOf(restored.tenant), expires);
     });
+
+    test('демо-сеть: PIN-подсказки точки и код демо для гостя переживают офлайн-кэш', () {
+      const river = TenantConfig(
+        tenant: Tenant(
+          id: 'd2', name: 'Демо · Набережная', slug: 'demo-x-river', status: TenantStatus.active,
+          planId: 'start', ownerUserId: '', chainId: 'c1', demo: true, demoCode: 'demo-x',
+          demoPins: DemoPins(admin: '222222', hookah: '4444', waiter: '5555', bar: '6666'),
+        ),
+        member: TenantMember(tenantId: 'd2', userId: 'u1', role: TenantRole.employee, status: 'active'),
+        branding: BrandingConfig(),
+        session: SessionSettings(),
+        features: FeatureFlags(),
+        subscription: SubscriptionInfo(tenantId: 'c1', planId: 'chain', status: 'trial'),
+      );
+      final restored = tenantConfigFromCacheMap(tenantConfigToCacheMap(river));
+      expect(restored.tenant.demoCode, 'demo-x');
+      expect(restored.tenant.demoPins.staffHint, 'Демо: кальянщик — 4444, официант — 5555, бармен — 6666');
+      expect(restored.tenant.demoPins.adminHint, 'Демо: администратор — 222222');
+      // У старых демо подсказок нет — стандартные PIN первой точки.
+      expect(DemoPins.fromMap(null).adminHint, 'Демо: администратор — 111111');
+      expect(DemoPins.fromMap({'admin': 'x'}).admin, '111111');
+    });
   });
 }

@@ -27,6 +27,9 @@ on:
       invite_code:
         description: 'Код приглашения устройства (settings/deviceInvite.code) заведения — см. tenant_slug'
         required: false
+      chain_slug:
+        description: 'Код сети (chains.slug), если заведение — точка сети: приложение гостя тогда общее на сеть, с выбором заведения'
+        required: false
 
 # Личная сборка заведения. Запускает только saas-gateway (createBuildJob)
 # через workflow_dispatch — токен с правом Actions: write лежит на сервере.
@@ -93,6 +96,7 @@ jobs:
           IN_JOB_WIN: ${{ inputs.job_id_pos_windows }}
           IN_SLUG: ${{ inputs.tenant_slug }}
           IN_INVITE: ${{ inputs.invite_code }}
+          IN_CHAIN: ${{ inputs.chain_slug }}
         run: |
           fail() { echo "::error::Некорректный параметр сборки: $1"; exit 1; }
           id_ok() { [[ -z "$1" || "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; }
@@ -102,6 +106,7 @@ jobs:
           id_ok "$IN_JOB_WIN" || fail job_id_pos_windows
           [[ -z "$IN_SLUG" || "$IN_SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || fail tenant_slug
           [[ -z "$IN_INVITE" || "$IN_INVITE" =~ ^[A-Za-z0-9]{4,32}$ ]] || fail invite_code
+          [[ -z "$IN_CHAIN" || "$IN_CHAIN" =~ ^[a-z0-9-]{1,63}$ ]] || fail chain_slug
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -537,6 +542,9 @@ jobs:
           # Код приглашения нужен только кассе: гостевой APK раздаётся публично,
           # и код в нём открыл бы любому доступ кассы к данным заведения.
           INVITE_CODE: ${{ matrix.app == 'pos' && inputs.invite_code || '' }}
+          # Приложение гостя точки сети — общее на сеть: при запуске гость
+          # выбирает заведение (kSaasPresetChainSlug).
+          CHAIN_SLUG: ${{ matrix.app == 'kolibri' && inputs.chain_slug || '' }}
         run: |
           if [ -z "$SAAS_FIREBASE_PROJECT_ID" ]; then
             echo "::error::Секреты SAAS_FIREBASE_* не заданы — см. saas/README.md, раздел «APK-конвейер»."
@@ -564,7 +572,8 @@ jobs:
             --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
             --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL" \
             --dart-define=SAAS_PRESET_SLUG="$TENANT_SLUG" \
-            --dart-define=SAAS_PRESET_INVITE_CODE="$INVITE_CODE"
+            --dart-define=SAAS_PRESET_INVITE_CODE="$INVITE_CODE" \
+            --dart-define=SAAS_PRESET_CHAIN_SLUG="$CHAIN_SLUG"
 
       - name: Resolve job id for this matrix leg
         id: jobid
@@ -671,6 +680,7 @@ jobs:
           IN_JOB_WIN: ${{ inputs.job_id_pos_windows }}
           IN_SLUG: ${{ inputs.tenant_slug }}
           IN_INVITE: ${{ inputs.invite_code }}
+          IN_CHAIN: ${{ inputs.chain_slug }}
         run: |
           fail() { echo "::error::Некорректный параметр сборки: $1"; exit 1; }
           id_ok() { [[ -z "$1" || "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; }
@@ -680,6 +690,7 @@ jobs:
           id_ok "$IN_JOB_WIN" || fail job_id_pos_windows
           [[ -z "$IN_SLUG" || "$IN_SLUG" =~ ^[a-z0-9-]{1,63}$ ]] || fail tenant_slug
           [[ -z "$IN_INVITE" || "$IN_INVITE" =~ ^[A-Za-z0-9]{4,32}$ ]] || fail invite_code
+          [[ -z "$IN_CHAIN" || "$IN_CHAIN" =~ ^[a-z0-9-]{1,63}$ ]] || fail chain_slug
 
       - name: Checkout
         uses: actions/checkout@v4

@@ -186,7 +186,7 @@ class _HallWatchHandler extends TaskHandler {
         final c = config.current;
         if (c == null) return; // устройство ещё не присоединено — слушать нечего
         AppScope.enterTenant(c.tenant.id,
-            branding: c.branding, slug: c.tenant.slug, chainId: c.tenant.chainId, demo: c.tenant.demo);
+            branding: c.branding, slug: c.tenant.slug, chainId: c.tenant.chainId, demo: c.tenant.demo, demoPins: c.tenant.demoPins, demoCode: c.tenant.demoCode);
       }
       await NotificationService.instance.init();
       await SessionAlertsService.instance.start();

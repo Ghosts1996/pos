@@ -196,6 +196,20 @@ cat /root/.ssh/github_deploy_key   # → секрет DEPLOY_SSH_KEY
 
 Ссылку `zalpos.apk` на этот файл ставит `saas-gateway/migrate-domain.sh`.
 
+**Демо приложения гостя.** Тот же workflow собирает и его (`SAAS_GUEST_DEMO=true`,
+`com.kolibriloungesaas`): гость вводит код демо-сети с экрана входа кассы в
+демо-режиме (`demo-…`) или открывает новое демо. Файл доставляется ключом
+`DEPLOY_SSH_KEY_TENANT` тем же `deploy-tenant-apk.sh` в
+`/opt/saas-gateway/tenant-builds/publicdemo/guestdemo.apk`, отдаёт его
+`GET /saas/guestDemoApk` через уже настроенный `location /internal-tenant-builds/`
+— на сервере ничего добавлять не нужно. Копия — в GitHub Release `public-apk`.
+
+**Демо — сеть из двух точек** («Демо · Центр» и «Демо · Набережная»): у каждой
+свои сотрудники и PIN-коды (1111/2222/3333/111111 и 4444/5555/6666/222222),
+гости и бонусы общие. Касса при входе спрашивает, в какую точку войти
+(`/chainPoints`, `/chainPointJoin` — так же работает касса любой сети). Через 3
+дня точки и сеть стираются целиком.
+
 ## Поддомены заведений
 
 У каждого заведения веб-версия гостя на `{slug}.zalpos.ru`, QR стола в кассе

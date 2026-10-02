@@ -11,10 +11,13 @@ import '../services/firestore_service.dart';
 import '../services/guest_link_service.dart';
 import '../services/push_service.dart';
 import '../services/reservation_service.dart';
+import '../services/saas_device_join_service.dart';
 import '../services/staff_device_service.dart';
 import '../services/staff_session_store.dart';
 import '../services/table_key_service.dart';
 import '../services/hall_watch_service.dart';
+import '../services/tenant_join_flow.dart';
+import '../utils/human_error.dart';
 import '../utils/constants.dart';
 import '../widgets/pin_pad.dart';
 import '../widgets/shift_open_dialog.dart';
@@ -57,6 +60,17 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Неверный PIN — точки вздрагивают (см. PinDots).
   int _errorTick = 0;
 
+  /// Касса точки сети: при запуске приложения она спрашивает, в кассу
+  /// какой точки войти, — у каждой точки свои сотрудники и PIN-коды. Один
+  /// раз за запуск; дальше точку меняют кнопкой «Сменить» над клавиатурой.
+  static bool _pointAskedThisRun = false;
+  List<ChainPoint>? _points;
+  bool _choosingPoint = false;
+  String? _switchingTo;
+  String? _pointError;
+
+  bool get _hasPoints => (_points?.length ?? 0) >= 2;
+
   /// Планшет ещё не отмечен как рабочее устройство — до регистрации база не
   /// отдаёт ему ни сотрудников, ни столы, ни чеки (см. firestore.rules).
   /// null — пока проверяем.
@@ -77,7 +91,58 @@ class _LoginScreenState extends State<LoginScreen> {
       _deviceRegistered = registered;
       _restoring = false;
     });
-    if (registered) unawaited(_preselectLastRole());
+    if (registered) {
+      unawaited(_preselectLastRole());
+      unawaited(_loadPoints());
+    }
+  }
+
+  /// Точки сети с сервера. Нет сети — касса остаётся в своей точке.
+  Future<void> _loadPoints() async {
+    final chainId = AppScope.chainId;
+    if (!kSaasMode || chainId == null) return;
+    try {
+      final points = await SaasDeviceJoinService().chainPoints(chainId).timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      setState(() {
+        _points = points;
+        if (points.length >= 2 && !_pointAskedThisRun) _choosingPoint = true;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _choosePoint(ChainPoint point) async {
+    if (_switchingTo != null) return;
+    if (point.tenantId == AppScope.tenantId) {
+      _pointAskedThisRun = true;
+      setState(() {
+        _choosingPoint = false;
+        _pointError = null;
+      });
+      return;
+    }
+    setState(() {
+      _switchingTo = point.tenantId;
+      _pointError = null;
+    });
+    try {
+      await switchChainPoint(point.tenantId);
+      if (!mounted) return;
+      _pointAskedThisRun = true;
+      setState(() {
+        _switchingTo = null;
+        _choosingPoint = false;
+        _pin = '';
+        _error = null;
+        _adminMode = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _switchingTo = null;
+        _pointError = 'Не удалось открыть кассу «${point.name}»: ${humanError(e, lower: true)}';
+      });
+    }
   }
 
   /// После закрытия кассы PIN спрашиваем всегда (AppLock), но роль
@@ -242,15 +307,29 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     }
 
+    if (_choosingPoint && _hasPoints) return _pointPicker();
+
     // Касса у всех заведений в фирменном стиле ZalPOS (см. main.dart):
     // знак и название платформы. Название заведения — мелкой подписью,
     // чтобы было видно, к какому заведению привязан планшет.
     final venue = (AppScope.branding?.appName ?? '').trim();
+    // Точка сети — её название: видно, в кассу какой точки входят.
+    final point = _points?.where((p) => p.tenantId == AppScope.tenantId).firstOrNull;
+    final caption = (point?.name ?? '').isNotEmpty ? point!.name : (venue.startsWith('ZalPOS') ? null : venue);
 
     final header = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        BrandMark(caption: venue.startsWith('ZalPOS') ? null : venue),
+        BrandMark(caption: caption),
+        if (_hasPoints) ...[
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _loading ? null : () => setState(() => _choosingPoint = true),
+            style: TextButton.styleFrom(foregroundColor: BrandPalette.sky, visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.storefront_rounded, size: 18),
+            label: const Text('Другая точка сети', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
         const SizedBox(height: 22),
         // Сотрудник — режим по умолчанию (частый вход в течение смены,
         // PIN короче), администратор выбирается явно: пока не знаем,
@@ -273,12 +352,20 @@ class _LoginScreenState extends State<LoginScreen> {
         // PIN демо-сотрудников задаёт createDemoTenant (saas-gateway).
         if (AppScope.isDemo) ...[
           Text(
-            _adminMode
-                ? 'Демо: администратор — 111111'
-                : 'Демо: кальянщик — 1111, официант — 2222, бармен — 3333',
+            _adminMode ? AppScope.demoPins.adminHint : AppScope.demoPins.staffHint,
             textAlign: TextAlign.center,
             style: const TextStyle(color: BrandPalette.muted, fontSize: 12),
           ),
+          // Демо-сеть открывается и в демо-приложении гостя — по этому коду.
+          if (AppScope.demoCode.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Код демо для приложения гостя: ${AppScope.demoCode}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: BrandPalette.sky, fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ),
           // Демо живёт 3 дня, потом сбрасывается в исходный вид (DemoGate).
           if (DemoGate.remainingText() case final left?)
             Padding(
@@ -329,6 +416,144 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             );
           }),
+        ),
+      ),
+    );
+  }
+
+  /// «В какую кассу войти?» — точки сети карточками.
+  Widget _pointPicker() {
+    final points = _points ?? const <ChainPoint>[];
+    return Scaffold(
+      backgroundColor: BrandPalette.night,
+      body: BrandBackdrop(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const BrandMark(caption: 'Сеть заведений'),
+                    const SizedBox(height: 22),
+                    const Text(
+                      'В какую кассу войти?',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'У каждой точки свои столы, чеки, сотрудники и PIN-коды. Сменить точку можно на экране входа.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: BrandPalette.muted, fontSize: 13.5),
+                    ),
+                    const SizedBox(height: 18),
+                    for (final p in points) ...[
+                      _PointCard(
+                        point: p,
+                        current: p.tenantId == AppScope.tenantId,
+                        busy: _switchingTo == p.tenantId,
+                        enabled: _switchingTo == null && p.status != 'suspended',
+                        onTap: () => _choosePoint(p),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (_pointError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(_pointError!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Color(0xFFFF7A86), fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                    if (AppScope.isDemo)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Демо-сеть из двух точек: у каждой свои сотрудники и PIN-коды — подсказка на экране входа.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white38, fontSize: 12),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PointCard extends StatelessWidget {
+  const _PointCard({
+    required this.point,
+    required this.current,
+    required this.busy,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final ChainPoint point;
+  final bool current;
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final suspended = point.status == 'suspended';
+    return Material(
+      color: current ? const Color(0x262F6FED) : const Color(0x12FFFFFF),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: current ? const Color(0x8859A6FF) : const Color(0x22FFFFFF)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
+          child: Row(children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: current ? BrandPalette.accent : null,
+                color: current ? null : const Color(0x1AFFFFFF),
+              ),
+              child: const Icon(Icons.storefront_rounded, color: Colors.white),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(point.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: enabled || current ? Colors.white : Colors.white38,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700)),
+                if (current || suspended)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      suspended ? 'Точка приостановлена владельцем' : 'Эта касса сейчас здесь',
+                      style: const TextStyle(color: BrandPalette.muted, fontSize: 12),
+                    ),
+                  ),
+              ]),
+            ),
+            if (busy)
+              const SizedBox(
+                  width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: BrandPalette.sky))
+            else
+              Icon(Icons.chevron_right_rounded, color: enabled ? BrandPalette.sky : Colors.white24),
+          ]),
         ),
       ),
     );

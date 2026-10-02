@@ -18,7 +18,9 @@ import '../utils/adaptive.dart';
 import '../utils/release_error_widget.dart';
 import '../widgets/app_update_banner.dart';
 import 'screens/kolibri_shell.dart';
+import 'screens/kolibri_demo_entry_screen.dart';
 import 'screens/kolibri_venue_picker_screen.dart';
+import 'services/chain_venue_switch.dart';
 import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
 
@@ -39,6 +41,23 @@ void main() async {
     TookenClient.instance.useGatewayProxy(kSaasGatewayUrl);
   }
 
+  // Демо приложения гостя с сайта: заведения в сборке нет — код демо-сети
+  // вводят на первом экране (или открывают новое демо).
+  if (kSaasMode && kSaasGuestDemo && kSaasPresetChainSlug.isEmpty) {
+    if (!DefaultFirebaseOptions.isConfigured) {
+      runApp(const KolibriApp(ready: false, startupError: 'Firebase не настроен для этой сборки.'));
+      return;
+    }
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    } catch (e) {
+      runApp(KolibriApp(ready: false, startupError: e.toString()));
+      return;
+    }
+    runApp(const _GuestDemoBootstrap());
+    return;
+  }
+
   if (kSaasMode && kSaasPresetChainSlug.isNotEmpty) {
     if (!DefaultFirebaseOptions.isConfigured) {
       runApp(const KolibriApp(ready: false, startupError: 'Firebase не настроен для этой сборки.'));
@@ -50,7 +69,7 @@ void main() async {
       runApp(KolibriApp(ready: false, startupError: e.toString()));
       return;
     }
-    runApp(const _KolibriChainBootstrap());
+    runApp(const _KolibriChainBootstrap(chainSlug: kSaasPresetChainSlug));
     return;
   }
 
@@ -118,9 +137,13 @@ void main() async {
 Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
   const tenantCacheKey = 'saas_kolibri_tenant_id_v1';
   const chainCacheKey = 'saas_kolibri_tenant_chain_id_v1';
+  const slugCacheKey = 'saas_kolibri_tenant_slug_v1';
   final prefs = await SharedPreferences.getInstance();
   final cached = prefs.getString(tenantCacheKey);
-  if (cached != null && cached.isNotEmpty) {
+  // Кэш другого заведения (приложение поставили поверх чужого) не берём.
+  final cachedSlug = prefs.getString(slugCacheKey);
+  if (cached != null && cached.isNotEmpty && (cachedSlug == null || cachedSlug == kSaasPresetSlug)) {
+    if (cachedSlug == null && kSaasPresetSlug.isNotEmpty) await prefs.setString(slugCacheKey, kSaasPresetSlug);
     return (tenantId: cached, chainId: prefs.getString(chainCacheKey));
   }
 
@@ -133,6 +156,8 @@ Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
   try {
     final resolved = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug);
     await prefs.setString(tenantCacheKey, resolved.tenantId);
+    await prefs.setString(slugCacheKey, kSaasPresetSlug);
+    await prefs.remove(chainCacheKey);
     if (resolved.chainId != null && resolved.chainId!.isNotEmpty) {
       await prefs.setString(chainCacheKey, resolved.chainId!);
     }
@@ -179,15 +204,21 @@ enum _ChainBootPhase { loading, picking, ready, error }
 /// Точка входа гостевой сборки для СЕТИ заведений (kSaasPresetChainSlug) —
 /// см. её докстринг у [main] выше. В отличие от одиночной сборки, здесь
 /// нужен настоящий (интерактивный) UI ДО того, как известен tenantId: гость
-/// сам выбирает, за каким столом какой точки сети он сидит.
+/// сам выбирает, в какое заведение сети он пришёл или где хочет
+/// забронировать стол.
 ///
-/// Выбор кэшируется на диск (тот же принцип, что и у [_resolveSaasTenantId]
-/// для одиночной сборки) — при следующих запусках приложение сразу
-/// открывает ПОСЛЕДНЮЮ выбранную точку без сети и без повторного вопроса.
-/// Сменить точку (гость пришёл в другое заведение той же сети) можно из
-/// профиля — см. KolibriProfileScreen.
+/// При каждом запуске, если в сети две точки и больше, — выбор заведения
+/// (последнее отмечено); точка одна — сразу она. Нет сети — последнее
+/// выбранное из кэша. Сменить заведение можно и на ходу (ChainVenueSwitch):
+/// из профиля и из бронирования, без перезапуска.
 class _KolibriChainBootstrap extends StatefulWidget {
-  const _KolibriChainBootstrap();
+  const _KolibriChainBootstrap({super.key, required this.chainSlug, this.onChainMissing});
+
+  final String chainSlug;
+
+  /// Сети с этим кодом больше нет (демо сбросилось) — демо-сборка снова
+  /// спрашивает код.
+  final VoidCallback? onChainMissing;
 
   @override
   State<_KolibriChainBootstrap> createState() => _KolibriChainBootstrapState();
@@ -199,35 +230,78 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   ChainDirectory? _directory;
   String _appTitle = 'ZalPOS';
   bool _picking = false;
+  String? _lastTenantId;
+  int _openTab = ChainVenueSwitch.homeTab;
 
   @override
   void initState() {
     super.initState();
+    ChainVenueSwitch.request.addListener(_onSwitchRequest);
     unawaited(_bootstrap());
   }
 
-  Future<void> _bootstrap() async {
+  @override
+  void dispose() {
+    ChainVenueSwitch.request.removeListener(_onSwitchRequest);
+    super.dispose();
+  }
+
+  void _onSwitchRequest() {
+    final tab = ChainVenueSwitch.request.value;
+    if (tab == null || _phase == _ChainBootPhase.loading) return;
+    _openTab = tab;
+    setState(() => _phase = _ChainBootPhase.loading);
+    unawaited(_bootstrap(forcePick: true));
+  }
+
+  Future<void> _bootstrap({bool forcePick = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    // Выбор заведения сохранён для другой сети (приложение поставили поверх
+    // демо или другой сети) — не берём его.
+    final sameChain = prefs.getString(kChainSlugCacheKey) == widget.chainSlug;
+    final cachedTenantId = sameChain ? prefs.getString(kChainLocationCacheKey) : null;
+    final cachedChainId = sameChain ? prefs.getString(kChainIdCacheKey) : null;
+    _lastTenantId = (cachedTenantId ?? '').isEmpty ? null : cachedTenantId;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final cachedTenantId = prefs.getString(kChainLocationCacheKey);
-      final cachedChainId = prefs.getString(kChainIdCacheKey);
-      if (cachedTenantId != null && cachedTenantId.isNotEmpty && cachedChainId != null && cachedChainId.isNotEmpty) {
-        await _enterLocation(cachedTenantId, cachedChainId);
+      final directory =
+          await SaasDeviceJoinService().resolveChainBySlug(widget.chainSlug).timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      final live = directory.locations.where((l) => l.status != 'suspended' && l.status != 'deleted').toList();
+      if (live.length == 1 && !forcePick) {
+        _picking = true;
+        await _remember(live.single.tenantId, directory.chainId);
+        await _enterLocation(live.single.tenantId, directory.chainId);
         return;
       }
-      final directory = await SaasDeviceJoinService().resolveChainBySlug(kSaasPresetChainSlug);
-      if (!mounted) return;
       setState(() {
         _directory = directory;
         _phase = _ChainBootPhase.picking;
+        _picking = false;
       });
     } catch (e) {
+      if (e is GatewayNotFound && widget.onChainMissing != null) {
+        widget.onChainMissing!();
+        return;
+      }
+      // Нет сети — последнее заведение из кэша: меню и профиль работают
+      // и без неё.
+      if (!forcePick && _lastTenantId != null && (cachedChainId ?? '').isNotEmpty) {
+        await _enterLocation(_lastTenantId!, cachedChainId!);
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _error = e.toString();
         _phase = _ChainBootPhase.error;
       });
     }
+  }
+
+  Future<void> _remember(String tenantId, String chainId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(kChainLocationCacheKey, tenantId);
+    await prefs.setString(kChainIdCacheKey, chainId);
+    await prefs.setString(kChainSlugCacheKey, widget.chainSlug);
   }
 
   Future<void> _onVenuePicked(ChainLocation location) async {
@@ -240,9 +314,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
     _picking = true;
     final directory = _directory!;
     setState(() => _phase = _ChainBootPhase.loading);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kChainLocationCacheKey, location.tenantId);
-    await prefs.setString(kChainIdCacheKey, directory.chainId);
+    await _remember(location.tenantId, directory.chainId);
     await _enterLocation(location.tenantId, directory.chainId);
   }
 
@@ -265,6 +337,8 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
         _error = e.toString();
         _phase = _ChainBootPhase.error;
       });
+    } finally {
+      _picking = false;
     }
   }
 
@@ -279,10 +353,17 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
         );
         break;
       case _ChainBootPhase.picking:
-        home = KolibriVenuePickerScreen(chain: _directory!, onSelected: _onVenuePicked);
+        home = KolibriVenuePickerScreen(
+          chain: _directory!,
+          onSelected: _onVenuePicked,
+          lastTenantId: _lastTenantId,
+          forBooking: _openTab == ChainVenueSwitch.bookingTab,
+        );
         break;
       case _ChainBootPhase.ready:
-        home = const KolibriShell();
+        // Ключ — заведение: при смене точки оболочка собирается заново и
+        // не держит подписок прежней.
+        home = KolibriShell(key: ValueKey(AppScope.tenantId), initialIndex: _openTab);
         break;
       case _ChainBootPhase.error:
         home = _StartupError(details: _error);
@@ -377,6 +458,99 @@ class _StartupError extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Демо приложения гостя (kSaasGuestDemo): экран входа по коду демо-сети,
+/// дальше — обычное приложение сети. Код запоминается; демо сбросилось
+/// (через 3 дня) или гость нажал «Другой код демо» — снова экран входа.
+class _GuestDemoBootstrap extends StatefulWidget {
+  const _GuestDemoBootstrap();
+
+  @override
+  State<_GuestDemoBootstrap> createState() => _GuestDemoBootstrapState();
+}
+
+class _GuestDemoBootstrapState extends State<_GuestDemoBootstrap> {
+  static const _slugKey = 'saas_guest_demo_chain_slug_v1';
+  bool _loaded = false;
+  String? _slug;
+  String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    ChainVenueSwitch.leaveDemo.addListener(_leave);
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _slug = prefs.getString(_slugKey);
+        _loaded = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    ChainVenueSwitch.leaveDemo.removeListener(_leave);
+    super.dispose();
+  }
+
+  Future<void> _open(String slug) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_slugKey, slug);
+    if (!mounted) return;
+    setState(() {
+      _slug = slug;
+      _notice = null;
+    });
+  }
+
+  Future<void> _forget(String? notice) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_slugKey);
+    await prefs.remove(kChainLocationCacheKey);
+    await prefs.remove(kChainIdCacheKey);
+    await prefs.remove(kChainSlugCacheKey);
+    AppScope.reset();
+    if (!mounted) return;
+    setState(() {
+      _slug = null;
+      _notice = notice;
+    });
+  }
+
+  void _leave() => unawaited(_forget(null));
+
+  @override
+  Widget build(BuildContext context) {
+    final slug = _slug;
+    if (_loaded && slug != null) {
+      return _KolibriChainBootstrap(
+        key: ValueKey(slug),
+        chainSlug: slug,
+        onChainMissing: () => unawaited(_forget('Это демо уже сбросилось — введите новый код или откройте новое демо.')),
+      );
+    }
+    return MaterialApp(
+      title: 'ZalPOS — демо для гостя',
+      debugShowCheckedModeBanner: false,
+      theme: KolibriTheme.dark,
+      darkTheme: KolibriTheme.dark,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ru', 'RU')],
+      locale: const Locale('ru', 'RU'),
+      home: !_loaded
+          ? Scaffold(
+              backgroundColor: KolibriColors.background,
+              body: Center(child: CircularProgressIndicator(color: KolibriColors.primary)),
+            )
+          : KolibriDemoEntryScreen(onOpen: _open, notice: _notice),
     );
   }
 }

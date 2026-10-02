@@ -11,6 +11,8 @@ import '../services/kolibri_auth_service.dart';
 import '../../models/venue_models.dart';
 import '../../services/venue_service.dart';
 import '../../widgets/table_picker_map.dart';
+import '../../services/app_scope.dart';
+import '../services/chain_venue_switch.dart';
 import '../theme/kolibri_theme.dart';
 import '../widgets/privacy_notice.dart';
 import 'kolibri_menu_screen.dart';
@@ -223,6 +225,36 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         const SizedBox(height: 4),
         Text('Подтверждение придёт в приложение — обычно в течение 15 минут',
             style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+        // Сеть заведений: бронь — в выбранном заведении; забронировать в
+        // другом — выбор заведения и сразу сюда же.
+        if (AppScope.chainId != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Material(
+              color: KolibriColors.surface,
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+                child: Row(children: [
+                  Icon(Icons.storefront_rounded, color: KolibriColors.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Бронь в заведении', style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                      Text((_venue?.name ?? '').isNotEmpty ? _venue!.name : 'текущее заведение сети',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                  TextButton(
+                    onPressed: () => ChainVenueSwitch.ask(openTab: ChainVenueSwitch.bookingTab),
+                    child: const Text('Другое'),
+                  ),
+                ]),
+              ),
+            ),
+          ),
         if (_venue != null && !_hoursUnknown)
           Padding(
             padding: const EdgeInsets.only(top: 6),
