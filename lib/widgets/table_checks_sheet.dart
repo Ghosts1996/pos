@@ -157,10 +157,10 @@ class _CheckCard extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Text('$number',
-                    style: TextStyle(
+                    style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
-                        color: current ? Colors.white : AppColors.textPrimary)),
+                        color: AppColors.textPrimary)),
               ),
               const SizedBox(width: 12),
               Expanded(

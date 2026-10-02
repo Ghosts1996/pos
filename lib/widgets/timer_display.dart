@@ -60,7 +60,7 @@ class TimerDisplay extends StatelessWidget {
               style: TextStyle(
                 fontSize: fontSize,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: AppColors.textPrimary,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             );

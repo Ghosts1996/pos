@@ -70,7 +70,7 @@ class _DemoResetScreenState extends State<DemoResetScreen> {
                 const Text(
                   'Демо обновляется',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+                  style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
                 const Text(

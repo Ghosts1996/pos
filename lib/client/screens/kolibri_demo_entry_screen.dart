@@ -159,7 +159,7 @@ class _KolibriDemoEntryScreenState extends State<KolibriDemoEntryScreen> {
                     const SizedBox(height: 14),
                     Text(_error!,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Color(0xFFE0715E), fontSize: 13.5, fontWeight: FontWeight.w600)),
+                        style: const TextStyle(color: KolibriColors.danger, fontSize: 13.5, fontWeight: FontWeight.w600)),
                   ],
                   const SizedBox(height: 18),
                   Text('Демо сбрасывается через 3 дня. Все данные в нём вымышленные.',
