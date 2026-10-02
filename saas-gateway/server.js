@@ -2654,7 +2654,7 @@ async function handleDownloadBuild(req, res) {
 
   const isWindows = job.platform === "windows";
   // Разные имена, чтобы кассу и гостевое приложение можно было отличить в «Загрузках».
-  const fileNamePrefix = job.type === "guest" ? "guest-app" : isWindows ? "zalpos-windows" : "zalpos";
+  const fileNamePrefix = job.type === "guest" ? "zalpos-guest" : isWindows ? "zalpos-windows" : "zalpos";
   // Windows-касса раньше была zip, теперь установщик: смотрим сигнатуру «MZ».
   let isInstaller = false;
   if (isWindows) {

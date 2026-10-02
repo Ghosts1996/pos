@@ -24,6 +24,7 @@ import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
+import '../utils/checkout_checks.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -634,19 +635,34 @@ class FirestoreService {
     double tipsCard = 0,
     List<String> tipsCancelled = const [],
     double? expectedTotal,
+    double? seenDiscountPercent,
     String loyaltyClientUid = '',
   }) async {
     // 1. Закрываем чек. Транзакция с проверкой статуса делает закрытие
     //    идемпотентным: повторное «Оплатить» после сбоя сети не спишет
     //    склад второй раз.
     final sessionRef = AppScope.col('sessions').doc(sessionId);
+    // Транзакция читает чек с сервера, а экран показывал его вместе с ещё
+    // не отправленными правками этого планшета (слабая сеть): без ожидания
+    // только что добавленная позиция выглядела бы как «счёт изменился».
+    try {
+      await _db.waitForPendingWrites().timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      throw StateError('Нет связи с сервером: последние изменения чека ещё не отправлены. '
+          'Проверьте интернет и нажмите «Оплатить» ещё раз');
+    } catch (_) {
+      // Платформа без ожидания записей — проверит сама транзакция.
+    }
+    SessionModel? changed;
     final outcome = await _db.runTransaction<_CloseOutcome>((tx) async {
       final snap = await tx.get(sessionRef);
       if ((snap.data()?['status'] as String?) == 'closed') return _CloseOutcome.alreadyClosed;
-      if (expectedTotal != null &&
-          snap.exists &&
-          (SessionModel.fromDoc(snap).totalWithDiscount - expectedTotal).abs() > 0.009) {
-        return _CloseOutcome.billChanged;
+      if (expectedTotal != null && snap.exists) {
+        final actual = SessionModel.fromDoc(snap);
+        if ((actual.totalWithDiscount - expectedTotal).abs() > 0.009) {
+          changed = actual;
+          return _CloseOutcome.billChanged;
+        }
       }
       tx.update(sessionRef, {
         'status': 'closed',
@@ -677,7 +693,17 @@ class FirestoreService {
     });
     // Бросаем после транзакции: в вебе исключение изнутри неё теряет текст.
     if (outcome == _CloseOutcome.billChanged) {
-      throw StateError('Счёт изменился, пока шла оплата — откройте оплату заново');
+      final actual = changed;
+      throw StateError(actual == null
+          ? 'Чек изменился, пока была открыта оплата — откройте оплату заново'
+          : describeBillChange(
+              seen: orderItems,
+              seenTotal: expectedTotal ?? 0,
+              actual: actual.orderItems,
+              actualTotal: actual.totalWithDiscount,
+              seenDiscount: seenDiscountPercent ?? actual.discountPercent,
+              actualDiscount: actual.discountPercent,
+            ));
     }
     final alreadyClosed = outcome == _CloseOutcome.alreadyClosed;
 
@@ -728,6 +754,24 @@ class FirestoreService {
     if (!alreadyClosed && orderItems.isNotEmpty) {
       await _deductInventoryForSale(orderItems, employeeName);
     }
+  }
+
+  /// Чего не хватит на складе, если закрыть чек с [orderItems]: кассир
+  /// узнаёт об этом до оплаты, а не по уходу остатка в минус.
+  Future<List<StockShortage>> stockShortagesFor(List<OrderItem> orderItems) async {
+    final menu = await menuItemsByIds(
+        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet());
+    final invIds = <String>{
+      for (final m in menu.values) ...[
+        if (m.inventoryItemId.isNotEmpty) m.inventoryItemId,
+        for (final c in m.components)
+          if (c.inventoryItemId.isNotEmpty) c.inventoryItemId,
+      ],
+    };
+    if (invIds.isEmpty) return const [];
+    final docs = await Future.wait(invIds.map((id) => AppScope.col('inventoryItems').doc(id).get()));
+    final stock = {for (final d in docs) if (d.exists) d.id: InventoryItem.fromDoc(d)};
+    return stockShortages(orderItems, menu, stock);
   }
 
   /// Списывает позиции склада по проданным пунктам меню.

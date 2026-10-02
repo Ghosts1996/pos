@@ -419,15 +419,17 @@ jobs:
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-             build/app/outputs/flutter-apk/hookah-pos-public.apk
+             build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=public-apk
-          FILE=build/app/outputs/flutter-apk/hookah-pos-public.apk
+          FILE=build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            # Файл со старым названием платформы больше не обновляется.
+            gh release delete-asset "$TAG" hookah-pos-public.apk --repo "${{ github.repository }}" -y 2>/dev/null || true
             gh release upload "$TAG" "$FILE" --repo "${{ github.repository }}" --clobber
           else
             gh release create "$TAG" "$FILE" \
@@ -452,4 +454,4 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@"$SSH_HOST" \
-            < build/app/outputs/flutter-apk/hookah-pos-public.apk
+            < build/app/outputs/flutter-apk/zalpos-kassa-demo.apk
