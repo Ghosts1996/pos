@@ -500,7 +500,7 @@ function buildJobLabel(j) {
   return j.platform === 'windows' ? `${base} (Windows)` : base;
 }
 const BILLING_PURPOSE_LABELS = {
-  subscription: 'оплата тарифа', renewal: 'автопродление',
+  subscription: 'оплата тарифа', renewal: 'автопродление', chainLocation: 'новая точка сети',
 };
 const AUDIT_ACTION_LABELS = {
   tenantCreated: 'Заведение создано',
@@ -508,6 +508,10 @@ const AUDIT_ACTION_LABELS = {
   tenantEnabled: 'Заведение разблокировано',
   memberInvited: 'Приглашён участник',
   subscriptionPaid: 'Подписка оплачена',
+  billingMarkedTest: 'Оплата отмечена тестовой',
+  chainLocationPaid: 'Оплачена и добавлена точка сети',
+  chainLocationPaymentUnapplied: 'Оплата точки сети без созданной точки — проверьте',
+  billingMarkedReal: 'Оплата снова учитывается в выручке',
   subscriptionPaymentCanceled: 'Платёж отменён',
   subscriptionRenewalFailed: 'Продление не прошло',
   subscriptionCancelRequested: 'Автопродление отключено владельцем',
@@ -3059,7 +3063,7 @@ function watchDashboardData(tenantId) {
           ${paymentHistory.map((e) => `
             <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
               <div class="grow small muted">
-                ${fmtDateTime(e.receivedAt)} · ${esc(BILLING_PURPOSE_LABELS[e.purpose] || e.purpose || 'оплата')}
+                ${fmtDateTime(e.receivedAt)} · ${esc(BILLING_PURPOSE_LABELS[e.purpose] || e.purpose || 'оплата')}${e.test ? ' · тестовая, без списания денег' : ''}
               </div>
               <div class="small" style="font-weight:600">${Number(e.amount || 0).toLocaleString('ru-RU')} ₽</div>
             </div>
@@ -5918,11 +5922,55 @@ function watchBankInvoicesAdmin() {
 function watchAnalytics() {
   const body = $('admin-analytics');
 
-  const draw = (tenants, revenueEvents, metrics, chains) => {
+  // Последние оплаты с отметкой «тестовая»: проверочные оплаты до запуска
+  // (и любые, прошедшие в тестовом режиме Робокассы) супер-админ убирает
+  // из выручки одним нажатием.
+  const paymentsHtml = (events, tenants) => {
+    const paid = events.filter((e) => e.status === 'succeeded').slice(0, 15);
+    if (!paid.length) return '';
+    const names = new Map(tenants.map((t) => [t.id, t.name]));
+    return `
+      <div class="card" style="margin-top:14px">
+        <div class="small muted">Последние оплаты</div>
+        ${paid.map((e) => `
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="flex:1;min-width:160px">
+              <b>${Number(e.amount || 0).toLocaleString('ru-RU')} ₽</b>
+              ${e.test ? '<span style="margin-left:6px;padding:2px 8px;border-radius:999px;font-size:12px;color:var(--warning);border:1px solid currentColor">тестовая</span>' : ''}
+              <div class="small muted">${esc(names.get(e.tenantId) || (e.chainId ? 'Сеть заведений' : e.tenantId || '—'))} · ${e.receivedAt?.toDate ? esc(e.receivedAt.toDate().toLocaleString('ru-RU')) : ''} · ${esc(e.provider || '')}</div>
+            </div>
+            <button class="btn-link f-pay-test" data-id="${esc(e.id)}" data-test="${e.test ? '0' : '1'}" style="width:auto">${e.test ? 'Это настоящая оплата' : 'Отметить тестовой'}</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  };
+  // onclick, а не addEventListener: панель могут открыть повторно.
+  body.onclick = async (ev) => {
+    const btn = ev.target.closest?.('.f-pay-test');
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+      await callSaasGateway('setBillingEventTest', { eventId: btn.dataset.id, test: btn.dataset.test === '1' });
+      toast(btn.dataset.test === '1' ? 'Оплата отмечена тестовой — в выручку не идёт' : 'Оплата снова учитывается в выручке');
+    } catch (e) {
+      toast(`Не получилось: ${e?.message || e}`);
+      btn.disabled = false;
+    }
+  };
+
+  const draw = (allTenants, allEvents, metrics, allChains) => {
     const now = Date.now();
     const day = 86400000;
+    // Демо-заведения (кнопка «Демо» на кассе) — не клиенты; подписка,
+    // оплаченная тестовым платежом, — не выручка. Так же считает
+    // runCalculatePlatformMetrics на сервере.
+    const tenants = allTenants.filter((t) => t.demo !== true);
+    const chains = (allChains || []).filter((c) => c.demo !== true);
+    const revenueEvents = allEvents.filter((e) => e.test !== true);
+    const testPaid = allEvents.filter((e) => e.test === true && e.status === 'succeeded');
     const byStatus = {};
-    tenants.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
+    tenants.forEach((t) => { if (t.status !== 'deleted') byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
     // status и planId точки сети биллинг не отражают (точка «active» даже на
     // триале сети), поэтому точки только считаем, а MRR сетей — ниже по
     // chains. Так же считает runCalculatePlatformMetrics на сервере.
@@ -5935,13 +5983,13 @@ function watchAnalytics() {
         if (t.status !== 'deleted') locationCountByChain.set(t.chainId, (locationCountByChain.get(t.chainId) || 0) + 1);
         return sum;
       }
-      if (t.status !== 'active') return sum;
+      if (t.status !== 'active' || t.testPayment === true) return sum;
       activeCount += 1;
       const plan = state.plansById?.[t.planId];
       return sum + (Number(plan?.priceRub) || 0);
     }, 0);
-    (chains || []).forEach((c) => {
-      if (c.status !== 'active') return;
+    chains.forEach((c) => {
+      if (c.status !== 'active' || c.testPayment === true) return;
       const plan = state.plansById?.[c.planId];
       if (!plan) return;
       const locationCount = Math.max(1, locationCountByChain.get(c.id) || 0);
@@ -5950,8 +5998,20 @@ function watchAnalytics() {
       const additional = plan.customAdditionalPrice ? (Number(plan.priceRubAdditional) || 0) : first;
       mrr += first + additional * Math.max(0, locationCount - 1);
     });
-    const signups7d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 7 * day).length;
-    const signups30d = tenants.filter((t) => t.createdAt?.toMillis && now - t.createdAt.toMillis() <= 30 * day).length;
+    // Регистрация — новый владелец, а не каждое заведение: точки, которые
+    // владелец добавил в свою сеть, и второе заведение того же аккаунта
+    // регистрациями не считаем.
+    const firstByOwner = new Map();
+    tenants.forEach((t) => {
+      const at = t.createdAt?.toMillis ? t.createdAt.toMillis() : null;
+      if (at == null) return;
+      const owner = t.ownerUserId || t.id;
+      if (!firstByOwner.has(owner) || at < firstByOwner.get(owner)) firstByOwner.set(owner, at);
+    });
+    const signupTimes = [...firstByOwner.values()];
+    const signups7d = signupTimes.filter((at) => now - at <= 7 * day).length;
+    const signups30d = signupTimes.filter((at) => now - at <= 30 * day).length;
+    const liveTenants = tenants.filter((t) => t.status !== 'deleted').length;
     const succeeded = revenueEvents.filter((e) => e.status === 'succeeded');
     const totalRevenue = succeeded.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
     // Лимит НПД — 2,4 млн ₽ дохода за календарный год (ч. 2 ст. 4 закона
@@ -5975,11 +6035,10 @@ function watchAnalytics() {
     const REGS_TREND_DAYS = 14;
     const dayKey = (ms) => new Date(ms).toISOString().slice(5, 10);
     const regsByDay = new Map();
-    tenants.forEach((t) => {
-      if (!t.createdAt?.toMillis) return;
-      const ageDays = Math.floor((now - t.createdAt.toMillis()) / day);
+    signupTimes.forEach((at) => {
+      const ageDays = Math.floor((now - at) / day);
       if (ageDays < 0 || ageDays >= REGS_TREND_DAYS) return;
-      const key = dayKey(t.createdAt.toMillis());
+      const key = dayKey(at);
       regsByDay.set(key, (regsByDay.get(key) || 0) + 1);
     });
     const regsTrendPoints = Array.from({ length: REGS_TREND_DAYS }, (_, i) => {
@@ -5991,7 +6050,7 @@ function watchAnalytics() {
 
     body.innerHTML = `
       <div class="admin-stat-grid">
-        ${tile('Всего заведений', tenants.length)}
+        ${tile('Заведений', liveTenants)}
         ${tile('Активных подписок', activeCount)}
         ${tile('MRR (оценка)', `${mrr.toLocaleString('ru-RU')} ₽`)}
         ${tile('Выручка (последние платежи)', `${totalRevenue.toLocaleString('ru-RU')} ₽`)}
@@ -6002,7 +6061,10 @@ function watchAnalytics() {
       <p class="small muted" style="margin-top:10px">
         Разбивка по статусам: ${Object.entries(byStatus).map(([s, n]) => `${esc(TENANT_STATUS_LABELS[s] || s)} — ${n}`).join(', ') || '—'}.
         Выручка — сумма последних ${revenueEvents.length} обработанных платежей, не весь исторический архив.
+        Не учитываются демо-заведения${testPaid.length ? ` и тестовые оплаты (${testPaid.length} на ${testPaid.reduce((a, e) => a + (Number(e.amount) || 0), 0).toLocaleString('ru-RU')} ₽)` : ' и тестовые оплаты'};
+        регистрации — новые владельцы, а не каждая точка сети.
       </p>
+      ${paymentsHtml(allEvents, allTenants)}
       ${npd && yearRevenue >= NPD_LIMIT * 0.8 ? `
         <p class="small" style="color:var(--danger);margin-top:6px">Доход за год — ${Math.round(yearRevenue / NPD_LIMIT * 100)} % лимита
         налога на профессиональный доход (2,4 млн ₽ в год). После превышения НПД не применяется — заранее
@@ -6036,7 +6098,7 @@ function watchAnalytics() {
   }).catch(() => { state.plansById = {}; });
 
   sub(onSnapshot(query(collection(state.db, 'tenants'), orderBy('createdAt', 'desc'), limit(500)), (snap) => {
-    tenants = snap.docs.map((d) => d.data());
+    tenants = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     maybeDraw();
   }, () => { tenants = []; maybeDraw(); }));
 
@@ -6047,7 +6109,7 @@ function watchAnalytics() {
 
   // Статус фильтруем на клиенте — без лишнего составного индекса.
   sub(onSnapshot(query(collection(state.db, 'billingEvents'), orderBy('receivedAt', 'desc'), limit(500)), (snap) => {
-    revenueEvents = snap.docs.map((d) => d.data());
+    revenueEvents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     maybeDraw();
   }, () => { revenueEvents = []; maybeDraw(); }));
 
@@ -7178,8 +7240,10 @@ async function convertTenantToChain(tenantId, tenant, planId) {
   }
 }
 
-// Новая точка сети — тот же createTenant, но с chainId: сразу active и без
-// своей подписки.
+// Новая точка сети. Подписка сети оплачена вперёд за точки на момент
+// оплаты — за новую доплачивают цену доп. точки до конца оплаченного
+// периода (сервер считает сумму сам: chainLocationQuote). В пробный период
+// и для первой точки — бесплатно. Точку создаёт сервер после оплаты.
 async function addChainLocation(chainId) {
   const name = prompt('Название новой точки сети:');
   if (!name || !name.trim()) return;
@@ -7188,11 +7252,45 @@ async function addChainLocation(chainId) {
   if (slug === null) return;
   slug = slug.trim();
   if (!slug) { toast('Код точки не может быть пустым'); return; }
+  let quote;
   try {
-    const res = await callSaasGateway('createTenant', { name: trimmedName, slug, chainId });
-    toast('Точка сети добавлена');
-    state.activeTenantId = res.data.tenantId;
-    route();
+    quote = (await callSaasGateway('chainLocationQuote', { chainId })).data;
+  } catch (e) {
+    toast(`Не удалось добавить точку сети: ${e?.message || e}`);
+    return;
+  }
+  const rub = (v) => `${Number(v || 0).toLocaleString('ru-RU')} ₽`;
+  const monthly = Number(quote.monthlyAdditional) || 0;
+  const next = monthly > 0 ? ` Дальше точка входит в цену тарифа сети: +${rub(monthly)} в месяц.` : '';
+  let question;
+  if (quote.free) {
+    question = {
+      trial: `Точка «${trimmedName}» добавится бесплатно — идёт пробный период.${next}`,
+      firstLocation: `Точка «${trimmedName}» — первая в сети, она входит в цену тарифа.`,
+      periodEnds: `Точка «${trimmedName}» добавится без доплаты — оплаченный период заканчивается.${next}`,
+      demo: `Точка «${trimmedName}» добавится в демо-сеть.`,
+    }[quote.reason] || `Добавить точку «${trimmedName}»?`;
+  } else {
+    const until = quote.periodEnd ? new Date(quote.periodEnd).toLocaleDateString('ru-RU') : '';
+    question = `Новая точка «${trimmedName}»: доплата ${rub(quote.amount)} — цена доп. точки за ${quote.remainingDays} дн. до конца оплаченного периода${until ? ` (до ${until})` : ''}.${next}\n\nТочка появится сразу после оплаты. Перейти к оплате?`;
+  }
+  if (!confirm(question)) return;
+  try {
+    const res = await callSaasGateway('chainLocationCheckout', {
+      chainId, name: trimmedName, slug,
+      returnUrl: `${location.origin}${location.pathname}#/`,
+    });
+    if (res.data?.created) {
+      toast('Точка сети добавлена');
+      state.activeTenantId = res.data.tenantId;
+      route();
+      return;
+    }
+    if (res.data?.confirmationUrl) {
+      location.href = res.data.confirmationUrl;
+      return;
+    }
+    throw new Error('Платёжный сервис не вернул ссылку на оплату');
   } catch (e) {
     toast(`Не удалось добавить точку сети: ${e?.message || e}`);
   }

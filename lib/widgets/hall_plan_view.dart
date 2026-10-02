@@ -180,31 +180,79 @@ class _HallPlanViewState extends State<HallPlanView> {
     const pad = 8.0;
     final viewport = Size(box.maxWidth, box.maxHeight);
     final content = _content();
-    final scale = HallPlanView.fitScale(content, viewport, pad: pad);
-    // Начальное положение ставим, только когда поменялся экран или
-    // расстановка столов, — иначе каждое обновление стола сбрасывало бы
-    // то, как сотрудник подвинул и приблизил схему.
-    final key = '${viewport.width.round()}x${viewport.height.round()}|${content.left.round()},${content.top.round()},'
-        '${content.width.round()},${content.height.round()}|${widget.frameKey}';
-    if (_fittedFor != key) {
-      _fittedFor = key;
-      final cw = content.width * scale, ch = content.height * scale;
-      // Помещается — по центру; не помещается — от левого верхнего угла.
-      final dx = cw <= viewport.width - pad * 2 ? (viewport.width - cw) / 2 : pad;
-      final dy = ch <= viewport.height - pad * 2 ? (viewport.height - ch) / 2 : pad;
+    final start = HallPlanView.fitScale(content, viewport, pad: pad);
+    // Отдалить можно до всех столов на экране, если в удобном масштабе
+    // они не поместились.
+    final whole = math.min((viewport.width - pad * 2) / content.width, (viewport.height - pad * 2) / content.height);
+    return _zoomable(
+      viewport: viewport,
+      area: content,
+      focus: content,
+      minScale: math.min(start, whole),
+      start: start,
+      pad: pad,
+      // Начальное положение ставим, только когда поменялся экран или
+      // расстановка столов, — иначе каждое обновление стола сбрасывало бы
+      // то, как сотрудник подвинул и приблизил схему.
+      fitKey: '${viewport.width.round()}x${viewport.height.round()}|${content.left.round()},${content.top.round()},'
+          '${content.width.round()},${content.height.round()}|${widget.frameKey}',
+    );
+  }
+
+  /// Схема, которую двигают и приближают пальцами, без «прыжков».
+  ///
+  /// InteractiveViewer не даёт уйти за край своего содержимого, а если
+  /// содержимое меньше экрана — прижимает его к левому верхнему углу: при
+  /// отдалении схема скакала в угол и обратно. Поэтому под схемой лежит
+  /// поле ровно в экран при самом мелком масштабе [minScale], а [area]
+  /// (столы или весь холст) — по его центру: отдалили до конца — схема
+  /// по центру экрана, приблизили — двигается в пределах поля.
+  Widget _zoomable({
+    required Size viewport,
+    required Rect area,
+    required Rect focus,
+    required double minScale,
+    required double start,
+    required double pad,
+    required String fitKey,
+  }) {
+    if (!(viewport.width > 0 && viewport.height > 0) || !viewport.isFinite) return const SizedBox.shrink();
+    final low = math.max(0.05, math.min(minScale, start));
+    final w = math.max(viewport.width / low, area.width);
+    final h = math.max(viewport.height / low, area.height);
+    final ox = (w - area.width) / 2 - area.left;
+    final oy = (h - area.height) / 2 - area.top;
+    if (_fittedFor != fitKey) {
+      _fittedFor = fitKey;
+      // Поле крупнее экрана — показываем [focus]: целиком по центру, а не
+      // помещается — от его левого верхнего угла.
+      double place(double field, double view, double focusStart, double focusSize) {
+        final size = field * start;
+        if (size <= view + 0.5) return (view - size) / 2;
+        final f = focusSize * start;
+        final want = f <= view - pad * 2 ? (view - f) / 2 - focusStart * start : pad - focusStart * start;
+        return want.clamp(view - size, 0.0).toDouble();
+      }
+
       _transform.value = Matrix4.identity()
-        ..translateByDouble(dx - content.left * scale, dy - content.top * scale, 0, 1)
-        ..scaleByDouble(scale, scale, 1, 1);
+        ..translateByDouble(place(w, viewport.width, focus.left + ox, focus.width),
+            place(h, viewport.height, focus.top + oy, focus.height), 0, 1)
+        ..scaleByDouble(start, start, 1, 1);
     }
-    final whole = math.min(viewport.width / kHallCanvas.width, viewport.height / kHallCanvas.height);
     return InteractiveViewer(
       transformationController: _transform,
       constrained: false,
-      minScale: math.min(scale, whole) * 0.9,
-      maxScale: 2.5,
+      minScale: low,
+      maxScale: math.max(2.5, start * 2),
       panEnabled: widget.panEnabled,
-      boundaryMargin: EdgeInsets.all(math.max(viewport.width, viewport.height)),
-      child: _canvas(),
+      boundaryMargin: EdgeInsets.zero,
+      child: SizedBox(
+        width: w,
+        height: h,
+        child: Stack(clipBehavior: Clip.hardEdge, children: [
+          Positioned(left: ox, top: oy, child: _canvas()),
+        ]),
+      ),
     );
   }
 
@@ -232,29 +280,23 @@ class _HallPlanViewState extends State<HallPlanView> {
       final start = widget.fitWidth
           ? math.max(fit, math.min(HallPlanView.comfortableScale, math.min(w / content.width, h / content.height)))
           : math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvas.height));
-      final applyKey = '${box.maxWidth}|${widget.frameKey}';
-      if (_appliedFor != applyKey) {
-        _appliedFor = applyKey;
-        double place(double from, double canvas, double view) =>
-            (pad - from * start).clamp(math.min(pad, view - pad - canvas * start), pad).toDouble();
-        _transform.value = Matrix4.identity()
-          ..translateByDouble(place(content.left, kHallCanvas.width, box.maxWidth),
-              place(content.top, kHallCanvas.height, box.maxHeight), 0, 1)
-          ..scaleByDouble(start, start, 1, 1);
+      final Widget viewer;
+      if (widget.transformationController == null) {
+        viewer = _zoomable(
+          viewport: Size(box.maxWidth, box.maxHeight),
+          area: Offset.zero & kHallCanvas,
+          focus: content,
+          minScale: fit,
+          start: start,
+          pad: pad,
+          fitKey: '${box.maxWidth.round()}x${box.maxHeight.round()}|${widget.frameKey}',
+        );
+      } else {
+        viewer = _editorViewer(box, content, fit, start, pad);
       }
       return Stack(
         children: [
-          Positioned.fill(
-            child: InteractiveViewer(
-              transformationController: _transform,
-              constrained: false,
-              minScale: fit,
-              maxScale: 2.5,
-              panEnabled: widget.panEnabled,
-              boundaryMargin: const EdgeInsets.all(pad),
-              child: _canvas(),
-            ),
-          ),
+          Positioned.fill(child: viewer),
           if (widget.showHint)
             const Positioned(
               left: 0,
@@ -287,6 +329,30 @@ class _HallPlanViewState extends State<HallPlanView> {
         ],
       );
     });
+  }
+
+  /// Редактор зала: холст в начале координат — его автопрокрутка у края
+  /// экрана (floor_plan_editor_screen.dart) считает сдвиг от холста.
+  Widget _editorViewer(BoxConstraints box, Rect content, double fit, double start, double pad) {
+    final applyKey = '${box.maxWidth}|${widget.frameKey}';
+    if (_appliedFor != applyKey) {
+      _appliedFor = applyKey;
+      double place(double from, double canvas, double view) =>
+          (pad - from * start).clamp(math.min(pad, view - pad - canvas * start), pad).toDouble();
+      _transform.value = Matrix4.identity()
+        ..translateByDouble(place(content.left, kHallCanvas.width, box.maxWidth),
+            place(content.top, kHallCanvas.height, box.maxHeight), 0, 1)
+        ..scaleByDouble(start, start, 1, 1);
+    }
+    return InteractiveViewer(
+      transformationController: _transform,
+      constrained: false,
+      minScale: fit,
+      maxScale: 2.5,
+      panEnabled: widget.panEnabled,
+      boundaryMargin: EdgeInsets.all(pad),
+      child: _canvas(),
+    );
   }
 }
 
