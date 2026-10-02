@@ -19,7 +19,7 @@ on:
         description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "ZalPOS"; пусто = название заведения'
         required: false
       logo_url:
-        description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = фирменный знак ZalPOS «◆»'
+        description: 'URL логотипа заведения (branding.logoUrl) — иконка ТОЛЬКО гостевого приложения, касса всегда со своей иконкой платформы; пусто = нейтральная иконка (клош), без цветов ZalPOS'
         required: false
       tenant_slug:
         description: 'Код заведения (tenants.slug) — если задан вместе с invite_code, собранный APK сам присоединится к этому заведению при первом запуске, без ручного ввода кодов'
@@ -55,7 +55,7 @@ jobs:
   # application_id — applicationId (com.hookahpossaas у кассы,
   # com.kolibriloungesaas у гостя); gservices_secret/appid_secret — свои
   # Firebase-приложения; default_* — иконка и имя без брендинга (у гостя
-  # без логотипа в «Брендинге» — знак платформы «◆», свой логотип заменяет
+  # без логотипа в «Брендинге» — нейтральный клош, свой логотип заменяет
   # его в шаге "Generate app launcher icon"); artifact_prefix — имя
   # артефакта.
   apps:
@@ -69,7 +69,7 @@ jobs:
           WITH_GUEST: ${{ inputs.job_id_kolibri != '' }}
         run: |
           pos='{"app":"pos","entrypoint":"lib/main.dart","project_name":"hookahpossaas","application_id":"com.hookahpossaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS","appid_secret":"SAAS_FIREBASE_APP_ID","default_icon":"assets/icon/icon.png","default_adaptive_icon":"assets/icon/icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-kassa"}'
-          guest='{"app":"kolibri","entrypoint":"lib/client/kolibri_main.dart","project_name":"kolibriloungesaas","application_id":"com.kolibriloungesaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS_KOLIBRI","appid_secret":"SAAS_FIREBASE_APP_ID_KOLIBRI","default_icon":"assets/icon/guest_icon.png","default_adaptive_icon":"assets/icon/guest_icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-guest"}'
+          guest='{"app":"kolibri","entrypoint":"lib/client/kolibri_main.dart","project_name":"kolibriloungesaas","application_id":"com.kolibriloungesaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS_KOLIBRI","appid_secret":"SAAS_FIREBASE_APP_ID_KOLIBRI","default_icon":"assets/icon/guest_icon.png","default_adaptive_icon":"assets/icon/guest_icon_foreground.png","default_adaptive_bg":"assets/icon/guest_icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-guest"}'
           if [ "$WITH_GUEST" = "true" ]; then
             echo "include=[$pos,$guest]" >> "$GITHUB_OUTPUT"
           else
@@ -514,11 +514,18 @@ jobs:
             dart run flutter_launcher_icons
           }
           # Иконка приложения гостя из branding.logoUrl. Нет логотипа, битый
-          # файл, нет сети — берём знак ZalPOS «◆», сборка не падает.
+          # файл, нет сети — нейтральная иконка (клош), сборка не падает.
           if [ -n "$LOGO_URL" ] && curl -fsSL --max-time 20 "$LOGO_URL" -o /tmp/tenant_logo.png && [ -s /tmp/tenant_logo.png ]; then
+            # Фон адаптивной иконки — цвет угла самого логотипа: лаунчер
+            # обрезает края, и шов между логотипом и фоном не виден. Угол
+            # прозрачный — светлый фон под тёмный логотип и тёмный под светлый.
+            # Цветов ZalPOS в иконке заведения нет.
+            python3 -m pip install --quiet --disable-pip-version-check pillow >/dev/null 2>&1 || true
+            ICON_BG=$(python3 .github/scripts/icon-bg.py /tmp/tenant_logo.png 2>/dev/null || echo "#141414")
+            echo "Фон иконки приложения гостя: $ICON_BG"
             sed -i -E 's|image_path: ".*"|image_path: "/tmp/tenant_logo.png"|' pubspec.yaml
             sed -i -E 's|adaptive_icon_foreground: ".*"|adaptive_icon_foreground: "/tmp/tenant_logo.png"|' pubspec.yaml
-            sed -i -E 's|adaptive_icon_background: ".*"|adaptive_icon_background: "#000000"|' pubspec.yaml
+            sed -i -E "s|adaptive_icon_background: \".*\"|adaptive_icon_background: \"$ICON_BG\"|" pubspec.yaml
             if ! dart run flutter_launcher_icons; then
               echo "::warning::Не удалось собрать иконку из логотипа заведения — используется общая иконка"
               use_default_icon

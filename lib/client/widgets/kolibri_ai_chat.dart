@@ -195,7 +195,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Text(
                 'Консьерж временно недоступен. Позовите ${VenueService.instance.terms.staffAcc} — он поможет.',
-                style: const TextStyle(color: KolibriColors.warning, fontSize: 13),
+                style: TextStyle(color: KolibriColors.warning, fontSize: 13),
               ),
             ),
           Expanded(

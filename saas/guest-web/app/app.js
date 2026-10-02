@@ -294,7 +294,7 @@ async function applyBranding() {
       if (slug) {
         localStorage.setItem('brand:' + slug, JSON.stringify({
           primaryColor: b.primaryColor, secondaryColor: b.secondaryColor,
-          accentColor: b.accentColor, backgroundColor: b.backgroundColor,
+          buttonColor: b.buttonColor, backgroundColor: b.backgroundColor,
           textColor: b.textColor, appName: b.appName,
         }));
       }

@@ -208,7 +208,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
             const CircleAvatar(
               radius: 16,
               backgroundColor: AppColors.primary,
-              child: Icon(Icons.auto_awesome, size: 18, color: Colors.white),
+              child: Icon(Icons.auto_awesome, size: 18, color: AppColors.textPrimary),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -275,8 +275,8 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
               )
             : SelectableText(
                 line.text,
-                style: TextStyle(
-                  color: isMine ? Colors.white : AppColors.textPrimary,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
                   fontSize: 14,
                   height: 1.35,
                 ),

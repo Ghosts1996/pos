@@ -836,38 +836,38 @@ boot();
 
 // ---------- ЛЕНДИНГ ----------
 
-// Возможности для лендинга — коротко, для человека, который видит систему впервые.
+// Возможности для лендинга: коротко, для человека, который видит систему впервые.
 const LANDING_FEATURES = [
-  { icon: '🗺️', title: 'Карта зала', desc: 'стены и зоны как в вашем помещении, столы любой формы, статусы и таймеры, несколько чеков на одном столе, пересадка гостей без потери заказа' },
-  { icon: '💳', title: 'Оплата и чеки', desc: 'наличные, карта, терминал, раздельный счёт, чаевые; фискальные чеки через онлайн-кассу АТОЛ' },
-  { icon: '📦', title: 'Склад и ЕГАИС', desc: 'автосписание по техкартам, остатки, инвентаризация с расхождениями, приём накладных ЕГАИС' },
-  { icon: '📅', title: 'Брони и лист ожидания', desc: 'из гостевого приложения и по телефону, подбор свободного стола, напоминания персоналу' },
-  { icon: '🎁', title: 'Программа лояльности', desc: 'уровни и кешбэк бонусами, скидочные карты, подарочные сертификаты, отзывы гостей' },
-  { icon: '📱', title: 'Гостевое приложение', desc: 'меню с фото, заказ со стола, вызов официанта, чаевые, бронь — под вашим названием и логотипом' },
-  { icon: '👥', title: 'Смены и зарплата', desc: 'кто сейчас на смене, табель, зарплата по часам, окладу за смену и проценту с продаж' },
-  { icon: '🧮', title: 'Касса смены', desc: 'X-отчёт, инкассация, внесение и выплата, пересчёт наличных при закрытии, печать отчёта' },
-  { icon: '📊', title: 'Отчёты', desc: 'выручка, средний чек, продажи по сотрудникам и позициям, история чеков и возвраты' },
-  { icon: '🤖', title: 'ИИ-помощники', desc: 'подсказки для зала и бара, разбор броней, остатки склада — отвечают по данным заведения' },
-  { icon: '🏢', title: 'Сеть заведений', desc: 'несколько точек в одном кабинете, общая программа лояльности гостей' },
-  { icon: '💻', title: 'Работает везде', desc: 'Android-планшет и телефон, компьютер с Windows; при обрыве интернета касса продолжает работать' },
+  { title: 'Карта зала', desc: 'Стены и зоны как в вашем помещении, столы любой формы, статусы и таймеры, несколько чеков на одном столе, пересадка гостей без потери заказа.' },
+  { title: 'Оплата и чеки', desc: 'Наличные, карта, терминал, раздельный счёт и чаевые. Фискальные чеки через вашу онлайн-кассу АТОЛ.' },
+  { title: 'Склад и ЕГАИС', desc: 'Автосписание по техкартам, остатки, инвентаризация с расхождениями, приём накладных ЕГАИС.' },
+  { title: 'Брони и лист ожидания', desc: 'Из приложения гостя и по телефону, подбор свободного стола, напоминания персоналу.' },
+  { title: 'Программа лояльности', desc: 'Уровни и кешбэк бонусами, скидочные карты, подарочные сертификаты, отзывы гостей.' },
+  { title: 'Приложение гостя', desc: 'Меню с фото, заказ со стола, вызов официанта, чаевые и бронь под вашим названием и логотипом.' },
+  { title: 'Смены и зарплата', desc: 'Кто сейчас на смене, табель, зарплата по часам, окладу за смену и проценту с продаж.' },
+  { title: 'Касса смены', desc: 'X-отчёт, инкассация, внесение и выплата, пересчёт наличных при закрытии, печать отчёта.' },
+  { title: 'Отчёты', desc: 'Выручка, средний чек, продажи по сотрудникам и позициям, история чеков и возвраты.' },
+  { title: 'ИИ-помощники', desc: 'Подсказки для зала и бара, разбор броней и остатков склада по данным вашего заведения.' },
+  { title: 'Сеть заведений', desc: 'Несколько точек в одном кабинете и общая программа лояльности гостей.' },
+  { title: 'Работает везде', desc: 'Android-планшет и телефон, компьютер с Windows. При обрыве интернета касса продолжает работать.' },
 ];
 
 // Форматы заведений на лендинге. Касса умеет тип заведения (venueType):
 // от него зависят слова и кнопки у персонала и гостя.
 const LANDING_FORMATS = [
   {
-    id: 'cafe', icon: '☕', title: 'Кафе',
-    lead: 'Меньше беготни в час пик — гости заказывают сами, а касса считает всё за персонал.',
+    id: 'cafe', title: 'Кафе',
+    lead: 'Меньше беготни в час пик: гости заказывают сами, а касса считает всё за персонал.',
     points: [
-      'Гости заказывают со стола по QR-коду — заказ сразу появляется на кассе',
+      'Гости заказывают со стола по QR-коду, и заказ сразу появляется на кассе',
       'Оплата наличными, картой или через терминал, раздельный счёт на компанию',
-      'Склад списывается с каждой продажи — видно, чего не хватит к утру',
-      'Бонусы и уровни гостя возвращают его снова',
+      'Склад списывается с каждой продажи: видно, чего не хватит к утру',
+      'Бонусы и уровни возвращают гостя снова',
     ],
   },
   {
-    id: 'restaurant', icon: '🍽', title: 'Ресторан',
-    lead: 'Зал, брони и кухня под контролем — от первого гостя до закрытия смены.',
+    id: 'restaurant', title: 'Ресторан',
+    lead: 'Зал, брони и кухня под контролем от первого гостя до закрытия смены.',
     points: [
       'Карта зала по зонам, несколько чеков на одном столе, пересадка без потери заказа',
       'Брони и лист ожидания в одном календаре с залом, подбор свободного стола',
@@ -876,8 +876,8 @@ const LANDING_FORMATS = [
     ],
   },
   {
-    id: 'bar', icon: '🍸', title: 'Бар',
-    lead: 'Быстро у стойки и прозрачно по остаткам — каждая продажа видна.',
+    id: 'bar', title: 'Бар',
+    lead: 'Быстро у стойки и прозрачно по остаткам: каждая продажа на виду.',
     points: [
       'Быстрые продажи у стойки и заказы гостей со столов',
       'ЕГАИС: приём накладных через ваш УТМ',
@@ -886,11 +886,11 @@ const LANDING_FORMATS = [
     ],
   },
   {
-    id: 'lounge', icon: '🛋', title: 'Лаунж',
-    lead: 'Сеансы по времени и внимание к каждому столу — даже в полном зале.',
+    id: 'lounge', title: 'Лаунж',
+    lead: 'Сеансы по времени и внимание к каждому столу даже в полном зале.',
     points: [
       'Сеансы по времени: таймер на каждом столе, продление в одно нажатие',
-      'Гость зовёт персонал за стол из приложения — стол подсвечивается на кассе',
+      'Гость зовёт персонал из приложения, и стол подсвечивается на кассе',
       'Брони на вечер с подбором свободного стола и напоминаниями',
       'Программа лояльности и подарки ко дню рождения',
     ],
@@ -906,6 +906,10 @@ function planCaps(p) {
     guestApp: !p?.features || p.features.guestApp !== false,
     ai: p?.aiEnabled !== false,
     maxEmployees: Math.max(0, Math.floor(Number(p?.maxEmployees) || 0)),
+    // Устройства касса не считает: число на сайте — только то, что записано
+    // в тарифе, 0 — без ограничений.
+    maxDevices: Math.max(0, Math.floor(Number(p?.maxDevices) || 0)),
+    prioritySupport: p?.prioritySupport === true,
   };
 }
 
@@ -945,34 +949,49 @@ const rub = (n) => `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`;
 
 function planTagline(p) {
   const c = planCaps(p);
-  if (p.isChainPlan) return 'Несколько точек: один кабинет, общие бонусы гостей и приложение на всю сеть';
-  if (!c.guestApp) return 'Касса, зал, склад и брони — всё для работы смены';
-  if (c.maxEmployees > 0) return 'Касса и приложение для гостей с вашим логотипом';
-  return 'Без ограничений — для большого зала и команды';
+  if (p.isChainPlan) {
+    if (c.maxEmployees) return 'Несколько точек в одном кабинете: общие бонусы гостей и одно приложение на всю сеть';
+    return c.prioritySupport
+      ? 'Сеть без ограничений по команде, с приоритетной поддержкой'
+      : 'Сеть без ограничений по команде на каждой точке';
+  }
+  if (c.maxEmployees && c.maxEmployees <= 6) return 'Кофейня, бар или небольшой зал';
+  if (c.maxEmployees) return 'Кафе и ресторан с полной сменой';
+  return 'Большой зал и команда без ограничений';
 }
 
-// Список возможностей карточки: [есть ли, текст].
-function planFeatureRows(p) {
+// Строки карточки тарифа — как в меню: название, отточие, значение.
+// Всё берётся из тарифа: на сайте не может оказаться того, чего в нём нет.
+// [row] — { label, value, on }; value: строка или null (тогда галочка/прочерк).
+function planFeatureRows(p, { priorityRow = p.prioritySupport === true } = {}) {
   const c = planCaps(p);
-  const perPoint = p.isChainPlan ? ' на каждой точке' : '';
-  return [
-    [true, 'Касса, карта зала, брони и склад'],
-    [true, 'Смены, зарплата, отчёты, ЕГАИС'],
-    [true, 'Кассы и устройства — без лимита'],
-    [true, c.maxEmployees
-      ? `До ${c.maxEmployees} ${plural(c.maxEmployees, 'сотрудника', 'сотрудников', 'сотрудников')}${perPoint}`
-      : `Сотрудники — без лимита${perPoint}`],
-    [c.guestApp, 'Приложение гостя с вашим логотипом'],
-    [c.guestApp, 'Меню по QR, заказ со стола, вызов персонала'],
-    [c.ai, 'ИИ-помощник для гостей и разборы смены'],
+  const perPoint = p.isChainPlan ? ' на точке' : '';
+  const rows = [
+    { label: 'Касса, зал, брони, склад', on: true },
+    { label: 'Смены, зарплата, ЕГАИС', on: true },
+    { label: `Сотрудники${perPoint}`, value: c.maxEmployees ? `до ${c.maxEmployees}` : 'без ограничений', on: true },
+    { label: `Рабочие места${perPoint}`, value: c.maxDevices ? `до ${c.maxDevices}` : 'без ограничений', on: true },
+    { label: 'Приложение гостя', on: c.guestApp },
+    { label: 'Меню по QR и заказ со стола', on: c.guestApp },
+    { label: 'ИИ-помощник', on: c.ai },
   ];
+  if (priorityRow) rows.push({ label: 'Приоритетная поддержка', on: c.prioritySupport });
+  return rows;
+}
+
+function planFeatsHtml(p, opts = {}) {
+  return planFeatureRows(p, opts).map((r) => `
+    <li class="${r.on ? 'on' : 'off'}">
+      <span class="pf-label">${esc(r.label)}</span><span class="pf-dots" aria-hidden="true"></span>
+      <span class="pf-val">${r.value ? esc(r.value) : r.on ? `${LI.check}<span class="sr-only">есть</span>` : '<span class="li-off">—</span><span class="sr-only">нет</span>'}</span>
+    </li>`).join('');
 }
 
 /**
  * Карточка тарифа на сайте. [period] — выбранный период оплаты: цена
  * показывается за месяц, итог за период — строкой ниже.
  */
-function planCardHtml(p, { period = 'monthly', selected = false, recommended = false } = {}) {
+function planCardHtml(p, { period = 'monthly', selected = false, recommended = false, priorityRow } = {}) {
   const isChain = !!p.isChainPlan;
   const usePeriod = planPeriodPrice(p, period) > 0 ? period : 'monthly';
   const months = BILLING_PERIODS[usePeriod].months;
@@ -982,9 +1001,9 @@ function planCardHtml(p, { period = 'monthly', selected = false, recommended = f
   let note;
   if (usePeriod === 'monthly') {
     const yearly = planPeriodPrice(p, 'yearly');
-    note = yearly ? `или ${rub(yearly / 12)}/мес при оплате за год` : 'оплата помесячно';
+    note = yearly ? `или ${rub(yearly)} за год: ${rub(yearly / 12)} в месяц` : 'оплата помесячно';
   } else {
-    note = `${rub(total)} за ${usePeriod === 'yearly' ? 'год' : '6 месяцев'}${discount ? ` · выгода ${discount}%` : ''}`;
+    note = `${rub(total)} за ${usePeriod === 'yearly' ? 'год' : '6 месяцев'}${discount ? `, выгода ${discount} %` : ''}`;
   }
   const additional = isChain ? planAdditionalPrice(p, usePeriod) / months : 0;
   const trialDays = Number(p.trialDays) || 14;
@@ -996,15 +1015,13 @@ function planCardHtml(p, { period = 'monthly', selected = false, recommended = f
       <div class="plan-price">
         ${isChain ? '<span class="plan-price-from">первая точка</span>' : ''}
         <span class="plan-price-num">${Math.round(perMonth).toLocaleString('ru-RU')}</span>
-        <span class="plan-price-unit">₽/мес</span>
+        <span class="plan-price-unit">₽ в месяц</span>
       </div>
       <div class="plan-price-note">${esc(note)}</div>
-      ${isChain && additional > 0 ? `<div class="plan-price-add">+ ${rub(additional)}/мес за каждую следующую точку</div>
-        <div class="plan-price-note">например, 3 точки — ${rub(perMonth + additional * 2)}/мес</div>` : ''}
-      <ul class="plan-feats">
-        ${planFeatureRows(p).map(([on, text]) => `<li class="${on ? 'on' : 'off'}">${on ? LI.check : '<span class="li-off">—</span>'}<span>${esc(text)}</span></li>`).join('')}
-      </ul>
-      <div class="plan-trial">${trialDays} ${pluralDays(trialDays)} бесплатно${isChain ? ' на первую точку' : ''} · без карты</div>
+      ${isChain && additional > 0 ? `<div class="plan-price-add">+ ${rub(additional)} в месяц за каждую следующую точку</div>
+        <div class="plan-price-note">Например, 3 точки: ${rub(perMonth + additional * 2)} в месяц</div>` : ''}
+      <ul class="plan-feats">${planFeatsHtml(p, { priorityRow })}</ul>
+      <div class="plan-trial">${trialDays} ${pluralDays(trialDays)} бесплатно${isChain ? ' на первую точку' : ''}, без карты</div>
       <button class="btn ${selected || recommended ? 'btn-primary' : 'btn-ghost'} ${isChain ? 'f-landing-chain-plan-pick' : 'f-landing-plan-pick'}" data-id="${esc(p.id)}">
         ${selected ? 'Тариф выбран' : 'Попробовать бесплатно'}
       </button>
@@ -1037,7 +1054,7 @@ const HALL_DEMO = {
     { id: 'vip', name: 'VIP', shape: 'rect', x: 442, y: 52, st: 'busy', a: '2 ч 05 мин', b: '8 700 ₽' },
     { id: 't1', name: 'Стол 1', shape: 'rect', x: 52, y: 234, st: 'busy', a: '1 ч 12 мин', b: '2 450 ₽' },
     { id: 't2', name: 'Стол 2', shape: 'circle', x: 208, y: 234, st: 'free', a: '4 места', b: '' },
-    { id: 't3', name: 'Стол 3', shape: 'long', x: 364, y: 234, w: 208, st: 'busy', a: '47 мин', b: '1 180 ₽' },
+    { id: 't3', name: 'Стол 3', shape: 'long', x: 364, y: 234, w: 208, st: 'busy', a: '47 мин', b: '1 430 ₽' },
     { id: 't4', name: 'Стол 4', shape: 'rect', x: 52, y: 390, st: 'ending', a: 'через 8 мин', b: '3 920 ₽' },
     { id: 't5', name: 'Стол 5', shape: 'rect', x: 208, y: 390, st: 'reserved', a: 'Бронь 19:30', b: '' },
     { id: 't6', name: 'Стол 6', shape: 'oval', x: 364, y: 390, w: 208, st: 'free', a: '6 мест', b: '' },
@@ -1265,22 +1282,97 @@ const LI = (() => {
   };
 })();
 
+// Цифры лендинга из настоящих тарифов (renderLandingPlans): «меню» первого
+// экрана, счёт «Из чего складывается цена» и список «Во всех тарифах».
+// Обещание появляется, только если оно верно для каждого продаваемого
+// тарифа: «рабочие места без ограничений» — если ни у одного тарифа нет
+// лимита устройств, и так далее.
+function renderLandingFacts(plans, recommendedId) {
+  const menu = $('landing-hero-menu');
+  const cheapest = plans[0];
+  const trials = plans.map((p) => Number(p.trialDays) || 14);
+  if (menu && cheapest) {
+    const minTrial = Math.min(...trials);
+    menu.innerHTML = `
+      <div><dt>Тариф «${esc(cheapest.name || cheapest.id)}»</dt><dd>${esc(rub(cheapest.priceRub))} в месяц</dd></div>
+      <div><dt>Пробный период</dt><dd>${new Set(trials).size > 1
+        // «от 3 дней», «от 21 дня» — после «от» родительный падеж.
+        ? `от ${minTrial} ${minTrial % 10 === 1 && minTrial % 100 !== 11 ? 'дня' : 'дней'}`
+        : `${minTrial} ${pluralDays(minTrial)}`}, без карты</dd></div>
+      <div><dt>Процент с ваших продаж</dt><dd>0 %</dd></div>`;
+  }
+
+  const all = (fn) => plans.length > 0 && plans.every(fn);
+  const chips = $('landing-pricing-chips');
+  if (chips) {
+    const items = [
+      'Касса на Android и Windows', 'Карта зала и брони', 'Склад и техкарты',
+      'Чеки через вашу ККТ АТОЛ', 'ЕГАИС через ваш УТМ', 'Бонусы, скидочные карты, сертификаты',
+      'Смены и зарплата', 'Отчёты и кабинет владельца',
+      ...(all((p) => planCaps(p).guestApp) ? ['Приложение гостя с вашим логотипом'] : []),
+      ...(all((p) => planCaps(p).maxDevices === 0) ? ['Рабочие места без ограничений'] : []),
+      'Обновления без доплаты', 'Без процента с продаж',
+    ];
+    chips.innerHTML = items.map((t) => `<li class="pricing-chip">${LI.check}${esc(t)}</li>`).join('');
+  }
+
+  // Счёт — по рекомендуемому тарифу (иначе по самому доступному).
+  const bill = $('landing-bill');
+  const p = plans.find((x) => x.id === recommendedId) || cheapest;
+  if (!bill) return;
+  if (!p) { bill.innerHTML = ''; return; }
+  const c = planCaps(p);
+  const yearly = planPeriodPrice(p, 'yearly');
+  const line = (label, value, cls = '') => `<li class="${cls}"><span>${label}</span><i aria-hidden="true"></i><b>${value}</b></li>`;
+  const sub = $('landing-value-sub');
+  if (sub) sub.textContent = `Модули не докупаются отдельно. Вот счёт за месяц на тарифе «${p.name || p.id}»: всё, что в нём есть, уже в цене.`;
+  bill.innerHTML = `
+    <div class="bill-head"><span>ZalPOS</span><span>Счёт за месяц</span></div>
+    <div class="bill-title">Тариф «${esc(p.name || p.id)}»</div>
+    <ul class="bill-lines">
+      ${line('Касса, карта зала, брони', 'включено')}
+      ${line('Склад, техкарты, ЕГАИС', 'включено')}
+      ${line('Смены, зарплата, отчёты', 'включено')}
+      ${c.guestApp ? line('Приложение гостя с вашим логотипом', 'включено') : ''}
+      ${c.ai ? line('ИИ-помощник', 'включено') : ''}
+      ${line('Сотрудники', c.maxEmployees ? `до ${c.maxEmployees}` : 'без ограничений')}
+      ${line('Рабочие места', c.maxDevices ? `до ${c.maxDevices}` : 'без доплаты')}
+      ${line('Обновления', 'без доплаты')}
+      ${line('Процент с выручки', '0 %')}
+    </ul>
+    <ul class="bill-lines bill-total">
+      ${line('Итого в месяц', esc(rub(p.priceRub)), 'total')}
+      ${yearly ? line('При оплате за год', `${esc(rub(yearly))}, это ${esc(rub(yearly / 12))} в месяц`, 'yearly') : ''}
+    </ul>
+    <div class="bill-foot">${Number(p.trialDays) || 14} ${pluralDays(Number(p.trialDays) || 14)} бесплатно, без карты</div>`;
+}
+
 function screenLanding() {
   let selectedPlanId = window.localStorage.getItem('selectedPlanId') || null;
   // Тёмно-синяя тема только у лендинга, кабинет остаётся в своей.
   screenEl().classList.add('landing');
 
   const HOW_IT_WORKS = [
-    { title: 'Оставляете email', desc: 'Придёт ссылка для входа — без пароля и без банковской карты. Сразу открывается бесплатный тестовый период (срок — в карточке тарифа ниже).' },
-    { title: 'Настраиваете под свой бренд', desc: 'Название, логотип и цвета приложения, меню и склад, лимиты сотрудников и устройств — 10–15 минут в личном кабинете.' },
-    { title: 'Подключаете планшет и работаете', desc: 'Приложение кассы — прямо из личного кабинета. Вводите код заведения — касса, склад, брони и лояльность уже работают.' },
+    { title: 'Оставляете email', desc: 'Придёт ссылка для входа, без пароля и банковской карты. Сразу начинается бесплатный пробный период, его срок указан в карточке тарифа.' },
+    { title: 'Настраиваете под себя', desc: 'Название, логотип и цвета приложения, меню, склад и сотрудники. В личном кабинете это занимает 10–15 минут.' },
+    { title: 'Подключаете планшет', desc: 'Скачиваете кассу из личного кабинета и вводите код заведения. Касса, склад, брони и лояльность сразу работают.' },
   ];
-  const LANDING_FAQ_PREVIEW = [FAQ_ITEMS[0], FAQ_ITEMS[4], FAQ_ITEMS[5], FAQ_ITEMS[3]];
+  const LANDING_FAQ_PREVIEW = [FAQ_ITEMS[0], FAQ_ITEMS[4], FAQ_ITEMS[6], FAQ_ITEMS[3]];
+  const PAINS = [
+    ['Выручка не сходится с кассой', 'Каждый чек, скидка и возврат записаны с именем сотрудника. При закрытии смены есть X-отчёт и пересчёт наличных.'],
+    ['Продукты заканчиваются внезапно', 'Склад списывается с каждой продажи по техкартам, остатки видны всегда, инвентаризация показывает расхождения.'],
+    ['Гости ждут официанта', 'Гость сам заказывает и зовёт персонал со стола по QR-коду, а стол на кассе сразу подсвечивается.'],
+    ['Брони теряются в переписке', 'Все брони в одном календаре с картой зала: свободный стол подбирается сам, персонал получает напоминание.'],
+    ['Гости приходят один раз', 'Кешбэк бонусами, уровни, подарки ко дню рождения и сертификаты живут у гостя в приложении с вашим логотипом.'],
+    ['Зарплату считаете вечером в Excel', 'Смены отмечаются на кассе. Зарплата по часам, окладу и проценту с продаж считается сама, чаевые тоже.'],
+    ['Не знаете, что происходит без вас', 'В кабинете владельца с телефона видно выручку за сегодня, открытые столы, кто на смене и сколько чеков закрыто.'],
+    ['Отчёт по смене занимает полчаса', 'Выручка, средний чек, продажи по сотрудникам и позициям собираются в пару нажатий, X-отчёт можно распечатать.'],
+  ];
 
   screenEl().innerHTML = `
     <nav class="landing-nav">
       <div class="landing-inner landing-nav-inner">
-        <a class="landing-logo" href="#/" aria-label="ZalPOS — на главную">Zal<span>POS</span></a>
+        <a class="landing-logo" href="#/" aria-label="ZalPOS, на главную">Zal<span>POS</span></a>
         <div class="landing-nav-links">
           <button type="button" data-scroll="landing-pains">Возможности</button>
           <button type="button" data-scroll="landing-formats">Для кого</button>
@@ -1297,34 +1389,33 @@ function screenLanding() {
     <section class="landing-section landing-hero-section">
       <div class="landing-inner landing-hero-grid">
         <div class="landing-hero-copy">
-          <div class="l-overline">Касса и управление заведением</div>
-          <h1>Всё заведение — в&nbsp;одном планшете. <em>Без хаоса, потерь и&nbsp;тетрадок.</em></h1>
-          <p class="landing-hero-lede">Официант принимает заказ за секунды, гость сам заказывает и зовёт
-          персонал со стола, склад списывается сам, зарплата считается сама — а вы видите выручку и смену
-          с телефона, даже когда вас нет в зале.</p>
+          <h1>Зал, касса и&nbsp;гости <em>в&nbsp;одном планшете</em></h1>
+          <p class="landing-hero-lede">Официант принимает заказ за секунды, гость сам заказывает со стола, склад
+          списывается по техкартам, зарплата считается по сменам. Выручку и смену вы видите с телефона, даже
+          когда вас нет в зале.</p>
 
           <ul class="landing-hero-points">
-            <li>${LI.check}<span>Запуск за 15 минут на обычном Android-планшете, телефоне или компьютере с Windows — без покупки оборудования</span></li>
-            <li>${LI.check}<span>Приложение для гостей под вашим названием и логотипом — меню, заказ со стола, бонусы, бронь</span></li>
-            <li>${LI.check}<span>Бесплатный тест: нужен только email, банковская карта не нужна</span></li>
+            <li>${LI.check}<span>Работает на Android-планшете, телефоне и компьютере с Windows, которые у вас уже есть</span></li>
+            <li>${LI.check}<span>Приложение для гостей под вашим названием и логотипом: меню, заказ со стола, бонусы и бронь</span></li>
+            <li>${LI.check}<span>Пробный период без банковской карты: нужен только email</span></li>
           </ul>
           <div class="row landing-hero-actions">
             <button class="btn btn-primary" id="f-landing-hero-cta">Попробовать бесплатно</button>
             <button class="btn-link l-arrow-link" id="f-landing-hero-demo">Как выглядит смена ${LI.arrowDown}</button>
           </div>
-          <dl class="hero-facts">
-            <div class="hero-fact"><dt id="landing-hero-price">от 990 ₽</dt><dd>в месяц за всё заведение</dd></div>
-            <div class="hero-fact"><dt>0 %</dt><dd>комиссии с продаж</dd></div>
-            <div class="hero-fact"><dt>без лимита</dt><dd>касс и устройств</dd></div>
+          <dl class="menu-lines hero-menu" id="landing-hero-menu">
+            <div><dt>Тариф</dt><dd>…</dd></div>
+            <div><dt>Пробный период</dt><dd>…</dd></div>
+            <div><dt>Процент с ваших продаж</dt><dd>0 %</dd></div>
           </dl>
         </div>
 
         <div class="landing-hero-form-wrap">
           <div class="card landing-hero-card">
             <div class="landing-form-title">Начните бесплатно</div>
-            <p class="small muted l-form-sub">Кабинет откроется по ссылке из письма — без пароля.</p>
+            <p class="small muted l-form-sub">Кабинет откроется по ссылке из письма, пароль не нужен.</p>
             <p id="f-landing-skip-trial-note" class="small l-note" style="display:none">
-              Выбрана оплата сразу, без пробного периода — после регистрации откроется страница оплаты.
+              Выбрана оплата сразу, без пробного периода: после регистрации откроется страница оплаты.
             </p>
             <label class="field"><span>Email</span>
               <input id="f-landing-email" type="email" autocomplete="email" placeholder="you@example.com">
@@ -1339,7 +1430,7 @@ function screenLanding() {
             </label>
             <div id="f-landing-error" class="small l-error"></div>
             <button class="btn btn-primary" id="f-landing-start">Попробовать бесплатно</button>
-            <p class="small muted l-form-foot">Пришлём ссылку для входа на почту — без пароля, ничего запоминать не нужно.</p>
+            <p class="small muted l-form-foot">Пришлём ссылку для входа на почту. Ничего запоминать не нужно.</p>
           </div>
 
           <div class="owner-mock" aria-hidden="true">
@@ -1350,7 +1441,7 @@ function screenLanding() {
               <div><b>6</b><span>столов открыто</span></div>
             </div>
             <div class="owner-mock-row"><span>На смене</span><span>Анна · Илья · Марат</span></div>
-            <div class="owner-mock-note">Пример экрана — так кабинет выглядит с телефона</div>
+            <div class="owner-mock-note">Пример экрана: так кабинет выглядит с телефона</div>
           </div>
           <p class="small muted l-demo-hint">Хотите сначала потрогать?
             <button class="btn-link" id="f-landing-goto-demo">Демо без регистрации</button></p>
@@ -1361,12 +1452,10 @@ function screenLanding() {
     <section class="landing-section l-dark landing-showcase" id="landing-showcase">
       <div class="landing-inner">
         <div class="l-head">
-          <div class="l-overline">Смена в ZalPOS</div>
-          <h2 class="landing-h2">Касса у персонала и приложение у гостя — одна система</h2>
-          <p class="landing-h2-sub">Схема зала — как ваше помещение: стены, подписи и столы любой формы вы
-          рисуете в редакторе за пару минут, а удобнее списком — зал переключается одним нажатием. Касса у персонала и
-          приложение у гостя работают вместе в реальном времени: гость нажал «Позвать официанта» — стол на кассе сразу
-          подсвечивается.</p>
+          <h2 class="landing-h2">Касса у персонала и&nbsp;приложение у&nbsp;гостя работают как одно целое</h2>
+          <p class="landing-h2-sub">Схему зала со стенами, подписями и столами любой формы вы рисуете в редакторе
+          за пару минут, а списком зал открывается одним нажатием. Гость нажал «Позвать официанта», и стол
+          на кассе сразу подсвечивается.</p>
         </div>
         <div class="showcase" aria-hidden="true">
           <div class="mock-tablet">
@@ -1393,10 +1482,10 @@ function screenLanding() {
             <div class="mp-bill">
               <div><span>Лимонад манго</span><span>390 ₽</span></div>
               <div><span>Паста карбонара</span><span>690 ₽</span></div>
-              <div><span>Чизкейк</span><span>100 ₽</span></div>
-              <div class="mp-total"><span>Итого</span><span>1 180 ₽</span></div>
+              <div><span>Чизкейк</span><span>350 ₽</span></div>
+              <div class="mp-total"><span>Итого</span><span>1 430 ₽</span></div>
             </div>
-            <div class="mp-bonus">+ 59 бонусов за визит</div>
+            <div class="mp-bonus">+ 71 бонус за визит</div>
           </div>
           <div class="mock-toast t1" id="hd-toast-call"><i></i>Стол 3 зовёт официанта</div>
           <div class="mock-toast t2" id="hd-toast-booking"><i></i>Новая бронь: сегодня 20:00, Стол 6</div>
@@ -1407,31 +1496,28 @@ function screenLanding() {
     <section class="landing-section" id="landing-demo">
       <div class="landing-inner l-split">
         <div class="l-head">
-          <div class="l-overline">Попробовать сейчас</div>
           <h2 class="landing-h2">Демо без регистрации</h2>
-          <p class="landing-h2-sub">Скачайте кассу на Android, нажмите «Демо» — откроется готовая сеть из двух
-          заведений: залы, меню с фото, открытая смена, брони и гости с бонусами. Демо живёт 3 дня, потом само
-          возвращается в исходный вид.</p>
-          <p class="small muted">Та же касса при первом запуске присоединяется и к вашему
-          заведению — по коду заведения и коду приглашения из личного кабинета.</p>
+          <p class="landing-h2-sub">Скачайте кассу на Android и нажмите «Демо»: откроется готовая сеть из двух
+          заведений с залами, меню, открытой сменой, бронями и гостями. Через 3 дня демо само возвращается
+          в исходный вид.</p>
+          <p class="small muted">Та же касса при первом запуске подключается и к вашему заведению по коду
+          заведения и коду приглашения из личного кабинета.</p>
         </div>
-        <div class="demo-cards">
-          <div class="demo-card">
-            <div class="demo-card-icon">${LI.tablet}</div>
-            <div class="demo-card-title">Касса — для персонала</div>
-            <div class="demo-card-text">При запуске нажмите «Демо» и выберите точку. У каждой точки свои сотрудники и PIN-коды.</div>
+        <div class="demo-cols">
+          <div class="demo-col">
+            <div class="demo-col-title">${LI.tablet}<span>Касса для персонала</span></div>
+            <p class="demo-col-text">При запуске нажмите «Демо» и выберите точку. У каждой точки свои сотрудники и PIN-коды.</p>
             <button class="btn btn-primary" id="f-landing-download-apk">${LI.download} Скачать демо-кассу (APK)</button>
             <details class="demo-pins landing-demo-pins">
               <summary>PIN-коды сотрудников демо</summary>
-              <div><b>«Демо · Центр»:</b> кальянщик — <code>1111</code>, официант — <code>2222</code>, бармен — <code>3333</code>, администратор — <code>111111</code></div>
-              <div><b>«Демо · Набережная»:</b> кальянщик — <code>4444</code>, официант — <code>5555</code>, бармен — <code>6666</code>, администратор — <code>222222</code></div>
+              <div><b>«Демо · Центр»:</b> кальянщик <code>1111</code>, официант <code>2222</code>, бармен <code>3333</code>, администратор <code>111111</code></div>
+              <div><b>«Демо · Набережная»:</b> кальянщик <code>4444</code>, официант <code>5555</code>, бармен <code>6666</code>, администратор <code>222222</code></div>
             </details>
           </div>
-          <div class="demo-card">
-            <div class="demo-card-icon">${LI.phone}</div>
-            <div class="demo-card-title">Приложение гостя</div>
-            <div class="demo-card-text">Введите код демо с экрана входа кассы (вида <code>demo-ab12cd</code>) — закажите со
-            стола, позовите официанта или забронируйте: касса увидит это сразу.</div>
+          <div class="demo-col">
+            <div class="demo-col-title">${LI.phone}<span>Приложение гостя</span></div>
+            <p class="demo-col-text">Введите код демо с экрана входа кассы (вида <code>demo-ab12cd</code>), закажите со стола,
+            позовите официанта или забронируйте стол. Касса увидит это сразу.</p>
             <button class="btn btn-ghost" id="f-landing-download-guest-demo">${LI.download} Скачать демо приложения гостя (APK)</button>
           </div>
         </div>
@@ -1441,38 +1527,20 @@ function screenLanding() {
     <section class="landing-section landing-section-alt" id="landing-pains">
       <div class="landing-inner">
         <div class="l-head l-head-row">
-          <div>
-            <div class="l-overline">Знакомо?</div>
-            <h2 class="landing-h2">Узнаёте своё заведение?</h2>
-          </div>
-          <p class="landing-h2-sub">Каждая из этих мелочей каждый месяц забирает деньги и нервы. ZalPOS закрывает их все сразу.</p>
+          <h2 class="landing-h2">Узнаёте своё заведение?</h2>
+          <p class="landing-h2-sub">Каждая из этих мелочей забирает деньги и нервы. ZalPOS закрывает их все сразу.</p>
         </div>
-        <ol class="pain-list">
-          ${[
-            ['Выручка не сходится с кассой', 'Каждый чек, скидка и возврат записаны с именем сотрудника. При закрытии смены — X-отчёт и пересчёт наличных.'],
-            ['Продукты заканчиваются внезапно', 'Склад списывается с каждой продажи по техкартам, остатки видны всегда, инвентаризация показывает расхождения.'],
-            ['Гости ждут официанта', 'Гость сам заказывает и зовёт персонал со стола по QR-коду, а на кассе стол сразу подсвечивается.'],
-            ['Брони теряются в переписке', 'Все брони — в одном календаре с картой зала: свободный стол подбирается сам, персонал получает напоминание.'],
-            ['Гости приходят один раз', 'Кешбэк бонусами, уровни, подарки ко дню рождения и сертификаты — у гостя в приложении с вашим логотипом.'],
-            ['Зарплату считаете вечером в Excel', 'Смены отмечаются на кассе, зарплата по часам, окладу и проценту с продаж считается сама, чаевые — тоже.'],
-            ['Не знаете, что происходит без вас', 'В кабинете владельца с телефона: выручка за сегодня, открытые столы, кто на смене, сколько чеков закрыто.'],
-            ['Отчёт по смене — полчаса вручную', 'Выручка, средний чек, продажи по сотрудникам и позициям — в пару нажатий, с печатью X-отчёта.'],
-          ].map(([pain, fix], n) => `
-            <li class="pain-item">
-              <span class="pain-num">${String(n + 1).padStart(2, '0')}</span>
-              <div class="pain-text">${pain}</div>
-              <div class="pain-fix">${fix}</div>
-            </li>`).join('')}
-        </ol>
+        <dl class="pain-ledger">
+          ${PAINS.map(([pain, fix]) => `<div class="pain-row"><dt>${pain}</dt><dd>${fix}</dd></div>`).join('')}
+        </dl>
       </div>
     </section>
 
     <section class="landing-section" id="landing-formats">
       <div class="landing-inner l-split">
         <div class="l-head">
-          <div class="l-overline">Для кого</div>
           <h2 class="landing-h2">Под ваш формат заведения</h2>
-          <p class="landing-h2-sub">Выберите свой — касса и приложение гостя сами подстраивают слова и кнопки под тип заведения.</p>
+          <p class="landing-h2-sub">Выберите свой: касса и приложение гостя подстраивают слова и кнопки под тип заведения.</p>
         </div>
         <div>
           <div class="format-tabs" role="tablist">
@@ -1486,24 +1554,20 @@ function screenLanding() {
     <section class="landing-section landing-section-alt">
       <div class="landing-inner">
         <div class="l-head">
-          <div class="l-overline">Что внутри</div>
-          <h2 class="landing-h2">Три приложения — одна система</h2>
+          <h2 class="landing-h2">Три приложения и&nbsp;одна база</h2>
         </div>
         <div class="apps-grid">
           <div class="app-card">
-            <div class="app-icon">${LI.tablet}</div>
-            <div class="app-title">Касса для персонала</div>
+            <div class="app-title">${LI.tablet}<span>Касса для персонала</span></div>
             <div class="app-desc">Android-планшет, телефон или компьютер с Windows. Вход по PIN-коду, у каждого своя роль: официант, бармен, администратор.</div>
           </div>
           <div class="app-card">
-            <div class="app-icon">${LI.phone}</div>
-            <div class="app-title">Приложение для гостей</div>
-            <div class="app-desc">Меню с фото, заказ со стола, вызов персонала, счёт, чаевые, бонусы и бронь — под вашим названием и логотипом. На iPhone открывается в браузере без установки.</div>
+            <div class="app-title">${LI.phone}<span>Приложение для гостей</span></div>
+            <div class="app-desc">Меню с фото, заказ со стола, вызов персонала, счёт, чаевые, бонусы и бронь под вашим названием и логотипом. На iPhone открывается в браузере без установки.</div>
           </div>
           <div class="app-card">
-            <div class="app-icon">${LI.chart}</div>
-            <div class="app-title">Кабинет владельца</div>
-            <div class="app-desc">Выручка за сегодня, кто на смене, брендинг, устройства и оплата — с телефона или компьютера, откуда угодно.</div>
+            <div class="app-title">${LI.chart}<span>Кабинет владельца</span></div>
+            <div class="app-desc">Выручка за сегодня, кто на смене, брендинг, устройства и оплата. С телефона или компьютера, откуда угодно.</div>
           </div>
         </div>
       </div>
@@ -1512,7 +1576,6 @@ function screenLanding() {
     <section class="landing-section" id="landing-how">
       <div class="landing-inner">
         <div class="l-head">
-          <div class="l-overline">Запуск</div>
           <h2 class="landing-h2">Как это работает</h2>
         </div>
         <ol class="landing-steps">
@@ -1530,12 +1593,9 @@ function screenLanding() {
     <section class="landing-section landing-section-alt" id="landing-features">
       <div class="landing-inner">
         <div class="l-head l-head-row">
-          <div>
-            <div class="l-overline">Возможности</div>
-            <h2 class="landing-h2">Всё, что есть в системе</h2>
-          </div>
-          <p class="landing-h2-sub">Касса, зал, склад, брони, лояльность и зарплата — во всех тарифах. Приложение для гостей
-          и ИИ-помощник — с тарифа «Бизнес». Подробно — в карточках тарифов ниже.</p>
+          <h2 class="landing-h2">Всё, что есть в&nbsp;системе</h2>
+          <p class="landing-h2-sub">Касса, зал, склад, брони, лояльность и зарплата входят во все тарифы. Что ещё входит
+          в каждый тариф, указано в карточках ниже.</p>
         </div>
         <div class="feature-grid">
           ${LANDING_FEATURES.map((f) => `
@@ -1549,27 +1609,28 @@ function screenLanding() {
     </section>
 
     <section class="landing-section l-dark" id="landing-value">
-      <div class="landing-inner">
+      <div class="landing-inner value-layout">
         <div class="l-head">
-          <div class="l-overline">Экономика</div>
-          <h2 class="landing-h2">Почему это выгодно</h2>
-          <p class="landing-h2-sub">То, что в кассовых системах для общепита часто продают отдельными модулями
-          и лицензиями, здесь уже входит в тариф.</p>
+          <h2 class="landing-h2">Из чего складывается цена</h2>
+          <p class="landing-h2-sub" id="landing-value-sub">Модули не докупаются отдельно: всё, что есть в тарифе, уже в его цене.</p>
+          <div class="value-extra">
+            <div class="value-extra-title">Оплачивается отдельно, не нам</div>
+            <ul>
+              <li>Онлайн-касса (ККТ) с фискальным накопителем и договор с ОФД, если вы пробиваете фискальные чеки</li>
+              <li>Комиссия банка за оплату картой (эквайринг) по вашему договору с банком</li>
+              <li>УТМ и электронная подпись для ЕГАИС, если продаёте алкоголь</li>
+            </ul>
+          </div>
         </div>
-        <div class="value-grid">
-          <div class="value-card"><b id="landing-value-day">от 52 ₽</b><span>в день — касса и приложение для гостей при оплате за год</span></div>
-          <div class="value-card"><b>0 ₽</b><span>за каждую дополнительную кассу, планшет официанта или компьютер</span></div>
-          <div class="value-card"><b>0 %</b><span>с выручки — сколько бы вы ни продали, цена тарифа не растёт</span></div>
-        </div>
+        <div class="bill" id="landing-bill" aria-live="polite"></div>
       </div>
     </section>
 
     <section class="landing-section landing-pricing-section" id="landing-pricing">
       <div class="landing-inner">
         <div class="l-head l-head-center">
-          <div class="l-overline">Тарифы</div>
-          <h2 class="landing-h2">Тарифы без доплат за модули</h2>
-          <p class="landing-h2-sub" id="landing-pricing-sub">Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.</p>
+          <h2 class="landing-h2">Тарифы без доплат за&nbsp;модули</h2>
+          <p class="landing-h2-sub" id="landing-pricing-sub">Бесплатный пробный период на любом тарифе, банковская карта не нужна. Без процента с продаж.</p>
         </div>
         <div class="pricing-switches">
           <div id="landing-pricing-toggle" class="landing-pricing-toggle" style="display:none">
@@ -1586,12 +1647,7 @@ function screenLanding() {
         <div id="landing-chain-plans" class="landing-plans-grid" style="display:none"></div>
         <div class="pricing-included">
           <div class="pricing-included-title">Во всех тарифах</div>
-          <ul class="pricing-chips">
-            ${['Касса на Android и Windows', 'Кассы и устройства без лимита', 'Карта зала и брони', 'Склад и техкарты',
-              'Чеки через вашу ККТ АТОЛ', 'ЕГАИС через ваш УТМ', 'Бонусы и скидочные карты', 'Смены и зарплата',
-              'Отчёты и кабинет владельца', 'Обновления без доплат', 'Без процентов с продаж']
-              .map((t) => `<li class="pricing-chip">${LI.check}${esc(t)}</li>`).join('')}
-          </ul>
+          <ul class="pricing-chips" id="landing-pricing-chips"></ul>
         </div>
       </div>
     </section>
@@ -1599,14 +1655,13 @@ function screenLanding() {
     <section class="landing-section landing-section-alt">
       <div class="landing-inner l-split">
         <div class="l-head">
-          <div class="l-overline">Надёжность</div>
-          <h2 class="landing-h2">Безопасность и соответствие</h2>
+          <h2 class="landing-h2">Безопасность и&nbsp;соответствие</h2>
         </div>
         <ul class="l-facts-list">
-          <li>${LI.lock}<span>Данные заведений разделены правилами доступа: персонал видит только своё заведение, это проверяют автотесты</span></li>
-          <li>${LI.server}<span>Имена и телефоны гостей сначала записываются на сервер в России — в соответствии с 152-ФЗ</span></li>
-          <li>${LI.receipt}<span>Фискальные чеки (54-ФЗ) — через вашу зарегистрированную онлайн-кассу АТОЛ; ЕГАИС — через ваш УТМ. Система подключается к ним, но не заменяет ККТ, договор с ОФД и эквайринг</span></li>
-          <li>${LI.cloud}<span>Инфраструктура — надёжный облачный провайдер с резервированием и автомасштабированием, статус в реальном времени — на <a href="#/status">странице статуса</a></span></li>
+          <li>${LI.lock}<span>Данные заведений разделены правилами доступа: персонал видит только своё заведение. Это проверяют автотесты.</span></li>
+          <li>${LI.server}<span>Имена и телефоны гостей сначала записываются на сервер в России, как требует 152-ФЗ.</span></li>
+          <li>${LI.receipt}<span>Фискальные чеки (54-ФЗ) идут через вашу зарегистрированную онлайн-кассу АТОЛ, ЕГАИС работает через ваш УТМ. Система подключается к ним, но не заменяет ККТ, договор с ОФД и эквайринг.</span></li>
+          <li>${LI.cloud}<span>Данные заведений хранятся в облаке Google Firebase, раз в сутки мы делаем резервную копию на своём сервере. Работа сервисов видна на <a href="#/status">странице статуса</a>.</span></li>
         </ul>
       </div>
     </section>
@@ -1614,14 +1669,13 @@ function screenLanding() {
     <section class="landing-section">
       <div class="landing-inner">
         <div class="l-head">
-          <div class="l-overline">Без обязательств</div>
-          <h2 class="landing-h2">Попробовать — без риска</h2>
+          <h2 class="landing-h2">Попробовать без&nbsp;риска</h2>
         </div>
         <div class="risk-grid">
-          <div class="risk-item"><b>Бесплатный тест</b><span>Нужен только email — ни карты, ни договора, чтобы начать.</span></div>
-          <div class="risk-item"><b>Без обязательств</b><span>Автопродление отключается в любой момент в личном кабинете.</span></div>
-          <div class="risk-item"><b>Без процентов с продаж</b><span>Только фиксированная цена тарифа — сколько бы вы ни продали, комиссии с чеков и выручки нет.</span></div>
-          <div class="risk-item"><b>Демо без регистрации</b><span>Скачайте кассу и нажмите «Демо» — готовое заведение с залом, меню, бронями и гостями, всё можно нажимать.</span></div>
+          <div class="risk-item"><b>Пробный период</b><span>Нужен только email: ни карты, ни договора.</span></div>
+          <div class="risk-item"><b>Без обязательств</b><span>Автопродление отключается в личном кабинете в любой момент.</span></div>
+          <div class="risk-item"><b>Цена не зависит от выручки</b><span>Вы платите только за тариф, процента с чеков и выручки нет.</span></div>
+          <div class="risk-item"><b>Демо без регистрации</b><span>Скачайте кассу и нажмите «Демо»: готовое заведение с залом, меню, бронями и гостями.</span></div>
         </div>
       </div>
     </section>
@@ -1629,7 +1683,6 @@ function screenLanding() {
     <section class="landing-section landing-section-alt" id="landing-faq">
       <div class="landing-inner l-split">
         <div class="l-head">
-          <div class="l-overline">Вопросы</div>
           <h2 class="landing-h2">Частые вопросы</h2>
           <p class="small"><a class="l-arrow-link" href="#/faq">Все вопросы ${LI.arrow}</a></p>
         </div>
@@ -1647,7 +1700,7 @@ function screenLanding() {
     <section class="landing-section l-dark landing-cta-band">
       <div class="landing-inner landing-cta-inner">
         <h3>Откройте своё заведение в&nbsp;ZalPOS <em>уже сегодня</em></h3>
-        <p>Бесплатный доступ по email, без карты. Или скачайте кассу и нажмите «Демо» — готовое заведение
+        <p>Бесплатный доступ по email, без карты. Или скачайте кассу и нажмите «Демо»: готовое заведение
         с залом, меню и гостями откроется за минуту.</p>
         <div class="landing-cta-buttons">
           <button class="btn" id="f-landing-cta-bottom">Попробовать бесплатно</button>
@@ -1778,12 +1831,14 @@ function screenLanding() {
     // «Рекомендуем» — средний из трёх и больше, у двух — дорогой.
     const recommendedId = plans.length >= 3 ? plans[Math.floor(plans.length / 2)].id : plans.length === 2 ? plans[1].id : null;
     body.innerHTML = plans.length
-      ? plans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId, recommended: p.id === recommendedId })).join('')
+      ? plans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId, recommended: p.id === recommendedId,
+        priorityRow: plans.some((x) => x.prioritySupport === true) })).join('')
       : '<p class="small muted">Тарифы скоро появятся.</p>';
     body.classList.toggle('three', plans.length === 3);
     const chainBody = $('landing-chain-plans');
     if (chainBody) {
-      chainBody.innerHTML = chainPlans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId })).join('');
+      chainBody.innerHTML = chainPlans.map((p) => planCardHtml(p, { period: landingPeriod, selected: p.id === selectedPlanId,
+        priorityRow: chainPlans.some((x) => x.prioritySupport === true) })).join('');
       chainBody.classList.toggle('one', chainPlans.length === 1);
     }
 
@@ -1800,19 +1855,16 @@ function screenLanding() {
       b.classList.toggle('active', b.dataset.period === landingPeriod);
     });
 
-    // Цифры первого экрана и блока «Почему выгодно» — из настоящих цен.
-    const cheapest = plans[0];
-    if (cheapest && $('landing-hero-price')) $('landing-hero-price').textContent = `от ${rub(cheapest.priceRub)}`;
-    const withGuest = plans.filter((p) => planCaps(p).guestApp)
-      .map((p) => (planPeriodPrice(p, 'yearly') || (Number(p.priceRub) || 0) * 12) / 365)
-      .filter((v) => v > 0);
-    if (withGuest.length && $('landing-value-day')) $('landing-value-day').textContent = `от ${rub(Math.min(...withGuest))}`;
+    // Первый экран, «Из чего складывается цена» и «Во всех тарифах» — только
+    // из настоящих тарифов: на сайте не должно быть обещаний, которых в
+    // тарифах нет.
+    renderLandingFacts(plans, recommendedId);
     const trial = [...new Set(plans.map((p) => Number(p.trialDays) || 14))];
     const subEl = $('landing-pricing-sub');
     if (subEl && !subEl.dataset.chain) {
       subEl.textContent = trial.length === 1
-        ? `${trial[0]} ${pluralDays(trial[0])} бесплатно на любом тарифе — банковская карта не нужна. Без процентов с продаж.`
-        : 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.';
+        ? `${trial[0]} ${pluralDays(trial[0])} бесплатно на любом тарифе, банковская карта не нужна. Без процента с продаж.`
+        : 'Бесплатный пробный период на любом тарифе, банковская карта не нужна. Без процента с продаж.';
     }
     bindPlanButtons();
   };
@@ -1860,8 +1912,8 @@ function screenLanding() {
   });
 
   // Переключатель «Одно заведение / Сеть» — только если есть тарифы сети.
-  const SINGLE_SUB_FALLBACK = 'Бесплатный тестовый период на любом тарифе — банковская карта не нужна. Без процентов с продаж.';
-  const CHAIN_SUB = 'Несколько точек одного владельца — общий кабинет и оплата, общая программа лояльности, гость выбирает точку сети прямо в приложении.';
+  const SINGLE_SUB_FALLBACK = 'Бесплатный пробный период на любом тарифе, банковская карта не нужна. Без процента с продаж.';
+  const CHAIN_SUB = 'Несколько точек одного владельца: общий кабинет и оплата, общая программа лояльности, гость выбирает точку сети прямо в приложении.';
   const setMode = (mode) => {
     const toggle = $('landing-pricing-toggle');
     toggle?.querySelectorAll('.landing-pricing-toggle-btn').forEach((btn) => {
@@ -2716,13 +2768,13 @@ const TIMEZONE_OPTIONS = [
 
 // Вопросы, которые на самом деле задают при выборе и подключении.
 const FAQ_ITEMS = [
-  { q: 'Что входит в пробный период?', a: 'Все функции выбранного тарифа — оплата не запрашивается, пока пробный период не закончится, банковская карта не нужна. Срок указан в карточке тарифа. Тариф в пробный период можно бесплатно поменять в разделе «Оплата» — например, попробовать «Бизнес» с приложением для гостей.' },
+  { q: 'Что входит в пробный период?', a: 'Все функции выбранного тарифа. Оплата не запрашивается, пока пробный период не закончится, банковская карта не нужна. Срок указан в карточке тарифа. В пробный период тариф можно бесплатно поменять в разделе «Оплата», например чтобы попробовать тариф с ИИ-помощником.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом не удаляются 10 дней (грейс-период) — если оплатить в течение этого срока, всё восстановится как было. После 10 дней данные удаляются безвозвратно.' },
   { q: 'Как подключить планшет на кассе?', a: 'В разделе «Устройства» — код приглашения и универсальный APK. Устанавливаете APK на планшет, при первом запуске вводите код заведения и код приглашения — планшет сам подключится к вашему заведению.' },
-  { q: 'Можно ли сменить тариф позже?', a: 'Да. В пробный период — бесплатно и сразу, в разделе «Оплата». После оплаты — выберите другой тариф при следующей оплате: он начнёт действовать с неё, без обращения в поддержку.' },
-  { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Да, через вашу онлайн-кассу АТОЛ: система отправляет в неё чек с позициями, ставками НДС и способами оплаты. Саму ККТ с фискальным накопителем, договор с ОФД и регистрацию в ФНС оформляете вы — система к ним подключается, но не заменяет. Приём карт — через ваш банковский терминал или эквайринг, подключение — в разделе «Интеграции» на кассе.' },
+  { q: 'Можно ли сменить тариф позже?', a: 'Да. В пробный период это бесплатно и сразу, в разделе «Оплата». После оплаты выберите другой тариф при следующей оплате: он начнёт действовать с неё, без обращения в поддержку.' },
+  { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Да, через вашу онлайн-кассу АТОЛ: система отправляет в неё чек с позициями, ставками НДС и способами оплаты. Саму ККТ с фискальным накопителем, договор с ОФД и регистрацию в ФНС оформляете вы: система к ним подключается, но не заменяет их. Карты принимаются через ваш банковский терминал или эквайринг, подключение настраивается в разделе «Интеграции» на кассе.' },
   { q: 'Где хранятся данные заведения?', a: 'Имена и телефоны гостей сначала записываются на наш сервер в России, остальные данные — в облаке с резервированием. Данные заведений разделены правилами доступа: другие заведения платформы не могут увидеть ваши данные — это проверяется автоматическими тестами защиты.' },
-  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Касс, планшетов и компьютеров — сколько нужно, во всех тарифах без доплат. Число сотрудников зависит от тарифа и указано в его карточке: когда лимит достигнут, касса предложит удалить уволенного сотрудника или перейти на тариф выше.' },
+  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Число сотрудников и рабочих мест (планшетов, телефонов, компьютеров) указано в карточке тарифа. За каждое рабочее место отдельно платить не нужно. Когда лимит сотрудников достигнут, касса предложит удалить уволенного сотрудника или перейти на тариф выше. Онлайн-касса (ККТ) для фискальных чеков покупается отдельно у её поставщика.' },
   { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Экспортировать данные до удаления можно, обратившись в поддержку.' },
   { q: 'Откуда фото блюд в демо-заведении?', a: 'Это фото со свободных фотостоков — для примера, в вашем заведении будут ваши фото и ваше меню. Авторы и лицензии указаны на отдельной странице.', link: { href: '#/demo-photos', text: 'Авторы фото →' } },
 ];
@@ -3342,9 +3394,7 @@ function watchDashboardData(tenantId) {
                 <div class="cab-plan-price">${rub(p.priceRub)}<span>/мес${isChain ? ' за первую точку' : ''}</span></div>
                 ${isChain && planAdditionalPrice(p, 'monthly') > 0 ? `<div class="small muted">+ ${rub(planAdditionalPrice(p, 'monthly'))}/мес за каждую следующую точку</div>` : ''}
                 ${yearly || semi ? `<div class="small muted">${[semi ? `${rub(semi)} за 6 мес` : '', yearly ? `${rub(yearly)} за год${planPeriodDiscount(p, 'yearly') ? ` (−${planPeriodDiscount(p, 'yearly')}%)` : ''}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
-                <ul class="plan-feats compact">
-                  ${planFeatureRows(p).map(([on, text]) => `<li class="${on ? 'on' : 'off'}">${on ? LI.check : '<span class="li-off">—</span>'}<span>${esc(text)}</span></li>`).join('')}
-                </ul>
+                <ul class="plan-feats compact">${planFeatsHtml(p, { priorityRow: list.some((x) => x.prioritySupport === true) })}</ul>
                 ${semi || yearly ? `
                   <select class="f-plan-period" id="f-plan-period-${esc(p.id)}" data-plan="${esc(p.id)}" style="margin-bottom:8px">
                     <option value="monthly">Оплатить на месяц</option>
@@ -4995,11 +5045,13 @@ function screenSuperAdmin() {
         <h1>Тарифы</h1>
         <div class="card" style="margin-bottom:14px">
           <div style="font-weight:700;margin-bottom:4px">Рекомендованная сетка к запуску продаж</div>
-          <p class="small muted">«Старт» 990 ₽/мес (касса, зал, склад, брони; до 5 сотрудников; без приложения гостя и ИИ),
-          «Бизнес» 1 990 ₽ (+ приложение гостя, меню по QR и ИИ; до 15 сотрудников), «Про» 2 990 ₽ (без лимитов),
-          «Сеть» 2 990 ₽ за первую точку + 1 490 ₽ за каждую следующую. Год — выгода 20%, полгода — 10%. Пробный период
-          14 дней. Тарифы вне сетки уходят в архив: с сайта пропадают, кто на них — остаётся на прежних условиях.
-          Тем, кто уже платит, подорожание начнёт действовать через 30 дней (так в оферте) — разошлите им объявление.</p>
+          <p class="small muted">Одно заведение: «Старт» 1 990 ₽/мес (до 5 сотрудников, приложение гостя, без ИИ),
+          «Бизнес» 2 990 ₽ (до 15 сотрудников, приложение гостя и ИИ), «Про» 4 490 ₽ (сотрудники без ограничений,
+          приоритетная поддержка). Сеть: «Сеть» 2 990 ₽ за первую точку + 2 290 ₽ за каждую следующую (до 15 сотрудников
+          на точке), «Сеть Про» 4 490 ₽ + 3 490 ₽ (без ограничений, приоритетная поддержка). Рабочие места везде без
+          ограничений. Год — выгода 20%, полгода — около 10%. Пробный период 14 дней. Тарифы вне сетки уходят в архив:
+          с сайта пропадают, кто на них — остаётся на прежних условиях. Тем, кто уже платит, подорожание начнёт
+          действовать через 30 дней (так в оферте) — разошлите им объявление.</p>
           <button class="btn btn-ghost" id="f-apply-plan-catalog" style="width:auto">Посмотреть изменения и применить</button>
         </div>
         <div id="admin-plans"><div class="spinner"></div></div>
@@ -5217,6 +5269,11 @@ function watchAdminSupportTickets() {
   const body = $('admin-support');
   let tickets = [];
   let tenantNames = new Map();
+  // Приоритетная поддержка — по тарифу заведения (у точки сети — тариф сети).
+  const tenantPlan = new Map();
+  const chainPlan = new Map();
+  let planPriority = new Map();
+  const isPriority = (t) => planPriority.get(tenantPlan.get(t.tenantId)) === true;
   let expandedId = null;
   let messages = null;
   let unsubMessages = null;
@@ -5241,17 +5298,18 @@ function watchAdminSupportTickets() {
       body.innerHTML = '<p class="small muted">Обращений пока не было.</p>';
       return;
     }
-    // Открытые наверх; sort стабильный, так что внутри групп остаётся
-    // порядок запроса — новые сверху.
+    // Открытые наверх, среди них — с приоритетной поддержкой по тарифу;
+    // sort стабильный, так что внутри групп остаётся порядок запроса —
+    // новые сверху.
     const sorted = tickets.slice().sort((a, b) => {
-      const rank = (t) => (t.status === 'closed' ? 1 : 0);
+      const rank = (t) => (t.status === 'closed' ? 2 : isPriority(t) ? 0 : 1);
       return rank(a) - rank(b);
     });
     renderKeepingInputs(body, `<div class="card">${sorted.map((t) => `
       <div style="padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="row f-admin-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;cursor:pointer">
           <div class="small grow" style="min-width:0">
-            <b>${esc(t.subject || '')}</b> · ${esc(tenantNames.get(t.tenantId) || t.tenantId)}
+            ${isPriority(t) ? '<span class="cab-plan-badge" style="margin-right:6px">Приоритет</span>' : ''}<b>${esc(t.subject || '')}</b> · ${esc(tenantNames.get(t.tenantId) || t.tenantId)}
             <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
           </div>
           ${t.status !== 'closed' && t.lastAuthorRole !== 'super_admin'
@@ -5320,11 +5378,25 @@ function watchAdminSupportTickets() {
     await Promise.all([...new Set(tickets.map((t) => t.tenantId))].filter((id) => !tenantNames.has(id)).map(async (id) => {
       try {
         const tSnap = await getDoc(doc(state.db, 'tenants', id));
-        tenantNames.set(id, tSnap.exists() ? tSnap.data().name : id);
+        const t = tSnap.exists() ? tSnap.data() : {};
+        tenantNames.set(id, t.name || id);
+        let planId = t.planId || null;
+        if (t.chainId) {
+          if (!chainPlan.has(t.chainId)) {
+            const cSnap = await getDoc(doc(state.db, 'chains', t.chainId)).catch(() => null);
+            chainPlan.set(t.chainId, cSnap?.exists() ? cSnap.data().planId || null : null);
+          }
+          planId = chainPlan.get(t.chainId) || planId;
+        }
+        tenantPlan.set(id, planId);
       } catch (_) {
         tenantNames.set(id, id);
       }
     }));
+    try {
+      const plansSnap = await getDocs(collection(state.db, 'plans'));
+      planPriority = new Map(plansSnap.docs.map((d) => [d.id, d.data().prioritySupport === true]));
+    } catch (_) {}
     draw();
   }, () => {
     body.innerHTML = '<p class="small muted">Обращения недоступны.</p>';
@@ -5594,7 +5666,7 @@ function watchAllTenants() {
           <label class="field"><span>Оплачено до</span>
             <input type="date" class="f-sub-period-end" id="f-sub-period-end-${esc(t.id)}" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.currentPeriodEnd)}">
           </label>
-          <label class="field"><span>Триал до</span>
+          <label class="field"><span>Пробный период до</span>
             <input type="date" class="f-sub-trial-end" id="f-sub-trial-end-${esc(t.id)}" data-id="${esc(t.id)}" value="${tsToDateInputValue(t.subscription?.trialEndsAt)}">
           </label>
           <button class="btn btn-ghost f-sub-save" data-id="${esc(t.id)}">Сохранить подписку</button>
@@ -5837,7 +5909,7 @@ function watchAllTenants() {
   if ($('f-export-tenants-csv')) {
     $('f-export-tenants-csv').onclick = () => {
       const rows = [[
-        'Название', 'Код', 'Статус', 'Тариф', 'Статус подписки', 'Оплачено до', 'Триал до',
+        'Название', 'Код', 'Статус', 'Тариф', 'Статус подписки', 'Оплачено до', 'Пробный период до',
         'Владелец (email)', 'Сотрудников', 'Устройств', 'Столов', 'Гостей', 'Создано',
       ]];
       allTenants.forEach((t) => {
@@ -6006,7 +6078,7 @@ function watchPlans() {
           <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxEmployees" value="${Number(p.maxEmployees) || 0}">
           </label>
-          <label class="field grow"><span>Устройств (0 = без лимита)</span>
+          <label class="field grow"><span>Устройств (0 = без лимита; касса их не считает — число видно на сайте и в предупреждениях панели)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxDevices" value="${Number(p.maxDevices) || 0}">
           </label>
         </div>
@@ -6030,6 +6102,9 @@ function watchPlans() {
           </label>
           <label class="row" style="width:auto;gap:6px">
             <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="customDomain" ${p.customDomain ? 'checked' : ''}> Свой домен
+          </label>
+          <label class="row" style="width:auto;gap:6px">
+            <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="prioritySupport" ${p.prioritySupport ? 'checked' : ''}> Приоритетная поддержка
           </label>
           <label class="row" style="width:auto;gap:6px">
             <input type="checkbox" class="f-plan-checkbox" data-plan="${esc(p.id)}" data-field="features.guestApp" ${planCaps(p).guestApp ? 'checked' : ''}> Приложение гостя и меню по QR
@@ -6106,7 +6181,7 @@ async function applyPlanCatalog() {
   try {
     const { data } = await callSaasGateway('applyPlanCatalog', {});
     const line = (r) => {
-      if (r.action === 'moveOrphans') return `• ${r.count} ${plural(r.count, 'заведение', 'заведения', 'заведений')} без выбранного тарифа (заглушка «start») перейдут на «${(data.diff || []).find((x) => x.planId === r.to)?.after?.name || r.to}» — у них сохранится приложение гостя`;
+      if (r.action === 'moveOrphans') return `• ${r.count} ${plural(r.count, 'заведение', 'заведения', 'заведений')} без выбранного тарифа (заглушка «start») перейдут на «${(data.diff || []).find((x) => x.planId === r.to)?.after?.name || r.to}» — у них сохранятся приложение гостя и ИИ`;
       if (r.action === 'archive') return `• «${r.before.name}» (${r.planId}) — в архив, цена ${r.before.priceRub} ₽ для тех, кто на нём, не меняется`;
       const from = r.before ? `«${r.before.name}» ${r.before.priceRub} ₽ → ` : 'новый: ';
       const extra = [
@@ -6114,6 +6189,7 @@ async function applyPlanCatalog() {
         r.after.maxEmployees ? `до ${r.after.maxEmployees} сотр.` : 'без лимита сотрудников',
         r.after.guestApp ? 'приложение гостя' : 'без приложения гостя',
         r.after.ai ? 'ИИ' : 'без ИИ',
+        r.after.prioritySupport ? 'приоритетная поддержка' : '',
       ].filter(Boolean).join(', ');
       return `• ${r.planId}: ${from}«${r.after.name}» ${r.after.priceRub} ₽/мес (${extra})`;
     };
