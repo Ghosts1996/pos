@@ -31,6 +31,12 @@ jobs:
     name: Windows smoke (Flutter ${{ matrix.flutter }})
     runs-on: windows-latest
     timeout-minutes: 75
+    env:
+      # firebase-admin без ключа ищет сервер метаданных облака — на машине
+      # GitHub (Azure) это долгое ожидание. С эмуляторами он не нужен.
+      METADATA_SERVER_DETECTION: none
+      GCLOUD_PROJECT: demo-hookah
+      GOOGLE_CLOUD_PROJECT: demo-hookah
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +74,7 @@ jobs:
 
       - name: Start emulators and saas-gateway
         shell: pwsh
+        timeout-minutes: 15
         run: |
           $dir = "${{ github.workspace }}\.github\windows-smoke"
           Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
@@ -79,13 +86,20 @@ jobs:
           $env:GCLOUD_PROJECT = 'demo-hookah'
           $env:PORT = '8095'
           $env:FIREBASE_WEB_CONFIG_JSON = '{"apiKey":"fake-api-key","authDomain":"demo-hookah.firebaseapp.com","projectId":"demo-hookah","appId":"1:1:web:1","messagingSenderId":"1"}'
+          $up = $false
           for ($i = 0; $i -lt 90; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 2 }
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
           }
+          if (-not $up) { Write-Host '::error::эмулятор Firestore не запустился'; Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 60; exit 1 }
+          Write-Host 'эмуляторы отвечают'
           Start-Process -FilePath 'node' -ArgumentList "`"${{ github.workspace }}\saas-gateway\server.js`"" -RedirectStandardOutput "$env:RUNNER_TEMP\gateway.log" -RedirectStandardError "$env:RUNNER_TEMP\gateway.err.log" -WindowStyle Hidden
+          $up = $false
           for ($i = 0; $i -lt 30; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; Write-Host 'шлюз отвечает'; break } catch { Start-Sleep 2 }
+            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
           }
+          if (-not $up) { Write-Host '::error::saas-gateway не запустился'; Get-Content "$env:RUNNER_TEMP\gateway.log", "$env:RUNNER_TEMP\gateway.err.log" -Tail 60; exit 1 }
+          Write-Host 'шлюз отвечает'
+          Write-Host 'данные: демо-сеть через шлюз'
           node "$dir\seed.js" demo
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 40; Get-Content "$env:RUNNER_TEMP\gateway.err.log" -Tail 40; exit 1 }
 
@@ -117,6 +131,7 @@ jobs:
 
       - name: Run scenarios
         shell: pwsh
+        timeout-minutes: 15
         run: |
           $exe = Get-ChildItem -Recurse -Path build\windows -Filter hookah_pos.exe | Where-Object { $_.FullName -match '\\runner\\Release\\' } | Select-Object -First 1
           if (-not $exe) { Write-Host '::error::hookah_pos.exe не найден'; exit 1 }
