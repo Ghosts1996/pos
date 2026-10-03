@@ -13,6 +13,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/public-apk-release.yml'
+      - '.github/scripts/patch-firestore-windows.js'
 
 # Несколько пушей подряд — собирается только последний: старая сборка
 # отменяется, файл на сайте всегда от самой свежей версии.
@@ -520,3 +521,180 @@ jobs:
           chmod 600 ~/.ssh/deploy_tenant_key
           ssh -i ~/.ssh/deploy_tenant_key -o StrictHostKeyChecking=no root@"$SSH_HOST" "publicdemo guestdemo" \
             < build/app/outputs/flutter-apk/zalpos-guest-demo.apk
+
+  # Демо-касса для Windows: тот же lib/main.dart, что и APK кассы выше, без
+  # кодов заведения — при первом запуске «Демо» или код своего заведения.
+  # Шаги — как у Windows-сборки заведения (saas-on-demand-build.yml,
+  # job build-windows): правя одну, проверьте и другую. Установщик тот же
+  # (AppId общий), поэтому касса заведения потом ставится поверх демо.
+  build-windows:
+    runs-on: windows-latest
+    name: Build public demo (Windows)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows desktop support
+        shell: bash
+        run: flutter config --enable-windows-desktop
+
+      - name: Generate missing Windows platform files
+        shell: bash
+        run: |
+          flutter create . --platforms=windows
+          test -d windows && echo "windows/ готова" || (echo "не удалось создать windows/" && exit 1)
+          sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          sed -i -E 's/(VALUE "(FileDescription|ProductName)", )"hookah_pos"/\1"ZalPOS"/' windows/runner/Runner.rc
+          grep -n 'ZalPOS' windows/runner/main.cpp windows/runner/Runner.rc || echo "::warning::заголовок окна не заменён"
+          cp assets/icon/app_icon.ico windows/runner/resources/app_icon.ico
+          rm -f test/widget_test.dart
+
+      - name: Install dependencies
+        shell: bash
+        run: flutter pub get
+
+      # Ошибка плагина cloud_firestore для Windows (подробности — в скрипте).
+      - name: Patch cloud_firestore (Windows)
+        shell: bash
+        run: node .github/scripts/patch-firestore-windows.js
+
+      # Тесты уже прогнала сборка APK кассы — код общий.
+      - name: Build Windows (release, SaaS mode, без привязки к заведению)
+        shell: bash
+        env:
+          PII_GATEWAY_URL: https://pii.zalpos.ru/
+          SAAS_GATEWAY_URL: https://pii.zalpos.ru/saas
+          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+          CXXFLAGS: -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+        run: |
+          flutter build windows --release \
+            -t lib/main.dart \
+            --build-number=${{ github.run_number }} \
+            --dart-define=SAAS_MODE=true \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=PII_GATEWAY_URL="$PII_GATEWAY_URL" \
+            --dart-define=SAAS_GATEWAY_URL="$SAAS_GATEWAY_URL"
+
+      - name: Locate Release output folder
+        id: outdir
+        shell: bash
+        run: |
+          DIR=""
+          while IFS= read -r d; do
+            if [ -f "$d/flutter_windows.dll" ] && [ -d "$d/data" ] && ls "$d"/*.exe >/dev/null 2>&1; then
+              DIR="$d"; break
+            fi
+          done < <(find build/windows -type d -path '*/runner/Release')
+          if [ -z "$DIR" ]; then
+            echo "::error::Не нашли готовую папку runner/Release (exe + flutter_windows.dll + data)"
+            find build/windows -maxdepth 4 -type d | head -50
+            exit 1
+          fi
+          echo "path=$DIR" >> "$GITHUB_OUTPUT"
+
+      # Установщик: ярлыки, удаление через «Приложения», без прав
+      # администратора. Библиотеки Visual C++ — рядом с exe, иначе на
+      # «чистом» компьютере касса не запустится.
+      - name: Build Windows installer (setup.exe)
+        id: setup
+        shell: pwsh
+        run: |
+          $out = (Resolve-Path "${{ steps.outdir.outputs.path }}").Path
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (Test-Path $src) { Copy-Item $src $out -Force }
+          }
+          $exe = (Get-ChildItem $out -Filter *.exe | Select-Object -First 1).Name
+          if (-not $exe) { Write-Error "В папке сборки нет exe"; exit 1 }
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $iscc)) { Write-Error "Inno Setup не установлен"; exit 1 }
+
+          $dist = (New-Item -ItemType Directory -Force -Path "build/windows/installer").FullName
+          $setupIcon = (Resolve-Path "assets/icon/app_icon.ico").Path
+          $name = "zalpos-kassa-demo-setup"
+          $iss = @"
+          [Setup]
+          AppId={{6F1C2A9E-3B7D-4E5A-9C41-5A7D3E2B9C10}
+          AppName=ZalPOS
+          AppVersion=1.0.${{ github.run_number }}
+          AppPublisher=ZalPOS
+          DefaultDirName={autopf}\ZalPOS
+          DefaultGroupName=ZalPOS
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=lowest
+          OutputDir=$dist
+          OutputBaseFilename=$name
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          UninstallDisplayIcon={app}\$exe
+          SetupIconFile=$setupIcon
+          CloseApplications=yes
+
+          [Languages]
+          Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
+
+          [Files]
+          Source: "$out\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\ZalPOS"; Filename: "{app}\$exe"
+          Name: "{autodesktop}\ZalPOS"; Filename: "{app}\$exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\$exe"; Description: "Запустить ZalPOS"; Flags: nowait postinstall skipifsilent
+          "@
+          $issPath = Join-Path $dist "zalpos_demo.iss"
+          # С BOM — иначе русские подписи установщика превратятся в «кракозябры».
+          [System.IO.File]::WriteAllText($issPath, $iss, (New-Object System.Text.UTF8Encoding $true))
+          & $iscc $issPath
+          if ($LASTEXITCODE -ne 0) { Write-Error "ISCC завершился с ошибкой $LASTEXITCODE"; exit 1 }
+
+          $setup = Join-Path $dist "$name.exe"
+          if (-not (Test-Path $setup) -or (Get-Item $setup).Length -lt 1MB) {
+            Write-Error "Установщик не создан или подозрительно мал: $setup"
+            exit 1
+          }
+          Write-Host ("Установщик: {0} ({1:N1} МБ)" -f $setup, ((Get-Item $setup).Length / 1MB))
+          echo "path=$setup" >> $env:GITHUB_OUTPUT
+
+      - name: Publish to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload public-apk "${{ steps.setup.outputs.path }}" --repo "${{ github.repository }}" --clobber \
+            || echo "::warning::Релиза public-apk ещё нет — установщик попадёт в него со следующей сборкой"
+
+      # Тем же скриптом deploy-tenant-apk.sh, что и демо гостя: папка
+      # publicdemo, файл kassawin.apk (на диске имя всегда *.apk, тип для
+      # браузера задаёт GET /saas/windowsDemo).
+      - name: Deploy to own server (pii.zalpos.ru)
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY_TENANT }}
+          SSH_HOST: pii.zalpos.ru
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "::warning::DEPLOY_SSH_KEY_TENANT не задан — демо для Windows осталось только в GitHub Release."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_tenant_key
+          chmod 600 ~/.ssh/deploy_tenant_key
+          ssh -i ~/.ssh/deploy_tenant_key -o StrictHostKeyChecking=no root@"$SSH_HOST" "publicdemo kassawin" \
+            < "${{ steps.setup.outputs.path }}"

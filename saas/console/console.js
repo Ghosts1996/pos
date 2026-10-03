@@ -1274,6 +1274,7 @@ const LI = (() => {
     download: svg('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>'),
     tablet: svg('<rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M10.5 16.2h3"/>'),
     phone: svg('<rect x="6.8" y="2.8" width="10.4" height="18.4" rx="2.4"/><path d="M10.8 18.2h2.4"/>'),
+    monitor: svg('<rect x="3" y="4" width="18" height="12.5" rx="1.8"/><path d="M9 20.5h6M12 16.5v4"/>'),
     chart: svg('<path d="M4 19.5h16"/><path d="M6.5 16V11M11 16V6.5M15.5 16v-3.5M20 16V8.5"/>'),
     lock: svg('<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>'),
     server: svg('<rect x="4" y="4.5" width="16" height="6" rx="1.6"/><rect x="4" y="13.5" width="16" height="6" rx="1.6"/><path d="M7.5 7.5h.01M7.5 16.5h.01"/>'),
@@ -1303,6 +1304,20 @@ function renderLandingFacts(plans, recommendedId) {
   }
 
   const all = (fn) => plans.length > 0 && plans.every(fn);
+  // «Почему ZalPOS»: обещания — только верные для продаваемых тарифов.
+  const whyGuest = $('why-guest-app');
+  if (whyGuest && plans.length && !all((p) => planCaps(p).guestApp)) {
+    const first = plans.find((p) => planCaps(p).guestApp);
+    whyGuest.textContent = first
+      ? `Меню, заказ со стола, брони и бонусы под вашим логотипом: в тарифе «${first.name || first.id}» и старше, без отдельного модуля.`
+      : 'Меню, заказ со стола, брони и бонусы под вашим логотипом и в ваших цветах.';
+  }
+  const whyPrice = $('why-price');
+  if (whyPrice && plans.length) {
+    const minTrial = Math.min(...trials);
+    whyPrice.textContent = 'Фиксированная подписка: без процента с выручки и без платы за обновления. '
+      + `${new Set(trials).size > 1 ? 'От ' : ''}${minTrial} ${pluralDays(minTrial)} бесплатно, без карты.`;
+  }
   const chips = $('landing-pricing-chips');
   if (chips) {
     const items = [
@@ -1494,33 +1509,49 @@ function screenLanding() {
     </section>
 
     <section class="landing-section" id="landing-demo">
-      <div class="landing-inner l-split">
-        <div class="l-head">
-          <h2 class="landing-h2">Демо без регистрации</h2>
-          <p class="landing-h2-sub">Скачайте кассу на Android и нажмите «Демо»: откроется готовая сеть из двух
-          заведений с залами, меню, открытой сменой, бронями и гостями. Через 3 дня демо само возвращается
-          в исходный вид.</p>
-          <p class="small muted">Та же касса при первом запуске подключается и к вашему заведению по коду
-          заведения и коду приглашения из личного кабинета.</p>
+      <div class="landing-inner">
+        <div class="l-head l-head-row">
+          <h2 class="landing-h2">Демо за&nbsp;две минуты</h2>
+          <p class="landing-h2-sub">Без заявки, звонка и&nbsp;менеджера. Скачайте кассу, нажмите «Демо»
+          и&nbsp;работайте в&nbsp;готовой сети из&nbsp;двух заведений: залы, меню, открытая смена, брони и&nbsp;гости.</p>
         </div>
-        <div class="demo-cols">
-          <div class="demo-col">
-            <div class="demo-col-title">${LI.tablet}<span>Касса для персонала</span></div>
-            <p class="demo-col-text">При запуске нажмите «Демо» и выберите точку. У каждой точки свои сотрудники и PIN-коды.</p>
-            <button class="btn btn-primary" id="f-landing-download-apk">${LI.download} Скачать демо-кассу (APK)</button>
-            <details class="demo-pins landing-demo-pins">
-              <summary>PIN-коды сотрудников демо</summary>
-              <div><b>«Демо · Центр»:</b> кальянщик <code>1111</code>, официант <code>2222</code>, бармен <code>3333</code>, администратор <code>111111</code></div>
-              <div><b>«Демо · Набережная»:</b> кальянщик <code>4444</code>, официант <code>5555</code>, бармен <code>6666</code>, администратор <code>222222</code></div>
-            </details>
+        <div class="demo-board">
+          <div class="demo-downloads">
+            <p class="demo-route"><span>Скачайте кассу</span>${LI.arrow}<span>нажмите «Демо»</span>${LI.arrow}<span>войдите по&nbsp;PIN-коду</span></p>
+            <div class="demo-dl" data-platform="android">
+              <div class="demo-dl-icon">${LI.tablet}</div>
+              <div class="demo-dl-text"><b>Касса для Android</b><span>Планшет или телефон</span></div>
+              <button class="btn btn-primary" id="f-landing-download-apk">${LI.download}<span>Скачать APK</span></button>
+            </div>
+            <div class="demo-dl" data-platform="windows">
+              <div class="demo-dl-icon">${LI.monitor}</div>
+              <div class="demo-dl-text"><b>Касса для Windows</b><span>Windows 10 и&nbsp;11, установка без прав администратора</span></div>
+              <button class="btn btn-primary" id="f-landing-download-windows">${LI.download}<span>Скачать для Windows</span></button>
+            </div>
+            <div class="demo-dl demo-dl-guest" data-platform="guest">
+              <div class="demo-dl-icon">${LI.phone}</div>
+              <div class="demo-dl-text"><b>Приложение гостя</b><span>Android. Введите код демо с&nbsp;экрана входа кассы, вида&nbsp;<code>demo-ab12cd</code></span></div>
+              <button class="btn btn-ghost" id="f-landing-download-guest-demo">${LI.download}<span>Скачать APK</span></button>
+            </div>
+            <p class="demo-hint" id="landing-demo-hint" hidden></p>
           </div>
-          <div class="demo-col">
-            <div class="demo-col-title">${LI.phone}<span>Приложение гостя</span></div>
-            <p class="demo-col-text">Введите код демо с экрана входа кассы (вида <code>demo-ab12cd</code>), закажите со стола,
-            позовите официанта или забронируйте стол. Касса увидит это сразу.</p>
-            <button class="btn btn-ghost" id="f-landing-download-guest-demo">${LI.download} Скачать демо приложения гостя (APK)</button>
+          <div class="demo-pins-card">
+            <div class="bill-head"><span>PIN-коды демо</span><span>Сотрудники</span></div>
+            <div class="demo-pins-cols">
+              ${[['Демо · Центр', ['1111', '2222', '3333', '111111']], ['Демо · Набережная', ['4444', '5555', '6666', '222222']]].map(([venue, pins]) => `
+                <div>
+                  <div class="demo-pins-venue">${venue}</div>
+                  <ul class="bill-lines">
+                    ${['Кальянщик', 'Официант', 'Бармен', 'Администратор'].map((role, i) =>
+                      `<li><span>${role}</span><i aria-hidden="true"></i><b>${pins[i]}</b></li>`).join('')}
+                  </ul>
+                </div>`).join('')}
+            </div>
+            <p class="demo-pins-note">Касса при входе спросит точку: у каждой свои сотрудники, гости и бонусы общие.</p>
           </div>
         </div>
+        <p class="demo-foot">Через 3 дня демо само возвращается в&nbsp;исходный вид. Та же касса подключается и&nbsp;к&nbsp;вашему
+        заведению по&nbsp;коду заведения и&nbsp;коду приглашения из&nbsp;личного кабинета.</p>
       </div>
     </section>
 
@@ -1668,14 +1699,24 @@ function screenLanding() {
 
     <section class="landing-section">
       <div class="landing-inner">
-        <div class="l-head">
-          <h2 class="landing-h2">Попробовать без&nbsp;риска</h2>
+        <div class="l-head l-head-row">
+          <h2 class="landing-h2">Почему ZalPOS</h2>
+          <p class="landing-h2-sub">Мы сравнили, как подключают кассы для общепита, и&nbsp;убрали то, что обычно
+          мешает начать: заявки на&nbsp;демо, платное внедрение и&nbsp;доплаты за&nbsp;модули.</p>
         </div>
-        <div class="risk-grid">
-          <div class="risk-item"><b>Пробный период</b><span>Нужен только email: ни карты, ни договора.</span></div>
-          <div class="risk-item"><b>Без обязательств</b><span>Автопродление отключается в личном кабинете в любой момент.</span></div>
-          <div class="risk-item"><b>Цена не зависит от выручки</b><span>Вы платите только за тариф, процента с чеков и выручки нет.</span></div>
-          <div class="risk-item"><b>Демо без регистрации</b><span>Скачайте кассу и нажмите «Демо»: готовое заведение с залом, меню, бронями и гостями.</span></div>
+        <div class="risk-grid why-grid">
+          <div class="risk-item"><b>Демо без заявки</b><span>Скачали кассу, нажали «Демо» и&nbsp;через две минуты работаете
+            в&nbsp;готовом заведении. Без звонка менеджера и&nbsp;выезда специалиста.</span></div>
+          <div class="risk-item"><b>Приложение гостя в&nbsp;тарифе</b><span id="why-guest-app">Меню, заказ со&nbsp;стола, брони и&nbsp;бонусы
+            под вашим логотипом и&nbsp;в&nbsp;ваших цветах. Входит в&nbsp;тариф, а&nbsp;не&nbsp;продаётся отдельным модулем.</span></div>
+          <div class="risk-item"><b>Сделано для зала</b><span>Таймер сеанса за&nbsp;столом, вызовы нужному сотруднику,
+            схема зала со&nbsp;стенами и&nbsp;брони по&nbsp;реальной занятости. Всё уже в&nbsp;кассе, без доработок на&nbsp;заказ.</span></div>
+          <div class="risk-item"><b>Android и&nbsp;Windows вместе</b><span>Планшет в&nbsp;зале, телефон официанта
+            и&nbsp;моноблок на&nbsp;баре работают в&nbsp;одной смене и&nbsp;одной подписке.</span></div>
+          <div class="risk-item"><b>Честная цена</b><span id="why-price">Фиксированная подписка: без процента с&nbsp;выручки
+            и&nbsp;без платы за&nbsp;обновления. Пробный период&nbsp;— без карты.</span></div>
+          <div class="risk-item"><b>Без обязательств</b><span>Подписка помесячно, без долгих договоров. Автопродление
+            выключается в&nbsp;личном кабинете в&nbsp;любой момент.</span></div>
         </div>
       </div>
     </section>
@@ -1786,7 +1827,9 @@ function screenLanding() {
     $('f-landing-hero-demo').onclick = () =>
       $('landing-showcase')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-  if ($('f-landing-cta-demo')) $('f-landing-cta-demo').onclick = downloadPublicApk;
+  if ($('f-landing-cta-demo')) $('f-landing-cta-demo').onclick = downloadDemoForThisDevice;
+  if ($('f-landing-download-windows')) $('f-landing-download-windows').onclick = downloadWindowsDemo;
+  suggestDemoPlatform();
 
   // Форматы заведения: вкладки с тем, что даёт система именно такому заведению.
   const renderFormat = (id) => {
@@ -7732,6 +7775,46 @@ const GUEST_DEMO_APK_URL = 'https://pii.zalpos.ru/saas/guestDemoApk';
 
 function downloadGuestDemoApk() {
   window.open(GUEST_DEMO_APK_URL, '_blank', 'noopener');
+}
+
+// Демо-касса для Windows — установщик setup.exe, тот же сервер.
+const WINDOWS_DEMO_URL = 'https://pii.zalpos.ru/saas/windowsDemo';
+
+function downloadWindowsDemo() {
+  window.open(WINDOWS_DEMO_URL, '_blank', 'noopener');
+}
+
+/// Устройство посетителя — чтобы первой показать подходящую кассу.
+function visitorPlatform() {
+  const ua = navigator.userAgent || '';
+  if (/Android/i.test(ua)) return 'android';
+  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+  if (/Windows/i.test(ua)) return 'windows';
+  if (/Macintosh|Mac OS X/i.test(ua)) return 'mac';
+  return 'other';
+}
+
+/// Кнопка «Скачать демо-кассу» внизу страницы: сразу файл для этого
+/// устройства, а с iPhone или Mac — к выбору платформы в блоке «Демо».
+function downloadDemoForThisDevice() {
+  const p = visitorPlatform();
+  if (p === 'windows') return downloadWindowsDemo();
+  if (p === 'android') return downloadPublicApk();
+  $('landing-demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/// В блоке «Демо» касса для устройства посетителя идёт первой с пометкой,
+/// а с iPhone и Mac — честная подсказка, где касса работает.
+function suggestDemoPlatform() {
+  const p = visitorPlatform();
+  const card = document.querySelector(`.demo-dl[data-platform="${p}"]`);
+  if (card) card.classList.add('is-suggested');
+  const hint = $('landing-demo-hint');
+  if (hint && (p === 'ios' || p === 'mac')) {
+    hint.textContent = 'Касса работает на Android и Windows. Откройте эту страницу на планшете или компьютере, '
+      + 'чтобы скачать её, а с iPhone гость пользуется веб-версией приложения по QR-коду на столе.';
+    hint.hidden = false;
+  }
 }
 
 // Сборку заведения отдаёт сервер по одноразовой ссылке на 60 секунд, её
