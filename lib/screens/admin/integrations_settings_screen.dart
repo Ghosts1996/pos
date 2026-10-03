@@ -29,6 +29,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   String _printerType = 'none'; // none | bluetooth | network
   bool _splitHookah = true;
+  bool _kitchenTickets = false;
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
@@ -77,6 +78,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     final data = snap.data() ?? {};
     _printerType = data['printerType'] ?? 'none';
     _splitHookah = data['printSplitHookah'] as bool? ?? true;
+    _kitchenTickets = data['printKitchenTickets'] as bool? ?? false;
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
     _utmHostCtrl.text = data['utmHost'] ?? '';
@@ -130,8 +132,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   Future<void> _save() async {
     printHookahSeparately = _splitHookah;
+    printKitchenTickets = _kitchenTickets;
     await _doc.set({
       'printSplitHookah': _splitHookah,
+      'printKitchenTickets': _kitchenTickets,
       'printerType': _printerType,
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
@@ -563,8 +567,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               onChanged: (v) => setState(() => _splitHookah = v),
               title: const Text('Кальяны — отдельным чеком'),
               subtitle: const Text('Если в счёте есть кальяны и что-то ещё, печатаются два чека: '
-                  '«Кальяны» и «Кухня и бар», каждый со своим итогом. Что считается кальяном — '
-                  'по категории в «Меню».'),
+                  '«Кальяны» и «Кухня и бар», каждый со своим итогом. Выключите — будет один общий чек. '
+                  'Это значение по умолчанию: при оплате кассир может переключить его для конкретного счёта. '
+                  'Что считается кальяном — по категории в «Меню».'),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _kitchenTickets,
+              onChanged: (v) => setState(() => _kitchenTickets = v),
+              title: const Text('Бегунки на кухню и бар'),
+              subtitle: const Text('В счёте стола появится кнопка «На кухню»: печатает только новые позиции, '
+                  'отдельным листком для кухни, бара и кальянов, с пожеланиями гостя. Если на кухне стоит '
+                  'планшет с экраном «Кухня и бар», бегунки не нужны.'),
             ),
             OutlinedButton.icon(
               onPressed: _testing ? null : _testPrinter,

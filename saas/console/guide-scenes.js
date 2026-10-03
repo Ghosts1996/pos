@@ -67,6 +67,10 @@ const P = {
   pause: '<path d="M8 5v14M16 5v14"/>',
   wall: '<path d="M4 20V5h7M11 5v6h9"/>',
   pin: '<path d="M12 21s-6.5-5.4-6.5-11a6.5 6.5 0 0 1 13 0c0 5.6-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/>',
+  mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4 7 8 6 8-6"/>',
+  gem: '<path d="M6.5 4h11l3.5 5-9 11-9-11zM3 9h18M9.5 4 8 9l4 11 4-11-1.5-5"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
 };
 
 const ic = (name, size = 22, sw = 1.8) =>
@@ -190,7 +194,7 @@ const ACTIONS = [
 ];
 
 // Счёт стола: таймер, действия, заказ, итог.
-function tableCheck({ name = 'Стол 2', who = 'Алина', items = [], total = '0 ₽', tap = {} } = {}) {
+function tableCheck({ name = 'Стол 2', who = 'Алина', items = [], total = '0 ₽', tap = {}, strip = null } = {}) {
   const list = items.length
     ? `<div class="gx-card" style="margin:0 14px">${items.map((i) => `<div class="gx-row"${mk(i.mark)}>
         <div class="gx-row-t"><b>${i.n}</b><span>${i.p} × ${i.q}</span><span style="display:flex;align-items:center;gap:3px;font-size:11.5px;color:${i.note ? 'var(--br)' : 'var(--mu)'};${i.note ? 'font-style:italic' : ''}">${ic(i.note ? 'pen' : 'plus', 12)}${i.note || 'пожелание'}</span></div>
@@ -207,6 +211,9 @@ function tableCheck({ name = 'Стол 2', who = 'Алина', items = [], total
     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px 10px">
       <b style="font-size:17px">Заказ${items.length ? `<span class="gx-mu" style="font-weight:400;font-size:13px"> · ${items.length} ${items.length === 1 ? 'позиция' : 'позиции'}</span>` : ''}</b>
       ${btn('Добавить', { kind: 'sm', icon: 'plus', tap: tap.add })}</div>
+    ${strip ? `<div class="gx-fold"${mk(strip.mark)}><div class="gx-strip">${ic('receipt', 19)}
+      <div style="flex:1;min-width:0"><b style="display:block;font-size:13.5px">Новое в заказе: ${strip.n} шт.</b><span class="gx-mu" style="font-size:11.5px">бегунок ещё не печатали</span></div>
+      ${btn('На кухню', { kind: 'sm', icon: 'printer', tap: strip.tap })}</div></div>` : ''}
     ${list}
     <div style="position:absolute;left:0;right:0;bottom:0;height:86px;background:var(--sf);border-top:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;padding:0 16px 8px">
       <div><div class="gx-mu gx-small">Итого</div><b style="font-size:22px">${total}</b></div>
@@ -239,7 +246,7 @@ function menuItems({ title, items, tap = '', count = 0, countMark = '' }) {
     <div class="gx-bottom">${btn(`Перейти к чеку<span${mk(countMark)} class="gx-hide"${countMark ? '' : ' style="opacity:1"'}>&nbsp;(${count})</span>`, { tap: 'tocheck' })}</div></div>`;
 }
 
-function payment({ total = '1 420', tap = {} } = {}) {
+function payment({ total = '1 420', tap = {}, mixed = false } = {}) {
   const row = (l, v, extra = '') => `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
     <span style="flex:1;font-size:14px">${l}</span><div class="gx-f" style="width:132px;height:42px;justify-content:flex-end;color:var(--tx)">${v}</div>${extra}</div>`;
   const sw = (l, k) => `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0"${mk(k)}><span style="font-size:14px">${l}</span><span class="gx-sw"${tp(k)}></span></div>`;
@@ -250,7 +257,10 @@ function payment({ total = '1 420', tap = {} } = {}) {
     <div style="display:flex;align-items:center;gap:6px;color:var(--mu);font-size:13px;margin:0 0 14px">${ic('plus', 15)} Добавить чаевые</div>
     ${row('Наличными:', total.replace(' ', ''))}${row('Банковской картой:', '0')}${row('Оплата с терминала:', '0')}${row('За счёт заведения:', '0')}
     <div class="gx-sep" style="margin:6px 0 4px"></div>
-    ${sw('Закрыть без оплаты', '')}${sw('Распечатать чек', 'print')}</div>
+    ${sw('Закрыть без оплаты', '')}${sw('Распечатать чек', 'print')}
+    ${mixed ? `<div class="gx-unfold"${mk('print')}><div style="display:flex;align-items:center;gap:10px;padding:4px 0 4px 16px"${mk('one')}>
+      <span style="flex:1;font-size:13.5px;line-height:1.3">Кальяны — отдельным чеком<br><span class="gx-mu" style="font-size:11.5px"><span class="gx-show"${mk('one')}>Два чека: «Кальяны» и «Кухня и бар»</span><span class="gx-alt"${mk('one')}>Всё одним общим чеком</span></span></span>
+      <span class="gx-sw inv"${tp('one')}></span></div></div>` : ''}</div>
     <div class="gx-bottom">${btn('Оплатить', { tap: 'pay' })}</div></div>`;
 }
 
@@ -274,12 +284,115 @@ const switchRow = (t, s, { on = false, tap = '', mark = '' } = {}) =>
     <div style="flex:1"><b style="display:block;font-size:14.5px">${t}</b>${s ? `<span class="gx-mu" style="font-size:12px;line-height:1.35">${s}</span>` : ''}</div>
     <span class="gx-sw"${tp(tap)}></span></div>`;
 
-/* ---- Кабинет (браузер) ---- */
-const WEB_NAV = [['grid', 'Обзор'], ['phone', 'Устройства'], ['palette', 'Брендинг'], ['users', 'Команда'], ['card', 'Оплата'], ['doc', 'Инструкция']];
+/* ---- Кабинет (сайт) ----
+   Один и тот же экран кабинета рисуется двумя способами: на широкой
+   странице — окно браузера с меню слева, на телефоне — мобильная версия
+   сайта в рамке телефона: адресная строка, кнопка ☰ и название раздела. */
+const WEB_NAV = [['home', 'Обзор'], ['phone', 'Устройства'], ['card', 'Оплата'], ['gem', 'Тарифы'], ['palette', 'Брендинг'], ['users', 'Команда'], ['spark', 'ИИ']];
 function web(active, main, { tap = {} } = {}) {
-  return `<div class="gx-web"><div class="gx-web-nav"><div class="gx-web-brand">Zal<em>POS</em></div>
+  // Переход в другой раздел: на широкой странице — пункт меню слева, на
+  // телефоне — кнопка ☰ (у проигрывателя тот же ключ касания).
+  const navKey = Object.values(tap)[0] || '';
+  return `<div class="gx-web">
+    <div class="gx-web-m">${status()}<div class="gx-web-url">${ic('lock', 11, 2.2)}zalpos.ru</div>
+      <div class="gx-web-top"><span class="gx-web-burger"${tp(navKey)}>${ic('menu', 22)}</span><b>${active}</b><span class="gx-web-brand">Zal<em>POS</em></span></div></div>
+    <div class="gx-web-nav"><div class="gx-web-brand">Zal<em>POS</em></div>
     ${WEB_NAV.map(([icn, t]) => `<div class="${cls('gx-web-ni', t === active && 'on')}"${tp(tap[t])}>${ic(icn, 18)}${t}</div>`).join('')}</div>
     <div class="gx-web-main">${main}</div></div>`;
+}
+
+// Лендинг и первые шаги — без меню кабинета.
+function webPage(main) {
+  return `<div class="gx-web gx-web-page">
+    <div class="gx-web-m">${status()}<div class="gx-web-url">${ic('lock', 11, 2.2)}zalpos.ru</div></div>
+    <div class="gx-web-main">${main}</div></div>`;
+}
+const wField = (label, { val = '', ph = '', type = '', tap = '' } = {}) =>
+  `<div class="gx-wf"${tp(tap || type)}${type ? ` data-type="${type}"` : ''}>${label ? `<span class="gx-wf-l">${label}</span>` : ''}<span class="gx-wf-box"><span class="gx-val">${val}</span><span class="gx-ph">${ph}</span></span></div>`;
+const wCheck = (label, k) => `<div class="gx-wc"${mk(k)}><span class="gx-wc-box"${tp(k)}>${ic('check', 13, 3)}</span><span>${label}</span></div>`;
+const wBtn = (label, { tap = '', ghost = false, style = '' } = {}) =>
+  `<div class="${cls('gx-web-btn', ghost && 'ghost')}"${tp(tap)}${style ? ` style="${style}"` : ''}>${label}</div>`;
+
+// Регистрация: email и согласия на сайте.
+function webSignup() {
+  return webPage(`<div class="gx-web-hero"><div class="gx-web-brand big">Zal<em>POS</em></div>
+    <h3>Касса, зал и гости — в одном приложении</h3><div class="gx-mu">14 дней бесплатно, без карты</div></div>
+    <div class="gx-web-card gx-web-narrow">
+      ${wField('Email', { type: 'mail', ph: 'you@example.com' })}
+      ${wCheck('Принимаю условия оферты', 'c1')}${wCheck('Согласен на обработку персональных данных', 'c2')}
+      ${wBtn('Попробовать бесплатно', { tap: 'go', style: 'width:100%;justify-content:center;margin-top:12px' })}</div>`);
+}
+function webCheckMail() {
+  return webPage(`<div class="gx-web-card gx-web-narrow" style="text-align:center;padding:28px 22px">
+    <div style="width:58px;height:58px;border-radius:50%;margin:0 auto 14px;background:var(--s2);color:var(--pr);display:flex;align-items:center;justify-content:center">${ic('mail', 28)}</div>
+    <h3 style="font-size:26px">Проверьте почту</h3>
+    <div class="gx-mu" style="font-size:14px;line-height:1.5;margin-top:8px">Отправили ссылку для входа на <b style="color:var(--tx)">olga@kafe-leto.ru</b>. Откройте письмо и перейдите по ссылке — без пароля.</div></div>`);
+}
+// Первое заведение: название, код, тип.
+function webOnboarding() {
+  return webPage(`<h3>Новое заведение</h3><div class="gx-mu" style="margin-bottom:12px">Название и тип — остальное можно поменять потом</div>
+    <div class="gx-web-card gx-web-narrow" style="margin-top:0">
+      ${wField('Название заведения', { type: 'vname', ph: 'Кафе «Лето»' })}
+      ${wField('Код заведения', { val: '<span class="gx-alt" data-mark="slug">kafe-leto</span>', ph: '<span class="gx-show" data-mark="slug">kafe-leto</span>' })}
+      ${wField('Тип заведения', { val: '<span class="gx-show" data-mark="kind">Кальянная / лаунж</span><span class="gx-alt" data-mark="kind">Кафе / кофейня</span>', tap: 'kind' })}
+      ${wBtn('Создать заведение', { tap: 'create', style: 'width:100%;justify-content:center;margin-top:6px' })}</div>`);
+}
+// Обзор кабинета: первые шаги.
+function webOverview({ tap = {} } = {}) {
+  const step = (t, done) => `<div class="gx-web-row"><span class="${cls('gx-web-tick', done && 'on')}">${ic('check', 12, 3)}</span><span style="flex:1">${t}</span><span class="gx-web-link">Открыть</span></div>`;
+  return web('Обзор', `<h3>Добрый вечер, Ольга</h3><div class="gx-mu">Кафе «Лето» · пробный период, осталось 14 дней</div>
+    <div class="gx-web-card"><h5>Настройка заведения</h5>
+      ${step('Настроить фирменные цвета и лого', true)}${step('Пригласить первого сотрудника')}${step('Собрать и установить APK на планшет')}</div>`, { tap });
+}
+
+// Команда: сотрудники кассы с PIN и доступ к кабинету.
+// saved / invited — форма уже очищена, новый человек в списке.
+function webTeam({ tap = {}, saved = false, invited = false } = {}) {
+  const added = (on, k) => (on ? '<div>' : `<div class="gx-unfold"${mk(k)}>`);
+  return web('Команда', `<h3>Команда</h3>
+    <div class="gx-web-card"><h5>Сотрудники кассы (вход по PIN)</h5>
+      <div class="gx-web-row" style="border-top:none"><span style="flex:1">Алина<br><span class="gx-mu" style="font-size:12px">Сотрудник · PIN •••• · Официант</span></span><span class="gx-web-link">Изменить</span></div>
+      ${added(saved, 'saved')}<div class="gx-web-row"><span style="flex:1">Марина<br><span class="gx-mu" style="font-size:12px">Сотрудник · PIN •••• · Бармен</span></span><span class="gx-web-link">Изменить</span></div></div>
+      <div class="gx-cols" style="margin-top:12px">
+        ${wField('Имя', { type: 'ename', ph: 'Имя для кассы' })}
+        ${wField('PIN-код', { type: 'epin', ph: '0000' })}
+        ${wField('Специализация', { val: '<span class="gx-show" data-mark="pos">Универсал</span><span class="gx-alt" data-mark="pos">Бармен</span>', tap: 'pos' })}
+        <div style="display:flex;align-items:flex-end">${wBtn('Сохранить', { tap: 'esave', ghost: true })}</div></div></div>
+    <div class="gx-web-card"><h5>Доступ к кабинету</h5>
+      <div class="gx-web-row" style="border-top:none"><span style="flex:1">olga@kafe-leto.ru <span class="gx-mu">(вы)</span><br><span class="gx-mu" style="font-size:12px">Владелец</span></span></div>
+      ${added(invited, 'invited')}<div class="gx-web-row"><span style="flex:1">anna@kafe-leto.ru<br><span class="gx-mu" style="font-size:12px">Менеджер</span></span></div></div>
+      <div class="gx-cols" style="margin-top:12px">
+        ${wField('Пригласить по email', { type: 'imail', ph: 'coworker@example.com' })}
+        ${wField('Роль', { val: '<span class="gx-show" data-mark="role">Сотрудник</span><span class="gx-alt" data-mark="role">Менеджер</span>', tap: 'role' })}
+        <div style="display:flex;align-items:flex-end">${wBtn('Пригласить', { tap: 'invite', ghost: true })}</div></div></div>`, { tap });
+}
+
+// Тарифы: карточки, срок оплаты, кто платит.
+function webPlans({ tap = {} } = {}) {
+  const plan = (n, t, cur, k) => `<div class="${cls('gx-web-plan', cur && 'cur')}">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:16px">${n}</b>${cur ? '<span class="gx-web-badge">Ваш тариф</span>' : ''}</div>
+    <div class="gx-mu" style="font-size:12px;margin:2px 0 10px">${t}</div><div class="gx-web-sk"></div>
+    ${k ? `${wField('', { val: '<span class="gx-show" data-mark="year">Оплатить на месяц</span><span class="gx-alt" data-mark="year">Оплатить на год (выгоднее)</span>', tap: 'period' })}` : ''}
+    ${wBtn(cur ? 'Оплатить' : 'Перейти и оплатить', { tap: k ? 'pay' : '', ghost: !k, style: 'width:100%;justify-content:center;margin-top:8px' })}</div>`;
+  return web('Тарифы', `<h3>Тарифы</h3>
+    <div class="gx-web-plans">${plan('Старт', 'Касса, зал, брони', false)}${plan('Бизнес', 'Плюс ИИ-помощники', true, true)}${plan('Про', 'Без лимита сотрудников', false)}</div>
+    <div class="gx-web-payer"><b style="font-size:13px">Кто платит</b>
+      <div class="gx-wc on"><span class="gx-wc-box radio"></span><span>Физическое лицо — картой или по СБП</span></div>
+      <div class="gx-wc"><span class="gx-wc-box radio"></span><span>ИП или организация — счёт на оплату</span></div></div>`, { tap });
+}
+function webBilling() {
+  return web('Оплата', `<h3>Оплата</h3>
+    <div class="gx-web-card"><div class="gx-mu" style="font-size:13.5px;line-height:1.7">Тариф: Бизнес<br>Статус: <b style="color:#3F8A5C">Активна</b><br>Оплачено до: 3 октября 2027</div>
+      ${wBtn('Отключить автопродление', { ghost: true, style: 'margin-top:12px' })}</div>
+    <div class="gx-web-card"><h5>История платежей</h5><div class="gx-web-row" style="border-top:none"><span style="flex:1" class="gx-mu">сегодня, 19:46 · подписка на год</span><b>чек на email</b></div></div>`);
+}
+
+// ИИ: включить, провайдер, ключ.
+function webAi({ tap = {} } = {}) {
+  return web('ИИ', `<h3>ИИ-помощники</h3><div class="gx-mu">Ассистент зала в кассе и помощник гостя в приложении</div>
+    <div class="gx-web-card">${wCheck('Включить ИИ-помощников (касса и консьерж в гостевом приложении)', 'ai')}
+      <div class="gx-cols" style="margin-top:10px">${wField('Основной провайдер', { val: 'Gemini' })}${wField('API-ключ', { type: 'key', ph: 'вставьте ключ' })}</div>
+      ${wBtn('Сохранить', { tap: 'aisave', style: 'margin-top:10px' })}</div>`, { tap });
 }
 
 /* ---- Ещё экраны ---- */
@@ -415,24 +528,39 @@ function payrollScreen() {
     ${card('Денис', '12 смен · 118 ч', row('Обычные часы', '118 ч × 220 ₽', '25 960 ₽'), '25 960 ₽')}</div></div>`;
 }
 
-function printerSettings() {
+function printerSettings({ tickets = false } = {}) {
   return `<div class="gx-app">${status()}${appBar({ title: 'Интеграции', left: 'back' })}<div style="padding:0 14px">
     <div class="gx-card" style="padding:14px">
       <b style="display:flex;align-items:center;gap:8px;font-size:16px"><span class="gx-brass">${ic('printer', 19)}</span>Чековый принтер</b>
       <div class="gx-mu" style="font-size:11.5px;margin:4px 0 12px">Печатается информационный чек (не фискальный).</div>
       <div class="gx-seg2" style="width:100%;height:38px;margin-bottom:12px"><span>Не подключён</span><span class="on">Bluetooth</span><span>Wi‑Fi / LAN</span></div>
       <div style="display:flex;align-items:center;gap:10px;font-size:13.5px;margin-bottom:6px"><span class="gx-brass">${ic('printer', 17)}</span><span style="flex:1">XP-58 · подключён</span><span style="color:#D98A5C;font-size:12.5px">Выбрать устройство</span></div>
-      ${switchRow('Кальяны — отдельным чеком', 'Если в счёте есть кальяны и что-то ещё, печатаются два чека: «Кальяны» и «Кухня и бар», каждый со своим итогом.', { tap: 'split', mark: 'split' })}
+      ${switchRow('Кальяны — отдельным чеком', tickets ? '' : 'Два чека: «Кальяны» и «Кухня и бар», каждый со своим итогом. При оплате можно переключить для конкретного счёта.', { tap: tickets ? '' : 'split', mark: tickets ? '' : 'split', on: tickets })}
+      ${tickets ? switchRow('Бегунки на кухню и бар', 'В счёте стола появится кнопка «На кухню»: печатает только новые позиции, отдельным листком для каждого цеха.', { tap: 'kt', mark: 'kt' }) : ''}
       ${btn('Тестовая печать', { kind: 'ghost sm', icon: 'printer', style: 'margin-top:6px' })}</div></div></div>`;
 }
 
 const slip = (title, lines, total, note, delay) => `<div class="gx-slip" style="animation-delay:${delay}ms">
-  <div style="text-align:center;font-weight:700;font-size:14px">КАФЕ «ЛЕТО»</div>
-  <div style="text-align:center;font-weight:700;font-size:13px;margin:2px 0 6px">${title}</div>
+  <div style="text-align:center;font-weight:700;font-size:14px;${title ? '' : 'margin-bottom:6px'}">КАФЕ «ЛЕТО»</div>
+  ${title ? `<div style="text-align:center;font-weight:700;font-size:13px;margin:2px 0 6px">${title}</div>` : ''}
   <div style="text-align:center;font-size:11px">Стол: Стол 2 · Официант: Алина</div>
   <div class="gx-slip-hr"></div>${lines.map(([n, v]) => `<div style="display:flex;justify-content:space-between;font-size:11.5px;padding:1px 0"><span>${n}</span><span>${v}</span></div>`).join('')}
   <div class="gx-slip-hr"></div><div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px"><span>ИТОГО</span><span>${total}</span></div>
   ${note ? `<div style="text-align:center;font-size:10.5px;margin-top:6px">${note}</div>` : ''}</div>`;
+
+// Один общий чек — «Кальяны — отдельным чеком» выключили при оплате.
+const receiptOne = `<div class="gx-scrim"></div><div class="gx-panel gx-slips">
+  ${slip('', [['Классический кальян x1', '1200'], ['Сок яблочный x1', '220']], '1420', '', 0)}</div>`;
+
+// Бегунки: по листку на цех, без цен, крупно.
+const ticket2 = (title, lines, delay) => `<div class="gx-slip" style="animation-delay:${delay}ms;width:228px">
+  <div style="text-align:center;font-weight:800;font-size:19px;letter-spacing:.04em">${title}</div>
+  <div style="text-align:center;font-weight:800;font-size:16px;margin:1px 0 2px">Стол 5</div>
+  <div style="text-align:center;font-size:10.5px">Марина, официант Максим · 21:14</div>
+  <div class="gx-slip-hr"></div>${lines.map(([n, note]) => `<div style="font-weight:700;font-size:14px;padding:2px 0">${n}</div>${note ? `<div style="font-size:11.5px;padding:0 0 2px 14px">! ${note}</div>` : ''}`).join('')}</div>`;
+const kitchenTickets = `<div class="gx-scrim"></div><div class="gx-panel gx-slips">
+  ${ticket2('КУХНЯ', [['2 x Паста карбонара', 'без лука'], ['1 x Том ям с креветками', '']], 0)}
+  ${ticket2('БАР', [['2 x Мохито', 'без сахара']], 650)}</div>`;
 
 const receipts = `<div class="gx-scrim"></div><div class="gx-panel gx-slips">
   ${slip('Кальяны', [['Классический кальян x1', '1200']], '1200', 'Кухня и бар — отдельным чеком', 0)}
@@ -482,26 +610,28 @@ function kitchenScreen() {
 }
 
 /* ---- Кабинет ---- */
-function webDevices() {
-  return web('Устройства', `<h3>Устройства</h3><div style="color:var(--mu);font-size:14px">Код приглашения, сборка касс и приложения гостей</div>
+function webDevices({ tap = {} } = {}) {
+  return web('Устройства', `<h3>Устройства</h3>
+    <div class="gx-web-card"><h5>Код приглашения устройства</h5><div class="gx-mu" style="font-size:12.5px;line-height:1.45">Введите его на планшете вместе с кодом заведения <b style="color:var(--tx)">kafe-leto</b>. Это секрет — по умолчанию скрыт.</div>
+      <div style="display:flex;align-items:center;gap:16px;margin-top:8px"><b class="gx-web-code"${tp('code')}${mk('code')}>K7Q2M9</b><span class="gx-web-link">Скопировать</span></div></div>
     <div class="gx-web-card"><h5>Сборка APK</h5><div style="color:var(--mu);font-size:13px;line-height:1.5;margin-bottom:14px;max-width:560px">Одна кнопка — сразу три личных приложения этого заведения: касса для Android-планшета, касса для Windows и гостевое приложение.</div>
       <div style="display:flex;align-items:center;gap:16px"><div class="gx-web-btn ghost"${tp('build')}><span class="gx-show"${mk('q')}>Собрать APK</span><span class="gx-alt"${mk('q')}><span class="gx-show"${mk('done')}>Сборка уже идёт…</span><span class="gx-alt"${mk('done')}>Собрать APK</span></span></div>
       <div class="gx-show"${mk('done')}><div class="gx-hide"${mk('q')} style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mu)"><div class="gx-prog"><i${mk('q')}></i></div>собираем, это займёт минут 10</div></div></div>
-      <div style="margin-top:16px">
-        ${[['Касса', 'b1'], ['Касса (Windows)', 'b2'], ['Гостевое приложение', 'b3']].map(([n, k]) => `<div class="gx-web-row"><span style="flex:1;color:var(--mu)">${n} · сегодня, 19:42 · <span class="gx-show"${mk('done')}>в очереди</span><span class="gx-alt"${mk('done')}>готова</span></span><span class="gx-web-link gx-hide"${mk('done')}${tp(k === 'b1' ? 'dl' : '')}>Скачать</span></div>`).join('')}
-      </div></div>`);
+      <div style="margin-top:12px">
+        ${[['Касса', 'b1'], ['Касса (Windows)', 'b2'], ['Гостевое приложение', 'b3']].map(([n, k]) => `<div class="gx-web-row"><span style="flex:1;color:var(--mu)">${n} · <span class="gx-show"${mk('done')}>в очереди</span><span class="gx-alt"${mk('done')}>готова</span></span><span class="gx-web-link gx-hide"${mk('done')}${tp(k === 'b1' ? 'dl' : '')}>Скачать</span></div>`).join('')}
+      </div></div>`, { tap });
 }
 
 function webBranding() {
   const sw = (a, b, on, k) => `<div style="width:54px;height:54px;border-radius:14px;padding:4px;border:2px solid ${on ? 'var(--pr)' : 'transparent'}"${tp(k)}${mk(k)}><div style="width:100%;height:100%;border-radius:10px;background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div></div>`;
   return web('Брендинг', `<h3>Брендинг</h3><div style="color:var(--mu);font-size:14px">Название, логотип и цвета — для приложения гостей и веб-меню</div>
-    <div style="display:flex;gap:28px;margin-top:16px"><div class="gx-web-card" style="flex:1;margin:0">
+    <div class="gx-web-split"><div class="gx-web-card" style="flex:1;margin:0">
       <div style="font-size:13px;color:var(--mu);margin-bottom:6px">Имя приложения</div>
       <div style="height:42px;border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;padding:0 12px;font-size:14px;margin-bottom:14px;background:var(--bg)">Кафе «Лето»</div>
       <div style="font-size:13px;color:var(--mu);margin-bottom:8px">Цвета</div>
       <div style="display:flex;gap:6px">${sw('#A4502A', '#1D1A16', true)}${sw('#2F6B4F', '#14201A', false, 'sage')}${sw('#3D5A80', '#121A24', false)}${sw('#8E3B5B', '#211219', false)}</div>
       <div class="gx-web-btn" style="margin-top:18px"${tp('save')}>Сохранить брендинг</div></div>
-      <div style="width:190px;flex:none;border-radius:22px;background:#15120F;padding:16px 14px;color:#F2EADF;box-shadow:0 18px 40px -20px rgba(0,0,0,.5)">
+      <div class="gx-web-preview">
         <div style="font:600 18px var(--serif);margin-bottom:12px">Кафе «Лето»</div>
         <div style="height:70px;border-radius:12px;background:#24201C;margin-bottom:10px"></div><div style="height:12px;width:70%;border-radius:6px;background:#2C2722;margin-bottom:6px"></div><div style="height:12px;width:50%;border-radius:6px;background:#2C2722;margin-bottom:16px"></div>
         <div style="height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;color:#fff;transition:background .4s"><span class="gx-brand-pay"${mk('sage')}>Оплатить</span></div></div></div>`);
@@ -523,6 +653,11 @@ const DRINKS = [
 const ORDER = [
   { n: 'Классический кальян', p: '1 200 ₽', q: 1, sum: '1 200 ₽' },
   { n: 'Сок яблочный', p: '220 ₽', q: 1, sum: '220 ₽' },
+];
+const ORDER_KITCHEN = [
+  { n: 'Паста карбонара', p: '690 ₽', q: 2, sum: '1 380 ₽', note: 'без лука' },
+  { n: 'Том ям с креветками', p: '540 ₽', q: 1, sum: '540 ₽' },
+  { n: 'Мохито', p: '220 ₽', q: 2, sum: '440 ₽', note: 'без сахара' },
 ];
 const startDialog = (since = '17:40') => dialog('Начать вашу смену?',
   `<p>Смена заведения открыта в ${since}.<br>Начните смену, если вы сейчас работаете: вызовы гостей будут приходить и вам, а время посчитается в зарплату.</p>`,
@@ -667,11 +802,22 @@ export const SCENES = {
   },
 
   'print-split': {
-    label: 'Кальяны — отдельным чеком',
+    label: 'Кальяны: отдельным чеком или в общем',
     frames: [
-      { screen: printerSettings(), cap: 'Админ → «Интеграции» → «Чековый принтер». Включите «Кальяны — отдельным чеком».', acts: [{ wait: 600 }, { tap: 'split', mark: 'split' }, { wait: 500 }] },
-      { screen: payment(), enter: 'push', cap: 'Теперь при оплате с включённым «Распечатать чек»…', acts: [{ tap: 'print', mark: 'print' }, { tap: 'pay' }] },
-      { screen: payment(), over: { kind: 'slips', html: receipts }, cap: '…принтер выдаст два чека: «Кальяны» и «Кухня и бар», у каждого свой итог.', acts: [{ wait: 2600 }] },
+      { screen: printerSettings(), cap: 'Админ → «Интеграции» → «Чековый принтер». «Кальяны — отдельным чеком» — как печатать по умолчанию.', acts: [{ wait: 600 }, { tap: 'split', mark: 'split' }, { wait: 500 }] },
+      { screen: payment({ mixed: true }), enter: 'push', cap: 'При оплате включите «Распечатать чек» — под ним тот же переключатель, только для этого счёта.', acts: [{ tap: 'print', mark: 'print' }, { wait: 900 }] },
+      { screen: payment({ mixed: true }), cap: 'Гость просит один чек? Выключите «Кальяны — отдельным чеком» и нажмите «Оплатить».', acts: [{ tap: 'one', mark: 'one' }, { wait: 500 }, { tap: 'pay' }] },
+      { screen: payment({ mixed: true }), over: { kind: 'slips', html: receiptOne }, cap: 'Вышел один общий чек. Не трогали переключатель — было бы два: «Кальяны» и «Кухня и бар».', acts: [{ wait: 2600 }] },
+    ],
+  },
+
+  'kitchen-print': {
+    label: 'Бегунки на кухню и бар',
+    frames: [
+      { screen: printerSettings({ tickets: true }), cap: 'Админ → «Интеграции» → «Чековый принтер». Включите «Бегунки на кухню и бар».', acts: [{ wait: 600 }, { tap: 'kt', mark: 'kt' }, { wait: 500 }] },
+      { screen: tableCheck({ name: 'Стол 5', who: 'Марина', items: ORDER_KITCHEN, total: '2 360 ₽', strip: { n: 5, tap: 'send', mark: 'sent' } }), enter: 'push', cap: 'Добавили позиции — в счёте стола появилось «Новое в заказе». Нажмите «На кухню».', acts: [{ wait: 700 }, { tap: 'send' }] },
+      { screen: tableCheck({ name: 'Стол 5', who: 'Марина', items: ORDER_KITCHEN, total: '2 360 ₽', strip: { n: 5, tap: 'send', mark: 'sent' } }), over: { kind: 'slips', html: kitchenTickets }, cap: 'Листок на каждый цех: крупно, без цен, с пожеланиями гостя.', acts: [{ wait: 2600 }] },
+      { screen: tableCheck({ name: 'Стол 5', who: 'Марина', items: ORDER_KITCHEN, total: '2 360 ₽', strip: { n: 5, tap: 'send', mark: 'sent' } }), cap: 'Плашка ушла. Дозакажут — следующий бегунок напечатает только новое, с пометкой «ещё».', acts: [{ mark: 'sent' }, { wait: 1600 }] },
     ],
   },
 
@@ -688,7 +834,9 @@ export const SCENES = {
     label: 'Собрать и скачать кассу',
     device: 'web',
     frames: [
-      { screen: webDevices(), cap: 'Кабинет → «Устройства» → «Собрать APK».', acts: [{ wait: 500 }, { tap: 'build', mark: 'q' }] },
+      { screen: webOverview({ tap: { 'Устройства': 'nav' } }), cap: 'В кабинете откройте «Устройства».', acts: [{ wait: 400 }, { tap: 'nav' }] },
+      { screen: webDevices(), cap: 'Код приглашения скрыт — нажмите, чтобы показать. Его вводят на планшете вместе с кодом заведения.', acts: [{ tap: 'code', mark: 'code' }, { wait: 900 }] },
+      { screen: webDevices(), cap: 'Ниже — «Собрать APK»: одна кнопка, и готовы кассы для Android и Windows и приложение гостя.', acts: [{ tap: 'build', mark: 'q' }] },
       { screen: webDevices(), cap: 'Сборка идёт около 10 минут, страницу можно закрыть — придёт уведомление.', acts: [{ wait: 2200 }, { mark: 'done' }] },
       { screen: webDevices(), cap: 'Нажмите «Скачать» на том устройстве, где будет касса, и откройте файл.', acts: [{ tap: 'dl' }, { wait: 1200 }] },
     ],
@@ -698,8 +846,58 @@ export const SCENES = {
     label: 'Цвета и название приложения гостя',
     device: 'web',
     frames: [
-      { screen: webBranding(), cap: 'Кабинет → «Брендинг»: название, логотип и цвета приложения гостя.', acts: [{ wait: 600 }, { tap: 'sage', mark: 'sage' }] },
-      { screen: webBranding(), cap: 'Справа сразу видно, как это будет выглядеть. «Сохранить брендинг».', acts: [{ wait: 900 }, { tap: 'save' }, { wait: 1200 }] },
+      { screen: webBranding(), cap: 'Кабинет → «Брендинг»: название, логотип и цвета приложения гостя. Выберите гамму.', acts: [{ wait: 600 }, { tap: 'sage', mark: 'sage' }] },
+      { screen: webBranding(), cap: 'Рядом сразу видно, как это будет выглядеть у гостя. «Сохранить брендинг».', acts: [{ wait: 900 }, { tap: 'save' }, { wait: 1200 }] },
+    ],
+  },
+
+  signup: {
+    label: 'Регистрация и первое заведение',
+    device: 'web',
+    frames: [
+      { screen: webSignup(), cap: 'На zalpos.ru впишите email, отметьте согласия и нажмите «Попробовать бесплатно».', acts: [{ type: 'mail', text: 'olga@kafe-leto.ru' }, { tap: 'c1', mark: 'c1', fast: true }, { tap: 'c2', mark: 'c2', fast: true }, { tap: 'go' }] },
+      { screen: webCheckMail(), cap: 'Пароль не нужен: на почту придёт ссылка, она сразу откроет кабинет.', acts: [{ wait: 2200 }] },
+      { screen: webOnboarding(), cap: 'Название заведения — код для ссылок появится сам. Выберите тип и «Создать заведение».', acts: [{ type: 'vname', text: 'Кафе «Лето»' }, { mark: 'slug' }, { tap: 'kind', mark: 'kind' }, { tap: 'create' }] },
+      { screen: webOverview(), cap: 'Готово: 14 дней бесплатно. На «Обзоре» список «Настройка заведения» подскажет, что дальше.', acts: [{ wait: 2200 }] },
+    ],
+  },
+
+  'team-pin': {
+    label: 'Добавить сотрудника с PIN-кодом',
+    device: 'web',
+    frames: [
+      { screen: webOverview({ tap: { 'Команда': 'nav' } }), cap: 'В кабинете откройте «Команда».', acts: [{ wait: 400 }, { tap: 'nav' }] },
+      { screen: webTeam(), cap: '«Сотрудники кассы»: имя, PIN-код и специализация — и «Сохранить».', acts: [{ type: 'ename', text: 'Марина' }, { type: 'epin', text: '4821' }, { tap: 'pos', mark: 'pos' }, { tap: 'esave', mark: 'saved' }] },
+      { screen: webTeam({ saved: true }), enter: 'none', cap: 'Сотрудник появился в списке и на всех кассах. Имя и PIN скажите ему лично.', acts: [{ wait: 2000 }] },
+    ],
+  },
+
+  'team-invite': {
+    label: 'Доступ к кабинету для управляющего',
+    device: 'web',
+    frames: [
+      { screen: webTeam(), cap: '«Команда» → «Доступ к кабинету»: email управляющего и роль «Менеджер».', acts: [{ type: 'imail', text: 'anna@kafe-leto.ru' }, { tap: 'role', mark: 'role' }] },
+      { screen: webTeam(), cap: 'Нажмите «Пригласить». Важно: он должен сначала сам зарегистрироваться на zalpos.ru.', acts: [{ tap: 'invite', mark: 'invited' }, { wait: 700 }] },
+      { screen: webTeam({ invited: true }), enter: 'none', cap: 'Готово: управляющий видит кабинет этого заведения. Роль можно сменить или отключить доступ в любой момент.', acts: [{ wait: 2000 }] },
+    ],
+  },
+
+  plans: {
+    label: 'Оплатить подписку',
+    device: 'web',
+    frames: [
+      { screen: webOverview({ tap: { 'Тарифы': 'nav' } }), cap: 'В кабинете откройте «Тарифы».', acts: [{ wait: 400 }, { tap: 'nav' }] },
+      { screen: webPlans(), cap: 'Выберите срок: за год выходит дешевле. Ниже — кто платит: вы картой или ИП и организация по счёту.', acts: [{ tap: 'period', mark: 'year' }, { wait: 600 }, { tap: 'pay' }] },
+      { screen: webBilling(), cap: 'После оплаты в «Оплате» — статус «Активна» и до какого числа. Чек придёт на email.', acts: [{ wait: 2400 }] },
+    ],
+  },
+
+  'ai-setup': {
+    label: 'Подключить ИИ-помощников',
+    device: 'web',
+    frames: [
+      { screen: webOverview({ tap: { 'ИИ': 'nav' } }), cap: 'В кабинете откройте «ИИ».', acts: [{ wait: 400 }, { tap: 'nav' }] },
+      { screen: webAi(), cap: 'Включите помощников, выберите провайдера и вставьте ключ — «Сохранить».', acts: [{ tap: 'ai', mark: 'ai' }, { type: 'key', text: '••••••••••••' }, { tap: 'aisave' }, { wait: 1200 }] },
     ],
   },
 };
@@ -707,17 +905,27 @@ export const SCENES = {
 /* ------------------------------------------------------------------ *
  *  Проигрыватель
  * ------------------------------------------------------------------ */
-const T = { enter: 520, settle: 420, move: 640, hl: 280, press: 340, after: 300, fastMove: 300, fastAfter: 120, char: 95, end: 2200, hold: 520, drag: 1000 };
+// Тайминги, мс. На телефоне палец «опускается» на кнопку (land), на сайте
+// курсор подъезжает к ней (move).
+const T = {
+  enter: 520, settle: 400, land: 340, fastLand: 150, move: 660, fastMove: 300,
+  hl: 260, press: 320, after: 340, fastAfter: 110, char: 95, end: 2200, hold: 520, drag: 1000,
+};
+const reach = (fast, web) => (web ? (fast ? T.fastMove : T.move) : (fast ? T.fastLand : T.land));
 
-function actTime(a) {
-  if (a.tap) return (a.fast ? T.fastMove + T.fastAfter : T.move + T.hl + T.after) + T.press;
-  if (a.type) return T.move + T.hl + T.press + a.text.length * T.char + 320;
-  if (a.drag) return T.move + T.hold + T.drag + 60 + T.after;
+function actTime(a, web) {
+  if (a.tap) return reach(a.fast, web) + (a.fast ? T.fastAfter : T.hl + T.after) + T.press;
+  if (a.type) return reach(false, web) + T.hl + T.press + a.text.length * T.char + 320;
+  if (a.drag) return reach(false, web) + T.hold + T.drag + 60 + T.after;
   if (a.mark) return 420;
   if (a.wait) return a.wait;
   return 0;
 }
-const frameTime = (f, last) => T.enter + T.settle + (f.acts || []).reduce((s, a) => s + actTime(a), 0) + (last ? T.end : 0);
+const frameTime = (f, last, web) =>
+  T.enter + T.settle + (f.acts || []).reduce((s, a) => s + actTime(a, web), 0) + (last ? T.end : 0);
+
+// Курсор мыши для сцен кабинета.
+const CURSOR = '<svg viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.4 2.9 6.6 3-1.3-2.9-6.5H19L5 2.5z" fill="#fff" stroke="#1D1A16" stroke-width="1.4" stroke-linejoin="round"/></svg>';
 
 const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -734,12 +942,16 @@ class Player {
     this.userPaused = false;
     this.visible = false;
     this.started = false;
-    const web = scene.device === 'web';
+    // Сцена кабинета на узком экране — мобильная версия сайта в телефоне:
+    // окно браузера в треть ширины было бы не прочитать.
+    const site = scene.device === 'web';
+    const width = fig.getBoundingClientRect().width || window.innerWidth;
+    const web = site && width >= 560;
     fig.innerHTML = `
       <div class="gx-stage">
         ${web
           ? `<div class="gx-browser" aria-hidden="true"><div class="gx-browser-bar"><i></i><i></i><i></i><span>zalpos.ru</span></div><div class="gx-screen web"></div></div>`
-          : `<div class="gx-phone" aria-hidden="true"><div class="gx-screen"><div class="gx-island"></div></div></div>`}
+          : `<div class="gx-phone" aria-hidden="true"><div class="${cls('gx-screen', site && 'webm')}"><div class="gx-island"></div></div></div>`}
         <div class="gx-foot">
           <div class="gx-cap" aria-live="polite"><span class="gx-cap-n">1</span><span class="gx-cap-t"></span></div>
           <div class="gx-ctrl">
@@ -750,13 +962,15 @@ class Player {
       </div>`;
     fig.setAttribute('aria-label', `Анимация: ${scene.label}`);
     this.screen = fig.querySelector('.gx-screen');
-    if (web && document.documentElement.dataset.theme === 'dark') this.screen.classList.add('dark');
+    if (site && document.documentElement.dataset.theme === 'dark') this.screen.classList.add('dark');
     this.capN = fig.querySelector('.gx-cap-n');
     this.capT = fig.querySelector('.gx-cap-t');
     this.segs = [...fig.querySelectorAll('.gx-seg')];
     this.ppBtn = fig.querySelector('.gx-btn');
+    this.web = web;
     this.touch = document.createElement('div');
-    this.touch.className = 'gx-touch';
+    this.touch.className = web ? 'gx-touch web' : 'gx-touch';
+    if (web) this.touch.innerHTML = CURSOR;
     this.screen.appendChild(this.touch);
     this.viewW = VIEW_W[web ? 'web' : 'phone'];
 
@@ -854,9 +1068,13 @@ class Player {
   }
 
   find(sel) {
-    // Сначала в верхнем слое (окно, меню), потом в экране под ним.
+    // Сначала в верхнем слое (окно, меню), потом в экране под ним. Только
+    // видимое: у кабинета на телефоне меню слева спрятано, вместо него ☰.
     const layers = [...this.screen.querySelectorAll('.gx-layer:not(.out):not(.out-push):not(.out-back):not(.out-fade)')].reverse();
-    for (const l of layers) { const el = l.querySelector(sel); if (el) return el; }
+    for (const l of layers) {
+      const el = [...l.querySelectorAll(sel)].find((e) => e.getClientRects().length);
+      if (el) return el;
+    }
     return null;
   }
 
@@ -905,7 +1123,13 @@ class Player {
       const nb = this.layer('base', f.screen, kind === 'none');
       if (kind !== 'none') nb.classList.add(`in-${kind}`);
       this.screen.insertBefore(nb, this.touch);
-      if (base) drop(base, kind === 'none' ? 'out' : `out-${kind}`, 520);
+      // При «проявлении» старый экран остаётся под новым непрозрачным,
+      // пока тот не проявится целиком, — без провала в пустоту.
+      if (base) {
+        // Уходящий экран — под новым, даже если сам когда-то въехал поверх.
+        base.classList.remove('in-push', 'in-back', 'in-fade');
+        drop(base, kind === 'none' || kind === 'fade' ? 'out' : `out-${kind}`, 520);
+      }
       overs.forEach((o) => drop(o, 'out', 340));
       if (f.over) this.screen.insertBefore(this.layer(`over ${f.over.kind}`, f.over.html), this.touch);
     } else {
@@ -930,7 +1154,7 @@ class Player {
       s.querySelector('i').style.removeProperty('--p');
     });
     const seg = this.segs[i];
-    seg.style.setProperty('--d', `${frameTime(f, i === this.frames.length - 1)}ms`);
+    seg.style.setProperty('--d', `${frameTime(f, i === this.frames.length - 1, this.web)}ms`);
     if (animate) { void seg.offsetWidth; seg.classList.add('run'); } else seg.querySelector('i').style.setProperty('--p', '0');
   }
 
@@ -940,11 +1164,33 @@ class Player {
     return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2 };
   }
 
+  // Поставить палец или курсор в точку сразу, без движения.
+  place(x, y) {
+    const prev = this.touch.style.transition;
+    this.touch.style.transition = 'none';
+    this.touch.style.translate = `${x}px ${y}px`;
+    void this.touch.offsetWidth;
+    this.touch.style.transition = prev;
+  }
+
+  // К кнопке: на телефоне палец появляется прямо на ней (никуда не
+  // летит), на сайте курсор подъезжает — а если его ещё не было видно,
+  // выходит из-за края кнопки, а не из угла экрана.
   moveTo(el) {
     const { x, y } = this.pos(el);
-    this.touch.style.transform = `translate(${x}px, ${y}px)`;
+    const shown = this.touch.classList.contains('on');
+    if (!this.web || !shown) this.place(this.web ? x + 46 : x, this.web ? y + 34 : y);
+    if (this.web) {
+      void this.touch.offsetWidth;
+      this.touch.style.translate = `${x}px ${y}px`;
+    }
     this.touch.classList.add('on');
     return { x, y };
+  }
+
+  // Палец поднялся — исчезает на месте.
+  lift() {
+    if (!this.web) this.touch.classList.remove('on');
   }
 
   // Статичная подсказка: палец над первой кнопкой кадра (без анимации).
@@ -952,11 +1198,13 @@ class Player {
     const a = (f.acts || []).find((x) => x.tap || x.type);
     const el = a && this.find(`[data-tap="${a.tap || a.type}"]`);
     if (!el) { this.touch.classList.remove('on'); return; }
-    const prevT = this.touch.style.transition;
+    const { x, y } = this.pos(el);
+    const prev = this.touch.style.transition;
     this.touch.style.transition = 'none';
-    this.moveTo(el);
+    this.touch.style.translate = `${x}px ${y}px`;
+    this.touch.classList.add('on');
     void this.touch.offsetWidth;
-    this.touch.style.transition = prevT;
+    this.touch.style.transition = prev;
     el.classList.add('hl');
   }
 
@@ -964,7 +1212,7 @@ class Player {
     const el = this.find(`[data-tap="${a.tap || a.type}"]`);
     if (!el) return true;
     const { x, y } = this.moveTo(el);
-    if (!(await this.sleep(a.fast ? T.fastMove : T.move, gen))) return false;
+    if (!(await this.sleep(reach(a.fast, this.web), gen))) return false;
     if (!a.fast) {
       el.classList.add('hl');
       if (!(await this.sleep(T.hl, gen))) return false;
@@ -974,10 +1222,11 @@ class Player {
     rip.className = 'gx-ripple';
     rip.style.left = `${x}px`; rip.style.top = `${y}px`;
     this.screen.appendChild(rip);
-    setTimeout(() => rip.remove(), 760);
+    setTimeout(() => rip.remove(), 660);
     el.classList.add('pressed');
     if (!(await this.sleep(T.press, gen))) return false;
     el.classList.remove('pressed', 'hl');
+    this.lift();
     if (a.mark) this.applyState({ mark: a.mark });
     return true;
   }
@@ -987,7 +1236,7 @@ class Player {
     const el = this.find(`[data-tap="${a.drag}"]`);
     if (!el) return true;
     const { x, y } = this.moveTo(el);
-    if (!(await this.sleep(T.move, gen))) return false;
+    if (!(await this.sleep(reach(false, this.web), gen))) return false;
     el.classList.add('hl');
     this.touch.classList.add('hold');
     if (!(await this.sleep(T.hold, gen))) return false;
@@ -996,13 +1245,14 @@ class Player {
     el.classList.add('dragging');
     el.style.transition = ease;
     el.style.transform = `translate(${a.dx}px, ${a.dy}px)`;
-    this.touch.style.transition = `${ease}, opacity .28s ease`;
-    this.touch.style.transform = `translate(${x + a.dx * k}px, ${y + a.dy * k}px)`;
+    this.touch.style.transition = `${ease.replace('transform', 'translate')}, opacity .28s ease, scale .28s ease`;
+    this.touch.style.translate = `${x + a.dx * k}px ${y + a.dy * k}px`;
     const ok = await this.sleep(T.drag + 60, gen);
     this.touch.style.transition = '';
     this.touch.classList.remove('hold');
     el.classList.remove('hl', 'dragging');
     if (!ok) return false;
+    this.lift();
     return this.sleep(T.after, gen);
   }
 
@@ -1082,7 +1332,7 @@ function sweep() {
 if (typeof MutationObserver !== 'undefined') {
   new MutationObserver(() => {
     const dark = document.documentElement.dataset.theme === 'dark';
-    document.querySelectorAll('.gx-screen.web').forEach((el) => el.classList.toggle('dark', dark));
+    document.querySelectorAll('.gx-screen.web, .gx-screen.webm').forEach((el) => el.classList.toggle('dark', dark));
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 

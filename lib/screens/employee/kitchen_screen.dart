@@ -5,6 +5,7 @@ import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/adaptive.dart';
 import '../../utils/constants.dart';
 import '../../utils/human_error.dart';
 import '../../utils/sale_kind.dart';
@@ -119,20 +120,19 @@ class _KitchenScreenState extends State<KitchenScreen> {
               Expanded(
                 child: tickets.isEmpty
                     ? _empty()
-                    : LayoutBuilder(builder: (context, c) {
-                        final cols = (c.maxWidth / 340).floor().clamp(1, 4);
-                        return GridView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: cols,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            mainAxisExtent: 250,
-                          ),
-                          itemCount: tickets.length,
-                          itemBuilder: (context, i) => _ticket(tickets[i]),
-                        );
-                      }),
+                    // Как в «Очереди заказов»: на телефоне одна колонка, на
+                    // планшете две-три; высота растёт с системным шрифтом.
+                    : GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 420,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          mainAxisExtent: context.scaledExtent(250, textPart: 120),
+                        ),
+                        itemCount: tickets.length,
+                        itemBuilder: (context, i) => _ticket(tickets[i]),
+                      ),
               ),
             ],
           );

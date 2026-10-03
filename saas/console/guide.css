@@ -33,7 +33,7 @@
 
 /* ---- Устройства ---- */
 .gx-phone {
-  position: relative; width: 236px; padding: 7px; border-radius: 36px;
+  position: relative; width: min(100%, 316px); padding: 7px; border-radius: 40px;
   background: linear-gradient(160deg, #3A342E 0%, #1A1714 38%, #0E0C0A 100%);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), inset 0 1px 0 rgba(255, 255, 255, .12), var(--gx-device-shadow);
 }
@@ -42,7 +42,7 @@
   background: linear-gradient(#2E2925, #191613);
 }
 .gx-browser {
-  position: relative; width: 100%; max-width: 560px; border-radius: 12px; overflow: hidden;
+  position: relative; width: 100%; max-width: 680px; border-radius: 12px; overflow: hidden;
   background: #1A1714; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), var(--gx-device-shadow);
 }
 .gx-browser-bar {
@@ -56,10 +56,12 @@
 }
 
 .gx-screen {
-  position: relative; overflow: hidden; background: #15120F; border-radius: 29px;
+  position: relative; overflow: hidden; background: #15120F; border-radius: 33px;
+  /* Слой посреди анимации Chrome рисует поверх скругления — обрезаем жёстко. */
+  clip-path: inset(0 round 33px);
   aspect-ratio: 360 / 700; -webkit-user-select: none; user-select: none;
 }
-.gx-screen.web { border-radius: 0; aspect-ratio: 960 / 540; background: #F3EEE6; }
+.gx-screen.web { border-radius: 0; clip-path: none; aspect-ratio: 960 / 540; background: #F3EEE6; }
 .gx-screen.web.dark { background: #0D0C0A; }
 .gx-phone .gx-screen::after { /* стекло: едва заметный блик */
   content: ''; position: absolute; inset: 0; z-index: 9; pointer-events: none; border-radius: inherit;
@@ -67,28 +69,32 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
 }
 .gx-island {
-  position: absolute; z-index: 8; left: 50%; top: 7px; width: 54px; height: 15px; margin-left: -27px;
-  border-radius: 10px; background: #050404;
+  position: absolute; z-index: 8; left: 50%; top: 8px; width: 68px; height: 19px; margin-left: -34px;
+  border-radius: 12px; background: #050404;
 }
 
-/* Слои: экран, поверх — меню, окно, лист снизу. */
-.gx-layer { position: absolute; inset: 0; will-change: transform, opacity; }
+/* Слои: экран, поверх — меню, окно, лист снизу. Экран всегда
+   непрозрачный: при переходе новый наезжает поверх старого, как в
+   настоящем телефоне, а не просвечивает сквозь него. */
+.gx-layer { position: absolute; inset: 0; }
+.gx-layer.over { z-index: 3; }
 .gx-view {
   position: absolute; left: 0; top: 0; width: 360px; height: 700px; overflow: hidden;
   transform-origin: 0 0; transform: scale(var(--s, .63));
 }
 .gx-screen.web .gx-view { width: 960px; height: 540px; }
 
-.gx-layer.in-push { animation: gx-in-push .46s cubic-bezier(.2, .8, .2, 1) both; }
-.gx-layer.out-push { animation: gx-out-push .46s cubic-bezier(.2, .8, .2, 1) both; }
-.gx-layer.in-back { animation: gx-in-back .42s cubic-bezier(.2, .8, .2, 1) both; }
-.gx-layer.out-back { animation: gx-out-back .42s cubic-bezier(.2, .8, .2, 1) both; }
-.gx-layer.in-fade { animation: gx-fade .32s ease both; }
-.gx-layer.out-fade { animation: gx-fade .32s ease reverse both; }
-@keyframes gx-in-push { from { transform: translateX(28%); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes gx-out-push { to { transform: translateX(-10%); opacity: 0; } }
-@keyframes gx-in-back { from { transform: translateX(-12%); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes gx-out-back { to { transform: translateX(26%); opacity: 0; } }
+.gx-layer.in-push, .gx-layer.out-back { z-index: 2; box-shadow: -14px 0 30px -6px rgba(0, 0, 0, .5); }
+.gx-layer.in-push { animation: gx-in-push .5s cubic-bezier(.32, .72, 0, 1) both; }
+.gx-layer.out-push { animation: gx-out-push .5s cubic-bezier(.32, .72, 0, 1) both; }
+.gx-layer.in-back { animation: gx-in-back .44s cubic-bezier(.32, .72, 0, 1) both; }
+.gx-layer.out-back { animation: gx-out-back .44s cubic-bezier(.32, .72, 0, 1) both; }
+.gx-layer.in-fade { z-index: 2; animation: gx-fade .34s ease both; }
+.gx-layer.out-fade { animation: gx-fade .3s ease reverse both; }
+@keyframes gx-in-push { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes gx-out-push { to { transform: translateX(-28%); filter: brightness(.55); } }
+@keyframes gx-in-back { from { transform: translateX(-28%); filter: brightness(.55); } to { transform: none; filter: none; } }
+@keyframes gx-out-back { to { transform: translateX(100%); } }
 @keyframes gx-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .gx-scrim { position: absolute; inset: 0; background: rgba(5, 4, 3, .58); }
@@ -111,23 +117,37 @@
 @keyframes gx-pop { from { transform: scale(.86); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes gx-toast { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 
-/* ---- Касание ---- */
+/* ---- Касание ----
+   Телефон: палец не летает по экрану — он мягко опускается на кнопку,
+   нажимает и сразу поднимается, надпись под ним видна почти всё время.
+   Сайт: обычный курсор мыши — плавно подъезжает и щёлкает. */
 .gx-touch {
-  position: absolute; z-index: 10; left: 0; top: 0; width: 30px; height: 30px; margin: -15px 0 0 -15px;
-  border-radius: 50%; pointer-events: none; opacity: 0;
-  background: radial-gradient(circle, rgba(255, 250, 244, .5) 0%, rgba(255, 250, 244, .26) 62%, rgba(255, 250, 244, .16) 100%);
-  box-shadow: 0 0 0 1.5px rgba(255, 250, 244, .82), 0 6px 16px -4px rgba(0, 0, 0, .55);
-  transition: transform .64s cubic-bezier(.45, .05, .2, 1), opacity .28s ease;
+  position: absolute; z-index: 10; left: 0; top: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+  border-radius: 50%; pointer-events: none; opacity: 0; scale: 1.45;
+  background: rgba(255, 252, 247, .2);
+  box-shadow: 0 0 0 2px rgba(255, 252, 247, .92), 0 3px 12px rgba(0, 0, 0, .45);
+  transition: opacity .2s ease, scale .28s cubic-bezier(.2, .8, .2, 1);
 }
-.gx-touch.on { opacity: 1; }
-.gx-touch.press { animation: gx-press .34s cubic-bezier(.3, 0, .3, 1); }
-@keyframes gx-press { 40% { scale: .78; } 100% { scale: 1; } }
+.gx-touch.on { opacity: 1; scale: 1; }
+/* Светлый экран кабинета: белый палец на нём не видно — медный. */
+.gx-screen.webm:not(.dark) .gx-touch { background: rgba(164, 80, 42, .2); box-shadow: 0 0 0 2px rgba(164, 80, 42, .9), 0 3px 10px rgba(40, 26, 12, .25); }
+.gx-screen.webm:not(.dark) .gx-ripple { border-color: rgba(164, 80, 42, .8); }
+.gx-touch.press { animation: gx-press .3s cubic-bezier(.3, 0, .3, 1); }
+@keyframes gx-press { 45% { scale: .72; } 100% { scale: 1; } }
+.gx-touch.web {
+  width: 22px; height: 22px; margin: -3px 0 0 -4px; border-radius: 0; background: none; box-shadow: none; scale: 1;
+  transition: translate .62s cubic-bezier(.45, .05, .2, 1), opacity .25s ease;
+}
+.gx-touch.web svg { display: block; width: 22px; height: 22px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); }
+.gx-touch.web.on { scale: 1; }
+.gx-touch.web.press { animation: gx-click .26s ease; }
+@keyframes gx-click { 50% { scale: .86; } 100% { scale: 1; } }
 .gx-ripple {
-  position: absolute; z-index: 9; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
-  pointer-events: none; border: 1.5px solid rgba(225, 160, 110, .95);
-  animation: gx-ripple .7s cubic-bezier(.2, .7, .3, 1) forwards;
+  position: absolute; z-index: 9; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
+  pointer-events: none; border: 2px solid rgba(232, 170, 120, .9);
+  animation: gx-ripple .6s cubic-bezier(.2, .7, .3, 1) forwards;
 }
-@keyframes gx-ripple { from { transform: scale(.5); opacity: 1; } to { transform: scale(2.3); opacity: 0; } }
+@keyframes gx-ripple { from { transform: scale(.6); opacity: .95; } to { transform: scale(2.1); opacity: 0; } }
 
 /* Подсветка того, куда сейчас нажмут. */
 .gx-view [data-tap].hl { position: relative; }
@@ -184,8 +204,12 @@
 /* ---- Раскладка статьи: шаги слева, иллюстрация справа ---- */
 .guide-item-body.has-scene { display: grid; gap: 18px; }
 .guide-item-body.has-scene > .gx { order: -1; }
+@media (max-width: 520px) {
+  .gx-stage { padding: 20px 8px 12px; border-radius: 14px; }
+  .gx-foot { padding: 0 6px; }
+}
 @media (min-width: 760px) {
-  .guide-item-body.has-scene:not(.wide) { grid-template-columns: minmax(0, 1fr) 286px; align-items: start; gap: 26px; }
+  .guide-item-body.has-scene:not(.wide) { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; gap: 28px; }
   .guide-item-body.has-scene:not(.wide) > .gx { order: 2; position: sticky; top: 84px; }
   .guide-item-body.has-scene:not(.wide) > .gx .gx-stage { padding: 22px 12px 12px; }
 }
@@ -301,10 +325,21 @@
 .gx-alt.on { display: inline; animation: gx-fade .3s ease both; }
 .gx-fold { max-height: 260px; overflow: hidden; transition: opacity .3s ease, max-height .5s cubic-bezier(.4, 0, .2, 1) .15s; }
 .gx-fold.on { opacity: 0; max-height: 0; }
+/* И наоборот: появляется после касания. */
+.gx-unfold { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .45s cubic-bezier(.4, 0, .2, 1), opacity .3s ease .12s; }
+.gx-unfold.on { max-height: 200px; opacity: 1; }
+/* Переключатель, включённый с самого начала: касание его выключает. */
+.gx-sw.inv { background: var(--pr); }
+.gx-sw.inv::after { transform: translateX(16px); background: #FFF7F0; }
+.on > .gx-sw.inv { background: var(--bd); }
+.on > .gx-sw.inv::after { transform: none; background: #CFC6BA; }
+/* «Новое в заказе» — бегунок ещё не печатали. */
+.gx-strip { display: flex; align-items: center; gap: 10px; margin: 0 14px 10px; padding: 9px 9px 9px 12px; border-radius: 14px; color: var(--br); background: rgba(207, 165, 103, .1); border: 1px solid rgba(207, 165, 103, .35); }
+.gx-strip b { color: var(--tx); }
 .gx-newt { opacity: 0; transform: scale(.6); }
 .gx-newt.on { opacity: 1; transform: none; transition: opacity .3s ease, transform .42s cubic-bezier(.3, 1.5, .5, 1); }
 .gx-view [data-tap].dragging::after { box-shadow: 0 0 0 2.5px rgba(109, 178, 135, .95), 0 0 22px 2px rgba(109, 178, 135, .35); }
-.gx-touch.hold { scale: .82; transition-property: transform, opacity, scale; }
+.gx-touch.hold { scale: .82; }
 .gx-brand-pay { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; border-radius: 12px; background: #A4502A; transition: background .45s ease; }
 .gx-brand-pay.on { background: #2F6B4F; }
 [data-mark="sage"].on { border-color: var(--pr) !important; }
@@ -413,6 +448,66 @@
 .gx-prog { height: 6px; border-radius: 3px; background: var(--s2); overflow: hidden; width: 160px; }
 .gx-prog i { display: block; height: 100%; width: 0; background: var(--pr); border-radius: inherit; transition: width 1.6s cubic-bezier(.3, 0, .2, 1); }
 .gx-prog i.on { width: 100%; }
+
+/* Поля, галочки и карточки кабинета */
+.gx-wf { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; min-width: 0; }
+.gx-wf-l { font-size: 12.5px; color: var(--mu); }
+.gx-wf-box { display: flex; align-items: center; height: 40px; padding: 0 12px; border: 1px solid var(--bd); border-radius: 10px; background: var(--bg); font-size: 14px; white-space: nowrap; overflow: hidden; }
+.gx-wf-box .gx-ph { color: var(--mu); opacity: .7; }
+.gx-wf-box .gx-val:not(:empty) + .gx-ph { display: none; }
+.gx-wc { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.35; margin: 8px 0; }
+.gx-wc-box { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--bd); display: flex; align-items: center; justify-content: center; color: transparent; transition: background .2s, border-color .2s, color .2s; }
+.gx-wc.on .gx-wc-box { background: var(--pr); border-color: var(--pr); color: #FFF7F0; }
+.gx-wc-box.radio { border-radius: 50%; }
+.gx-wc.on .gx-wc-box.radio { background: var(--bg); box-shadow: inset 0 0 0 4px var(--pr); }
+.gx-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; }
+.gx-web-narrow { max-width: 420px; }
+.gx-web-hero { margin-bottom: 4px; }
+.gx-web-hero h3 { font-size: 28px; max-width: 520px; }
+.gx-web-brand.big { font-size: 22px; margin: 0 0 14px; }
+.gx-web-page .gx-web-main { padding: 34px 48px; }
+.gx-web-code { font-size: 22px; letter-spacing: .1em; filter: blur(6px); transition: filter .35s ease; }
+.gx-web-code.on { filter: none; }
+.gx-web-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--bd); display: flex; align-items: center; justify-content: center; color: transparent; }
+.gx-web-tick.on { background: #3F8A5C; border-color: #3F8A5C; color: #fff; }
+.gx-web-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.gx-web-plan { background: var(--sf); border: 1px solid var(--bd); border-radius: 14px; padding: 14px; }
+.gx-web-plan.cur { border-color: var(--pr); box-shadow: 0 0 0 1px var(--pr); }
+.gx-web-plan .gx-wf { margin: 8px 0 0; }
+.gx-web-plan .gx-wf-box { height: 34px; font-size: 12.5px; }
+.gx-web-badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 10px; background: var(--s2); color: var(--pr); }
+.gx-web-sk { height: 22px; width: 62%; border-radius: 6px; background: var(--s2); }
+.gx-web-payer { margin-top: 14px; }
+.gx-web-split { display: flex; gap: 28px; margin-top: 16px; }
+.gx-web-preview { width: 190px; flex: none; border-radius: 22px; background: #15120F; padding: 16px 14px; color: #F2EADF; box-shadow: 0 18px 40px -20px rgba(0, 0, 0, .5); }
+
+/* Кабинет на телефоне: мобильная вёрстка сайта */
+.gx-web-m { display: none; }
+.gx-screen.webm { background: #F3EEE6; }
+.gx-screen.webm.dark { background: #0D0C0A; }
+.gx-screen.webm .gx-web { flex-direction: column; }
+.gx-screen.webm .gx-web-nav { display: none; }
+.gx-screen.webm .gx-web-m { display: block; flex: none; background: var(--sf); border-bottom: 1px solid var(--bd); }
+.gx-web-url { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; margin: 2px 14px 6px; border-radius: 15px; background: var(--s2); font-size: 12.5px; color: var(--mu); }
+.gx-web-top { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 12px 0 14px; }
+.gx-web-top b { flex: 1; font-size: 16.5px; font-weight: 600; }
+.gx-web-top .gx-web-brand { margin: 0; font-size: 17px; }
+.gx-web-burger { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.gx-screen.webm .gx-web-main { padding: 18px 16px 24px; }
+.gx-screen.webm .gx-web-main h3 { font-size: 25px; }
+.gx-screen.webm .gx-web-page .gx-web-main { padding: 24px 18px; }
+.gx-screen.webm .gx-web-hero h3 { font-size: 24px; }
+.gx-screen.webm .gx-web-card { padding: 14px 14px; margin-top: 12px; }
+.gx-screen.webm .gx-cols, .gx-screen.webm .gx-web-plans { grid-template-columns: minmax(0, 1fr); }
+.gx-screen.webm .gx-cols > div:last-child { margin-bottom: 4px; }
+.gx-screen.webm .gx-web-plans { gap: 8px; }
+.gx-screen.webm .gx-web-plan:not(.cur) { padding: 10px 14px; }
+.gx-screen.webm .gx-web-plan:not(.cur) .gx-web-sk, .gx-screen.webm .gx-web-plan:not(.cur) .gx-web-btn { display: none; }
+.gx-screen.webm .gx-web-split { flex-direction: column; gap: 12px; margin-top: 12px; }
+.gx-screen.webm .gx-web-preview { width: auto; display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.gx-screen.webm .gx-web-preview > div:not(:first-child):not(:last-child) { display: none; }
+.gx-screen.webm .gx-web-preview > div:first-child { flex: 1; margin: 0 !important; }
+.gx-screen.webm .gx-web-preview > div:last-child { width: 120px; }
 
 @media (prefers-reduced-motion: reduce) {
   .gx-layer, .gx-layer > .gx-view > .gx-panel, .gx-cap-t.swap, .gx-ripple { animation: none !important; }
