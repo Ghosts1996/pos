@@ -32,18 +32,6 @@ sleep 3
 systemctl is-active --quiet saas-gateway || die "saas-gateway не запустился — посмотрите: journalctl -u saas-gateway -n 50"
 echo "ok, версия $(cat /opt/saas-gateway/VERSION 2>/dev/null || echo '?')"
 
-if [[ -d /opt/pii-gateway ]]; then
-  say "pii-gateway (данные в РФ)"
-  rsync -a --exclude node_modules "$REPO/pii-gateway/" /opt/pii-gateway/
-  (cd /opt/pii-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
-  chown -R pii-gateway:pii-gateway /opt/pii-gateway
-  sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d pii_gateway -f /opt/pii-gateway/schema.sql
-  systemctl restart pii-gateway
-  sleep 2
-  systemctl is-active --quiet pii-gateway || die "pii-gateway не запустился — посмотрите: journalctl -u pii-gateway -n 50"
-  echo "ok"
-fi
-
 say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
 if command -v firebase >/dev/null; then
   if (cd "$REPO/saas" && firebase deploy --only hosting,firestore --non-interactive); then
@@ -53,6 +41,37 @@ if command -v firebase >/dev/null; then
   fi
 else
   echo "firebase CLI на сервере нет — сайт обновите вручную: cd $REPO/saas && firebase deploy --only hosting,firestore"
+fi
+
+if [[ -d /opt/pii-gateway ]]; then
+  say "pii-gateway (данные в РФ)"
+  rsync -a --exclude node_modules "$REPO/pii-gateway/" /opt/pii-gateway/
+  (cd /opt/pii-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
+  chown -R pii-gateway:pii-gateway /opt/pii-gateway
+  # База должна отвечать до применения схемы. Если Postgres остановился
+  # (перезагрузка, нехватка памяти), поднимаем его; не вышло — причина
+  # будет прямо в логе обновления.
+  if ! pg_isready -q; then
+    echo "Postgres не отвечает — запускаю"
+    systemctl start postgresql || true
+    pg_lsclusters -h 2>/dev/null | while read -r ver name _ status _; do
+      [[ "$status" == online* ]] || pg_ctlcluster "$ver" "$name" start || true
+    done || true
+    for _ in $(seq 1 30); do pg_isready -q && break; sleep 1; done
+    if ! pg_isready -q; then
+      pg_lsclusters 2>&1 || true
+      systemctl --no-pager --full status 'postgresql*' 2>&1 | tail -n 40 || true
+      df -h / /var/lib/postgresql 2>&1 || true
+      free -m 2>&1 || true
+      die "Postgres не запустился — причина выше. Вручную: systemctl start postgresql; journalctl -u 'postgresql*' -n 50"
+    fi
+    echo "Postgres запущен"
+  fi
+  (cd / && sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d pii_gateway -f /opt/pii-gateway/schema.sql)
+  systemctl restart pii-gateway
+  sleep 2
+  systemctl is-active --quiet pii-gateway || die "pii-gateway не запустился — посмотрите: journalctl -u pii-gateway -n 50"
+  echo "ok"
 fi
 
 echo
