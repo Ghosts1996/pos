@@ -476,6 +476,10 @@ class GuestOrder {
   final List<OrderItem> items;
   final String comment;
 
+  /// Кому заказ (AppConstants.position*): кальян — кальянщику, блюда и
+  /// напитки — официанту. Пусто — старый заказ, для всех.
+  final String targetPosition;
+
   /// 'new' | 'preparing' | 'ready' | 'rejected'
   final String status;
   final String rejectReason;
@@ -492,6 +496,7 @@ class GuestOrder {
     this.guestName = '',
     this.items = const [],
     this.comment = '',
+    this.targetPosition = '',
     this.status = 'new',
     this.rejectReason = '',
     required this.createdAt,
@@ -501,6 +506,13 @@ class GuestOrder {
 
   /// Заказ ещё в работе у персонала.
   bool get isOpen => status == 'new' || status == 'preparing';
+
+  /// Заказ адресован сотруднику этой специализации. Универсал и старые
+  /// заказы без адресата — для всех.
+  bool isFor(String position) =>
+      targetPosition.isEmpty ||
+      position == AppConstants.positionUniversal ||
+      position == targetPosition;
 
   /// Подпись стадии для гостя.
   String get statusLabel {
@@ -533,6 +545,7 @@ class GuestOrder {
           .whereType<Map>().map((e) => OrderItem.fromMap(Map<String, dynamic>.from(e)))
           .toList(),
       comment: asText(data['comment']),
+      targetPosition: asText(data['targetPosition']),
       status: asText(data['status'], 'new'),
       rejectReason: asText(data['rejectReason']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
@@ -549,6 +562,7 @@ class GuestOrder {
         'guestName': guestName,
         'items': items.map((e) => e.toMap()).toList(),
         'comment': comment,
+        if (targetPosition.isNotEmpty) 'targetPosition': targetPosition,
         'status': status,
         'rejectReason': rejectReason,
         'createdAt': Timestamp.fromDate(createdAt),

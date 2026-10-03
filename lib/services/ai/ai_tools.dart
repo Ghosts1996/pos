@@ -241,7 +241,8 @@ class AiToolRegistry {
 
     AiTool(
       name: 'create_reservation',
-      description: 'Создать бронь. Для гостя бронь создаётся от его имени со статусом «новая».',
+      description: 'Создать бронь. Номер телефона гостя обязателен. '
+          'Для гостя бронь создаётся от его имени со статусом «новая».',
       parameters: _params({
         'guest_name': {'type': 'string'},
         'phone': {'type': 'string'},
@@ -290,6 +291,10 @@ class AiToolRegistry {
           return 'Свободных столов на это время нет — предложи другое время.';
         } on ReservationTimeException catch (e) {
           return e.message;
+        } on ReservationPhoneException {
+          return ctx.scope == AiToolScope.guest
+              ? 'Без номера телефона бронь не принимаем — попроси гостя указать номер в профиле.'
+              : 'Без номера телефона бронь не принимаем — спроси номер у гостя.';
         }
       },
     ),

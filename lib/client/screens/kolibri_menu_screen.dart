@@ -11,6 +11,7 @@ import '../theme/kolibri_theme.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
+import '../../utils/constants.dart';
 import '../../utils/promo_policy.dart';
 
 /// Живое меню заведения для гостя — как в кассе: сначала плитки категорий
@@ -63,6 +64,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// Табак, кальяны и принадлежности — не плиткой с фото, а отдельной
   /// «категорией» со строгим перечнем (ст. 19 закона № 15-ФЗ).
   static const _tobaccoKey = '__tobacco';
+
+  /// Названия категорий: по ним видно, что позиция — кальян (см. _add).
+  Map<String, String> _catNames = const {};
   static const _otherKey = '__other';
 
   static int _byName(MenuItem a, MenuItem b) => _alphaKey(a.name).compareTo(_alphaKey(b.name));
@@ -73,6 +77,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       builder: (context, catSnap) {
         final allCategories = catSnap.data ?? const <MenuCategory>[];
         final catNames = {for (final c in allCategories) c.id: c.name};
+        // Нужны и корзине: кальян из неё уходит кальянщику, а не официанту.
+        _catNames = catNames;
         bool tobacco(MenuItem i) => PromoPolicy.menuTobacco(i, catNames[i.categoryId] ?? '');
 
         return StreamBuilder<List<MenuItem>>(
@@ -127,7 +133,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
               final open = sections.where((s) => s.id == _categoryId).firstOrNull;
               body = open != null
                   ? _categoryPage(open.name, _itemsGrid(open.items))
-                  : _categoryGrid(sections, regular, hasTobacco: tobaccoItems.isNotEmpty, hidden: hidden);
+                  : _categoryGrid(sections, regular, tobaccoCount: tobaccoItems.length, hidden: hidden);
             }
 
             return PopScope(
@@ -152,8 +158,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
 
   /// Главный экран меню: «Популярное» лентой и плитки категорий с фото.
   Widget _categoryGrid(List<_MenuSection> sections, List<MenuItem> regular,
-      {required bool hasTobacco, required int hidden}) {
-    if (sections.isEmpty && !hasTobacco) {
+      {required int tobaccoCount, required int hidden}) {
+    if (sections.isEmpty && tobaccoCount == 0) {
       return Center(child: Text('Меню пока пустое', style: TextStyle(color: KolibriColors.textMuted)));
     }
     final hits = regular.where((i) => i.isHit).toList()..sort((a, b) => a.popularRank.compareTo(b.popularRank));
@@ -189,7 +195,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             delegate: SliverChildBuilderDelegate((_, i) => _categoryTile(sections[i]), childCount: sections.length),
           ),
         ),
-        if (hasTobacco) SliverToBoxAdapter(child: _tobaccoTile()),
+        if (tobaccoCount > 0) SliverToBoxAdapter(child: _tobaccoTile(tobaccoCount)),
         if (hidden > 0)
           SliverToBoxAdapter(
             child: Padding(
@@ -257,20 +263,38 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     );
   }
 
-  /// Вход в перечень табака — такой же строгий: чёрные буквы на белом,
-  /// без изображений.
-  Widget _tobaccoTile() {
-    const style = TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w400, height: 1.35);
+  /// Вход в перечень табака — такой же строгий: чёрные буквы одного размера
+  /// на белом, без изображений. Форма — как у плиток категорий.
+  Widget _tobaccoTile(int count) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Material(
         color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => setState(() => _categoryId = _tobaccoKey),
-          child: const Padding(
-            padding: EdgeInsets.all(14),
-            child: Text('Табачная и никотинсодержащая продукция, кальяны — перечень. '
-                'Продажа лицам младше 18 лет запрещена.', style: style),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Табак и кальяны',
+                          style: _tobaccoText.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text('Перечень с ценами, $count ${pluralRu(count, 'позиция', 'позиции', 'позиций')}. '
+                          'Продажа лицам младше 18 лет запрещена.',
+                          style: _tobaccoText),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const ExcludeSemantics(child: Text('→', style: _tobaccoText)),
+              ],
+            ),
           ),
         ),
       ),
@@ -567,51 +591,121 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// Алфавитный порядок для перечня табака: без учёта регистра, «ё» как «е».
   static String _alphaKey(String s) => s.toLowerCase().replaceAll('ё', 'е');
 
+  /// Текст перечня табака: один размер, чёрный, цифры одной ширины.
+  static const _tobaccoText = TextStyle(
+    color: Colors.black,
+    fontSize: 15,
+    fontWeight: FontWeight.w400,
+    height: 1.4,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
   /// Перечень табака, кальянов и принадлежностей по ст. 19 закона № 15-ФЗ:
   /// буквы одного размера, чёрные на белом, по алфавиту, с ценой и без
-  /// изображений — даже кнопки заказа здесь текстом, без иконок.
+  /// изображений — даже кнопки заказа здесь текстом, без иконок. Красота —
+  /// только вёрсткой, как у бумажного меню: название, отточие, цена.
   Widget _tobaccoList(List<MenuItem> items, {required bool first}) {
-    const style = TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w400, height: 1.35);
     return Container(
       margin: EdgeInsets.only(top: first ? 4 : 22),
-      padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
-      color: Colors.white,
-      child: DefaultTextStyle(
-        style: style,
+      padding: const EdgeInsets.fromLTRB(18, 16, 14, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: DefaultTextStyle.merge(
+        style: _tobaccoText,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Padding(
-              padding: EdgeInsets.only(right: 10, bottom: 6),
+              padding: EdgeInsets.only(right: 4, bottom: 12),
               child: Text('Табачная и никотинсодержащая продукция, кальяны. '
                   'Продажа лицам младше 18 лет запрещена.'),
             ),
-            for (final item in items) _tobaccoRow(item, style),
+            for (final item in items) ...[
+              const Divider(height: 1, thickness: 1, color: Color(0x1A000000)),
+              _tobaccoRow(item),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _tobaccoRow(MenuItem item, TextStyle style) {
+  Widget _tobaccoRow(MenuItem item) {
     final inCart = _cart[item.id]?.qty ?? 0;
-    Widget button(String label, VoidCallback onTap) => TextButton(
-          onPressed: onTap,
-          style: TextButton.styleFrom(
-            foregroundColor: Colors.black,
-            textStyle: style,
-            minimumSize: const Size(44, 40),
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: _MenuLeaderLine(
+              name: item.name,
+              // Неразрывные пробелы — цена не рвётся на «1 200» и «₽».
+              price: rub(item.price).replaceAll(' ', '\u00A0'),
+              style: _tobaccoText,
+            ),
           ),
-          child: Text(label),
+          const SizedBox(width: 12),
+          if (inCart > 0) _tobaccoStepper(item, inCart) else _tobaccoAdd(item),
+        ],
+      ),
+    );
+  }
+
+  /// «+» — знаком того же шрифта в тонкой круглой рамке: без иконок и
+  /// цвета заведения, и название с ценой помещаются в одну строку.
+  Widget _tobaccoAdd(MenuItem item) => Semantics(
+        button: true,
+        label: 'Добавить: ${item.name}',
+        excludeSemantics: true,
+        child: Material(
+          color: Colors.white,
+          shape: const CircleBorder(side: BorderSide(color: Colors.black)),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _add(item),
+            child: const SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(child: Text('+', style: _tobaccoText)),
+            ),
+          ),
+        ),
+      );
+
+  /// Сколько в заказе: «− 2 +» в той же рамке, знаки — текстом.
+  Widget _tobaccoStepper(MenuItem item, int qty) {
+    Widget step(String sign, String label, VoidCallback onTap) => Semantics(
+          button: true,
+          label: label,
+          excludeSemantics: true,
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(child: Text(sign, style: _tobaccoText)),
+            ),
+          ),
         );
-    return Row(
-      children: [
-        // Неразрывные пробелы — цена не рвётся на «1 200» и «₽».
-        Expanded(child: Text('${item.name} — ${rub(item.price).replaceAll(' ', '\u00A0')}')),
-        if (inCart > 0) ...[button('−', () => _remove(item)), Text('$inCart')],
-        button(inCart > 0 ? '+' : 'Добавить', () => _add(item)),
-      ],
+    return Material(
+      color: Colors.white,
+      shape: const StadiumBorder(side: BorderSide(color: Colors.black)),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          step('−', 'Убрать одну', () => _remove(item)),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 18),
+            child: Text('$qty', textAlign: TextAlign.center, style: _tobaccoText),
+          ),
+          step('+', 'Добавить ещё', () => _add(item)),
+        ],
+      ),
     );
   }
 
@@ -733,6 +827,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         name: item.name,
         price: item.price,
         qty: (existing?.qty ?? 0) + 1,
+        // Кальян/табак: по этому признаку заказ уйдёт кальянщику.
+        noPromo: PromoPolicy.menuTobacco(item, _catNames[item.categoryId] ?? ''),
       );
     });
   }
@@ -789,8 +885,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         ),
       );
 
-  /// Отправка заказа на POS. Заказ не попадает в чек автоматически —
-  /// кальянщик подтверждает его на планшете.
+  /// Отправка заказа на POS. Заказ не попадает в чек автоматически: блюда
+  /// и напитки подтверждает официант, кальян — кальянщик, каждый у себя.
   Future<void> _sendOrder() async {
     final profile = await _link.profileStream(_auth.uid).first;
     if (profile == null || profile.activeSessionId.isEmpty) {
@@ -803,10 +899,9 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
 
     setState(() => _sending = true);
     try {
-      await _link.placeGuestOrder(
+      final targets = await _link.placeRoutedGuestOrder(
         sessionId: profile.activeSessionId,
         tableId: profile.activeTableId,
-        tableName: '',
         items: _cart.values.toList(),
         clientUid: profile.uid,
         guestName: profile.name,
@@ -814,7 +909,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       if (!mounted) return;
       setState(_cart.clear);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Заказ отправлен — ${VenueService.instance.terms.staff} подтвердит его')),
+        SnackBar(content: Text(orderSentMessage(targets))),
       );
       if (widget.tableOrderMode) {
         Navigator.of(context).pop(true);
@@ -864,4 +959,87 @@ class _MenuSection {
   final String imageUrl;
   final List<MenuItem> items;
   const _MenuSection(this.id, this.name, this.imageUrl, this.items);
+}
+
+/// Строка меню «название …… цена»: отточие тянется от конца названия до
+/// цены, длинное название переносится, а отточие с ценой встают на его
+/// последнюю строку. Точки — обычные символы того же шрифта и цвета.
+class _MenuLeaderLine extends StatelessWidget {
+  final String name;
+  final String price;
+  final TextStyle style;
+
+  const _MenuLeaderLine({required this.name, required this.price, required this.style});
+
+  static const _gap = 6.0;
+  static const _minLeader = 18.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final effective = DefaultTextStyle.of(context).style.merge(style);
+    final scaler = MediaQuery.textScalerOf(context);
+    final dir = Directionality.of(context);
+    TextPainter measure(String text, double maxWidth) =>
+        TextPainter(text: TextSpan(text: text, style: effective), textDirection: dir, textScaler: scaler)
+          ..layout(maxWidth: maxWidth);
+
+    return LayoutBuilder(builder: (context, c) {
+      final width = c.maxWidth;
+      final priceW = measure(price, double.infinity).width;
+      final nameMax = (width - priceW - _gap * 2 - _minLeader).clamp(40.0, width);
+      final nameTp = measure(name, nameMax);
+      final lines = nameTp.computeLineMetrics();
+      final lastW = lines.isEmpty ? 0.0 : lines.last.width;
+      final dotW = measure('.', double.infinity).width;
+      final leaderLeft = lastW + _gap;
+      final leaderW = width - priceW - _gap - leaderLeft;
+      final dots = dotW > 0 && leaderW > 0 ? (leaderW / dotW).floor() : 0;
+
+      return SizedBox(
+        width: width,
+        height: nameTp.height,
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              width: nameMax,
+              child: Text(name, style: effective),
+            ),
+            if (dots > 0)
+              Positioned(
+                left: leaderLeft,
+                width: leaderW,
+                bottom: 0,
+                child: ExcludeSemantics(
+                  child: Text('.' * dots,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.clip,
+                      textAlign: TextAlign.right,
+                      style: effective),
+                ),
+              ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Text(price, maxLines: 1, softWrap: false, style: effective),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+/// Подпись после отправки заказа: кому что ушло.
+String orderSentMessage(List<String> targets) {
+  const hookah = AppConstants.positionHookahMaster;
+  if (targets.length > 1 && targets.contains(hookah)) {
+    final other = targets.firstWhere((t) => t != hookah);
+    return 'Заказ передан: блюда и напитки — ${AppConstants.orderTargetDat(other)}, '
+        'кальян — ${AppConstants.orderTargetDat(hookah)}';
+  }
+  final who = targets.isEmpty ? AppConstants.positionWaiter : targets.first;
+  return 'Заказ передан ${AppConstants.orderTargetDat(who)} — он подтвердит его';
 }

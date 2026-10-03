@@ -148,16 +148,20 @@ class WaitlistService {
 
   /// Превратить ожидание в бронь на конкретное время — если гость
   /// не готов ждать сейчас, но придёт позже. Стол подбирается автоматически.
+  ///
+  /// [phone] — номер, если в очереди гость стоял без него: бронь без
+  /// номера не создаётся.
   Future<void> convertToReservation(
     WaitlistEntry entry,
     DateTime startTime, {
     String employeeName = '',
+    String? phone,
   }) async {
     await _reservations.create(ReservationModel(
       id: '',
       clientUid: entry.clientUid,
       guestName: entry.guestName,
-      phone: entry.phone,
+      phone: phone ?? entry.phone,
       guestsCount: entry.guestsCount,
       startTime: startTime,
       comment: entry.comment,
