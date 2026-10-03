@@ -1283,6 +1283,51 @@ const LI = (() => {
   };
 })();
 
+// ---- Светлая и тёмная тема ----
+// Тему до первой отрисовки ставит скрипт в index.html (выбор посетителя или
+// тема устройства). Здесь — кнопка: в шапке сайта, в верхней панели
+// кабинета и плавающая на страницах без шапки (.theme-fab в index.html).
+const THEME_KEY = 'zalpos-theme';
+const THEME_ICONS = `<svg class="li theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1z"/></svg>`
+  + `<svg class="li theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/>`
+  + `<path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5 7 7M17 17l1.5 1.5M5.5 18.5 7 17M17 7l1.5-1.5"/></svg>`;
+
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function themeToggleHtml() {
+  return `<button type="button" class="theme-toggle" aria-label="${currentTheme() === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}">${THEME_ICONS}</button>`;
+}
+
+function applyTheme(theme, { save = false } = {}) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#15120F' : '#F3EEE6');
+  const label = theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему';
+  document.querySelectorAll('.theme-toggle').forEach((b) => b.setAttribute('aria-label', label));
+  if (save) { try { localStorage.setItem(THEME_KEY, theme); } catch (_) {} }
+}
+
+(function initThemeToggle() {
+  const fab = document.querySelector('.theme-fab');
+  if (fab) fab.innerHTML = THEME_ICONS;
+  applyTheme(currentTheme());
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.theme-toggle');
+    if (!btn) return;
+    applyTheme(currentTheme() === 'dark' ? 'light' : 'dark', { save: true });
+  });
+  // Пока посетитель сам не выбрал — тема следует за устройством.
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      let saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+      if (saved !== 'light' && saved !== 'dark') applyTheme(e.matches ? 'dark' : 'light');
+    });
+  } catch (_) {}
+})();
+
 // Цифры лендинга из настоящих тарифов (renderLandingPlans): «меню» первого
 // экрана, счёт «Из чего складывается цена» и список «Во всех тарифах».
 // Обещание появляется, только если оно верно для каждого продаваемого
@@ -1395,6 +1440,7 @@ function screenLanding() {
           <button type="button" data-scroll="landing-faq">Вопросы</button>
         </div>
         <div class="landing-nav-actions">
+          ${themeToggleHtml()}
           <a class="landing-nav-login" href="#/login">Войти</a>
           <button class="btn btn-primary" id="f-landing-nav-cta"><span class="landing-nav-cta-full">Попробовать бесплатно</span><span class="landing-nav-cta-short">Попробовать</span></button>
         </div>
@@ -2919,11 +2965,12 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
         <div class="dash-topbar-tenant">${esc(tenantName || 'ZalPOS')}</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
+      ${themeToggleHtml()}
       <span class="brand-gem" aria-hidden="true"></span>
     </div>
     <div class="nav-backdrop" id="nav-backdrop"></div>
     <div class="nav-drawer" id="nav-drawer">
-      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS</div>
+      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS${themeToggleHtml()}</div>
       ${state.tenants.length > 1 ? `
         <label class="field"><span>Заведение</span>
           <select id="f-nav-tenant-pick">
@@ -5007,11 +5054,12 @@ function adminNavHtml(activeTab) {
         <div class="dash-topbar-tenant">ZalPOS · платформа</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
+      ${themeToggleHtml()}
       <span class="brand-gem" aria-hidden="true"></span>
     </div>
     <div class="nav-backdrop" id="admin-nav-backdrop"></div>
     <div class="nav-drawer" id="admin-nav-drawer">
-      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS</div>
+      <div class="nav-drawer-brand"><span class="brand-gem" aria-hidden="true"></span>ZalPOS${themeToggleHtml()}</div>
       <div class="nav-drawer-tenant">Панель платформы</div>
       ${ADMIN_NAV.map((t) => `
         <button class="nav-item${t.id === activeTab ? ' active' : ''} f-admin-tab" data-tab="${t.id}">

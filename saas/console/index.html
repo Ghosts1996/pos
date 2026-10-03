@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>ZalPOS — касса и управление заведением: зал, склад, брони, лояльность</title>
 <meta name="theme-color" content="#F3EEE6">
+<meta name="color-scheme" content="light dark">
+<!-- Тема до первой отрисовки, без белой вспышки: выбор посетителя
+     (кнопка в шапке, localStorage) или тема его устройства. -->
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('zalpos-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+  var m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', t === 'dark' ? '#15120F' : '#F3EEE6');
+})();
+</script>
 <meta name="description" content="Облачная касса для кафе, ресторанов, баров и лаунжей: карта зала, оплата и фискальные чеки, склад, брони, программа лояльности, смены и зарплата, гостевое приложение. Бесплатный пробный период, запуск за 10–15 минут.">
 <!-- Без входа здесь лендинг — его индексируем; кабинет краулер не увидит. -->
 <meta name="robots" content="index, follow">
@@ -47,6 +62,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Переключатель темы для страниц без шапки (вход, документы, мастер
+     создания заведения); в шапке сайта и кабинета — свой, а этот прячется. -->
+<button type="button" class="theme-toggle theme-fab" aria-label="Сменить тему"></button>
 
 <script src="typograf.js" defer></script>
 <script type="module" src="console.js"></script>
