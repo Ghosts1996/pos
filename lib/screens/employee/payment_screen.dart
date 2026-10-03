@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payment_terminal_service.dart';
+import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_service.dart';
@@ -495,17 +496,54 @@ class _PaymentScreenState extends State<PaymentScreen> {
         } catch (_) {}
       }
       if (venueName.isEmpty) venueName = AppScope.branding?.appName.trim() ?? '';
-      await printer.printReceipt(ReceiptData(
-        venueName: venueName.isEmpty ? 'Кальянная' : venueName,
-        tableName: widget.session.tableName,
-        employeeName: widget.session.employeeName,
-        closedAt: DateTime.now(),
-        items: widget.session.orderItems
-            .map((i) => ReceiptLine('${i.name} x${i.qty}', right: i.total.toStringAsFixed(0)))
-            .toList(),
-        total: _total,
-        paymentMethod: paidVia.isEmpty ? 'Наличные' : paidVia,
-      ));
+      final name = venueName.isEmpty ? 'Кальянная' : venueName;
+      final closedAt = DateTime.now();
+      final method = paidVia.isEmpty ? 'Наличные' : paidVia;
+      ReceiptLine line(OrderItem i) => ReceiptLine('${i.name} x${i.qty}', right: i.total.toStringAsFixed(0));
+      // Кальяны — отдельным чеком, кухня и бар — другим (настройка в
+      // Интеграциях). Скидка счёта в кальянном чеке — только на позиции,
+      // где она разрешена (обычно табак без скидок); бонусы списываются
+      // со второго чека — на табак их не тратят.
+      final items = widget.session.orderItems;
+      final hookah = items.where((i) => i.effectiveKind == SaleKind.hookah).toList();
+      final rest = items.where((i) => i.effectiveKind != SaleKind.hookah).toList();
+      if (printHookahSeparately && hookah.isNotEmpty && rest.isNotEmpty) {
+        final discount = widget.session.discountPercent / 100;
+        final hookahTotal = hookah.fold<double>(
+            0, (a, i) => a + i.total * (PromoPolicy.restricted(i) ? 1 : 1 - discount));
+        final restTotal = (_total - hookahTotal).clamp(0, double.infinity).toDouble();
+        await printer.printReceipt(ReceiptData(
+          venueName: name,
+          title: 'Кальяны',
+          tableName: widget.session.tableName,
+          employeeName: widget.session.employeeName,
+          closedAt: closedAt,
+          items: hookah.map(line).toList(),
+          total: hookahTotal,
+          paymentMethod: method,
+          footerNote: 'Кухня и бар — отдельным чеком',
+        ));
+        await printer.printReceipt(ReceiptData(
+          venueName: name,
+          title: 'Кухня и бар',
+          tableName: widget.session.tableName,
+          employeeName: widget.session.employeeName,
+          closedAt: closedAt,
+          items: rest.map(line).toList(),
+          total: restTotal,
+          paymentMethod: method,
+        ));
+      } else {
+        await printer.printReceipt(ReceiptData(
+          venueName: name,
+          tableName: widget.session.tableName,
+          employeeName: widget.session.employeeName,
+          closedAt: closedAt,
+          items: items.map(line).toList(),
+          total: _total,
+          paymentMethod: method,
+        ));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

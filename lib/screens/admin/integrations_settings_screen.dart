@@ -28,6 +28,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _doc = AppScope.col('settings').doc('integrations');
 
   String _printerType = 'none'; // none | bluetooth | network
+  bool _splitHookah = true;
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
@@ -75,6 +76,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     final snap = await _doc.get();
     final data = snap.data() ?? {};
     _printerType = data['printerType'] ?? 'none';
+    _splitHookah = data['printSplitHookah'] as bool? ?? true;
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
     _utmHostCtrl.text = data['utmHost'] ?? '';
@@ -127,7 +129,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   }
 
   Future<void> _save() async {
+    printHookahSeparately = _splitHookah;
     await _doc.set({
+      'printSplitHookah': _splitHookah,
       'printerType': _printerType,
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
@@ -552,6 +556,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                     ),
                 ],
               ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _splitHookah,
+              onChanged: (v) => setState(() => _splitHookah = v),
+              title: const Text('Кальяны — отдельным чеком'),
+              subtitle: const Text('Если в счёте есть кальяны и что-то ещё, печатаются два чека: '
+                  '«Кальяны» и «Кухня и бар», каждый со своим итогом. Что считается кальяном — '
+                  'по категории в «Меню».'),
             ),
             OutlinedButton.icon(
               onPressed: _testing ? null : _testPrinter,

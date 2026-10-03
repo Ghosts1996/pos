@@ -320,7 +320,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
   Future<void> _changeQty(String sessionId, String menuItemId, int delta) async {
     try {
-      await _fs.changeOrderItemQty(sessionId, menuItemId, delta);
+      await _fs.changeOrderItemQty(sessionId, menuItemId, delta, employeeId: widget.employee.id);
     } catch (e) {
       _showError('Не удалось изменить заказ: ${humanError(e, lower: true)}');
     }
@@ -548,7 +548,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   }
 
   Future<void> _openMenu(SessionModel session) => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session)));
+      .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session, employeeId: widget.employee.id)));
 
   Widget _orderHeader(SessionModel session) {
     final count = session.orderItems.fold<int>(0, (a, i) => a + i.qty);

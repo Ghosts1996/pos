@@ -3,6 +3,8 @@ import '../../models/employee.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_calculator.dart';
+import '../../services/payroll_sales.dart';
+import '../../utils/sale_kind.dart';
 import '../../services/tips_service.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
@@ -12,9 +14,14 @@ import '../../theme/app_colors.dart';
 
 /// Расчёт зарплаты сотрудников за выбранный период: часы и смены (ставка
 /// за час или оклад за смену + переработка) — из «Смены сотрудников»,
-/// выручка для процента с продаж —
-/// из закрытых чеков (та же выручка, что и в "Отчётах", те же исключения:
-/// возвраты и чеки, закрытые без оплаты, в неё не входят).
+/// проценты — с закрытых чеков (PayrollSales): официанту с чеков, которые
+/// он вёл, кальянщику с кальянов, бармену с бара. Только реально
+/// полученные деньги: возвраты, «за счёт заведения», бонусы и закрытие
+/// без оплаты процента не дают. Ставки — действовавшие в момент смены.
+///
+/// Всё, что стоит проверить глазами, помечено в карточке: ручные правки
+/// часов (и кто их сделал), правки самому себе, очень длинные смены,
+/// изменение ставок в этом периоде.
 class PayrollScreen extends StatefulWidget {
   const PayrollScreen({super.key});
 
@@ -35,6 +42,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
   /// отмечал начало смены), и чаевые по именам, которых больше нет.
   double _unassignedTips = 0;
 
+  /// Кальяны и бар, с которых процент некому было начислить.
+  Map<String, double> _unassignedSales = const {};
+
   @override
   void initState() {
     super.initState();
@@ -51,8 +61,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
     });
     try {
       final employees = await _fs.employeesOnce();
-      final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
+      // Смены с запасом в сутки по краям и открытые — чтобы понять, кто был
+      // на смене, когда закрыли чек (общий котёл кальянов и бара). Платим
+      // только за смены, закончившиеся в периоде.
+      final around = await _fs.closedStaffShiftsInRange(
+          _rangeStart.subtract(const Duration(days: 1)), _rangeEnd.add(const Duration(days: 1)));
+      final open = await _fs.openStaffShiftsOnce();
+      final shifts = around
+          .where((s) => s.endedAt != null && !s.endedAt!.isBefore(_rangeStart) && s.endedAt!.isBefore(_rangeEnd))
+          .toList();
       final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
+      final sales = PayrollSales.attribute(sessions: sessions, employees: employees, shifts: [...around, ...open]);
       // Чаевые не должны ронять весь отчёт: если их не удалось загрузить,
       // зарплата всё равно посчитается.
       var tips = const <TipModel>[];
@@ -61,25 +80,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
       } catch (_) {}
       final tipShares = TipsService.sharesByEmployee(tips);
       final usedTipKeys = <String>{};
-
-      // Выручка как в «Отчётах»: без возвратов и чеков, закрытых без оплаты, —
-      // процент не начисляется на деньги, которых заведение не получило.
-      //
-      // Группируем по employeeId: по имени выручка терялась бы при
-      // переименовании и складывалась у тёзок. Старые чеки без employeeId
-      // сопоставляем по имени.
-      final revenueByEmployeeId = <String, double>{};
-      final revenueByNameFallback = <String, double>{};
-      for (final s in sessions) {
-        if (s.refunded || s.closedWithoutPayment) continue;
-        if (s.employeeId.isNotEmpty) {
-          revenueByEmployeeId[s.employeeId] =
-              (revenueByEmployeeId[s.employeeId] ?? 0) + s.totalWithDiscount;
-        } else {
-          final name = s.employeeName.isEmpty ? 'Без имени' : s.employeeName;
-          revenueByNameFallback[name] = (revenueByNameFallback[name] ?? 0) + s.totalWithDiscount;
-        }
-      }
 
       final results = <PayrollResult>[];
       final unconfigured = <Employee>[];
@@ -91,17 +91,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
           // Зарплата не настроена, но чаевые ему оставили — их всё равно
           // нужно выдать, поэтому карточка нужна.
           if (empTips > 0) {
-            results.add(PayrollCalculator.calculate(
-                employee: emp, closedShifts: empShifts, salesRevenue: 0, tips: empTips));
+            results.add(PayrollCalculator.calculate(employee: emp, closedShifts: empShifts, tips: empTips));
           } else {
             unconfigured.add(emp);
           }
           continue;
         }
-        final revenue =
-            (revenueByEmployeeId[emp.id] ?? 0) + (revenueByNameFallback[emp.name] ?? 0);
         results.add(PayrollCalculator.calculate(
-            employee: emp, closedShifts: empShifts, salesRevenue: revenue, tips: empTips));
+            employee: emp, closedShifts: empShifts, credits: sales.of(emp.id), tips: empTips));
       }
       final unassignedTips = tipShares.entries
           .where((e) => !usedTipKeys.contains(e.key))
@@ -113,6 +110,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         _results = results;
         _unconfigured = unconfigured;
         _unassignedTips = unassignedTips;
+        _unassignedSales = sales.unassigned;
         _loading = false;
       });
     } catch (e) {
@@ -265,6 +263,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                   style: const TextStyle(fontSize: 12),
                                 ),
                               ),
+                            for (final kind in [SaleKind.hookah, SaleKind.bar])
+                              if ((_unassignedSales[kind] ?? 0) > 0.5)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                                  child: Text(
+                                    '${kind == SaleKind.hookah ? 'Кальяны' : 'Бар'} на ${_rub(_unassignedSales[kind]!)} — '
+                                    'процент никому не начислен: на смене не было никого с процентом '
+                                    '${kind == SaleKind.hookah ? 'с кальянов' : 'с бара'}.',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
                             ..._results.map(_employeeCard),
                             if (_unconfigured.isNotEmpty)
                               Padding(
@@ -322,11 +331,23 @@ class _PayrollScreenState extends State<PayrollScreen> {
           '${_hours(r.overtimeHours)} ч × ${_rub(r.overtimeHourPrice)}',
           _rub(r.overtimePay)));
     }
-    if (emp.salesPercentEnabled) {
+    String pct(double pay, double base) => base > 0 ? '${_numStr(((pay / base) * 1000).round() / 10)}%' : '';
+    if (r.checkPay > 0 || (emp.salesPercentEnabled && emp.salesPercentRate > 0)) {
+      rows.add(_row('С чеков', '${pct(r.checkPay, r.checkRevenue)} от ${_rub(r.checkRevenue)}', _rub(r.checkPay)));
+    }
+    if (r.hookahPay > 0 || (emp.salesPercentEnabled && emp.hookahPercentRate > 0)) {
       rows.add(_row(
-          'Процент с продаж',
-          '${_numStr(emp.salesPercentRate)}% от ${_rub(r.salesRevenue)}',
-          _rub(r.salesPercentPay)));
+          'С кальянов',
+          '${pct(r.hookahPay, r.hookahRevenue)} от ${_rub(r.hookahRevenue)}'
+              '${r.hookahRevenue > r.hookahPersonal + 0.5 ? ' (свои ${_rub(r.hookahPersonal)}, доля смены ${_rub(r.hookahRevenue - r.hookahPersonal)})' : ''}',
+          _rub(r.hookahPay)));
+    }
+    if (r.barPay > 0 || (emp.salesPercentEnabled && emp.barPercentRate > 0)) {
+      rows.add(_row(
+          'С бара',
+          '${pct(r.barPay, r.barRevenue)} от ${_rub(r.barRevenue)}'
+              '${r.barRevenue > r.barPersonal + 0.5 ? ' (свои ${_rub(r.barPersonal)}, доля смены ${_rub(r.barRevenue - r.barPersonal)})' : ''}',
+          _rub(r.barPay)));
     }
     if (r.tips > 0) {
       rows.add(_row('Чаевые', 'от гостей, не зарплата',
@@ -352,6 +373,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             ),
             const SizedBox(height: 6),
             ...rows,
+            ..._checks(r),
             const Divider(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -366,6 +388,50 @@ class _PayrollScreenState extends State<PayrollScreen> {
         ),
       ),
     );
+  }
+
+  /// Что стоит проверить: ручные правки часов, правки самому себе, очень
+  /// длинные смены, изменение ставок в этом периоде.
+  List<Widget> _checks(PayrollResult r) {
+    final notes = <String>[];
+    if (r.manualShifts > 0) {
+      final who = r.editors.isEmpty ? '' : ' — ${r.editors.join(', ')}';
+      notes.add('Часы правили вручную: ${r.manualShifts} ${pluralRu(r.manualShifts, 'смена', 'смены', 'смен')}, '
+          '${_hours(r.manualHours)} ч$who');
+    }
+    if (r.selfEditedShifts > 0) {
+      notes.add('Сам себе указал время: ${r.selfEditedShifts} ${pluralRu(r.selfEditedShifts, 'раз', 'раза', 'раз')}');
+    }
+    if (r.longShifts > 0) {
+      notes.add('Смены длиннее ${PayrollCalculator.longShiftHours.round()} ч: ${r.longShifts}');
+    }
+    final changes = r.employee.payHistory
+        .where((c) => !c.at.isBefore(_rangeStart) && c.at.isBefore(_rangeEnd))
+        .toList();
+    for (final c in changes) {
+      notes.add('Оплату изменили ${_fmtDay(c.at)}${c.byName.isNotEmpty ? ' (${c.byName == r.employee.name ? 'сам' : c.byName})' : ''}: '
+          '${c.terms.summary()}');
+    }
+    if (notes.isEmpty) return const [];
+    return [
+      const SizedBox(height: 6),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Проверьте', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+            const SizedBox(height: 2),
+            for (final n in notes) Text('• $n', style: const TextStyle(fontSize: 12.5)),
+          ],
+        ),
+      ),
+    ];
   }
 
   Widget _row(String label, String detail, String amount) {

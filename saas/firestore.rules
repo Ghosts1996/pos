@@ -444,9 +444,45 @@ service cloud.firestore {
     // ---- Сотрудники (PIN-вход на кассе) ----
     // isStaff, а не owner/admin: сотрудников и зарплату настраивают с
     // планшета, а он в Firestore всегда employee.
+    //
+    // Оплата (ставки и проценты) меняется только вместе с новой записью в
+    // истории payHistory: старые записи не трогаются, новая — «с этого
+    // момента» (допуск 5 минут на часы планшета). Так прошлые смены
+    // считаются по прежним ставкам, а поднять ставку задним числом нельзя.
+    // Исключение — самая первая настройка зарплаты: она может действовать
+    // «с начала» (запись с нулевым временем), иначе уже отработанные смены
+    // нового сотрудника остались бы без оплаты.
+    function payFields() {
+      return ['hourlyRateEnabled', 'hourlyRate', 'shiftRateEnabled', 'shiftRate',
+        'overtimeEnabled', 'overtimeThresholdHours', 'overtimeMultiplier', 'overtimeHourRate',
+        'salesPercentEnabled', 'salesPercentRate', 'checkPercentExcludesHookah',
+        'hookahPercentRate', 'barPercentRate'];
+    }
+    function clockSkew() { return duration.value(5, 'm'); }
+    function payHistoryAppendOk(d, o) {
+      let before = o.get('payHistory', []);
+      let after = d.get('payHistory', []);
+      let n = before.size();
+      let m = after.size();
+      let wasPaid = o.get('hourlyRateEnabled', false) == true ||
+        o.get('shiftRateEnabled', false) == true || o.get('salesPercentEnabled', false) == true;
+      return after is list && m >= n + 1 && m <= n + 2 && m <= 500 &&
+        (n == 0 || after[0:n] == before) &&
+        after[m - 1].at is timestamp &&
+        ((after[m - 1].at >= request.time - clockSkew() && after[m - 1].at <= request.time + clockSkew()) ||
+         (n == 0 && !wasPaid && after[m - 1].at == timestamp.value(0)));
+    }
     match /tenants/{tenantId}/employees/{employeeId} {
       allow read: if isStaff(tenantId);
-      allow write: if isStaff(tenantId);
+      allow create: if isStaff(tenantId) &&
+        request.resource.data.get('payHistory', []) is list &&
+        request.resource.data.get('payHistory', []).size() <= 1;
+      allow update: if isStaff(tenantId) && (
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(payFields()) &&
+          request.resource.data.get('payHistory', []) == resource.data.get('payHistory', [])) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasAny(payFields()) &&
+          payHistoryAppendOk(request.resource.data, resource.data)));
+      allow delete: if isStaff(tenantId);
     }
 
     // ---- Столы и чеки ----
@@ -964,8 +1000,50 @@ service cloud.firestore {
       allow read, write: if isStaff(tenantId);
     }
     // Личные смены сотрудников (часы и зарплата) — не кассовые shifts.
+    // Чтобы часы нельзя было накрутить:
+    //  • «Начать смену» — начало не раньше «сейчас» по серверу (допуск
+    //    5 минут на часы старой версии кассы): перевод часов планшета назад
+    //    смену не удлинит;
+    //  • «Закончить смену» — конец не позже «сейчас»; без пометки manual —
+    //    ровно «сейчас»;
+    //  • ручная запись или правка (админ в табеле, сотрудник указал время
+    //    ухода) — только с пометкой manual, целиком в прошлом и не длиннее
+    //    суток; она видна в расчёте зарплаты;
+    //  • сотрудника у записи не сменить — чужие часы на себя не переписать;
+    //  • удалять нельзя — ошибочную запись отменяют флагом cancelled.
+    function staffShiftCreateOk(d) {
+      return d.employeeId is string && d.employeeId.size() > 0 &&
+        d.startedAt is timestamp && d.get('cancelled', false) == false && (
+          (d.get('manual', false) == false && d.status == 'open' && d.get('endedAt', null) == null &&
+            d.startedAt >= request.time - clockSkew() &&
+            d.get('countFrom', d.startedAt) is timestamp) ||
+          (d.manual == true && d.endedAt is timestamp &&
+            d.endedAt <= request.time + clockSkew() && d.endedAt > d.startedAt &&
+            d.endedAt - d.startedAt <= duration.value(24, 'h'))
+        );
+    }
+    function staffShiftUpdateOk(d, o) {
+      let changed = d.diff(o).affectedKeys();
+      return d.employeeId == o.employeeId && o.get('cancelled', false) == false && (
+        (changed.hasOnly(['cancelled', 'cancelledBy', 'cancelledAt']) && d.get('cancelled', false) == true) ||
+        (d.get('cancelled', false) == false && (
+          (o.status == 'open' && d.status == 'closed' && d.startedAt == o.startedAt &&
+            d.endedAt is timestamp && d.endedAt <= request.time + clockSkew() && d.endedAt > o.startedAt &&
+            changed.hasOnly(['status', 'endedAt', 'manual', 'editedBy', 'editedById', 'editedAt']) &&
+            (d.get('manual', false) == true || d.endedAt >= request.time - clockSkew())) ||
+          (d.get('manual', false) == true && d.startedAt is timestamp && d.endedAt is timestamp &&
+            d.endedAt <= request.time + clockSkew() && d.endedAt > d.startedAt &&
+            d.endedAt - d.startedAt <= duration.value(24, 'h') &&
+            changed.hasOnly(['startedAt', 'endedAt', 'status', 'manual', 'editedBy', 'editedById',
+              'editedAt', 'countFrom', 'employeeName']))
+        ))
+      );
+    }
     match /tenants/{tenantId}/staffShifts/{doc} {
-      allow read, write: if isStaff(tenantId);
+      allow read: if isStaff(tenantId);
+      allow create: if isStaff(tenantId) && staffShiftCreateOk(request.resource.data);
+      allow update: if isStaff(tenantId) && staffShiftUpdateOk(request.resource.data, resource.data);
+      allow delete: if false;
     }
     // Указатели открытой смены. Транзакция открытия смены читает их вместе
     // с shifts/staffShifts и проходит, только если разрешены все операции.
