@@ -199,6 +199,13 @@ function staffWord(form) {
   return w[{ nom: 0, acc: 1, dat: 2 }[form] || 0];
 }
 const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+/// Кто принимает заказ — подсказка у кнопки заказа.
+function orderHint() {
+  const food = TARGET_NOM[orderTarget(false)];
+  return isHookah()
+    ? `Блюда и напитки примет ${food}, кальян — кальянщик. После подтверждения заказ появится в счёте.`
+    : `Блюда и напитки — прямо к столу: ${food} подтвердит заказ, и он появится в счёте.`;
+}
 
 // ---------- ЗАПУСК ----------
 
@@ -725,13 +732,26 @@ function screenMenu() {
           <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable ? qtyControls(i) : ''}</div>
         </div>
       </div>`;
+    // Перечень табака (ст. 19 закона № 15-ФЗ): как строка бумажного меню —
+    // название, отточие, цена; заказ словом, без иконок.
+    const tobaccoControls = (i) => (state.cart[i.id]
+      ? `<div class="tstep">
+           <button data-minus="${esc(i.id)}" aria-label="Убрать одну">−</button>
+           <span>${state.cart[i.id]}</span>
+           <button data-plus="${esc(i.id)}" aria-label="Добавить ещё">+</button>
+         </div>`
+      : `<button class="tadd" data-plus="${esc(i.id)}" aria-label="Добавить: ${esc(i.name)}">+</button>`);
     const tobaccoBlock = (list) => `
       <div class="tobacco-list">
         <p>Табачная и никотинсодержащая продукция, кальяны. Продажа лицам младше 18 лет запрещена.</p>
         ${[...list].sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru')).map((i) => `
           <div class="tobacco-row">
-            <span class="name">${esc(i.name)} — <span class="nowrap">${money(i.price)}</span></span>
-            ${qtyControls(i)}
+            <div class="tline">
+              <span class="tname">${esc(i.name)}</span>
+              <span class="tdots" aria-hidden="true"></span>
+              <span class="tprice">${money(i.price)}</span>
+            </div>
+            ${tobaccoControls(i)}
           </div>`).join('')}
       </div>`;
     const backBar = (title) => `
@@ -765,8 +785,11 @@ function screenMenu() {
             <span class="cname">${esc(s.name)}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
           </button>`;
         }).join('')}</div>
-        ${tobaccoItems.length ? `<button class="tobacco-tile" data-cat="__tobacco">Табачная и никотинсодержащая
-          продукция, кальяны — перечень. Продажа лицам младше 18 лет запрещена.</button>` : ''}
+        ${tobaccoItems.length ? `<button class="tobacco-tile" data-cat="__tobacco">
+          <span class="tt-text"><b>Табак и кальяны</b>
+            Перечень с ценами, ${tobaccoItems.length} ${plural(tobaccoItems.length, 'позиция', 'позиции', 'позиций')}.
+            Продажа лицам младше 18 лет запрещена.</span>
+          <span class="tt-go" aria-hidden="true">→</span></button>` : ''}
         ${hidden ? `<p class="small muted">Часть позиций (18+) видна только в заведении,
           когда вы за столом.</p>` : ''}`;
     }
@@ -800,7 +823,7 @@ function screenMenu() {
       el.onclick = () => { removeFromCart(el.dataset.minus); draw(); };
     });
     const send = $('sendOrder');
-    if (send) send.onclick = () => placeOrder(items, draw);
+    if (send) send.onclick = () => placeOrder(items, draw, tobacco);
   };
 
   sub(onSnapshot(query(collection(state.root, 'menuCategories'), orderBy('order')), (s) => {
@@ -827,7 +850,7 @@ function cartBlock(items = []) {
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">Ваш заказ: ${count} ${plural(count, 'позиция', 'позиции', 'позиций')} · ${money(total)}</div>
       <div class="small muted" style="margin-bottom:12px">
-        ${cap(staffWord('nom'))} подтвердит заказ, и позиции появятся в счёте.
+        ${orderHint()}
       </div>
       <button class="btn-primary" id="sendOrder">Отправить заказ</button>
     </div>`;
@@ -844,14 +867,40 @@ function removeFromCart(id) {
   if (state.cart[id] <= 0) delete state.cart[id];
 }
 
-async function placeOrder(items, redraw) {
+/// Кому уходит часть заказа (как AppConstants.guestOrderTarget в
+/// приложении): кальян — кальянщику, блюда и напитки — официанту, в баре —
+/// бармену. Каждый подтверждает свою часть сам.
+function orderTarget(hookahItem) {
+  if (hookahItem && isHookah()) return 'hookah_master';
+  return venueType() === 'bar' ? 'bartender' : 'waiter';
+}
+const TARGET_DAT = { hookah_master: 'кальянщику', bartender: 'бармену', waiter: 'официанту' };
+const TARGET_NOM = { hookah_master: 'кальянщик', bartender: 'бармен', waiter: 'официант' };
+
+/// Подпись после отправки: кому что ушло.
+function orderSentText(targets) {
+  if (targets.length > 1 && targets.includes('hookah_master')) {
+    const other = targets.find((t) => t !== 'hookah_master');
+    return `Заказ передан: блюда и напитки — ${TARGET_DAT[other]}, кальян — кальянщику`;
+  }
+  return `Заказ передан ${TARGET_DAT[targets[0] || 'waiter']} — он подтвердит его`;
+}
+
+async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.name || '')) {
   const p = state.profile;
   if (!p || !p.activeSessionId) return toast('Сначала откройте свой стол');
   const chosen = Object.entries(state.cart).map(([id, qty]) => {
     const it = items.find((i) => i.id === id);
-    return it ? { menuItemId: it.id, name: it.name, price: Number(it.price) || 0, qty } : null;
+    return it ? { item: { menuItemId: it.id, name: it.name, price: Number(it.price) || 0, qty },
+      target: orderTarget(isTobacco(it)) } : null;
   }).filter(Boolean);
   if (!chosen.length) return;
+  // Части заказа по адресатам, в порядке позиций.
+  const groups = new Map();
+  chosen.forEach(({ item, target }) => {
+    if (!groups.has(target)) groups.set(target, []);
+    groups.get(target).push(item);
+  });
 
   try {
     // Стол — из самого чека: гостя могли пересадить, а стол в профиле ещё
@@ -866,20 +915,23 @@ async function placeOrder(items, redraw) {
         tableName = ses.data().tableName || '';
       }
     } catch (_) { /* не критично — заказ всё равно уйдёт с id стола */ }
-    await addDoc(collection(state.root, 'guestOrders'), {
-      sessionId: p.activeSessionId,
-      tableId,
-      tableName,
-      clientUid: state.uid,
-      guestName: p.name || '',
-      items: chosen,
-      comment: '',
-      status: 'new',
-      rejectReason: '',
-      createdAt: Timestamp.fromDate(new Date()),
-    });
+    for (const [target, list] of groups) {
+      await addDoc(collection(state.root, 'guestOrders'), {
+        sessionId: p.activeSessionId,
+        tableId,
+        tableName,
+        clientUid: state.uid,
+        guestName: p.name || '',
+        items: list,
+        comment: '',
+        targetPosition: target,
+        status: 'new',
+        rejectReason: '',
+        createdAt: Timestamp.fromDate(new Date()),
+      });
+    }
     state.cart = {};
-    toast(`Заказ передан ${staffWord('dat')}`);
+    toast(orderSentText([...groups.keys()]));
     if (state.orderFromTable) {
       state.orderFromTable = false;
       location.hash = '#/table';
@@ -1107,8 +1159,7 @@ function drawTable(s) {
     ${showTimer ? `<div class="card timer" id="timer"><div class="value">—</div></div>` : ''}
 
     <button class="btn-primary" id="orderFromTable">${ic('cloche')}Сделать заказ</button>
-    <p class="small muted" style="margin:8px 0 0">Блюда и напитки — прямо к столу:
-    ${staffWord('nom')} подтвердит заказ, и он появится в счёте.</p>
+    <p class="small muted" style="margin:8px 0 0">${orderHint()}</p>
 
     <h2>Позвать</h2>
     ${hookah ? `
@@ -1281,7 +1332,9 @@ function paintOrders(sessionId) {
       <div class="row">
         <div class="grow">
           <div>${(o.items || []).map((i) => esc(i.name) + '×' + (i.qty || 1)).join(', ')}</div>
-          <div class="small muted">${esc(label(o.status))}${o.rejectReason ? ' · ' + esc(o.rejectReason) : ''}</div>
+          <div class="small muted">${o.status === 'new' && TARGET_DAT[o.targetPosition]
+            ? `Передан ${TARGET_DAT[o.targetPosition]} · ждёт подтверждения`
+            : esc(label(o.status))}${o.rejectReason ? ' · ' + esc(o.rejectReason) : ''}</div>
         </div>
       </div>
     </div>`).join('');
@@ -1438,14 +1491,14 @@ function screenBooking() {
     <div class="card">
       <label class="field"><span>Ваше имя</span>
         <input id="bName" value="${esc(p.name || '')}" placeholder="Как к вам обращаться"></label>
-      <label class="field"><span>Телефон</span>
-        <input id="bPhone" type="tel" inputmode="tel"
+      <label class="field"><span>Телефон (обязательно)</span>
+        <input id="bPhone" type="tel" inputmode="tel" required
           value="${esc(p.phone ? prettyPhone(p.phone) : '')}"
           placeholder="+7 999 123-45-67" ${p.phone ? 'readonly' : ''}></label>
       <p class="small muted" style="margin:-4px 0 12px">
         ${p.phone
           ? ic('lock', 'inline') + 'Номер привязан — сменить его можно только через администратора'
-          : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
+          : 'По нему подтвердим бронь. Можно +7, 8 или просто 9…'}</p>
 
       <label class="field"><span>Стол</span></label>
       <div class="row" style="margin:-6px 0 12px">
@@ -1761,7 +1814,12 @@ async function sendBooking() {
   const duration = bookingDraft.duration || 90;
 
   if (!name) return toast('Укажите имя');
-  if (!isValidRuPhone(phone)) return toast('Проверьте номер телефона');
+  if (!isValidRuPhone(phone)) {
+    // Без номера бронь не принимаем — подсвечиваем поле и ведём к нему.
+    const field = $('bPhone');
+    if (field) { field.focus(); field.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    return toast(phone ? 'Проверьте номер телефона' : 'Укажите номер телефона — без него бронь не принимаем');
+  }
   if (!bookingDraft.time) return toast('Выберите время из списка свободного');
 
   const start = bookingStart();
@@ -2860,10 +2918,17 @@ async function estimateWait(guests) {
 }
 
 async function joinQueue(guests, btn) {
+  const p = state.profile || {};
+  // Как с бронью и столом: без номера в очередь не ставим — по нему зовут,
+  // когда стол освободится. Правила базы проверяют то же самое.
+  if (!p.phone) {
+    toast('Укажите номер телефона в профиле, чтобы встать в очередь');
+    location.hash = '#/profile';
+    return;
+  }
   btn.disabled = true;
   try {
     const minutes = await estimateWait(guests);
-    const p = state.profile || {};
     // Имя и телефон — сначала на сервер в РФ (152-ФЗ), потом очередь.
     const ref = doc(collection(state.root, 'waitlist'));
     await piiPost({ tenantId: state.tenantId, kind: 'waitlist', id: ref.id, name: (p.name || '').trim(), phone: p.phone || '' });

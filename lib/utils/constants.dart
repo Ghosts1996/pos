@@ -180,11 +180,11 @@ class AppConstants {
   static String positionHint(String position, {required bool hookahVenue}) {
     switch (normalizePosition(position)) {
       case positionWaiter:
-        return 'Получает вызовы официанта и просьбы принести счёт.';
+        return 'Получает вызовы официанта, просьбы принести счёт и заказы блюд и напитков из приложения гостя.';
       case positionHookahMaster:
-        return 'Получает вызовы на угли и кальян, видит «Перезабивку» и напоминания про угли.';
+        return 'Получает вызовы на угли и кальян, заказы кальянов из приложения гостя, видит «Перезабивку» и напоминания про угли.';
       case positionBartender:
-        return 'Получает вызовы к бару.';
+        return 'Получает вызовы к бару, а в баре — и заказы из приложения гостя.';
       case positionCook:
         return 'Вызовов из-за стола не получает, но гость может оставить ему чаевые.';
       case positionHost:
@@ -193,6 +193,37 @@ class AppConstants {
         return hookahVenue
             ? 'Получает все вызовы гостей, видит «Перезабивку» и напоминания про угли.'
             : 'Получает все вызовы гостей.';
+    }
+  }
+
+  /// Кому уходит заказ гостя из приложения: кальян — кальянщику, блюда и
+  /// напитки — официанту (в баре — бармену). Универсал видит любой заказ.
+  static String guestOrderTarget({required bool hookahItem, required bool hookahVenue, required bool bar}) {
+    if (hookahItem && hookahVenue) return positionHookahMaster;
+    return bar ? positionBartender : positionWaiter;
+  }
+
+  /// Адресат заказа для гостя: «официант», «кальянщик», «бармен».
+  static String orderTargetWord(String position) {
+    switch (position) {
+      case positionHookahMaster:
+        return 'кальянщик';
+      case positionBartender:
+        return 'бармен';
+      default:
+        return 'официант';
+    }
+  }
+
+  /// Дательный падеж: «передан кальянщику».
+  static String orderTargetDat(String position) {
+    switch (position) {
+      case positionHookahMaster:
+        return 'кальянщику';
+      case positionBartender:
+        return 'бармену';
+      default:
+        return 'официанту';
     }
   }
 

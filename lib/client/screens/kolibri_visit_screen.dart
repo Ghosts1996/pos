@@ -204,7 +204,13 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Блюда и напитки — прямо к столу: ${terms.staff} подтвердит заказ, и он появится в счёте.',
+          // Заказ делится по адресатам (GuestLinkService.placeRoutedGuestOrder):
+          // блюда и напитки — официанту, кальян — кальянщику.
+          terms.isHookah
+              ? 'Блюда и напитки примет ${_waiterWord(terms)}, кальян — кальянщик. '
+                  'После подтверждения заказ появится в счёте.'
+              : 'Блюда и напитки — прямо к столу: ${_waiterWord(terms)} подтвердит заказ, '
+                  'и он появится в счёте.',
           style: TextStyle(color: KolibriColors.textMuted, fontSize: 12.5, height: 1.4),
         ),
 
@@ -401,7 +407,9 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                           'preparing' || 'accepted' => 'Принят — готовим',
                           'ready' => 'Готов — несём к столу',
                           'rejected' => o.rejectReason.isEmpty ? 'Отклонён' : 'Отклонён: ${o.rejectReason}',
-                          _ => 'Ждёт подтверждения',
+                          _ => o.targetPosition.isEmpty
+                              ? 'Ждёт подтверждения'
+                              : 'Передан ${AppConstants.orderTargetDat(o.targetPosition)} · ждёт подтверждения',
                         },
                         style: const TextStyle(fontSize: 12),
                       ),
@@ -413,6 +421,10 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
       ],
     );
   }
+
+  /// Кто принимает блюда и напитки: в баре — бармен, иначе официант.
+  static String _waiterWord(VenueTerms terms) => AppConstants.orderTargetWord(
+      AppConstants.guestOrderTarget(hookahItem: false, hookahVenue: terms.isHookah, bar: terms.type == VenueTerms.bar));
 
   /// Правила заведения — те же, что администратор пишет в профиле
   /// заведения на кассе.

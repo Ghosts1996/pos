@@ -11,7 +11,9 @@ import 'pii_gateway_service.dart';
 import 'push_service.dart';
 import 'venue_service.dart';
 import '../utils/shared_stream.dart';
+import '../utils/constants.dart';
 import '../utils/promo_policy.dart';
+import '../utils/venue_terms.dart';
 
 /// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -656,6 +658,41 @@ class GuestLinkService {
 
   // ---------- ЗАКАЗ ИЗ-ЗА СТОЛА ----------
 
+  /// Заказ гостя, разложенный по адресатам: кальян — кальянщику, блюда и
+  /// напитки — официанту (в баре — бармену). Каждый получает свою часть и
+  /// подтверждает её сам. Возвращает адресатов в порядке позиций — для
+  /// подписи «Заказ передан официанту».
+  Future<List<String>> placeRoutedGuestOrder({
+    required String sessionId,
+    required String tableId,
+    required List<OrderItem> items,
+    String clientUid = '',
+    String guestName = '',
+  }) async {
+    final terms = VenueService.instance.terms;
+    final groups = <String, List<OrderItem>>{};
+    for (final item in items) {
+      final target = AppConstants.guestOrderTarget(
+        hookahItem: item.noPromo || PromoPolicy.looksTobacco(item.name),
+        hookahVenue: terms.isHookah,
+        bar: terms.type == VenueTerms.bar,
+      );
+      (groups[target] ??= []).add(item);
+    }
+    for (final group in groups.entries) {
+      await placeGuestOrder(
+        sessionId: sessionId,
+        tableId: tableId,
+        tableName: '',
+        items: group.value,
+        clientUid: clientUid,
+        guestName: guestName,
+        targetPosition: group.key,
+      );
+    }
+    return groups.keys.toList();
+  }
+
   Future<String> placeGuestOrder({
     required String sessionId,
     required String tableId,
@@ -664,6 +701,7 @@ class GuestLinkService {
     String clientUid = '',
     String guestName = '',
     String comment = '',
+    String targetPosition = '',
   }) async {
     // Стол берём из самого чека (его гостю читать можно): гостя могли
     // пересадить, а стол в профиле ещё прежний. Имя стола обязательно —
@@ -689,6 +727,7 @@ class GuestLinkService {
       guestName: guestName,
       items: items,
       comment: comment,
+      targetPosition: targetPosition,
       createdAt: DateTime.now(),
     );
     final ref = await _orders.add(order.toMap());

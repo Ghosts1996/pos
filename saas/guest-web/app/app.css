@@ -242,16 +242,25 @@ button.chip.on { color: var(--on-primary, #fff); background: var(--primary); fon
 .item:last-child { border-bottom: none; }
 .item img { width: 54px; height: 54px; border-radius: 10px; object-fit: cover; flex: none; background: var(--surface-2); }
 /* Перечень табака и кальянов (ст. 19 закона № 15-ФЗ): чёрные буквы одного
-   размера на белом фоне, без изображений — цвета и шрифты темы сюда не
-   применяются. */
-.tobacco-list { background: #fff; color: #000; padding: 12px 8px 12px 14px; margin: 12px 0;
-  font: 400 15px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; letter-spacing: 0; }
-.tobacco-list p { margin: 0 0 6px; }
-.tobacco-row { display: flex; align-items: center; gap: 8px; }
-.tobacco-row .name { flex: 1; }
-.tobacco-list .nowrap { white-space: nowrap; }
-.tobacco-list .qty button { background: none; border: none; color: #000; font: inherit; min-width: 40px; min-height: 40px; }
-.tobacco-list .qty span { font: inherit; color: #000; }
+   размера на белом фоне, по алфавиту, без изображений — цвета темы сюда не
+   применяются. Красота только вёрсткой, как у бумажного меню: название,
+   отточие (обычные точки того же шрифта), цена. */
+.tobacco-list { background: #fff; color: #000; padding: 16px 14px 6px 18px; margin: 12px 0; border-radius: 18px;
+  font: 400 15px/1.4 var(--sans); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.tobacco-list p { margin: 0 4px 12px 0; }
+.tobacco-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(0, 0, 0, .1); }
+.tobacco-row .tline { flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 6px; }
+.tobacco-row .tname { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tobacco-row .tdots { flex: 1 1 18px; min-width: 18px; overflow: hidden; white-space: nowrap; }
+.tobacco-row .tdots::before { content: '..................................................................................................................................................'; }
+.tobacco-row .tprice { flex: none; white-space: nowrap; }
+.tobacco-list button { font: inherit; letter-spacing: 0; color: #000; background: #fff; width: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tobacco-list .tadd { flex: none; width: 40px; height: 40px; min-height: 0; padding: 0; border: 1px solid #000; border-radius: 50%; }
+.tobacco-list .tstep { flex: none; display: flex; align-items: center; border: 1px solid #000; border-radius: 999px; }
+.tobacco-list .tstep button { width: 40px; height: 40px; min-height: 0; padding: 0; border: 0; border-radius: 50%; }
+.tobacco-list .tstep span { min-width: 18px; text-align: center; }
+.tobacco-list button:active { background: rgba(0, 0, 0, .06); }
+.tobacco-list button:focus-visible { outline: 2px solid #000; outline-offset: 2px; }
 .qty { display: flex; align-items: center; gap: 10px; }
 .qty button {
   width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%;
@@ -490,5 +499,9 @@ h2.mh { margin: 26px 0 12px; }
 .backbar h2 { margin: 0; font: 600 28px/1.1 var(--serif); text-transform: none; letter-spacing: -.005em; color: var(--text); }
 .backbar h2::after { display: none; }
 .backbar button { width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; flex: none; }
-.tobacco-tile { display: block; width: 100%; background: #fff; color: #000; border: 0; border-radius: 0; padding: 14px; min-height: 0;
-  font: 400 15px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: left; margin-top: 14px; cursor: pointer; }
+.tobacco-tile { display: flex; align-items: center; gap: 12px; width: 100%; background: #fff; color: #000; border: 0;
+  border-radius: 18px; padding: 14px 16px 14px 18px; min-height: 0;
+  font: 400 15px/1.4 var(--sans); letter-spacing: 0; text-align: left; margin-top: 14px; cursor: pointer; }
+.tobacco-tile .tt-text { flex: 1; }
+.tobacco-tile .tt-text b { display: block; font-weight: 600; margin-bottom: 2px; }
+.tobacco-tile .tt-go { flex: none; }

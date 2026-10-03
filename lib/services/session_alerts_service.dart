@@ -91,6 +91,7 @@ class SessionAlertsService {
   StreamSubscription? _sessions;
   StreamSubscription? _reservations;
   StreamSubscription? _calls;
+  StreamSubscription? _orders;
 
   /// Что уже запланировано: sessionId → (конец сеанса, число перезабивок).
   /// Нужно, чтобы не переставлять будильники на каждое чтение стрима —
@@ -105,6 +106,7 @@ class SessionAlertsService {
   /// гостя, и отставшие часы съедали бы свежие брони.
   bool _firstReservationSnapshot = true;
   bool _firstCallSnapshot = true;
+  bool _firstOrderSnapshot = true;
 
   Future<void> start() async {
     if (_running) return;
@@ -145,6 +147,7 @@ class SessionAlertsService {
     _watchSessions();
     _watchReservations();
     _watchCalls();
+    _watchOrders();
   }
 
   void _applyMe(Map<String, dynamic>? data) {
@@ -278,10 +281,12 @@ class SessionAlertsService {
     await _sessions?.cancel();
     await _reservations?.cancel();
     await _calls?.cancel();
-    _sessions = _reservations = _calls = null;
+    await _orders?.cancel();
+    _sessions = _reservations = _calls = _orders = null;
     _planned.clear();
     _firstReservationSnapshot = true;
     _firstCallSnapshot = true;
+    _firstOrderSnapshot = true;
     _running = false;
   }
 
@@ -425,6 +430,35 @@ class SessionAlertsService {
           title: c.type.label,
           body: '${c.tableName.isEmpty ? 'Стол' : c.tableName}'
               '${c.comment.isEmpty ? '' : ' · «${c.comment}»'}',
+        ));
+      }
+    }, onError: (_) {});
+  }
+
+  // ---------- ЗАКАЗЫ ИЗ ПРИЛОЖЕНИЯ ГОСТЯ ----------
+
+  /// Заказ гостя звенит у того, кому адресован: блюда и напитки — у
+  /// официанта, кальян — у кальянщика (GuestOrder.targetPosition).
+  /// Универсал слышит всё.
+  void _watchOrders() {
+    _orders = AppScope.col('guestOrders')
+        .where('status', isEqualTo: 'new')
+        .snapshots()
+        .listen((snap) {
+      if (_firstOrderSnapshot) {
+        _firstOrderSnapshot = false;
+        return;
+      }
+      for (final change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final o = GuestOrder.fromDoc(change.doc);
+        if (!_mine) continue; // на смене другой сотрудник — это его заказ
+        if (!o.isFor(_myPosition)) continue;
+
+        unawaited(_notify.show(
+          id: NotificationService.idFor('order_${o.id}'),
+          title: 'Заказ из приложения · ${o.tableName.isEmpty ? 'стол' : o.tableName}',
+          body: o.items.map((i) => '${i.name} ×${i.qty}').join(', '),
         ));
       }
     }, onError: (_) {});

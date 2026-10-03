@@ -139,6 +139,24 @@ service cloud.firestore {
         .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId']);
     }
 
+    // Номер похож на настоящий: 10–15 цифр, знаки форматирования не в счёт
+    // (старые версии приложения присылали «+7 999 …»). Без номера гость не
+    // бронирует, не встаёт в очередь и не садится за стол.
+    function phoneOk(p) {
+      return p is string &&
+        p.replace('[^0-9]', '').size() >= 10 &&
+        p.replace('[^0-9]', '').size() <= 15;
+    }
+
+    // В профиле гостя есть номер: свой профиль заведения или общий профиль сети.
+    function guestHasPhone(tenantId) {
+      let own = /databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid);
+      let cId = chainIdOf(tenantId);
+      let chainOwn = /databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid);
+      return (exists(own) && phoneOk(get(own).data.get('phone', ''))) ||
+        (cId != '' && exists(chainOwn) && phoneOk(get(chainOwn).data.get('phone', '')));
+    }
+
     // ---- users: свой профиль читает/правит сам, супер-админ — любой ----
     match /users/{uid} {
       allow read: if isSelf(uid) || isSuperAdmin();
@@ -585,6 +603,7 @@ service cloud.firestore {
       allow create: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          request.resource.data.uid == request.auth.uid &&
+         guestHasPhone(tenantId) &&
          tableKeyOk(tenantId, sessionId));
       allow update: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
@@ -601,6 +620,7 @@ service cloud.firestore {
         (isTenantGuest(tenantId) &&
          request.resource.data.clientUid == request.auth.uid &&
          request.resource.data.status == 'new' &&
+         phoneOk(request.resource.data.get('phone', '')) &&
          request.resource.data.get('sessionId', '') == '' &&
          request.resource.data.get('preOrder', []) is list &&
          request.resource.data.get('preOrder', []).size() <= 50);
@@ -651,7 +671,9 @@ service cloud.firestore {
         ownsSession(tenantId, request.resource.data.get('sessionId', '')) &&
         request.resource.data.items is list &&
         request.resource.data.items.size() > 0 &&
-        request.resource.data.items.size() <= 50;
+        request.resource.data.items.size() <= 50 &&
+        // Кому заказ: кальян — кальянщику, блюда и напитки — официанту.
+        request.resource.data.get('targetPosition', '') in ['', 'waiter', 'hookah_master', 'bartender'];
       allow update, delete: if isStaff(tenantId);
     }
 
@@ -694,9 +716,13 @@ service cloud.firestore {
 
     match /tenants/{tenantId}/waitlist/{doc} {
       allow read: if isStaff(tenantId) || (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
-      allow create: if isTenantGuest(tenantId) &&
-        request.resource.data.clientUid == request.auth.uid &&
-        request.resource.data.status == 'waiting';
+      // Касса записывает гостя у входа (номер по желанию — он стоит рядом),
+      // гость из приложения — только себя и только с номером.
+      allow create: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) &&
+         request.resource.data.clientUid == request.auth.uid &&
+         request.resource.data.status == 'waiting' &&
+         phoneOk(request.resource.data.get('phone', '')));
       allow update: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          resource.data.clientUid == request.auth.uid &&

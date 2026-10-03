@@ -1049,6 +1049,19 @@ describe("Сеть заведений (chains) — общая лояльност
     await assertFails(getDoc(doc(ctxFor("staleEmp"), "subscriptions/chainX")));
   });
 
+  it("гость сети садится за стол точки, только если в общем профиле сети есть номер", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantX1/sessions/sessSeat"), { status: "active", tableId: "t1" });
+    });
+    const db = ctxFor("chainGuest");
+    const claimRef = doc(db, "tenants/tenantX1/sessionClaims/sessSeat");
+    await assertFails(setDoc(claimRef, { uid: "chainGuest", tableId: "t1" }));
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "chains/chainX/clients/chainGuest"), { phone: "79990000077" });
+    });
+    await assertSucceeds(setDoc(claimRef, { uid: "chainGuest", tableId: "t1" }));
+  });
+
   it("гость сети без sessionClaims не может подставить себе чужой activeSessionId", async () => {
     const db = ctxFor("chainGuest");
     await assertFails(
@@ -1472,11 +1485,35 @@ describe("Брони и заказы гостя: только своё и тол
 
   it("гость не создаёт бронь сразу с открытым чеком или огромным предзаказом", async () => {
     const g = ctxFor("guestA");
-    const r = (over = {}) => ({ clientUid: "guestA", status: "new", tableId: "table1", sessionId: "", preOrder: [], ...over });
+    const r = (over = {}) => ({ clientUid: "guestA", status: "new", tableId: "table1", sessionId: "", preOrder: [], phone: "79991234567", ...over });
     await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/ok"), r()));
     await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/s"), r({ sessionId: "sess1" })));
     const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
     await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/big"), r({ preOrder: Array(51).fill(item) })));
+  });
+
+  it("бронь гостя — только с номером телефона", async () => {
+    const g = ctxFor("guestA");
+    const r = (over = {}) => ({ clientUid: "guestA", status: "new", tableId: "table1", sessionId: "", preOrder: [], ...over });
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/n1"), r()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/n2"), r({ phone: "" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/n3"), r({ phone: "12345" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/n4"), r({ phone: 79991234567 })));
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/y1"), r({ phone: "79991234567" })));
+    // Старые версии приложения присылали номер как ввёл гость.
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/y2"), r({ phone: "+7 (999) 123-45-67" })));
+  });
+
+  it("очередь: гость встаёт только с номером, касса записывает любого", async () => {
+    const g = ctxFor("guestA");
+    const w = (over = {}) => ({ clientUid: "guestA", status: "waiting", guestsCount: 2, ...over });
+    await assertFails(setDoc(doc(g, "tenants/tenantA/waitlist/w1"), w({ phone: "" })));
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/waitlist/w2"), w({ phone: "79991234567" })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/waitlist/w3"), w({ phone: "79991234567", clientUid: "other" })));
+    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "tenants/tenantA/waitlist/w4"),
+      { clientUid: "", status: "waiting", guestsCount: 3, phone: "", source: "pos" }));
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/waitlist/w5"),
+      { clientUid: "", status: "waiting", guestsCount: 3, phone: "", source: "pos" }));
   });
 
   it("заказ гостя: хотя бы одна позиция и не больше 50", async () => {
@@ -1486,6 +1523,16 @@ describe("Брони и заказы гостя: только своё и тол
     await assertSucceeds(setDoc(doc(g, "tenants/tenantA/guestOrders/o1"), o([item])));
     await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/o2"), o([])));
     await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/o3"), o(Array(51).fill(item))));
+  });
+
+  it("заказ гостя адресован официанту или кальянщику, но не кому попало", async () => {
+    const g = ctxFor("guestA");
+    const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
+    const o = (targetPosition) => ({ clientUid: "guestA", status: "new", sessionId: "sess1", items: [item], targetPosition });
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/guestOrders/w"), o("waiter")));
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/guestOrders/h"), o("hookah_master")));
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/guestOrders/b"), o("bartender")));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/guestOrders/x"), o("owner")));
   });
 });
 
@@ -1513,11 +1560,18 @@ describe("Секрет стола в QR: чужой чек удалённо не
       await setDoc(doc(db, "tenants/tenantA/tableKeys/table1"), { key: "SeCrEtKeY123456789" });
       await setDoc(doc(db, "tenants/tenantA/sessions/sessClosed"), { status: "closed", tableId: "table1" });
       await setDoc(doc(db, "tenants/tenantA/sessions/sess2"), { status: "active", tableId: "table2" });
-      await setDoc(doc(db, "tenants/tenantA/clients/guestC"), { name: "Гость C", activeSessionId: "" });
+      await setDoc(doc(db, "tenants/tenantA/clients/guestC"), { name: "Гость C", activeSessionId: "", phone: "79990000003" });
+      await setDoc(doc(db, "tenants/tenantA/clients/guestA"), { name: "Гость A", activeSessionId: "", phone: "79990000001" });
+      await setDoc(doc(db, "tenants/tenantA/clients/guestN"), { name: "Без номера", activeSessionId: "" });
     });
   });
 
   const claim = (uid, over = {}) => ({ uid, tableId: "table1", key: "SeCrEtKeY123456789", ...over });
+
+  it("без номера в профиле за стол не сесть, даже с верным кодом со стола", async () => {
+    await assertFails(setDoc(doc(ctxFor("guestN"), "tenants/tenantA/sessionClaims/sess1"), claim("guestN")));
+    await assertSucceeds(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/sessionClaims/sess1"), claim("guestA")));
+  });
 
   it("с секретом со стола гость занимает открытый чек этого стола", async () => {
     const g = ctxFor("guestA");

@@ -291,6 +291,14 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
       );
 
   Future<void> _join(int guests) async {
+    // Как с бронью и посадкой за стол: без номера в очередь не ставим —
+    // по нему зовут, когда стол освободится.
+    if ((widget.profile?.phone ?? '').isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Укажите номер телефона в профиле, чтобы встать в очередь'),
+      ));
+      return;
+    }
     final result = await _waitlist.join(
       guestName: widget.profile?.name ?? 'Гость',
       guestsCount: guests,

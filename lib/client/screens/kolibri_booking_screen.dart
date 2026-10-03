@@ -39,6 +39,10 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _commentCtrl = TextEditingController();
+  // Поле телефона: к нему прокручиваем, если гость жмёт «Забронировать»
+  // без номера (если поле ещё построено — кнопка на экран ниже).
+  final _phoneKey = GlobalKey();
+  String? _phoneError;
 
   DateTime _day = DateTime.now();
   int _guests = 2;
@@ -415,14 +419,21 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         ),
         const SizedBox(height: 12),
         TextField(
+          key: _phoneKey,
           controller: _phoneCtrl,
           keyboardType: TextInputType.phone,
           readOnly: _phoneLocked,
+          onChanged: (_) {
+            if (_phoneError != null) setState(() => _phoneError = null);
+          },
           decoration: InputDecoration(
-            labelText: 'Телефон',
+            labelText: 'Телефон (обязательно)',
             helperText: _phoneLocked
                 ? 'Сменить номер можно только через администратора'
-                : 'Укажите номер в любом формате: +7, 8 или просто 9...',
+                : 'По нему подтвердим бронь. Можно +7, 8 или просто 9…',
+            helperMaxLines: 2,
+            errorText: _phoneError,
+            errorMaxLines: 2,
             suffixIcon: _phoneLocked
                 ? Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
                 : null,
@@ -475,6 +486,12 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         ],
 
         const SizedBox(height: 24),
+        // Поле телефона на экран выше — ошибку дублируем у самой кнопки.
+        if (_phoneError != null) ...[
+          const Text('Укажите номер телефона в «Контактах» — без него бронь не принимаем',
+              style: TextStyle(color: KolibriColors.danger, fontSize: 13, height: 1.4)),
+          const SizedBox(height: 10),
+        ],
         FilledButton(
           onPressed: _slot == null || _sending ? null : _submit,
           child: _sending
@@ -606,9 +623,44 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     if (picked != null && mounted) setState(() => _pickedTable = picked);
   }
 
+  /// Без номера бронь не отправляем: по нему заведение подтверждает бронь
+  /// и ищет гостя, если тот опаздывает. Показываем ошибку у самого поля и
+  /// прокручиваем к нему.
+  bool _phoneOk(String phone) {
+    final ok = isValidRuPhone(phone) ||
+        // Номер из профиля менять нельзя — если он старого вида, но
+        // похож на настоящий, принимаем как есть.
+        (_phoneLocked && ReservationService.phoneLooksValid(phone));
+    if (ok) return true;
+    setState(() => _phoneError = _phoneCtrl.text.trim().isEmpty
+        ? 'Укажите номер — без него бронь не принимаем'
+        : 'Проверьте номер: нужно 10 цифр после +7');
+    final field = _phoneKey.currentContext;
+    if (field != null) {
+      Scrollable.ensureVisible(field,
+          alignment: 0.3, duration: const Duration(milliseconds: 300));
+    }
+    return false;
+  }
+
   Future<void> _submit() async {
     if (_slot == null) return;
+    final phone = normalizePhone(_phoneCtrl.text.trim());
+    if (!_phoneOk(phone)) return;
     setState(() => _sending = true);
+
+    // Номер уже закреплён за другим профилем (гость сменил телефон или
+    // переустановил приложение). Бронь всё равно принимаем — с этим
+    // номером, но к профилю его не привязываем: иначе касса по номеру
+    // нашла бы не того гостя и бонусы уехали бы не туда.
+    var takenByOther = false;
+    if (!_phoneLocked) {
+      try {
+        takenByOther = await _link.isPhoneTakenByOther(phone, _auth.uid);
+      } catch (_) {
+        // Не проверили — привяжем как обычно.
+      }
+    }
 
     try {
       final profile = await _link.registerGuestProfile(
@@ -617,16 +669,14 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         // Номер отправляем, только если он ещё не привязан: попытка
         // изменить привязанный отклоняется правилами базы и уронила бы
         // всю отправку брони — она идёт следующим шагом.
-        phone: (!_phoneLocked && _phoneCtrl.text.trim().isNotEmpty)
-            ? normalizePhone(_phoneCtrl.text.trim())
-            : null,
+        phone: (!_phoneLocked && !takenByOther) ? phone : null,
       );
 
       await _service.create(ReservationModel(
         id: '',
         clientUid: profile.uid,
         guestName: _nameCtrl.text.trim().isEmpty ? 'Гость' : _nameCtrl.text.trim(),
-        phone: _phoneCtrl.text.trim(),
+        phone: phone,
         guestsCount: _guests,
         tableId: _pickedTable?.id ?? '',
         tableName: _pickedTable?.name ?? '',
@@ -643,6 +693,9 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         _preOrder = const [];
         _commentCtrl.clear();
         _pickedTable = null;
+        // Номер теперь в профиле — дальше его меняет только администратор.
+        _phoneLocked = profile.phone.isNotEmpty;
+        if (_phoneLocked) _phoneCtrl.text = profile.phone;
       });
       await _loadSlots();
       if (!mounted) return;
@@ -651,9 +704,13 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         builder: (ctx) => AlertDialog(
           scrollable: true,
           title: const Text('Бронь отправлена'),
-          content: const Text(
+          content: Text(
               'Мы придержим стол и подтвердим бронь в приложении. '
-              'Если планы поменяются — отмените её здесь же.'),
+              'Если планы поменяются — отмените её здесь же.'
+              '${takenByOther ? '\n\nНа этот номер уже есть другой профиль. Чтобы '
+                  'бонусы копились в одном месте, назовите '
+                  '${VenueService.instance.terms.staffDat} номер и «ID устройства» '
+                  'из профиля — он объединит профили.' : ''}'),
           actions: [
             FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Хорошо')),
           ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
 import '../../models/venue_models.dart';
+import '../../services/reservation_service.dart';
 import '../../services/waitlist_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
@@ -145,6 +146,14 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
   }
 
   Future<void> _toReservation(WaitlistEntry e) async {
+    // Бронь без номера не создаётся — спрашиваем его, если гость встал в
+    // очередь у входа без телефона.
+    String? phone;
+    if (!ReservationService.phoneLooksValid(e.phone)) {
+      phone = await _askPhone(e.guestName);
+      if (phone == null) return;
+    }
+    if (!mounted) return;
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 2))),
@@ -157,6 +166,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
         e,
         start.isBefore(now) ? start.add(const Duration(days: 1)) : start,
         employeeName: widget.employee.name,
+        phone: phone,
       );
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -167,6 +177,47 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(err))));
       }
     }
+  }
+
+  /// Номер гостя для брони. null — сотрудник передумал.
+  Future<String?> _askPhone(String guestName) async {
+    final ctrl = TextEditingController();
+    String? error;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          scrollable: true,
+          title: const Text('Номер для брони'),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType: TextInputType.phone,
+            onChanged: (_) {
+              if (error != null) setLocal(() => error = null);
+            },
+            decoration: InputDecoration(
+              labelText: guestName.isEmpty ? 'Телефон гостя' : 'Телефон: $guestName',
+              errorText: error,
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () {
+                if (!ReservationService.phoneLooksValid(ctrl.text)) {
+                  setLocal(() => error = 'Без номера бронь не создаётся');
+                  return;
+                }
+                Navigator.pop(ctx, ctrl.text.trim());
+              },
+              child: const Text('Дальше'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return result;
   }
 
   Future<void> _add() async {
