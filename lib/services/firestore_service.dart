@@ -12,6 +12,7 @@ import '../models/session_model.dart';
 import '../models/menu_models.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
+import '../models/pay_terms.dart';
 import '../models/shift_model.dart';
 import '../models/cash_op.dart';
 import '../models/staff_shift_model.dart';
@@ -22,6 +23,8 @@ import 'tips_service.dart';
 import 'table_key_service.dart';
 import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
+import '../utils/sale_kind.dart';
+import 'audit_log_service.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 import '../utils/checkout_checks.dart';
@@ -431,10 +434,13 @@ class FirestoreService {
         final want = left[key] ?? 0;
         final take = want <= 0 ? 0 : (want >= item.qty ? item.qty : want);
         if (take > 0) {
-          moved.add(item.copyWith(qty: take));
+          final (out, rest) = item.split(take);
+          moved.add(out);
           left[key] = want - take;
+          if (rest != null) keep.add(rest);
+        } else {
+          keep.add(item);
         }
-        if (item.qty - take > 0) keep.add(item.copyWith(qty: item.qty - take));
       }
       if (moved.isEmpty) throw StateError('Нечего переносить — заказ уже изменился');
 
@@ -512,24 +518,35 @@ class FirestoreService {
   /// есть в счёте — увеличивает её количество, а не создаёт вторую строку.
   /// Обёрнуто в транзакцию, чтобы два одновременных нажатия "Добавить" не
   /// перезаписали друг друга.
-  Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1}) async {
+  ///
+  /// [employeeId] — кто добавляет (сотрудник, вошедший по PIN): по нему
+  /// кальянщику и бармену идёт процент с их позиций (PayrollSales).
+  Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1, String employeeId = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     // Кальян/табак — по флагу позиции, её названию или категории («Кальяны»):
     // на такие позиции не действуют скидки и бонусы (PromoPolicy).
     var noPromo = PromoPolicy.menuTobacco(menuItem);
-    if (!noPromo && menuItem.categoryId.isNotEmpty) {
+    var catName = '';
+    var catKind = '';
+    if (menuItem.categoryId.isNotEmpty) {
       try {
         final cat = await AppScope.col('menuCategories').doc(menuItem.categoryId).get();
-        noPromo = PromoPolicy.looksTobacco((cat.data()?['name'] ?? '') as String);
+        catName = (cat.data()?['name'] ?? '').toString();
+        catKind = SaleKind.normalize(cat.data()?['kind'] as String?);
+        if (!noPromo) noPromo = PromoPolicy.looksTobacco(catName);
       } catch (_) {}
     }
+    final kind = noPromo
+        ? SaleKind.hookah
+        : SaleKind.forMenuItem(
+            tobacco: menuItem.tobacco, itemName: menuItem.name, categoryKind: catKind, categoryName: catName);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
       if (data == null) return;
       final items = _openCheckItems(data);
       final idx = items.indexWhere((i) => i.menuItemId == menuItem.id);
       if (idx >= 0) {
-        items[idx] = items[idx].copyWith(qty: items[idx].qty + qty);
+        items[idx] = items[idx].plus(qty, employeeId: employeeId);
       } else {
         items.add(OrderItem(
           menuItemId: menuItem.id,
@@ -537,6 +554,8 @@ class FirestoreService {
           price: menuItem.price,
           qty: qty,
           noPromo: noPromo,
+          kind: kind,
+          by: employeeId.isEmpty ? const {} : {employeeId: qty},
         ));
       }
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
@@ -552,12 +571,13 @@ class FirestoreService {
     final catIds = menu.values.map((m) => m.categoryId).where((id) => id.isNotEmpty).toSet();
     final cats = await Future.wait(catIds.map((id) => AppScope.col('menuCategories').doc(id).get()));
     final categoryNames = {for (final c in cats) c.id: (c.data()?['name'] ?? '').toString()};
-    return priceGuestItems(items, menu, categoryNames: categoryNames);
+    final categoryKinds = {for (final c in cats) c.id: SaleKind.normalize(c.data()?['kind'] as String?)};
+    return priceGuestItems(items, menu, categoryNames: categoryNames, categoryKinds: categoryKinds);
   }
 
   /// Изменить количество позиции в заказе на delta (может быть отрицательным).
   /// Если количество опускается до 0 или ниже — позиция удаляется из счёта.
-  Future<void> changeOrderItemQty(String sessionId, String menuItemId, int delta) async {
+  Future<void> changeOrderItemQty(String sessionId, String menuItemId, int delta, {String employeeId = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
@@ -569,7 +589,9 @@ class FirestoreService {
       if (newQty <= 0) {
         items.removeAt(idx);
       } else {
-        items[idx] = items[idx].copyWith(qty: newQty);
+        items[idx] = delta > 0
+            ? items[idx].plus(delta, employeeId: employeeId)
+            : items[idx].minus(-delta, employeeId: employeeId);
       }
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
     });
@@ -1260,7 +1282,11 @@ class FirestoreService {
   Future<String> clockIn(Employee employee) async {
     final stateRef = AppScope.col('meta').doc('staffShiftState');
     final shiftRef = AppScope.col('staffShifts').doc();
-    final startedAt = _clampToVenueOpening(DateTime.now());
+    // Начало ставит сервер — перевод часов планшета назад смену не
+    // удлинит. До открытия заведения время в зарплату не идёт: момент
+    // открытия пишем в countFrom.
+    final now = DateTime.now();
+    final startedAt = _clampToVenueOpening(now);
 
     final id = await _db.runTransaction<String>((tx) async {
       final stateDoc = await tx.get(stateRef);
@@ -1285,14 +1311,15 @@ class FirestoreService {
         }
       }
 
-      final shift = StaffShiftModel(
-        id: shiftRef.id,
-        employeeId: employee.id,
-        employeeName: employee.name,
-        startedAt: startedAt,
-        status: 'open',
-      );
-      tx.set(shiftRef, shift.toMap());
+      tx.set(shiftRef, {
+        'employeeId': employee.id,
+        'employeeName': employee.name,
+        'startedAt': FieldValue.serverTimestamp(),
+        'endedAt': null,
+        'status': 'open',
+        'manual': false,
+        if (startedAt.isAfter(now)) 'countFrom': Timestamp.fromDate(startedAt),
+      });
       openByEmployee[employee.id] = shiftRef.id;
       tx.set(stateRef, {'openByEmployee': openByEmployee}, SetOptions(merge: true));
       return shiftRef.id;
@@ -1336,19 +1363,25 @@ class FirestoreService {
     });
   }
 
-  /// Заканчивает личную смену. [endedAt] и [manual] — для ручной правки
-  /// админом (например, сотрудник забыл закончить смену вчера); при обычном
-  /// нажатии "Закончить смену" оба параметра не передаются.
-  Future<void> clockOut(String shiftId, String employeeId, {DateTime? endedAt, bool manual = false}) async {
-    final end = endedAt ?? DateTime.now();
+  /// Заканчивает личную смену. При обычном нажатии «Закончить смену»
+  /// конец ставит сервер. [endedAt] — ручное время ухода (забыл закончить
+  /// вчера, админ дозакрывает в табеле): запись помечается ручной и
+  /// подписывается тем, кто правил ([editor]), — это видно в зарплате.
+  Future<void> clockOut(String shiftId, String employeeId, {DateTime? endedAt, Employee? editor}) async {
     final shiftRef = AppScope.col('staffShifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('staffShiftState');
+    final manual = endedAt != null;
     final wasCurrent = await _db.runTransaction<bool>((tx) async {
       final stateDoc = await tx.get(stateRef);
       tx.update(shiftRef, {
         'status': 'closed',
-        'endedAt': Timestamp.fromDate(end),
-        if (manual) 'manual': true,
+        'endedAt': manual ? Timestamp.fromDate(endedAt) : FieldValue.serverTimestamp(),
+        if (manual) ...{
+          'manual': true,
+          'editedBy': editor?.name ?? '',
+          'editedById': editor?.id ?? '',
+          'editedAt': FieldValue.serverTimestamp(),
+        },
       });
       final openByEmployee =
           Map<String, dynamic>.from(stateDoc.data()?['openByEmployee'] ?? {});
@@ -1363,6 +1396,13 @@ class FirestoreService {
     // Только если закрыли ТЕКУЩУЮ смену: админ, дозакрывающий в табеле
     // вчерашнюю забытую смену, не должен убрать того, кто работает сейчас.
     if (wasCurrent) _removeTipsMember(employeeId).ignore();
+    if (manual) {
+      AuditLogService.instance.log(
+        action: 'staff_shift_closed_manually',
+        employeeName: editor?.name ?? '',
+        details: {'shiftId': shiftId, 'employeeId': employeeId, 'endedAt': endedAt.toIso8601String()},
+      ).ignore();
+    }
   }
 
   Future<void> _removeTipsMember(String employeeId) async {
@@ -1406,14 +1446,19 @@ class FirestoreService {
 
   /// Закрытые личные смены за [start; end) по времени закрытия — одно
   /// поле, без составного индекса. Открытые не попадают: пока смена идёт,
-  /// платить не за что.
-  Future<List<StaffShiftModel>> closedStaffShiftsInRange(DateTime start, DateTime end) async {
+  /// платить не за что. Отменённые записи остаются в табеле зачёркнутыми,
+  /// [includeCancelled] — для него.
+  Future<List<StaffShiftModel>> closedStaffShiftsInRange(DateTime start, DateTime end,
+      {bool includeCancelled = false}) async {
     final snap = await AppScope.col('staffShifts')
         .where('endedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('endedAt', isLessThan: Timestamp.fromDate(end))
         .orderBy('endedAt', descending: true)
         .get();
-    return snap.docs.map((d) => StaffShiftModel.fromDoc(d)).toList();
+    return snap.docs
+        .map((d) => StaffShiftModel.fromDoc(d))
+        .where((s) => includeCancelled || !s.cancelled)
+        .toList();
   }
 
   /// Все личные смены сотрудника — для проверки пересечения при ручном
@@ -1425,13 +1470,67 @@ class FirestoreService {
   }
 
   /// Ручное добавление смены (админ восстанавливает забытую запись).
-  Future<void> addStaffShift(StaffShiftModel shift) =>
-      AppScope.col('staffShifts').add(shift.toMap());
+  /// Запись помечается ручной и подписывается [editor]; правка — в журнал.
+  Future<void> addStaffShift(StaffShiftModel shift, {required Employee editor}) async {
+    await AppScope.col('staffShifts').add({
+      ...shift.toMap(),
+      'manual': true,
+      'editedBy': editor.name,
+      'editedById': editor.id,
+      'editedAt': FieldValue.serverTimestamp(),
+    });
+    AuditLogService.instance.log(
+      action: 'staff_shift_added',
+      employeeName: editor.name,
+      details: {
+        'employee': shift.employeeName,
+        'startedAt': shift.startedAt.toIso8601String(),
+        'endedAt': shift.endedAt?.toIso8601String() ?? '',
+      },
+    ).ignore();
+  }
 
-  Future<void> updateStaffShift(StaffShiftModel shift) =>
-      AppScope.col('staffShifts').doc(shift.id).update(shift.toMap());
+  /// Правка времени смены админом. Сотрудника у записи не сменить —
+  /// иначе можно было бы переписать чужие часы на себя.
+  Future<void> updateStaffShift(StaffShiftModel before, StaffShiftModel after, {required Employee editor}) async {
+    await AppScope.col('staffShifts').doc(before.id).update({
+      'startedAt': Timestamp.fromDate(after.startedAt),
+      'endedAt': after.endedAt != null ? Timestamp.fromDate(after.endedAt!) : null,
+      'status': after.endedAt != null ? 'closed' : 'open',
+      'manual': true,
+      'editedBy': editor.name,
+      'editedById': editor.id,
+      'editedAt': FieldValue.serverTimestamp(),
+    });
+    AuditLogService.instance.log(
+      action: 'staff_shift_edited',
+      employeeName: editor.name,
+      details: {
+        'employee': before.employeeName,
+        'before': '${before.startedAt.toIso8601String()} – ${before.endedAt?.toIso8601String() ?? ''}',
+        'after': '${after.startedAt.toIso8601String()} – ${after.endedAt?.toIso8601String() ?? ''}',
+      },
+    ).ignore();
+  }
 
-  Future<void> deleteStaffShift(String id) => AppScope.col('staffShifts').doc(id).delete();
+  /// Смены не удаляются: ошибочную отменяют, запись остаётся в табеле с
+  /// именем того, кто отменил.
+  Future<void> cancelStaffShift(StaffShiftModel shift, {required Employee editor}) async {
+    await AppScope.col('staffShifts').doc(shift.id).update({
+      'cancelled': true,
+      'cancelledBy': editor.name,
+      'cancelledAt': FieldValue.serverTimestamp(),
+    });
+    AuditLogService.instance.log(
+      action: 'staff_shift_cancelled',
+      employeeName: editor.name,
+      details: {
+        'employee': shift.employeeName,
+        'startedAt': shift.startedAt.toIso8601String(),
+        'endedAt': shift.endedAt?.toIso8601String() ?? '',
+      },
+    ).ignore();
+  }
 
   // ---------- МЕНЮ ----------
   Stream<List<MenuCategory>> categoriesStream() {
@@ -1467,6 +1566,12 @@ class FirestoreService {
 
   Future<void> renameCategory(String id, String name) {
     return AppScope.col('menuCategories').doc(id).update({'name': name});
+  }
+
+  /// Что в категории (SaleKind): от этого зависят проценты кальянщику и
+  /// бармену и раздельная печать чеков. Пусто — по названию категории.
+  Future<void> setCategoryKind(String id, String kind) {
+    return AppScope.col('menuCategories').doc(id).update({'kind': SaleKind.normalize(kind)});
   }
 
   /// Сохраняет ссылку на фото-плитку категории (после загрузки через
@@ -1566,10 +1671,53 @@ class FirestoreService {
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
-  Future<void> addEmployee(Employee e) => AppScope.col('employees').add(e.toMap());
+  /// Новый сотрудник. Его первые условия оплаты сразу пишутся в историю —
+  /// с этого момента они и действуют.
+  Future<void> addEmployee(Employee e, {Employee? editor}) => AppScope.col('employees').add({
+        ...e.toMap(),
+        if (e.payTerms.configured)
+          'payHistory': [
+            PayChange(at: DateTime.now(), terms: e.payTerms, byId: editor?.id ?? '', byName: editor?.name ?? '').toMap(),
+          ],
+      });
 
-  Future<void> updateEmployee(Employee e) =>
-      AppScope.col('employees').doc(e.id).update(e.toMap());
+  /// Сохранить карточку. Если поменялась оплата — дописываем запись в
+  /// историю: новые ставки действуют с этого момента, прошлые смены
+  /// считаются по старым. Правка — в журнал действий.
+  Future<void> updateEmployee(Employee e, {Employee? editor}) async {
+    final ref = AppScope.col('employees').doc(e.id);
+    String? changed;
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final before = snap.exists ? Employee.fromDoc(snap) : e;
+      final update = <String, dynamic>{...e.toMap()};
+      if (before.payTerms != e.payTerms) {
+        final history = [...before.payHistory];
+        // Первая правка: записываем, как было до неё, — «с самого начала».
+        // Кроме случая, когда зарплата вовсе не была настроена: тогда
+        // первые условия действуют и для уже отработанных смен.
+        if (history.isEmpty && before.payTerms.configured) {
+          history.add(PayChange(at: PayChange.since, terms: before.payTerms));
+        }
+        history.add(PayChange(
+          at: history.isEmpty ? PayChange.since : DateTime.now(),
+          terms: e.payTerms,
+          byId: editor?.id ?? '',
+          byName: editor?.name ?? '',
+        ));
+        update['payHistory'] = history.map((c) => c.toMap()).toList();
+        changed = '${before.payTerms.summary()} → ${e.payTerms.summary()}';
+      }
+      tx.update(ref, update);
+    });
+    if (changed != null) {
+      AuditLogService.instance.log(
+        action: 'pay_terms_changed',
+        employeeName: editor?.name ?? '',
+        details: {'employee': e.name, 'change': changed},
+      ).ignore();
+    }
+  }
 
   /// Удаляет сотрудника. Его открытую личную смену закрываем сейчас же и
   /// убираем его из списка «кому чаевые»: иначе удалённый числился бы на

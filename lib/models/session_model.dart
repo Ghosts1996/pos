@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../utils/promo_policy.dart';
 import '../utils/parse.dart';
+import '../utils/sale_kind.dart';
 
 class OrderItem {
   // Id позиции меню, из которой добавлена эта строка заказа.
@@ -16,23 +17,47 @@ class OrderItem {
   /// PromoPolicy. Ставится при добавлении по названию позиции и категории.
   final bool noPromo;
 
+  /// Вид продажи (SaleKind: kitchen, bar, hookah) — ставится при
+  /// добавлении по категории меню. Пусто у старых строк, см. [effectiveKind].
+  final String kind;
+
+  /// Кто сколько штук добавил: id сотрудника → количество. Одна строка
+  /// копит количество от разных людей (два «Мохито» от двух барменов),
+  /// поэтому учёт — внутри строки. Сумма может быть меньше [qty]: штуки
+  /// без автора (заказ гостя до обновления, старые чеки) идут в общий
+  /// котёл смены, см. PayrollSales.
+  final Map<String, int> by;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
     required this.price,
     required this.qty,
     this.noPromo = false,
+    this.kind = '',
+    this.by = const {},
   });
 
   /// Строки заказа приходят и от гостя (guestOrders, предзаказ) — дробное
   /// количество или цена строкой роняли бы разбор всего списка заказов.
-  factory OrderItem.fromMap(Map<String, dynamic> m) => OrderItem(
-        menuItemId: m['menuItemId']?.toString() ?? '',
-        name: m['name']?.toString() ?? '',
-        price: m['price'] is num ? (m['price'] as num).toDouble() : 0,
-        qty: m['qty'] is num ? (m['qty'] as num).toInt() : 1,
-        noPromo: m['noPromo'] == true,
-      );
+  factory OrderItem.fromMap(Map<String, dynamic> m) {
+    final rawBy = m['by'];
+    final by = <String, int>{};
+    if (rawBy is Map) {
+      rawBy.forEach((k, v) {
+        if (k is String && k.isNotEmpty && v is num && v > 0) by[k] = v.toInt();
+      });
+    }
+    return OrderItem(
+      menuItemId: m['menuItemId']?.toString() ?? '',
+      name: m['name']?.toString() ?? '',
+      price: m['price'] is num ? (m['price'] as num).toDouble() : 0,
+      qty: m['qty'] is num ? (m['qty'] as num).toInt() : 1,
+      noPromo: m['noPromo'] == true,
+      kind: SaleKind.normalize(m['kind'] as String?),
+      by: by,
+    );
+  }
 
   Map<String, dynamic> toMap() => {
         'menuItemId': menuItemId,
@@ -40,17 +65,117 @@ class OrderItem {
         'price': price,
         'qty': qty,
         if (noPromo) 'noPromo': true,
+        if (kind.isNotEmpty) 'kind': kind,
+        if (by.isNotEmpty) 'by': by,
       };
 
-  OrderItem copyWith({int? qty}) => OrderItem(
-        menuItemId: menuItemId,
-        name: name,
-        price: price,
-        qty: qty ?? this.qty,
-        noPromo: noPromo,
-      );
+  /// Новое количество. Если штук стало меньше, учёт авторов урезается с
+  /// самых крупных долей — сумма никогда не больше [qty].
+  OrderItem copyWith({int? qty}) {
+    final q = qty ?? this.qty;
+    return OrderItem(
+      menuItemId: menuItemId,
+      name: name,
+      price: price,
+      qty: q,
+      noPromo: noPromo,
+      kind: kind,
+      by: _fitBy(by, q),
+    );
+  }
+
+  /// Ещё [n] штук от сотрудника [employeeId] (пусто — без автора).
+  OrderItem plus(int n, {String employeeId = ''}) {
+    final next = Map<String, int>.from(by);
+    if (employeeId.isNotEmpty && n > 0) next[employeeId] = (next[employeeId] ?? 0) + n;
+    return OrderItem(
+      menuItemId: menuItemId,
+      name: name,
+      price: price,
+      qty: qty + n,
+      noPromo: noPromo,
+      kind: kind,
+      by: next,
+    );
+  }
+
+  /// Минус [n] штук. Убираем сначала штуки того, кто убирает ([employeeId]),
+  /// потом без автора, потом с самых крупных долей: свою позицию убрать
+  /// можно, а «переписать» чужую на себя — нет.
+  OrderItem minus(int n, {String employeeId = ''}) {
+    final q = qty - n;
+    if (q <= 0) return copyWith(qty: 0);
+    final next = Map<String, int>.from(by);
+    var left = n;
+    final mine = next[employeeId] ?? 0;
+    if (employeeId.isNotEmpty && mine > 0) {
+      final take = mine < left ? mine : left;
+      next[employeeId] = mine - take;
+      left -= take;
+    }
+    final unattributed = qty - by.values.fold<int>(0, (a, b) => a + b);
+    left -= unattributed < left ? (unattributed < 0 ? 0 : unattributed) : left;
+    next.removeWhere((_, v) => v <= 0);
+    return OrderItem(
+      menuItemId: menuItemId,
+      name: name,
+      price: price,
+      qty: q,
+      noPromo: noPromo,
+      kind: kind,
+      by: _fitBy(next, q),
+    );
+  }
+
+  /// Часть строки на [n] штук — для «Разделить счёт». Авторы уходят вместе
+  /// со штуками: сначала забираем штуки без автора, потом по порядку.
+  /// Возвращает (уходит, остаётся).
+  (OrderItem, OrderItem?) split(int n) {
+    if (n >= qty) return (this, null);
+    final attributed = by.values.fold<int>(0, (a, b) => a + b);
+    var unattributed = qty - attributed;
+    final taken = <String, int>{};
+    final kept = Map<String, int>.from(by);
+    var left = n - (unattributed < n ? unattributed : n);
+    unattributed = 0;
+    for (final id in by.keys) {
+      if (left <= 0) break;
+      final have = kept[id] ?? 0;
+      final take = have < left ? have : left;
+      if (take <= 0) continue;
+      taken[id] = take;
+      kept[id] = have - take;
+      left -= take;
+    }
+    kept.removeWhere((_, v) => v <= 0);
+    OrderItem part(int q, Map<String, int> b) => OrderItem(
+        menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b);
+    return (part(n, taken), part(qty - n, kept));
+  }
+
+  /// Вид продажи: записанный при добавлении, а у старых строк — по
+  /// признаку табака (кальян) или «кухня».
+  String get effectiveKind {
+    if (kind.isNotEmpty) return kind;
+    return noPromo || PromoPolicy.looksTobacco(name) ? SaleKind.hookah : SaleKind.kitchen;
+  }
 
   double get total => price * qty;
+
+  static Map<String, int> _fitBy(Map<String, int> by, int qty) {
+    var sum = by.values.fold<int>(0, (a, b) => a + b);
+    if (sum <= qty) return by;
+    final next = Map<String, int>.from(by);
+    final ids = next.keys.toList()..sort((a, b) => next[b]!.compareTo(next[a]!));
+    for (final id in ids) {
+      if (sum <= qty) break;
+      final cut = sum - qty < next[id]! ? sum - qty : next[id]!;
+      next[id] = next[id]! - cut;
+      sum -= cut;
+    }
+    next.removeWhere((_, v) => v <= 0);
+    return next;
+  }
 }
 
 class RefillEvent {

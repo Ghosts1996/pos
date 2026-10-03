@@ -21,7 +21,10 @@ import '../../utils/adaptive.dart';
 /// живым счётчиком позиций в текущем счёте, как на скриншоте.
 class MenuSelectionScreen extends StatefulWidget {
   final SessionModel session;
-  const MenuSelectionScreen({super.key, required this.session});
+
+  /// Кто добавляет позиции — по нему кальянщику и бармену идёт процент.
+  final String employeeId;
+  const MenuSelectionScreen({super.key, required this.session, this.employeeId = ''});
 
   @override
   State<MenuSelectionScreen> createState() => _MenuSelectionScreenState();
@@ -124,7 +127,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
 
   Future<void> _add(MenuItem item) async {
     try {
-      await _fs.addOrderItem(widget.session.id, item);
+      await _fs.addOrderItem(widget.session.id, item, employeeId: widget.employeeId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Добавлено: ${item.name}'), duration: const Duration(seconds: 1)));
@@ -141,6 +144,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => _CategoryItemsScreen(
         session: widget.session,
+        employeeId: widget.employeeId,
         category: category,
         items: items,
         onAdd: _add,
@@ -342,9 +346,11 @@ class _CategoryItemsScreen extends StatelessWidget {
   final MenuCategory category;
   final List<MenuItem> items;
   final ValueChanged<MenuItem> onAdd;
+  final String employeeId;
 
   const _CategoryItemsScreen({
     required this.session,
+    required this.employeeId,
     required this.category,
     required this.items,
     required this.onAdd,
@@ -379,7 +385,7 @@ class _CategoryItemsScreen extends StatelessWidget {
                 item: item,
                 qty: qtyOf(item.id),
                 onAdd: () => onAdd(item),
-                onRemoveOne: () => fs.changeOrderItemQty(session.id, item.id, -1).catchError((Object e) {
+                onRemoveOne: () => fs.changeOrderItemQty(session.id, item.id, -1, employeeId: employeeId).catchError((Object e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
                   }

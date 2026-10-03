@@ -254,7 +254,7 @@ Future<void> _fixForgottenShift(BuildContext context, Employee me, StaffShiftMod
     return;
   }
   try {
-    await _fs.clockOut(mine.id, me.id, endedAt: end, manual: true);
+    await _fs.clockOut(mine.id, me.id, endedAt: end, editor: me);
     if (context.mounted) _snack(context, 'Прошлая смена закрыта: ${shiftTimeLabel(mine.startedAt)} — ${shiftTimeLabel(end)}');
   } catch (e) {
     if (context.mounted) _snack(context, 'Не удалось закрыть смену: ${humanError(e, lower: true)}');

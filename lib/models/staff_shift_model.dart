@@ -16,6 +16,21 @@ class StaffShiftModel {
   final String status; // 'open' | 'closed'
   final bool manual; // true — добавлена/исправлена админом вручную, а не через "начать/закончить смену"
 
+  /// Начали раньше открытия заведения — время до открытия в зарплату не
+  /// идёт: считаем с этого момента. Само [startedAt] ставит сервер.
+  final DateTime? countFrom;
+
+  /// Кто правил запись вручную (админ в табеле или сам сотрудник, указав
+  /// время ухода) — видно в зарплате рядом с часами.
+  final String editedById;
+  final String editedByName;
+  final DateTime? editedAt;
+
+  /// Запись отменена. Смены не удаляются — ошибочную отменяют, и она
+  /// остаётся в табеле зачёркнутой, с именем того, кто отменил.
+  final bool cancelled;
+  final String cancelledByName;
+
   StaffShiftModel({
     required this.id,
     required this.employeeId,
@@ -24,9 +39,31 @@ class StaffShiftModel {
     this.endedAt,
     this.status = 'open',
     this.manual = false,
+    this.countFrom,
+    this.editedById = '',
+    this.editedByName = '',
+    this.editedAt,
+    this.cancelled = false,
+    this.cancelledByName = '',
   });
 
   bool get isOpen => status == 'open';
+
+  /// Начало рабочего времени для зарплаты: не раньше открытия заведения.
+  DateTime get effectiveStart {
+    final c = countFrom;
+    return c != null && c.isAfter(startedAt) ? c : startedAt;
+  }
+
+  /// Часы закрытой смены для зарплаты; 0 — открытая или испорченная.
+  double get paidHours {
+    final end = endedAt;
+    if (end == null || !end.isAfter(effectiveStart)) return 0;
+    return end.difference(effectiveStart).inSeconds / 3600.0;
+  }
+
+  /// Правил сам сотрудник, чьё это время.
+  bool get selfEdited => manual && editedById.isNotEmpty && editedById == employeeId;
 
   /// Продолжительность смены. У открытой смены считается "по текущий
   /// момент" — только для превью в интерфейсе; в расчёт зарплаты идут
@@ -57,6 +94,12 @@ class StaffShiftModel {
       endedAt: (data['endedAt'] as Timestamp?)?.toDate(),
       status: data['status'] ?? 'open',
       manual: data['manual'] ?? false,
+      countFrom: (data['countFrom'] as Timestamp?)?.toDate(),
+      editedById: (data['editedById'] ?? '').toString(),
+      editedByName: (data['editedBy'] ?? '').toString(),
+      editedAt: (data['editedAt'] as Timestamp?)?.toDate(),
+      cancelled: data['cancelled'] == true,
+      cancelledByName: (data['cancelledBy'] ?? '').toString(),
     );
   }
 

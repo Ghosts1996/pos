@@ -751,7 +751,9 @@ class GuestLinkService {
           .snapshots()
           .map((s) => s.docs.map(GuestOrder.fromDoc).toList()));
 
-  Future<void> acceptGuestOrder(GuestOrder order, String employeeName) async {
+  /// [employeeId] — кто принял заказ: позиции записываются на него (по
+  /// нему кальянщику и бармену идёт процент, см. PayrollSales).
+  Future<void> acceptGuestOrder(GuestOrder order, String employeeName, {String employeeId = ''}) async {
     final sessionRef = AppScope.col('sessions').doc(order.sessionId);
     final orderRef = _orders.doc(order.id);
     // Цены, названия и признак табака — из меню, а не из заказа: его пишет
@@ -795,9 +797,17 @@ class GuestLinkService {
       for (final incoming in priced) {
         final idx = current.indexWhere((i) => i.menuItemId == incoming.menuItemId);
         if (idx >= 0) {
-          current[idx] = current[idx].copyWith(qty: current[idx].qty + incoming.qty);
+          current[idx] = current[idx].plus(incoming.qty, employeeId: employeeId);
         } else {
-          current.add(incoming);
+          current.add(OrderItem(
+            menuItemId: incoming.menuItemId,
+            name: incoming.name,
+            price: incoming.price,
+            qty: incoming.qty,
+            noPromo: incoming.noPromo,
+            kind: incoming.kind,
+            by: employeeId.isEmpty ? const {} : {employeeId: incoming.qty},
+          ));
         }
       }
 

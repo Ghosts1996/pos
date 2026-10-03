@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/payroll_guard.dart';
 
 /// Табель личных смен сотрудников — учёт отработанного времени для расчёта
 /// зарплаты (см. PayrollScreen и PayrollCalculator). Это НЕ кассовая смена
@@ -13,8 +14,13 @@ import '../../utils/adaptive.dart';
 /// свои записи, начатые и законченные им самим через "Мою смену" в меню, а
 /// админ может добавить/поправить запись вручную — например, если человек
 /// забыл нажать "Закончить смену".
+///
+/// Каждая ручная правка подписывается тем, кто вошёл ([employee]), и видна
+/// в зарплате; смены не удаляются, а отменяются; свои смены админ не
+/// правит, если в заведении есть другой администратор.
 class StaffShiftsScreen extends StatefulWidget {
-  const StaffShiftsScreen({super.key});
+  final Employee employee;
+  const StaffShiftsScreen({super.key, required this.employee});
 
   @override
   State<StaffShiftsScreen> createState() => _StaffShiftsScreenState();
@@ -46,7 +52,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
     });
     try {
       final employees = await _fs.employeesOnce();
-      final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd);
+      final shifts = await _fs.closedStaffShiftsInRange(_rangeStart, _rangeEnd, includeCancelled: true);
       if (!mounted) return;
       setState(() {
         _employees = employees;
@@ -109,11 +115,12 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
   }
 
   Future<DateTime?> _pickDateTime(BuildContext ctx, DateTime initial) async {
+    final now = DateTime.now();
     final date = await showDatePicker(
       context: ctx,
-      initialDate: initial,
-      firstDate: DateTime.now().subtract(const Duration(days: 730)),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      initialDate: initial.isAfter(now) ? now : initial,
+      firstDate: now.subtract(const Duration(days: 730)),
+      lastDate: now,
     );
     if (date == null || !ctx.mounted) return null;
     final time = await showTimePicker(context: ctx, initialTime: TimeOfDay.fromDateTime(initial));
@@ -121,7 +128,17 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
+  /// Свои смены — только если других администраторов нет.
+  bool _guard(String employeeId) {
+    final reason = PayrollGuard.ownRecordBlock(widget.employee, employeeId, _employees,
+        what: 'свои смены');
+    if (reason == null) return true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(reason)));
+    return false;
+  }
+
   Future<void> _forceClose(StaffShiftModel shift) async {
+    if (!_guard(shift.employeeId)) return;
     final picked = await _pickDateTime(context, DateTime.now());
     if (picked == null) return;
     if (!picked.isAfter(shift.startedAt)) {
@@ -131,12 +148,27 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       }
       return;
     }
-    await _fs.clockOut(shift.id, shift.employeeId, endedAt: picked, manual: true);
+    if (picked.isAfter(DateTime.now())) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Это время ещё не наступило')));
+      }
+      return;
+    }
+    try {
+      await _fs.clockOut(shift.id, shift.employeeId, endedAt: picked, editor: widget.employee);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось закрыть: ${humanError(e, lower: true)}')));
+      }
+    }
     _load();
   }
 
   Future<void> _editShift(StaffShiftModel? shift) async {
     if (_employees.isEmpty) return;
+    if (shift != null && !_guard(shift.employeeId)) return;
     Employee selected = shift == null
         ? _employees.first
         : _employees.firstWhere((e) => e.id == shift.employeeId, orElse: () => _employees.first);
@@ -153,13 +185,20 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // У существующей смены сотрудника не сменить: иначе чужие часы
+                // можно было бы переписать на другого.
                 DropdownButtonFormField<Employee>(
                   initialValue: selected,
                   decoration: const InputDecoration(labelText: 'Сотрудник'),
                   items: _employees
                       .map((e) => DropdownMenuItem(value: e, child: Text(e.name)))
                       .toList(),
-                  onChanged: (e) => setSt(() => selected = e ?? selected),
+                  onChanged: shift != null ? null : (e) => setSt(() => selected = e ?? selected),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Ручная правка подписывается вашим именем и видна в расчёте зарплаты.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 12),
                 ListTile(
@@ -194,6 +233,21 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
     );
 
     if (saved != true) return;
+    if (shift == null && !_guard(selected.id)) return;
+    if (end.isAfter(DateTime.now())) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Конец смены ещё не наступил')));
+      }
+      return;
+    }
+    if (end.difference(start) > const Duration(hours: 24)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Смена не может длиться больше суток')));
+      }
+      return;
+    }
     if (!end.isAfter(start)) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -208,7 +262,7 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
     // просто суммирует все переданные ему смены). Саму редактируемую смену
     // из проверки исключаем — иначе она бы "пересекалась сама с собой".
     final existing = await _fs.allStaffShiftsForEmployee(selected.id);
-    final overlapping = existing.where((s) => s.id != shift?.id && s.overlapsRange(start, end));
+    final overlapping = existing.where((s) => s.id != shift?.id && !s.cancelled && s.overlapsRange(start, end));
     if (overlapping.isNotEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
@@ -218,13 +272,8 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       return;
     }
 
-    // Правка исходной (не ручной) смены без изменения времени — например,
-    // просто чтобы поменять сотрудника при опечатке — не должна навсегда
-    // помечать её "исправленной вручную": manual важен как признак того,
-    // что часы РЕАЛЬНО подправили, а не просто пересохранили как есть.
-    final manual = shift == null
-        ? true
-        : (shift.manual || start != shift.startedAt || end != shift.endedAt);
+    // Пересохранили без изменений — правкой не считаем.
+    if (shift != null && start == shift.startedAt && end == shift.endedAt) return;
 
     final result = StaffShiftModel(
       id: shift?.id ?? '',
@@ -233,36 +282,52 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       startedAt: start,
       endedAt: end,
       status: 'closed',
-      manual: manual,
+      manual: true,
     );
-    if (shift == null) {
-      await _fs.addStaffShift(result);
-    } else {
-      await _fs.updateStaffShift(result);
+    try {
+      if (shift == null) {
+        await _fs.addStaffShift(result, editor: widget.employee);
+      } else {
+        await _fs.updateStaffShift(shift, result, editor: widget.employee);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось сохранить: ${humanError(e, lower: true)}')));
+      }
     }
     _load();
   }
 
-  Future<void> _deleteShift(StaffShiftModel shift) async {
+  Future<void> _cancelShift(StaffShiftModel shift) async {
+    if (!_guard(shift.employeeId)) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         scrollable: true,
-        title: const Text('Удалить запись?'),
+        title: const Text('Отменить запись?'),
         content: Text(
-            'Смена «${shift.employeeName}» ${_fmtDateTime(shift.startedAt)} будет удалена без возможности восстановить.'),
+            'Смена «${shift.employeeName}» ${_fmtDateTime(shift.startedAt)} не войдёт в зарплату. '
+            'Запись останется в табеле зачёркнутой, с вашим именем.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Назад')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Удалить'),
+            child: const Text('Отменить запись'),
           ),
         ],
       ),
     );
     if (confirm == true) {
-      await _fs.deleteStaffShift(shift.id);
+      try {
+        await _fs.cancelStaffShift(shift, editor: widget.employee);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Не удалось отменить: ${humanError(e, lower: true)}')));
+        }
+      }
       _load();
     }
   }
@@ -379,14 +444,15 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
       return const Center(child: Text('За этот период смен нет'));
     }
     var totalHours = 0.0;
-    for (final s in filtered) {
-      totalHours += s.duration.inSeconds / 3600.0;
+    final live = filtered.where((s) => !s.cancelled).toList();
+    for (final s in live) {
+      totalHours += s.paidHours;
     }
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Text('Всего: ${filtered.length} ${pluralRu(filtered.length, 'смена', 'смены', 'смен')}, ${totalHours.toStringAsFixed(1).replaceAll('.', ',')} ч',
+          child: Text('Всего: ${live.length} ${pluralRu(live.length, 'смена', 'смены', 'смен')}, ${totalHours.toStringAsFixed(1).replaceAll('.', ',')} ч',
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
         Expanded(
@@ -396,23 +462,38 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
             itemCount: filtered.length,
             itemBuilder: (context, i) {
               final s = filtered[i];
-              final hours = s.duration.inSeconds / 3600.0;
+              final hours = s.paidHours;
+              final note = s.cancelled
+                  ? ' · отменена${s.cancelledByName.isNotEmpty ? ' (${s.cancelledByName})' : ''}'
+                  : s.manual
+                      ? ' · вручную${s.editedByName.isNotEmpty ? ' (${s.selfEdited ? 'сам' : s.editedByName})' : ''}'
+                      : '';
               return ListTile(
-                leading: const Icon(Icons.timer_outlined),
-                title: Text(s.employeeName),
+                leading: Icon(
+                  s.cancelled ? Icons.block : (s.manual ? Icons.edit_note : Icons.timer_outlined),
+                  color: s.cancelled ? Colors.grey : (s.manual ? AppColors.warning : null),
+                ),
+                title: Text(s.employeeName,
+                    style: s.cancelled
+                        ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+                        : null),
                 subtitle: Text(
                   '${_fmtDateTime(s.startedAt)} — ${s.endedAt != null ? _fmtDateTime(s.endedAt!) : "…"}'
-                  ' · ${hours.toStringAsFixed(1).replaceAll('.', ',')} ч${s.manual ? " · вручную" : ""}',
+                  ' · ${hours.toStringAsFixed(1).replaceAll('.', ',')} ч$note',
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                        icon: const Icon(Icons.edit_outlined), onPressed: () => _editShift(s)),
-                    IconButton(
-                        icon: const Icon(Icons.delete_outline), onPressed: () => _deleteShift(s)),
-                  ],
-                ),
+                trailing: s.cancelled
+                    ? null
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                              icon: const Icon(Icons.edit_outlined), onPressed: () => _editShift(s)),
+                          IconButton(
+                              tooltip: 'Отменить запись',
+                              icon: const Icon(Icons.block),
+                              onPressed: () => _cancelShift(s)),
+                        ],
+                      ),
               );
             },
           ),
