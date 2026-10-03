@@ -3689,11 +3689,11 @@ const DEMO_MENU = [
 const DEMO_STAFF = [
   { key: "admin", name: "Демо-админ", pinCode: "111111", role: "admin", position: "universal" },
   { key: "hookah", name: "Максим", pinCode: "1111", role: "employee", position: "hookah_master",
-    hourlyRateEnabled: true, hourlyRate: 250, salesPercentEnabled: true, salesPercentRate: 5 },
+    hourlyRateEnabled: true, hourlyRate: 250, salesPercentEnabled: true, hookahPercentRate: 10 },
   { key: "waiter", name: "Алина", pinCode: "2222", role: "employee", position: "waiter",
-    shiftRateEnabled: true, shiftRate: 2000, salesPercentEnabled: true, salesPercentRate: 3 },
+    shiftRateEnabled: true, shiftRate: 2000, salesPercentEnabled: true, salesPercentRate: 3, checkPercentExcludesHookah: true },
   { key: "bar", name: "Денис", pinCode: "3333", role: "employee", position: "bartender",
-    hourlyRateEnabled: true, hourlyRate: 220 },
+    hourlyRateEnabled: true, hourlyRate: 220, salesPercentEnabled: true, barPercentRate: 5 },
 ];
 
 // Вторая точка демо-сети: свои сотрудники и PIN-коды — видно, что PIN одной
@@ -3701,11 +3701,11 @@ const DEMO_STAFF = [
 const DEMO_STAFF_RIVER = [
   { key: "admin", name: "Демо-админ «Набережной»", pinCode: "222222", role: "admin", position: "universal" },
   { key: "hookah", name: "Артём", pinCode: "4444", role: "employee", position: "hookah_master",
-    hourlyRateEnabled: true, hourlyRate: 260, salesPercentEnabled: true, salesPercentRate: 5 },
+    hourlyRateEnabled: true, hourlyRate: 260, salesPercentEnabled: true, hookahPercentRate: 10 },
   { key: "waiter", name: "Вика", pinCode: "5555", role: "employee", position: "waiter",
-    shiftRateEnabled: true, shiftRate: 2200, salesPercentEnabled: true, salesPercentRate: 3 },
+    shiftRateEnabled: true, shiftRate: 2200, salesPercentEnabled: true, salesPercentRate: 3, checkPercentExcludesHookah: true },
   { key: "bar", name: "Олег", pinCode: "6666", role: "employee", position: "bartender",
-    hourlyRateEnabled: true, hourlyRate: 230 },
+    hourlyRateEnabled: true, hourlyRate: 230, salesPercentEnabled: true, barPercentRate: 5 },
 ];
 
 /** PIN-коды для подсказки на экранах входа кассы (tenants.demoPins). */
@@ -3717,6 +3717,9 @@ function demoPinsOf(staff) {
 // Смена открыта столько минут назад — в неё попадают все закрытые чеки
 // ниже, и X-отчёт сразу показывает выручку, наличные и чаевые.
 const DEMO_SHIFT_OPENED_MINUTES_AGO = 360;
+
+// Категории демо-меню, позиции которых — бар и напитки (процент бармену).
+const DEMO_BAR_CATEGORIES = new Set(["Чай", "Кофе", "Лимонады", "Милкшейки и смузи", "Напитки"]);
 
 // Закрытые за смену чеки: [стол, открыт (мин назад), закрыт, кто вёл,
 // оплата, позиции [название, кол-во], чаевые].
@@ -3795,7 +3798,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     cat.items.forEach((item) => {
       const ref = col("menuItems").doc();
       const tobacco = cat.tobacco === true;
-      menuByName[item.name] = { id: ref.id, price: item.price, tobacco };
+      menuByName[item.name] = { id: ref.id, price: item.price, tobacco, kind: tobacco ? "hookah" : DEMO_BAR_CATEGORIES.has(cat.category) ? "bar" : "kitchen" };
       batch.set(ref, {
         categoryId: catRef.id,
         name: item.name,
@@ -3819,10 +3822,18 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   });
 
   // Позиции чека как в приложении: табак помечен noPromo — на него не
-  // действуют скидки (ст. 16 закона № 15-ФЗ).
-  const orderItemsOf = (items) => items.map(([name, qty]) => {
+  // действуют скидки (ст. 16 закона № 15-ФЗ). kind — вид продажи (кому
+  // процент), by — кто добавил позицию: кальяны — кальянщик, напитки —
+  // бармен, остальное — тот, кто вёл стол ([waiterId]; у заказов гостя и
+  // предзаказов брони его нет — их ещё никто не принял).
+  const orderItemsOf = (items, waiterId) => items.map(([name, qty]) => {
     const m = menuByName[name];
-    return { menuItemId: m.id, name, price: m.price, qty, ...(m.tobacco ? { noPromo: true } : {}) };
+    const by = !waiterId ? null : m.kind === "hookah" ? staff.hookah.id : m.kind === "bar" ? staff.bar.id : waiterId;
+    return {
+      menuItemId: m.id, name, price: m.price, qty, kind: m.kind,
+      ...(m.tobacco ? { noPromo: true } : {}),
+      ...(by ? { by: { [by]: qty } } : {}),
+    };
   });
 
   // Сотрудники
@@ -3833,6 +3844,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     batch.set(ref, {
       hourlyRateEnabled: false, hourlyRate: 0, shiftRateEnabled: false, shiftRate: 0,
       overtimeEnabled: false, salesPercentEnabled: false, salesPercentRate: 0, tipsLink: "",
+      checkPercentExcludesHookah: false, hookahPercentRate: 0, barPercentRate: 0,
       ...e,
     });
   });
@@ -3927,7 +3939,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       refillHistory: (s.refills || []).map((m) => ({ time: ts(m) })),
       discountCardId: card ? card.id : null,
       discountPercent: card ? card.percent : 0,
-      orderItems: orderItemsOf(s.items),
+      orderItems: orderItemsOf(s.items, staff[s.staff].id),
       status: "active",
       closedAt: null,
     });
@@ -3941,7 +3953,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   DEMO_CLOSED_RECEIPTS.forEach(([tableName, start, end, staffKey, pay, items, tips]) => {
     const ref = col("sessions").doc();
     closedIds.push({ id: ref.id, tableName, end });
-    const orderItems = orderItemsOf(items);
+    const orderItems = orderItemsOf(items, staff[staffKey].id);
     const total = orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
     const cash = pay === "cash" ? total : pay === "mixed" ? Math.round(total / 200) * 100 : 0;
     const who = staff[staffKey];

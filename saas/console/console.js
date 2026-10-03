@@ -2409,17 +2409,38 @@ function screenPublicFaq() {
 // на которую владелец отправляет сотрудникам.
 const GUIDE_PUBLIC_URL = 'https://zalpos.ru/#/guide';
 let guideData = null;
+let guideScenes = null; // guide-scenes.js: живые иллюстрации «куда нажимать»
 let guideLoadFailed = false;
 let guidePromise = null;
 const guideTexts = new Map(); // id статьи → текст для поиска
 
+// Стили иллюстраций — отдельным файлом, лендинг их не грузит. Не
+// загрузились — инструкция всё равно откроется, просто без анимаций.
+function loadGuideCss() {
+  if (document.getElementById('guide-css')) return Promise.resolve();
+  return new Promise((resolve) => {
+    const link = document.createElement('link');
+    link.id = 'guide-css';
+    link.rel = 'stylesheet';
+    link.href = 'guide.css';
+    link.onload = link.onerror = () => resolve();
+    document.head.appendChild(link);
+  });
+}
+
 function loadGuide() {
   if (!guidePromise) {
-    guidePromise = import('./guide.js').then((m) => {
+    guidePromise = Promise.all([
+      import('./guide.js'),
+      import('./guide-scenes.js').catch(() => null),
+      loadGuideCss(),
+    ]).then(([m, scenes]) => {
       guideData = m.GUIDE;
+      guideScenes = scenes;
       guideLoadFailed = false;
       guideData.forEach((sec) => sec.items.forEach((it, i) => {
-        guideTexts.set(`${sec.id}-${i}`, guideNorm([sec.title, it.title, it.where, ...(it.steps || []), ...(it.tips || [])].join(' ')));
+        guideTexts.set(`${sec.id}-${i}`, guideNorm([sec.title, it.title, it.where, it.intro,
+          ...(it.steps || []), ...(it.tips || []), ...(it.faq || []).flat()].join(' ')));
       }));
       return guideData;
     }).catch((e) => { guidePromise = null; throw e; });
@@ -2455,6 +2476,7 @@ function guideBodyHtml(openSet, inCabinet) {
             ${sec.items.map((it, i) => {
               const id = `${sec.id}-${i}`;
               const tab = inCabinet ? guideCabinetTab(it.where) : null;
+              const scene = it.scene && guideScenes && guideScenes.hasScene(it.scene) ? it.scene : '';
               return `
                 <details class="guide-item" data-guide-id="${esc(id)}"${openSet.has(id) ? ' open' : ''}>
                   <summary>
@@ -2464,10 +2486,16 @@ function guideBodyHtml(openSet, inCabinet) {
                     </span>
                     <span class="guide-toggle" aria-hidden="true"></span>
                   </summary>
-                  <div class="guide-item-body">
-                    <ol class="guide-steps">${(it.steps || []).map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
-                    ${(it.tips || []).map((t) => `<p class="guide-tip">${esc(t)}</p>`).join('')}
-                    ${tab ? `<button type="button" class="btn-link f-dash-tab guide-go" data-tab="${esc(tab.id)}">Открыть «${esc(tab.label)}» ${LI.arrow}</button>` : ''}
+                  <div class="guide-item-body${scene ? ' has-scene' : ''}${scene && guideScenes.isWideScene(scene) ? ' wide' : ''}">
+                    <div class="guide-text">
+                      ${it.intro ? `<p class="guide-lede">${esc(it.intro)}</p>` : ''}
+                      <ol class="guide-steps">${(it.steps || []).map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
+                      ${(it.tips || []).map((t) => `<p class="guide-tip">${esc(t)}</p>`).join('')}
+                      ${(it.faq || []).length ? `<div class="guide-faq"><p class="guide-faq-title">Если что-то не так</p>
+                        ${it.faq.map(([q, a]) => `<p class="guide-q">${esc(q)}</p><p class="guide-a">${esc(a)}</p>`).join('')}</div>` : ''}
+                      ${tab ? `<button type="button" class="btn-link f-dash-tab guide-go" data-tab="${esc(tab.id)}">Открыть «${esc(tab.label)}» ${LI.arrow}</button>` : ''}
+                    </div>
+                    ${scene ? `<figure class="gx" data-scene="${esc(scene)}"></figure>` : ''}
                   </div>
                 </details>`;
             }).join('')}
@@ -2486,12 +2514,20 @@ function bindGuide(root, openSet) {
   const chips = root.querySelector('.guide-chips');
   let searching = false;
 
+  // Иллюстрация живёт, только пока статья раскрыта.
+  const scene = (el) => {
+    const fig = el.querySelector('figure.gx');
+    if (!fig || !guideScenes) return;
+    if (el.open) guideScenes.mountScene(fig); else guideScenes.unmountScene(fig);
+  };
   items.forEach((el) => {
     el.addEventListener('toggle', () => {
+      scene(el);
       // Во время поиска статьи раскрывает сам поиск — это не выбор человека.
       if (searching) return;
       if (el.open) openSet.add(el.dataset.guideId); else openSet.delete(el.dataset.guideId);
     });
+    if (el.open) scene(el);
   });
   root.querySelectorAll('[data-guide-jump]').forEach((btn) => {
     btn.onclick = () => document.getElementById(`guide-${btn.dataset.guideJump}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });

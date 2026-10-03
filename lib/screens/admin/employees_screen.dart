@@ -282,7 +282,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   }
 }
 
-/// «3 000 ₽ за смену + переработка · 5% с продаж» — коротко о зарплате
+/// «3 000 ₽ за смену + переработка · 5% с чеков» — коротко о зарплате
 /// сотрудника для списка. Пусто — зарплата не настроена.
 String payrollSummary(Employee e) {
   String rub(double v) => formatKopecks((v * 100).round());
@@ -292,9 +292,11 @@ String payrollSummary(Employee e) {
   } else if (e.hourlyRateEnabled && e.hourlyRate > 0) {
     parts.add('${rub(e.hourlyRate)} в час${e.overtimeEnabled ? ' + переработка' : ''}');
   }
-  if (e.salesPercentEnabled && e.salesPercentRate > 0) {
-    final p = e.salesPercentRate;
-    parts.add('${p == p.roundToDouble() ? p.toInt() : p.toString().replaceAll('.', ',')}% с продаж');
+  String pct(double p) => '${p == p.roundToDouble() ? p.toInt() : p.toString().replaceAll('.', ',')}%';
+  if (e.salesPercentEnabled) {
+    if (e.salesPercentRate > 0) parts.add('${pct(e.salesPercentRate)} с чеков');
+    if (e.hookahPercentRate > 0) parts.add('${pct(e.hookahPercentRate)} с кальянов');
+    if (e.barPercentRate > 0) parts.add('${pct(e.barPercentRate)} с бара');
   }
   return parts.join(' · ');
 }

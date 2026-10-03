@@ -164,7 +164,9 @@ void main() {
       expect(_emp().payrollConfigured, isTrue);
     });
     test('сводка в списке сотрудников', () {
-      expect(payrollSummary(_emp(overtime: true, sales: true, salesPercent: 5)), '3 000 ₽ за смену + переработка · 5% с продаж');
+      expect(payrollSummary(_emp(overtime: true, sales: true, salesPercent: 5)), '3 000 ₽ за смену + переработка · 5% с чеков');
+      expect(payrollSummary(Employee(id: 'x', name: 'К', pinCode: '1', role: 'employee', salesPercentEnabled: true, hookahPercentRate: 10, barPercentRate: 2.5)),
+          '10% с кальянов · 2,5% с бара');
       expect(payrollSummary(Employee(id: 'x', name: 'Б', pinCode: '1', role: 'employee', hourlyRateEnabled: true, hourlyRate: 250)),
           '250 ₽ в час');
       expect(payrollSummary(Employee(id: 'x', name: 'Б', pinCode: '1', role: 'employee')), '');
