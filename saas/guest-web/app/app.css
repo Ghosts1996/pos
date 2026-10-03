@@ -108,6 +108,7 @@ h1, h2, h3 { text-wrap: balance; }
 .card.warn { border-color: var(--warning); }
 .card.bad { border-color: var(--danger); }
 .card a { color: var(--primary); }
+.card a.policy-link, a.policy-link { color: var(--muted); text-decoration: none; display: inline-block; padding: 6px 8px; }
 .link-more { display: inline-flex; align-items: center; gap: 6px; color: var(--primary); margin-top: 12px; font-weight: 600; }
 .link-more .i { width: 16px; height: 16px; }
 
