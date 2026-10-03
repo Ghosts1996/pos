@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/staff_session_store.dart';
 import '../models/employee.dart';
 import '../models/shift_model.dart';
+import '../models/session_model.dart';
 import 'shift_open_dialog.dart';
 import '../screens/login_screen.dart';
 import '../screens/employee/floor_plan_screen.dart';
@@ -12,6 +13,7 @@ import '../screens/employee/inventory_count_entry_screen.dart';
 import '../screens/employee/stock_view_screen.dart';
 import '../screens/employee/reservations_screen.dart';
 import '../screens/employee/kds_screen.dart';
+import '../screens/employee/kitchen_screen.dart';
 import '../screens/employee/waitlist_screen.dart';
 import '../services/firestore_service.dart';
 import '../models/staff_shift_model.dart';
@@ -253,6 +255,32 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
             );
           },
         ),
+      ),
+
+      // Кухня и бар: что готовить по всем столам — со счётчиком столов,
+      // которые ждут свой цех (повар — кухня, бармен — бар, кальянщик — кальяны).
+      StreamBuilder<List<SessionModel>>(
+        stream: FirestoreService().openChecksStream(),
+        builder: (context, snap) {
+          final station = KitchenScreen.stationFor(widget.employee.position);
+          // Счётчик — тем, кто готовит: повару, бармену, кальянщику.
+          final cooks = const [AppConstants.positionCook, AppConstants.positionBartender, AppConstants.positionHookahMaster]
+              .contains(AppConstants.normalizePosition(widget.employee.position));
+          final count = cooks ? KitchenScreen.ticketsFor(snap.data ?? const [], station).length : 0;
+          return ListTile(
+            leading: const Icon(Icons.soup_kitchen_outlined),
+            title: const Text('Кухня и бар'),
+            subtitle: const Text('Что готовить по всем столам', style: TextStyle(fontSize: 11)),
+            trailing: count == 0
+                ? null
+                : CircleAvatar(
+                    radius: 12,
+                    backgroundColor: AppColors.warning,
+                    child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.background)),
+                  ),
+            onTap: () => _go(KitchenScreen(employee: widget.employee)),
+          );
+        },
       ),
 
       ListTile(
