@@ -140,6 +140,7 @@ function drawer({ name = 'Алина', role = 'ОФИЦИАНТ', shift = 'on', 
     <div class="gx-di-sep"></div>
     ${drawerItem({ icon: 'table', t: 'Зал' })}
     ${drawerItem({ icon: 'tray', t: 'Очередь заказов', s: 'Заказы и вызовы из приложения гостей', badge: '3', tap: tap.queue })}
+    ${drawerItem({ icon: 'fork', t: 'Кухня и бар', s: 'Что готовить по всем столам', tap: tap.kitchen })}
     ${drawerItem({ icon: 'cal', t: 'Брони', s: 'Подтверждение и посадка гостей', tap: tap.book })}
     ${drawerItem({ icon: 'glass', t: 'Лист ожидания', s: 'Когда все столы заняты', tap: tap.wait })}
     <div class="gx-di-sep"></div>
@@ -192,7 +193,7 @@ const ACTIONS = [
 function tableCheck({ name = 'Стол 2', who = 'Алина', items = [], total = '0 ₽', tap = {} } = {}) {
   const list = items.length
     ? `<div class="gx-card" style="margin:0 14px">${items.map((i) => `<div class="gx-row"${mk(i.mark)}>
-        <div class="gx-row-t"><b>${i.n}</b><span>${i.p} × ${i.q}</span></div>
+        <div class="gx-row-t"><b>${i.n}</b><span>${i.p} × ${i.q}</span><span style="display:flex;align-items:center;gap:3px;font-size:11.5px;color:${i.note ? 'var(--br)' : 'var(--mu)'};${i.note ? 'font-style:italic' : ''}">${ic(i.note ? 'pen' : 'plus', 12)}${i.note || 'пожелание'}</span></div>
         <span class="gx-mu" style="display:flex;align-items:center;gap:10px">${ic('minus', 16)}<b style="color:var(--tx)">${i.q}</b>${ic('plus', 16)}</span>
         <span class="gx-price" style="min-width:62px;text-align:right">${i.sum}</span></div>`).join('')}</div>`
     : `<div class="gx-card" style="margin:0 14px;height:112px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
@@ -461,6 +462,25 @@ const newTableDialog = dialog('Новый стол', `${field('Название'
   <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="gx-chip on" style="height:30px">Прямоугольный</span><span class="gx-chip" style="height:30px">Круглый</span><span class="gx-chip" style="height:30px">Диван</span></div>`,
   `${btn('Отмена', { kind: 'text' })}${btn('Сохранить', { kind: 'sm', tap: 'save' })}`);
 
+function kitchenScreen() {
+  const line = (n, name, note) => `<div style="display:flex;gap:10px;padding:5px 0">
+    <b class="gx-brass" style="width:26px;font-size:15px">${n}×</b>
+    <div style="flex:1"><b style="display:block;font-size:14.5px">${name}</b>${note ? `<i class="gx-brass" style="font-size:13px">${note}</i>` : ''}</div>
+    <span class="gx-mu">${ic('check', 18)}</span></div>`;
+  const ticket = (table, sub, min, tone, lines, k) => `<div class="gx-card gx-fold"${mk(k)} style="padding:12px 14px;margin-bottom:10px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between">
+      <div><b style="font-size:17px">${table}</b><div class="gx-mu" style="font-size:12px">${sub}</div></div>
+      <span style="padding:3px 9px;border-radius:9px;font-weight:700;font-size:12.5px;background:${tone === 'warn' ? 'rgba(217,168,78,.16)' : 'rgba(163,154,142,.14)'};color:${tone === 'warn' ? 'var(--warn)' : 'var(--mu)'}">${min} мин</span></div>
+    <div class="gx-sep" style="margin:9px 0 4px"></div>${lines}
+    ${btn('Всё готово', { kind: 'ok sm', icon: 'checks', tap: k, style: 'margin-top:8px' })}</div>`;
+  return `<div class="gx-app">${status()}${appBar({ title: 'Кухня и бар', left: 'back' })}
+    <div class="gx-chips"><span class="gx-chip on">Кухня · 2</span><span class="gx-chip">Бар · 1</span><span class="gx-chip">Кальяны</span></div>
+    <div style="padding:2px 14px">
+      ${ticket('Стол 1', 'Аня · Алина', 18, 'warn', line(1, 'Сырники со сметаной') + line(2, 'Капучино', 'На растительном молоке').replace('Капучино', 'Цезарь с курицей').replace('На растительном молоке', 'Соус отдельно'), 't1')}
+      ${ticket('Стол 5', 'Максим', 6, '', line(2, 'Паста карбонара', 'Без лука') + line(1, 'Том ям с креветками'), 't5')}
+    </div></div>`;
+}
+
 /* ---- Кабинет ---- */
 function webDevices() {
   return web('Устройства', `<h3>Устройства</h3><div style="color:var(--mu);font-size:14px">Код приглашения, сборка касс и приложения гостей</div>
@@ -556,6 +576,15 @@ export const SCENES = {
       { screen: menuCats({ tap: 'Напитки', count: 1 }), enter: 'back', cap: 'Вернитесь назад и добавьте ещё — например, напиток.', acts: [{ tap: 'cat' }] },
       { screen: menuItems({ title: 'Напитки', items: DRINKS, tap: 'Сок яблочный', count: 2, countMark: 'n' }), enter: 'push', cap: 'Каждое нажатие «+» — ещё одна штука. Потом «Перейти к чеку».', acts: [{ tap: 'item', mark: 'q' }, { mark: 'n' }, { wait: 400 }, { tap: 'tocheck' }] },
       { screen: tableCheck({ items: ORDER, total: '1 420 ₽' }), enter: 'push', cap: 'Заказ сохранён и виден на всех кассах заведения.', acts: [{ wait: 1600 }] },
+    ],
+  },
+
+  kitchen: {
+    label: 'Экран «Кухня и бар»',
+    frames: [
+      { screen: hall(), over: { kind: 'drawer', html: drawer({ name: 'Ильдар', role: 'ПОВАР', tap: { kitchen: 'kitchen' } }) }, cap: 'Меню ☰ → «Кухня и бар».', acts: [{ tap: 'kitchen' }] },
+      { screen: kitchenScreen(), enter: 'push', cap: 'Столы с вашими позициями. Сверху — те, что ждут дольше всех: 15 минут подсвечиваются жёлтым.', acts: [{ wait: 1600 }] },
+      { screen: kitchenScreen(), cap: 'Приготовили — «Всё готово». Официант увидит в счёте зелёное «готово».', acts: [{ tap: 't1', mark: 't1' }, { wait: 1500 }] },
     ],
   },
 

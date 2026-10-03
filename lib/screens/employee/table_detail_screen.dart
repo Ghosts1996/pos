@@ -5,6 +5,7 @@ import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/order_note_sheet.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/timer_display.dart';
 import '../../widgets/clock_ticker.dart';
@@ -318,6 +319,48 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// «Пожелание» под строкой заказа: есть — показываем его, нет —
+  /// неприметная ссылка «+ пожелание».
+  Widget _noteLink(String sessionId, OrderItem i) {
+    final has = i.note.isNotEmpty;
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: () => _editNote(sessionId, i),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(has ? Icons.edit_note : Icons.add, size: 16, color: has ? AppColors.brass : AppColors.textMuted),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                has ? i.note : 'пожелание',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: has ? AppColors.brass : AppColors.textMuted,
+                  fontStyle: has ? FontStyle.italic : FontStyle.normal,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editNote(String sessionId, OrderItem i) async {
+    final note = await showOrderNoteSheet(context, i);
+    if (note == null || note == i.note || !mounted) return;
+    try {
+      await _fs.setOrderItemNote(sessionId, i.menuItemId, note);
+    } catch (e) {
+      _showError('Не удалось сохранить пожелание: ${humanError(e, lower: true)}');
+    }
+  }
+
   Future<void> _changeQty(String sessionId, String menuItemId, int delta) async {
     try {
       await _fs.changeOrderItemQty(sessionId, menuItemId, delta, employeeId: widget.employee.id);
@@ -615,8 +658,21 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text('${_money(i.price)} × ${i.qty}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                  Row(
+                    children: [
+                      Text('${_money(i.price)} × ${i.qty}',
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                      // Отметка с экрана «Кухня и бар»: можно выносить.
+                      if (i.ready > 0) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.check_circle, size: 14, color: AppColors.success),
+                        const SizedBox(width: 3),
+                        Text(i.pending > 0 ? 'готово ${i.ready} из ${i.qty}' : 'готово',
+                            style: const TextStyle(color: AppColors.success, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                      ],
+                    ],
+                  ),
+                  if (i.menuItemId.isNotEmpty) _noteLink(session.id, i),
                 ],
               ),
             ),

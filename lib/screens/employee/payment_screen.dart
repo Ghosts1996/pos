@@ -500,6 +500,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final closedAt = DateTime.now();
       final method = paidVia.isEmpty ? 'Наличные' : paidVia;
       ReceiptLine line(OrderItem i) => ReceiptLine('${i.name} x${i.qty}', right: i.total.toStringAsFixed(0));
+      // Пожелание — строкой под позицией («  без льда»).
+      List<ReceiptLine> lines(List<OrderItem> list) => [
+            for (final i in list) ...[line(i), if (i.note.isNotEmpty) ReceiptLine('  ${i.note}')],
+          ];
       // Кальяны — отдельным чеком, кухня и бар — другим (настройка в
       // Интеграциях). Скидка счёта в кальянном чеке — только на позиции,
       // где она разрешена (обычно табак без скидок); бонусы списываются
@@ -518,7 +522,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           tableName: widget.session.tableName,
           employeeName: widget.session.employeeName,
           closedAt: closedAt,
-          items: hookah.map(line).toList(),
+          items: lines(hookah),
           total: hookahTotal,
           paymentMethod: method,
           footerNote: 'Кухня и бар — отдельным чеком',
@@ -529,7 +533,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           tableName: widget.session.tableName,
           employeeName: widget.session.employeeName,
           closedAt: closedAt,
-          items: rest.map(line).toList(),
+          items: lines(rest),
           total: restTotal,
           paymentMethod: method,
         ));
@@ -539,7 +543,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           tableName: widget.session.tableName,
           employeeName: widget.session.employeeName,
           closedAt: closedAt,
-          items: items.map(line).toList(),
+          items: lines(items),
           total: _total,
           paymentMethod: method,
         ));
