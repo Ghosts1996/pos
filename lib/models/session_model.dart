@@ -45,6 +45,10 @@ class OrderItem {
   /// устройства, которое добавило, — для «ждут 12 мин» на экране кухни.
   final DateTime? since;
 
+  /// Сколько штук уже ушло на кухню или бар бумажным бегунком — чтобы
+  /// следующий бегунок печатал только новое.
+  final int sent;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
@@ -56,10 +60,18 @@ class OrderItem {
     this.note = '',
     int ready = 0,
     this.since,
-  }) : ready = ready < 0 ? 0 : (ready > qty ? (qty < 0 ? 0 : qty) : ready);
+    int sent = 0,
+  })  : ready = _clampQty(ready, qty),
+        sent = _clampQty(sent, qty);
+
+  static int _clampQty(int v, int qty) => v < 0 ? 0 : (v > qty ? (qty < 0 ? 0 : qty) : v);
 
   /// Штук ещё не готово.
   int get pending => qty - ready;
+
+  /// Штук для следующего бегунка: не отправленные и не отмеченные готовыми.
+  /// Строки без «ждёт с» — из чеков до бегунков, их давно вынесли.
+  int get unsent => since == null ? 0 : qty - (sent > ready ? sent : ready);
 
   static String cleanNote(Object? raw) {
     final s = (raw ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -87,6 +99,7 @@ class OrderItem {
       note: cleanNote(m['note']),
       ready: m['ready'] is num ? (m['ready'] as num).toInt() : 0,
       since: m['since'] is num ? DateTime.fromMillisecondsSinceEpoch((m['since'] as num).toInt()) : null,
+      sent: m['sent'] is num ? (m['sent'] as num).toInt() : 0,
     );
   }
 
@@ -101,17 +114,22 @@ class OrderItem {
         if (note.isNotEmpty) 'note': note,
         if (ready > 0) 'ready': ready,
         if (since != null) 'since': since!.millisecondsSinceEpoch,
+        if (sent > 0) 'sent': sent,
       };
 
   /// Всё готово: [ready] = [qty].
   OrderItem markReady() => _with(ready: qty);
 
+  /// Бегунок напечатан: на кухню ушло [count] штук (сколько было в строке
+  /// на момент печати — добавленное за это время уйдёт следующим).
+  OrderItem markSent(int count) => count > sent ? _with(sent: count) : this;
+
   /// Та же строка с другим пожеланием (пусто — убрать).
   OrderItem withNote(String value) => _with(note: cleanNote(value));
 
-  OrderItem _with({String? note, int? ready}) => OrderItem(
+  OrderItem _with({String? note, int? ready, int? sent}) => OrderItem(
       menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
-      note: note ?? this.note, ready: ready ?? this.ready, since: since);
+      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent);
 
   /// Новое количество. Если штук стало меньше, учёт авторов урезается с
   /// самых крупных долей — сумма никогда не больше [qty].
@@ -128,6 +146,7 @@ class OrderItem {
       note: note,
       ready: ready,
       since: since,
+      sent: sent,
     );
   }
 
@@ -147,6 +166,7 @@ class OrderItem {
       ready: ready,
       // Было всё готово — новые штуки ждут с этой минуты.
       since: n > 0 && pending <= 0 ? DateTime.now() : since,
+      sent: sent,
     );
   }
 
@@ -178,6 +198,7 @@ class OrderItem {
       note: note,
       ready: ready,
       since: since,
+      sent: sent,
     );
   }
 
@@ -202,12 +223,14 @@ class OrderItem {
       left -= take;
     }
     kept.removeWhere((_, v) => v <= 0);
-    // Готовые штуки уходят первыми — их уже вынесли гостю.
+    // Готовые штуки уходят первыми — их уже вынесли гостю. Так же и
+    // отправленные бегунком: их уже готовят.
     final readyOut = ready < n ? ready : n;
-    OrderItem part(int q, Map<String, int> b, int r) => OrderItem(
+    final sentOut = sent < n ? sent : n;
+    OrderItem part(int q, Map<String, int> b, int r, int sn) => OrderItem(
         menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b, note: note,
-        ready: r, since: since);
-    return (part(n, taken, readyOut), part(qty - n, kept, ready - readyOut));
+        ready: r, since: since, sent: sn);
+    return (part(n, taken, readyOut, sentOut), part(qty - n, kept, ready - readyOut, sent - sentOut));
   }
 
   /// Вид продажи: записанный при добавлении, а у старых строк — по

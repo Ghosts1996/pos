@@ -617,6 +617,27 @@ class FirestoreService {
     });
   }
 
+  /// Бегунок напечатан: [sentQty] — сколько штук каждой позиции (id меню →
+  /// количество) было в строке на момент печати. Добавленное за это время
+  /// останется неотправленным и уйдёт следующим бегунком.
+  Future<void> markItemsSent(String sessionId, Map<String, int> sentQty) async {
+    if (sentQty.isEmpty) return;
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return;
+      final items = _openCheckItems(data);
+      var changed = false;
+      for (var k = 0; k < items.length; k++) {
+        final count = sentQty[items[k].menuItemId];
+        if (count == null || count <= items[k].sent) continue;
+        items[k] = items[k].markSent(count);
+        changed = true;
+      }
+      if (changed) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+    });
+  }
+
   /// Все открытые чеки заведения — для экрана «Кухня и бар».
   Stream<List<SessionModel>> openChecksStream() => _openChecksS.get(
       'all',

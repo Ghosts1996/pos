@@ -742,6 +742,12 @@ jobs:
         shell: bash
         run: flutter pub get
 
+      # Firebase C++ SDK — заранее и с повторами: сервер Google при
+      # скачивании плагином иногда отвечал 502 (подробности — в скрипте).
+      - name: Prefetch Firebase C++ SDK
+        shell: bash
+        run: bash .github/scripts/prefetch-firebase-cpp-sdk.sh
+
       # Ошибка плагина cloud_firestore для Windows: транзакции и ссылки на
       # документы роняли кассу (подробности — в самом скрипте).
       - name: Patch cloud_firestore (Windows)

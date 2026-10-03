@@ -7,6 +7,7 @@ import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../utils/adaptive.dart';
+import '../utils/kitchen_slips.dart';
 
 /// Печать информационного (не фискального) чека на 58/80-мм принтере
 /// командами ESC/POS: по Bluetooth (`print_bluetooth_thermal`) или по сети
@@ -59,6 +60,9 @@ abstract class ReceiptPrinter {
 
   /// Напечатать отчёт (X-отчёт смены и т. п.).
   Future<void> printReport(ReportPrint report) async => printBytes(await buildReportBytes(report));
+
+  /// Напечатать бегунки — по листку на цех, каждый с отрезом.
+  Future<void> printKitchenSlips(List<KitchenSlip> slips) async => printBytes(await buildKitchenSlipsBytes(slips));
 }
 
 /// Строка отчёта для печати: слева подпись, справа сумма. [separator] —
@@ -117,6 +121,38 @@ Future<List<int>> buildReportBytes(ReportPrint r, {PaperSize paper = PaperSize.m
   }
   bytes.addAll(g.feed(2));
   bytes.addAll(g.cut());
+  return bytes;
+}
+
+/// ESC/POS-байты бегунков: цех и стол крупно — чтобы повар прочитал с
+/// расстояния, позиции крупно, пожелание под позицией. Без цен.
+Future<List<int>> buildKitchenSlipsBytes(List<KitchenSlip> slips, {PaperSize paper = PaperSize.mm58}) async {
+  final profile = await CapabilityProfile.load();
+  final g = Generator(paper, profile, codec: const Cp866Codec());
+  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  String two(int v) => v.toString().padLeft(2, '0');
+  for (final slip in slips) {
+    bytes.addAll(g.text(slip.title,
+        styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2)));
+    bytes.addAll(g.text(slip.tableName,
+        styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2)));
+    final who = [if (slip.guestTag.isNotEmpty) slip.guestTag, if (slip.waiter.isNotEmpty) 'официант ${slip.waiter}'];
+    if (who.isNotEmpty) {
+      bytes.addAll(g.text(who.join(', '), styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+    }
+    bytes.addAll(g.text('${two(slip.at.hour)}:${two(slip.at.minute)}  ${two(slip.at.day)}.${two(slip.at.month)}',
+        styles: const PosStyles(align: PosAlign.center)));
+    bytes.addAll(g.hr());
+    for (final l in slip.lines) {
+      bytes.addAll(g.text('${l.qty} x ${l.name}${l.more ? ' (ещё)' : ''}',
+          styles: const PosStyles(bold: true, height: PosTextSize.size2)));
+      if (l.note.isNotEmpty) bytes.addAll(g.text('   ! ${l.note}'));
+    }
+    bytes.addAll(g.hr());
+    bytes.addAll(g.text('Всего: ${slip.pieces} шт.', styles: const PosStyles(align: PosAlign.right, fontType: PosFontType.fontB)));
+    bytes.addAll(g.feed(2));
+    bytes.addAll(g.cut());
+  }
   return bytes;
 }
 
@@ -383,6 +419,30 @@ ReceiptPrinter? activeReceiptPrinter;
 /// settings/integrations.printSplitHookah, по умолчанию включена).
 bool printHookahSeparately = true;
 
+/// Печатать бегунки на кухню и бар: в счёте стола появляется кнопка «На
+/// кухню» для новых позиций (settings/integrations.printKitchenTickets, по
+/// умолчанию выключено — кому хватает экрана «Кухня и бар»).
+bool printKitchenTickets = false;
+
+DateTime? _printFlagsAt;
+
+/// Перечитывает флаги печати (кальяны отдельно, бегунки) без пересоздания
+/// принтера — админ мог переключить их в «Интеграциях» на другом
+/// устройстве, а планшет официанта работает сутками. Не чаще раза в 5 минут.
+Future<void> refreshPrintFlags() async {
+  final now = DateTime.now();
+  if (_printFlagsAt != null && now.difference(_printFlagsAt!) < const Duration(minutes: 5)) return;
+  _printFlagsAt = now;
+  try {
+    final data = (await AppScope.col('settings').doc('integrations').get()).data();
+    if (data == null) return;
+    printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
+    printKitchenTickets = data['printKitchenTickets'] as bool? ?? false;
+  } catch (_) {
+    // Нет сети — остаются прежние значения.
+  }
+}
+
 /// Подтягивает сохранённые настройки принтера (settings/integrations) и
 /// заполняет [activeReceiptPrinter] — вызывается один раз при старте
 /// приложения (см. main.dart), чтобы официанту не нужно было заново
@@ -393,6 +453,7 @@ Future<void> loadSavedPrinterSettings() async {
     final data = doc.data();
     if (data == null) return;
     printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
+    printKitchenTickets = data['printKitchenTickets'] as bool? ?? false;
     final type = data['printerType'] as String? ?? 'none';
     // На Windows print_bluetooth_thermal идёt через BLE (win_ble), а не
     // classic-SPP, на котором держится подавляющее большинство дешёвых
