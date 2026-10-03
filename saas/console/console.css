@@ -6,7 +6,8 @@
    Шрифты лежат рядом (fonts.css), с Google не грузятся.
 
    Правила, которые держат вид «сделано вручную»:
-   — никаких градиентов и свечения на кнопках и тексте;
+   — никаких градиентов и свечения на кнопках и тексте (мягкий свет за
+     блоками тёмной темы — можно);
    — одна тень на всю систему (--shadow), остальное — тонкие линии;
    — иконки только линейные (набор LI в console.js), без эмодзи;
    — заголовки слева, по центру — только тарифы и финальный призыв. */
@@ -45,38 +46,41 @@
   --overlay: rgba(29, 26, 22, .35);
 }
 
-/* Тёмная тема — «вечерний зал», как касса: графит, слоновая кость, медь.
-   Ставится атрибутом data-theme (скрипт в index.html и кнопка в шапке).
-   Кнопки остаются «чернильными» по смыслу: светлые на тёмном фоне. */
+/* Тёмная тема — «вечерний зал»: глубокий графит почти без коричневого,
+   насыщенная медь и светлые кнопки цвета шампань. Глубину дают слои
+   поверхностей, тонкая светлая грань сверху у карточек (в --shadow) и
+   мягкое медное свечение за первым экраном и тёмными полосами.
+   Ставится атрибутом data-theme (скрипт в index.html и кнопка в шапке). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #15120F;
-  --surface: #1E1A16;
-  --surface-2: #29231E;
-  --border: #332C25;
-  --border-strong: #4A4037;
-  --text: #F2EADF;
-  --muted: #A99E8F;
-  --ink: #F1EBE1;
-  --primary: #D9925F;
-  --primary-2: #E9A877;
-  --accent-soft: #3A281C;
-  --success: #7FB894;
-  --danger: #E07A66;
-  --warning: #E0B258;
-  --shadow: 0 1px 0 rgba(0, 0, 0, .25), 0 18px 40px -26px rgba(0, 0, 0, .8);
-  --on-ink: #1C1915;
-  --ink-hover: #FFFFFF;
-  --field: #191512;
-  --placeholder: #7D7366;
-  --danger-soft: #2C1A16;
-  --warn-soft: #2A2116;
-  --alt-bg: #1A1613;
-  --header-bg: rgba(21, 18, 15, .88);
-  --hero-card: #1E1A16;
-  --band: #0D0B09;
-  --band-card: #29231D;
-  --overlay: rgba(0, 0, 0, .6);
+  --bg: #0D0C0A;
+  --surface: #161412;
+  --surface-2: #201D1A;
+  --border: #29251F;
+  --border-strong: #3D362E;
+  --text: #F0E8DC;
+  --muted: #A1978A;
+  --ink: #E8D8BD;         /* шампань */
+  --primary: #CF8B5B;     /* медь */
+  --primary-2: #E2A679;
+  --accent-soft: #2C1F16;
+  --success: #82BC98;
+  --danger: #E2806B;
+  --warning: #DDB062;
+  --shadow: inset 0 1px 0 rgba(255, 238, 214, .045), 0 28px 60px -34px rgba(0, 0, 0, .95);
+  --on-ink: #15120E;
+  --ink-hover: #F3E6CF;
+  --field: #110F0D;
+  --placeholder: #6E665B;
+  --danger-soft: #261612;
+  --warn-soft: #241C12;
+  --alt-bg: #11100E;
+  --header-bg: rgba(13, 12, 10, .72);
+  --hero-card: #151311;
+  --band: #080706;
+  --band-card: #1A1714;
+  --overlay: rgba(0, 0, 0, .66);
+  --glow: rgba(207, 139, 91, .24);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -1142,11 +1146,64 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 @media (max-width: 859px) { .nav-drawer-brand .theme-toggle { display: none; } }
 
 /* ---- Тёмная тема: точечные поправки ---- */
-/* Тёмная карточка заведения в кабинете — на тёмном фоне нужна граница. */
-:root[data-theme="dark"] .venue-card { border-color: var(--border-strong); }
+/* Первый экран: мягкое медное свечение сверху справа, как свет над стойкой.
+   Лежит на всей странице, чтобы проходить и под прозрачной шапкой. */
+:root[data-theme="dark"] .wrap.landing {
+  background:
+    radial-gradient(1100px 760px at 84% -60px, var(--glow), transparent 62%),
+    radial-gradient(900px 640px at -6% 920px, rgba(150, 92, 56, .12), transparent 62%),
+    var(--bg);
+  background-repeat: no-repeat;
+}
+/* Кабинет и простые страницы: тот же свет, но тише. */
+:root[data-theme="dark"] body {
+  background: radial-gradient(1000px 680px at 86% -80px, rgba(207, 139, 91, .11), transparent 62%) no-repeat, var(--bg);
+}
+/* Тёмные полосы: глубже фона, тот же свет сверху, медь и шампань. */
+:root[data-theme="dark"] .l-dark {
+  --text: #F0E8DC; --muted: #A1978A; --primary: #CF8B5B;
+  --surface: #151311; --surface-2: #1D1A17;
+  --border: rgba(240, 232, 220, .09); --border-strong: rgba(240, 232, 220, .18);
+  background: radial-gradient(1100px 520px at 50% -8%, rgba(207, 139, 91, .15), transparent 70%), var(--band);
+}
+/* Медная световая линия по верху тёмной полосы вместо серой границы. */
+:root[data-theme="dark"] .l-dark::before {
+  content: ''; position: absolute; left: 8%; right: 8%; top: 0; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(207, 139, 91, .55) 50%, transparent);
+}
+/* Карточки как материал: чуть светлее сверху, глубже снизу. Полупрозрачный
+   слой — поверх любого цвета карточки (в том числе предупреждений). */
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .quick-actions,
+:root[data-theme="dark"] .plan-card {
+  background-image: linear-gradient(180deg, rgba(255, 238, 214, .028), rgba(0, 0, 0, .14));
+}
+:root[data-theme="dark"] .landing-section-alt {
+  background: linear-gradient(180deg, rgba(255, 238, 214, .012), transparent 40%), var(--alt-bg);
+}
+/* Светлые кнопки в тёмных блоках — того же цвета шампань. */
+:root[data-theme="dark"] .l-dark .btn-primary,
+:root[data-theme="dark"] .plan-card.recommended .btn-primary,
+:root[data-theme="dark"] .landing-cta-inner .btn:not(.landing-cta-ghost),
+:root[data-theme="dark"] .has-tabbar .venue-card .btn-primary { background: var(--ink); color: var(--on-ink); }
+:root[data-theme="dark"] .l-dark .btn-primary:not(:disabled):hover,
+:root[data-theme="dark"] .landing-cta-inner .btn:not(.landing-cta-ghost):hover { background: var(--ink-hover); }
+/* Форма регистрации: светлая грань сверху и глубокая тень. */
+:root[data-theme="dark"] .landing-hero-card {
+  border-color: #2A2520;
+  box-shadow: inset 0 1px 0 rgba(255, 238, 214, .06), 0 50px 90px -46px rgba(0, 0, 0, 1);
+}
+/* Карточка заведения в кабинете — клубная карта: графит с отливом и медная грань. */
+:root[data-theme="dark"] .has-tabbar .venue-card {
+  background: linear-gradient(155deg, #1E1A16 0%, #110F0D 62%);
+  border-color: rgba(207, 139, 91, .28);
+  box-shadow: inset 0 1px 0 rgba(255, 238, 214, .06), 0 34px 70px -40px rgba(0, 0, 0, 1);
+}
 /* «−11 %» на активной кнопке периода: кнопка светлая — подпись тёмно-зелёная. */
 :root[data-theme="dark"] .landing-pricing-toggle-btn.active .period-save { color: #2F6B49; }
-/* Рекомендованный тариф отделяем от фона тонкой медной рамкой. */
-:root[data-theme="dark"] .plan-card.recommended { border-color: rgba(217, 146, 95, .45); }
-/* Тёмные полосы сайта отделяем линиями от такого же тёмного фона. */
-:root[data-theme="dark"] .l-dark { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+/* Рекомендованный тариф: медная рамка и тот же свет сверху. */
+:root[data-theme="dark"] .plan-card.recommended {
+  border-color: rgba(207, 139, 91, .5);
+  background: radial-gradient(420px 220px at 50% -10%, rgba(207, 139, 91, .12), transparent 70%), var(--band-card);
+  box-shadow: inset 0 1px 0 rgba(255, 238, 214, .06), 0 40px 80px -44px rgba(0, 0, 0, 1);
+}
