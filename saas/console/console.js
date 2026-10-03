@@ -1303,7 +1303,7 @@ function themeToggleHtml() {
 function applyTheme(theme, { save = false } = {}) {
   document.documentElement.setAttribute('data-theme', theme);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#15120F' : '#F3EEE6');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0D0C0A' : '#F3EEE6');
   const label = theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему';
   document.querySelectorAll('.theme-toggle').forEach((b) => b.setAttribute('aria-label', label));
   if (save) { try { localStorage.setItem(THEME_KEY, theme); } catch (_) {} }
