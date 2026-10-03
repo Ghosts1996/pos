@@ -15,9 +15,10 @@ say() { echo; echo "== $*"; }
 die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "запустите от root"
 
-# Полный диск роняет Postgres и не даёт обновиться. Если свободно меньше
-# 1 ГБ, чистим то, что безопасно удалять (кэши apt и npm, старые журналы
-# systemd), и печатаем, что занимает место, — разбор виден в логе.
+# Полный диск роняет Postgres и не даёт обновиться. Меньше 3 ГБ свободно —
+# печатаем, что занимает место (разбор виден в логе обновления); меньше
+# 1 ГБ — ещё и чистим то, что безопасно удалять: кэши apt и npm и журналы
+# systemd старше недели.
 say "Место на диске"
 free_mb() { df -Pm / | awk 'NR==2 {print $4}'; }
 echo "свободно: $(free_mb) МБ"
@@ -27,9 +28,12 @@ if (( $(free_mb) < 1024 )); then
   journalctl --vacuum-time=7d --vacuum-size=300M >/dev/null 2>&1 || true
   npm cache clean --force >/dev/null 2>&1 || true
   echo "после уборки свободно: $(free_mb) МБ"
+fi
+if (( $(free_mb) < 3072 )); then
   echo "крупнее всего:"
-  du -xhd1 / 2>/dev/null | sort -rh | head -n 10 || true
-  du -xhd1 /opt /var /root /home /var/lib /var/log 2>/dev/null | sort -rh | head -n 25 || true
+  for d in / /var/lib /usr /usr/lib /usr/local /var/log /opt /root; do
+    du -xhd1 "$d" 2>/dev/null | sort -rh | sed -n '2,8p' || true
+  done
   du -xhd1 /opt/saas-gateway/tenant-builds 2>/dev/null | sort -rh | head -n 15 || true
   ls -la /swapfile /swap.img 2>/dev/null || true
 fi
