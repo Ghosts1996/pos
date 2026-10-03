@@ -788,6 +788,7 @@ const PUBLIC_ROUTES = {
   '#/legal/consent': () => screenLegalConsent(),
   '#/status': () => screenStatus(),
   '#/faq': () => screenPublicFaq(),
+  '#/guide': () => screenPublicGuide(),
   '#/demo-photos': () => screenDemoPhotos(),
 };
 
@@ -2058,6 +2059,7 @@ function publicFooterLinksHtml() {
       <a href="#/legal/payment">Оплата и возврат</a> ·
       <a href="#/legal/privacy">Конфиденциальность</a> ·
       <a href="#/status">Статус</a> ·
+      <a href="#/guide">Инструкция</a> ·
       <a href="#/faq">FAQ</a>
     </p>
     <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
@@ -2398,6 +2400,142 @@ function screenPublicFaq() {
   `);
   document.querySelectorAll('.faq-item').forEach((el) => {
     el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
+  });
+}
+
+// ---------------------------------------------------------------- Инструкция
+// Текст — в guide.js, грузится при первом открытии: лендингу он не нужен.
+// Одна разметка для вкладки кабинета и публичной страницы #/guide, ссылку
+// на которую владелец отправляет сотрудникам.
+const GUIDE_PUBLIC_URL = 'https://zalpos.ru/#/guide';
+let guideData = null;
+let guideLoadFailed = false;
+let guidePromise = null;
+const guideTexts = new Map(); // id статьи → текст для поиска
+
+function loadGuide() {
+  if (!guidePromise) {
+    guidePromise = import('./guide.js').then((m) => {
+      guideData = m.GUIDE;
+      guideLoadFailed = false;
+      guideData.forEach((sec) => sec.items.forEach((it, i) => {
+        guideTexts.set(`${sec.id}-${i}`, guideNorm([sec.title, it.title, it.where, ...(it.steps || []), ...(it.tips || [])].join(' ')));
+      }));
+      return guideData;
+    }).catch((e) => { guidePromise = null; throw e; });
+  }
+  return guidePromise;
+}
+
+const guideNorm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[ \s]+/g, ' ');
+
+// «Кабинет · Устройства» — в кабинете это ещё и переход на вкладку.
+function guideCabinetTab(where) {
+  const m = /^Кабинет · ([^·]+?)(?: и | · |$)/.exec(where || '');
+  return m ? DASHBOARD_NAV.find((t) => t.label === m[1].trim()) : null;
+}
+
+function guideBodyHtml(openSet, inCabinet) {
+  const searchIcon = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>';
+  return `
+    <div class="guide">
+      <label class="guide-search">
+        ${searchIcon}
+        <input id="f-guide-search" type="search" placeholder="Найти: смена, возврат, бронь, QR-код…" autocomplete="off" aria-label="Поиск по инструкции">
+      </label>
+      <nav class="guide-chips" aria-label="Разделы инструкции">
+        ${guideData.map((sec) => `<button type="button" class="guide-chip" data-guide-jump="${esc(sec.id)}">${esc(sec.title)}</button>`).join('')}
+      </nav>
+      <p class="guide-found small muted" id="guide-found" hidden></p>
+      ${guideData.map((sec) => `
+        <section class="guide-section" id="guide-${esc(sec.id)}" data-guide-section>
+          <h3 class="guide-section-title">${esc(sec.title)}</h3>
+          <p class="small muted guide-section-lead">${esc(sec.lead || '')}</p>
+          <div class="guide-list">
+            ${sec.items.map((it, i) => {
+              const id = `${sec.id}-${i}`;
+              const tab = inCabinet ? guideCabinetTab(it.where) : null;
+              return `
+                <details class="guide-item" data-guide-id="${esc(id)}"${openSet.has(id) ? ' open' : ''}>
+                  <summary>
+                    <span class="guide-item-head">
+                      <span class="guide-item-title">${esc(it.title)}</span>
+                      ${it.where ? `<span class="guide-where">${esc(it.where)}</span>` : ''}
+                    </span>
+                    <span class="guide-toggle" aria-hidden="true"></span>
+                  </summary>
+                  <div class="guide-item-body">
+                    <ol class="guide-steps">${(it.steps || []).map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
+                    ${(it.tips || []).map((t) => `<p class="guide-tip">${esc(t)}</p>`).join('')}
+                    ${tab ? `<button type="button" class="btn-link f-dash-tab guide-go" data-tab="${esc(tab.id)}">Открыть «${esc(tab.label)}» ${LI.arrow}</button>` : ''}
+                  </div>
+                </details>`;
+            }).join('')}
+          </div>
+        </section>
+      `).join('')}
+    </div>
+  `;
+}
+
+function bindGuide(root, openSet) {
+  const input = root.querySelector('#f-guide-search');
+  const items = [...root.querySelectorAll('.guide-item')];
+  const sections = [...root.querySelectorAll('[data-guide-section]')];
+  const found = root.querySelector('#guide-found');
+  const chips = root.querySelector('.guide-chips');
+  let searching = false;
+
+  items.forEach((el) => {
+    el.addEventListener('toggle', () => {
+      // Во время поиска статьи раскрывает сам поиск — это не выбор человека.
+      if (searching) return;
+      if (el.open) openSet.add(el.dataset.guideId); else openSet.delete(el.dataset.guideId);
+    });
+  });
+  root.querySelectorAll('[data-guide-jump]').forEach((btn) => {
+    btn.onclick = () => document.getElementById(`guide-${btn.dataset.guideJump}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  const apply = () => {
+    const words = guideNorm(input.value).trim().split(' ').filter(Boolean);
+    searching = words.length > 0;
+    let count = 0;
+    items.forEach((el) => {
+      const text = guideTexts.get(el.dataset.guideId) || '';
+      const hit = !searching || words.every((w) => text.includes(w));
+      el.hidden = !hit;
+      if (hit && searching) count++;
+      el.open = searching ? hit : openSet.has(el.dataset.guideId);
+    });
+    sections.forEach((sec) => { sec.hidden = !sec.querySelector('.guide-item:not([hidden])'); });
+    chips.hidden = searching;
+    found.hidden = !searching;
+    found.textContent = !searching ? '' : count
+      ? `Найдено: ${count} ${plural(count, 'статья', 'статьи', 'статей')}`
+      : 'Ничего не нашлось — попробуйте другое слово, например «смена», «чек» или «склад».';
+  };
+  input.addEventListener('input', apply);
+  if (input.value) apply();
+}
+
+function screenPublicGuide() {
+  const fill = () => {
+    if (!guideData) return;
+    const box = $('guide-public');
+    if (!box) return;
+    box.innerHTML = guideBodyHtml(new Set(), false);
+    bindGuide(box, new Set());
+  };
+  screenEl().innerHTML = publicPageWrapHtml('Инструкция ZalPOS', `
+    <p class="small muted guide-intro">Как настроить заведение и работать в кассе каждый день: касса, зал, меню, смены,
+    оплата, брони, склад и кабинет владельца. Найдите нужное через поиск или выберите раздел.</p>
+    <div id="guide-public"><div class="card"><div class="spinner"></div></div></div>
+  `);
+  if (guideData) fill();
+  else loadGuide().then(fill).catch(() => {
+    const box = $('guide-public');
+    if (box) box.innerHTML = '<div class="card"><p class="small">Не удалось загрузить инструкцию — проверьте интернет и обновите страницу.</p></div>';
   });
 }
 
@@ -2897,6 +3035,7 @@ const NAV_ICON_PATHS = {
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   back: '<path d="M11 5 4 12l7 7"/><line x1="4" y1="12" x2="20" y2="12"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M12 8.5 13.2 11l2.3 1-2.3 1L12 15.5 10.8 13l-2.3-1 2.3-1Z"/>',
+  book: '<path d="M12 6.5C10.3 5.2 7.8 4.5 4.5 4.5v14c3.3 0 5.8.7 7.5 2 1.7-1.3 4.2-2 7.5-2v-14c-3.3 0-5.8.7-7.5 2Z"/><line x1="12" y1="6.5" x2="12" y2="20.5"/>',
 };
 
 function navIconHtml(name, color) {
@@ -2924,6 +3063,7 @@ const aiVendor = (id) => AI_VENDORS.find((v) => v.id === id) || AI_VENDORS[0];
 
 const DASHBOARD_NAV = [
   { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
+  { id: 'guide', icon: 'book', color: '', label: 'Инструкция' },
   { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
   { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
   { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
@@ -2965,6 +3105,9 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
         <div class="dash-topbar-tenant">${esc(tenantName || 'ZalPOS')}</div>
         <div class="dash-topbar-tab">${esc(activeMeta?.label || '')}</div>
       </div>
+      <button type="button" class="dash-guide-btn f-dash-tab${activeTab === 'guide' ? ' active' : ''}" data-tab="guide" aria-label="Инструкция">
+        ${navIconHtml('book')}<span>Инструкция</span>
+      </button>
       ${themeToggleHtml()}
       <span class="brand-gem" aria-hidden="true"></span>
     </div>
@@ -3007,6 +3150,9 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
 function watchDashboardData(tenantId) {
   const body = $('dash-body');
   let activeTab = 'overview';
+  // Открытые статьи инструкции: экран перерисовывается целиком при каждом
+  // обновлении данных, без этого статьи схлопывались бы сами.
+  const guideOpen = new Set();
   let tenant = null;
   let invite = null;
   let branding = null;
@@ -3303,6 +3449,11 @@ function watchDashboardData(tenantId) {
         ${liveStat('badge', '#A855F7', todayChecksCount === null ? '—' : todayChecksCount, 'Чеков закрыто сегодня', false)}
       </div>
       ${dangerBannerHtml}
+      <button type="button" class="card guide-promo f-dash-tab" data-tab="guide">
+        ${navIconHtml('book')}
+        <span class="guide-promo-text"><b>Инструкция по ZalPOS</b><span>Как настроить заведение и работать в кассе: шаги, кнопки, поиск</span></span>
+        <span class="guide-promo-cta">Открыть</span>
+      </button>
       ${attentionItems.length ? `
         <h2>Требует внимания</h2>
         <div class="card">
@@ -3329,6 +3480,7 @@ function watchDashboardData(tenantId) {
       ` : ''}
       <h2>Быстрый доступ</h2>
       <div class="quick-actions">
+        ${quickAction('guide', 'book', '', 'Инструкция', 'Как всё настроить и работать каждый день')}
         ${quickAction('devices', 'device', '#0EA5E9', 'Устройства', 'Код приглашения и сборка APK')}
         ${quickAction('billing', 'card', '#F59E0B', 'Оплата', 'Продление и счета')}
         ${quickAction('branding', 'palette', '#EC4899', 'Брендинг', 'Логотип и цвета приложения')}
@@ -3822,6 +3974,7 @@ function watchDashboardData(tenantId) {
 
     const faqHtml = () => `
       <h2>Частые вопросы</h2>
+      <p class="small muted">Пошаговые действия в кассе и кабинете — в разделе <a href="#" class="f-dash-tab" data-tab="guide">«Инструкция»</a>.</p>
       <div class="card">
         ${FAQ_ITEMS.map((item, i) => `
           <div class="faq-item" data-faq="${i}">
@@ -3987,8 +4140,31 @@ function watchDashboardData(tenantId) {
       `;
     };
 
+    const guideTabHtml = () => {
+      if (!guideData) {
+        loadGuide().then(() => { if (activeTab === 'guide') draw(); })
+          .catch(() => { guideLoadFailed = true; if (activeTab === 'guide') draw(); });
+        return `<h2>Инструкция</h2>${guideLoadFailed
+          ? '<div class="card"><p class="small">Не удалось загрузить инструкцию — проверьте интернет и обновите страницу.</p></div>'
+          : '<div class="card"><div class="spinner"></div></div>'}`;
+      }
+      return `
+        <h2>Инструкция</h2>
+        <p class="small muted guide-intro">Как настроить заведение и работать в кассе каждый день. Найдите нужное через поиск или выберите раздел.</p>
+        ${guideBodyHtml(guideOpen, true)}
+        <div class="card guide-share">
+          <div class="small"><b>Ссылка для сотрудников</b> — инструкция открывается без входа в кабинет:</div>
+          <div class="row" style="justify-content:space-between;align-items:center;gap:10px;margin-top:6px">
+            <code class="guide-share-url">${esc(GUIDE_PUBLIC_URL)}</code>
+            <button class="btn-link" id="f-guide-copy" style="width:auto">Скопировать</button>
+          </div>
+        </div>
+        <p class="small center muted">Не нашли ответ? <a href="#" class="f-dash-tab" data-tab="support">Напишите в поддержку</a></p>
+      `;
+    };
+
     const TAB_RENDERERS = {
-      overview: overviewHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
+      overview: overviewHtml, guide: guideTabHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml,
     };
@@ -3997,10 +4173,15 @@ function watchDashboardData(tenantId) {
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
       el.onclick = (e) => {
         e.preventDefault();
+        if (activeTab !== el.dataset.tab) window.scrollTo(0, 0);
         activeTab = el.dataset.tab;
         draw();
       };
     });
+    if (activeTab === 'guide' && guideData) {
+      bindGuide(body, guideOpen);
+      if ($('f-guide-copy')) $('f-guide-copy').onclick = () => copyToClipboard(GUIDE_PUBLIC_URL);
+    }
     // Название для кабинета и панели платформы; в приложениях — своё, из
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
