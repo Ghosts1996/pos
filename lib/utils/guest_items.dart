@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
 import 'promo_policy.dart';
+import 'sale_kind.dart';
 
 /// Сколько штук одной позиции гость может заказать за раз.
 const int kMaxGuestQty = 99;
@@ -20,6 +21,7 @@ List<OrderItem> priceGuestItems(
   Iterable<OrderItem> items,
   Map<String, MenuItem> menu, {
   Map<String, String> categoryNames = const {},
+  Map<String, String> categoryKinds = const {},
 }) {
   final out = <OrderItem>[];
   for (final item in items) {
@@ -31,12 +33,21 @@ List<OrderItem> priceGuestItems(
       out[idx] = out[idx].copyWith(qty: math.min(out[idx].qty + qty, kMaxGuestQty));
       continue;
     }
+    final noPromo = PromoPolicy.menuTobacco(m, categoryNames[m.categoryId] ?? '');
     out.add(OrderItem(
       menuItemId: m.id,
       name: m.name,
       price: m.price,
       qty: qty,
-      noPromo: PromoPolicy.menuTobacco(m, categoryNames[m.categoryId] ?? ''),
+      noPromo: noPromo,
+      kind: noPromo
+          ? SaleKind.hookah
+          : SaleKind.forMenuItem(
+              tobacco: m.tobacco,
+              itemName: m.name,
+              categoryKind: categoryKinds[m.categoryId] ?? '',
+              categoryName: categoryNames[m.categoryId] ?? '',
+            ),
     ));
   }
   return out;

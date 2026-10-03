@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/sale_kind.dart';
 import 'inventory_models.dart';
 
 class MenuCategory {
@@ -11,12 +12,21 @@ class MenuCategory {
   /// Пусто, если фото ещё не загружено — тогда плитка рисуется заглушкой.
   final String imageUrl;
 
+  /// Что в категории — кухня, бар и напитки или кальяны (SaleKind). Пусто —
+  /// угадываем по названию. От этого зависят проценты кальянщику и бармену
+  /// и раздельная печать чеков.
+  final String kind;
+
   MenuCategory({
     required this.id,
     required this.name,
     this.order = 0,
     this.imageUrl = '',
+    this.kind = '',
   });
+
+  /// Вид категории: выбранный владельцем или угаданный по названию.
+  String get effectiveKind => kind.isNotEmpty ? kind : SaleKind.inferFromCategoryName(name);
 
   factory MenuCategory.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -25,16 +35,18 @@ class MenuCategory {
       name: data['name'] ?? '',
       order: (data['order'] as num?)?.toInt() ?? 0,
       imageUrl: data['imageUrl'] ?? '',
+      kind: SaleKind.normalize(data['kind'] as String?),
     );
   }
 
-  Map<String, dynamic> toMap() => {'name': name, 'order': order, 'imageUrl': imageUrl};
+  Map<String, dynamic> toMap() => {'name': name, 'order': order, 'imageUrl': imageUrl, 'kind': kind};
 
-  MenuCategory copyWith({String? name, int? order, String? imageUrl}) => MenuCategory(
+  MenuCategory copyWith({String? name, int? order, String? imageUrl, String? kind}) => MenuCategory(
         id: id,
         name: name ?? this.name,
         order: order ?? this.order,
         imageUrl: imageUrl ?? this.imageUrl,
+        kind: kind ?? this.kind,
       );
 }
 

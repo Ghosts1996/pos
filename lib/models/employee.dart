@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/constants.dart';
+import 'pay_terms.dart';
 
 class Employee {
   final String id;
@@ -29,9 +30,18 @@ class Employee {
   final double overtimeThresholdHours; // после скольких часов В СМЕНЕ начинается переработка
   final double overtimeMultiplier; // во сколько раз ставка выше на переработке
   final double overtimeHourRate; // ₽ за час переработки при окладе за смену
-  // Процент с личных продаж сотрудника (по SessionModel.employeeName).
+  // Проценты с продаж (см. PayTerms): с чеков, которые сотрудник вёл, с
+  // кальянов и с напитков бара.
   final bool salesPercentEnabled;
-  final double salesPercentRate; // %, напр. 5 = 5%
+  final double salesPercentRate; // % с чеков, напр. 5 = 5%
+  final bool checkPercentExcludesHookah;
+  final double hookahPercentRate;
+  final double barPercentRate;
+
+  /// История изменений оплаты — по ней прошлые смены считаются по старым
+  /// ставкам. Пишется только FirestoreService.saveEmployee (дописывает
+  /// запись), в [toMap] её нет.
+  final List<PayChange> payHistory;
 
   /// Личная ссылка для чаевых (Нетмонет, CloudTips, страница банка) —
   /// необязательно. Если задана, гость может перевести чаевые напрямую
@@ -54,12 +64,39 @@ class Employee {
     this.overtimeHourRate = 0,
     this.salesPercentEnabled = false,
     this.salesPercentRate = 0,
+    this.checkPercentExcludesHookah = false,
+    this.hookahPercentRate = 0,
+    this.barPercentRate = 0,
+    this.payHistory = const [],
     this.tipsLink = '',
   });
 
+  /// Текущие условия оплаты.
+  PayTerms get payTerms => PayTerms(
+        hourlyRateEnabled: hourlyRateEnabled,
+        hourlyRate: hourlyRate,
+        shiftRateEnabled: shiftRateEnabled,
+        shiftRate: shiftRate,
+        overtimeEnabled: overtimeEnabled,
+        overtimeThresholdHours: overtimeThresholdHours,
+        overtimeMultiplier: overtimeMultiplier,
+        overtimeHourRate: overtimeHourRate,
+        salesPercentEnabled: salesPercentEnabled,
+        salesPercentRate: salesPercentRate,
+        checkPercentExcludesHookah: checkPercentExcludesHookah,
+        hookahPercentRate: hookahPercentRate,
+        barPercentRate: barPercentRate,
+      );
+
+  /// Условия, действовавшие в момент [t] (см. [payTermsAt]).
+  PayTerms termsAt(DateTime t) => payTermsAt(payHistory, payTerms, t);
+
   /// Хоть один способ расчёта зарплаты настроен — иначе отчёт по сотруднику
   /// будет пустым (не ошибка, но стоит показать подсказку в интерфейсе).
-  bool get payrollConfigured => hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled;
+  bool get payrollConfigured =>
+      hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled ||
+      // зарплату отключили, но в отчётный период она ещё действовала
+      payHistory.any((c) => c.terms.configured);
 
   /// «Перезабивка» и напоминания про угли — см. AppConstants.handlesHookah.
   bool handlesHookah({required bool hookahVenue}) =>
@@ -87,6 +124,13 @@ class Employee {
       overtimeHourRate: (data['overtimeHourRate'] ?? 0).toDouble(),
       salesPercentEnabled: data['salesPercentEnabled'] ?? false,
       salesPercentRate: (data['salesPercentRate'] ?? 0).toDouble(),
+      checkPercentExcludesHookah: data['checkPercentExcludesHookah'] == true,
+      hookahPercentRate: (data['hookahPercentRate'] as num?)?.toDouble() ?? 0,
+      barPercentRate: (data['barPercentRate'] as num?)?.toDouble() ?? 0,
+      payHistory: ((data['payHistory'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((m) => PayChange.fromMap(Map<String, dynamic>.from(m)))
+          .toList(),
       tipsLink: (data['tipsLink'] ?? '').toString(),
     );
   }
@@ -106,6 +150,9 @@ class Employee {
         'overtimeHourRate': overtimeHourRate,
         'salesPercentEnabled': salesPercentEnabled,
         'salesPercentRate': salesPercentRate,
+        'checkPercentExcludesHookah': checkPercentExcludesHookah,
+        'hookahPercentRate': hookahPercentRate,
+        'barPercentRate': barPercentRate,
         'tipsLink': tipsLink,
       };
 
@@ -124,6 +171,9 @@ class Employee {
     double? overtimeHourRate,
     bool? salesPercentEnabled,
     double? salesPercentRate,
+    bool? checkPercentExcludesHookah,
+    double? hookahPercentRate,
+    double? barPercentRate,
     String? tipsLink,
   }) {
     return Employee(
@@ -142,6 +192,10 @@ class Employee {
       overtimeHourRate: overtimeHourRate ?? this.overtimeHourRate,
       salesPercentEnabled: salesPercentEnabled ?? this.salesPercentEnabled,
       salesPercentRate: salesPercentRate ?? this.salesPercentRate,
+      checkPercentExcludesHookah: checkPercentExcludesHookah ?? this.checkPercentExcludesHookah,
+      hookahPercentRate: hookahPercentRate ?? this.hookahPercentRate,
+      barPercentRate: barPercentRate ?? this.barPercentRate,
+      payHistory: payHistory,
       tipsLink: tipsLink ?? this.tipsLink,
     );
   }

@@ -10,10 +10,13 @@ import '../../utils/constants.dart';
 import 'employee_edit_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/payroll_guard.dart';
 import '../../widgets/plan_upsell.dart';
 
 class EmployeesScreen extends StatefulWidget {
-  const EmployeesScreen({super.key});
+  /// Кто вошёл — им подписываются правки оплаты (см. PayrollGuard).
+  final Employee employee;
+  const EmployeesScreen({super.key, required this.employee});
 
   @override
   State<EmployeesScreen> createState() => _EmployeesScreenState();
@@ -28,6 +31,8 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   final Set<String> _revealed = {};
   // Сколько сотрудников уже есть — для лимита тарифа (см. _add).
   int _count = 0;
+  // Последний список — чтобы понять, есть ли другой администратор.
+  List<Employee> _all = const [];
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +52,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               return const Center(child: Text('Не удалось загрузить сотрудников — проверьте интернет'));
             }
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            _all = snap.data!;
             _count = snap.data!.length;
             final employees = [...snap.data!]
               ..sort((a, b) {
@@ -201,15 +207,37 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   }
 
   Future<void> _edit(Employee? emp) async {
-    final result = await Navigator.of(context).push<Employee>(
-      MaterialPageRoute(builder: (_) => EmployeeEditScreen(employee: emp)),
+    // Свою оплату администратор не меняет, если есть другой администратор.
+    final payLock = emp == null
+        ? null
+        : PayrollGuard.ownRecordBlock(widget.employee, emp.id, _all, what: 'свою оплату');
+    var result = await Navigator.of(context).push<Employee>(
+      MaterialPageRoute(builder: (_) => EmployeeEditScreen(employee: emp, payLockedReason: payLock)),
     );
     if (result == null) return;
+    if (payLock != null && emp != null) {
+      // На всякий случай: оплату из закрытой формы не берём.
+      result = result.copyWith(
+        hourlyRateEnabled: emp.hourlyRateEnabled,
+        hourlyRate: emp.hourlyRate,
+        shiftRateEnabled: emp.shiftRateEnabled,
+        shiftRate: emp.shiftRate,
+        overtimeEnabled: emp.overtimeEnabled,
+        overtimeThresholdHours: emp.overtimeThresholdHours,
+        overtimeMultiplier: emp.overtimeMultiplier,
+        overtimeHourRate: emp.overtimeHourRate,
+        salesPercentEnabled: emp.salesPercentEnabled,
+        salesPercentRate: emp.salesPercentRate,
+        checkPercentExcludesHookah: emp.checkPercentExcludesHookah,
+        hookahPercentRate: emp.hookahPercentRate,
+        barPercentRate: emp.barPercentRate,
+      );
+    }
     try {
       if (emp == null) {
-        await _fs.addEmployee(result);
+        await _fs.addEmployee(result, editor: widget.employee);
       } else {
-        await _fs.updateEmployee(result);
+        await _fs.updateEmployee(result, editor: widget.employee);
         // Если он сейчас на смене — гость сразу увидит новое имя и ссылку.
         TipsService.instance.refreshMember(result).catchError((_) {});
       }

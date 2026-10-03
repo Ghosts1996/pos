@@ -1,5 +1,7 @@
 import '../models/employee.dart';
+import '../models/pay_terms.dart';
 import '../models/staff_shift_model.dart';
+import 'payroll_sales.dart';
 
 /// Результат расчёта зарплаты одного сотрудника за период.
 class PayrollResult {
@@ -12,13 +14,33 @@ class PayrollResult {
   final double shiftPay;
   final int shiftsPaid;
   final double overtimePay;
+
+  /// Все базы процентов вместе и весь процент — для итогов.
   final double salesRevenue;
   final double salesPercentPay;
   final int shiftsCount;
 
+  // Процент по видам продаж (см. PayrollSales).
+  final double checkRevenue;
+  final double checkPay;
+  final double hookahRevenue;
+  final double hookahPersonal; // из [hookahRevenue] — кальяны, которые добавил сам
+  final double hookahPay;
+  final double barRevenue;
+  final double barPersonal;
+  final double barPay;
+
   /// Чаевые за период (оплаченные вместе со счётом, включая долю от
   /// «чаевых всей смене»). Не зарплата, но выдать их сотруднику нужно.
   final double tips;
+
+  // Что стоит проверить владельцу: ручные правки часов и подозрительно
+  // длинные смены. Не ошибка, но без этих пометок их не заметить.
+  final int manualShifts;
+  final double manualHours;
+  final int selfEditedShifts;
+  final Set<String> editors;
+  final int longShifts;
 
   PayrollResult({
     required this.employee,
@@ -31,7 +53,20 @@ class PayrollResult {
     required this.salesRevenue,
     required this.salesPercentPay,
     required this.shiftsCount,
+    this.checkRevenue = 0,
+    this.checkPay = 0,
+    this.hookahRevenue = 0,
+    this.hookahPersonal = 0,
+    this.hookahPay = 0,
+    this.barRevenue = 0,
+    this.barPersonal = 0,
+    this.barPay = 0,
     this.tips = 0,
+    this.manualShifts = 0,
+    this.manualHours = 0,
+    this.selfEditedShifts = 0,
+    this.editors = const {},
+    this.longShifts = 0,
   });
 
   double get totalHours => normalHours + overtimeHours;
@@ -42,13 +77,19 @@ class PayrollResult {
 
   /// К выплате: зарплата + чаевые.
   double get total => wages + tips;
+
+  /// Есть что проверить: ручные правки или очень длинные смены.
+  bool get needsReview => manualShifts > 0 || longShifts > 0;
 }
 
-/// Считает зарплату сотрудника за период по его же закрытым личным сменам и
-/// выручке от его продаж. Никакой работы с календарными сутками или
-/// часовыми поясами: часы — это разница двух Timestamp (endedAt - startedAt)
-/// в секундах, делённая на 3600. Так смена, идущая через полночь, считается
-/// ровно так же, как любая другая — не теряется и не задваивается.
+/// Считает зарплату сотрудника за период по его же личным сменам и
+/// продажам. Ставки — те, что действовали в момент смены или продажи
+/// (история в карточке, см. PayTerms): поднять ставку в конце месяца и
+/// пересчитать весь месяц нельзя.
+///
+/// Никакой работы с календарными сутками или часовыми поясами: часы — это
+/// разница двух моментов (конец − начало) в секундах, делённая на 3600.
+/// Смена через полночь считается так же, как любая другая.
 class PayrollCalculator {
   /// Оклад за смену: если сотрудник закрыл смену и открыл снова меньше чем
   /// через столько времени (случайно нажал «Закончить смену», отходил),
@@ -56,99 +97,86 @@ class PayrollCalculator {
   /// складываются. Иначе один выход на работу оплачивался бы дважды.
   static const shiftMergeGap = Duration(hours: 3);
 
+  /// Смена длиннее — пометка «проверьте» в отчёте.
+  static const longShiftHours = 14.0;
+
   /// Рабочие смены для оклада за смену: закрытые, с положительной длиной,
   /// по времени начала; соседние с перерывом меньше [shiftMergeGap] —
   /// одна смена (её часы = сумма часов частей, без перерыва).
-  static List<double> workedShiftHours(List<StaffShiftModel> shifts) {
-    final closed = shifts
-        .where((s) => s.endedAt != null && s.endedAt!.isAfter(s.startedAt))
-        .toList()
-      ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-    final hours = <double>[];
-    DateTime? lastEnd;
-    for (final s in closed) {
-      final h = s.endedAt!.difference(s.startedAt).inSeconds / 3600.0;
-      if (lastEnd != null && s.startedAt.difference(lastEnd) < shiftMergeGap) {
-        hours[hours.length - 1] += h;
-      } else {
-        hours.add(h);
-      }
-      if (lastEnd == null || s.endedAt!.isAfter(lastEnd)) lastEnd = s.endedAt;
-    }
-    return hours;
-  }
+  static List<double> workedShiftHours(List<StaffShiftModel> shifts) =>
+      _group(shifts, (_) => true).map((g) => g.hours).toList();
 
   /// Переработка считается ОТДЕЛЬНО ПО КАЖДОЙ смене, а не суммарно за
   /// календарный день или весь период: если порог у сотрудника — 8 часов, а
-  /// он отработал две смены по 6 часов в один день, переработки не будет
-  /// (в каждой смене меньше порога), даже если суммарно за день 12 часов.
-  /// Это осознанный выбор: рабочее время всегда привязано к факту открытия
-  /// и закрытия ИМЕННО ЭТОЙ смены сотрудником, без попытки сгруппировать
-  /// смены по календарным суткам — группировка была бы неоднозначной для
-  /// смен через полночь и создавала бы ровно тот риск ошибки в днях/часах,
-  /// которого нужно избежать.
+  /// он отработал две смены по 6 часов в один день, переработки не будет.
+  ///
+  /// [salesRevenue] — старый вход «выручка по его чекам», процент с неё — по
+  /// текущей ставке. Новый — [credits] из PayrollSales.
   static PayrollResult calculate({
     required Employee employee,
     required List<StaffShiftModel> closedShifts,
-    required double salesRevenue,
+    double salesRevenue = 0,
+    List<SaleCredit> credits = const [],
     double tips = 0,
   }) {
-    // Границы значений (множитель переработки не меньше 1, процент с продаж
-    // 0..100, ставка и порог переработки не отрицательные) проверяются при
-    // сохранении сотрудника (employees_screen.dart) — но ЗДЕСЬ, в самом
-    // расчёте, подстраховываемся ещё раз теми же границами: у сотрудника,
-    // заведённого до появления этой проверки, в базе мог остаться, например,
-    // отрицательный множитель переработки, и без этой подстраховки его
-    // зарплата продолжила бы считаться неверно (в том числе в минус) до тех
-    // пор, пока кто-то не откроет и не пересохранит его карточку вручную.
-    final overtimeThreshold =
-        employee.overtimeThresholdHours < 0 ? 0.0 : employee.overtimeThresholdHours;
-    final hourlyRate = employee.hourlyRate < 0 ? 0.0 : employee.hourlyRate;
-    final overtimeMultiplier = employee.overtimeMultiplier < 1 ? 1.0 : employee.overtimeMultiplier;
-    final salesPercentRate = employee.salesPercentRate.clamp(0.0, 100.0);
-    final shiftRate = employee.shiftRate < 0 ? 0.0 : employee.shiftRate;
-    final overtimeHourRate = employee.overtimeHourRate < 0 ? 0.0 : employee.overtimeHourRate;
-    final byShift = employee.shiftRateEnabled;
+    final live = closedShifts.where((s) => !s.cancelled).toList();
+    final groups = _group(live, (s) => employee.termsAt(s.effectiveStart).shiftRateEnabled,
+        termsOf: (s) => employee.termsAt(s.effectiveStart));
 
     double normalHours = 0;
     double overtimeHours = 0;
-
-    // При окладе за смену часы считаются по рабочим сменам (разорванная
-    // смена — одна, см. workedShiftHours), при почасовой — по каждой записи.
-    final perShiftHours = byShift
-        ? workedShiftHours(closedShifts)
-        : [
-            for (final shift in closedShifts)
-              // открытая смена в расчёт не входит; конец раньше начала —
-              // испорченная ручная запись
-              if (shift.endedAt != null && shift.endedAt!.isAfter(shift.startedAt))
-                shift.endedAt!.difference(shift.startedAt).inSeconds / 3600.0,
-          ];
-    for (final hours in perShiftHours) {
-      if (employee.overtimeEnabled && hours > overtimeThreshold) {
-        normalHours += overtimeThreshold;
-        overtimeHours += hours - overtimeThreshold;
-      } else {
-        normalHours += hours;
+    double hourlyPay = 0;
+    double shiftPay = 0;
+    double overtimePay = 0;
+    var shiftsPaid = 0;
+    for (final g in groups) {
+      final t = g.terms ?? employee.payTerms;
+      final threshold = t.safeOvertimeThreshold;
+      final over = t.overtimeEnabled && g.hours > threshold ? g.hours - threshold : 0.0;
+      final normal = g.hours - over;
+      normalHours += normal;
+      overtimeHours += over;
+      if (t.hourlyRateEnabled) hourlyPay += normal * t.safeHourlyRate;
+      if (t.shiftRateEnabled) {
+        shiftPay += t.safeShiftRate;
+        shiftsPaid++;
+      }
+      if (t.overtimeEnabled && over > 0) {
+        if (t.shiftRateEnabled) {
+          overtimePay += over * t.safeOvertimeHourRate;
+        } else if (t.hourlyRateEnabled) {
+          overtimePay += over * t.safeHourlyRate * t.safeOvertimeMultiplier;
+        }
       }
     }
 
-    final hourlyPay = employee.hourlyRateEnabled ? normalHours * hourlyRate : 0.0;
-    final shiftsPaid = byShift ? perShiftHours.length : 0;
-    final shiftPay = shiftsPaid * shiftRate;
-    final double overtimePay;
-    if (!employee.overtimeEnabled) {
-      overtimePay = 0;
-    } else if (byShift) {
-      overtimePay = overtimeHours * overtimeHourRate;
-    } else if (employee.hourlyRateEnabled) {
-      overtimePay = overtimeHours * hourlyRate * overtimeMultiplier;
-    } else {
-      overtimePay = 0;
+    double checkRevenue = 0, checkPay = 0;
+    double hookahRevenue = 0, hookahPersonal = 0, hookahPay = 0;
+    double barRevenue = 0, barPersonal = 0, barPay = 0;
+    if (credits.isEmpty && salesRevenue > 0) {
+      checkRevenue = salesRevenue;
+      checkPay = salesRevenue * employee.payTerms.percentFor('check') / 100;
     }
-    final salesPercentPay =
-        employee.salesPercentEnabled ? salesRevenue * salesPercentRate / 100.0 : 0.0;
+    for (final c in credits) {
+      final t = employee.termsAt(c.at);
+      switch (c.base) {
+        case 'hookah':
+          hookahRevenue += c.amount;
+          if (c.personal) hookahPersonal += c.amount;
+          hookahPay += c.amount * t.percentFor('hookah') / 100;
+        case 'bar':
+          barRevenue += c.amount;
+          if (c.personal) barPersonal += c.amount;
+          barPay += c.amount * t.percentFor('bar') / 100;
+        default:
+          final base = t.checkPercentExcludesHookah ? c.amount - c.hookahAmount : c.amount;
+          checkRevenue += base;
+          checkPay += base * t.percentFor('check') / 100;
+      }
+    }
 
+    final closed = live.where((s) => s.endedAt != null).toList();
+    final manual = closed.where((s) => s.manual).toList();
     return PayrollResult(
       employee: employee,
       normalHours: normalHours,
@@ -157,10 +185,55 @@ class PayrollCalculator {
       shiftPay: shiftPay,
       shiftsPaid: shiftsPaid,
       overtimePay: overtimePay,
-      salesRevenue: salesRevenue,
-      salesPercentPay: salesPercentPay,
-      shiftsCount: closedShifts.where((s) => s.endedAt != null).length,
+      salesRevenue: checkRevenue + hookahRevenue + barRevenue,
+      salesPercentPay: checkPay + hookahPay + barPay,
+      shiftsCount: closed.length,
+      checkRevenue: checkRevenue,
+      checkPay: checkPay,
+      hookahRevenue: hookahRevenue,
+      hookahPersonal: hookahPersonal,
+      hookahPay: hookahPay,
+      barRevenue: barRevenue,
+      barPersonal: barPersonal,
+      barPay: barPay,
       tips: tips,
+      manualShifts: manual.length,
+      manualHours: manual.fold<double>(0, (a, s) => a + s.paidHours),
+      selfEditedShifts: manual.where((s) => s.selfEdited).length,
+      editors: {for (final s in manual) if (s.editedByName.isNotEmpty) s.editedByName},
+      longShifts: closed.where((s) => s.paidHours > longShiftHours).length,
     );
   }
+
+  /// Закрытые смены с положительной длиной по времени начала. Соседние
+  /// склеиваются в одну рабочую смену, если [mergeable] для обеих (оклад
+  /// за смену) и перерыв меньше [shiftMergeGap].
+  static List<_WorkedShift> _group(
+    List<StaffShiftModel> shifts,
+    bool Function(StaffShiftModel) mergeable, {
+    PayTerms Function(StaffShiftModel)? termsOf,
+  }) {
+    final closed = shifts.where((s) => !s.cancelled && s.paidHours > 0).toList()
+      ..sort((a, b) => a.effectiveStart.compareTo(b.effectiveStart));
+    final out = <_WorkedShift>[];
+    DateTime? lastEnd;
+    var lastMergeable = false;
+    for (final s in closed) {
+      final m = mergeable(s);
+      if (lastEnd != null && m && lastMergeable && s.effectiveStart.difference(lastEnd) < shiftMergeGap) {
+        out.last.hours += s.paidHours;
+      } else {
+        out.add(_WorkedShift(s.paidHours, termsOf?.call(s)));
+        lastMergeable = m;
+      }
+      if (lastEnd == null || s.endedAt!.isAfter(lastEnd)) lastEnd = s.endedAt;
+    }
+    return out;
+  }
+}
+
+class _WorkedShift {
+  double hours;
+  final PayTerms? terms;
+  _WorkedShift(this.hours, this.terms);
 }

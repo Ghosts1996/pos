@@ -17,7 +17,11 @@ enum _TimePay { none, hourly, shift }
 /// Возвращает готового [Employee] (PIN уже проверен), сохраняет вызывающий.
 class EmployeeEditScreen extends StatefulWidget {
   final Employee? employee;
-  const EmployeeEditScreen({super.key, this.employee});
+
+  /// Почему оплату здесь менять нельзя (своя карточка администратора при
+  /// другом администраторе, см. PayrollGuard); null — можно.
+  final String? payLockedReason;
+  const EmployeeEditScreen({super.key, this.employee, this.payLockedReason});
 
   @override
   State<EmployeeEditScreen> createState() => _EmployeeEditScreenState();
@@ -36,6 +40,9 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
   late final _multiplier = TextEditingController(text: _num(_emp?.overtimeMultiplier ?? 1.5));
   late final _overtimeHourRate = TextEditingController(text: _numOrEmpty(_emp?.overtimeHourRate ?? 0));
   late final _salesPercent = TextEditingController(text: _numOrEmpty(_emp?.salesPercentRate ?? 0));
+  late final _hookahPercent = TextEditingController(text: _numOrEmpty(_emp?.hookahPercentRate ?? 0));
+  late final _barPercent = TextEditingController(text: _numOrEmpty(_emp?.barPercentRate ?? 0));
+  late bool _checkExcludesHookah = _emp?.checkPercentExcludesHookah ?? false;
 
   late String _role = _emp?.role ?? AppConstants.roleEmployee;
   late String _position = _emp?.position ?? AppConstants.positionUniversal;
@@ -64,7 +71,8 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
   void initState() {
     super.initState();
     // Пример расчёта под зарплатой пересчитывается на каждый ввод.
-    for (final c in [_hourlyRate, _shiftRate, _threshold, _multiplier, _overtimeHourRate, _salesPercent]) {
+    for (final c in [_hourlyRate, _shiftRate, _threshold, _multiplier, _overtimeHourRate, _salesPercent,
+      _hookahPercent, _barPercent]) {
       c.addListener(_refresh);
     }
     // У сотрудников до появления оклада за смену норма стояла 8 ч по
@@ -85,7 +93,9 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       _threshold,
       _multiplier,
       _overtimeHourRate,
-      _salesPercent
+      _salesPercent,
+      _hookahPercent,
+      _barPercent,
     ]) {
       c.dispose();
     }
@@ -126,6 +136,9 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         overtimeHourRate: _parse(_overtimeHourRate),
         salesPercentEnabled: _salesPercentOn,
         salesPercentRate: _parse(_salesPercent),
+        checkPercentExcludesHookah: _checkExcludesHookah,
+        hookahPercentRate: _parse(_hookahPercent),
+        barPercentRate: _parse(_barPercent),
         tipsLink: _tipsLink.text.trim(),
       );
 
@@ -148,8 +161,12 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       }
       if (e.shiftRateEnabled && e.overtimeHourRate <= 0) return 'Укажите, сколько платить за час переработки';
     }
-    if (e.salesPercentRate < 0 || e.salesPercentRate > 100) return 'Процент с продаж — число от 0 до 100';
-    if (e.salesPercentEnabled && e.salesPercentRate <= 0) return 'Укажите процент больше нуля или выключите его';
+    for (final v in [e.salesPercentRate, e.hookahPercentRate, e.barPercentRate]) {
+      if (v < 0 || v > 100) return 'Процент — число от 0 до 100';
+    }
+    if (e.salesPercentEnabled && e.salesPercentRate <= 0 && e.hookahPercentRate <= 0 && e.barPercentRate <= 0) {
+      return 'Укажите хотя бы один процент больше нуля или выключите проценты';
+    }
     if (e.tipsLink.isNotEmpty && !(Uri.tryParse(e.tipsLink)?.isAbsolute == true && e.tipsLink.startsWith('https://'))) {
       return 'Ссылка для чаевых должна начинаться с https://';
     }
@@ -380,7 +397,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       }
     }
 
-    return _section('Зарплата', Icons.payments_outlined, [
+    final children = <Widget>[
       const Text('Оплата времени', style: TextStyle(fontWeight: FontWeight.w600)),
       const SizedBox(height: 8),
       SizedBox(
@@ -400,14 +417,79 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       ...timeFields,
       ...overtime,
       const Divider(height: 28, color: AppColors.border),
-      _switch('Процент с продаж', 'От выручки по его чекам, без возвратов', _salesPercentOn,
-          (v) => setState(() => _salesPercentOn = v)),
+      _switch('Проценты с продаж', 'Только с денег, которые заведение реально получило', _salesPercentOn,
+          (v) => setState(() {
+                _salesPercentOn = v;
+                if (v) _prefillPercents();
+              })),
       if (_salesPercentOn) ...[
+        const SizedBox(height: 12),
+        _money(_salesPercent, 'С чеков, которые он вёл', '%', decimal: true),
+        const SizedBox(height: 4),
+        _hint(Icons.table_bar_outlined, 'Столы, которые он открыл. Так обычно платят официанту.'),
+        if (_hookahVenue)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: _checkExcludesHookah,
+            onChanged: (v) => setState(() => _checkExcludesHookah = v ?? false),
+            title: const Text('Кроме кальянов в чеке'),
+          ),
+        if (_hookahVenue || _parse(_hookahPercent) > 0) ...[
+          const SizedBox(height: 10),
+          _money(_hookahPercent, 'С кальянов', '%', decimal: true),
+          const SizedBox(height: 4),
+          _hint(Icons.local_fire_department_outlined,
+              'С кальянов, которые он сам добавил в чек. Кальяны, добавленные официантом, '
+              'делятся поровну между всеми, у кого есть этот процент и кто на смене.'),
+        ],
         const SizedBox(height: 10),
-        _money(_salesPercent, 'Процент', '%', decimal: true),
+        _money(_barPercent, 'С бара и напитков', '%', decimal: true),
+        const SizedBox(height: 4),
+        _hint(Icons.local_bar_outlined,
+            'Напитки, алкоголь, коктейли, кофе — то, что он сам добавил в чек, и поровну '
+            'с остального бара смены. Какая категория меню считается баром — '
+            'в «Меню» у категории.'),
       ],
+      const SizedBox(height: 14),
+      _hint(Icons.lock_clock_outlined,
+          'Новые ставки действуют с момента сохранения: уже отработанные смены и закрытые чеки '
+          'считаются по прежним. Каждое изменение видно в журнале.'),
       ..._example(),
+    ];
+    final locked = widget.payLockedReason;
+    if (locked == null) return _section('Зарплата', Icons.payments_outlined, children);
+    return _section('Зарплата', Icons.payments_outlined, [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text('$locked. Сейчас: ${_emp?.payTerms.summary() ?? ''}.',
+            style: const TextStyle(fontSize: 13)),
+      ),
+      IgnorePointer(child: Opacity(opacity: 0.45, child: Column(children: children))),
     ]);
+  }
+
+  /// Проценты по специализации при первом включении: официанту — с чеков,
+  /// кальянщику — с кальянов, бармену — с бара. Владелец поправит.
+  void _prefillPercents() {
+    final any = [_salesPercent, _hookahPercent, _barPercent].any((c) => _parse(c) > 0);
+    if (any) return;
+    switch (_position) {
+      case AppConstants.positionHookahMaster:
+        _hookahPercent.text = '10';
+      case AppConstants.positionBartender:
+        _barPercent.text = '5';
+      default:
+        _salesPercent.text = '5';
+        _checkExcludesHookah = _hookahVenue;
+    }
   }
 
   /// «Пример: смена 14 ч → 3 000 ₽ + 2 ч переработки × 380 ₽ = 3 760 ₽»
@@ -454,7 +536,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
           if (parts.length > 1)
             TextSpan(text: ' = ${_rub(r.wages)}', style: const TextStyle(fontWeight: FontWeight.w700)),
           if (_salesPercentOn)
-            const TextSpan(text: ' + процент с продаж', style: TextStyle(color: AppColors.textMuted)),
+            const TextSpan(text: ' + проценты с продаж', style: TextStyle(color: AppColors.textMuted)),
         ])),
       ),
     ];

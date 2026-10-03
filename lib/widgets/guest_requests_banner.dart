@@ -266,7 +266,7 @@ class GuestRequestsBanner extends StatelessWidget {
                 if (preparing) {
                   await service.markOrderReady(o, employee.name);
                 } else {
-                  await service.acceptGuestOrder(o, employee.name);
+                  await service.acceptGuestOrder(o, employee.name, employeeId: employee.id);
                 }
               } catch (e) {
                 if (context.mounted) {

@@ -10,7 +10,7 @@
  *     --only firestore "npm test"
  */
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require("@firebase/rules-unit-testing");
-const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where } = require("firebase/firestore");
+const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where, serverTimestamp, Timestamp } = require("firebase/firestore");
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
@@ -365,7 +365,7 @@ describe("Ролевая модель внутри одного заведени
     // крутили спиннер.
     const empDb = ctxFor("empA");
     await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/staffShifts/shift1"),
-      { employeeId: "e1", employeeName: "Иван", status: "open" }));
+      { employeeId: "e1", employeeName: "Иван", status: "open", startedAt: serverTimestamp(), endedAt: null, manual: false }));
     await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/meta/shiftState"), { openShiftId: "s1" }));
     await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/meta/staffShiftState"), { openCount: 1 }));
 
@@ -1459,6 +1459,107 @@ describe("Аудит безопасности: гость не накрутит 
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p2"), { topic: "guests-all", title: "Акция", body: "Переведите..." }));
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p3"), { token: "victim-device", title: "x", body: "y" }));
     await assertFails(setDoc(doc(guest, "tenants/tenantA/pushQueue/p4"), { topic: "staff", title: "x", body: "y".repeat(600) }));
+  });
+});
+
+describe("Зарплата: часы и ставки нельзя накрутить", () => {
+  const H = 3600 * 1000;
+  const ts = (ms) => Timestamp.fromMillis(ms);
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+  });
+
+  async function seedShift(id, data) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `tenants/tenantA/staffShifts/${id}`), data);
+    });
+  }
+
+  it("начать смену можно только «сейчас» — не задним числом", async () => {
+    const db = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/staffShifts/s1"),
+      { employeeId: "e1", employeeName: "Иван", status: "open", startedAt: serverTimestamp(), endedAt: null, manual: false }));
+    // Планшет с переведёнными назад часами: начало 3 часа назад без пометки manual.
+    await assertFails(setDoc(doc(db, "tenants/tenantA/staffShifts/s2"),
+      { employeeId: "e1", employeeName: "Иван", status: "open", startedAt: ts(Date.now() - 3 * H), endedAt: null, manual: false }));
+  });
+
+  it("закончить смену — не позже «сейчас»; продлить в будущее нельзя", async () => {
+    await seedShift("s1", { employeeId: "e1", employeeName: "Иван", status: "open", startedAt: ts(Date.now() - 5 * H), endedAt: null, manual: false });
+    const db = ctxFor("empA");
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"),
+      { status: "closed", endedAt: ts(Date.now() + 4 * H) }));
+    // Без пометки manual конец — только «сейчас», не произвольное прошлое.
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"),
+      { status: "closed", endedAt: ts(Date.now() - 2 * H) }));
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"),
+      { status: "closed", endedAt: serverTimestamp() }));
+  });
+
+  it("ручная правка — только с пометкой manual, не в будущем и не длиннее суток", async () => {
+    const db = ctxFor("empA");
+    const start = Date.now() - 30 * H;
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/staffShifts/m1"),
+      { employeeId: "e1", employeeName: "Иван", status: "closed", startedAt: ts(start), endedAt: ts(start + 8 * H),
+        manual: true, editedBy: "Админ", editedById: "a1", editedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/staffShifts/m2"),
+      { employeeId: "e1", employeeName: "Иван", status: "closed", startedAt: ts(start), endedAt: ts(start + 26 * H), manual: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/staffShifts/m3"),
+      { employeeId: "e1", employeeName: "Иван", status: "closed", startedAt: ts(Date.now() - H), endedAt: ts(Date.now() + 5 * H), manual: true }));
+    // Правка времени без пометки manual не проходит.
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/staffShifts/m1"), { endedAt: ts(start + 10 * H), manual: false }));
+  });
+
+  it("чужие часы на себя не переписать, смену не удалить — только отменить", async () => {
+    const start = Date.now() - 30 * H;
+    await seedShift("s1", { employeeId: "e1", employeeName: "Иван", status: "closed", startedAt: ts(start), endedAt: ts(start + 8 * H), manual: false });
+    const db = ctxFor("empA");
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"), { employeeId: "e2", employeeName: "Пётр" }));
+    await assertFails(deleteDoc(doc(db, "tenants/tenantA/staffShifts/s1")));
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"),
+      { cancelled: true, cancelledBy: "Админ", cancelledAt: serverTimestamp() }));
+    // Отменённую обратно не «воскресить».
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/staffShifts/s1"), { cancelled: false }));
+  });
+
+  it("ставку нельзя поменять без записи в истории и задним числом", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/employees/e1"),
+        { name: "Иван", pinCode: "1234", role: "employee", shiftRateEnabled: true, shiftRate: 2000 });
+    });
+    const db = ctxFor("empA");
+    const ref = doc(db, "tenants/tenantA/employees/e1");
+    // Без истории — нельзя.
+    await assertFails(updateDoc(ref, { shiftRate: 9000 }));
+    // Запись «задним числом» (неделя назад) — нельзя.
+    const old = { at: ts(Date.now() - 7 * 24 * H), terms: { shiftRateEnabled: true, shiftRate: 9000 }, byId: "a1", byName: "Админ" };
+    await assertFails(updateDoc(ref, { shiftRate: 9000, payHistory: [old] }));
+    // Как было до правки + новая ставка с этого момента — можно.
+    const before = { at: ts(0), terms: { shiftRateEnabled: true, shiftRate: 2000 }, byId: "", byName: "" };
+    const now = { at: Timestamp.now(), terms: { shiftRateEnabled: true, shiftRate: 2500 }, byId: "a1", byName: "Админ" };
+    await assertSucceeds(updateDoc(ref, { shiftRate: 2500, payHistory: [before, now] }));
+    // Переписать старую запись истории нельзя.
+    const forged = { ...before, terms: { shiftRateEnabled: true, shiftRate: 9000 } };
+    const next = { at: Timestamp.now(), terms: { shiftRateEnabled: true, shiftRate: 2600 }, byId: "a1", byName: "Админ" };
+    await assertFails(updateDoc(ref, { shiftRate: 2600, payHistory: [forged, now, next] }));
+    // Имя и PIN — без истории, как раньше (так пишет и кабинет).
+    await assertSucceeds(updateDoc(ref, { name: "Иван П.", pinCode: "4321" }));
+  });
+
+  it("первая настройка зарплаты может действовать с начала", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/employees/e2"), { name: "Пётр", pinCode: "5555", role: "employee" });
+    });
+    const db = ctxFor("empA");
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/employees/e2"), {
+      hourlyRateEnabled: true, hourlyRate: 300,
+      payHistory: [{ at: ts(0), terms: { hourlyRateEnabled: true, hourlyRate: 300 }, byId: "a1", byName: "Админ" }],
+    }));
   });
 });
 

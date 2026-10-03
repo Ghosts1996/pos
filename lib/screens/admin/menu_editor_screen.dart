@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
+import '../../utils/sale_kind.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../utils/table_label.dart';
@@ -93,10 +94,33 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                         onTap: () => _pickAndUploadCategoryImage(cat),
                       ),
                       title: Text(cat.name),
-                      subtitle: Text('${catItems.length} ${pluralRu(catItems.length, 'позиция', 'позиции', 'позиций')}'),
+                      subtitle: Text('${catItems.length} ${pluralRu(catItems.length, 'позиция', 'позиции', 'позиций')}'
+                          ' · ${SaleKind.label(cat.effectiveKind)}${cat.kind.isEmpty ? ' (по названию)' : ''}'),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Что в категории — для процентов кальянщику и
+                          // бармену и для раздельной печати чеков.
+                          PopupMenuButton<String>(
+                            tooltip: 'Что в категории',
+                            icon: Icon(
+                              switch (cat.effectiveKind) {
+                                SaleKind.hookah => Icons.local_fire_department_outlined,
+                                SaleKind.bar => Icons.local_bar_outlined,
+                                _ => Icons.restaurant_outlined,
+                              },
+                              size: 20,
+                            ),
+                            onSelected: (k) => _fs.setCategoryKind(cat.id, k == 'auto' ? '' : k),
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(enabled: false, child: Text('Что в категории')),
+                              for (final k in SaleKind.all)
+                                CheckedPopupMenuItem(
+                                    value: k, checked: cat.kind == k, child: Text(SaleKind.label(k))),
+                              CheckedPopupMenuItem(
+                                  value: 'auto', checked: cat.kind.isEmpty, child: const Text('По названию')),
+                            ],
+                          ),
                           IconButton(
                             icon: const Icon(Icons.edit_outlined, size: 20),
                             tooltip: 'Переименовать',

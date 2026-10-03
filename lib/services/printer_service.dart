@@ -23,6 +23,10 @@ class ReceiptLine {
 /// из позиций стола и передаёт в [ReceiptPrinter.printReceipt].
 class ReceiptData {
   final String venueName;
+
+  /// Подзаголовок чека — «Кальяны» или «Кухня и бар», когда счёт
+  /// печатается двумя чеками (см. [printHookahSeparately]).
+  final String title;
   final String tableName;
   final String employeeName;
   final DateTime closedAt;
@@ -33,6 +37,7 @@ class ReceiptData {
 
   const ReceiptData({
     required this.venueName,
+    this.title = '',
     required this.tableName,
     required this.employeeName,
     required this.closedAt,
@@ -133,6 +138,9 @@ Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperS
     data.venueName,
     styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
   ));
+  if (data.title.isNotEmpty) {
+    bytes.addAll(generator.text(data.title, styles: const PosStyles(align: PosAlign.center, bold: true)));
+  }
   bytes.addAll(generator.text('Стол: ${data.tableName}', styles: const PosStyles(align: PosAlign.center)));
   bytes.addAll(generator.text(
     'Официант: ${data.employeeName}',
@@ -371,6 +379,10 @@ class PrinterException implements Exception {
 /// в payment_terminal_service.dart).
 ReceiptPrinter? activeReceiptPrinter;
 
+/// Кальяны печатать отдельным чеком, а кухню и бар — другим (настройка
+/// settings/integrations.printSplitHookah, по умолчанию включена).
+bool printHookahSeparately = true;
+
 /// Подтягивает сохранённые настройки принтера (settings/integrations) и
 /// заполняет [activeReceiptPrinter] — вызывается один раз при старте
 /// приложения (см. main.dart), чтобы официанту не нужно было заново
@@ -380,6 +392,7 @@ Future<void> loadSavedPrinterSettings() async {
     final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     if (data == null) return;
+    printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
     final type = data['printerType'] as String? ?? 'none';
     // На Windows print_bluetooth_thermal идёt через BLE (win_ble), а не
     // classic-SPP, на котором держится подавляющее большинство дешёвых
