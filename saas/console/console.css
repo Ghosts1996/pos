@@ -30,6 +30,53 @@
   --sans: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --serif: 'Cormorant Garamond', 'Cormorant', Georgia, 'Times New Roman', serif;
   --radius: 14px;
+  /* Цвета, которые в тёмной теме меняются вместе с остальными. */
+  --on-ink: #FBF8F3;      /* текст на чернильной кнопке */
+  --ink-hover: #000;
+  --field: #FFFDF9;       /* поля ввода */
+  --placeholder: #A99E8E;
+  --danger-soft: #FBF1EE;
+  --warn-soft: #FBF4E8;
+  --alt-bg: #EDE6DA;      /* чередующиеся полосы сайта */
+  --header-bg: rgba(243, 238, 230, .88);
+  --hero-card: #FFFCF7;
+  --band: #1C1915;        /* тёмные полосы сайта */
+  --band-card: #1C1915;   /* рекомендованный тариф */
+  --overlay: rgba(29, 26, 22, .35);
+}
+
+/* Тёмная тема — «вечерний зал», как касса: графит, слоновая кость, медь.
+   Ставится атрибутом data-theme (скрипт в index.html и кнопка в шапке).
+   Кнопки остаются «чернильными» по смыслу: светлые на тёмном фоне. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #15120F;
+  --surface: #1E1A16;
+  --surface-2: #29231E;
+  --border: #332C25;
+  --border-strong: #4A4037;
+  --text: #F2EADF;
+  --muted: #A99E8F;
+  --ink: #F1EBE1;
+  --primary: #D9925F;
+  --primary-2: #E9A877;
+  --accent-soft: #3A281C;
+  --success: #7FB894;
+  --danger: #E07A66;
+  --warning: #E0B258;
+  --shadow: 0 1px 0 rgba(0, 0, 0, .25), 0 18px 40px -26px rgba(0, 0, 0, .8);
+  --on-ink: #1C1915;
+  --ink-hover: #FFFFFF;
+  --field: #191512;
+  --placeholder: #7D7366;
+  --danger-soft: #2C1A16;
+  --warn-soft: #2A2116;
+  --alt-bg: #1A1613;
+  --header-bg: rgba(21, 18, 15, .88);
+  --hero-card: #1E1A16;
+  --band: #0D0B09;
+  --band-card: #29231D;
+  --overlay: rgba(0, 0, 0, .6);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -86,7 +133,7 @@ code {
   margin-bottom: 14px;
   box-shadow: var(--shadow);
 }
-.card.danger { border-color: rgba(176, 57, 44, .45); background: #FBF1EE; }
+.card.danger { border-color: rgba(176, 57, 44, .45); background: var(--danger-soft); }
 
 /* ---- Кнопки: чернильная основная, контурная вторичная ---- */
 button, .btn {
@@ -106,8 +153,8 @@ button, .btn {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
 }
 button:active:not(:disabled), .btn:active:not(:disabled) { transform: translateY(1px); }
-.btn-primary { background: var(--ink); color: #FBF8F3; }
-.btn-primary:not(:disabled):hover { background: #000; }
+.btn-primary { background: var(--ink); color: var(--on-ink); }
+.btn-primary:not(:disabled):hover { background: var(--ink-hover); }
 .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-strong); }
 .btn-ghost:not(:disabled):hover { background: var(--surface-2); }
 button:disabled { opacity: .45; cursor: default; }
@@ -125,7 +172,7 @@ button:disabled { opacity: .45; cursor: default; }
 input, select, textarea {
   font: inherit;
   width: 100%;
-  background: #FFFDF9;
+  background: var(--field);
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -133,7 +180,7 @@ input, select, textarea {
   margin-bottom: 10px;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-input::placeholder, textarea::placeholder { color: #A99E8E; }
+input::placeholder, textarea::placeholder { color: var(--placeholder); }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(164, 80, 42, .14);
 }
@@ -161,7 +208,7 @@ a:hover { color: var(--primary-2); }
 .toast {
   position: fixed; left: 16px; right: 16px; bottom: 24px;
   max-width: 460px; margin: 0 auto;
-  background: var(--ink); color: #F3EEE6;
+  background: var(--ink); color: var(--on-ink);
   border-radius: 12px; padding: 13px 16px; z-index: 50; font-size: 14px;
   box-shadow: 0 18px 40px -16px rgba(29, 26, 22, .55);
   opacity: 0; transform: translateY(12px); transition: .22s; pointer-events: none;
@@ -185,7 +232,7 @@ a:hover { color: var(--primary-2); }
 .dash-topbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20;
   display: flex; align-items: center; gap: 12px; padding: 11px 16px;
-  background: rgba(243, 238, 230, .9);
+  background: var(--header-bg);
   backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
   border-bottom: 1px solid var(--border);
 }
@@ -200,7 +247,7 @@ a:hover { color: var(--primary-2); }
   width: 42px; height: 42px; padding: 0; border-radius: 11px; font-size: 18px; flex: none;
 }
 .nav-backdrop {
-  position: fixed; inset: 0; background: rgba(29, 26, 22, .35); z-index: 25;
+  position: fixed; inset: 0; background: var(--overlay); z-index: 25;
   opacity: 0; pointer-events: none; transition: opacity .2s ease;
 }
 .nav-backdrop.open { opacity: 1; pointer-events: auto; }
@@ -261,10 +308,10 @@ a:hover { color: var(--primary-2); }
 .admin-tab-panel.active { display: block; }
 
 .has-tabbar h2 { font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 32px 0 12px; }
-.has-tabbar .card.sec-warn { background: #FBF4E8; border-color: rgba(154, 100, 23, .4); }
-.has-tabbar select option, .has-tabbar select optgroup { background: #FFFDF9; }
+.has-tabbar .card.sec-warn { background: var(--warn-soft); border-color: rgba(154, 100, 23, .4); }
+.has-tabbar select option, .has-tabbar select optgroup { background: var(--field); }
 .has-tabbar input[type=file]::file-selector-button {
-  font: inherit; font-weight: 600; color: #FBF8F3; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--on-ink); cursor: pointer;
   background: var(--ink); border: 0; border-radius: 8px; padding: 7px 12px; margin-right: 10px;
 }
 
@@ -278,7 +325,7 @@ a:hover { color: var(--primary-2); }
 @media (min-width: 860px) { .admin-stat-grid { grid-template-columns: repeat(6, 1fr); } }
 
 .plan-badge {
-  display: inline-block; background: var(--ink); color: #FBF8F3;
+  display: inline-block; background: var(--ink); color: var(--on-ink);
   font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
   padding: 3px 9px; border-radius: 999px; margin-bottom: 8px;
 }
@@ -294,7 +341,7 @@ a:hover { color: var(--primary-2); }
   width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--border-strong);
   flex: none; display: flex; align-items: center; justify-content: center; font-size: 11px; color: transparent;
 }
-.checklist-item.done .checklist-check { background: var(--ink); border-color: var(--ink); color: #FBF8F3; }
+.checklist-item.done .checklist-check { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .checklist-label { flex: 1; font-size: 14px; }
 .checklist-item.done .checklist-label { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--border-strong); }
 
@@ -412,8 +459,8 @@ a:hover { color: var(--primary-2); }
 .sec-pane { display: none; }
 .sec-pane.active { display: block; }
 .sec-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.sec-warn { border-color: rgba(154, 100, 23, .4); background: #FBF4E8; }
-.sec-bad { border-color: rgba(176, 57, 44, .4); background: #FBF1EE; }
+.sec-warn { border-color: rgba(154, 100, 23, .4); background: var(--warn-soft); }
+.sec-bad { border-color: rgba(176, 57, 44, .4); background: var(--danger-soft); }
 .sec-inline-link { display: inline-flex; width: auto; padding: 0 0 0 6px; font-size: inherit; vertical-align: baseline; }
 
 /* Кабинет: тарифы карточками. */
@@ -421,7 +468,7 @@ a:hover { color: var(--primary-2); }
 @media (min-width: 900px) { .cab-plans { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
 .cab-plan { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; background: var(--surface); }
 .cab-plan.current { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
-.cab-plan-badge { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: #FBF8F3; white-space: nowrap; }
+.cab-plan-badge { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: var(--on-ink); white-space: nowrap; }
 .cab-plan-price { font-family: var(--serif); font-size: 30px; font-weight: 600; font-variant-numeric: lining-nums; }
 .cab-plan-price span { font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--muted); }
 .cab-plan .btn { width: 100%; }
@@ -494,7 +541,7 @@ a:hover { color: var(--primary-2); }
 /* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ ================== */
 .wrap.landing { max-width: none; margin: 0; padding: 0; background: var(--bg); }
 .landing-section { padding: 64px 20px; position: relative; }
-.landing-section-alt { background: #EDE6DA; }
+.landing-section-alt { background: var(--alt-bg); }
 .landing-inner { max-width: 1160px; margin: 0 auto; }
 @media (min-width: 860px) { .landing-section { padding: 112px 48px; } }
 
@@ -502,7 +549,7 @@ a:hover { color: var(--primary-2); }
 .l-dark {
   --text: #F1EBE1; --muted: #A99E8F; --border: rgba(241, 235, 225, .12); --border-strong: rgba(241, 235, 225, .24);
   --surface: #26221D; --surface-2: #2E2924; --primary: #D9925F;
-  background: #1C1915; color: var(--text);
+  background: var(--band); color: var(--text);
 }
 .l-dark .btn-primary { background: #F1EBE1; color: #1C1915; }
 .l-dark .btn-primary:not(:disabled):hover { background: #fff; }
@@ -541,7 +588,7 @@ a:hover { color: var(--primary-2); }
 /* ---- Навигация ---- */
 .landing-nav {
   position: sticky; top: 0; z-index: 40;
-  background: rgba(243, 238, 230, .86);
+  background: var(--header-bg);
   backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
   border-bottom: 1px solid var(--border);
 }
@@ -555,12 +602,13 @@ a:hover { color: var(--primary-2); }
 .landing-nav-links { display: none; gap: 32px; }
 .landing-nav-links button { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; font-size: 14px; cursor: pointer; padding: 0; width: auto; }
 .landing-nav-links button:hover { color: var(--text); }
-.landing-nav-actions { display: flex; align-items: center; gap: 18px; flex: none; }
+.landing-nav-actions { display: flex; align-items: center; gap: 12px; flex: none; }
+@media (min-width: 640px) { .landing-nav-actions { gap: 18px; } }
 /* На узком экране «Войти» прячем: он есть внизу страницы. */
 .landing-nav-login { display: none; font-size: 14px; font-weight: 500; color: var(--text); text-decoration: none; white-space: nowrap; }
 .landing-nav-actions .btn { width: auto; padding: 10px 16px; font-size: 13.5px; white-space: nowrap; }
 .landing-nav-cta-short { display: none; }
-@media (max-width: 359px) { .landing-nav-cta-full { display: none; } .landing-nav-cta-short { display: inline; } }
+@media (max-width: 419px) { .landing-nav-cta-full { display: none; } .landing-nav-cta-short { display: inline; } }
 @media (min-width: 640px) { .landing-nav-login { display: inline; } }
 @media (min-width: 860px) {
   .landing-nav-inner { padding: 14px 24px; gap: 16px; }
@@ -596,7 +644,7 @@ a:hover { color: var(--primary-2); }
 
 .landing-hero-form-wrap { margin-top: 48px; }
 @media (min-width: 960px) { .landing-hero-form-wrap { margin-top: 12px; } }
-.landing-hero-card { padding: 26px 24px 22px; border-radius: 18px; background: #FFFCF7; box-shadow: 0 30px 70px -40px rgba(29, 26, 22, .45); }
+.landing-hero-card { padding: 26px 24px 22px; border-radius: 18px; background: var(--hero-card); box-shadow: 0 30px 70px -40px rgba(29, 26, 22, .45); }
 .landing-form-title { font-family: var(--serif); font-size: 30px; font-weight: 600; line-height: 1.1; margin-bottom: 6px; }
 .l-form-sub { margin: 0 0 18px; }
 .l-note { color: var(--primary); margin-bottom: 12px; }
@@ -826,7 +874,7 @@ a:hover { color: var(--primary-2); }
 @media (min-width: 640px) { .demo-dl .btn { grid-column: auto; width: auto; min-width: 210px; } }
 /* Касса для устройства посетителя — первой и с пометкой. */
 .demo-dl.is-suggested { order: -1; }
-.demo-dl.is-suggested .demo-dl-icon { background: var(--ink); border-color: var(--ink); color: #F3EEE6; }
+.demo-dl.is-suggested .demo-dl-icon { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .demo-dl.is-suggested .demo-dl-text b::after { content: 'Для вашего устройства'; display: block; margin-top: 6px;
   font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--primary); }
 /* Тёмная кнопка — одна: у кассы для этого устройства. Устройство не
@@ -834,12 +882,14 @@ a:hover { color: var(--primary-2); }
 .demo-dl .btn-primary { background: transparent; color: var(--text); border-color: var(--border-strong); }
 .demo-dl .btn-primary:not(:disabled):hover { background: var(--surface-2); }
 .demo-dl.is-suggested .btn, .demo-downloads:not(:has(.is-suggested)) .demo-dl .btn-primary {
-  background: var(--ink); color: #FBF8F3; border-color: var(--ink); }
-.demo-dl.is-suggested .btn:not(:disabled):hover, .demo-downloads:not(:has(.is-suggested)) .demo-dl .btn-primary:not(:disabled):hover { background: #000; }
+  background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.demo-dl.is-suggested .btn:not(:disabled):hover, .demo-downloads:not(:has(.is-suggested)) .demo-dl .btn-primary:not(:disabled):hover { background: var(--ink-hover); }
 .demo-hint { margin: 16px 0 0; padding: 14px 16px; border-radius: 10px; background: var(--accent-soft);
   color: var(--text); font-size: 14px; line-height: 1.55; }
 .demo-pins-card {
   --paper: #FBF8F3; --ink-soft: #6F665A;
+  /* Бумажный чек — светлый и в тёмной теме. */
+  --text: #1D1A16; --muted: #736A5D; --border: #DFD5C5; --border-strong: #CABDA8; color: var(--text);
   position: relative; background: var(--paper); padding: 24px 24px 28px; border-radius: 6px 6px 0 0;
   border: 1px solid var(--border); box-shadow: var(--shadow);
 }
@@ -963,7 +1013,7 @@ a:hover { color: var(--primary-2); }
   transition: color .15s ease, background-color .15s ease;
 }
 .landing-pricing-toggle-btn:hover { color: var(--text); }
-.landing-pricing-toggle-btn.active { background: var(--ink); color: #FBF8F3; }
+.landing-pricing-toggle-btn.active { background: var(--ink); color: var(--on-ink); }
 @media (min-width: 860px) { .landing-pricing-toggle-btn { font-size: 14px; padding: 10px 20px; } }
 .period-save { display: inline-block; margin-left: 2px; font-size: 11.5px; font-weight: 600; color: var(--success); }
 .landing-pricing-toggle-btn.active .period-save { color: #A8D3B8; }
@@ -983,7 +1033,7 @@ a:hover { color: var(--primary-2); }
 /* Рекомендуемый — тёмная карточка: выделение весом, а не свечением. */
 .plan-card.recommended {
   --text: #F1EBE1; --muted: #A99E8F; --border: rgba(241, 235, 225, .14);
-  background: #1C1915; color: var(--text); border-color: #1C1915;
+  background: var(--band-card); color: var(--text); border-color: var(--band-card);
   box-shadow: 0 40px 80px -40px rgba(29, 26, 22, .7);
 }
 .plan-card.recommended .btn-primary { background: #F1EBE1; color: #1C1915; }
@@ -1070,3 +1120,33 @@ a:hover { color: var(--primary-2); }
   .pricing-switches .landing-pricing-toggle { max-width: none; width: 100%; }
   .landing-pricing-toggle-btn { padding: 9px 6px; font-size: 13px; gap: 4px; min-width: 0; }
 }
+
+/* ---- Переключатель темы ----
+   В шапке сайта, в верхней панели кабинета (телефон) и в шапке меню
+   (компьютер); на страницах без шапки — плавающий в углу. */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 40px; height: 40px; min-height: 0; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  cursor: pointer; transition: background-color .15s, border-color .15s, color .15s;
+}
+.theme-toggle:hover { background: var(--surface-2); }
+.theme-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.theme-toggle .li { width: 18px; height: 18px; stroke-width: 1.6; }
+.theme-toggle .theme-icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .theme-icon-sun { display: block; }
+:root[data-theme="dark"] .theme-toggle .theme-icon-moon { display: none; }
+.theme-fab { position: fixed; top: 14px; right: 14px; z-index: 45; background: var(--surface); box-shadow: var(--shadow); }
+body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: none; }
+.nav-drawer-brand .theme-toggle { margin-left: auto; width: 34px; height: 34px; }
+@media (max-width: 859px) { .nav-drawer-brand .theme-toggle { display: none; } }
+
+/* ---- Тёмная тема: точечные поправки ---- */
+/* Тёмная карточка заведения в кабинете — на тёмном фоне нужна граница. */
+:root[data-theme="dark"] .venue-card { border-color: var(--border-strong); }
+/* «−11 %» на активной кнопке периода: кнопка светлая — подпись тёмно-зелёная. */
+:root[data-theme="dark"] .landing-pricing-toggle-btn.active .period-save { color: #2F6B49; }
+/* Рекомендованный тариф отделяем от фона тонкой медной рамкой. */
+:root[data-theme="dark"] .plan-card.recommended { border-color: rgba(217, 146, 95, .45); }
+/* Тёмные полосы сайта отделяем линиями от такого же тёмного фона. */
+:root[data-theme="dark"] .l-dark { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
