@@ -43,6 +43,7 @@ class FirestoreService {
   static final _labelsS = SharedStreams<List<HallLabel>>();
   static final _sessionS = SharedStreams<SessionModel?>();
   static final _activeSessionsS = SharedStreams<List<SessionModel>>();
+  static final _openChecksS = SharedStreams<List<SessionModel>>();
   static final _openShiftS = SharedStreams<ShiftModel?>();
   static final _openStaffShiftS = SharedStreams<StaffShiftModel?>();
   static final _openStaffShiftsS = SharedStreams<List<StaffShiftModel>>();
@@ -556,6 +557,7 @@ class FirestoreService {
           noPromo: noPromo,
           kind: kind,
           by: employeeId.isEmpty ? const {} : {employeeId: qty},
+          since: DateTime.now(),
         ));
       }
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
@@ -593,6 +595,46 @@ class FirestoreService {
             ? items[idx].plus(delta, employeeId: employeeId)
             : items[idx].minus(-delta, employeeId: employeeId);
       }
+      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+    });
+  }
+
+  /// Экран «Кухня и бар»: отметить строки чека готовыми целиком.
+  Future<void> markItemsReady(String sessionId, Set<String> menuItemIds) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return;
+      final items = _openCheckItems(data);
+      var changed = false;
+      for (var k = 0; k < items.length; k++) {
+        if (menuItemIds.contains(items[k].menuItemId) && items[k].pending > 0) {
+          items[k] = items[k].markReady();
+          changed = true;
+        }
+      }
+      if (changed) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+    });
+  }
+
+  /// Все открытые чеки заведения — для экрана «Кухня и бар».
+  Stream<List<SessionModel>> openChecksStream() => _openChecksS.get(
+      'all',
+      () => AppScope.col('sessions')
+          .where('status', isEqualTo: 'active')
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => SessionModel.fromDoc(d)).toList()));
+
+  /// Пожелание к строке заказа («без льда», «покрепче»). Пусто — убрать.
+  Future<void> setOrderItemNote(String sessionId, String menuItemId, String note) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return;
+      final items = _openCheckItems(data);
+      final idx = items.indexWhere((i) => i.menuItemId == menuItemId);
+      if (idx < 0) return;
+      items[idx] = items[idx].withNote(note);
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
     });
   }

@@ -807,6 +807,7 @@ class GuestLinkService {
             noPromo: incoming.noPromo,
             kind: incoming.kind,
             by: employeeId.isEmpty ? const {} : {employeeId: incoming.qty},
+            since: DateTime.now(),
           ));
         }
       }

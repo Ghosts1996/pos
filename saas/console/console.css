@@ -604,8 +604,8 @@ a:hover { color: var(--primary-2); }
 .landing-logo span { font-style: italic; color: var(--primary); }
 .landing-logo:hover { color: var(--text); }
 .landing-nav-links { display: none; gap: 32px; }
-.landing-nav-links button { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; font-size: 14px; cursor: pointer; padding: 0; width: auto; }
-.landing-nav-links button:hover { color: var(--text); }
+.landing-nav-links button, .landing-nav-links a { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; font-size: 14px; cursor: pointer; padding: 0; width: auto; text-decoration: none; }
+.landing-nav-links button:hover, .landing-nav-links a:hover { color: var(--text); }
 .landing-nav-actions { display: flex; align-items: center; gap: 12px; flex: none; }
 @media (min-width: 640px) { .landing-nav-actions { gap: 18px; } }
 /* На узком экране «Войти» прячем: он есть внизу страницы. */
@@ -958,6 +958,8 @@ a:hover { color: var(--primary-2); }
 @media (min-width: 640px) { .feature-grid { grid-template-columns: 1fr 1fr; } }
 @media (min-width: 1000px) { .feature-grid { grid-template-columns: repeat(3, 1fr); } }
 .feature-card { padding: 20px 0 22px; border-bottom: 1px solid var(--border-strong); display: flex; flex-direction: column; gap: 6px; }
+.feature-ico { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; background: var(--accent-soft); color: var(--primary); }
+.feature-ico .li { width: 21px; height: 21px; }
 .feature-title { font-weight: 600; font-size: 15.5px; }
 .feature-desc { font-size: 14px; color: var(--muted); line-height: 1.55; }
 .feature-desc::first-letter { text-transform: uppercase; }
@@ -1073,7 +1075,31 @@ a:hover { color: var(--primary-2); }
 .plan-card .btn { width: 100%; }
 .plan-card .btn-link { margin: 10px auto 0; font-size: 13px; }
 
-.pricing-included { max-width: 1100px; margin: 48px auto 0; padding-top: 28px; border-top: 1px solid var(--border-strong); }
+.pricing-included { max-width: 1100px; margin: 40px auto 0; padding-top: 28px; border-top: 1px solid var(--border-strong); }
+
+/* «Растёте?» — как тариф растёт вместе с заведением */
+.scale-strip { max-width: 1100px; margin: 36px auto 0; display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+@media (min-width: 820px) { .scale-strip { grid-template-columns: repeat(3, 1fr); } }
+.scale-strip > div { background: var(--surface); padding: 20px 22px; display: flex; flex-direction: column; gap: 6px; }
+.scale-strip b { font-size: 15px; font-weight: 600; }
+.scale-strip span { font-size: 14px; line-height: 1.55; color: var(--muted); }
+.pricing-note { max-width: 1100px; margin: 22px auto 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
+/* Ссылка на обзор под «Что внутри» */
+.l-more {
+  margin-top: 30px; display: flex; align-items: center; gap: 16px; padding: 18px 20px; text-decoration: none; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  transition: border-color .2s ease, transform .2s ease;
+}
+.l-more:hover { border-color: var(--primary); }
+.l-more > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.l-more b { font-size: 15.5px; font-weight: 600; }
+.l-more > span:nth-child(2) > span { font-size: 13.5px; color: var(--muted); line-height: 1.45; }
+.l-more-ico { flex: none; width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--primary); color: var(--on-ink); }
+.l-more-ico .li { width: 18px; height: 18px; fill: currentColor; stroke: none; margin-left: 2px; }
+.l-more > .li { flex: none; width: 18px; height: 18px; color: var(--primary); transition: transform .2s ease; }
+.l-more:hover > .li { transform: translateX(3px); }
+#f-landing-hero-guide .li:first-child { width: 15px; height: 15px; fill: currentColor; stroke: none; }
 .pricing-included-title { font-size: 11.5px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
 .pricing-chips { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr; gap: 10px 32px; }
 @media (min-width: 640px) { .pricing-chips { grid-template-columns: 1fr 1fr; } }
@@ -1316,4 +1342,34 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
   border-color: rgba(207, 139, 91, .5);
   background: radial-gradient(420px 220px at 50% -10%, rgba(207, 139, 91, .12), transparent 70%), var(--band-card);
   box-shadow: inset 0 1px 0 rgba(255, 238, 214, .06), 0 40px 80px -44px rgba(0, 0, 0, 1);
+}
+
+/* ---- Лендинг на телефоне: карточки листаются пальцем ----
+   Тарифы, «Что внутри» и «Почему ZalPOS» — лентой с соседней карточкой,
+   выглядывающей сбоку, и точками под ней: страница короче вдвое, а всё
+   видно. На планшете и компьютере — обычная сетка. */
+@media (max-width: 719px) {
+  .wrap.landing .m-swipe {
+    position: relative; display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory; scroll-padding: 0 20px; scrollbar-width: none;
+    margin: 0 -20px; padding: 6px 20px 10px; border-top: 0; max-width: none;
+  }
+  .wrap.landing .m-swipe::-webkit-scrollbar { display: none; }
+  .wrap.landing .m-swipe > * { flex: 0 0 86%; min-width: 0; scroll-snap-align: center; }
+  .wrap.landing .feature-grid.m-swipe > .feature-card,
+  .wrap.landing .why-grid.m-swipe > .risk-item {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 18px 22px; box-shadow: var(--shadow);
+  }
+  .wrap.landing .pricing-chips { grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .wrap.landing .pricing-chip { gap: 6px; font-size: 13px; line-height: 1.35; }
+  .wrap.landing .pricing-chip .li { width: 13px; height: 13px; margin-top: 2px; }
+  .wrap.landing .demo-pins-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .wrap.landing .demo-pins-cols .bill-lines li { font-size: 12.5px; }
+}
+.m-dots { display: none; }
+@media (max-width: 719px) {
+  .m-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+  .m-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--border-strong); transition: width .25s ease, background-color .25s ease; }
+  .m-dots i.on { width: 18px; background: var(--primary); }
 }

@@ -28,6 +28,23 @@ class OrderItem {
   /// котёл смены, см. PayrollSales.
   final Map<String, int> by;
 
+  /// Пожелание к строке: «без льда», «покрепче», «один лёгкий, один
+  /// крепкий». Одно на всю строку — строка в счёте одна на позицию меню.
+  /// Видно в счёте, в очереди заказов и на бумажном чеке.
+  final String note;
+
+  /// Длина пожелания: хватает на «два без льда, один с лимоном».
+  static const noteMaxLength = 120;
+
+  /// Сколько штук уже готово — отметили на экране «Кухня и бар». Остальные
+  /// ([pending]) ждут повара, бармена или кальянщика.
+  final int ready;
+
+  /// С какого момента ждут неготовые штуки: ставится, когда у строки
+  /// появляется неготовое (новая строка или «+» к уже готовой). Время
+  /// устройства, которое добавило, — для «ждут 12 мин» на экране кухни.
+  final DateTime? since;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
@@ -36,7 +53,18 @@ class OrderItem {
     this.noPromo = false,
     this.kind = '',
     this.by = const {},
-  });
+    this.note = '',
+    int ready = 0,
+    this.since,
+  }) : ready = ready < 0 ? 0 : (ready > qty ? (qty < 0 ? 0 : qty) : ready);
+
+  /// Штук ещё не готово.
+  int get pending => qty - ready;
+
+  static String cleanNote(Object? raw) {
+    final s = (raw ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    return s.length > noteMaxLength ? s.substring(0, noteMaxLength) : s;
+  }
 
   /// Строки заказа приходят и от гостя (guestOrders, предзаказ) — дробное
   /// количество или цена строкой роняли бы разбор всего списка заказов.
@@ -56,6 +84,9 @@ class OrderItem {
       noPromo: m['noPromo'] == true,
       kind: SaleKind.normalize(m['kind'] as String?),
       by: by,
+      note: cleanNote(m['note']),
+      ready: m['ready'] is num ? (m['ready'] as num).toInt() : 0,
+      since: m['since'] is num ? DateTime.fromMillisecondsSinceEpoch((m['since'] as num).toInt()) : null,
     );
   }
 
@@ -67,7 +98,20 @@ class OrderItem {
         if (noPromo) 'noPromo': true,
         if (kind.isNotEmpty) 'kind': kind,
         if (by.isNotEmpty) 'by': by,
+        if (note.isNotEmpty) 'note': note,
+        if (ready > 0) 'ready': ready,
+        if (since != null) 'since': since!.millisecondsSinceEpoch,
       };
+
+  /// Всё готово: [ready] = [qty].
+  OrderItem markReady() => _with(ready: qty);
+
+  /// Та же строка с другим пожеланием (пусто — убрать).
+  OrderItem withNote(String value) => _with(note: cleanNote(value));
+
+  OrderItem _with({String? note, int? ready}) => OrderItem(
+      menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
+      note: note ?? this.note, ready: ready ?? this.ready, since: since);
 
   /// Новое количество. Если штук стало меньше, учёт авторов урезается с
   /// самых крупных долей — сумма никогда не больше [qty].
@@ -81,6 +125,9 @@ class OrderItem {
       noPromo: noPromo,
       kind: kind,
       by: _fitBy(by, q),
+      note: note,
+      ready: ready,
+      since: since,
     );
   }
 
@@ -96,6 +143,10 @@ class OrderItem {
       noPromo: noPromo,
       kind: kind,
       by: next,
+      note: note,
+      ready: ready,
+      // Было всё готово — новые штуки ждут с этой минуты.
+      since: n > 0 && pending <= 0 ? DateTime.now() : since,
     );
   }
 
@@ -124,6 +175,9 @@ class OrderItem {
       noPromo: noPromo,
       kind: kind,
       by: _fitBy(next, q),
+      note: note,
+      ready: ready,
+      since: since,
     );
   }
 
@@ -148,9 +202,12 @@ class OrderItem {
       left -= take;
     }
     kept.removeWhere((_, v) => v <= 0);
-    OrderItem part(int q, Map<String, int> b) => OrderItem(
-        menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b);
-    return (part(n, taken), part(qty - n, kept));
+    // Готовые штуки уходят первыми — их уже вынесли гостю.
+    final readyOut = ready < n ? ready : n;
+    OrderItem part(int q, Map<String, int> b, int r) => OrderItem(
+        menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b, note: note,
+        ready: r, since: since);
+    return (part(n, taken, readyOut), part(qty - n, kept, ready - readyOut));
   }
 
   /// Вид продажи: записанный при добавлении, а у старых строк — по
