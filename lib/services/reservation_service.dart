@@ -415,10 +415,23 @@ class ReservationService {
 
   // ---------- СОЗДАНИЕ / ИЗМЕНЕНИЕ ----------
 
+  /// Номер похож на настоящий: от 10 до 15 цифр (российский или
+  /// иностранный). Строже, только российский, проверяют формы гостя.
+  static bool phoneLooksValid(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    return digits.length >= 10 && digits.length <= 15;
+  }
+
   /// Создать бронь. Если [tableId] не задан — стол подбирается автоматически
   /// из свободных на это время (самый компактный подходящий).
+  ///
+  /// Без номера телефона бронь не создаётся — ни гостем, ни кассой, ни
+  /// ИИ-помощником: по номеру заведение подтверждает бронь и ищет
+  /// опаздывающего гостя. Для гостя то же проверяют правила базы.
   Future<String> create(ReservationModel r, {bool autoAssignTable = true}) async {
     var reservation = r;
+
+    if (!phoneLooksValid(reservation.phone)) throw ReservationPhoneException();
 
     // Защита от брони «в прошлое»: такие записи появлялись, если экран
     // держали открытым и время успевало пройти.
@@ -703,6 +716,12 @@ class ReservationTimeException implements Exception {
   ReservationTimeException(this.message);
   @override
   String toString() => message;
+}
+
+/// Бронь без номера телефона: такую не принимаем.
+class ReservationPhoneException implements Exception {
+  @override
+  String toString() => 'Укажите номер телефона — без него бронь не принимаем.';
 }
 
 class NoTablesAvailableException implements Exception {

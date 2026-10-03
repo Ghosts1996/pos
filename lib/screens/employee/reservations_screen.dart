@@ -555,6 +555,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     var guests = 2;
     var time = TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
     TableModel? pickedTable;
+    String? phoneError;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -572,7 +573,13 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
               TextField(
                 controller: phoneCtrl,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Телефон'),
+                onChanged: (_) {
+                  if (phoneError != null) setLocal(() => phoneError = null);
+                },
+                decoration: InputDecoration(
+                  labelText: 'Телефон (обязательно)',
+                  errorText: phoneError,
+                ),
               ),
               const SizedBox(height: 12),
               Row(
@@ -628,7 +635,18 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Создать')),
+            FilledButton(
+              onPressed: () {
+                // Без номера бронь не создаём: по нему её подтверждают и
+                // ищут опаздывающего гостя.
+                if (!ReservationService.phoneLooksValid(phoneCtrl.text)) {
+                  setLocal(() => phoneError = 'Без номера бронь не создаётся');
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
+              child: const Text('Создать'),
+            ),
           ],
         ),
       ),

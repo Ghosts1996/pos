@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/constants.dart';
 import '../../models/client_models.dart';
 import '../../models/employee.dart';
 import '../../services/guest_link_service.dart';
@@ -102,9 +103,9 @@ class KdsScreen extends StatelessWidget {
     return _card(
       color: waiting >= _slaMinutes ? AppColors.danger : AppColors.success,
       title: o.tableName.isEmpty ? 'Стол' : o.tableName,
-      subtitle: preparing
-          ? 'Готовим · ${rub(o.total)}'
-          : 'Заказ из приложения · ${rub(o.total)}',
+      subtitle: '${preparing ? 'Готовим' : 'Заказ из приложения'}'
+          '${o.targetPosition.isEmpty ? '' : ' · ${AppConstants.orderTargetDat(o.targetPosition)}'}'
+          ' · ${rub(o.total)}',
       body: o.items.map((i) => '${i.name} ×${i.qty}').join('\n'),
       minutes: waiting,
       actionLabel: preparing ? 'Готово' : 'Принять в чек',

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/client_models.dart';
 import '../models/employee.dart';
+import '../utils/constants.dart';
 import '../services/guest_link_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
@@ -104,7 +105,15 @@ class GuestRequestsBanner extends StatelessWidget {
             initialData: orders,
             builder: (ctx, ordersSnap) {
               final c = callsSnap.data ?? const <WaiterCall>[];
-              final o = ordersSnap.data ?? const <GuestOrder>[];
+              // Свои заказы — сверху: блюда официанту, кальян кальянщику.
+              // Чужие тоже видны: если адресата нет на смене, заказ не
+              // должен потеряться.
+              final o = [...(ordersSnap.data ?? const <GuestOrder>[])]
+                ..sort((a, b) {
+                  final mineA = a.isFor(employee.position) ? 0 : 1;
+                  final mineB = b.isFor(employee.position) ? 0 : 1;
+                  return mineA != mineB ? mineA - mineB : a.createdAt.compareTo(b.createdAt);
+                });
 
               if (c.isEmpty && o.isEmpty) {
                 return const Padding(
@@ -223,7 +232,8 @@ class GuestRequestsBanner extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  preparing ? 'Готовится' : 'Новый заказ',
+                  '${preparing ? 'Готовится' : 'Новый заказ'}'
+                  '${o.targetPosition.isEmpty ? '' : ' · ${AppConstants.orderTargetDat(o.targetPosition)}'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
