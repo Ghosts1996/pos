@@ -213,6 +213,13 @@ cat /root/.ssh/github_deploy_key   # → секрет DEPLOY_SSH_KEY
 `GET /saas/guestDemoApk` через уже настроенный `location /internal-tenant-builds/`
 — на сервере ничего добавлять не нужно. Копия — в GitHub Release `public-apk`.
 
+**Демо-касса для Windows.** Тот же workflow (job `build-windows`) собирает
+установщик `zalpos-kassa-demo-setup.exe` без кодов заведения и тем же ключом
+кладёт его в `/opt/saas-gateway/tenant-builds/publicdemo/kassawin.apk` (скрипт
+доставки пишет только `*.apk`); отдаёт `GET /saas/windowsDemo` с именем
+`zalpos-kassa-demo-setup.exe`. Установщик общий с кассой заведения (тот же
+AppId), поэтому касса заведения ставится поверх демо.
+
 **Демо — сеть из двух точек** («Демо · Центр» и «Демо · Набережная»): у каждой
 свои сотрудники и PIN-коды (1111/2222/3333/111111 и 4444/5555/6666/222222),
 гости и бонусы общие. Касса при входе спрашивает, в какую точку войти

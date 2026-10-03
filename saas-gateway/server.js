@@ -573,6 +573,27 @@ async function handleGuestDemoApk(req, res) {
   res.end();
 }
 
+/**
+ * Демо-касса для Windows (установщик setup.exe) для кнопки на сайте. Кладёт
+ * её тот же workflow «Публичный APK» (job build-windows, папка publicdemo,
+ * файл kassawin.apk — скрипт доставки пишет только *.apk), отдаёт nginx.
+ */
+async function handleWindowsDemo(req, res) {
+  const filePath = path.join(TENANT_BUILDS_DIR, PUBLIC_DEMO_DIR, "kassawin.apk");
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK);
+  } catch (_) {
+    throw new HttpError(404, "Демо для Windows ещё не собрано — загляните чуть позже");
+  }
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.microsoft.portable-executable",
+    "Content-Disposition": 'attachment; filename="zalpos-kassa-demo-setup.exe"',
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Redirect": `/internal-tenant-builds/${PUBLIC_DEMO_DIR}/kassawin.apk`,
+  });
+  res.end();
+}
+
 // ------------------------------------------------------- createTenant
 
 const VENUE_TYPES = ["hookah", "restaurant", "cafe", "bar"];
@@ -6615,6 +6636,7 @@ const server = http.createServer((req, res) => {
   // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
+  if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
   // «Технических настройках» магазина).
