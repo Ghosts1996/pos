@@ -658,14 +658,11 @@ function renderStories() {
 
 // ---------- МЕНЮ ----------
 
-/** Уведомление под формами с именем и телефоном (ст. 18.1 152-ФЗ): кто,
- *  зачем и где обрабатывает данные. Это исполнение договора (бронь,
- *  бонусы) — отдельная галочка согласия не нужна. */
-function privacyNotice(action) {
-  return `<p class="small muted" style="margin:10px 0 0">Нажимая «${esc(action)}», вы соглашаетесь, что заведение
-    обработает ваше имя и телефон для брони и бонусной программы. Данные сначала записываются на сервер
-    в России, копия хранится в облаке Google для работы приложения.
-    <a href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
+/** Ссылка на политику обработки данных под формами с именем и телефоном
+ *  (ст. 18.1 152-ФЗ): кто, зачем и где обрабатывает данные, описано в ней. */
+function privacyNotice() {
+  return `<p class="small" style="margin:12px 0 0;text-align:center">
+    <a class="policy-link" href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
 }
 
 // 15-ФЗ: табак нельзя рекламировать и продавать дистанционно, а в месте
@@ -1514,7 +1511,7 @@ function screenBooking() {
       <label class="field"><span>Пожелания (необязательно)</span>
         <input id="bComment" placeholder="Диван у окна, день рождения, без музыки…"></label>
       <button class="btn-primary" id="bSend">Отправить заявку</button>
-      ${privacyNotice('Отправить заявку')}
+      ${privacyNotice()}
       <p class="small muted center" style="margin:12px 0 0">
         Мы подтвердим бронь и закрепим стол.</p>
     </div>
@@ -2133,7 +2130,7 @@ function screenProfile() {
           ? ic('lock', 'inline') + 'Сменить номер можно только через администратора'
           : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
       <button class="btn-primary" id="pSave">Сохранить</button>
-      ${privacyNotice('Сохранить')}
+      ${privacyNotice()}
     </div>
 
     <div class="card" style="border-color:color-mix(in srgb, var(--gold) 45%, transparent)">
