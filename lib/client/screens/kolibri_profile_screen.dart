@@ -461,7 +461,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
         ),
-        const PrivacyNotice(action: 'Сохранить'),
+        const PrivacyNotice(),
 
         const SizedBox(height: 20),
         Container(

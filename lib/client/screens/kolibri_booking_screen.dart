@@ -500,7 +500,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                   ? 'Выберите время'
                   : 'Забронировать на ${_fmtTime(_slot!)}'),
         ),
-        const PrivacyNotice(action: 'Забронировать'),
+        const PrivacyNotice(),
 
         const SizedBox(height: 32),
         const Text('Мои брони', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
