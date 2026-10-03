@@ -5,6 +5,7 @@ import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/printer_service.dart';
 import '../../widgets/order_note_sheet.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/timer_display.dart';
@@ -18,6 +19,7 @@ import '../../utils/table_label.dart';
 import '../../services/venue_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/kitchen_slips.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
@@ -44,6 +46,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   String get _startLabel => VenueService.instance.terms.isHookah ? 'Начать сеанс' : 'Открыть стол';
   final _fs = FirestoreService();
   bool _busy = false;
+  bool _sending = false;
   String? _sessionId;
 
   /// Карточка вошедшего сотрудника из базы — живая: админ поменял
@@ -56,6 +59,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
+    refreshPrintFlags().then((_) {
+      if (mounted) setState(() {});
+    });
     _meSub = _fs.employeesStream().listen((list) {
       final fresh = list.where((e) => e.id == widget.employee.id).firstOrNull;
       final cur = _me ?? widget.employee;
@@ -361,6 +367,72 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// Плашка «Новое в заказе» с кнопкой «На кухню» — когда в «Интеграциях»
+  /// включены бегунки и есть позиции, которые ещё не печатали.
+  Widget _kitchenStrip(SessionModel session) {
+    final n = printKitchenTickets ? kitchenUnsentCount(session) : 0;
+    if (n == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.brass.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.brass.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.receipt_long_outlined, size: 20, color: AppColors.brass),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Новое в заказе: $n шт.', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('бегунок ещё не печатали', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+              onPressed: _sending ? null : () => _sendToKitchen(session),
+              icon: _sending
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.print_outlined, size: 18),
+              label: const Text('На кухню'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Печатает бегунки на новые позиции (по листку на кухню, бар, кальяны)
+  /// и отмечает их отправленными — следующий бегунок будет только с новым.
+  Future<void> _sendToKitchen(SessionModel session) async {
+    final printer = activeReceiptPrinter;
+    if (printer == null) {
+      _showError('Принтер на этом устройстве не подключён. Подключите его в «Интеграциях» — Bluetooth или Wi‑Fi.');
+      return;
+    }
+    final slips = kitchenSlipsFor(session);
+    if (slips.isEmpty) return;
+    setState(() => _sending = true);
+    try {
+      await printer.printKitchenSlips(slips);
+      await _fs.markItemsSent(session.id, kitchenSlipsSentQty(slips));
+      if (mounted) {
+        final where = slips.map((s) => s.title.toLowerCase()).join(', ');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Бегунок напечатан: $where')));
+      }
+    } catch (e) {
+      _showError('Не удалось напечатать бегунок: ${humanError(e, lower: true)}');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _changeQty(String sessionId, String menuItemId, int delta) async {
     try {
       await _fs.changeOrderItemQty(sessionId, menuItemId, delta, employeeId: widget.employee.id);
@@ -577,6 +649,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 const SizedBox(height: 24),
                 _orderHeader(session),
                 const SizedBox(height: 10),
+                _kitchenStrip(session),
                 if (session.orderItems.isEmpty)
                   _emptyOrder(session)
                 else

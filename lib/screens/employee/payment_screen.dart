@@ -93,6 +93,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _closeWithoutPayment = false;
   bool _printReceipt = false;
   bool _printFiscalReceipt = false;
+
+  /// Кальяны — отдельным бумажным чеком. По умолчанию — как в
+  /// «Интеграциях», но кассир переключает для этого счёта: гости просят то
+  /// один общий чек, то раздельные.
+  bool _splitHookah = printHookahSeparately;
+
+  /// В счёте есть и кальяны, и что-то ещё — только тогда есть что делить.
+  bool get _mixedCheck {
+    final items = widget.session.orderItems;
+    return items.any((i) => i.effectiveKind == SaleKind.hookah) && items.any((i) => i.effectiveKind != SaleKind.hookah);
+  }
+
   bool _busy = false;
   bool _terminalBusy = false;
 
@@ -511,7 +523,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final items = widget.session.orderItems;
       final hookah = items.where((i) => i.effectiveKind == SaleKind.hookah).toList();
       final rest = items.where((i) => i.effectiveKind != SaleKind.hookah).toList();
-      if (printHookahSeparately && hookah.isNotEmpty && rest.isNotEmpty) {
+      if (_splitHookah && hookah.isNotEmpty && rest.isNotEmpty) {
         final discount = widget.session.discountPercent / 100;
         final hookahTotal = hookah.fold<double>(
             0, (a, i) => a + i.total * (PromoPolicy.restricted(i) ? 1 : 1 - discount));
@@ -821,6 +833,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 if (mounted) setState(() => _closeWithoutPayment = v);
               }),
               _toggleRow('Распечатать чек', _printReceipt, (v) => setState(() => _printReceipt = v)),
+              if (_printReceipt && _mixedCheck)
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: _toggleRow('Кальяны — отдельным чеком', _splitHookah, (v) => setState(() => _splitHookah = v),
+                      hint: _splitHookah ? 'Два чека: «Кальяны» и «Кухня и бар»' : 'Всё одним общим чеком'),
+                ),
               _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
                   (v) => setState(() => _printFiscalReceipt = v)),
               const SizedBox(height: 20),
@@ -1064,7 +1082,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   /// Переключается нажатием на всю строку, а не только на сам маленький
   /// переключатель — на планшете в спешке по нему легко промахнуться.
-  Widget _toggleRow(String label, bool value, void Function(bool) onChanged) {
+  Widget _toggleRow(String label, bool value, void Function(bool) onChanged, {String? hint}) {
     return MergeSemantics(
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
@@ -1074,7 +1092,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+              Expanded(
+                child: hint == null
+                    ? Text(label, style: const TextStyle(fontSize: 16))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(label, style: const TextStyle(fontSize: 15)),
+                          Text(hint, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+                        ],
+                      ),
+              ),
               Switch(value: value, onChanged: onChanged),
             ],
           ),

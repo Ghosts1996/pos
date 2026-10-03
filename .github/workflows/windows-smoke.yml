@@ -17,6 +17,7 @@ on:
       - '.github/workflows/windows-smoke.yml'
       - '.github/windows-smoke/**'
       - '.github/scripts/patch-firestore-windows.js'
+      - '.github/scripts/prefetch-firebase-cpp-sdk.sh'
       - 'pubspec.yaml'
       - 'pubspec.lock'
 
@@ -87,6 +88,8 @@ jobs:
           flutter pub get
           # Как в сборке заведений: исправление плагина cloud_firestore.
           node .github/scripts/patch-firestore-windows.js
+          # И Firebase C++ SDK заранее, с повторами.
+          bash .github/scripts/prefetch-firebase-cpp-sdk.sh
 
       - name: Build Windows (release, SaaS, код заведения win-smoke)
         shell: bash
