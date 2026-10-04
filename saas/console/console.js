@@ -2372,6 +2372,9 @@ function guideBodyHtml(openSet, inCabinet) {
   `;
 }
 
+// Поиск, с которым откроется инструкция (ссылка «Где взять ключ» и т. п.).
+let guidePendingQuery = '';
+
 function bindGuide(root, openSet) {
   const input = root.querySelector('#f-guide-search');
   const items = [...root.querySelectorAll('.guide-item')];
@@ -2418,6 +2421,10 @@ function bindGuide(root, openSet) {
       : 'Ничего не нашлось — попробуйте другое слово, например «смена», «чек» или «склад».';
   };
   input.addEventListener('input', apply);
+  if (guidePendingQuery) {
+    input.value = guidePendingQuery;
+    guidePendingQuery = '';
+  }
   if (input.value) apply();
 }
 
@@ -4013,6 +4020,7 @@ function watchDashboardData(tenantId) {
           <p class="small muted" style="margin-top:0">${tenant.chainId
             ? `Общие настройки для всей сети${chainName ? ` «${esc(chainName)}»` : ''}: ключ провайдера покупается один раз и работает во всех точках сети.`
             : 'Ключ провайдера ИИ этого заведения. Оплата идёт напрямую провайдеру по его тарифам — платформа ключи не выдаёт.'}</p>
+          <p class="small" style="margin:6px 0 0">Ключа ещё нет? <a href="#" class="f-dash-tab" data-tab="guide" data-guide-q="где взять ключ">Где взять ключ и какую модель выбрать</a> — пошагово, с примером.</p>
           ${st.migrated ? '<p class="small" style="color:var(--warning,#F59E0B)">Сейчас работают прежние настройки этой точки. После сохранения они станут общими для всей сети.</p>' : ''}
           <label class="row" style="gap:8px;align-items:center;margin:8px 0">
             <input type="checkbox" id="f-ai-enabled" ${st.enabled ? 'checked' : ''} ${canManage ? '' : 'disabled'}>
@@ -4077,6 +4085,8 @@ function watchDashboardData(tenantId) {
         e.preventDefault();
         if (activeTab !== el.dataset.tab) window.scrollTo(0, 0);
         activeTab = el.dataset.tab;
+        // Ссылка на конкретную статью: инструкция откроется с поиском по ней.
+        if (el.dataset.guideQ) guidePendingQuery = el.dataset.guideQ;
         draw();
       };
     });

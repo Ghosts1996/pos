@@ -11,6 +11,7 @@ import 'build_info.dart';
 import 'firebase_options.dart';
 import 'models/employee.dart';
 import 'models/tenant_models.dart';
+import 'services/window_mode.dart';
 import 'services/app_bootstrap.dart';
 import 'services/app_lock.dart';
 import 'services/app_scope.dart';
@@ -168,6 +169,8 @@ void main() async {
 
   // Обновления изнутри — только у сборок из «Собрать APK» (см. AppUpdateService).
   AppUpdateService.start(app: 'pos');
+  // Windows: на весь экран без рамки (выбор кассира запоминается).
+  unawaited(WindowMode.init());
 
   runApp(HookahPosApp(
     ready: ready,

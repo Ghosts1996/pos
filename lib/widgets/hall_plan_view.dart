@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show PointMode;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../models/hall_label.dart';
@@ -121,6 +122,30 @@ class _HallPlanViewState extends State<HallPlanView> {
   String? _appliedFor;
   String? _fittedFor;
 
+  /// Пальцев на экране. Windows превращает щипок по сенсорному экрану ещё
+  /// и в «колесо с Ctrl» — схема масштабировалась дважды и скакала между
+  /// масштабами. Пока пальцы на экране, колесо схему не масштабирует.
+  int _touches = 0;
+
+  void _touch(PointerEvent e, int d) {
+    if (e.kind != PointerDeviceKind.touch) return;
+    final next = math.max(0, _touches + d);
+    if ((next > 0) != (_touches > 0)) {
+      setState(() => _touches = next);
+    } else {
+      _touches = next;
+    }
+  }
+
+  Widget _touchAware(Widget viewer) => Listener(
+        onPointerDown: (e) => _touch(e, 1),
+        onPointerUp: (e) => _touch(e, -1),
+        onPointerCancel: (e) => _touch(e, -1),
+        child: viewer,
+      );
+
+  double get _wheelScale => _touches > 0 ? double.infinity : kDefaultMouseScrollToScaleFactor;
+
   @override
   void dispose() {
     _own.dispose();
@@ -239,11 +264,12 @@ class _HallPlanViewState extends State<HallPlanView> {
             place(h, viewport.height, focus.top + oy, focus.height), 0, 1)
         ..scaleByDouble(start, start, 1, 1);
     }
-    return InteractiveViewer(
+    return _touchAware(InteractiveViewer(
       transformationController: _transform,
       constrained: false,
       minScale: low,
       maxScale: math.max(2.5, start * 2),
+      scaleFactor: _wheelScale,
       panEnabled: widget.panEnabled,
       boundaryMargin: EdgeInsets.zero,
       child: SizedBox(
@@ -253,7 +279,7 @@ class _HallPlanViewState extends State<HallPlanView> {
           Positioned(left: ox, top: oy, child: _canvas()),
         ]),
       ),
-    );
+    ));
   }
 
   @override
@@ -344,15 +370,16 @@ class _HallPlanViewState extends State<HallPlanView> {
             place(content.top, kHallCanvas.height, box.maxHeight), 0, 1)
         ..scaleByDouble(start, start, 1, 1);
     }
-    return InteractiveViewer(
+    return _touchAware(InteractiveViewer(
       transformationController: _transform,
       constrained: false,
       minScale: fit,
       maxScale: 2.5,
+      scaleFactor: _wheelScale,
       panEnabled: widget.panEnabled,
       boundaryMargin: EdgeInsets.all(pad),
       child: _canvas(),
-    );
+    ));
   }
 }
 

@@ -16,6 +16,7 @@ import '../screens/employee/kds_screen.dart';
 import '../screens/employee/kitchen_screen.dart';
 import '../screens/employee/waitlist_screen.dart';
 import '../services/firestore_service.dart';
+import '../services/window_mode.dart';
 import '../models/staff_shift_model.dart';
 import '../services/guest_link_service.dart';
 import '../services/ai/ai_agents.dart';
@@ -361,6 +362,18 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
         subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
         onTap: () => showAboutAppDialog(context),
       ),
+      // Касса на Windows: на весь экран без рамки или обычным окном (F11).
+      if (WindowMode.supported)
+        ValueListenableBuilder<bool>(
+          valueListenable: WindowMode.fullscreen,
+          builder: (context, full, _) => ListTile(
+            dense: true,
+            leading: Icon(full ? Icons.fullscreen_exit : Icons.fullscreen),
+            title: Text(full ? 'Обычное окно' : 'Во весь экран'),
+            subtitle: const Text('или клавиша F11', style: TextStyle(fontSize: 11)),
+            onTap: WindowMode.toggle,
+          ),
+        ),
       ListTile(
         leading: const Icon(Icons.logout),
         title: const Text('Сменить сотрудника'),
