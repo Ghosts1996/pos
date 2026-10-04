@@ -30,6 +30,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   String _printerType = 'none'; // none | bluetooth | network
   bool _splitHookah = true;
   bool _kitchenTickets = false;
+  bool _kitchenAuto = false;
+  final _kitchenIpCtrl = TextEditingController();
+  final _barIpCtrl = TextEditingController();
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
@@ -79,6 +82,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _printerType = data['printerType'] ?? 'none';
     _splitHookah = data['printSplitHookah'] as bool? ?? true;
     _kitchenTickets = data['printKitchenTickets'] as bool? ?? false;
+    _kitchenAuto = data['printKitchenAuto'] as bool? ?? false;
+    _kitchenIpCtrl.text = data['kitchenPrinterIp'] as String? ?? '';
+    _barIpCtrl.text = data['barPrinterIp'] as String? ?? '';
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
     _utmHostCtrl.text = data['utmHost'] ?? '';
@@ -133,9 +139,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   Future<void> _save() async {
     printHookahSeparately = _splitHookah;
     printKitchenTickets = _kitchenTickets;
+    printKitchenAuto = _kitchenAuto;
+    kitchenPrinterIp = _kitchenIpCtrl.text.trim();
+    barPrinterIp = _barIpCtrl.text.trim();
     await _doc.set({
       'printSplitHookah': _splitHookah,
       'printKitchenTickets': _kitchenTickets,
+      'printKitchenAuto': _kitchenAuto,
+      'kitchenPrinterIp': _kitchenIpCtrl.text.trim(),
+      'barPrinterIp': _barIpCtrl.text.trim(),
       'printerType': _printerType,
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
@@ -463,6 +475,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   @override
   void dispose() {
+    _kitchenIpCtrl.dispose();
+    _barIpCtrl.dispose();
     _networkIpCtrl.dispose();
     _utmHostCtrl.dispose();
     _fsrarIdCtrl.dispose();
@@ -580,6 +594,37 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                   'отдельным листком для кухни, бара и кальянов, с пожеланиями гостя. Если на кухне стоит '
                   'планшет с экраном «Кухня и бар», бегунки не нужны.'),
             ),
+            if (_kitchenTickets) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _kitchenAuto,
+                onChanged: (v) => setState(() => _kitchenAuto = v),
+                title: const Text('Отправлять сразу'),
+                subtitle: const Text('Бегунок печатается сам, как только официант вернулся из меню в счёт. '
+                    'Кнопка «На кухню» остаётся — на случай, если принтер был выключен.'),
+              ),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _kitchenIpCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Принтер кухни — IP (необязательно)',
+                  hintText: '192.168.1.101',
+                  helperText: 'Сетевой принтер на кухне, порт 9100. Пусто — бегунки кухни печатает чековый принтер.',
+                  helperMaxLines: 3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _barIpCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Принтер бара — IP (необязательно)',
+                  hintText: '192.168.1.102',
+                  helperText: 'Сюда же — бегунки кальянов. Пусто — печатает чековый принтер.',
+                  helperMaxLines: 3,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             OutlinedButton.icon(
               onPressed: _testing ? null : _testPrinter,
               icon: const Icon(Icons.print),

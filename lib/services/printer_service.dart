@@ -61,6 +61,9 @@ abstract class ReceiptPrinter {
   /// Напечатать отчёт (X-отчёт смены и т. п.).
   Future<void> printReport(ReportPrint report) async => printBytes(await buildReportBytes(report));
 
+  /// Напечатать предчек — счёт гостю до оплаты.
+  Future<void> printPrecheck(PrecheckData data) async => printBytes(await buildPrecheckBytes(data));
+
   /// Напечатать бегунки — по листку на цех, каждый с отрезом.
   Future<void> printKitchenSlips(List<KitchenSlip> slips) async => printBytes(await buildKitchenSlipsBytes(slips));
 }
@@ -119,6 +122,101 @@ Future<List<int>> buildReportBytes(ReportPrint r, {PaperSize paper = PaperSize.m
     bytes.addAll(g.hr());
     bytes.addAll(g.text(r.footer, styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
   }
+  bytes.addAll(g.feed(2));
+  bytes.addAll(g.cut());
+  return bytes;
+}
+
+/// Предчек: счёт гостю до оплаты. Не кассовый чек — так и написано внизу;
+/// кассовый чек (54-ФЗ) выдаёт онлайн-касса после оплаты.
+class PrecheckLine {
+  final String name;
+  final int qty;
+  final double price;
+  const PrecheckLine(this.name, this.qty, this.price);
+  double get total => price * qty;
+}
+
+class PrecheckData {
+  final String venueName;
+  final String tableName;
+  final String guestTag;
+  final String waiter;
+  final DateTime at;
+  final List<PrecheckLine> lines;
+  final double subtotal;
+  final double discountPercent;
+  final double total;
+  const PrecheckData({
+    required this.venueName,
+    required this.tableName,
+    this.guestTag = '',
+    this.waiter = '',
+    required this.at,
+    required this.lines,
+    required this.subtotal,
+    this.discountPercent = 0,
+    required this.total,
+  });
+}
+
+/// «1 200» или «1 200.50» — копейки только если они есть.
+String precheckMoney(double v) {
+  final cents = (v * 100).round();
+  final whole = (cents ~/ 100).toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ' ');
+  final rest = cents % 100;
+  return rest == 0 ? whole : '$whole.${rest.toString().padLeft(2, '0')}';
+}
+
+Future<List<int>> buildPrecheckBytes(PrecheckData d, {PaperSize paper = PaperSize.mm58}) async {
+  final profile = await CapabilityProfile.load();
+  final g = Generator(paper, profile, codec: const Cp866Codec());
+  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  String two(int v) => v.toString().padLeft(2, '0');
+  if (d.venueName.isNotEmpty) {
+    bytes.addAll(g.text(d.venueName,
+        styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2)));
+  }
+  bytes.addAll(g.text('ПРЕДВАРИТЕЛЬНЫЙ СЧЁТ', styles: const PosStyles(align: PosAlign.center, bold: true)));
+  bytes.addAll(g.feed(1));
+  bytes.addAll(g.text([d.tableName, if (d.guestTag.isNotEmpty) d.guestTag].join(' · '),
+      styles: const PosStyles(align: PosAlign.center)));
+  if (d.waiter.isNotEmpty) {
+    bytes.addAll(g.text('Вас обслуживает: ${d.waiter}', styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  }
+  bytes.addAll(g.text('${two(d.at.day)}.${two(d.at.month)}.${d.at.year} ${two(d.at.hour)}:${two(d.at.minute)}',
+      styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  bytes.addAll(g.hr());
+  for (final l in d.lines) {
+    bytes.addAll(g.text(l.name, styles: const PosStyles(bold: true)));
+    bytes.addAll(g.row([
+      PosColumn(text: '  ${l.qty} x ${precheckMoney(l.price)}', width: 7),
+      PosColumn(text: precheckMoney(l.total), width: 5, styles: const PosStyles(align: PosAlign.right)),
+    ]));
+  }
+  bytes.addAll(g.hr());
+  if (d.discountPercent > 0 && d.subtotal > d.total) {
+    bytes.addAll(g.row([
+      PosColumn(text: 'Сумма', width: 7),
+      PosColumn(text: precheckMoney(d.subtotal), width: 5, styles: const PosStyles(align: PosAlign.right)),
+    ]));
+    bytes.addAll(g.row([
+      PosColumn(text: 'Скидка ${d.discountPercent.toStringAsFixed(0)}%', width: 7),
+      PosColumn(text: '-${precheckMoney(d.subtotal - d.total)}', width: 5, styles: const PosStyles(align: PosAlign.right)),
+    ]));
+  }
+  bytes.addAll(g.row([
+    PosColumn(text: 'К ОПЛАТЕ', width: 6, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
+    PosColumn(
+        text: '${precheckMoney(d.total)} р.',
+        width: 6,
+        styles: const PosStyles(align: PosAlign.right, bold: true, height: PosTextSize.size2)),
+  ]));
+  bytes.addAll(g.hr());
+  bytes.addAll(g.text('Не является кассовым чеком.', styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  bytes.addAll(g.text('Кассовый чек выдаётся после оплаты.', styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB)));
+  bytes.addAll(g.feed(1));
+  bytes.addAll(g.text('Спасибо, что пришли к нам!', styles: const PosStyles(align: PosAlign.center)));
   bytes.addAll(g.feed(2));
   bytes.addAll(g.cut());
   return bytes;
@@ -424,6 +522,32 @@ bool printHookahSeparately = true;
 /// умолчанию выключено — кому хватает экрана «Кухня и бар»).
 bool printKitchenTickets = false;
 
+/// Отправлять бегунок сам, как только официант вернулся из меню в счёт
+/// (settings/integrations.printKitchenAuto).
+bool printKitchenAuto = false;
+
+/// Сетевые принтеры цехов (IP, порт 9100): бегунки кухни — на кухонный,
+/// бара и кальянов — на барный. Пусто — на чековый принтер кассы.
+String kitchenPrinterIp = '';
+String barPrinterIp = '';
+
+/// Принтер для бегунка цеха [station] и ключ, по которому бегунки одного
+/// принтера печатаются одним заходом. null — принтера нет совсем.
+(ReceiptPrinter, String)? printerForStation(String station) {
+  final ip = (station == 'kitchen' ? kitchenPrinterIp : barPrinterIp).trim();
+  if (ip.isNotEmpty) return (NetworkReceiptPrinter(ip: ip), 'ip:$ip');
+  final main = activeReceiptPrinter;
+  return main == null ? null : (main, 'main');
+}
+
+void _applyPrintFlags(Map<String, dynamic> data) {
+  printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
+  printKitchenTickets = data['printKitchenTickets'] as bool? ?? false;
+  printKitchenAuto = data['printKitchenAuto'] as bool? ?? false;
+  kitchenPrinterIp = (data['kitchenPrinterIp'] as String? ?? '').trim();
+  barPrinterIp = (data['barPrinterIp'] as String? ?? '').trim();
+}
+
 DateTime? _printFlagsAt;
 
 /// Перечитывает флаги печати (кальяны отдельно, бегунки) без пересоздания
@@ -436,8 +560,7 @@ Future<void> refreshPrintFlags() async {
   try {
     final data = (await AppScope.col('settings').doc('integrations').get()).data();
     if (data == null) return;
-    printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
-    printKitchenTickets = data['printKitchenTickets'] as bool? ?? false;
+    _applyPrintFlags(data);
   } catch (_) {
     // Нет сети — остаются прежние значения.
   }
@@ -452,8 +575,7 @@ Future<void> loadSavedPrinterSettings() async {
     final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
     if (data == null) return;
-    printHookahSeparately = data['printSplitHookah'] as bool? ?? true;
-    printKitchenTickets = data['printKitchenTickets'] as bool? ?? false;
+    _applyPrintFlags(data);
     final type = data['printerType'] as String? ?? 'none';
     // На Windows print_bluetooth_thermal идёt через BLE (win_ble), а не
     // classic-SPP, на котором держится подавляющее большинство дешёвых

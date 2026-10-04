@@ -286,7 +286,13 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
             ),
           ),
         ),
-        Expanded(child: plan ? _plan(inZone, zone ?? '', states, callTables, reservations) : _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
+        // «Схема»: карта зала сверху, под ней список тех же столов — и
+        // видно расстановку, и до стола дотянуться одним касанием.
+        if (plan) ...[
+          Expanded(flex: 3, child: _plan(inZone, zone ?? '', states, callTables, reservations)),
+          Expanded(flex: 2, child: _grid(inZone, states, callTables, reservations, showZone: false)),
+        ] else
+          Expanded(child: _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
       ],
     );
   }
@@ -346,8 +352,8 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         child: ClipRRect(borderRadius: BorderRadius.circular(21), child: map),
       );
 
-  /// Вид «Схема»: часть зала со столами на весь экран, её можно двигать и
-  /// приближать. Списка под ней нет — для него есть вид «Список».
+  /// Вид «Схема»: часть зала со столами, её можно двигать и приближать;
+  /// под ней — список тех же столов.
   Widget _plan(List<TableModel> tables, String zone, Map<String, TableState> states, Set<String> calls,
       Map<String, ReservationModel> reservations) {
     // Стены и подписи зоны — как нарисовал администратор в редакторе зала.

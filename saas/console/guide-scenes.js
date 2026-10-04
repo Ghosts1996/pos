@@ -301,10 +301,11 @@ function web(active, main, { tap = {} } = {}) {
     <div class="gx-web-main">${main}</div></div>`;
 }
 
-// Лендинг и первые шаги — без меню кабинета.
-function webPage(main) {
+// Лендинг и первые шаги — без меню кабинета. [url] — что в адресной
+// строке (у сайта сервиса ИИ — не наш адрес).
+function webPage(main, { url = 'zalpos.ru' } = {}) {
   return `<div class="gx-web gx-web-page">
-    <div class="gx-web-m">${status()}<div class="gx-web-url">${ic('lock', 11, 2.2)}zalpos.ru</div></div>
+    <div class="gx-web-m">${status()}<div class="gx-web-url">${ic('lock', 11, 2.2)}${url}</div></div>
     <div class="gx-web-main">${main}</div></div>`;
 }
 const wField = (label, { val = '', ph = '', type = '', tap = '' } = {}) =>
@@ -387,12 +388,24 @@ function webBilling() {
     <div class="gx-web-card"><h5>История платежей</h5><div class="gx-web-row" style="border-top:none"><span style="flex:1" class="gx-mu">сегодня, 19:46 · подписка на год</span><b>чек на email</b></div></div>`);
 }
 
-// ИИ: включить, провайдер, ключ.
+// ИИ: включить, провайдер, ключ, модель, проверка связи.
 function webAi({ tap = {} } = {}) {
   return web('ИИ', `<h3>ИИ-помощники</h3><div class="gx-mu">Ассистент зала в кассе и помощник гостя в приложении</div>
     <div class="gx-web-card">${wCheck('Включить ИИ-помощников (касса и консьерж в гостевом приложении)', 'ai')}
-      <div class="gx-cols" style="margin-top:10px">${wField('Основной провайдер', { val: 'Gemini' })}${wField('API-ключ', { type: 'key', ph: 'вставьте ключ' })}</div>
-      ${wBtn('Сохранить', { tap: 'aisave', style: 'margin-top:10px' })}</div>`, { tap });
+      <div class="gx-cols" style="margin-top:10px">${wField('Основной провайдер', { val: 'Tooken Club' })}${wField('API-ключ', { type: 'key', ph: 'вставьте ключ' })}${wField('Модель', { val: 'gpt-4o-mini' })}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${wBtn('Сохранить', { tap: 'aisave' })}${wBtn('Проверить связь', { tap: 'aitest', ghost: true })}</div>
+      <div class="gx-unfold"${mk('ok')}><div class="gx-web-ok">${ic('check', 15, 2.6)}Связь есть: Tooken Club ответил «OK»</div></div></div>`, { tap });
+}
+
+// Сайт сервиса ИИ — схематично: баланс и ключи. Настоящий кабинет
+// сервиса выглядит по-своему, важны шаги, а не кнопки один в один.
+function webAiProvider() {
+  return webPage(`<h3>Личный кабинет сервиса</h3><div class="gx-mu" style="margin-bottom:4px">Один ключ — к GPT, Claude и DeepSeek</div>
+    <div class="gx-web-card gx-web-narrow"><h5>Баланс</h5>
+      <div style="display:flex;align-items:center;gap:14px"><b style="font-size:24px"><span class="gx-show"${mk('paid')}>0 ₽</span><span class="gx-alt"${mk('paid')}>300 ₽</span></b>${wBtn('Пополнить', { tap: 'topup', ghost: true })}</div></div>
+    <div class="gx-web-card gx-web-narrow"><h5>API-ключи</h5>
+      <div class="gx-unfold"${mk('key')}><div class="gx-web-key"><code>sk-••••••••••••7f3a</code><span class="gx-web-link"${tp('copy')}><span class="gx-show"${mk('copied')}>Скопировать</span><span class="gx-alt"${mk('copied')}>Скопировано ✓</span></span></div></div>
+      ${wBtn('Создать ключ', { tap: 'newkey', style: 'margin-top:8px' })}</div>`, { url: 'сайт сервиса ИИ' });
 }
 
 /* ---- Ещё экраны ---- */
@@ -897,7 +910,19 @@ export const SCENES = {
     device: 'web',
     frames: [
       { screen: webOverview({ tap: { 'ИИ': 'nav' } }), cap: 'В кабинете откройте «ИИ».', acts: [{ wait: 400 }, { tap: 'nav' }] },
-      { screen: webAi(), cap: 'Включите помощников, выберите провайдера и вставьте ключ — «Сохранить».', acts: [{ tap: 'ai', mark: 'ai' }, { type: 'key', text: '••••••••••••' }, { tap: 'aisave' }, { wait: 1200 }] },
+      { screen: webAi(), cap: 'Включите помощников, вставьте ключ и нажмите «Сохранить».', acts: [{ tap: 'ai', mark: 'ai' }, { type: 'key', text: 'sk-••••••7f3a' }, { tap: 'aisave' }] },
+      { screen: webAi(), cap: '«Проверить связь» — если всё верно, появится «Связь есть».', acts: [{ tap: 'aitest', mark: 'ok' }, { wait: 1800 }] },
+    ],
+  },
+
+  'ai-key': {
+    label: 'Где взять ключ ИИ',
+    device: 'web',
+    frames: [
+      { screen: webAiProvider(), url: 'сайт сервиса ИИ', cap: 'На сайте сервиса (например, tooken.club) зарегистрируйтесь и пополните баланс — для начала хватит 300 ₽.', acts: [{ wait: 500 }, { tap: 'topup', mark: 'paid' }, { wait: 700 }] },
+      { screen: webAiProvider(), url: 'сайт сервиса ИИ', cap: '«Создать ключ» — и «Скопировать». Ключ как пароль: никому его не пересылайте.', acts: [{ tap: 'newkey', mark: 'key' }, { wait: 500 }, { tap: 'copy', mark: 'copied' }, { wait: 700 }] },
+      { screen: webAi(), cap: 'Кабинет ZalPOS → «ИИ». Включите помощников и вставьте ключ. Модель уже стоит — gpt-4o-mini.', acts: [{ tap: 'ai', mark: 'ai' }, { type: 'key', text: 'sk-••••••7f3a' }, { tap: 'aisave' }] },
+      { screen: webAi(), cap: '«Проверить связь» → «Связь есть». Готово: ассистент работает в кассе, помощник — у гостей.', acts: [{ tap: 'aitest', mark: 'ok' }, { wait: 2000 }] },
     ],
   },
 };
@@ -950,7 +975,7 @@ class Player {
     fig.innerHTML = `
       <div class="gx-stage">
         ${web
-          ? `<div class="gx-browser" aria-hidden="true"><div class="gx-browser-bar"><i></i><i></i><i></i><span>zalpos.ru</span></div><div class="gx-screen web"></div></div>`
+          ? `<div class="gx-browser" aria-hidden="true"><div class="gx-browser-bar"><i></i><i></i><i></i><span class="gx-url">zalpos.ru</span></div><div class="gx-screen web"></div></div>`
           : `<div class="gx-phone" aria-hidden="true"><div class="${cls('gx-screen', site && 'webm')}"><div class="gx-island"></div></div></div>`}
         <div class="gx-foot">
           <div class="gx-cap" aria-live="polite"><span class="gx-cap-n">1</span><span class="gx-cap-t"></span></div>
@@ -1145,6 +1170,8 @@ class Player {
 
   caption(i, animate) {
     const f = this.frames[i];
+    const url = this.fig.querySelector('.gx-url');
+    if (url) url.textContent = f.url || 'zalpos.ru';
     this.capN.textContent = String(i + 1);
     this.capT.textContent = f.cap || '';
     if (animate) { this.capT.classList.remove('swap'); void this.capT.offsetWidth; this.capT.classList.add('swap'); }

@@ -408,28 +408,80 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
   }
 
-  /// Печатает бегунки на новые позиции (по листку на кухню, бар, кальяны)
-  /// и отмечает их отправленными — следующий бегунок будет только с новым.
-  Future<void> _sendToKitchen(SessionModel session) async {
-    final printer = activeReceiptPrinter;
-    if (printer == null) {
-      _showError('Принтер на этом устройстве не подключён. Подключите его в «Интеграциях» — Bluetooth или Wi‑Fi.');
-      return;
-    }
+  /// Печатает бегунки на новые позиции — каждый цех на свой принтер
+  /// (кухня — на кухонный, бар и кальяны — на барный, иначе на чековый) —
+  /// и отмечает отправленным только то, что напечаталось: не вышел бегунок
+  /// бара — его позиции остаются в «Новое в заказе», кухня не повторится.
+  Future<void> _sendToKitchen(SessionModel session, {bool auto = false}) async {
+    if (_sending) return;
     final slips = kitchenSlipsFor(session);
     if (slips.isEmpty) return;
-    setState(() => _sending = true);
-    try {
-      await printer.printKitchenSlips(slips);
-      await _fs.markItemsSent(session.id, kitchenSlipsSentQty(slips));
-      if (mounted) {
-        final where = slips.map((s) => s.title.toLowerCase()).join(', ');
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Бегунок напечатан: $where')));
+    final groups = <String, (ReceiptPrinter, List<KitchenSlip>)>{};
+    final missing = <String>[];
+    for (final slip in slips) {
+      final target = printerForStation(slip.station);
+      if (target == null) {
+        missing.add(slip.title.toLowerCase());
+        continue;
       }
+      groups.putIfAbsent(target.$2, () => (target.$1, <KitchenSlip>[])).$2.add(slip);
+    }
+    if (groups.isEmpty) {
+      if (!auto) _showError('Принтер не подключён. Подключите его в «Интеграциях» — Bluetooth или Wi‑Fi.');
+      return;
+    }
+    setState(() => _sending = true);
+    final printed = <KitchenSlip>[];
+    final failed = <String>[...missing];
+    for (final g in groups.values) {
+      try {
+        await g.$1.printKitchenSlips(g.$2);
+        printed.addAll(g.$2);
+      } catch (_) {
+        failed.addAll(g.$2.map((s) => s.title.toLowerCase()));
+      }
+    }
+    try {
+      if (printed.isNotEmpty) await _fs.markItemsSent(session.id, kitchenSlipsSentQty(printed));
     } catch (e) {
-      _showError('Не удалось напечатать бегунок: ${humanError(e, lower: true)}');
-    } finally {
-      if (mounted) setState(() => _sending = false);
+      failed.add('отметка в базе: ${humanError(e, lower: true)}');
+    }
+    if (mounted) {
+      setState(() => _sending = false);
+      final ok = printed.map((s) => s.title.toLowerCase()).join(', ');
+      final text = failed.isEmpty
+          ? 'Бегунок напечатан: $ok'
+          : '${ok.isEmpty ? '' : 'Напечатано: $ok. '}Не напечаталось: ${failed.join(', ')} — нажмите «На кухню» ещё раз.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
+  }
+
+  /// Предчек — счёт гостю до оплаты на чековом принтере кассы.
+  Future<void> _printPrecheck(SessionModel session) async {
+    final printer = activeReceiptPrinter;
+    if (printer == null) {
+      _showError('Чековый принтер не подключён. Подключите его в «Интеграциях» — Bluetooth или Wi‑Fi.');
+      return;
+    }
+    if (session.orderItems.isEmpty) {
+      _showError('В счёте пока ничего нет');
+      return;
+    }
+    try {
+      await printer.printPrecheck(PrecheckData(
+        venueName: VenueService.instance.cached.name.trim(),
+        tableName: session.tableName,
+        guestTag: session.guestTag,
+        waiter: session.employeeName,
+        at: DateTime.now(),
+        lines: [for (final i in session.orderItems) PrecheckLine(i.name, i.qty, i.price)],
+        subtotal: session.orderTotal,
+        discountPercent: session.discountPercent,
+        total: session.totalWithDiscount,
+      ));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Предчек напечатан')));
+    } catch (e) {
+      _showError('Не удалось напечатать предчек: ${humanError(e, lower: true)}');
     }
   }
 
@@ -657,14 +709,25 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               ],
             ),
           ),
-          _TotalBar(session: session, side: side, onPay: () => _openPayment(session)),
+          _TotalBar(
+            session: session,
+            side: side,
+            onPay: () => _openPayment(session),
+            onPrecheck: session.orderItems.isEmpty ? null : () => _printPrecheck(session),
+          ),
         ],
       );
     });
   }
 
-  Future<void> _openMenu(SessionModel session) => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session, employeeId: widget.employee.id)));
+  Future<void> _openMenu(SessionModel session) async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session, employeeId: widget.employee.id)));
+    // «Отправлять сразу»: вернулись из меню — новое уходит на кухню и бар.
+    if (!mounted || !printKitchenTickets || !printKitchenAuto) return;
+    final fresh = await _fs.sessionStream(session.id).first.catchError((_) => null);
+    if (fresh != null && mounted && kitchenUnsentCount(fresh) > 0) await _sendToKitchen(fresh, auto: true);
+  }
 
   Widget _orderHeader(SessionModel session) {
     final count = session.orderItems.fold<int>(0, (a, i) => a + i.qty);
@@ -1031,7 +1094,8 @@ class _TotalBar extends StatelessWidget {
   final SessionModel session;
   final double side;
   final VoidCallback onPay;
-  const _TotalBar({required this.session, required this.side, required this.onPay});
+  final VoidCallback? onPrecheck;
+  const _TotalBar({required this.session, required this.side, required this.onPay, this.onPrecheck});
 
   @override
   Widget build(BuildContext context) {
@@ -1076,6 +1140,31 @@ class _TotalBar extends StatelessWidget {
               ],
             ),
           ),
+          // Предчек — счёт гостю на бумаге до оплаты.
+          if (onPrecheck != null) ...[
+            SizedBox(
+              height: 56,
+              width: 56,
+              child: Tooltip(
+                message: 'Предчек — счёт гостю',
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: onPrecheck,
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.receipt_long_outlined, size: 20),
+                      Text('Предчек', style: TextStyle(fontSize: 10.5)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           SizedBox(
             height: 56,
             child: FilledButton.icon(
