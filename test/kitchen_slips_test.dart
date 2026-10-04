@@ -133,4 +133,48 @@ void main() {
       expect(RegExp('\x1DV').allMatches(String.fromCharCodes(bytes)).length, 2);
     });
   });
+
+  group('Предчек и принтеры цехов', () {
+    test('деньги: тысячи через пробел, копейки только если есть', () {
+      expect(precheckMoney(1200), '1 200');
+      expect(precheckMoney(1234567.5), '1 234 567.50');
+      expect(precheckMoney(99), '99');
+    });
+
+    test('предчек: заголовок, позиции, скидка, итог и пометка «не кассовый чек»', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final bytes = await buildPrecheckBytes(PrecheckData(
+        venueName: 'Кафе Лето',
+        tableName: 'Стол 5',
+        guestTag: 'Марина',
+        waiter: 'Алина',
+        at: DateTime(2026, 10, 4, 21, 5),
+        lines: const [PrecheckLine('Паста карбонара', 2, 690), PrecheckLine('Кальян классический', 1, 1200)],
+        subtotal: 2580,
+        discountPercent: 10,
+        total: 2442,
+      ));
+      for (final text in ['ПРЕДВАРИТЕЛЬНЫЙ СЧЁТ', 'Стол 5 · Марина', 'Вас обслуживает: Алина', 'Паста карбонара',
+        '2 x 690', '1 380', 'Скидка 10%', '-138', '2 442 р.', 'Не является кассовым чеком.', '04.10.2026 21:05']) {
+        expect(_contains(bytes, Cp866Codec.encodeString(text)), isTrue, reason: text);
+      }
+    });
+
+    test('бегунок цеха — на свой принтер, иначе на чековый', () {
+      activeReceiptPrinter = null;
+      kitchenPrinterIp = '';
+      barPrinterIp = '';
+      expect(printerForStation(SaleKind.kitchen), isNull);
+      kitchenPrinterIp = '192.168.1.101';
+      barPrinterIp = '192.168.1.102';
+      expect(printerForStation(SaleKind.kitchen)!.$2, 'ip:192.168.1.101');
+      expect(printerForStation(SaleKind.bar)!.$2, 'ip:192.168.1.102');
+      expect(printerForStation(SaleKind.hookah)!.$2, 'ip:192.168.1.102');
+      kitchenPrinterIp = '';
+      activeReceiptPrinter = NetworkReceiptPrinter(ip: '192.168.1.50');
+      expect(printerForStation(SaleKind.kitchen)!.$2, 'main');
+      activeReceiptPrinter = null;
+      barPrinterIp = '';
+    });
+  });
 }

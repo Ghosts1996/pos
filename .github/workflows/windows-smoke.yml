@@ -18,6 +18,7 @@ on:
       - '.github/windows-smoke/**'
       - '.github/scripts/patch-firestore-windows.js'
       - '.github/scripts/prefetch-firebase-cpp-sdk.sh'
+      - '.github/scripts/patch-windows-runner.js'
       - 'pubspec.yaml'
       - 'pubspec.lock'
 
@@ -83,6 +84,8 @@ jobs:
           flutter config --enable-windows-desktop
           flutter create . --platforms=windows
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          # На весь экран без рамки по команде из приложения (канал zalpos/window).
+          node .github/scripts/patch-windows-runner.js
           rm -f test/widget_test.dart
           node .github/windows-smoke/patch-emulators.js
           flutter pub get

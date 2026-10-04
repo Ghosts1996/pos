@@ -727,6 +727,8 @@ jobs:
           # не имя пакета. Имя exe (hookah_pos.exe) не меняем: обновление
           # ставится поверх старой папки, и ярлыки указывают на него.
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          # На весь экран без рамки по команде из приложения (канал zalpos/window).
+          node .github/scripts/patch-windows-runner.js
           sed -i -E 's/(VALUE "(FileDescription|ProductName)", )"hookah_pos"/\1"ZalPOS"/' windows/runner/Runner.rc
           grep -n 'ZalPOS' windows/runner/main.cpp windows/runner/Runner.rc || echo "::warning::заголовок окна не заменён"
           # Иконка кассы вместо стандартной иконки Flutter (exe, панель задач, ярлыки).

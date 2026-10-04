@@ -551,6 +551,8 @@ jobs:
           flutter create . --platforms=windows
           test -d windows && echo "windows/ готова" || (echo "не удалось создать windows/" && exit 1)
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
+          # На весь экран без рамки по команде из приложения (канал zalpos/window).
+          node .github/scripts/patch-windows-runner.js
           sed -i -E 's/(VALUE "(FileDescription|ProductName)", )"hookah_pos"/\1"ZalPOS"/' windows/runner/Runner.rc
           grep -n 'ZalPOS' windows/runner/main.cpp windows/runner/Runner.rc || echo "::warning::заголовок окна не заменён"
           cp assets/icon/app_icon.ico windows/runner/resources/app_icon.ico
