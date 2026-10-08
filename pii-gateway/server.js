@@ -406,19 +406,23 @@ async function handleDeleteGuest(req, res, body) {
       OR (kind = 'reservation' AND record_id = ANY($3))
       OR (kind = 'waitlist' AND record_id = ANY($4)))`;
   const args = [tenantIds, uid, recordIds.reservation, recordIds.waitlist];
-  try {
-    const db = getPool();
+  // Каждую таблицу — отдельно: нет права DELETE (42501, старая схема) —
+  // затираем значения, и одна неудача не отменяет вторую.
+  const db = getPool();
+  const erase = async (table, cond, params) => {
     try {
-      await db.query("DELETE FROM guest_profiles WHERE tenant_id = $1 AND uid = $2", [storeKey, uid]);
-      await db.query(`DELETE FROM contact_records WHERE ${where}`, args);
+      await db.query(`DELETE FROM ${table} WHERE ${cond}`, params);
     } catch (e) {
-      // 42501 — на сервере старая схема без права DELETE; затираем значения.
-      if (e && e.code !== "42501") throw e;
-      await db.query("UPDATE guest_profiles SET name = '', phone = '', updated_at = now() WHERE tenant_id = $1 AND uid = $2", [storeKey, uid]);
-      await db.query(`UPDATE contact_records SET name = '', phone = '', updated_at = now() WHERE ${where}`, args);
+      if (!e || e.code !== "42501") throw e;
+      await db.query(`UPDATE ${table} SET name = '', phone = '', updated_at = now() WHERE ${cond}`, params);
     }
-  } catch (_) {
-    return sendJson(res, 500, { error: "не удалось удалить данные в первичной базе" });
+  };
+  try {
+    await erase("guest_profiles", "tenant_id = $1 AND uid = $2", [storeKey, uid]);
+    await erase("contact_records", where, args);
+  } catch (e) {
+    console.error(`guest_delete ${tenantId}/${uid}: ${e?.code || ""} ${e?.message || e}`);
+    return sendJson(res, 500, { error: `не удалось удалить данные в первичной базе (${e?.code || "нет связи с базой"})` });
   }
   return sendJson(res, 200, { ok: true });
 }
