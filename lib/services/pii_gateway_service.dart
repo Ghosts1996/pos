@@ -151,7 +151,13 @@ extension PiiGuestDeletion on PiiGatewayService {
       throw PiiGatewayException('Нет связи с сервером — проверьте интернет и попробуйте снова.');
     }
     if (resp.statusCode != 200) {
-      throw PiiGatewayException('Сервер не удалил данные (${resp.statusCode}) — попробуйте ещё раз.');
+      // Текст ошибки сервера — чтобы по скриншоту было видно причину.
+      var detail = '';
+      try {
+        final err = (jsonDecode(resp.body) as Map<String, dynamic>)['error'];
+        if (err is String) detail = ': $err';
+      } catch (_) {}
+      throw PiiGatewayException('Сервер не удалил данные (${resp.statusCode}$detail) — попробуйте ещё раз.');
     }
   }
 }
