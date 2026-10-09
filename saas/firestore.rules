@@ -1001,6 +1001,11 @@ service cloud.firestore {
         (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
       allow write: if false;
     }
+    // QR на экране кассы через банк заведения. Пишет только шлюз.
+    match /tenants/{tenantId}/kassaPayments/{doc} {
+      allow read: if isStaff(tenantId);
+      allow write: if false;
+    }
     match /tenants/{tenantId}/inventoryCounts/{doc} {
       allow read, write: if isStaff(tenantId);
     }

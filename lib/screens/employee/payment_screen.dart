@@ -357,11 +357,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
           _terminal.controller.text = _fmt(_terminal.parse() + amount);
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Оплата на терминале прошла успешно${result.maskedCardNumber != null ? ' · карта ${result.maskedCardNumber}' : ''}')),
+          SnackBar(content: Text('${_qrTerminal ? 'Оплата по QR прошла' : 'Оплата на терминале прошла успешно'}'
+              '${result.maskedCardNumber != null ? ' · карта ${result.maskedCardNumber}' : ''}')),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Терминал отклонил операцию: ${result.errorMessage ?? 'неизвестная ошибка'}')),
+          SnackBar(content: Text('${_qrTerminal ? 'Оплата по QR не прошла' : 'Терминал отклонил операцию'}: '
+              '${result.errorMessage ?? 'неизвестная ошибка'}')),
         );
       }
     } catch (e) {
@@ -994,6 +996,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// нажатие просто имитирует поход к терминалу с задержкой; после
   /// подключения реального банковского SDK поведение изменится само,
   /// без правок этого экрана.
+  /// Вместо терминала — QR на экране (банк онлайн-оплаты или Т-Банк СБП).
+  bool get _qrTerminal =>
+      paymentTerminalService is GatewayQrTerminalService || paymentTerminalService is TinkoffSbpQrTerminalService;
+
   Widget _terminalPayButton() {
     return Padding(
       padding: const EdgeInsets.only(left: 8),
@@ -1007,8 +1013,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               )
             : IconButton(
                 onPressed: _closeWithoutPayment ? null : _payViaTerminal,
-                tooltip: 'Оплатить с терминала',
-                icon: const Icon(Icons.point_of_sale_outlined),
+                tooltip: _qrTerminal ? 'Показать QR для оплаты' : 'Оплатить с терминала',
+                icon: Icon(_qrTerminal ? Icons.qr_code_2 : Icons.point_of_sale_outlined),
                 style: IconButton.styleFrom(
                   backgroundColor: AppColors.surfaceElevated,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),

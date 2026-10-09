@@ -90,7 +90,7 @@ const TENANT_SUBCOLLECTIONS = [
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
   "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
-  "waiterCalls", "waitlist", "guestPayments",
+  "waiterCalls", "waitlist", "guestPayments", "kassaPayments",
 ];
 
 // Демо-заведения создаются анонимно и живут 3 дня с момента запуска демо
@@ -6509,6 +6509,10 @@ const ROUTES = {
   "/guestPayNotify": guestPay.handleNotify,
   "/guestPayRobokassa": handleAnyRobokassaResult,
   "/onlinePayCheck": guestPay.handleCheck,
+  // QR на экране кассы через тот же банк — касса принимает его как терминал.
+  "/kassaPayStart": guestPay.handleKassaStart,
+  "/kassaPayStatus": guestPay.handleKassaStatus,
+  "/kassaPayCancel": guestPay.handleKassaCancel,
   // Реквизиты продавца: контрольные цифры и сверка с ЕГРЮЛ/ЕГРИП ФНС.
   "/checkSeller": requisites.createHandler({ verifyAuth, parseJsonBody, requireTenantRole, sendJson, HttpError }),
   // Заказ доставки/с собой из приложения гостя и его отмена гостем.

@@ -82,6 +82,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _onlineLoginCtrl = TextEditingController();
   final _onlinePasswordCtrl = TextEditingController();
   final _onlinePassword2Ctrl = TextEditingController();
+  final _onlineUrlCtrl = TextEditingController();
   bool _onlineTest = false;
   String _onlineHash = 'md5';
   bool _onlineChecking = false;
@@ -138,6 +139,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _onlineLoginCtrl.text = data['onlinePayLogin'] as String? ?? '';
     _onlinePasswordCtrl.text = data['onlinePayPassword'] as String? ?? '';
     _onlinePassword2Ctrl.text = data['onlinePayPassword2'] as String? ?? '';
+    _onlineUrlCtrl.text = data['onlinePayUrl'] as String? ?? '';
     _onlineTest = data['onlinePayTest'] as bool? ?? false;
     _onlineHash = data['onlinePayHash'] as String? ?? 'md5';
     // Раньше оплата гостей шла через «терминал» Т-Банка QR СБП — переносим.
@@ -221,6 +223,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'onlinePayLogin': _onlineLoginCtrl.text.trim(),
       'onlinePayPassword': _onlinePasswordCtrl.text.trim(),
       'onlinePayPassword2': _onlinePassword2Ctrl.text.trim(),
+      'onlinePayUrl': _onlineUrlCtrl.text.trim(),
       'onlinePayTest': _onlineTest,
       'onlinePayHash': _onlineHash,
     }, SetOptions(merge: true));
@@ -252,17 +255,27 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         _onlinePassword2Ctrl.text.trim(),
         _onlineTest,
         _onlineHash,
+        if (_onlineProvider == 'rbs_custom') _onlineUrlCtrl.text.trim(),
       ].join('\u0001');
 
   bool get _onlineReady {
     final p = OnlinePayProvider.byId(_onlineProvider);
     if (p == null) return false;
     if (_onlineLoginCtrl.text.trim().isEmpty || _onlinePasswordCtrl.text.trim().isEmpty) return false;
+    if (p.urlLabel != null && OnlinePayProvider.urlProblem(_onlineUrlCtrl.text) != null) return false;
     return p.password2Label == null || _onlinePassword2Ctrl.text.trim().isNotEmpty;
   }
 
   /// Проверка реквизитов банком — без списания денег (см. guest-pay.js checkCreds).
   Future<void> _checkOnlinePay() async {
+    final p = OnlinePayProvider.byId(_onlineProvider);
+    if (p?.urlLabel != null) {
+      final problem = OnlinePayProvider.urlProblem(_onlineUrlCtrl.text);
+      if (problem != null) {
+        setState(() => _onlineCheckResult = '✗ $problem');
+        return;
+      }
+    }
     setState(() {
       _onlineChecking = true;
       _onlineCheckResult = null;
@@ -317,6 +330,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         ),
         if (p != null) ...[
           _Hint(p.hint),
+          if (p.urlLabel != null)
+            TextField(
+              controller: _onlineUrlCtrl,
+              keyboardType: TextInputType.url,
+              autocorrect: false,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: p.urlLabel,
+                errorText: _onlineUrlCtrl.text.trim().isEmpty ? null : OnlinePayProvider.urlProblem(_onlineUrlCtrl.text),
+              ),
+            ),
           TextField(controller: _onlineLoginCtrl, decoration: InputDecoration(labelText: p.loginLabel)),
           TextField(
             controller: _onlinePasswordCtrl,
@@ -353,7 +377,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               title: const Text('Тестовый режим'),
               subtitle: Text(p.id == 'robokassa'
                   ? 'Деньги не списываются; нужны тестовые пароли магазина'
-                  : 'Тестовый контур банка; нужны тестовые логин и пароль'),
+                  : p.id == 'raiffeisen'
+                      ? 'Тестовый контур банка; нужны тестовые ID партнёра и ключ'
+                      : 'Тестовый контур банка; нужны тестовые логин и пароль'),
               value: _onlineTest,
               onChanged: (v) => setState(() => _onlineTest = v),
             ),
@@ -556,6 +582,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   ({String? first, String? second}) _terminalFields(TerminalProvider p) {
     switch (p) {
       case TerminalProvider.manual:
+      case TerminalProvider.onlineQr:
         return (first: null, second: null);
       case TerminalProvider.tinkoffSbp:
         return (first: 'TerminalKey', second: 'Пароль терминала');
@@ -564,8 +591,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     }
   }
 
-  /// Пробный платёж на 1 ₽ — для Т-Банка это реальный запрос Init+GetQr к
-  /// боевому API (тестовых сумм там не бывает, зато рубль не жалко).
+  /// Пробный платёж на 1 ₽ — QR через банк (тестовых сумм в боевом контуре
+  /// не бывает, зато рубль не жалко; не оплатили — платёж отменяется).
   /// Ручной терминал ничего не запрашивает у банка — проверять нечего.
   Future<void> _testTerminal() async {
     if (_terminalProvider == TerminalProvider.manual) {
@@ -658,6 +685,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _onlineLoginCtrl.dispose();
     _onlinePasswordCtrl.dispose();
     _onlinePassword2Ctrl.dispose();
+    _onlineUrlCtrl.dispose();
     _kitchenIpCtrl.dispose();
     _barIpCtrl.dispose();
     _networkIpCtrl.dispose();
@@ -1000,6 +1028,14 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         ],
       );
 
+  /// Какой банк покажет QR на кассе — тот, что подключён к онлайн-оплате.
+  String _onlineBankForQr() {
+    final p = OnlinePayProvider.byId(_onlineProvider);
+    if (p == null) return 'Через банк из «Онлайн-оплаты гостей» — сначала подключите его ниже';
+    final ok = _onlineVerified && _onlineSignature == _onlineSaved;
+    return 'Через ${_bankName(p)}${ok ? '' : ' — проверьте подключение банка ниже'}';
+  }
+
   Widget _terminalSection() {
     final fields = _terminalFields(_terminalProvider);
     return _Section(
@@ -1008,16 +1044,24 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       status: _terminalProvider.label,
       active: true,
       children: [
-        const _Hint('Как касса принимает карты у стойки. Оплата гостями из приложения — '
-            'в разделе «Онлайн-оплата гостей».'),
+        const _Hint('Как касса принимает оплату картой и по СБП у стойки. Кнопка «Терминал» в окне '
+            'оплаты работает по выбранному здесь способу. Оплата гостями из приложения — в разделе '
+            '«Онлайн-оплата гостей».'),
         _Choice<TerminalProvider>(
           value: _terminalProvider,
-          options: const [
-            _Opt(TerminalProvider.manual, 'Ручной терминал — любой банк',
-                'Сумму набирают на терминале, касса спрашивает, прошла ли оплата'),
-            _Opt(TerminalProvider.tinkoffSbp, 'Т-Банк — QR СБП на экране кассы', 'Без терминала'),
-            _Opt(TerminalProvider.sberUpos, 'Сбер — терминал на кассе',
+          options: [
+            const _Opt(TerminalProvider.manual, 'Терминал любого банка',
+                'Сбер, ВТБ, Альфа, Т-Банк, Газпромбанк, ПСБ и другие: сумму набирают на терминале, '
+                    'касса спрашивает, прошла ли оплата'),
+            _Opt(
+                TerminalProvider.onlineQr,
+                'QR на экране кассы — без терминала',
+                '${_onlineBankForQr()}. Гость платит телефоном: по СБП или на странице банка картой'),
+            const _Opt(TerminalProvider.sberUpos, 'Сбер — терминал на кассе',
                 'Сумма уходит на терминал сама: Windows-касса с кабелем, UPOS'),
+            if (_terminalProvider == TerminalProvider.tinkoffSbp)
+              const _Opt(TerminalProvider.tinkoffSbp, 'Т-Банк — QR СБП (прежний способ)',
+                  'Лучше выбрать «QR на экране кассы» — ключи Т-Банка тогда хранятся только на сервере'),
           ],
           onChanged: (v) => setState(() => _terminalProvider = v),
         ),
@@ -1032,7 +1076,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         OutlinedButton.icon(
           onPressed: _terminalTesting ? null : _testTerminal,
           icon: const Icon(Icons.point_of_sale),
-          label: Text(_terminalProvider == TerminalProvider.tinkoffSbp ? 'Тест: показать QR на 1 ₽' : 'Проверить'),
+          label: Text(_terminalProvider == TerminalProvider.tinkoffSbp || _terminalProvider == TerminalProvider.onlineQr
+              ? 'Тест: показать QR на 1 ₽'
+              : 'Проверить'),
         ),
         if (_terminalTestResult != null) _Result(_terminalTestResult!),
       ],

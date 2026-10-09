@@ -196,6 +196,187 @@ test("проверка реквизитов без денег: верные/не
   assert.equal((await pay.checkCreds({ provider: "robokassa", login: "a", password: "b", password2: "c", hash: "md5" })).ok, false);
 });
 
+test("ВТБ и МТС Банк: тот же шлюз RBS, свои боевые и тестовые адреса", async () => {
+  for (const [provider, test, host] of [
+    ["vtb", false, "platezh.vtb24.ru"], ["vtb", true, "vtb.rbsuat.com"],
+    ["mts", false, "oplata.mtsbank.ru"], ["mts", true, "mts.rbsuat.com"],
+  ]) {
+    const { pay, calls } = makePay((url) => ({
+      status: 200,
+      text: JSON.stringify(/register/.test(url) ? { orderId: "u-2", formUrl: `https://${host}/payment/merchants/x` } : { orderStatus: 2 }),
+    }));
+    const c = { provider, login: "shop-api", password: "pw", test };
+    const r = await pay.createPayment(c, { tenantId: "t1", amount: 50, orderId: "g5", description: "Счёт" });
+    assert.equal(calls[0].url, `https://${host}/payment/rest/register.do`);
+    assert.equal(r.url, `https://${host}/payment/merchants/x`);
+    assert.equal(await pay.bankStatus(c, "u-2"), "paid");
+    assert.equal(calls[1].url, `https://${host}/payment/rest/getOrderStatusExtended.do`);
+  }
+});
+
+test("другой банк на шлюзе RBS: только https-домен с путём …/payment/rest", async () => {
+  const s = (url) => gp.onlinePaySettings({ onlinePayProvider: "rbs_custom", onlinePayLogin: "a-api", onlinePayPassword: "p", onlinePayUrl: url });
+  assert.equal(s("https://pay.examplebank.ru/payment/rest/").url, "https://pay.examplebank.ru/payment/rest");
+  assert.equal(s("https://ecom.bank.ru/ab/payment/rest").url, "https://ecom.bank.ru/ab/payment/rest");
+  assert.equal(s("https://оплата.банк.рф/payment/rest").url, `https://${new URL("https://оплата.банк.рф").hostname}/payment/rest`);
+  for (const bad of [
+    "", "http://pay.bank.ru/payment/rest", "https://127.0.0.1/payment/rest", "https://[::1]/payment/rest",
+    "https://localhost/payment/rest", "https://gw.internal/payment/rest", "https://pay.bank.ru:8443/payment/rest",
+    "https://pay.bank.ru/payment/rest?x=1", "https://user:pw@pay.bank.ru/payment/rest", "https://pay.bank.ru/admin",
+    "https://10.0.0.5/payment/rest", "https://pay.bank.ru/../payment/rest/x",
+  ]) {
+    assert.equal(s(bad), null, `не годится: ${bad}`);
+  }
+  for (const ip of ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.20.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "0.0.0.0"]) {
+    assert.equal(gp.privateIp(ip), true, ip);
+  }
+  for (const ip of ["213.180.204.1", "8.8.8.8", "2a02:6b8::1"]) assert.equal(gp.privateIp(ip), false, ip);
+  // Запросы — на адрес банка и с проверкой DNS на внутреннюю сеть.
+  const { pay, calls } = makePay(() => ({ status: 200, text: JSON.stringify({ orderId: "o-9", formUrl: "https://pay.examplebank.ru/pay/o-9" }) }));
+  const c = s("https://pay.examplebank.ru/payment/rest");
+  const r = await pay.createPayment(c, { tenantId: "t1", amount: 10, orderId: "g6", description: "Счёт" });
+  assert.equal(calls[0].url, "https://pay.examplebank.ru/payment/rest/register.do");
+  assert.equal(calls[0].publicOnly, true);
+  assert.equal(r.providerId, "o-9");
+  // Отпечаток: у «другого банка» в нём адрес, у остальных — прежний.
+  assert.notEqual(gp.credsPrint(c), gp.credsPrint({ ...c, url: "https://pay2.examplebank.ru/payment/rest" }));
+  const old = { provider: "sber", login: "l", password: "p", password2: "", test: false, hash: "md5" };
+  assert.equal(gp.credsPrint(old), crypto.createHash("sha256").update(["sber", "l", "p", "", 0, "md5"].join("\u0001")).digest("hex"));
+  // Ответ не похож на шлюз RBS — подключение не подтверждаем.
+  const { pay: p2 } = makePay(() => ({ status: 200, text: "<html>hello</html>" }));
+  assert.equal((await p2.checkCreds(c)).ok, false);
+});
+
+test("Райффайзенбанк СБП: QR без ключа, статус и отмена — с секретным ключом", async () => {
+  const { pay, calls } = makePay((url, opts) => {
+    if (url.endsWith("/sbp/v1/qr/register")) {
+      return { status: 200, text: JSON.stringify({ code: "SUCCESS", qrId: "AD100004BAL7227F9BNP6KNE007J9B3K", payload: "https://qr.nspk.ru/AD100004BAL7227F9BNP6KNE007J9B3K?type=02", qrUrl: "x" }) };
+    }
+    if (/payment-info$/.test(url)) return { status: 200, text: JSON.stringify({ code: "SUCCESS", paymentStatus: opts.headers.Authorization === "Bearer key" ? "SUCCESS" : "NO_INFO" }) };
+    return { status: 200, text: "{}" };
+  });
+  const c = { provider: "raiffeisen", login: "MA0000000552", password: "key", test: false };
+  const r = await pay.createPayment(c, { tenantId: "t1", amount: 1234.5, orderId: "gabc123", description: "Доставка" });
+  assert.equal(calls[0].url, "https://e-commerce.raiffeisen.ru/api/sbp/v1/qr/register");
+  assert.equal(calls[0].headers.Authorization, undefined, "регистрация QR — без ключа");
+  const body = JSON.parse(calls[0].body);
+  assert.equal(body.amount, 1234.5, "сумма в рублях");
+  assert.equal(body.sbpMerchantId, "MA0000000552");
+  assert.equal(body.order, "gabc123");
+  assert.equal(body.qrType, "QRDynamic");
+  assert.match(body.qrExpirationDate, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+03:00$/);
+  assert.equal(r.providerId, "AD100004BAL7227F9BNP6KNE007J9B3K");
+  assert.match(r.url, /^https:\/\/qr\.nspk\.ru\//);
+  assert.equal(await pay.bankStatus(c, r.providerId), "paid");
+  assert.equal(calls[1].url, "https://e-commerce.raiffeisen.ru/api/sbp/v1/qr/AD100004BAL7227F9BNP6KNE007J9B3K/payment-info");
+  await pay.cancelPayment(c, r.providerId);
+  assert.equal(calls[2].method, "DELETE");
+  assert.equal(calls[2].url, "https://e-commerce.raiffeisen.ru/api/sbp/v2/qrs/AD100004BAL7227F9BNP6KNE007J9B3K");
+  assert.equal(calls[2].headers.Authorization, "Bearer key");
+  for (const [ps, want] of [["DECLINED", "failed"], ["IN_PROGRESS", "pending"], ["NO_INFO", "pending"]]) {
+    const { pay: p } = makePay(() => ({ status: 200, text: JSON.stringify({ code: "SUCCESS", paymentStatus: ps }) }));
+    assert.equal(await p.bankStatus({ ...c, test: true }, "q"), want);
+  }
+  assert.equal(gp.moscowIso(Date.UTC(2026, 9, 9, 21, 30, 5)), "2026-10-10T00:30:05+03:00");
+});
+
+test("Райффайзенбанк: проверка подключения — ID партнёра и секретный ключ", async () => {
+  const reply = (infoStatus) => (url) => {
+    if (url.endsWith("/register")) return { status: 200, text: JSON.stringify({ code: "SUCCESS", qrId: "Q1", payload: "https://qr.nspk.ru/Q1" }) };
+    if (url.endsWith("/payment-info")) return { status: infoStatus, text: JSON.stringify({ code: "SUCCESS", paymentStatus: "NO_INFO" }) };
+    return { status: 200, text: "" };
+  };
+  const c = { provider: "raiffeisen", login: "MA1", password: "key", test: true };
+  let { pay, calls } = makePay(reply(200));
+  let r = await pay.checkCreds(c);
+  assert.equal(r.ok, true);
+  assert.ok(calls[0].url.startsWith("https://test.ecom.raiffeisen.ru/api/"), "тестовый контур");
+  assert.ok(calls.some((x) => x.method === "DELETE"), "проверочный QR отменён");
+  ({ pay } = makePay(reply(401)));
+  r = await pay.checkCreds(c);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /секретный ключ/);
+  ({ pay } = makePay(() => ({ status: 400, text: JSON.stringify({ code: "ERROR.MERCHANT_NOT_REGISTERED", message: "Партнер не зарегистрирован" }) })));
+  r = await pay.checkCreds(c);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /нет партнёра СБП с ID MA1/);
+});
+
+test("Т-Банк, страница оплаты: ссылка PaymentURL, возврат на guestPayDone, уведомления принимаются", async () => {
+  const { pay, calls, store } = makePay(() => ({ status: 200, text: JSON.stringify({ Success: true, PaymentId: 555, PaymentURL: "https://pay.tbank.ru/abc" }) }));
+  const c = { provider: "tinkoff_form", login: "TK", password: "pw" };
+  const r = await pay.createPayment(c, { tenantId: "t1", amount: 100, orderId: "g7", description: "Счёт" });
+  assert.equal(r.url, "https://pay.tbank.ru/abc");
+  assert.equal(calls.length, 1, "без GetQr");
+  const init = JSON.parse(calls[0].body);
+  assert.equal(init.SuccessURL, "https://pii.zalpos.ru/saas/guestPayDone");
+  assert.ok(gp.tokenValid(init, "pw"));
+  store.set("tenants/t1/settings/integrations", { onlinePayProvider: "tinkoff_form", onlinePayLogin: "TK", onlinePayPassword: "pw" });
+  store.set("tenants/t1/sessions/s1", { status: "active", orderItems: [] });
+  store.set("tenants/t1/guestPayments/555", { provider: "tinkoff_form", providerId: "555", sessionId: "s1", amount: 100, status: "pending" });
+  const note = { TerminalKey: "TK", PaymentId: 555, Status: "CONFIRMED", Success: true, Amount: 10000 };
+  note.Token = gp.tbankToken(note, "pw");
+  const res = { writeHead(code) { this.code = code; }, end(t) { this.text = t; } };
+  await pay.handleNotify({ url: "/guestPayNotify?t=t1", raw: JSON.stringify(note) }, res);
+  assert.equal(res.text, "OK");
+  assert.equal(store.get("tenants/t1/guestPayments/555").status, "paid");
+});
+
+test("касса: QR через банк заведения — оплачено, отмена, деньги после закрытия окна", async () => {
+  let bank = { orderStatus: 0 };
+  const { pay, store, calls } = makePay((url) => ({
+    status: 200,
+    text: JSON.stringify(/register\.do/.test(url) ? { orderId: "o-k1", formUrl: "https://securepayments.sberbank.ru/pay/o-k1" } : bank),
+  }));
+  const integ = { onlinePayProvider: "sber", onlinePayLogin: "shop-api", onlinePayPassword: "pw" };
+  store.set("tenants/t1/settings/integrations", integ);
+  const start = async (amount = 450) => { const res = {}; await pay.handleKassaStart({ body: { tenantId: "t1", amount } }, res); return res.body; };
+  // Банк не проверен — QR не выдаём.
+  await assert.rejects(start(), (e) => e.status === 409 && /не подтвердил/.test(e.message));
+  store.set("tenants/t1/settings/integrations", { ...integ, onlinePayVerified: gp.credsPrint(gp.onlinePaySettings(integ)) });
+  await assert.rejects(start(0.5), (e) => e.status === 400);
+  const s = await start();
+  assert.equal(s.url, "https://securepayments.sberbank.ru/pay/o-k1");
+  assert.equal(s.sbp, false);
+  assert.equal(s.ttlSec, 300);
+  const reg = new URLSearchParams(calls[0].body);
+  assert.equal(reg.get("amount"), "45000");
+  assert.equal(reg.get("sessionTimeoutSecs"), "600");
+  const id = s.paymentId;
+  assert.equal(store.get(`tenants/t1/kassaPayments/${id}`).status, "pending");
+  assert.equal(store.get(`pendingGuestPayments/t1__${id}`).kind, "kassa");
+  // Пока окно открыто — ждём; гость заплатил — оплачено, в счёт гостя не пишем.
+  const status = async () => { const res = {}; await pay.handleKassaStatus({ body: { tenantId: "t1", paymentId: id } }, res); return res.body.status; };
+  assert.equal(await status(), "pending");
+  bank = { orderStatus: 2 };
+  assert.equal(await status(), "paid");
+  assert.equal(store.get(`tenants/t1/kassaPayments/${id}`).status, "paid");
+  assert.equal(store.has(`pendingGuestPayments/t1__${id}`), false);
+  // Второй платёж: кассир закрыл окно — отмена в банке, статус «отменён».
+  bank = { orderStatus: 0 };
+  const s2 = await start(300);
+  const cancel = {};
+  await pay.handleKassaCancel({ body: { tenantId: "t1", paymentId: s2.paymentId } }, cancel);
+  assert.equal(cancel.body.status, "cancelled");
+  assert.ok(calls.some((x) => /decline\.do$/.test(x.url)), "неоплаченный заказ отменён в банке");
+  // Деньги всё же пришли позже — фоновая проверка зовёт персонал.
+  bank = { orderStatus: 2 };
+  await pay.sweep();
+  assert.equal(store.get(`tenants/t1/kassaPayments/${s2.paymentId}`).status, "paid_late");
+  const late = [...store.entries()].find(([k, v]) => k.startsWith("tenants/t1/waiterCalls/") && /после закрытия окна: 300/.test(v.comment));
+  assert.ok(late, "персоналу — «оплата пришла после закрытия окна»");
+  // Окно ещё открыто (касса сама опрашивает) — фон платёж не трогает.
+  bank = { orderStatus: 0 };
+  const s3 = await start(200);
+  bank = { orderStatus: 2 };
+  await pay.sweep();
+  assert.equal(store.get(`tenants/t1/kassaPayments/${s3.paymentId}`).status, "pending");
+  // Касса пропала, окно давно истекло, а деньги пришли — фон сообщает персоналу.
+  store.set(`pendingGuestPayments/t1__${s3.paymentId}`, { ...store.get(`pendingGuestPayments/t1__${s3.paymentId}`), createdAt: admin.firestore.Timestamp.fromMillis(Date.now() - 9 * 60 * 1000) });
+  await pay.sweep();
+  assert.equal(store.get(`tenants/t1/kassaPayments/${s3.paymentId}`).status, "paid_late");
+});
+
 test("корень Минцифры лежит рядом и это именно он", () => {
   const pem = require("fs").readFileSync(require("path").join(__dirname, "certs", "russian_trusted_root_ca.pem"), "utf8");
   const der = Buffer.from(pem.replace(/-----[^-]+-----|\s/g, ""), "base64");
