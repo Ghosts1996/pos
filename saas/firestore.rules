@@ -1045,6 +1045,22 @@ service cloud.firestore {
       allow update: if isStaff(tenantId) && staffShiftUpdateOk(request.resource.data, resource.data);
       allow delete: if false;
     }
+    // Зарплата: премии, штрафы, авансы и выплаты (lib/models/payroll_adjustment.dart).
+    // Запись не правится и не удаляется — ошибочную отменяют флагом cancelled.
+    match /tenants/{tenantId}/payrollAdjustments/{doc} {
+      allow read: if isStaff(tenantId);
+      allow create: if isStaff(tenantId)
+        && request.resource.data.type in ['bonus', 'penalty', 'advance', 'payout']
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.amount < 100000000
+        && request.resource.data.employeeId is string
+        && request.resource.data.get('cancelled', false) == false;
+      allow update: if isStaff(tenantId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cancelled', 'cancelledBy', 'cancelledAt'])
+        && request.resource.data.cancelled == true;
+      allow delete: if false;
+    }
     // Указатели открытой смены. Транзакция открытия смены читает их вместе
     // с shifts/staffShifts и проходит, только если разрешены все операции.
     match /tenants/{tenantId}/meta/shiftState {

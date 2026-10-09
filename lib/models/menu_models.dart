@@ -221,6 +221,11 @@ class MenuItem {
   /// добавляется в счёт сразу, без окна выбора.
   final List<ModifierGroup> modifierGroups;
 
+  /// Бонус сотруднику за каждую проданную штуку, ₽ (мотивация продавать
+  /// десерты, коктейли дня). 0 — без бонуса. Начисляется тому, кто добавил
+  /// позицию в счёт (OrderItem.by).
+  final double staffBonus;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -238,6 +243,7 @@ class MenuItem {
     this.tobacco = false,
     this.popularRank = 0,
     this.modifierGroups = const [],
+    this.staffBonus = 0,
   });
 
   bool get hasModifiers => modifierGroups.any((g) => g.options.isNotEmpty);
@@ -326,6 +332,7 @@ class MenuItem {
       description: (data['description'] as String?) ?? '',
       tobacco: data['tobacco'] == true,
       popularRank: (data['popularRank'] as num?)?.toInt() ?? 0,
+      staffBonus: (data['staffBonus'] as num?)?.toDouble() ?? 0,
       modifierGroups: ((data['modifierGroups'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => ModifierGroup.fromMap(Map<String, dynamic>.from(e)))
@@ -349,6 +356,7 @@ class MenuItem {
         'inventoryItemId': inventoryItemId,
         'components': components.map((c) => c.toMap()).toList(),
         'modifierGroups': modifierGroups.map((g) => g.toMap()).toList(),
+        'staffBonus': staffBonus,
       };
 
   MenuItem copyWith({
@@ -366,9 +374,11 @@ class MenuItem {
     String? description,
     bool? tobacco,
     List<ModifierGroup>? modifierGroups,
+    double? staffBonus,
   }) =>
       MenuItem(
         id: id,
+        staffBonus: staffBonus ?? this.staffBonus,
         modifierGroups: modifierGroups ?? this.modifierGroups,
         description: description ?? this.description,
         tobacco: tobacco ?? this.tobacco,

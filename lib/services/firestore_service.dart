@@ -10,6 +10,7 @@ import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/session_model.dart';
 import '../models/menu_models.dart';
+import '../models/payroll_adjustment.dart';
 import '../models/discount_card.dart';
 import '../models/employee.dart';
 import '../models/pay_terms.dart';
@@ -1321,6 +1322,24 @@ class FirestoreService {
     });
     if (!closed) throw StateError('Смена уже закрыта на другом устройстве');
   }
+
+  // ---------- ЗАРПЛАТА: ПРЕМИИ, ШТРАФЫ, ВЫПЛАТЫ ----------
+
+  Future<List<PayrollAdjustment>> payrollAdjustmentsInRange(DateTime from, DateTime to) async {
+    final snap = await AppScope.col('payrollAdjustments')
+        .where('at', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+        .where('at', isLessThan: Timestamp.fromDate(to))
+        .get();
+    return snap.docs.map(PayrollAdjustment.fromDoc).where((a) => !a.cancelled).toList()
+      ..sort((a, b) => a.at.compareTo(b.at));
+  }
+
+  Future<void> addPayrollAdjustment(PayrollAdjustment a) =>
+      AppScope.col('payrollAdjustments').add(a.toMap());
+
+  Future<void> cancelPayrollAdjustment(String id, String by) => AppScope.col('payrollAdjustments')
+      .doc(id)
+      .update({'cancelled': true, 'cancelledBy': by, 'cancelledAt': Timestamp.fromDate(DateTime.now())});
 
   // ---------- НАЛИЧНЫЕ В КАССЕ ----------
 

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/employee.dart';
+import '../../models/payroll_adjustment.dart';
+import '../../services/payroll_item_bonus.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_calculator.dart';
@@ -23,7 +26,9 @@ import '../../theme/app_colors.dart';
 /// часов (и кто их сделал), правки самому себе, очень длинные смены,
 /// изменение ставок в этом периоде.
 class PayrollScreen extends StatefulWidget {
-  const PayrollScreen({super.key});
+  /// Кто работает с экраном — пишется в премии, штрафы и выплаты.
+  final String actorName;
+  const PayrollScreen({super.key, this.actorName = ''});
 
   @override
   State<PayrollScreen> createState() => _PayrollScreenState();
@@ -44,6 +49,25 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   /// Кальяны и бар, с которых процент некому было начислить.
   Map<String, double> _unassignedSales = const {};
+
+  /// Премии, штрафы, авансы и выплаты за период по сотрудникам.
+  Map<String, List<PayrollAdjustment>> _adj = const {};
+
+  /// Бонусы за продажу позиций (MenuItem.staffBonus) по сотрудникам.
+  Map<String, ItemBonus> _itemBonus = const {};
+
+  List<PayrollAdjustment> _adjOf(String id) => _adj[id] ?? const [];
+
+  /// Начислено: зарплата + бонусы за позиции + премии − штрафы.
+  double _accrued(PayrollResult r) =>
+      r.wages +
+      (_itemBonus[r.employee.id]?.amount ?? 0) +
+      _adjOf(r.employee.id).fold<double>(0, (a, x) => a + x.signedAccrual);
+
+  double _paidOut(PayrollResult r) => _adjOf(r.employee.id).fold<double>(0, (a, x) => a + x.paidOut);
+
+  /// Осталось выдать: начислено + чаевые − уже выдано (аванс, выплаты).
+  double _left(PayrollResult r) => _accrued(r) + r.tips - _paidOut(r);
 
   @override
   void initState() {
@@ -72,6 +96,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
           .toList();
       final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
       final sales = PayrollSales.attribute(sessions: sessions, employees: employees, shifts: [...around, ...open]);
+      final adjustments = await _fs.payrollAdjustmentsInRange(_rangeStart, _rangeEnd);
+      final adj = <String, List<PayrollAdjustment>>{};
+      for (final a in adjustments) {
+        adj.putIfAbsent(a.employeeId, () => []).add(a);
+      }
+      final menu = {for (final m in await _fs.menuItemsStream().first) m.id: m};
+      final itemBonus = itemBonuses(sessions, menu);
       // Чаевые не должны ронять весь отчёт: если их не удалось загрузить,
       // зарплата всё равно посчитается.
       var tips = const <TipModel>[];
@@ -90,7 +121,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         if (!emp.payrollConfigured) {
           // Зарплата не настроена, но чаевые ему оставили — их всё равно
           // нужно выдать, поэтому карточка нужна.
-          if (empTips > 0) {
+          if (empTips > 0 || adj.containsKey(emp.id) || itemBonus.containsKey(emp.id)) {
             results.add(PayrollCalculator.calculate(employee: emp, closedShifts: empShifts, tips: empTips));
           } else {
             unconfigured.add(emp);
@@ -111,6 +142,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
         _unconfigured = unconfigured;
         _unassignedTips = unassignedTips;
         _unassignedSales = sales.unassigned;
+        _adj = adj;
+        _itemBonus = itemBonus;
         _loading = false;
       });
     } catch (e) {
@@ -293,7 +326,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Widget _totalsCard() {
-    final totalPay = _results.fold<double>(0, (sum, r) => sum + r.total);
+    final totalPay = _results.fold<double>(0, (sum, r) => sum + _left(r));
     final totalHours = _results.fold<double>(0, (sum, r) => sum + r.totalHours);
     return Card(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 6),
@@ -304,7 +337,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}'),
-            Text('${_hours(totalHours)} ч · Итого: ${_rub(totalPay)}',
+            Text('${_hours(totalHours)} ч · Осталось выдать: ${_rub(totalPay)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
@@ -349,10 +382,19 @@ class _PayrollScreenState extends State<PayrollScreen> {
               '${r.barRevenue > r.barPersonal + 0.5 ? ' (свои ${_rub(r.barPersonal)}, доля смены ${_rub(r.barRevenue - r.barPersonal)})' : ''}',
           _rub(r.barPay)));
     }
+    final ib = _itemBonus[emp.id];
+    if (ib != null && ib.amount > 0) {
+      rows.add(_row('За продажу позиций',
+          ib.qtyByItem.entries.map((e) => '${e.key} × ${e.value}').join(', '), _rub(ib.amount)));
+    }
+    for (final a in _adjOf(emp.id).where((a) => a.isAccrual)) {
+      rows.add(_adjRow(a));
+    }
     if (r.tips > 0) {
       rows.add(_row('Чаевые', 'от гостей, не зарплата',
           _rub(r.tips)));
     }
+    final payouts = _adjOf(emp.id).where((a) => !a.isAccrual).toList();
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -375,13 +417,46 @@ class _PayrollScreenState extends State<PayrollScreen> {
             ...rows,
             ..._checks(r),
             const Divider(),
+            _row('Начислено', 'зарплата, бонусы, премии и штрафы', _rub(_accrued(r))),
+            if (r.tips > 0) _row('Чаевые', '', _rub(r.tips)),
+            for (final a in payouts) _adjRow(a),
+            const SizedBox(height: 4),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(r.tips > 0 ? 'К выплате' : 'Итого',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text(_rub(r.total),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const Text('Осталось выдать', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(_rub(_left(r)),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: _left(r) < -0.5 ? AppColors.danger : null)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _addAdjustment(emp, PayrollAdjustment.bonus),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Премия'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _addAdjustment(emp, PayrollAdjustment.penalty),
+                  icon: const Icon(Icons.remove, size: 16),
+                  label: const Text('Штраф'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _addAdjustment(emp, PayrollAdjustment.payout, suggested: _left(r)),
+                  icon: const Icon(Icons.payments_outlined, size: 16),
+                  label: const Text('Выдать'),
+                ),
+                TextButton.icon(
+                  onPressed: () => _copyPayslip(r),
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Расчётный листок'),
+                ),
               ],
             ),
           ],
@@ -432,6 +507,142 @@ class _PayrollScreenState extends State<PayrollScreen> {
         ),
       ),
     ];
+  }
+
+  /// Строка премии/штрафа/выплаты с отменой долгим нажатием.
+  Widget _adjRow(PayrollAdjustment a) => InkWell(
+        onLongPress: () => _cancelAdjustment(a),
+        child: _row(
+          a.label,
+          '${_fmtDay(a.at)}${a.comment.isEmpty ? '' : ' — ${a.comment}'}',
+          '${a.type == PayrollAdjustment.penalty || !a.isAccrual ? '−' : '+'}${_rub(a.amount)}',
+        ),
+      );
+
+  Future<void> _addAdjustment(Employee emp, String type, {double suggested = 0}) async {
+    final amountCtrl = TextEditingController(text: suggested > 0.5 ? suggested.toStringAsFixed(0) : '');
+    final commentCtrl = TextEditingController();
+    var kind = type;
+    final title = switch (type) {
+      PayrollAdjustment.bonus => 'Премия',
+      PayrollAdjustment.penalty => 'Штраф',
+      _ => 'Выдать деньги',
+    };
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          scrollable: true,
+          title: Text('$title — ${emp.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (type == PayrollAdjustment.payout)
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: PayrollAdjustment.advance, label: Text('Аванс')),
+                    ButtonSegment(value: PayrollAdjustment.payout, label: Text('Расчёт')),
+                  ],
+                  selected: {kind},
+                  onSelectionChanged: (v) => setSt(() => kind = v.first),
+                ),
+              TextField(
+                controller: amountCtrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Сумма, ₽'),
+              ),
+              TextField(
+                controller: commentCtrl,
+                maxLength: 100,
+                decoration: InputDecoration(
+                    labelText: type == PayrollAdjustment.penalty ? 'За что' : 'Комментарий (необязательно)'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Записать')),
+          ],
+        ),
+      ),
+    );
+    final amount = double.tryParse(amountCtrl.text.replaceAll(',', '.').replaceAll(' ', '')) ?? 0;
+    if (ok != true || amount <= 0) return;
+    // Запись — внутри выбранного периода: иначе она не попала бы в отчёт.
+    final now = DateTime.now();
+    final at = now.isBefore(_rangeEnd) && !now.isBefore(_rangeStart) ? now : _rangeEnd.subtract(const Duration(minutes: 1));
+    try {
+      await _fs.addPayrollAdjustment(PayrollAdjustment(
+        employeeId: emp.id,
+        employeeName: emp.name,
+        type: kind,
+        amount: amount,
+        comment: commentCtrl.text.trim(),
+        at: at,
+        createdBy: widget.actorName,
+      ));
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось записать: ${humanError(e, lower: true)}')));
+      }
+    }
+  }
+
+  Future<void> _cancelAdjustment(PayrollAdjustment a) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Отменить: ${a.label.toLowerCase()} ${_rub(a.amount)}?'),
+        content: const Text('Запись останется в истории с пометкой «отменена» и не войдёт в расчёт.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Нет')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Отменить запись')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _fs.cancelPayrollAdjustment(a.id, widget.actorName);
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось отменить: ${humanError(e, lower: true)}')));
+      }
+    }
+  }
+
+  /// Расчётный листок текстом — отправить сотруднику в мессенджер.
+  void _copyPayslip(PayrollResult r) {
+    final emp = r.employee;
+    final b = StringBuffer()
+      ..writeln('Расчётный листок: ${emp.name}')
+      ..writeln('Период: ${_fmtDay(_rangeStart)} – ${_fmtDay(_rangeEnd.subtract(const Duration(days: 1)))}')
+      ..writeln('Смен: ${r.shiftsCount}, часов: ${_hours(r.totalHours)}');
+    void line(String label, double v) {
+      if (v.abs() > 0.004) b.writeln('$label: ${_rub(v)}');
+    }
+
+    line('Оклад за смены', r.shiftPay);
+    line('Почасовая оплата', r.hourlyPay);
+    line('Переработка', r.overtimePay);
+    line('Процент с продаж', r.salesPercentPay);
+    line('За продажу позиций', _itemBonus[emp.id]?.amount ?? 0);
+    for (final a in _adjOf(emp.id).where((a) => a.isAccrual)) {
+      b.writeln('${a.label}${a.comment.isEmpty ? '' : ' (${a.comment})'}: ${a.type == PayrollAdjustment.penalty ? '−' : ''}${_rub(a.amount)}');
+    }
+    b.writeln('Начислено: ${_rub(_accrued(r))}');
+    line('Чаевые', r.tips);
+    for (final a in _adjOf(emp.id).where((a) => !a.isAccrual)) {
+      b.writeln('${a.label} ${_fmtDay(a.at)}: −${_rub(a.amount)}');
+    }
+    b.writeln('Осталось выдать: ${_rub(_left(r))}');
+    Clipboard.setData(ClipboardData(text: b.toString()));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Расчётный листок скопирован — отправьте сотруднику')));
   }
 
   Widget _row(String label, String detail, String amount) {
