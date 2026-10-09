@@ -36,6 +36,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   bool _tipsEnabled = true;
   bool _tipsTeamEnabled = true;
   bool _guestSbpPay = false;
+  bool _deliveryEnabled = false;
 
   static const _days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -61,6 +62,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _tipsEnabled = p.tipsEnabled;
     _tipsTeamEnabled = p.tipsTeamEnabled;
     _guestSbpPay = p.guestSbpPay;
+    _deliveryEnabled = p.deliveryEnabled;
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -82,6 +84,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       tipsEnabled: _tipsEnabled,
       tipsTeamEnabled: _tipsTeamEnabled,
       guestSbpPay: _guestSbpPay,
+      deliveryEnabled: _deliveryEnabled,
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
@@ -239,6 +242,17 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                   style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
               ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _deliveryEnabled,
+              onChanged: (v) => setState(() => _deliveryEnabled = v),
+              title: const Text('Заказы с собой и доставка'),
+              subtitle: const Text(
+                'Кнопка в шапке зала: заказ без стола, статусы «Принят → Готовится → У курьера → Доставлен». '
+                'Включение и выключение сразу видно на всех кассах.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _guestSbpPay,

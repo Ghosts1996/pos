@@ -70,6 +70,10 @@ class VenueProfile {
   /// «Интеграций»; пароль терминала остаётся на сервере).
   final bool guestSbpPay;
 
+  /// Модуль «С собой и доставка»: кнопка в зале кассы. Выключение прячет её
+  /// на всех кассах сразу, без перезапуска.
+  final bool deliveryEnabled;
+
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
     // нельзя — оно уходило в чек и в ИИ. См. VenueService.displayNameOf.
@@ -90,6 +94,7 @@ class VenueProfile {
     this.tipsEnabled = true,
     this.tipsTeamEnabled = true,
     this.guestSbpPay = false,
+    this.deliveryEnabled = false,
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -119,6 +124,7 @@ class VenueProfile {
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
       guestSbpPay: data['guestSbpPay'] == true,
+      deliveryEnabled: data['deliveryEnabled'] == true,
     );
   }
 
@@ -140,6 +146,7 @@ class VenueProfile {
         'tipsEnabled': tipsEnabled,
         'tipsTeamEnabled': tipsTeamEnabled,
         'guestSbpPay': guestSbpPay,
+        'deliveryEnabled': deliveryEnabled,
       };
 
   VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
@@ -165,6 +172,7 @@ class VenueProfile {
     bool? tipsEnabled,
     bool? tipsTeamEnabled,
     bool? guestSbpPay,
+    bool? deliveryEnabled,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -184,6 +192,7 @@ class VenueProfile {
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
+        deliveryEnabled: deliveryEnabled ?? this.deliveryEnabled,
       );
 }
 
