@@ -1971,6 +1971,8 @@ function screenOrder(id) {
       <div class="overline">Заказ №${esc(orderNo(s.id, s.orderNo))}</div>
       <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
       <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : ''}">${hint}</p>
+      ${st === 'courier' && /^\d{11}$/.test(String(s.courierPhone || '')) ? `<a class="btn btn-ghost" href="tel:+${esc(s.courierPhone)}"
+        style="margin:0 0 14px">${ic('phone')}Позвонить курьеру${s.courierName ? ' · ' + esc(s.courierName) : ''}</a>` : ''}
       ${cancelled ? '' : `<div class="card dsteps">${path.map((x, i) => {
         const done = i < cur || st === 'done';
         const active = i === cur && st !== 'done';

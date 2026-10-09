@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/delivery_status.dart';
 import '../models/employee.dart';
@@ -64,30 +67,17 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
   Future<void> _advance() async {
     final to = DeliveryFlow.next(s.orderType, s.deliveryStatus);
     if (to == null) return;
-    var courier = '';
+    var courier = (name: '', phone: '');
     if (to == 'courier') {
-      final ctrl = TextEditingController();
-      final ok = await showDialog<bool>(
+      final picked = await showDialog<({String name, String phone})>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Кто везёт заказ?'),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Курьер (необязательно)'),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Передать')),
-          ],
-        ),
+        builder: (_) => const _CourierDialog(),
       );
-      courier = ctrl.text.trim();
-      ctrl.dispose();
-      if (ok != true) return;
+      if (picked == null) return;
+      courier = picked;
     }
-    await _run(() => FirestoreService().setDeliveryStatus(s.id, to, courierName: courier));
+    await _run(() => FirestoreService()
+        .setDeliveryStatus(s.id, to, courierName: courier.name, courierPhone: courier.phone));
   }
 
   @override
@@ -305,6 +295,127 @@ class _CancelDialogState extends State<_CancelDialog> {
           },
           child: const Text('Отменить заказ'),
         ),
+      ],
+    );
+  }
+}
+
+/// «Кто везёт заказ?»: имя и рабочий телефон курьера — гость увидит кнопку
+/// «Позвонить курьеру», пока заказ в пути. Недавние курьеры — чипами, чтобы
+/// не набирать заново (хранятся только на этом устройстве).
+class _CourierDialog extends StatefulWidget {
+  const _CourierDialog();
+
+  @override
+  State<_CourierDialog> createState() => _CourierDialogState();
+}
+
+class _CourierDialogState extends State<_CourierDialog> {
+  static const _prefsKey = 'recent_couriers_v1';
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  List<({String name, String phone})> _recent = const [];
+  String? _phoneError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecent();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRecent() async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getStringList(_prefsKey) ?? const [];
+      final list = [
+        for (final r in raw)
+          if (jsonDecode(r) case {'name': final String n, 'phone': final String p}) (name: n, phone: p),
+      ];
+      if (mounted) setState(() => _recent = list);
+    } catch (_) {}
+  }
+
+  Future<void> _remember(({String name, String phone}) c) async {
+    if (c.name.isEmpty && c.phone.isEmpty) return;
+    try {
+      final list = [c, ..._recent.where((r) => r.name != c.name || r.phone != c.phone)].take(6);
+      await (await SharedPreferences.getInstance())
+          .setStringList(_prefsKey, [for (final r in list) jsonEncode({'name': r.name, 'phone': r.phone})]);
+    } catch (_) {}
+  }
+
+  void _submit() {
+    final raw = _phone.text.trim();
+    final problem = raw.isEmpty ? null : phoneProblem(raw);
+    if (problem != null) {
+      setState(() => _phoneError = problem);
+      return;
+    }
+    final c = (name: _name.text.trim(), phone: raw.isEmpty ? '' : normalizePhone(raw));
+    _remember(c);
+    Navigator.pop(context, c);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Кто везёт заказ?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_recent.isNotEmpty) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final r in _recent)
+                  ActionChip(
+                    label: Text(r.name.isEmpty ? formatPhone(r.phone) : r.name),
+                    onPressed: () => setState(() {
+                      _name.text = r.name;
+                      _phone.text = r.phone.isEmpty ? '' : formatPhone(r.phone);
+                      _phoneError = null;
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
+          TextField(
+            controller: _name,
+            autofocus: _recent.isEmpty,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Курьер (необязательно)'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _phone,
+            keyboardType: TextInputType.phone,
+            onChanged: (_) {
+              if (_phoneError != null) setState(() => _phoneError = null);
+            },
+            decoration: InputDecoration(
+              labelText: 'Телефон курьера (необязательно)',
+              helperText: 'Гость сможет позвонить курьеру, пока заказ в пути. Укажите рабочий '
+                  'номер; личный — только с письменного согласия курьера.',
+              helperMaxLines: 4,
+              errorText: _phoneError,
+              errorMaxLines: 3,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(onPressed: _submit, child: const Text('Передать')),
       ],
     );
   }
