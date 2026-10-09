@@ -53,26 +53,6 @@ test("Т-Банк: Init в копейках с подписью, ссылка С
   assert.match(init.NotificationURL, /guestPayNotify\?t=t1$/);
 });
 
-test("ЮKassa: платёж СБП, сумма строкой в рублях, ключ идемпотентности", async () => {
-  const { pay, calls } = makePay(() => ({ status: 200, text: JSON.stringify({ id: "2e1-yk", confirmation: { confirmation_url: "https://yoomoney.ru/checkout/x" } }) }));
-  const r = await pay.createPayment({ provider: "yookassa", login: "shop", password: "sk" }, { tenantId: "t1", amount: 990, orderId: "g2", description: "Счёт" });
-  assert.equal(r.providerId, "2e1-yk");
-  assert.equal(calls[0].url, "https://api.yookassa.ru/v3/payments");
-  assert.equal(calls[0].headers.Authorization, `Basic ${Buffer.from("shop:sk").toString("base64")}`);
-  assert.equal(calls[0].headers["Idempotence-Key"], "g2");
-  const body = JSON.parse(calls[0].body);
-  assert.deepEqual(body.amount, { value: "990.00", currency: "RUB" });
-  assert.equal(body.payment_method_data.type, "sbp");
-  assert.equal(body.confirmation.return_url, "https://pii.zalpos.ru/saas/guestPayDone");
-});
-
-test("ЮKassa: «нужен чек» — понятная подсказка владельцу", async () => {
-  const { pay } = makePay(() => ({ status: 400, text: JSON.stringify({ description: "Receipt is missing or illegal" }) }));
-  await assert.rejects(
-    pay.createPayment({ provider: "yookassa", login: "s", password: "k" }, { tenantId: "t1", amount: 10, orderId: "g", description: "x" }),
-    /Чеки от ЮKassa/);
-});
-
 test("Робокасса: подпись Пароль №1 с Shp_t, тестовый режим, свой номер счёта", async () => {
   const { pay, store } = makePay(() => ({ status: 200, text: "" }));
   const c = { provider: "robokassa", login: "shop", password: "p1", password2: "p2", hash: "md5", test: true };
@@ -118,8 +98,6 @@ test("статусы банков: оплачен / отказ / ждём", asyn
     ["tinkoff", { Success: true, Status: "CONFIRMED" }, "paid"],
     ["tinkoff", { Success: true, Status: "REJECTED" }, "failed"],
     ["tinkoff", { Success: true, Status: "FORM_SHOWED" }, "pending"],
-    ["yookassa", { status: "succeeded" }, "paid"],
-    ["yookassa", { status: "canceled" }, "failed"],
     ["sber", { orderStatus: 2 }, "paid"],
     ["alfa", { orderStatus: 6 }, "failed"],
     ["alfa", { orderStatus: 0 }, "pending"],
@@ -162,10 +140,8 @@ test("проверка реквизитов без денег: верные/не
   reply = { status: 200, text: JSON.stringify({ errorCode: "5", errorMessage: "Access denied" }) };
   ({ pay } = makePay(() => reply));
   assert.equal((await pay.checkCreds({ provider: "alfa", login: "a", password: "b" })).ok, false);
-  ({ pay } = makePay(() => ({ status: 401, text: "{}" })));
-  assert.equal((await pay.checkCreds({ provider: "yookassa", login: "a", password: "b" })).ok, false);
-  ({ pay } = makePay(() => ({ status: 404, text: "{}" })));
-  assert.equal((await pay.checkCreds({ provider: "yookassa", login: "a", password: "b" })).ok, true);
+  // ЮKassa больше не поддерживается — такие настройки не включают оплату.
+  assert.equal(gp.onlinePaySettings({ onlinePayProvider: "yookassa", onlinePayLogin: "a", onlinePayPassword: "b" }), null);
   ({ pay } = makePay(() => ({ status: 200, text: "<Result><Code>3</Code></Result>" })));
   assert.equal((await pay.checkCreds({ provider: "robokassa", login: "a", password: "b", password2: "c", hash: "md5" })).ok, true);
   ({ pay } = makePay(() => ({ status: 200, text: "<Result><Code>1</Code></Result>" })));

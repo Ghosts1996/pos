@@ -595,6 +595,23 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     + "добавил в кабинете ZalPOS → Настройки → Telegram-бот → «Кто управляет ботом». Перешлите ему это число.";
   const isStaffChat = (bot, chatId) => !!bot.cfg.staffChat && bot.cfg.staffChat.id === chatId;
 
+  /** Личный чат владельца или управляющего из списка — получать отчёты и сигналы. */
+  async function linkOwnerChat(bot, chat, venue = null) {
+    const v = venue || (await tenantRef(bot.tenantId).get()).data() || {};
+    const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ") || "Владелец";
+    await db().runTransaction(async (tx) => {
+      const r = botsCol().doc(bot.tenantId);
+      const cur = (await tx.get(r)).data() || {};
+      // Владельцев и управляющих в списке до 30 — столько же и чатов.
+      const owners = (cur.ownerChats || []).filter((c) => c.id !== chat.id).concat([{ id: chat.id, name }]).slice(-MAX_ALLOWED);
+      tx.update(r, { ownerChats: owners });
+    });
+    return say(bot, chat.id, `Готово: «${v.name || "заведение"}» подключено.\n\n`
+      + `Каждое утро в ${SUMMARY_HOUR}:00 — итоги прошлой смены. Начало и конец смен, отмены позиций, `
+      + `закрытие без оплаты, возвраты и скидки от ${BIG_DISCOUNT_PERCENT}% — сразу. Отчёты — кнопками ниже.`,
+    { reply_markup: MENU_KEYBOARD });
+  }
+
   async function onMessage(bot, msg) {
     const chat = msg.chat || {};
     const text = String(msg.text || "").trim();
@@ -630,18 +647,8 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       if (group) return say(bot, chat.id, "Эта ссылка — для личного чата владельца, а не для группы.");
       // Ссылку могли переслать: подключается только ID из списка владельцев.
       if (role !== "owner" || chat.id !== userId) return say(bot, chat.id, noAccess(userId));
-      const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ") || "Владелец";
-      await db().runTransaction(async (tx) => {
-        const r = botsCol().doc(bot.tenantId);
-        const cur = (await tx.get(r)).data() || {};
-        const owners = (cur.ownerChats || []).filter((c) => c.id !== chat.id).concat([{ id: chat.id, name }]).slice(-5);
-        tx.update(r, { ownerChats: owners });
-        tx.delete(ref);
-      });
-      return say(bot, chat.id, `Готово: «${venue.name || "заведение"}» подключено.\n\n`
-        + `Каждое утро в ${SUMMARY_HOUR}:00 — итоги прошлой смены. Начало и конец смен, отмены позиций, `
-        + `закрытие без оплаты, возвраты и скидки от ${BIG_DISCOUNT_PERCENT}% — сразу. Отчёты — кнопками ниже.`,
-      { reply_markup: MENU_KEYBOARD });
+      await ref.delete();
+      return linkOwnerChat(bot, chat, venue);
     }
 
     if (cmd === "/stop" && !group && isOwnerChat(bot, chat.id)) {
@@ -658,10 +665,9 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       return say(bot, chat.id, "Вы в списке сотрудников: заказы ведёте кнопками в рабочей группе. Отчёты получает владелец.");
     }
     if (role !== "owner" || chat.id !== userId) return say(bot, chat.id, noAccess(userId));
-    if (!isOwnerChat(bot, chat.id)) {
-      return say(bot, chat.id, "Ваш ID в списке владельцев. Чтобы получать отчёты и уведомления, нажмите в кабинете "
-        + "«Подключить мой Telegram».");
-    }
+    // ID в списке владельцев — подключаем личный чат сразу, без ссылки из
+    // кабинета: достаточно открыть бота и нажать «Запустить».
+    if (!isOwnerChat(bot, chat.id)) return linkOwnerChat(bot, chat);
     const report = REPORTS[Object.keys(MENU).find((k) => MENU[k] === text)];
     if (report) return say(bot, chat.id, await report(bot), { reply_markup: MENU_KEYBOARD });
     if (cmd === "/start" || cmd === "/menu") return say(bot, chat.id, "Выберите отчёт:", { reply_markup: MENU_KEYBOARD });
