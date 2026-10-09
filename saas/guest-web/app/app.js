@@ -1146,6 +1146,8 @@ function drawTable(s) {
   // у стола «без ограничений» конец через десять лет.
   const showTimer = hookah && plannedEnd && plannedEnd - new Date() < 365 * 24 * 3600 * 1000;
   const tipsOn = (state.venue || {}).tipsEnabled !== false;
+  const sbpOn = (state.venue || {}).guestSbpPay === true;
+  const guestPaid = Number(s.guestPaidTotal) || 0;
 
   screenEl().innerHTML = `
     <div class="row">
@@ -1188,12 +1190,16 @@ function drawTable(s) {
           <span class="grow">Скидка ${Math.round(discount)}%</span>
           <span>−${money(total * discount / 100)}</span></div>` : ''}
         <div class="bill-total"><span>Итого</span><span>${money(total * (1 - discount / 100))}</span></div>
+        ${guestPaid > 0 ? `<div class="bill-line" style="color:var(--gold)">
+          <span class="grow">Оплачено по СБП</span><span>−${money(guestPaid)}</span></div>` : ''}
         ${bonus >= 1 ? `<div class="small" style="color:var(--gold);margin-top:10px">
           Доступно бонусов: ${money(bonus)} — скажите ${staffWord('dat')}, чтобы списать при оплате</div>` : ''}
       ` : `<p class="muted small" style="margin:0">Пока пусто — нажмите «Сделать заказ»</p>`}
     </div>
 
     ${tipsOn ? `<h2>Чаевые</h2><div class="card"><div id="tipsPanel"></div></div>` : ''}
+
+    ${sbpOn && items.length ? `<h2>Оплата</h2><div class="card"><div id="sbpPanel"></div></div>` : ''}
 
     <div id="orders"></div>
   `;
@@ -1237,6 +1243,84 @@ function drawTable(s) {
     paintOrders(s.id);
   }
   paintTips();
+  if (sbpOn) paintSbp(s);
+}
+
+// ---------- ОПЛАТА ПО СБП СО СТОЛА ----------
+// Сумму считает сервер по счёту; гость только подтверждает в своём банке.
+
+function paintSbp(s) {
+  const box = $('sbpPanel');
+  if (!box) return;
+  const p = state.sbp && state.sbp.sid === s.id ? state.sbp : null;
+  if (p && p.status === 'paid') {
+    box.innerHTML = `<p style="margin:0">${ic('check')} Оплата прошла — спасибо! ${cap(staffWord('nom'))} уже знает.</p>`;
+    return;
+  }
+  if (p && p.link) {
+    box.innerHTML = `
+      <p class="small muted" style="margin:0 0 10px">К оплате ${money(p.amount)}. Выберите свой банк и подтвердите перевод —
+        мы сами увидим оплату.</p>
+      <a class="btn btn-primary" href="${esc(p.link)}" target="_blank" rel="noopener">Открыть приложение банка</a>
+      <p class="small muted" style="margin:10px 0 0">${p.status === 'failed' ? 'Платёж не прошёл — попробуйте ещё раз.' : 'Ждём подтверждения банка…'}</p>
+      ${p.status === 'failed' ? '<button class="btn-ghost" id="sbpPay" style="margin-top:10px">Оплатить заново</button>' : ''}`;
+  } else {
+    box.innerHTML = `
+      <p class="small muted" style="margin:0 0 10px">Оплатите счёт сами через СБП — без ожидания официанта и терминала.
+        Чаевые, добавленные к счёту, войдут в сумму.</p>
+      <button class="btn-primary" id="sbpPay">Оплатить по СБП</button>`;
+  }
+  const btn = $('sbpPay');
+  if (btn) btn.onclick = () => startSbp(s, btn);
+}
+
+async function gatewayPost(path, body) {
+  const token = await state.auth.currentUser.getIdToken();
+  const res = await fetch(`${GATEWAY}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tenantId: state.tenantId, ...body }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || 'Сервис оплаты недоступен');
+  return json;
+}
+
+async function startSbp(s, btn) {
+  btn.disabled = true;
+  try {
+    const r = await gatewayPost('/guestPayStart', { sessionId: s.id });
+    state.sbp = { sid: s.id, paymentId: r.paymentId, link: r.payload, amount: r.amount, status: 'pending' };
+    paintSbp(s);
+    if (r.payload) window.open(r.payload, '_blank', 'noopener');
+    pollSbp(s);
+  } catch (e) {
+    toast(e.message || 'Не удалось начать оплату');
+    btn.disabled = false;
+  }
+}
+
+function pollSbp(s) {
+  const p = state.sbp;
+  if (!p || p.polling) return;
+  p.polling = true;
+  const started = Date.now();
+  const tick = async () => {
+    if (state.sbp !== p || p.status !== 'pending' || Date.now() - started > 16 * 60 * 1000) {
+      p.polling = false;
+      return;
+    }
+    try {
+      const r = await gatewayPost('/guestPayStatus', { paymentId: p.paymentId });
+      if (r.status !== p.status) {
+        p.status = r.status;
+        paintSbp(s);
+        if (r.status === 'paid') toast('Оплата прошла');
+      }
+    } catch (_) { /* сеть моргнула — следующий опрос */ }
+    setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
 }
 
 const CALL_LABELS = {
@@ -1245,6 +1329,7 @@ const CALL_LABELS = {
   waiter: 'Позвать кальянщика',
   bill: 'Счёт, пожалуйста',
   callWaiter: 'Позвать официанта',
+  paid: 'Оплачено по СБП',
 };
 
 async function callStaff(type, s, btn) {

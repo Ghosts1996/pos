@@ -292,6 +292,8 @@ class GuestRequestsBanner extends StatelessWidget {
         return Icons.pan_tool_alt;
       case GuestCallType.callWaiter:
         return Icons.room_service;
+      case GuestCallType.paid:
+        return Icons.qr_code_2;
     }
   }
 }
