@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'app_scope.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
@@ -351,6 +352,70 @@ class _NotImplementedTerminalService implements PaymentTerminalService {
           'Пока используйте «Ручной терминал» — Настройки → Интеграции.');
 }
 
+/// Терминал Сбера (Verifone/Ingenico/PAX с ПО UPOS), подключённый к
+/// Windows-кассе кабелем: сумма уходит на терминал сама, кассиру не нужно
+/// её набирать. Работает через `sb_pilot.exe` из комплекта UPOS, который
+/// банк ставит вместе с терминалом: `sb_pilot.exe 1 <сумма в копейках>` —
+/// оплата, итог — в файле `e` (первая строка «код,текст», 0 — одобрено),
+/// слип — в файле `p`.
+///
+/// Код ответа читаем строго: оплата считается прошедшей только при коде 0.
+/// Любой другой результат (нет файла, мусор) — отказ, кассир повторит или
+/// примет оплату вручную.
+class SberUposTerminalService implements PaymentTerminalService {
+  /// Папка UPOS, где лежит sb_pilot.exe (обычно C:\sc552).
+  final String folder;
+  SberUposTerminalService({required String folder})
+      : folder = folder.trim().isEmpty ? r'C:\sc552' : folder.trim();
+
+  @override
+  bool get isAvailable => Platform.isWindows;
+
+  /// Разбор файла `e`. Кодировка — cp1251, но нам нужны только код и
+  /// маска карты (ASCII), поэтому читаем как latin1.
+  static TerminalPaymentResult parseResult(List<int> bytes) {
+    final lines = latin1.decode(bytes).split(RegExp(r'\r?\n'));
+    final head = lines.isEmpty ? '' : lines.first.trim();
+    final code = int.tryParse(head.split(',').first.trim());
+    if (code == null) return const TerminalPaymentResult.failure('Терминал не вернул результат операции');
+    if (code != 0) return TerminalPaymentResult.failure('Терминал отклонил оплату (код $code)');
+    String? line(int i) => lines.length > i && lines[i].trim().isNotEmpty ? lines[i].trim() : null;
+    final card = line(1);
+    final digits = card?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+    return TerminalPaymentResult.success(
+      operationId: line(3),
+      maskedCardNumber: digits.length >= 4 ? '•• ${digits.substring(digits.length - 4)}' : null,
+    );
+  }
+
+  @override
+  Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async {
+    if (!Platform.isWindows) {
+      return const TerminalPaymentResult.failure('Терминал Сбера через UPOS работает только на Windows-кассе');
+    }
+    final exe = File('$folder\\sb_pilot.exe');
+    if (!exe.existsSync()) {
+      return TerminalPaymentResult.failure('Не найден ${exe.path} — укажите папку UPOS в Настройках → Интеграции');
+    }
+    final result = File('$folder\\e');
+    try {
+      if (result.existsSync()) result.deleteSync();
+    } catch (_) {}
+    final kopecks = (amount * 100).round();
+    try {
+      await Process.run(exe.path, ['1', '$kopecks'], workingDirectory: folder)
+          .timeout(const Duration(minutes: 3));
+    } on TimeoutException {
+      return const TerminalPaymentResult.failure(
+          'Терминал не ответил за 3 минуты — проверьте на экране терминала, прошла ли оплата');
+    } catch (e) {
+      return TerminalPaymentResult.failure('Не удалось запустить UPOS: $e');
+    }
+    if (!result.existsSync()) return const TerminalPaymentResult.failure('Терминал не вернул результат операции');
+    return parseResult(await result.readAsBytes());
+  }
+}
+
 class SberAcquiringTerminalService extends _NotImplementedTerminalService {
   final String login;
   final String password;
@@ -399,6 +464,7 @@ class VerifoneTerminalService extends _NotImplementedTerminalService {
 enum TerminalProvider {
   manual('manual', 'Ручной терминал (любой банк)'),
   tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП (без терминала)'),
+  sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)'),
   sber('sber', 'Сбербанк Эквайринг'),
   vtb('vtb', 'ВТБ Эквайринг'),
   alfa('alfa', 'Альфа-Банк Эквайринг'),
@@ -436,6 +502,8 @@ PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
     case TerminalProvider.tinkoffSbp:
       return TinkoffSbpQrTerminalService(
           terminalKey: s('terminalLogin'), password: s('terminalPassword'));
+    case TerminalProvider.sberUpos:
+      return SberUposTerminalService(folder: s('terminalLogin'));
     case TerminalProvider.sber:
       return SberAcquiringTerminalService(login: s('terminalLogin'), password: s('terminalPassword'));
     case TerminalProvider.vtb:

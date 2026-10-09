@@ -386,6 +386,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         return (first: null, second: null);
       case TerminalProvider.tinkoffSbp:
         return (first: 'TerminalKey', second: 'Пароль терминала');
+      case TerminalProvider.sberUpos:
+        return (first: r'Папка UPOS с sb_pilot.exe (пусто — C:\sc552)', second: null);
       case TerminalProvider.sber:
         return (first: 'Логин', second: 'Пароль');
       case TerminalProvider.vtb:
@@ -421,7 +423,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (!paymentTerminalService.isAvailable) {
       setState(() {
         _terminalTesting = false;
-        _terminalTestResult = 'Заполните логин/пароль терминала';
+        _terminalTestResult = _terminalProvider == TerminalProvider.sberUpos
+            ? 'Терминал через UPOS подключается к Windows-кассе — проверьте с неё'
+            : 'Заполните логин/пароль терминала';
       });
       return;
     }
