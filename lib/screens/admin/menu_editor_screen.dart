@@ -195,7 +195,18 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     );
   }
 
-  String _buildItemSubtitle(MenuItem item) {
+  String _buildItemSubtitle(MenuItem item) => [_buildItemSubtitleBase(item), _costLine(item)].where((s) => s.isNotEmpty).join(' · ');
+
+  /// «себест. 112 ₽ · фудкост 28%» — по ценам закупки склада.
+  String _costLine(MenuItem item) {
+    final stock = {for (final i in _inventoryItems) i.id: i};
+    final cost = item.costPrice(stock);
+    if (cost == null) return '';
+    final fc = item.foodCostPercent(stock);
+    return 'себест. ${rub(cost)}${fc == null ? '' : ' · фудкост ${fc.toStringAsFixed(0)}%'}';
+  }
+
+  String _buildItemSubtitleBase(MenuItem item) {
     final priceStr = rub(item.price);
     if (item.isComposite) {
       // Составная позиция: показываем суммарный вес всех компонентов

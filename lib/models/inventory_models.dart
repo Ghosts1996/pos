@@ -102,6 +102,13 @@ extension InventoryUnitX on InventoryUnit {
   }
 
   String formatWithLabel(double value) => '${format(value)} $label';
+
+  /// В чём удобно задавать цену закупки: граммы — за кг, мл — за литр.
+  InventoryUnit get priceUnit => this == InventoryUnit.g
+      ? InventoryUnit.kg
+      : this == InventoryUnit.ml
+          ? InventoryUnit.l
+          : this;
 }
 
 /// Позиция склада — любой отслеживаемый ресурс: сорт табака в граммах,
@@ -147,6 +154,10 @@ class InventoryItem {
   /// [MarkingCode.gtin]) сверяется с конкретной позицией номенклатуры.
   final String gtin;
 
+  /// Цена закупки, ₽ за [InventoryUnit.priceUnit] (за кг, литр или штуку).
+  /// 0 — не задана: себестоимость блюд с этим продуктом не считается.
+  final double costPrice;
+
   InventoryItem({
     required this.id,
     required this.name,
@@ -160,7 +171,12 @@ class InventoryItem {
     this.alcohol = const AlcoholInfo(),
     this.isMarked = false,
     this.gtin = '',
+    this.costPrice = 0,
   });
+
+  /// Стоимость [amount] в единицах [amountUnit] по цене закупки, ₽.
+  double costOf(double amount, InventoryUnit amountUnit) =>
+      costPrice <= 0 ? 0 : amountUnit.convertTo(amount, unit.priceUnit) * costPrice;
 
   /// Мало на складе — только если порог явно задан админом.
   bool get isLow => minQuantity > 0 && quantity <= minQuantity;
@@ -180,6 +196,7 @@ class InventoryItem {
       alcohol: AlcoholInfo.fromMap(data['alcohol'] as Map<String, dynamic>?),
       isMarked: data['isMarked'] ?? false,
       gtin: data['gtin'] ?? '',
+      costPrice: (data['costPrice'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -195,6 +212,7 @@ class InventoryItem {
         'alcohol': alcohol.toMap(),
         'isMarked': isMarked,
         'gtin': gtin,
+        'costPrice': costPrice,
       };
 
   InventoryItem copyWith({
@@ -208,9 +226,11 @@ class InventoryItem {
     AlcoholInfo? alcohol,
     bool? isMarked,
     String? gtin,
+    double? costPrice,
   }) =>
       InventoryItem(
         id: id,
+        costPrice: costPrice ?? this.costPrice,
         name: name ?? this.name,
         category: category ?? this.category,
         unit: unit ?? this.unit,
