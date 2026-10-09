@@ -255,11 +255,13 @@ async function main() {
       let tampered = false;
       try { tg.decrypt(key, enc.slice(0, -4) + "AAAA"); } catch (_) { tampered = true; }
       check("telegram: подменённый шифротекст не расшифровывается", tampered);
-      const card = tg.deliveryCardText({ id: "abcdef123456", orderType: "delivery", deliveryStatus: "cooking",
+      const card = tg.deliveryCardText({ id: "abcdef123456", orderNo: 17, orderType: "delivery", deliveryStatus: "cooking",
         guestTag: "Иван Петров", customerPhone: "+79001112233", deliveryAddress: "ул. Ленина, 1",
         orderItems: [{ name: "Пицца", price: 500, qty: 2 }] }, "Europe/Moscow");
+      const oldCard = tg.deliveryCardText({ id: "abcdef123456", orderType: "takeaway", deliveryStatus: "new", orderItems: [] }, "Europe/Moscow");
+      check("telegram: у заказа без порядкового номера — 4 последних знака id", oldCard.includes("№3456"));
       check("telegram: в карточке доставки нет имени, телефона и адреса гостя",
-        card.includes("№123456") && card.includes("Готовится") && !card.includes("Иван") && !card.includes("+7900") && !card.includes("Ленина"));
+        card.includes("№17") && card.includes("Готовится") && !card.includes("Иван") && !card.includes("+7900") && !card.includes("Ленина"));
       const kb = tg.deliveryKeyboard({ id: "abc", orderType: "delivery", deliveryStatus: "cooking" }, "https://x/a");
       check("telegram: кнопки доставки — следующий шаг, курьер, адрес",
         kb.inline_keyboard[0][0].callback_data === "s:abc:courier" && kb.inline_keyboard[1].some((b) => b.url === "https://x/a"));

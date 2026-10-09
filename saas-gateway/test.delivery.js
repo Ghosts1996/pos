@@ -115,6 +115,18 @@ test("заказ: цены из меню с добавками, ПДн снач�
   assert.deepEqual(go.items[0], { menuItemId: "soup", name: "Том ям", price: 640, qty: 2, mods: ["Огонь"] });
   assert.equal(store.get(`tenants/t1/sessionClaims/${sid}`).uid, "g1");
   assert.deepEqual(store.get("tenants/t1/tables/takeaway").activeSessionIds, [sid]);
+  // Первый заказ заведения — №1.
+  assert.equal(s.orderNo, 1);
+  assert.equal(res.body.orderNo, "1");
+});
+
+test("номера заказов идут подряд от счётчика заведения", async () => {
+  const { api, store } = setup();
+  store.set("tenants/t1/settings/orderCounter", { last: 41 });
+  const res = await call(api.handleCreate, order());
+  assert.equal(res.body.orderNo, "42");
+  assert.equal(store.get(`tenants/t1/sessions/${res.body.sessionId}`).orderNo, 42);
+  assert.equal(store.get("tenants/t1/settings/orderCounter").last, 42);
 });
 
 test("табак и пиво из корзины не проходят; только они — отказ", async () => {

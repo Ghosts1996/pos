@@ -208,7 +208,8 @@ const hhmm = (date, tz) => {
 
 // ---------------------------------------------------------------- тексты (чистые функции)
 
-const orderNo = (sessionId) => String(sessionId).slice(-6).toUpperCase();
+/** Номер заказа: порядковый (sessions.orderNo), у старых — хвост id. Как orderNumberLabel в кассе. */
+const orderNo = (sessionId, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) : String(sessionId).slice(-4).toUpperCase());
 
 /** Деньги чеков: выручка, чеки, оплаты, доли цехов. */
 function salesStats(sessions, excludeTobacco = true) {
@@ -314,7 +315,7 @@ function deliveryCardText(s, tz, pendingItems = []) {
     : Math.round(items.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0) * 100) / 100;
   const app = s.source === "app";
   const lines = [
-    `${type === "delivery" ? "🛵 Доставка" : "🥡 С собой"} №${orderNo(s.id)}${app ? " · 📱 из приложения" : ""}`,
+    `${type === "delivery" ? "🛵 Доставка" : "🥡 С собой"} №${orderNo(s.id, s.orderNo)}${app ? " · 📱 из приложения" : ""}`,
     `Статус: ${flow.label(type, s.deliveryStatus)}`,
     `Позиций: ${qty} · ${rub(total)}`,
   ];
@@ -548,7 +549,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const ses = (await tenantRef(t).collection("sessions").doc(s).get()).data();
     if (!ses || ses.orderType !== "delivery") return page(404, "<p>Заказ не найден.</p>");
     const phone = String(ses.customerPhone || "");
-    page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s))}</h2>
+    page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s, ses.orderNo))}</h2>
 <p><b>Адрес:</b><br>${esc(ses.deliveryAddress) || "не указан"}</p>
 ${phone ? `<p><b>Телефон:</b> <a href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">${esc(phone)}</a></p>` : ""}
 ${ses.guestTag ? `<p><b>Имя:</b> ${esc(ses.guestTag)}</p>` : ""}
@@ -846,7 +847,7 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       if (!open.length) return "🛵 Заказов с собой и доставки в работе нет.";
       return ["🛵 В работе:"].concat(open.map((s) => {
         const type = s.orderType === "delivery" ? "delivery" : "takeaway";
-        return `• №${orderNo(s.id)} ${type === "delivery" ? "доставка" : "с собой"} — ${flow.label(type, s.deliveryStatus)}, ${rub(sessionBill(s))}`;
+        return `• №${orderNo(s.id, s.orderNo)} ${type === "delivery" ? "доставка" : "с собой"} — ${flow.label(type, s.deliveryStatus)}, ${rub(sessionBill(s))}`;
       })).join("\n");
     },
   };
@@ -889,10 +890,10 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     const type = s && s.orderType === "delivery" ? "delivery" : "takeaway";
     const st = s ? flow.normalize(type, s.deliveryStatus) : "";
     const text = st === "cancelled"
-      ? `❌ №${orderNo(sessionId)} отменён${s.cancelReason ? `: ${String(s.cancelReason).slice(0, 120)}` : ""}`
+      ? `❌ №${orderNo(sessionId, s && s.orderNo)} отменён${s.cancelReason ? `: ${String(s.cancelReason).slice(0, 120)}` : ""}`
       : st === "done"
-        ? `✅ №${orderNo(sessionId)} ${type === "delivery" ? "доставлен" : "выдан"}`
-        : `✅ №${orderNo(sessionId)} закрыт на кассе`;
+        ? `✅ №${orderNo(sessionId, s && s.orderNo)} ${type === "delivery" ? "доставлен" : "выдан"}`
+        : `✅ №${orderNo(sessionId, s && s.orderNo)} закрыт на кассе`;
     await api(bot.token, "editMessageReplyMarkup", { chat_id: card.chatId, message_id: card.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
     await api(bot.token, "sendMessage", { chat_id: card.chatId, text, reply_to_message_id: card.messageId }).catch(() => {});
     await cardRef.delete();

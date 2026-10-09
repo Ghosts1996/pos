@@ -20,25 +20,26 @@ class KolibriOrderScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Заказ №${orderNumber(sessionId)}')),
-      body: StreamBuilder<SessionModel?>(
-        stream: DeliveryOrderService.instance.order(sessionId),
-        builder: (context, snap) {
-          final s = snap.data;
-          if (s == null) {
-            return Center(
-              child: snap.connectionState == ConnectionState.waiting
-                  ? const CircularProgressIndicator()
-                  : Text('Заказ не найден', style: TextStyle(color: KolibriColors.textMuted)),
-            );
-          }
-          return ValueListenableBuilder<VenueProfile>(
-            valueListenable: VenueService.instance.notifier,
-            builder: (context, venue, _) => _OrderBody(order: s, venue: venue),
-          );
-        },
-      ),
+    // Номер берём из самого заказа (порядковый, см. SessionModel.orderNo),
+    // поэтому шапка — внутри потока.
+    return StreamBuilder<SessionModel?>(
+      stream: DeliveryOrderService.instance.order(sessionId),
+      builder: (context, snap) {
+        final s = snap.data;
+        return Scaffold(
+          appBar: AppBar(title: Text(s == null ? 'Заказ' : 'Заказ №${s.orderLabel}')),
+          body: s == null
+              ? Center(
+                  child: snap.connectionState == ConnectionState.waiting
+                      ? const CircularProgressIndicator()
+                      : Text('Заказ не найден', style: TextStyle(color: KolibriColors.textMuted)),
+                )
+              : ValueListenableBuilder<VenueProfile>(
+                  valueListenable: VenueService.instance.notifier,
+                  builder: (context, venue, _) => _OrderBody(order: s, venue: venue),
+                ),
+        );
+      },
     );
   }
 }
@@ -310,7 +311,7 @@ class MyDeliveryOrders extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('${o.orderType == 'delivery' ? 'Доставка' : 'С собой'} №${orderNumber(o.id)}',
+                                Text('${o.orderType == 'delivery' ? 'Доставка' : 'С собой'} №${o.orderLabel}',
                                     style: const TextStyle(fontWeight: FontWeight.w700)),
                                 Text(
                                   DeliveryFlow.normalize(o.orderType, o.deliveryStatus) == 'new'
