@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../app_scope.dart';
 import 'ai_agents.dart';
+import 'ai_context_service.dart';
 import 'ai_settings.dart';
 
 /// Фоновые задания ИИ на POS-планшете.
@@ -11,10 +12,12 @@ import 'ai_settings.dart';
 /// работу трижды и не потратят токены втрое.
 ///
 /// Задания:
-///  • утренний разбор броней → staffNotes;
-///  • вечерние итоги смены → shiftSummaries;
-///  • проверка склада и рисков стоп-листа раз в 3 часа;
+///  • утренний разбор броней;
+///  • итоги смены под закрытие;
+///  • разбор суток и недели по всем данным заведения (без персональных);
+///  • проверка склада, когда что-то ниже минимума;
 ///  • разбор новых отзывов раз в сутки.
+/// Всё складывается в staffNotes — вкладка «Сводки ИИ».
 class AiScheduler {
   AiScheduler._();
   static final AiScheduler instance = AiScheduler._();
@@ -48,7 +51,9 @@ class AiScheduler {
       await _runIfDue('hostess_briefing', const Duration(hours: 12),
           window: now.hour >= 12 && now.hour <= 20, () => AiService.instance.hostessBriefing());
 
-      await _runIfDue('stock_watch', const Duration(hours: 3), () async {
+      await _runIfDue('stock_watch', const Duration(hours: 8), () async {
+        final low = await AiContextService().stockSnapshot(onlyProblems: true);
+        if (low == 'Склад в норме.') return null; // нечего докупать — не тратим токены
         return AiService.instance.restockPlan(days: 7);
       });
 
@@ -65,6 +70,13 @@ class AiScheduler {
       // Под закрытие заведения.
       await _runIfDue('shift_summary', const Duration(hours: 20),
           window: now.hour >= 2 && now.hour <= 6, () => AiService.instance.shiftSummary());
+
+      // Разбор суток — к утру владельца; недели — в понедельник.
+      await _runIfDue('venue_digest', const Duration(hours: 20),
+          window: now.hour >= 8 && now.hour <= 12, () => AiService.instance.venueDigest());
+      await _runIfDue('week_digest', const Duration(days: 6),
+          window: now.weekday == DateTime.monday && now.hour >= 9 && now.hour <= 14,
+          () => AiService.instance.venueDigest(days: 7));
     } catch (_) {
       // Фоновые задания не должны ломать работу кассы.
     } finally {
@@ -133,7 +145,26 @@ class AiScheduler {
     });
   }
 
+  /// «Собрать разбор сейчас» с экрана «Активность и журнал»: тот же
+  /// разбор суток, что и по расписанию, сразу в ленту сводок.
+  /// null — за сутки не было чеков.
+  Future<String?> digestNow() async {
+    final text = await AiService.instance.venueDigest();
+    if (text == null || text.trim().isEmpty) return null;
+    await AppScope.col('staffNotes').add({
+      'text': text,
+      'title': _titles['venue_digest'],
+      'priority': 'info',
+      'source': 'ai:venue_digest',
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+      'read': false,
+    });
+    return text;
+  }
+
   static const _titles = {
+    'venue_digest': 'Разбор суток',
+    'week_digest': 'Разбор недели',
     'hostess_briefing': 'Брони на смену',
     'stock_watch': 'Склад и закупки',
     'review_digest': 'Отзывы за сутки',
