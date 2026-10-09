@@ -235,6 +235,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(controller: name, decoration: const InputDecoration(labelText: 'Имя')),
+              const SizedBox(height: 12),
               TextField(
                 controller: phone,
                 keyboardType: TextInputType.phone,

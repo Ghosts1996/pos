@@ -552,6 +552,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: 'Сумма, ₽'),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: commentCtrl,
                 maxLength: 100,
