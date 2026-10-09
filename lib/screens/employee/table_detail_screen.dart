@@ -2,13 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../models/delivery_status.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/printer_service.dart';
+import '../../widgets/delivery_order_card.dart';
 import '../../widgets/void_item_dialog.dart';
 import '../../widgets/order_note_sheet.dart';
 import '../../widgets/table_checks_sheet.dart';
@@ -810,7 +810,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               padding: EdgeInsets.fromLTRB(side, 12, side, 24),
               children: [
                 if (t.isTakeaway)
-                  _TakeawayCard(session: session)
+                  DeliveryOrderCard(session: session, employee: widget.employee)
                 else
                   _SessionStatusCard(session: session, showRefills: canRefill, unlimited: unlimited),
                 const SizedBox(height: 12),
@@ -1479,105 +1479,3 @@ class _TimeAdjustSheet extends StatelessWidget {
 }
 
 /// Шапка заказа с собой или доставки: кто, телефон, адрес, сколько ждёт.
-class _TakeawayCard extends StatelessWidget {
-  final SessionModel session;
-  const _TakeawayCard({required this.session});
-
-  @override
-  Widget build(BuildContext context) {
-    final delivery = session.orderType == 'delivery';
-    final waited = DateTime.now().difference(session.startTime).inMinutes;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(delivery ? Icons.delivery_dining_rounded : Icons.shopping_bag_outlined,
-              size: 30, color: AppColors.primary),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(session.tableName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                if (session.customerPhone.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(session.customerPhone),
-                  ),
-                if (session.deliveryAddress.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(session.deliveryAddress),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text('Заказ принят ${waited < 1 ? 'только что' : '$waited мин назад'}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text(DeliveryFlow.label(session.orderType, session.deliveryStatus)
-                          + (session.courierName.isNotEmpty ? ' · ${session.courierName}' : '')),
-                    ),
-                    if (DeliveryFlow.actionLabel(session.orderType, session.deliveryStatus) != null)
-                      FilledButton.tonal(
-                        onPressed: () => _advance(context),
-                        child: Text(DeliveryFlow.actionLabel(session.orderType, session.deliveryStatus)!),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _advance(BuildContext context) async {
-    final to = DeliveryFlow.next(session.orderType, session.deliveryStatus);
-    if (to == null) return;
-    var courier = '';
-    if (to == 'courier') {
-      final ctrl = TextEditingController();
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Кто везёт заказ?'),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Курьер (необязательно)'),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Передать')),
-          ],
-        ),
-      );
-      courier = ctrl.text.trim();
-      ctrl.dispose();
-      if (ok != true) return;
-    }
-    try {
-      await FirestoreService().setDeliveryStatus(session.id, to, courierName: courier);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
-      }
-    }
-  }
-}

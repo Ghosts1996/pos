@@ -563,8 +563,13 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId}/sessions/{doc} {
+      // Гость видит свой чек за столом и свои заказы доставки/с собой из
+      // приложения (их создаёт шлюз, clientUid — гость): статус и сумму.
       allow read: if isStaff(tenantId) ||
-        (isTenantGuest(tenantId) && myActiveSession(tenantId) == doc);
+        (isTenantGuest(tenantId) && myActiveSession(tenantId) == doc) ||
+        (isTenantGuest(tenantId) &&
+         resource.data.get('clientUid', '') == request.auth.uid &&
+         resource.data.get('source', '') == 'app');
       allow update: if isStaff(tenantId) ||
         (signedIn() &&
          exists(/databases/$(database)/documents/tenants/$(tenantId)/sessionClaims/$(doc)) &&
