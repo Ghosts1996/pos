@@ -1048,64 +1048,85 @@ class FirestoreService {
         }
       }
 
-      if (!menuItem.hasAnyInventoryLink) continue;
-
-      if (menuItem.isComposite) {
-        // Составная позиция: списываем каждый компонент отдельно
-        for (final component in menuItem.components) {
-          if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
-          try {
-            final invDoc = await AppScope.col('inventoryItems')
-                .doc(component.inventoryItemId)
-                .get();
-            if (!invDoc.exists) continue;
-            final invItem = InventoryItem.fromDoc(invDoc);
-            // Граммовка компонента задана в component.weightUnit, а остаток
-            // склада ведётся в invItem.unit — единицы могут не совпадать
-            // (например, компонент задан в мл, а сама позиция склада — в
-            // литрах), поэтому переводим количество в единицу склада перед
-            // тем, как вычесть его из остатка.
-            final qtyInStockUnit =
-                component.weightUnit.convertTo(component.weight, invItem.unit);
-            final delta = -(qtyInStockUnit * orderItem.qty);
-            await adjustInventoryQuantity(
-              itemId: component.inventoryItemId,
-              itemName: invItem.name,
-              unit: invItem.unit,
-              delta: delta,
-              type: 'writeoff',
-              employeeName: employeeName,
-              reason: 'Продажа: ${orderItem.name} ×${orderItem.qty} (компонент)',
-            );
-          } catch (_) {
-            // Не блокируем оплату из-за ошибок списания компонента
+      // Комбо: вариант — блюдо меню, списываем его техкарту.
+      for (final option in menuItem.optionsNamed(orderItem.mods)) {
+        if (option.menuItemId.isEmpty) continue;
+        try {
+          var dish = menuMap[option.menuItemId];
+          if (dish == null) {
+            final d = await AppScope.col('menuItems').doc(option.menuItemId).get();
+            if (!d.exists) continue;
+            dish = menuMap[d.id] = MenuItem.fromDoc(d);
           }
+          await _deductMenuItem(dish, orderItem.qty, '${orderItem.name}: ${dish.name}', employeeName);
+        } catch (_) {
+          // Не блокируем оплату из-за ошибок списания
         }
-      } else {
-        // Простая позиция: одна привязка к складу
+      }
+
+      await _deductMenuItem(menuItem, orderItem.qty, orderItem.name, employeeName);
+    }
+  }
+
+  /// Списание техкарты одной позиции меню: простая привязка или состав.
+  Future<void> _deductMenuItem(MenuItem menuItem, int qty, String label, String employeeName) async {
+    if (!menuItem.hasAnyInventoryLink) return;
+
+    if (menuItem.isComposite) {
+      // Составная позиция: списываем каждый компонент отдельно
+      for (final component in menuItem.components) {
+        if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
         try {
           final invDoc = await AppScope.col('inventoryItems')
-              .doc(menuItem.inventoryItemId)
+              .doc(component.inventoryItemId)
               .get();
           if (!invDoc.exists) continue;
           final invItem = InventoryItem.fromDoc(invDoc);
-          // Аналогично компоненту выше: граммовка позиции меню задана в
-          // menuItem.weightUnit, который админ выбирает независимо от
-          // единицы привязанной позиции склада — переводим перед списанием.
-          final qtyInStockUnit = menuItem.weightUnit.convertTo(menuItem.weight, invItem.unit);
-          final delta = -(qtyInStockUnit * orderItem.qty);
+          // Граммовка компонента задана в component.weightUnit, а остаток
+          // склада ведётся в invItem.unit — единицы могут не совпадать
+          // (например, компонент задан в мл, а сама позиция склада — в
+          // литрах), поэтому переводим количество в единицу склада перед
+          // тем, как вычесть его из остатка.
+          final qtyInStockUnit =
+              component.weightUnit.convertTo(component.weight, invItem.unit);
+          final delta = -(qtyInStockUnit * qty);
           await adjustInventoryQuantity(
-            itemId: menuItem.inventoryItemId,
+            itemId: component.inventoryItemId,
             itemName: invItem.name,
             unit: invItem.unit,
             delta: delta,
             type: 'writeoff',
             employeeName: employeeName,
-            reason: 'Продажа: ${orderItem.name} ×${orderItem.qty}',
+            reason: 'Продажа: $label ×$qty (компонент)',
           );
         } catch (_) {
-          // Не блокируем оплату из-за ошибок списания
+          // Не блокируем оплату из-за ошибок списания компонента
         }
+      }
+    } else {
+      // Простая позиция: одна привязка к складу
+      try {
+        final invDoc = await AppScope.col('inventoryItems')
+            .doc(menuItem.inventoryItemId)
+            .get();
+        if (!invDoc.exists) return;
+        final invItem = InventoryItem.fromDoc(invDoc);
+        // Аналогично компоненту выше: граммовка позиции меню задана в
+        // menuItem.weightUnit, который админ выбирает независимо от
+        // единицы привязанной позиции склада — переводим перед списанием.
+        final qtyInStockUnit = menuItem.weightUnit.convertTo(menuItem.weight, invItem.unit);
+        final delta = -(qtyInStockUnit * qty);
+        await adjustInventoryQuantity(
+          itemId: menuItem.inventoryItemId,
+          itemName: invItem.name,
+          unit: invItem.unit,
+          delta: delta,
+          type: 'writeoff',
+          employeeName: employeeName,
+          reason: 'Продажа: $label ×$qty',
+        );
+      } catch (_) {
+        // Не блокируем оплату из-за ошибок списания
       }
     }
   }

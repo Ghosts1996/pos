@@ -102,12 +102,17 @@ class ModifierOption {
   final double weight;
   final InventoryUnit weightUnit;
 
+  /// Блюдо меню, которым является вариант, — для комбо и бизнес-ланчей
+  /// («Первое: Борщ»): со склада списывается техкарта этого блюда.
+  final String menuItemId;
+
   const ModifierOption({
     required this.name,
     this.price = 0,
     this.inventoryItemId = '',
     this.weight = 0,
     this.weightUnit = InventoryUnit.g,
+    this.menuItemId = '',
   });
 
   bool get hasInventoryLink => inventoryItemId.isNotEmpty && weight > 0;
@@ -118,11 +123,13 @@ class ModifierOption {
         inventoryItemId: (m['inventoryItemId'] ?? '').toString(),
         weight: (m['weight'] as num?)?.toDouble() ?? 0,
         weightUnit: InventoryUnitX.fromName(m['weightUnit'] as String?),
+        menuItemId: (m['menuItemId'] ?? '').toString(),
       );
 
   Map<String, dynamic> toMap() => {
         'name': name,
         'price': price,
+        if (menuItemId.isNotEmpty) 'menuItemId': menuItemId,
         if (inventoryItemId.isNotEmpty) 'inventoryItemId': inventoryItemId,
         if (weight > 0) 'weight': weight,
         if (inventoryItemId.isNotEmpty) 'weightUnit': weightUnit.name,

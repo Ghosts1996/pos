@@ -535,7 +535,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 // ---- Модификаторы ----
                 const SizedBox(height: 16),
                 const Text('Модификаторы', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                Text('Молоко, сиропы, прожарка, соус — официант выбирает при добавлении',
+                Text('Молоко, сиропы, прожарка, соус — официант выбирает при добавлении. '
+                    'Комбо и бизнес-ланч: группы «Первое», «Второе», «Напиток» с вариантами-блюдами из меню',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
                 ...groups.asMap().entries.map((e) => ListTile(
                       dense: true,
@@ -724,7 +725,13 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   }
 
   /// Вариант модификатора: название, доплата, списание со склада.
-  Future<ModifierOption?> _editModifierOption(BuildContext ctx, ModifierOption? option) {
+  Future<ModifierOption?> _editModifierOption(BuildContext ctx, ModifierOption? option) async {
+    // Блюда меню — для вариантов комбо («Первое: Борщ»).
+    final dishes = await _fs.menuItemsStream().first.catchError((Object _) => <MenuItem>[]);
+    dishes.sort((a, b) => a.name.compareTo(b.name));
+    String? dishId = (option?.menuItemId.isNotEmpty == true) ? option!.menuItemId : null;
+    if (dishId != null && !dishes.any((d) => d.id == dishId)) dishId = null;
+    if (!ctx.mounted) return null;
     final nameCtrl = TextEditingController(text: option?.name ?? '');
     final priceCtrl = TextEditingController(text: (option != null && option.price > 0) ? option.price.toStringAsFixed(0) : '');
     final weightCtrl =
@@ -750,7 +757,30 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   decoration: const InputDecoration(labelText: 'Доплата, ₽ (пусто — бесплатно)'),
                 ),
                 const SizedBox(height: 8),
-                if (_inventoryItems.isNotEmpty)
+                if (dishes.isNotEmpty)
+                  DropdownButton<String?>(
+                    value: dishId,
+                    isExpanded: true,
+                    hint: const Text('Блюдо из меню — для комбо (необязательно)'),
+                    items: [
+                      const DropdownMenuItem<String?>(value: null, child: Text('Не блюдо меню')),
+                      ...dishes.map((d) => DropdownMenuItem<String?>(
+                          value: d.id, child: Text(d.name, overflow: TextOverflow.ellipsis))),
+                    ],
+                    onChanged: (v) => setSt(() {
+                      dishId = v;
+                      if (v != null && nameCtrl.text.trim().isEmpty) {
+                        nameCtrl.text = dishes.firstWhere((d) => d.id == v).name;
+                      }
+                    }),
+                  ),
+                if (dishId != null)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text('Со склада спишется техкарта этого блюда',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ),
+                if (_inventoryItems.isNotEmpty && dishId == null)
                   DropdownButton<String?>(
                     value: invId,
                     isExpanded: true,
@@ -765,7 +795,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                       if (v != null) unit = _inventoryItems.firstWhere((i) => i.id == v).unit;
                     }),
                   ),
-                if (invId != null)
+                if (invId != null && dishId == null)
                   Row(
                     children: [
                       Expanded(
@@ -801,9 +831,10 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     ModifierOption(
                       name: name,
                       price: price < 0 ? 0 : price,
-                      inventoryItemId: invId != null && w > 0 ? invId! : '',
-                      weight: invId != null && w > 0 ? w : 0,
+                      inventoryItemId: dishId == null && invId != null && w > 0 ? invId! : '',
+                      weight: dishId == null && invId != null && w > 0 ? w : 0,
                       weightUnit: unit,
+                      menuItemId: dishId ?? '',
                     ));
               },
               child: const Text('Готово'),
