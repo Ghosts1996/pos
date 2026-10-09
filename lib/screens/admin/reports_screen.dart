@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/printer_service.dart';
+import '../../services/venue_service.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
@@ -288,24 +294,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 16),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () => _copyReport(stats, range),
-                              icon: const Icon(Icons.copy, size: 16),
-                              label: const Text('Копировать отчёт текстом'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () => _copyCsv(sessions),
-                              icon: const Icon(Icons.table_chart_outlined, size: 16),
-                              label: const Text('Продажи для бухгалтера (CSV)'),
-                            ),
-                          ],
-                        ),
+                        const SizedBox(height: 8),
+                        _sectionTitle('Выгрузка'),
+                        _exportCard(stats, range, sessions),
                       ],
                     ),
                   );
@@ -383,44 +374,161 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return '${two(s.day)}.${two(s.month)}.${s.year} — ${two(lastDay.day)}.${two(lastDay.month)}.${lastDay.year}';
   }
 
-  /// Продажи построчно для бухгалтера и 1С: копируется в буфер, вставляется
-  /// в Excel или Google Таблицы (разделитель — точка с запятой).
-  void _copyCsv(List<SessionModel> sessions) {
-    String cell(Object v) {
-      final t = v.toString().replaceAll('"', '""');
-      return t.contains(';') || t.contains('"') || t.contains('\n') ? '"$t"' : t;
-    }
+  /// Кнопки выгрузки — одинаковой ширины, одна под другой: раньше две
+  /// кнопки разной длины стояли «лесенкой» по центру.
+  Widget _exportCard(_ReportStats stats, DateTimeRange range, List<SessionModel> sessions) {
+    Widget button(IconData icon, String title, String hint, VoidCallback onTap) => ListTile(
+          leading: Icon(icon, color: AppColors.brass),
+          title: Text(title),
+          subtitle: Text(hint, style: const TextStyle(fontSize: 12)),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
+        );
+    return Card(
+      child: Column(
+        children: [
+          button(Icons.print_outlined, 'Напечатать отчёт', 'На чековом принтере заведения',
+              () => _printReport(stats, range)),
+          const Divider(height: 1),
+          button(Icons.copy, 'Скопировать текстом', 'Для мессенджера или заметок',
+              () => _copyReport(stats, range)),
+          const Divider(height: 1),
+          button(Icons.table_chart_outlined, 'Таблица продаж для Excel', 'Каждая позиция — строкой, для бухгалтера',
+              () => _exportTable(sessions, range)),
+        ],
+      ),
+    );
+  }
+
+  /// Продажи построчно для бухгалтера и 1С. Файлом .csv, который открывается
+  /// в Excel или Google Таблицах. Скопированные в буфер строки «через точку
+  /// с запятой» в заметках и мессенджерах выглядели нечитаемо.
+  List<List<String>> _salesRows(List<SessionModel> sessions) {
     String num2(double v) => v.toStringAsFixed(2).replaceAll('.', ',');
-    final buf = StringBuffer('Дата;Время;Стол;Сотрудник;Позиция;Количество;Цена;Сумма;Скидка %;Оплата\n');
+    final rows = <List<String>>[
+      ['Дата', 'Время', 'Стол', 'Сотрудник', 'Позиция', 'Количество', 'Цена', 'Сумма', 'Скидка %', 'Оплата'],
+    ];
     for (final s in sessions) {
       if (s.refunded || s.closedWithoutPayment) continue;
       final at = s.closedAt ?? s.startTime;
-      final date = '${at.day.toString().padLeft(2, '0')}.${at.month.toString().padLeft(2, '0')}.${at.year}';
-      final time = '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
       final pay = [
         if (s.paymentCash > 0) 'наличные',
         if (s.paymentCard > 0) 'карта',
         if (s.paymentTerminal > 0) 'терминал',
         if (s.paymentComp > 0) 'за счёт заведения',
-      ].join('+');
+      ].join(' + ');
       for (final i in s.orderItems) {
-        buf.writeln([
-          date,
-          time,
-          cell(s.tableName),
-          cell(s.employeeName),
-          cell(i.displayName),
-          i.qty,
+        rows.add([
+          _date(at),
+          '${_two(at.hour)}:${_two(at.minute)}',
+          s.tableName,
+          s.employeeName,
+          i.displayName,
+          '${i.qty}',
           num2(i.price),
           num2(i.total),
           num2(s.discountPercent),
           pay,
-        ].join(';'));
+        ]);
       }
     }
-    Clipboard.setData(ClipboardData(text: buf.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Продажи скопированы — вставьте в Excel или Google Таблицы')));
+    return rows;
+  }
+
+  Future<void> _exportTable(List<SessionModel> sessions, DateTimeRange range) async {
+    final rows = _salesRows(sessions);
+    final messenger = ScaffoldMessenger.of(context);
+    if (!kIsWeb) {
+      try {
+        String cell(String v) {
+          final t = v.replaceAll('"', '""');
+          return t.contains(';') || t.contains('"') || t.contains('\n') ? '"$t"' : t;
+        }
+        // BOM — чтобы Excel сразу открыл кириллицу, а не «крякозябры».
+        final csv = '﻿${rows.map((r) => r.map(cell).join(';')).join('\r\n')}\r\n';
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/Продажи ${_formatRange(range).replaceAll(' — ', '–')}.csv');
+        await file.writeAsString(csv);
+        final res = await OpenFilex.open(file.path, type: 'text/csv');
+        if (res.type == ResultType.done) return;
+      } catch (_) {
+        // Нет приложения для таблиц или файл не открылся — скопируем ниже.
+      }
+    }
+    // Табуляция: при вставке в Excel или Google Таблицы строки сами
+    // разложатся по колонкам.
+    await Clipboard.setData(ClipboardData(text: rows.map((r) => r.join('\t')).join('\n')));
+    messenger.showSnackBar(const SnackBar(
+        content: Text('Таблица скопирована — вставьте её в Excel или Google Таблицы, колонки разложатся сами')));
+  }
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+  static String _date(DateTime d) => '${_two(d.day)}.${_two(d.month)}.${d.year}';
+
+  String _periodLabel(DateTimeRange range) {
+    final last = range.end.subtract(const Duration(days: 1));
+    return _date(range.start) == _date(last) ? 'за ${_date(last)}' : 'за ${_formatRange(range)}';
+  }
+
+  /// Отчёт на чековом принтере (Bluetooth или Wi-Fi из «Интеграций»).
+  Future<void> _printReport(_ReportStats stats, DateTimeRange range) async {
+    final printer = activeReceiptPrinter;
+    if (printer == null) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          scrollable: true,
+          title: const Text('Принтер не подключён'),
+          content: const Text('Чековый принтер подключается в разделе «Интеграции» (Bluetooth или Wi‑Fi). '
+              'Пока отчёт можно скопировать текстом.'),
+          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+        ),
+      );
+      return;
+    }
+    final now = DateTime.now();
+    final lines = <ReportLine>[
+      ReportLine('Выручка', right: rub(stats.revenue), bold: true),
+      ReportLine('Визитов', right: '${stats.visits}'),
+      ReportLine('Средний чек', right: rub(stats.averageCheck)),
+      ReportLine('Перезабивок', right: '${stats.refills}'),
+      if (stats.takeawayCount > 0) ReportLine('С собой: ${stats.takeawayCount}', right: rub(stats.takeawayRevenue)),
+      if (stats.deliveryCount > 0) ReportLine('Доставка: ${stats.deliveryCount}', right: rub(stats.deliveryRevenue)),
+      if (stats.cardsUsed > 0) ReportLine('Скидки по картам', right: rub(stats.totalDiscountGiven)),
+      if (stats.unpaidClosed > 0) ReportLine('Без оплаты: ${stats.unpaidClosed}', right: rub(stats.unpaidAmount)),
+      if (stats.refunds > 0) ReportLine('Возвраты: ${stats.refunds}', right: rub(stats.refundedAmount)),
+      if (stats.byEmployee.isNotEmpty) ...[
+        const ReportLine.separator(),
+        const ReportLine('ПО СОТРУДНИКАМ', bold: true),
+        for (final e in stats.byEmployee.entries) ReportLine(e.key, right: rub(e.value.revenue)),
+      ],
+      if (stats.topItems.isNotEmpty) ...[
+        const ReportLine.separator(),
+        const ReportLine('ПОЗИЦИИ', bold: true),
+        for (final i in stats.topItems) ...[
+          ReportLine(i.name),
+          ReportLine('  ${i.qty} шт.', right: rub(i.revenue)),
+        ],
+      ],
+    ];
+    try {
+      final venue = VenueService.instance.cached.name;
+      await printer.printReport(ReportPrint(
+        title: 'ОТЧЁТ',
+        subtitle: [if (venue.isNotEmpty) venue, _periodLabel(range)],
+        lines: lines,
+        footer: 'Напечатано ${_date(now)} ${_two(now.hour)}:${_two(now.minute)}',
+      ));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Отчёт отправлен на принтер')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Не удалось напечатать: ${humanError(e, lower: true)}. Проверьте, что принтер включён.'),
+        ));
+      }
+    }
   }
 
   /// ABC-анализ: A — позиции, дающие 80% выручки, B — следующие 15%, C — 5%.
@@ -447,37 +555,46 @@ class _ReportsScreenState extends State<ReportsScreen> {
         child: Text(c, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
       );
 
+  /// Отчёт текстом для мессенджера: короткие строки, разделы с пустой
+  /// строкой между ними — читается и в заметках, и в Telegram.
   void _copyReport(_ReportStats stats, DateTimeRange range) {
-    final buf = StringBuffer();
-    buf.writeln('Отчёт: ${_formatRange(range)}');
-    buf.writeln('Выручка: ${rub(stats.revenue)}');
-    buf.writeln('Визитов: ${stats.visits}');
-    buf.writeln('Средний чек: ${rub(stats.averageCheck)}');
-    buf.writeln('Перезабивок: ${stats.refills}');
-    if (stats.refunds > 0) {
-      buf.writeln(
-          'Возвратов: ${stats.refunds} на сумму ${rub(stats.refundedAmount)}');
-    }
+    String visits(int n) => '$n ${pluralRu(n, 'визит', 'визита', 'визитов')}';
+    String orders(int n) => '$n ${pluralRu(n, 'заказ', 'заказа', 'заказов')}';
+    final venue = VenueService.instance.cached.name;
+    final buf = StringBuffer()
+      ..writeln('Отчёт ${_periodLabel(range)}${venue.isEmpty ? '' : ' · $venue'}')
+      ..writeln()
+      ..writeln('Выручка: ${rub(stats.revenue)}')
+      ..writeln('Визитов: ${stats.visits}, средний чек ${rub(stats.averageCheck)}')
+      ..writeln('Перезабивок: ${stats.refills}');
+    if (stats.takeawayCount > 0) buf.writeln('С собой: ${orders(stats.takeawayCount)}, ${rub(stats.takeawayRevenue)}');
+    if (stats.deliveryCount > 0) buf.writeln('Доставка: ${orders(stats.deliveryCount)}, ${rub(stats.deliveryRevenue)}');
+    if (stats.cardsUsed > 0) buf.writeln('Скидки по картам: ${rub(stats.totalDiscountGiven)}');
     if (stats.unpaidClosed > 0) {
-      buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed} на сумму '
-          '${rub(stats.unpaidAmount)}');
+      buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed}, ${rub(stats.unpaidAmount)}');
     }
+    if (stats.refunds > 0) buf.writeln('Возвраты: ${stats.refunds}, ${rub(stats.refundedAmount)}');
     if (stats.byEmployee.isNotEmpty) {
-      buf.writeln('\nПо сотрудникам:');
+      buf
+        ..writeln()
+        ..writeln('По сотрудникам:');
       for (final e in stats.byEmployee.entries) {
-        buf.writeln('  ${e.key}: ${rub(e.value.revenue)} (${e.value.visits} ${pluralRu(e.value.visits, 'визит', 'визита', 'визитов')})');
+        buf.writeln('• ${e.key} — ${rub(e.value.revenue)}, ${visits(e.value.visits)}');
       }
     }
     if (stats.topItems.isNotEmpty) {
-      buf.writeln('\nПопулярные позиции:');
+      buf
+        ..writeln()
+        ..writeln('Популярные позиции:');
       for (final i in stats.topItems) {
-        buf.writeln('  ${i.name}: ${i.qty} шт. — ${rub(i.revenue)}');
+        buf.writeln('• ${i.name} — ${i.qty} шт., ${rub(i.revenue)}');
       }
     }
-    Clipboard.setData(ClipboardData(text: buf.toString()));
+    Clipboard.setData(ClipboardData(text: buf.toString().trimRight()));
     ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Отчёт скопирован в буфер обмена')));
+        .showSnackBar(const SnackBar(content: Text('Отчёт скопирован — вставьте его в мессенджер')));
   }
+
 }
 
 extension on _ReportsScreenState {
