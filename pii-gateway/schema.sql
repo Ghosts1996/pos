@@ -19,15 +19,18 @@ CREATE INDEX IF NOT EXISTS guest_profiles_phone_idx
 -- только после успешной записи сюда.
 CREATE TABLE IF NOT EXISTS contact_records (
   tenant_id   TEXT NOT NULL,
-  kind        TEXT NOT NULL,               -- 'reservation' | 'waitlist'
+  kind        TEXT NOT NULL,               -- 'reservation' | 'waitlist' | 'delivery'
   record_id   TEXT NOT NULL,               -- id документа в Firestore
   name        TEXT NOT NULL DEFAULT '',
   phone       TEXT NOT NULL DEFAULT '',
+  address     TEXT NOT NULL DEFAULT '',    -- адрес доставки (kind = 'delivery')
   created_by  TEXT NOT NULL DEFAULT '',    -- uid, от чьего имени записано
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, kind, record_id)
 );
+-- Базы, созданные до появления доставки.
+ALTER TABLE contact_records ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
 
 -- Владельцы кабинета: email попадает сюда до регистрации в Firebase Auth.
 -- Отметки о принятии оферты и согласия — доказательство согласия.
