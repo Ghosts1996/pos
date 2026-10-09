@@ -1,47 +1,32 @@
 #!/bin/bash
-# Задача 18: Telegram через ретранслятор Cloudflare. Адрес приходит из
-# секрета GitHub TELEGRAM_RELAY_URL (через stdin, в журнал не печатается).
-# Сначала проверка в обе стороны, и только потом запись в окружение шлюза.
+# Задача 19: почему кабинет пишет «Сервер не может достучаться до Telegram».
+# Только чтение: ничего не меняет. Токены и адрес ретранслятора скрыты.
 set -u
-URL=$(printf "%s" "${TELEGRAM_RELAY_URL:-}" | tr -d "[:space:]"); URL="${URL%/}"
-if ! printf '%s' "$URL" | grep -Eq '^https://[A-Za-z0-9.-]+\.workers\.dev/[A-Za-z0-9_-]{16,}$'; then
-  echo "СТОП: секрет TELEGRAM_RELAY_URL не задан или не вида https://<имя>.<аккаунт>.workers.dev/<секрет> (секрет — от 16 латинских букв и цифр)"
-  exit 1
-fi
-
-echo "== 1. Сервер → ретранслятор → Telegram"
-# На выдуманный токен Telegram отвечает 401 — значит, путь до него открыт.
-c1=$(curl -sS -o /dev/null -w "%{http_code}" -m 15 "$URL/bot123456:relay-check-not-a-real-token/getMe" 2>/dev/null)
-echo "ответ: $c1 (нужно 401)"
-
-echo "== 2. Ретранслятор → наш сервер (как нажатие кнопки в боте)"
-# Без подписи наш сервер отвечает 403 — значит, Cloudflare до него достучался.
-c2=$(curl -sS -o /dev/null -w "%{http_code}" -m 20 -X POST -H "Content-Type: application/json" -d '{}' "$URL/hook/relay-check" 2>/dev/null)
-echo "ответ: $c2 (нужно 403)"
-
-if [ "$c1" != "401" ] || [ "$c2" != "403" ]; then
-  case "$c1" in
-    404) echo "СТОП: ретранслятор ответил 404 — секрет в адресе не совпадает с RELAY_SECRET в Cloudflare, или в Worker не тот код";;
-    000) echo "СТОП: ретранслятор недоступен с сервера — проверьте адрес Worker";;
-  esac
-  echo "Окружение шлюза не менялось."
-  exit 1
-fi
-
+mask() { sed -E "s#bot[0-9]+:[A-Za-z0-9_-]+#bot***#g; s#https://[A-Za-z0-9.-]+\.workers\.dev/[A-Za-z0-9_-]+#<ретранслятор>#g"; }
 ENV=/etc/saas-gateway.env
-mkdir -p /root/backups
-cp -a "$ENV" "/root/backups/saas-gateway.env.bak-$(date +%Y%m%d%H%M%S)"
-tmp=$(mktemp)
-grep -vE '^(TELEGRAM_API_BASE|TELEGRAM_HOOK_BASE)=' "$ENV" > "$tmp"
-printf 'TELEGRAM_API_BASE=%s\nTELEGRAM_HOOK_BASE=%s/hook\n' "$URL" "$URL" >> "$tmp"
-cat "$tmp" > "$ENV"   # cat, а не mv: владелец и права файла остаются прежними
-rm -f "$tmp"
-echo "== 3. Записано в $ENV (копия в /root/backups), перезапуск шлюза"
-systemctl restart saas-gateway
-sleep 5
-echo "служба: $(systemctl is-active saas-gateway)"
-echo "health: $(curl -sS -o /dev/null -w "%{http_code}" -m 10 https://pii.zalpos.ru/saas/health 2>/dev/null)"
-echo "== журнал Telegram после перезапуска (токены и адрес скрыты)"
-journalctl -u saas-gateway --since "-1min" --no-pager 2>/dev/null | grep -i telegram | tail -10 \
-  | sed -E "s#bot[0-9]+:[A-Za-z0-9_-]+#bot***#g; s#https://[A-Za-z0-9.-]+\.workers\.dev/[A-Za-z0-9_-]+#<ретранслятор>#g"
+
+echo "== 1. Настройки шлюза"
+for k in TELEGRAM_API_BASE TELEGRAM_HOOK_BASE; do
+  if grep -q "^$k=" "$ENV"; then echo "$k: задан ($(grep "^$k=" "$ENV" | cut -d= -f2- | mask))"; else echo "$k: НЕ задан"; fi
+done
+PID=$(systemctl show -p MainPID --value saas-gateway)
+echo "служба: $(systemctl is-active saas-gateway), PID $PID, запущена: $(systemctl show -p ActiveEnterTimestamp --value saas-gateway)"
+if [ -n "$PID" ] && [ "$PID" != "0" ]; then
+  echo "в процессе TELEGRAM_API_BASE: $(tr '\0' '\n' < /proc/$PID/environ | grep -c '^TELEGRAM_API_BASE=') (1 — подхвачен)"
+fi
+
+URL=$(grep '^TELEGRAM_API_BASE=' "$ENV" | cut -d= -f2- | tr -d '[:space:]')
+echo "== 2. Сервер → ретранслятор → Telegram, 6 попыток (нужно 401)"
+for i in 1 2 3 4 5 6; do
+  r=$(curl -sS -o /dev/null -w "%{http_code} за %{time_total}с" -m 20 "$URL/bot123456:relay-check-not-a-real-token/getMe" 2>&1 | mask)
+  echo "  попытка $i: $r"
+  sleep 2
+done
+echo "== 3. Напрямую api.telegram.org (для сравнения)"
+curl -sS -o /dev/null -w "  %{http_code} за %{time_total}с\n" -m 15 https://api.telegram.org/bot123456:x/getMe 2>&1 | mask
+echo "== 4. DNS ретранслятора"
+host=$(printf '%s' "$URL" | sed -E 's#https://([^/]+)/.*#\1#')
+getent ahosts "$host" | awk '{print "  " $1}' | sort -u | head -4
+echo "== 5. Журнал шлюза за 12 часов: Telegram"
+journalctl -u saas-gateway --since "-12h" --no-pager 2>/dev/null | grep -iE "telegram|tgHook" | tail -25 | mask
 echo "Готово."
