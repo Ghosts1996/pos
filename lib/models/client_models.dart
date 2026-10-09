@@ -373,7 +373,7 @@ extension GuestCallTypeX on GuestCallType {
       case GuestCallType.callWaiter:
         return 'Позвать официанта';
       case GuestCallType.paid:
-        return 'Оплачено по СБП';
+        return 'Оплачено онлайн';
     }
   }
 

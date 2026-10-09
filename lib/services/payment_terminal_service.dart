@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../utils/bank_http.dart';
 import '../utils/money.dart';
+import 'gateway_api.dart';
 
 /// Результат одной операции оплаты через терминал.
 class TerminalPaymentResult {
@@ -33,11 +34,15 @@ class TerminalPaymentResult {
 ///     сумму в терминал сам, приложение фиксирует итог. Передача суммы по
 ///     кабелю или Bluetooth требует SDK банка, его выдают по договору
 ///     эквайринга.
-///   • [TinkoffSbpQrTerminalService] — REST API интернет-эквайринга
-///     Т-Банка: счёт и QR СБП без терминала, нужны TerminalKey и пароль.
-///     Открытой схемы ответа нет — перед боевым запуском сверьте поля.
-///   • Сбер, ВТБ, Альфа, Точка, mPOS, SDK Ingenico/Verifone — только
-///     настройки; протокол каждого банка доступен после договора.
+///   • [GatewayQrTerminalService] — QR на экране кассы через банк
+///     онлайн-оплаты заведения (Т-Банк, Сбер, Альфа, ВТБ, МТС,
+///     Райффайзен, Робокасса, другой банк на шлюзе RBS): платёж заводит
+///     шлюз, реквизиты банка на кассе не нужны.
+///   • [TinkoffSbpQrTerminalService] — прежний способ: QR СБП Т-Банка
+///     прямо с кассы по TerminalKey и паролю.
+///   • [SberUposTerminalService] — терминал Сбера на Windows-кассе (UPOS).
+///   • Терминалы других банков (Arcus, INPAS) подключаются только SDK
+///     банка по договору — до тех пор работает [ManualTerminalService].
 abstract class PaymentTerminalService {
   /// Есть ли вообще подключённый терминал/провайдер (проверка заполненных
   /// настроек — не проверка реального Bluetooth/сетевого соединения).
@@ -307,13 +312,7 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
   }
 }
 
-/// ---------- ЗАГОТОВКИ ПОД ОСТАЛЬНЫЕ БАНКИ ----------
-///
-/// У каждого — свой протокол эквайринга, видимый только после подписания
-/// договора. Ниже только поля настроек (чтобы Настройки → Интеграции уже
-/// сегодня могли их сохранить) и понятная ошибка вместо угадывания API.
-/// Как только появится документация конкретного банка — здесь дописывается
-/// один класс по образцу [TinkoffSbpQrTerminalService].
+/// Ошибка банка с текстом для кассира.
 class TerminalException implements Exception {
   final String message;
   TerminalException(this.message);
@@ -385,11 +384,240 @@ class SberUposTerminalService implements PaymentTerminalService {
   }
 }
 
+/// QR на экране кассы через банк онлайн-оплаты заведения (Настройки →
+/// Интеграции → «Онлайн-оплата гостей»). Платёж заводит шлюз
+/// (saas-gateway/guest-pay.js, handleKassa*), реквизиты банка остаются на
+/// сервере. Гость сканирует код телефоном: по СБП (Т-Банк, Райффайзен)
+/// открывается приложение его банка, у остальных — страница оплаты банка,
+/// где можно заплатить картой или через СБП.
+///
+/// Окно закрыли или код истёк — шлюз сперва проверяет, не успел ли гость
+/// заплатить, и только потом отменяет платёж. Деньги, пришедшие ещё
+/// позже, шлюз не теряет: персонал получит «Оплачено онлайн» с суммой.
+class GatewayQrTerminalService implements PaymentTerminalService {
+  /// Запрос к шлюзу; в тестах — подделка.
+  final Future<Map<String, dynamic>> Function(String path, Map<String, dynamic> body) _post;
+
+  /// Как часто спрашивать статус, пока открыт QR.
+  final Duration pollEvery;
+
+  GatewayQrTerminalService({
+    Future<Map<String, dynamic>> Function(String path, Map<String, dynamic> body)? post,
+    this.pollEvery = const Duration(seconds: 2),
+  }) : _post = post ?? ((path, body) => GatewayApi.post(path, body));
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async {
+    final Map<String, dynamic> start;
+    try {
+      start = await _post('kassaPayStart', {'amount': (amount * 100).round() / 100});
+    } on GatewayException catch (e) {
+      return TerminalPaymentResult.failure(e.message);
+    } catch (e) {
+      return TerminalPaymentResult.failure('Нет связи с сервером: $e');
+    }
+    final id = '${start['paymentId'] ?? ''}';
+    final url = '${start['url'] ?? ''}';
+    if (id.isEmpty || url.isEmpty) return const TerminalPaymentResult.failure('Банк не выдал код для оплаты');
+    final ttl = Duration(seconds: (start['ttlSec'] as num?)?.toInt() ?? 300);
+    final info = _QrInfo(
+      url: url,
+      amount: amount,
+      bank: '${start['bank'] ?? 'Банк'}',
+      sbp: start['sbp'] == true,
+      test: start['test'] == true,
+      ttl: ttl,
+    );
+
+    final ctx = context;
+    final String outcome;
+    if (ctx != null && ctx.mounted) {
+      outcome = await _showQr(ctx, id, info);
+    } else {
+      outcome = await _pollSilently(id, ttl);
+    }
+    if (outcome == 'paid') return TerminalPaymentResult.success(operationId: id);
+    if (outcome == 'failed') return const TerminalPaymentResult.failure('Банк отклонил оплату');
+    // Закрыли окно или код истёк: вдруг гость успел заплатить в последний момент.
+    if (await _cancel(id) == 'paid') return TerminalPaymentResult.success(operationId: id);
+    return const TerminalPaymentResult.failure('Оплата по QR не завершена');
+  }
+
+  Future<String> _status(String id) async {
+    try {
+      return '${(await _post('kassaPayStatus', {'paymentId': id}))['status'] ?? 'pending'}';
+    } catch (_) {
+      return 'pending'; // сеть моргнула — спросим на следующем шаге
+    }
+  }
+
+  Future<String> _cancel(String id) async {
+    for (var i = 0; i < 3; i++) {
+      try {
+        return '${(await _post('kassaPayCancel', {'paymentId': id}))['status'] ?? 'cancelled'}';
+      } catch (_) {
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+    return 'cancelled';
+  }
+
+  Future<String> _pollSilently(String id, Duration ttl) async {
+    final until = DateTime.now().add(ttl);
+    while (DateTime.now().isBefore(until)) {
+      await Future.delayed(pollEvery);
+      final st = await _status(id);
+      if (st == 'paid' || st == 'failed') return st;
+    }
+    return 'timeout';
+  }
+
+  /// QR и ожидание. → 'paid' | 'failed' | 'cancelled' | 'timeout'.
+  Future<String> _showQr(BuildContext context, String id, _QrInfo info) async {
+    final done = Completer<String>();
+    BuildContext? dialogCtx;
+    var polling = false;
+    final until = DateTime.now().add(info.ttl);
+
+    void finish(String outcome) {
+      if (done.isCompleted) return;
+      done.complete(outcome);
+      final c = dialogCtx;
+      if (c != null && c.mounted) Navigator.pop(c);
+    }
+
+    final poller = Timer.periodic(pollEvery, (_) async {
+      if (polling || done.isCompleted) return;
+      if (DateTime.now().isAfter(until)) return finish('timeout');
+      polling = true;
+      final st = await _status(id);
+      polling = false;
+      if (st == 'paid' || st == 'failed') finish(st);
+    });
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        dialogCtx = ctx;
+        return _QrDialog(info: info, until: until, onCancel: () => finish('cancelled'));
+      },
+    );
+    poller.cancel();
+    if (!done.isCompleted) done.complete('cancelled');
+    return done.future;
+  }
+}
+
+class _QrInfo {
+  final String url;
+  final double amount;
+  final String bank;
+  final bool sbp;
+  final bool test;
+  final Duration ttl;
+  const _QrInfo({
+    required this.url,
+    required this.amount,
+    required this.bank,
+    required this.sbp,
+    required this.test,
+    required this.ttl,
+  });
+}
+
+/// Окно с QR: сумма, банк, как платить и сколько ещё действует код.
+class _QrDialog extends StatefulWidget {
+  final _QrInfo info;
+  final DateTime until;
+  final VoidCallback onCancel;
+  const _QrDialog({required this.info, required this.until, required this.onCancel});
+
+  @override
+  State<_QrDialog> createState() => _QrDialogState();
+}
+
+class _QrDialogState extends State<_QrDialog> {
+  late final Timer _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final i = widget.info;
+    final left = widget.until.difference(DateTime.now());
+    final secs = left.isNegative ? 0 : left.inSeconds;
+    final clock = '${secs ~/ 60}:${(secs % 60).toString().padLeft(2, '0')}';
+    final muted = Theme.of(context).textTheme.bodySmall?.color;
+    return AlertDialog(
+      scrollable: true,
+      title: Text(i.sbp ? 'Оплата по QR (СБП)' : 'Оплата по QR'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(rub(i.amount), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(i.bank, style: TextStyle(color: muted)),
+          if (i.test) ...[
+            const SizedBox(height: 4),
+            const Text('Тестовый контур — деньги не списываются', style: TextStyle(color: Colors.orange)),
+          ],
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+            child: SizedBox(
+              width: 240,
+              height: 240,
+              child: QrImageView(data: i.url, backgroundColor: Colors.white, padding: EdgeInsets.zero),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            i.sbp
+                ? 'Гость наводит камеру телефона на код — откроется приложение его банка, остаётся подтвердить перевод.'
+                : 'Гость наводит камеру телефона на код — откроется страница банка: оплата картой или через СБП.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 10),
+              Text('Ждём оплату · код действует $clock', style: TextStyle(color: muted)),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: widget.onCancel, child: const Text('Отменить')),
+      ],
+    );
+  }
+}
+
 /// Провайдеры терминала оплаты — список для выпадающего меню в
 /// Настройки → Интеграции. id хранится в Firestore, name — подпись в UI.
 enum TerminalProvider {
   manual('manual', 'Ручной терминал (любой банк)'),
-  tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП на экране кассы'),
+  onlineQr('online_qr', 'QR на экране кассы — банк онлайн-оплаты'),
+  tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП (TerminalKey на кассе)'),
   sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)');
 
   final String id;
@@ -415,6 +643,8 @@ PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
   switch (provider) {
     case TerminalProvider.manual:
       return ManualTerminalService();
+    case TerminalProvider.onlineQr:
+      return GatewayQrTerminalService();
     case TerminalProvider.tinkoffSbp:
       return TinkoffSbpQrTerminalService(
           terminalKey: s('terminalLogin'), password: s('terminalPassword'));
