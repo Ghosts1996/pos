@@ -354,6 +354,10 @@ class SessionModel {
   final String deliveryStatus;
   final String courierName;
 
+  /// Рабочий номер курьера — гость видит кнопку «Позвонить курьеру», пока
+  /// заказ в пути. Стирается, когда заказ доставлен или отменён.
+  final String courierPhone;
+
   /// Имя гостя для звонка (заказ из приложения или записанный кассиром).
   final String customerName;
 
@@ -436,6 +440,7 @@ class SessionModel {
     this.deliveryAddress = '',
     this.deliveryStatus = '',
     this.courierName = '',
+    this.courierPhone = '',
     this.customerName = '',
     this.orderNo = 0,
     this.deliveryComment = '',
@@ -490,6 +495,7 @@ class SessionModel {
       deliveryAddress: asText(data['deliveryAddress']),
       deliveryStatus: asText(data['deliveryStatus']),
       courierName: asText(data['courierName']),
+      courierPhone: asText(data['courierPhone']),
       customerName: asText(data['customerName']),
       orderNo: asNum(data['orderNo'])?.toInt() ?? 0,
       deliveryComment: asText(data['deliveryComment']),
@@ -522,6 +528,7 @@ class SessionModel {
       if (deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
       if (orderType.isNotEmpty) 'deliveryStatus': deliveryStatus.isEmpty ? 'new' : deliveryStatus,
       if (courierName.isNotEmpty) 'courierName': courierName,
+      if (courierPhone.isNotEmpty) 'courierPhone': courierPhone,
       if (customerName.isNotEmpty) 'customerName': customerName,
       if (orderNo > 0) 'orderNo': orderNo,
       if (deliveryComment.isNotEmpty) 'deliveryComment': deliveryComment,
