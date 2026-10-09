@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/employee.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
@@ -65,6 +70,61 @@ class _KitchenScreenState extends State<KitchenScreen> {
   late String _station = KitchenScreen.stationFor(widget.employee.position);
   final _busy = <String>{};
 
+  // Сигнал о новом билете своего цеха: звук и вибрация, чтобы повар
+  // заметил заказ, не глядя на планшет. Первый снимок — без сигнала.
+  StreamSubscription<List<SessionModel>>? _alertSub;
+  Set<String>? _knownLines;
+  bool _sound = true;
+  static const _soundKey = 'kitchen_sound_v1';
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      if (mounted) setState(() => _sound = p.getBool(_soundKey) ?? true);
+    }).catchError((Object _) {});
+    _alertSub = _fs.openChecksStream().listen(_checkNew, onError: (_) {});
+  }
+
+  @override
+  void dispose() {
+    _alertSub?.cancel();
+    super.dispose();
+  }
+
+  void _checkNew(List<SessionModel> checks) {
+    final lines = <String>{};
+    var label = '';
+    for (final t in KitchenScreen.ticketsFor(checks, _station)) {
+      for (final l in t.lines) {
+        final key = '${t.session.id}|${l.lineId}|${l.since?.millisecondsSinceEpoch}';
+        lines.add(key);
+        if (_knownLines != null && !_knownLines!.contains(key)) label = t.session.tableName;
+      }
+    }
+    final first = _knownLines == null;
+    _knownLines = lines;
+    if (first || label.isEmpty || !_sound) return;
+    HapticFeedback.heavyImpact();
+    SystemSound.play(SystemSoundType.alert);
+    unawaited(NotificationService.instance.show(
+      id: NotificationService.idFor('kitchen_$label'),
+      title: switch (_station) {
+        SaleKind.bar => 'Новый заказ в бар',
+        SaleKind.hookah => 'Новый заказ на кальяны',
+        _ => 'Новый заказ на кухню',
+      },
+      body: label.isEmpty ? 'Новый билет' : label,
+    ).catchError((Object _) {}));
+  }
+
+  Future<void> _toggleSound() async {
+    setState(() => _sound = !_sound);
+    try {
+      (await SharedPreferences.getInstance()).setBool(_soundKey, _sound);
+    } catch (_) {}
+  }
+
   Future<void> _ready(SessionModel s, Set<String> ids) async {
     final key = '${s.id}:${ids.join(',')}';
     if (_busy.contains(key)) return;
@@ -86,7 +146,16 @@ class _KitchenScreenState extends State<KitchenScreen> {
     final hookahVenue = VenueService.instance.terms.isHookah;
     final stations = [SaleKind.kitchen, SaleKind.bar, if (hookahVenue || _station == SaleKind.hookah) SaleKind.hookah];
     return Scaffold(
-      appBar: AppBar(title: const Text('Кухня и бар')),
+      appBar: AppBar(
+        title: const Text('Кухня и бар'),
+        actions: [
+          IconButton(
+            tooltip: _sound ? 'Выключить сигнал новых заказов' : 'Включить сигнал новых заказов',
+            icon: Icon(_sound ? Icons.notifications_active_outlined : Icons.notifications_off_outlined),
+            onPressed: _toggleSound,
+          ),
+        ],
+      ),
       body: StreamBuilder<List<SessionModel>>(
         stream: _fs.openChecksStream(),
         builder: (context, snap) {
@@ -110,7 +179,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           child: ChoiceChip(
                             label: Text(_stationTitle(st, KitchenScreen.ticketsFor(checks, st).length)),
                             selected: st == _station,
-                            onSelected: (_) => setState(() => _station = st),
+                            onSelected: (_) => setState(() {
+                              _station = st;
+                              _knownLines = null; // другой цех — без ложного сигнала
+                            }),
                           ),
                         ),
                     ],
