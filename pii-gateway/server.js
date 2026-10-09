@@ -368,6 +368,74 @@ async function handleRecordContact(req, res, body) {
 }
 
 /**
+ * Согласие гостя: две отметки перед первой отправкой имени или телефона —
+ * на обработку и на трансграничную передачу. Без обеих гость дальше не
+ * проходит (приложение не даёт нажать кнопку), здесь — проверка на случай
+ * старой или подделанной версии. Пишем в РФ; в Firestore — только номер
+ * редакции, чтобы приложение на другом устройстве не спрашивало заново.
+ */
+async function handleGuestConsent(req, res, body) {
+  const tenant = typeof body.tenantId === "string" ? body.tenantId : "";
+  const edition = str(body.edition, 40);
+  if (tenant && !/^[A-Za-z0-9_-]{1,64}$/.test(tenant)) {
+    return sendJson(res, 400, { error: "некорректный tenantId" });
+  }
+  if (!/^[A-Za-z0-9._-]{1,40}$/.test(edition)) {
+    return sendJson(res, 400, { error: "некорректная редакция согласия" });
+  }
+  if (body.pd !== true || body.crossBorder !== true) {
+    return sendJson(res, 400, { error: "нужны согласие на обработку и на трансграничную передачу" });
+  }
+  const idToken = bearer(req);
+  if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
+  let fbApp;
+  if (tenant) {
+    fbApp = getSaasApp();
+    if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  }
+  let decoded;
+  try {
+    decoded = await (fbApp || getFirebaseApp()).auth().verifyIdToken(idToken);
+  } catch (_) {
+    return sendJson(res, 401, { error: "невалидный токен" });
+  }
+  const db = admin.firestore(fbApp || getFirebaseApp());
+  let chainId = "";
+  if (tenant) {
+    try {
+      const t = await db.doc(`tenants/${tenant}`).get();
+      if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
+      chainId = String(t.data().chainId || "");
+    } catch (_) {
+      return sendJson(res, 502, { error: "не удалось прочитать заведение" });
+    }
+  }
+  const storeKey = chainId ? `chain:${chainId}` : tenant;
+  try {
+    await getPool().query(
+      `INSERT INTO guest_consents (tenant_id, uid, edition, pd_consent_at, xborder_consent_at, ip, user_agent)
+       VALUES ($1, $2, $3, now(), now(), $4, $5)
+       ON CONFLICT (tenant_id, uid, edition) DO UPDATE SET
+         pd_consent_at = now(), xborder_consent_at = now(), withdrawn_at = NULL,
+         ip = EXCLUDED.ip, user_agent = EXCLUDED.user_agent`,
+      [storeKey, decoded.uid, edition, clientIp(req), String(req.headers["user-agent"] || "").slice(0, 300)]
+    );
+  } catch (_) {
+    return sendJson(res, 500, { error: "не удалось сохранить согласие в первичной базе" });
+  }
+  // Профиль ещё может не существовать (заказ без регистрации) — тогда
+  // отметку помнит само устройство, а в Firestore пустой профиль не заводим.
+  try {
+    const path = chainId ? `chains/${chainId}/clients/${decoded.uid}` : tenant ? `tenants/${tenant}/clients/${decoded.uid}` : `clients/${decoded.uid}`;
+    const ref = db.doc(path);
+    if ((await ref.get()).exists) await ref.set({ consentEdition: edition }, { merge: true });
+  } catch (_) {
+    // Согласие уже записано в РФ — копия отметки не обязательна.
+  }
+  return sendJson(res, 200, { ok: true });
+}
+
+/**
  * «Удалить мои данные» в профиле гостя: стираем профиль и контакты его
  * броней и листа ожидания во всех точках заведения или сети. Брони,
  * заведённые персоналом, находим по clientUid. Firestore приложение потом
@@ -422,6 +490,15 @@ async function handleDeleteGuest(req, res, body) {
     // Заказы доставки из приложения записаны токеном гостя (created_by) —
     // вместе с ними уходит и адрес.
     await erase("contact_records", where, args, "name = '', phone = '', address = ''");
+    // Отзыв согласия: сама отметка остаётся доказательством того, что
+    // данные до удаления обрабатывались законно, но без IP и браузера.
+    await db
+      .query(
+        `UPDATE guest_consents SET withdrawn_at = now(), ip = '', user_agent = ''
+         WHERE tenant_id = $1 AND uid = $2 AND withdrawn_at IS NULL`,
+        [storeKey, uid]
+      )
+      .catch((e) => console.error(`guest_consent_withdraw ${tenantId}/${uid}: ${e?.code || ""}`));
   } catch (e) {
     console.error(`guest_delete ${tenantId}/${uid}: ${e?.code || ""} ${e?.message || e}`);
     return sendJson(res, 500, { error: `не удалось удалить данные в первичной базе (${e?.code || "нет связи с базой"})` });
@@ -433,6 +510,7 @@ const HANDLERS = {
   owner: handleRegisterOwner,
   owner_link: handleLinkOwner,
   guest_delete: handleDeleteGuest,
+  guest_consent: handleGuestConsent,
   payer: handleRecordPayer,
 };
 

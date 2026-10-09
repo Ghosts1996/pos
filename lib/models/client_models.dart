@@ -46,6 +46,11 @@ class ClientProfile {
   final DateTime createdAt;
   final DateTime? lastVisitAt;
 
+  /// Редакция согласий на обработку и трансграничную передачу, которые
+  /// гость отметил (GuestConsent). Ставит сервер в РФ, где хранится сама
+  /// отметка; пусто — гость ещё не соглашался.
+  final String consentEdition;
+
   ClientProfile({
     required this.uid,
     this.name = '',
@@ -57,6 +62,7 @@ class ClientProfile {
     this.discountPercent = 0,
     this.activeSessionId = '',
     this.activeTableId = '',
+    this.consentEdition = '',
     this.lastVisitId = '',
     this.ratedVisitId = '',
     this.favoriteItemIds = const [],
@@ -169,6 +175,7 @@ class ClientProfile {
       aiProfile: asText(data['aiProfile']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       lastVisitAt: last is Timestamp ? last.toDate() : null,
+      consentEdition: asText(data['consentEdition']),
     );
   }
 

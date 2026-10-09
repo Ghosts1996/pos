@@ -125,6 +125,21 @@ async function run() {
   }
 
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
+  {
+    // Согласие гостя: без обеих отметок и без токена — отказ до базы.
+    const post = (b, headers) => request("POST", "/", { headers, body: JSON.stringify({ kind: "guest_consent", ...b }) });
+    const noEdition = await post({ tenantId: "t1", pd: true, crossBorder: true });
+    assert.strictEqual(noEdition.statusCode, 400);
+    const noXborder = await post({ tenantId: "t1", edition: "2026-10-09", pd: true });
+    assert.strictEqual(noXborder.statusCode, 400);
+    assert.match(JSON.parse(noXborder.body).error, /трансграничн/);
+    const truthy = await post({ tenantId: "t1", edition: "2026-10-09", pd: "yes", crossBorder: 1 });
+    assert.strictEqual(truthy.statusCode, 400);
+    const badTenant = await post({ tenantId: "t1/clients/x", edition: "2026-10-09", pd: true, crossBorder: true });
+    assert.strictEqual(badTenant.statusCode, 400);
+    const noToken = await post({ tenantId: "t1", edition: "2026-10-09", pd: true, crossBorder: true });
+    assert.strictEqual(noToken.statusCode, 401);
+  }
   server.close(() => process.exit(0));
 }
 

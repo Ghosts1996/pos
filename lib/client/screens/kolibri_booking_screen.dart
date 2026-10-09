@@ -14,7 +14,8 @@ import '../../widgets/table_picker_map.dart';
 import '../../services/app_scope.dart';
 import '../services/chain_venue_switch.dart';
 import '../theme/kolibri_theme.dart';
-import '../widgets/privacy_notice.dart';
+import '../services/guest_consent.dart';
+import '../widgets/guest_consent_checks.dart';
 import 'kolibri_menu_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/table_label.dart';
@@ -80,6 +81,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _commentCtrl.dispose();
+    _consent.dispose();
     super.dispose();
   }
 
@@ -101,8 +103,11 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   // на экране оседала сводка по времени, которое уже не выбрано.
   int _statsRequest = 0;
 
+  final _consent = GuestConsent();
+
   Future<void> _prefill() async {
     final p = await _link.profileStream(_auth.uid).first;
+    await _consent.load(_auth.uid, p);
     if (p != null && mounted) {
       _nameCtrl.text = p.name;
       _phoneCtrl.text = p.phone;
@@ -492,15 +497,24 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
               style: TextStyle(color: KolibriColors.danger, fontSize: 13, height: 1.4)),
           const SizedBox(height: 10),
         ],
-        FilledButton(
-          onPressed: _slot == null || _sending ? null : _submit,
-          child: _sending
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(_slot == null
-                  ? 'Выберите время'
-                  : 'Забронировать на ${_fmtTime(_slot!)}'),
+        ListenableBuilder(
+          listenable: _consent,
+          builder: (context, _) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!_consent.given) GuestConsentChecks(consent: _consent),
+              FilledButton(
+                onPressed: _slot == null || _sending || !_consent.ready ? null : _submit,
+                child: _sending
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : Text(_slot == null
+                        ? 'Выберите время'
+                        : 'Забронировать на ${_fmtTime(_slot!)}'),
+              ),
+              if (_consent.given) GuestConsentChecks(consent: _consent),
+            ],
+          ),
         ),
-        const PrivacyNotice(),
 
         const SizedBox(height: 32),
         const Text('Мои брони', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -663,6 +677,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     }
 
     try {
+      await _consent.commit(_auth.uid);
       final profile = await _link.registerGuestProfile(
         _auth.uid,
         name: _nameCtrl.text.trim(),

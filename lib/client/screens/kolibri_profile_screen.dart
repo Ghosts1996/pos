@@ -18,7 +18,8 @@ import '../../utils/phone_utils.dart';
 import '../services/kolibri_auth_service.dart';
 import '../services/chain_venue_switch.dart';
 import '../theme/kolibri_theme.dart';
-import '../widgets/privacy_notice.dart';
+import '../services/guest_consent.dart';
+import '../widgets/guest_consent_checks.dart';
 import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
@@ -44,6 +45,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   final _link = GuestLinkService();
   final _name = TextEditingController();
   final _phone = TextEditingController();
+  final _consent = GuestConsent();
 
   String _shortDeviceId = '…';
 
@@ -65,6 +67,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     super.initState();
     _name.text = widget.profile?.name ?? '';
     _phone.text = widget.profile?.phone ?? '';
+    _consent.load(_auth.uid, widget.profile);
     _initShortId();
     _checkNotifications();
   }
@@ -156,6 +159,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   @override
   void didUpdateWidget(covariant KolibriProfileScreen old) {
     super.didUpdateWidget(old);
+    _consent.sync(widget.profile);
     if (_name.text.isEmpty && (widget.profile?.name ?? '').isNotEmpty) {
       _name.text = widget.profile!.name;
     }
@@ -184,6 +188,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   void dispose() {
     _name.dispose();
     _phone.dispose();
+    _consent.dispose();
     super.dispose();
   }
 
@@ -309,12 +314,15 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         }
       }
 
+      await _consent.commit(_auth.uid);
       await _link.registerGuestProfile(
         _auth.uid,
         name: _name.text.trim(),
         phone: (!_phoneLocked && phone.isNotEmpty) ? phone : null,
       );
       _snack('Сохранено');
+    } on PiiGatewayException catch (e) {
+      _snack(e.message);
     } catch (e) {
       _snack('Не удалось сохранить: проверьте интернет и попробуйте снова');
     } finally {
@@ -458,11 +466,22 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               : null,
         ),
         const SizedBox(height: 12),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
+        // Пока гость не отметил согласия, галочки стоят над кнопкой, а
+        // кнопка неактивна; после — под кнопкой только ссылка на политику.
+        ListenableBuilder(
+          listenable: _consent,
+          builder: (context, _) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!_consent.given) GuestConsentChecks(consent: _consent),
+              FilledButton(
+                onPressed: _saving || !_consent.ready ? null : _save,
+                child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
+              ),
+              if (_consent.given) GuestConsentChecks(consent: _consent),
+            ],
+          ),
         ),
-        const PrivacyNotice(),
 
         const SizedBox(height: 20),
         Container(
