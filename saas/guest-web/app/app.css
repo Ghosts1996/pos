@@ -514,3 +514,20 @@ h2.mh { margin: 26px 0 12px; }
   border-radius: 20px 20px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }
 .modsheet-body .btn-primary, .modsheet-body .btn-ghost { width: 100%; }
 .modsheet-body .btn-primary[disabled] { opacity: .55; }
+
+/* Доставка и с собой: шаги заказа и карточки «Мои заказы». */
+.mfoot .small { text-align: right; line-height: 1.2; }
+.backbar h1 { font: 600 28px/1.1 var(--serif); }
+.dsteps { padding: 14px 18px; }
+.dstep { position: relative; display: flex; align-items: center; gap: 12px; padding: 7px 0; color: var(--muted); }
+.dstep i { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border);
+  display: inline-flex; align-items: center; justify-content: center; transition: background .3s, border-color .3s; }
+.dstep i .i { width: 14px; height: 14px; color: var(--on-primary, #fff); }
+.dstep + .dstep::before { content: ''; position: absolute; left: 10px; top: -9px; width: 2px; height: 16px; background: var(--border); }
+.dstep.done, .dstep.active { color: var(--text); }
+.dstep.done i { background: var(--primary); border-color: var(--primary); }
+.dstep.done + .dstep::before { background: var(--primary); }
+.dstep.active i { border-color: var(--primary); }
+.dstep.active span { font-weight: 600; }
+a.order-link { display: flex; align-items: center; gap: 14px; color: var(--text); text-decoration: none; }
+a.order-link .ic-wrap .i { width: 28px; height: 28px; }
