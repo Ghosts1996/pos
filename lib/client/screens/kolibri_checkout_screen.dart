@@ -172,7 +172,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
         return Scaffold(
           appBar: AppBar(title: const Text('Оформление заказа')),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+            padding: EdgeInsets.fromLTRB(20, 8, 20, 32 + MediaQuery.paddingOf(context).bottom),
             children: [
               SegmentedButton<bool>(
                 segments: const [
@@ -211,6 +211,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
                   textCapitalization: TextCapitalization.sentences,
                   decoration: InputDecoration(labelText: 'Улица и дом', errorText: _addressError),
                 ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(child: TextField(controller: _flat, decoration: const InputDecoration(labelText: 'Кв./офис'))),
@@ -222,6 +223,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
                             decoration: const InputDecoration(labelText: 'Подъезд'))),
                   ],
                 ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(

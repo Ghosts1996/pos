@@ -100,7 +100,7 @@ class _OrderBody extends StatelessWidget {
     final paidOnline = order.guestPaidTotal > 0;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, 40 + MediaQuery.paddingOf(context).bottom),
       children: [
         Text(type == 'delivery' ? 'Доставка' : 'С собой', style: KolibriFonts.display(30)),
         const SizedBox(height: 6),

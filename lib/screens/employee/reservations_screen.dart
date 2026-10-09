@@ -570,6 +570,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                 controller: nameCtrl,
                 decoration: const InputDecoration(labelText: 'Имя гостя'),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: phoneCtrl,
                 keyboardType: TextInputType.phone,

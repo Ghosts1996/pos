@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
+import 'boxed_input_border.dart';
 
 /// Шрифты (assets/fonts, OFL): Onest — интерфейс и суммы,
 /// Cormorant Garamond — крупные заголовки (экран входа, PIN, названия
@@ -283,15 +284,15 @@ class AppTheme {
         fillColor: AppColors.surface,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         hintStyle: const TextStyle(color: AppColors.textMuted),
-        border: OutlineInputBorder(
+        border: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
           borderSide: const BorderSide(color: AppColors.border),
         ),
-        enabledBorder: OutlineInputBorder(
+        enabledBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
           borderSide: const BorderSide(color: AppColors.border),
         ),
-        focusedBorder: OutlineInputBorder(
+        focusedBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
           borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
         ),
