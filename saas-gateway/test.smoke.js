@@ -239,6 +239,26 @@ async function main() {
     check("telegram: итоги — выручка и закрытые без оплаты", text.includes("Выручка: 600 ₽") && text.includes("закрыто без оплаты: 1"));
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
+    {
+      const key = require("crypto").randomBytes(32);
+      const enc = tg.encrypt(key, "123456:ABCdef");
+      check("telegram: токен шифруется AES-256-GCM и расшифровывается", enc.startsWith("v1:") && !enc.includes("ABCdef") && tg.decrypt(key, enc) === "123456:ABCdef");
+      let tampered = false;
+      try { tg.decrypt(key, enc.slice(0, -4) + "AAAA"); } catch (_) { tampered = true; }
+      check("telegram: подменённый шифротекст не расшифровывается", tampered);
+      const card = tg.deliveryCardText({ id: "abcdef123456", orderType: "delivery", deliveryStatus: "cooking",
+        guestTag: "Иван Петров", customerPhone: "+79001112233", deliveryAddress: "ул. Ленина, 1",
+        orderItems: [{ name: "Пицца", price: 500, qty: 2 }] }, "Europe/Moscow");
+      check("telegram: в карточке доставки нет имени, телефона и адреса гостя",
+        card.includes("№123456") && card.includes("Готовится") && !card.includes("Иван") && !card.includes("+7900") && !card.includes("Ленина"));
+      const kb = tg.deliveryKeyboard({ id: "abc", orderType: "delivery", deliveryStatus: "cooking" }, "https://x/a");
+      check("telegram: кнопки доставки — следующий шаг, курьер, адрес",
+        kb.inline_keyboard[0][0].callback_data === "s:abc:courier" && kb.inline_keyboard[1].some((b) => b.url === "https://x/a"));
+    }
+    r = await request("POST", "/tgHook/t1", { body: {} });
+    check("POST /tgHook: без секрета бота -> 403", r.status === 403);
+    r = await request("GET", "/deliveryAddress?t=t1&s=s1&e=1&k=bad");
+    check("GET /deliveryAddress: неверная подпись -> 403", r.status === 403);
     check("telegram: мелкая скидка не сигналит", tg.alertText("Тест", { action: "discount_applied", details: { percent: 5 } }) === null);
   }
 

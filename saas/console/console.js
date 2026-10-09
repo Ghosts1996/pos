@@ -78,6 +78,115 @@ async function hashEmployeePin(pin, tenantId) {
   return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ---------- Telegram-бот заведения ----------
+// Статус бота — один запрос на заведение, а не на каждую перерисовку.
+const tgStatusCache = new Map();
+
+function telegramBoxHtml(st) {
+  if (!st) return '<div class="small muted">Проверяем…</div>';
+  if (st.error) return `<div class="small" style="color:var(--danger)">${esc(st.error)}</div>`;
+  if (!st.configured) {
+    return `
+      <p class="small muted">Свой бот заведения: заказы с собой и доставки — в рабочую группу с кнопками статусов,
+      владельцу — выручка, средний чек, посадка и смена по кнопкам, начало и конец смен, отмены позиций,
+      закрытие без оплаты и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.</p>
+      <ol class="small muted" style="padding-left:18px;margin:8px 0">
+        <li>В Telegram откройте <b>@BotFather</b> → <b>/newbot</b>, придумайте имя и адрес бота.</li>
+        <li>Скопируйте токен (вида <code>123456:ABC…</code>) и вставьте сюда.</li>
+      </ol>
+      <label class="field"><span>Токен бота</span>
+        <input id="f-tg-token" type="password" autocomplete="off" placeholder="123456789:AA…"></label>
+      <button class="btn btn-primary" id="f-tg-setup">Подключить бота</button>
+      <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
+  }
+  const n = st.notify || {};
+  const cb = (key, label) => `<label class="field-checkbox" style="display:flex;gap:8px;align-items:center;margin:4px 0">
+    <input type="checkbox" class="f-tg-notify" data-key="${key}" style="width:auto" ${n[key] === false ? '' : 'checked'}> <span class="small">${label}</span></label>`;
+  return `
+    <div class="small">Бот: <b>@${esc(st.username)}</b> · токен хранится зашифрованным</div>
+    <div class="small" style="margin-top:6px">Владелец: ${st.owners.length ? esc(st.owners.join(', ')) : '<span class="muted">не подключён</span>'}</div>
+    <button class="btn btn-ghost" id="f-tg-owner" style="margin-top:6px">Подключить мой Telegram</button>
+    <div class="small" style="margin-top:10px">Рабочая группа: ${st.staffChat ? esc(st.staffChat) : '<span class="muted">не подключена</span>'}</div>
+    <button class="btn btn-ghost" id="f-tg-staff" style="margin-top:6px">${st.staffChat ? 'Сменить группу' : 'Подключить группу сотрудников'}</button>
+    <div class="small muted" style="margin:10px 0 4px">Что присылать</div>
+    ${cb('delivery', 'Заказы с собой и доставки — в группу, с кнопками')}
+    ${cb('shifts', 'Начало и конец смен — владельцу')}
+    ${cb('alerts', 'Отмены, закрытие без оплаты, возвраты, скидки от 20% — владельцу')}
+    ${cb('summary', 'Итоги смены в 10:00 — владельцу')}
+    <button class="btn btn-ghost" id="f-tg-unlink" style="margin-top:8px;color:var(--danger)">Отключить бота</button>
+    <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
+}
+
+function bindTelegramBox(tenantId, redraw) {
+  const refresh = async () => {
+    try {
+      const r = await callSaasGateway('telegramStatus', { tenantId });
+      tgStatusCache.set(tenantId, r.data);
+    } catch (e) {
+      tgStatusCache.set(tenantId, { error: e.message || 'Не удалось узнать статус бота' });
+    }
+    redraw();
+  };
+  if (!tgStatusCache.has(tenantId)) {
+    tgStatusCache.set(tenantId, null);
+    refresh();
+    return;
+  }
+  const msg = (t, bad) => { const el = $('f-tg-msg'); if (el) { el.textContent = t; el.style.color = bad ? 'var(--danger)' : ''; } };
+  const openLink = async (kind, hint) => {
+    // Окно — сразу по клику: после await браузер его заблокирует.
+    const win = window.open('', '_blank');
+    try {
+      const r = await callSaasGateway('telegramLinkCode', { tenantId, kind });
+      if (win) win.location = r.data.link; else location.href = r.data.link;
+      msg(hint);
+    } catch (e) {
+      if (win) win.close();
+      msg(e.message, true);
+    }
+  };
+  if ($('f-tg-setup')) $('f-tg-setup').onclick = async () => {
+    const token = ($('f-tg-token').value || '').trim();
+    if (!token) return msg('Вставьте токен из @BotFather', true);
+    $('f-tg-setup').disabled = true;
+    try {
+      await callSaasGateway('telegramSetup', { tenantId, token });
+      $('f-tg-token').value = '';
+      tgStatusCache.delete(tenantId);
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+      $('f-tg-setup').disabled = false;
+    }
+  };
+  if ($('f-tg-owner')) $('f-tg-owner').onclick = () => openLink('owner', 'Нажмите «Запустить» в Telegram — и вы подключены. Обновите страницу, чтобы увидеть.');
+  if ($('f-tg-staff')) $('f-tg-staff').onclick = () => openLink('staff', 'Выберите рабочую группу в Telegram и добавьте бота — группа подключится сама.');
+  document.querySelectorAll('.f-tg-notify').forEach((el) => {
+    el.onchange = async () => {
+      const notify = {};
+      document.querySelectorAll('.f-tg-notify').forEach((x) => { notify[x.dataset.key] = x.checked; });
+      try {
+        await callSaasGateway('telegramNotify', { tenantId, notify });
+        const st = tgStatusCache.get(tenantId);
+        if (st) st.notify = notify;
+      } catch (e) {
+        el.checked = !el.checked;
+        msg(e.message, true);
+      }
+    };
+  });
+  if ($('f-tg-unlink')) $('f-tg-unlink').onclick = async () => {
+    if (!confirm('Отключить бота заведения? Уведомления и кнопки в Telegram перестанут работать.')) return;
+    try {
+      await callSaasGateway('telegramUnlink', { tenantId });
+      tgStatusCache.delete(tenantId);
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+    }
+  };
+}
+
 /** Вызов saas-gateway с ID-токеном пользователя. Бросает Error с текстом,
  *  который можно показать пользователю. */
 async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
@@ -3887,14 +3996,8 @@ function watchDashboardData(tenantId) {
       </div>
 
       ${canManage ? `
-        <h2>Telegram</h2>
-        <div class="card">
-          <p class="small muted">Итоги смены каждое утро в 10:00 — выручка, средний чек, оплаты, топ продаж.
-          А удаление позиций, закрытие стола без оплаты, возвраты и большие скидки — сразу, с именем сотрудника.</p>
-          <div id="f-tg-status" class="small" style="margin:8px 0">Проверяем…</div>
-          <button class="btn btn-ghost" id="f-tg-link">Подключить Telegram</button>
-          <button class="btn btn-ghost" id="f-tg-unlink" style="margin-top:8px;display:none">Отключить</button>
-        </div>
+        <h2>Telegram-бот заведения</h2>
+        <div class="card" id="f-tg-box">${telegramBoxHtml(tgStatusCache.get(tenantId))}</div>
       ` : ''}
 
       ${role === 'owner' ? `
@@ -4140,42 +4243,7 @@ function watchDashboardData(tenantId) {
     // Название для кабинета и панели платформы; в приложениях — своё, из
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
-    if ($('f-tg-status')) {
-      const tgStatus = $('f-tg-status');
-      const paintTg = (d) => {
-        if (!d.botEnabled) {
-          tgStatus.textContent = 'Бот платформы ещё не включён — скоро появится.';
-          $('f-tg-link').disabled = true;
-          return;
-        }
-        tgStatus.textContent = d.chats.length ? `Подключено: ${d.chats.join(', ')}` : 'Не подключено';
-        $('f-tg-unlink').style.display = d.chats.length ? '' : 'none';
-      };
-      callSaasGateway('telegramStatus', { tenantId }).then((r) => paintTg(r.data)).catch(() => {
-        tgStatus.textContent = 'Не удалось узнать статус — попробуйте позже.';
-      });
-      $('f-tg-link').onclick = async () => {
-        // Окно открываем сразу по клику: после await браузер его заблокирует.
-        const win = window.open('', '_blank');
-        try {
-          const r = await callSaasGateway('telegramLinkCode', { tenantId });
-          if (win) win.location = r.data.link; else location.href = r.data.link;
-          tgStatus.textContent = 'Нажмите «Старт» в Telegram — и заведение подключится.';
-        } catch (e) {
-          if (win) win.close();
-          tgStatus.textContent = e.message;
-        }
-      };
-      $('f-tg-unlink').onclick = async () => {
-        if (!confirm('Отключить уведомления в Telegram?')) return;
-        try {
-          await callSaasGateway('telegramUnlink', { tenantId });
-          paintTg({ botEnabled: true, chats: [] });
-        } catch (e) {
-          tgStatus.textContent = e.message;
-        }
-      };
-    }
+    if ($('f-tg-box')) bindTelegramBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
     if ($('f-backup-chain')) $('f-backup-chain').onclick = () => {
       const chain = state.tenants.find((t) => t.chainId === tenant.chainId) || {};
