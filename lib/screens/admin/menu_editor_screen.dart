@@ -313,6 +313,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     var vat = item?.vat ?? '';
     var fiscalSubject = item?.fiscalSubject ?? 'commodity';
     var tobacco = item?.tobacco ?? false;
+    final groups = List<ModifierGroup>.from(item?.modifierGroups ?? const []);
 
     final result = await showDialog<_ItemDialogResult>(
       context: context,
@@ -509,6 +510,40 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                       ),
                     ),
                 ],
+
+                // ---- Модификаторы ----
+                const SizedBox(height: 16),
+                const Text('Модификаторы', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                Text('Молоко, сиропы, прожарка, соус — официант выбирает при добавлении',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                ...groups.asMap().entries.map((e) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(e.value.name, style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                        '${e.value.required ? 'обязательно' : 'по желанию'} · '
+                        '${e.value.options.map((o) => o.price > 0 ? '${o.name} +${o.price.toStringAsFixed(0)}' : o.name).join(', ')}',
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () async {
+                        final g = await _editModifierGroup(ctx, e.value);
+                        if (g != null) setDialogState(() => groups[e.key] = g);
+                      },
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        onPressed: () => setDialogState(() => groups.removeAt(e.key)),
+                      ),
+                    )),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Добавить группу модификаторов'),
+                  onPressed: () async {
+                    final g = await _editModifierGroup(ctx, null);
+                    if (g != null) setDialogState(() => groups.add(g));
+                  },
+                ),
               ],
             ),
           ),
@@ -530,6 +565,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     fiscalSubject: fiscalSubject,
                     description: descCtrl.text.trim(),
                     tobacco: tobacco,
+                    modifierGroups: List.from(groups),
                   )),
               child: const Text('Сохранить'),
             ),
@@ -552,6 +588,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         fiscalSubject: result.fiscalSubject,
         description: result.description,
         tobacco: result.tobacco,
+        modifierGroups: result.modifierGroups,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -565,8 +602,192 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         fiscalSubject: result.fiscalSubject,
         description: result.description,
         tobacco: result.tobacco,
+        modifierGroups: result.modifierGroups,
       ));
     }
+  }
+
+  /// Группа модификаторов: название, обязательность, сколько можно выбрать
+  /// и варианты с доплатой и (по желанию) списанием со склада.
+  Future<ModifierGroup?> _editModifierGroup(BuildContext ctx, ModifierGroup? group) {
+    final nameCtrl = TextEditingController(text: group?.name ?? '');
+    var required = group?.required ?? false;
+    var multi = group != null && !group.single;
+    final maxCtrl = TextEditingController(text: (group != null && group.max > 1) ? '${group.max}' : '');
+    final options = List<ModifierOption>.from(group?.options ?? const []);
+    return showDialog<ModifierGroup>(
+      context: ctx,
+      builder: (ctx2) => StatefulBuilder(
+        builder: (ctx2, setSt) => AlertDialog(
+          title: Text(group == null ? 'Группа модификаторов' : 'Изменить группу'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'Название', hintText: 'Молоко, Сироп, Прожарка'),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: required,
+                  onChanged: (v) => setSt(() => required = v),
+                  title: const Text('Обязательный выбор'),
+                  subtitle: const Text('Без него позицию не добавить', style: TextStyle(fontSize: 11)),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: multi,
+                  onChanged: (v) => setSt(() => multi = v),
+                  title: const Text('Можно выбрать несколько'),
+                ),
+                if (multi)
+                  TextField(
+                    controller: maxCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Не больше (пусто — без ограничения)'),
+                  ),
+                const SizedBox(height: 10),
+                const Text('Варианты', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ...options.asMap().entries.map((e) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(e.value.name, style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                        [
+                          e.value.price > 0 ? '+${e.value.price.toStringAsFixed(0)} ₽' : 'бесплатно',
+                          if (e.value.hasInventoryLink) 'склад: ${e.value.weightUnit.formatWithLabel(e.value.weight)}',
+                        ].join(' · '),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      onTap: () async {
+                        final o = await _editModifierOption(ctx2, e.value);
+                        if (o != null) setSt(() => options[e.key] = o);
+                      },
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        onPressed: () => setSt(() => options.removeAt(e.key)),
+                      ),
+                    )),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Добавить вариант'),
+                  onPressed: () async {
+                    final o = await _editModifierOption(ctx2, null);
+                    if (o != null) setSt(() => options.add(o));
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                if (name.isEmpty || options.isEmpty) return;
+                final max = multi ? (int.tryParse(maxCtrl.text.trim()) ?? 0) : 1;
+                Navigator.pop(
+                    ctx2, ModifierGroup(name: name, min: required ? 1 : 0, max: max < 0 ? 0 : max, options: options));
+              },
+              child: const Text('Готово'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Вариант модификатора: название, доплата, списание со склада.
+  Future<ModifierOption?> _editModifierOption(BuildContext ctx, ModifierOption? option) {
+    final nameCtrl = TextEditingController(text: option?.name ?? '');
+    final priceCtrl = TextEditingController(text: (option != null && option.price > 0) ? option.price.toStringAsFixed(0) : '');
+    final weightCtrl =
+        TextEditingController(text: (option != null && option.weight > 0) ? option.weightUnit.format(option.weight) : '');
+    String? invId = (option?.inventoryItemId.isNotEmpty == true) ? option!.inventoryItemId : null;
+    var unit = option?.weightUnit ?? InventoryUnit.g;
+    return showDialog<ModifierOption>(
+      context: ctx,
+      builder: (ctx2) => StatefulBuilder(
+        builder: (ctx2, setSt) => AlertDialog(
+          title: const Text('Вариант'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'Название', hintText: 'Кокосовое молоко'),
+                ),
+                TextField(
+                  controller: priceCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Доплата, ₽ (пусто — бесплатно)'),
+                ),
+                const SizedBox(height: 8),
+                if (_inventoryItems.isNotEmpty)
+                  DropdownButton<String?>(
+                    value: invId,
+                    isExpanded: true,
+                    hint: const Text('Склад — не списывать'),
+                    items: [
+                      const DropdownMenuItem<String?>(value: null, child: Text('Склад — не списывать')),
+                      ..._inventoryItems.map((inv) =>
+                          DropdownMenuItem<String?>(value: inv.id, child: Text('${inv.name} (${inv.unit.label})'))),
+                    ],
+                    onChanged: (v) => setSt(() {
+                      invId = v;
+                      if (v != null) unit = _inventoryItems.firstWhere((i) => i.id == v).unit;
+                    }),
+                  ),
+                if (invId != null)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: weightCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Сколько списать'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      DropdownButton<InventoryUnit>(
+                        value: unit,
+                        items: InventoryUnit.values.map((u) => DropdownMenuItem(value: u, child: Text(u.label))).toList(),
+                        onChanged: (u) {
+                          if (u != null) setSt(() => unit = u);
+                        },
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                if (name.isEmpty) return;
+                final price = double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0;
+                final w = double.tryParse(weightCtrl.text.replaceAll(',', '.')) ?? 0;
+                Navigator.pop(
+                    ctx2,
+                    ModifierOption(
+                      name: name,
+                      price: price < 0 ? 0 : price,
+                      inventoryItemId: invId != null && w > 0 ? invId! : '',
+                      weight: invId != null && w > 0 ? w : 0,
+                      weightUnit: unit,
+                    ));
+              },
+              child: const Text('Готово'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Диалог добавления одного компонента составной позиции.
@@ -713,6 +934,7 @@ class _ItemDialogResult {
   final String fiscalSubject;
   final String description;
   final bool tobacco;
+  final List<ModifierGroup> modifierGroups;
 
   _ItemDialogResult({
     required this.name,
@@ -725,6 +947,7 @@ class _ItemDialogResult {
     this.fiscalSubject = 'commodity',
     this.description = '',
     this.tobacco = false,
+    this.modifierGroups = const [],
   });
 }
 

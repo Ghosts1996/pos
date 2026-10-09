@@ -49,6 +49,11 @@ class OrderItem {
   /// следующий бегунок печатал только новое.
   final int sent;
 
+  /// Выбранные модификаторы («Кокосовое молоко», «Medium»). Цена строки уже
+  /// включает доплаты. Строки одной позиции с разными модификаторами — разные
+  /// строки, см. [lineId].
+  final List<String> mods;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
@@ -61,6 +66,7 @@ class OrderItem {
     int ready = 0,
     this.since,
     int sent = 0,
+    this.mods = const [],
   })  : ready = _clampQty(ready, qty),
         sent = _clampQty(sent, qty);
 
@@ -68,6 +74,14 @@ class OrderItem {
 
   /// Штук ещё не готово.
   int get pending => qty - ready;
+
+  /// Ключ строки в счёте: позиция меню + её модификаторы.
+  String get lineId => lineIdOf(menuItemId, mods);
+  static String lineIdOf(String menuItemId, List<String> mods) =>
+      mods.isEmpty ? menuItemId : '$menuItemId|${mods.join('|')}';
+
+  /// Название с модификаторами — для чеков, бегунков и предчека.
+  String get displayName => mods.isEmpty ? name : '$name (${mods.join(', ')})';
 
   /// Штук для следующего бегунка: не отправленные и не отмеченные готовыми.
   /// Строки без «ждёт с» — из чеков до бегунков, их давно вынесли.
@@ -100,6 +114,9 @@ class OrderItem {
       ready: m['ready'] is num ? (m['ready'] as num).toInt() : 0,
       since: m['since'] is num ? DateTime.fromMillisecondsSinceEpoch((m['since'] as num).toInt()) : null,
       sent: m['sent'] is num ? (m['sent'] as num).toInt() : 0,
+      mods: m['mods'] is List
+          ? [for (final v in m['mods'] as List) if (v != null && v.toString().trim().isNotEmpty) v.toString().trim()]
+          : const [],
     );
   }
 
@@ -115,6 +132,7 @@ class OrderItem {
         if (ready > 0) 'ready': ready,
         if (since != null) 'since': since!.millisecondsSinceEpoch,
         if (sent > 0) 'sent': sent,
+        if (mods.isNotEmpty) 'mods': mods,
       };
 
   /// Всё готово: [ready] = [qty].
@@ -129,7 +147,7 @@ class OrderItem {
 
   OrderItem _with({String? note, int? ready, int? sent}) => OrderItem(
       menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
-      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent);
+      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent, mods: mods);
 
   /// Новое количество. Если штук стало меньше, учёт авторов урезается с
   /// самых крупных долей — сумма никогда не больше [qty].
@@ -147,6 +165,7 @@ class OrderItem {
       ready: ready,
       since: since,
       sent: sent,
+      mods: mods,
     );
   }
 
@@ -167,6 +186,7 @@ class OrderItem {
       // Было всё готово — новые штуки ждут с этой минуты.
       since: n > 0 && pending <= 0 ? DateTime.now() : since,
       sent: sent,
+      mods: mods,
     );
   }
 
@@ -199,6 +219,7 @@ class OrderItem {
       ready: ready,
       since: since,
       sent: sent,
+      mods: mods,
     );
   }
 
@@ -229,7 +250,7 @@ class OrderItem {
     final sentOut = sent < n ? sent : n;
     OrderItem part(int q, Map<String, int> b, int r, int sn) => OrderItem(
         menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b, note: note,
-        ready: r, since: since, sent: sn);
+        ready: r, since: since, sent: sn, mods: mods);
     return (part(n, taken, readyOut, sentOut), part(qty - n, kept, ready - readyOut, sent - sentOut));
   }
 

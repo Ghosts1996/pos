@@ -11,6 +11,7 @@ import '../../services/chestny_znak_api_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
+import '../../widgets/modifier_picker_sheet.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
 ///
@@ -126,8 +127,14 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
   }
 
   Future<void> _add(MenuItem item) async {
+    var mods = const <String>[];
+    if (item.hasModifiers) {
+      final picked = await showModifierPicker(context, item);
+      if (picked == null) return;
+      mods = picked;
+    }
     try {
-      await _fs.addOrderItem(widget.session.id, item, employeeId: widget.employeeId);
+      await _fs.addOrderItem(widget.session.id, item, employeeId: widget.employeeId, mods: mods);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Добавлено: ${item.name}'), duration: const Duration(seconds: 1)));
@@ -385,7 +392,16 @@ class _CategoryItemsScreen extends StatelessWidget {
                 item: item,
                 qty: qtyOf(item.id),
                 onAdd: () => onAdd(item),
-                onRemoveOne: () => fs.changeOrderItemQty(session.id, item.id, -1, employeeId: employeeId).catchError((Object e) {
+                // Убираем штуку из последней добавленной строки этой позиции
+                // (у позиции с модификаторами строк может быть несколько).
+                onRemoveOne: () => fs
+                    .changeOrderItemQty(
+                        session.id,
+                        orderItems.lastWhere((o) => o.menuItemId == item.id,
+                            orElse: () => OrderItem(menuItemId: item.id, name: '', price: 0, qty: 0)).lineId,
+                        -1,
+                        employeeId: employeeId)
+                    .catchError((Object e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
                   }

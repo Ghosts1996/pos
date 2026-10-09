@@ -361,7 +361,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final note = await showOrderNoteSheet(context, i);
     if (note == null || note == i.note || !mounted) return;
     try {
-      await _fs.setOrderItemNote(sessionId, i.menuItemId, note);
+      await _fs.setOrderItemNote(sessionId, i.lineId, note);
     } catch (e) {
       _showError('Не удалось сохранить пожелание: ${humanError(e, lower: true)}');
     }
@@ -474,7 +474,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         guestTag: session.guestTag,
         waiter: session.employeeName,
         at: DateTime.now(),
-        lines: [for (final i in session.orderItems) PrecheckLine(i.name, i.qty, i.price)],
+        lines: [for (final i in session.orderItems) PrecheckLine(i.displayName, i.qty, i.price)],
         subtotal: session.orderTotal,
         discountPercent: session.discountPercent,
         total: session.totalWithDiscount,
@@ -485,9 +485,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
-  Future<void> _changeQty(String sessionId, String menuItemId, int delta) async {
+  Future<void> _changeQty(String sessionId, String lineId, int delta) async {
     try {
-      await _fs.changeOrderItemQty(sessionId, menuItemId, delta, employeeId: widget.employee.id);
+      await _fs.changeOrderItemQty(sessionId, lineId, delta, employeeId: widget.employee.id);
     } catch (e) {
       _showError('Не удалось изменить заказ: ${humanError(e, lower: true)}');
     }
@@ -793,6 +793,11 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  if (i.mods.isNotEmpty)
+                    Text(i.mods.join(' · '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13, color: AppColors.brass)),
                   const SizedBox(height: 2),
                   Row(
                     children: [
@@ -815,8 +820,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             if (i.menuItemId.isNotEmpty)
               _QtyStepper(
                 qty: i.qty,
-                onMinus: () => _changeQty(session.id, i.menuItemId, -1),
-                onPlus: () => _changeQty(session.id, i.menuItemId, 1),
+                onMinus: () => _changeQty(session.id, i.lineId, -1),
+                onPlus: () => _changeQty(session.id, i.lineId, 1),
               ),
             SizedBox(
               width: 76,

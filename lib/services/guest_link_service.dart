@@ -795,7 +795,7 @@ class GuestLinkService {
           .toList();
 
       for (final incoming in priced) {
-        final idx = current.indexWhere((i) => i.menuItemId == incoming.menuItemId);
+        final idx = current.indexWhere((i) => i.lineId == incoming.lineId);
         if (idx >= 0) {
           current[idx] = current[idx].plus(incoming.qty, employeeId: employeeId);
         } else {
