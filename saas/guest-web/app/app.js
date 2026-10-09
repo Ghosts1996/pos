@@ -15,6 +15,7 @@ import {
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
+  disableNetwork, enableNetwork,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // Сервер платформы: поиск заведения по поддомену, конфиг Firebase, удаление данных.
@@ -374,6 +375,7 @@ async function boot() {
 
   const app = initializeApp(config);
   state.db = getFirestore(app);
+  watchResume();
   state.root = doc(state.db, 'tenants', tenantId);
   state.loyaltyRoot = chainId ? doc(state.db, 'chains', chainId) : state.root;
 
@@ -1347,6 +1349,33 @@ function drawTable(s) {
   }
   paintTips();
   if (sbpOn) paintSbp(s);
+}
+
+// ---------- ВОЗВРАТ НА ЭКРАН ----------
+// iOS усыпляет вкладку и PWA «на экране Домой»: соединение с базой
+// замирает, и после возврата бонусы и статусы приходили с задержкой в
+// десятки секунд. Вернулись после паузы — сразу переподключаемся, подписки
+// получают свежие данные за доли секунды. Держать соединение открытым в
+// фоне iOS не даёт никому — ни сайту, ни Service Worker'у.
+function watchResume() {
+  let hiddenAt = 0;
+  let busy = false;
+  const resume = async () => {
+    if (!state.db || busy || !hiddenAt || Date.now() - hiddenAt < 5000) { hiddenAt = 0; return; }
+    hiddenAt = 0;
+    busy = true;
+    try {
+      await disableNetwork(state.db);
+      await enableNetwork(state.db);
+    } catch (_) { /* SDK переподключится сам */ } finally { busy = false; }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else resume();
+  });
+  // Страница вернулась из кэша «назад/вперёд» (bfcache) — то же самое.
+  window.addEventListener('pageshow', (e) => { if (e.persisted) { hiddenAt = hiddenAt || Date.now() - 6000; resume(); } });
+  window.addEventListener('online', () => { hiddenAt = hiddenAt || Date.now() - 6000; resume(); });
 }
 
 // ---------- ОПЛАТА ПО СБП СО СТОЛА ----------
