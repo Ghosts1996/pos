@@ -216,9 +216,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                   style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.success)),
                             ),
                           ),
+                        if (stats.allItems.length >= 3) _abcCard(stats),
                         ...stats.topItems.map((i) => Card(
                               child: ListTile(
-                                leading: const Icon(Icons.local_cafe_outlined),
+                                leading: _abcBadge(stats.abc[i] ?? 'C'),
                                 title: Text(i.name),
                                 subtitle: Text('${i.qty} шт.${_itemCostLine(i)}'),
                                 trailing: Text(
@@ -264,12 +265,22 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           ),
                         ],
                         const SizedBox(height: 16),
-                        Center(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _copyReport(stats, range),
-                            icon: const Icon(Icons.copy, size: 16),
-                            label: const Text('Копировать отчёт текстом'),
-                          ),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _copyReport(stats, range),
+                              icon: const Icon(Icons.copy, size: 16),
+                              label: const Text('Копировать отчёт текстом'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => _copyCsv(sessions),
+                              icon: const Icon(Icons.table_chart_outlined, size: 16),
+                              label: const Text('Продажи для бухгалтера (CSV)'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -348,6 +359,70 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return '${two(s.day)}.${two(s.month)}.${s.year} — ${two(lastDay.day)}.${two(lastDay.month)}.${lastDay.year}';
   }
 
+  /// Продажи построчно для бухгалтера и 1С: копируется в буфер, вставляется
+  /// в Excel или Google Таблицы (разделитель — точка с запятой).
+  void _copyCsv(List<SessionModel> sessions) {
+    String cell(Object v) {
+      final t = v.toString().replaceAll('"', '""');
+      return t.contains(';') || t.contains('"') || t.contains('\n') ? '"$t"' : t;
+    }
+    String num2(double v) => v.toStringAsFixed(2).replaceAll('.', ',');
+    final buf = StringBuffer('Дата;Время;Стол;Сотрудник;Позиция;Количество;Цена;Сумма;Скидка %;Оплата\n');
+    for (final s in sessions) {
+      if (s.refunded || s.closedWithoutPayment) continue;
+      final at = s.closedAt ?? s.startTime;
+      final date = '${at.day.toString().padLeft(2, '0')}.${at.month.toString().padLeft(2, '0')}.${at.year}';
+      final time = '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+      final pay = [
+        if (s.paymentCash > 0) 'наличные',
+        if (s.paymentCard > 0) 'карта',
+        if (s.paymentTerminal > 0) 'терминал',
+        if (s.paymentComp > 0) 'за счёт заведения',
+      ].join('+');
+      for (final i in s.orderItems) {
+        buf.writeln([
+          date,
+          time,
+          cell(s.tableName),
+          cell(s.employeeName),
+          cell(i.displayName),
+          i.qty,
+          num2(i.price),
+          num2(i.total),
+          num2(s.discountPercent),
+          pay,
+        ].join(';'));
+      }
+    }
+    Clipboard.setData(ClipboardData(text: buf.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Продажи скопированы — вставьте в Excel или Google Таблицы')));
+  }
+
+  /// ABC-анализ: A — позиции, дающие 80% выручки, B — следующие 15%, C — 5%.
+  Widget _abcCard(_ReportStats stats) {
+    int count(String c) => stats.abc.values.where((v) => v == c).length;
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.insights_outlined),
+        title: Text('ABC: ${count('A')} позиций дают 80% выручки'),
+        subtitle: Text('B — ${count('B')} поз. (15%), C — ${count('C')} поз. (5%). '
+            'Позиции C — кандидаты убрать из меню или переделать'),
+      ),
+    );
+  }
+
+  Widget _abcBadge(String c) => CircleAvatar(
+        radius: 15,
+        backgroundColor: (c == 'A'
+                ? AppColors.success
+                : c == 'B'
+                    ? AppColors.brass
+                    : AppColors.textMuted)
+            .withValues(alpha: 0.18),
+        child: Text(c, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+      );
+
   void _copyReport(_ReportStats stats, DateTimeRange range) {
     final buf = StringBuffer();
     buf.writeln('Отчёт: ${_formatRange(range)}');
@@ -425,6 +500,19 @@ class _ReportStats {
   final Map<String, _EmployeeStat> byEmployee;
   final List<_ItemStat> topItems;
   final List<_ItemStat> allItems;
+
+  /// Класс ABC каждой позиции по доле в выручке.
+  late final Map<_ItemStat, String> abc = () {
+    final total = allItems.fold<double>(0, (a, i) => a + i.revenue);
+    final out = <_ItemStat, String>{};
+    var acc = 0.0;
+    for (final i in allItems) {
+      final before = total <= 0 ? 1.0 : acc / total;
+      out[i] = before < 0.8 ? 'A' : (before < 0.95 ? 'B' : 'C');
+      acc += i.revenue;
+    }
+    return out;
+  }();
   final int cardsUsed;
   final double totalDiscountGiven;
   final int refunds;

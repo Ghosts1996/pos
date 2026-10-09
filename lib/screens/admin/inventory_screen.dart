@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
@@ -17,6 +18,42 @@ class InventoryScreen extends StatelessWidget {
   final Employee employee;
   const InventoryScreen({super.key, required this.employee});
 
+  /// Заказ поставщику: всё, что ниже порога «мало на складе», с количеством
+  /// до двойного порога. Текст копируется — отправить поставщику в чат.
+  Future<void> _showOrderList(BuildContext context) async {
+    final items = await FirestoreService().inventoryItemsStream().first;
+    final low = items.where((i) => i.active && i.isLow).toList()..sort((a, b) => a.name.compareTo(b.name));
+    if (!context.mounted) return;
+    final lines = [
+      for (final i in low)
+        '${i.name} — ${i.unit.formatWithLabel(i.minQuantity * 2 - i.quantity > i.minQuantity ? i.minQuantity * 2 - i.quantity : i.minQuantity)}',
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: const Text('Что заказать'),
+        content: Text(low.isEmpty
+            ? 'Всё в достатке. Позиции попадают сюда, когда остаток опускается до порога «мало на складе».'
+            : lines.join('\n')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+          if (low.isNotEmpty)
+            FilledButton.icon(
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Скопировать'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: 'Заказ:\n${lines.join('\n')}'));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Список скопирован — отправьте поставщику')));
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
@@ -24,6 +61,13 @@ class InventoryScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Склад'),
+          actions: [
+            IconButton(
+              tooltip: 'Что заказать поставщику',
+              icon: const Icon(Icons.local_shipping_outlined),
+              onPressed: () => _showOrderList(context),
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Остатки'),
