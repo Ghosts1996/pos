@@ -49,7 +49,7 @@ class AdminHomeScreen extends StatelessWidget {
             (ctx) => InventoryScreen(employee: employee)),
         _AdminTile('Сотрудники', Icons.people, (ctx) => EmployeesScreen(employee: employee)),
         _AdminTile('Смены сотрудников', Icons.timer_outlined, (ctx) => StaffShiftsScreen(employee: employee)),
-        _AdminTile('Зарплата', Icons.payments_outlined, (ctx) => const PayrollScreen()),
+        _AdminTile('Зарплата', Icons.payments_outlined, (ctx) => PayrollScreen(actorName: employee.name)),
       ],
       'Гости и лояльность': [
         _AdminTile('Гости', Icons.people_alt, (ctx) => const GuestsScreen()),
