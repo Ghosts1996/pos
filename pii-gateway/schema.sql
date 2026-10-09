@@ -31,6 +31,28 @@ CREATE TABLE IF NOT EXISTS contact_records (
 );
 -- Базы, созданные до появления доставки.
 ALTER TABLE contact_records ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
+-- Остальное, что относится к человеку в записи: пожелания к заказу,
+-- курьер и его рабочий номер, подпись и контакт чека, заметка карты
+-- (vault.js, EXTRA_KEYS). updated_by — кто правил последним.
+ALTER TABLE contact_records ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE contact_records ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT '';
+-- Касса забирает изменения по времени (pii_sync).
+CREATE INDEX IF NOT EXISTS contact_records_sync_idx ON contact_records (tenant_id, updated_at);
+CREATE INDEX IF NOT EXISTS guest_profiles_sync_idx ON guest_profiles (tenant_id, updated_at);
+
+-- Сотрудники заведения: имя и телефон. В Firestore у сотрудника остаются
+-- id, должность, ставки и хэш PIN — без имени.
+CREATE TABLE IF NOT EXISTS staff_profiles (
+  tenant_id    TEXT NOT NULL,
+  employee_id  TEXT NOT NULL,              -- id документа employees в Firestore
+  name         TEXT NOT NULL DEFAULT '',
+  phone        TEXT NOT NULL DEFAULT '',
+  updated_by   TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, employee_id)
+);
+CREATE INDEX IF NOT EXISTS staff_profiles_sync_idx ON staff_profiles (tenant_id, updated_at);
 
 -- Владельцы кабинета: email попадает сюда до регистрации в Firebase Auth.
 -- Отметки о принятии оферты и согласия — доказательство согласия.
@@ -82,9 +104,9 @@ CREATE TABLE IF NOT EXISTS guest_consents (
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'pii_gateway') THEN
-    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations, payer_requisites, guest_consents TO pii_gateway;
+    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, staff_profiles, owner_registrations, payer_requisites, guest_consents TO pii_gateway;
     -- «Удалить мои данные» у гостя (kind guest_delete).
-    GRANT DELETE ON guest_profiles, contact_records TO pii_gateway;
+    GRANT DELETE ON guest_profiles, contact_records, staff_profiles TO pii_gateway;
   END IF;
 END
 $$;
