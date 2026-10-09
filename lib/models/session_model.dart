@@ -349,6 +349,10 @@ class SessionModel {
   final String customerPhone;
   final String deliveryAddress;
 
+  /// Статус заказа с собой/доставки — см. DeliveryFlow.
+  final String deliveryStatus;
+  final String courierName;
+
   bool get isTakeaway => orderType == 'takeaway' || orderType == 'delivery';
   final String guestContact; // телефон/email гостя, необязательно
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
@@ -394,6 +398,8 @@ class SessionModel {
     this.orderType = '',
     this.customerPhone = '',
     this.deliveryAddress = '',
+    this.deliveryStatus = '',
+    this.courierName = '',
     this.guestContact = '',
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
@@ -438,6 +444,8 @@ class SessionModel {
       orderType: asText(data['orderType']),
       customerPhone: asText(data['customerPhone']),
       deliveryAddress: asText(data['deliveryAddress']),
+      deliveryStatus: asText(data['deliveryStatus']),
+      courierName: asText(data['courierName']),
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
@@ -460,6 +468,8 @@ class SessionModel {
       if (orderType.isNotEmpty) 'orderType': orderType,
       if (customerPhone.isNotEmpty) 'customerPhone': customerPhone,
       if (deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
+      if (orderType.isNotEmpty) 'deliveryStatus': deliveryStatus.isEmpty ? 'new' : deliveryStatus,
+      if (courierName.isNotEmpty) 'courierName': courierName,
       'startTime': Timestamp.fromDate(startTime),
       'plannedEnd': Timestamp.fromDate(plannedEnd),
       'refillCount': refillCount,

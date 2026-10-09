@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../models/delivery_status.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
@@ -1482,11 +1483,64 @@ class _TakeawayCard extends StatelessWidget {
                   child: Text('Заказ принят ${waited < 1 ? 'только что' : '$waited мин назад'}',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
                 ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(DeliveryFlow.label(session.orderType, session.deliveryStatus)
+                          + (session.courierName.isNotEmpty ? ' · ${session.courierName}' : '')),
+                    ),
+                    if (DeliveryFlow.actionLabel(session.orderType, session.deliveryStatus) != null)
+                      FilledButton.tonal(
+                        onPressed: () => _advance(context),
+                        child: Text(DeliveryFlow.actionLabel(session.orderType, session.deliveryStatus)!),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _advance(BuildContext context) async {
+    final to = DeliveryFlow.next(session.orderType, session.deliveryStatus);
+    if (to == null) return;
+    var courier = '';
+    if (to == 'courier') {
+      final ctrl = TextEditingController();
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Кто везёт заказ?'),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Курьер (необязательно)'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Передать')),
+          ],
+        ),
+      );
+      courier = ctrl.text.trim();
+      ctrl.dispose();
+      if (ok != true) return;
+    }
+    try {
+      await FirestoreService().setDeliveryStatus(session.id, to, courierName: courier);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+      }
+    }
   }
 }

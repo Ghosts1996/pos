@@ -3876,6 +3876,16 @@ function watchDashboardData(tenantId) {
         <div id="f-hookah-mode-msg" class="small" style="margin-top:8px"></div>
       </div>
 
+      <div class="card">
+        <label class="field-checkbox" style="display:flex;align-items:flex-start;gap:10px">
+          <input type="checkbox" id="f-delivery-mode" style="width:auto;margin-top:3px"
+            ${venueProfile && venueProfile.deliveryEnabled === true ? 'checked' : ''} ${canManage ? '' : 'disabled'}>
+          <span><b>Заказы с собой и доставка</b><br>
+          <span class="small muted">Кнопка в шапке зала кассы: заказ без стола, статусы «Принят → Готовится → У курьера →
+          Доставлен». Включение и выключение видно на всех кассах сразу, без перезапуска.</span></span>
+        </label>
+      </div>
+
       ${canManage ? `
         <h2>Telegram</h2>
         <div class="card">
@@ -4453,6 +4463,21 @@ function watchDashboardData(tenantId) {
         } catch (err) {
           e.target.checked = !on;
           if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = `Не удалось сохранить: ${err?.message || err}`; }
+        } finally {
+          e.target.disabled = false;
+        }
+      };
+    }
+    if ($('f-delivery-mode')) {
+      $('f-delivery-mode').onchange = async (e) => {
+        const on = e.target.checked;
+        e.target.disabled = true;
+        try {
+          await setDoc(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), { deliveryEnabled: on }, { merge: true });
+          toast(on ? 'С собой и доставка включены на кассах' : 'С собой и доставка выключены');
+        } catch (err) {
+          e.target.checked = !on;
+          toast(`Не удалось сохранить: ${err?.message || err}`);
         } finally {
           e.target.disabled = false;
         }

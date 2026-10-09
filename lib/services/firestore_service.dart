@@ -6,6 +6,7 @@ import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
 import '../utils/shift_crew.dart';
 import 'package:uuid/uuid.dart';
+import '../models/delivery_status.dart';
 import '../models/table_model.dart';
 import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
@@ -100,6 +101,40 @@ class FirestoreService {
       unawaited(write.catchError((Object _) {}));
     }
     return table;
+  }
+
+  /// Следующий шаг заказа с собой/доставки (см. DeliveryFlow). Со связью —
+  /// транзакцией: если тот же шаг уже нажали в Telegram или на другой
+  /// кассе, второй раз он не пройдёт. Без связи — по копии на устройстве.
+  Future<void> setDeliveryStatus(String sessionId, String to, {String courierName = ''}) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    Map<String, dynamic> patch() => {
+          'deliveryStatus': to,
+          'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
+          if (courierName.isNotEmpty) 'courierName': courierName,
+        };
+    void check(Map<String, dynamic>? data) {
+      if (data == null) throw StateError('Заказ не найден');
+      final type = (data['orderType'] ?? '').toString();
+      if (!DeliveryFlow.canMove(type, data['deliveryStatus'] as String?, to)) {
+        throw StateError('Статус уже изменили: сейчас «${DeliveryFlow.label(type, data['deliveryStatus'] as String?)}»');
+      }
+    }
+
+    if (NetStatus.online.value) {
+      try {
+        await _db.runTransaction((tx) async {
+          check((await tx.get(ref)).data());
+          tx.update(ref, patch());
+        });
+        return;
+      } on FirebaseException catch (e) {
+        if (e.code != 'unavailable') rethrow;
+        NetStatus.reportFailure();
+      }
+    }
+    check((await ref.get(const GetOptions(source: Source.cache))).data());
+    await _write(ref.update(patch()));
   }
 
   Stream<List<SessionModel>> takeawaySessionsStream() => AppScope.col('sessions')

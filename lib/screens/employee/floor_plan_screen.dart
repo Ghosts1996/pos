@@ -12,6 +12,7 @@ import '../../services/ai/ai_agents.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/reservation_service.dart';
+import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/hall_layout.dart';
@@ -168,7 +169,13 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
           ],
         ),
         actions: [
-          TakeawayButton(employee: widget.employee),
+          // Модуль включают в профиле заведения — кнопка появляется и
+          // пропадает сразу, без перезапуска кассы.
+          ValueListenableBuilder(
+            valueListenable: VenueService.instance.notifier,
+            builder: (context, venue, _) =>
+                venue.deliveryEnabled ? TakeawayButton(employee: widget.employee) : const SizedBox.shrink(),
+          ),
           LayoutBuilder(builder: (context, _) {
             final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
             return IconButton(
