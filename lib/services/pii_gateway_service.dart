@@ -171,6 +171,42 @@ extension PiiGuestDeletion on PiiGatewayService {
   }
 }
 
+/// Согласия гостя (обработка ПД и трансграничная передача) — отметка с
+/// датой, редакцией текста, IP и браузером записывается на сервер в РФ
+/// и служит доказательством согласия (ст. 9 152-ФЗ).
+extension PiiGuestConsent on PiiGatewayService {
+  Future<void> recordGuestConsent(String edition) async {
+    if (baseUrl.isEmpty) {
+      throw PiiGatewayException('Сервер данных не настроен в этой сборке — согласие не сохранить.');
+    }
+    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      throw PiiGatewayException('Нет активной сессии — перезапустите приложение.');
+    }
+    http.Response resp;
+    try {
+      resp = await _http
+          .post(
+            Uri.parse(baseUrl),
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
+            body: jsonEncode({
+              'tenantId': AppScope.tenantId ?? '',
+              'kind': 'guest_consent',
+              'edition': edition,
+              'pd': true,
+              'crossBorder': true,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      throw PiiGatewayException('Нет связи с сервером — проверьте интернет и попробуйте снова.');
+    }
+    if (resp.statusCode != 200) {
+      throw PiiGatewayException('Согласие не сохранилось (${resp.statusCode})${_serverReason(resp)} — попробуйте ещё раз.');
+    }
+  }
+}
+
 class PiiGatewayException implements Exception {
   final String message;
   PiiGatewayException(this.message);

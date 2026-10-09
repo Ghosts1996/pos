@@ -6,7 +6,9 @@ import '../../services/venue_service.dart';
 import '../widgets/kolibri_tips_panel.dart';
 import '../../services/referral_service.dart';
 import '../../services/waitlist_service.dart';
+import '../services/guest_consent.dart';
 import '../services/kolibri_auth_service.dart';
+import '../widgets/guest_consent_checks.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/table_label.dart';
 
@@ -28,6 +30,7 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
   final _cards = GiftCardService.instance;
   final _waitlist = WaitlistService.instance;
   final _referral = ReferralService.instance;
+  final _consent = GuestConsent();
 
   final _cardCode = TextEditingController();
   final _referralCode = TextEditingController();
@@ -44,12 +47,14 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
     _referral.ensureCode(_auth.uid).then((c) {
       if (mounted) setState(() => _myCode = c);
     });
+    _consent.load(_auth.uid, widget.profile);
   }
 
   @override
   void dispose() {
     _cardCode.dispose();
     _referralCode.dispose();
+    _consent.dispose();
     super.dispose();
   }
 
@@ -299,6 +304,8 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
       ));
       return;
     }
+    _consent.sync(widget.profile);
+    if (!await ensureGuestConsent(context, _consent, _auth.uid) || !mounted) return;
     final result = await _waitlist.join(
       guestName: widget.profile?.name ?? 'Гость',
       guestsCount: guests,

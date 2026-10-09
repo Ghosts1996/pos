@@ -60,11 +60,29 @@ CREATE TABLE IF NOT EXISTS payer_requisites (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Согласия гостей: отметки «согласие на обработку» и «трансграничная
+-- передача» в приложении или веб-версии заведения — доказательство
+-- согласия (ст. 9 152-ФЗ). Одна строка на редакцию текста: новая
+-- редакция — новое согласие. При «Удалить мои данные» строка не
+-- стирается, а помечается отозванной (без IP и браузера).
+CREATE TABLE IF NOT EXISTS guest_consents (
+  tenant_id           TEXT NOT NULL,             -- как в guest_profiles: tenantId или 'chain:<id>'
+  uid                 TEXT NOT NULL,             -- Firebase Auth uid гостя
+  edition             TEXT NOT NULL,             -- редакция текста согласия
+  pd_consent_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  xborder_consent_at  TIMESTAMPTZ,
+  withdrawn_at        TIMESTAMPTZ,
+  ip                  TEXT NOT NULL DEFAULT '',
+  user_agent          TEXT NOT NULL DEFAULT '',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, uid, edition)
+);
+
 -- Схему применяет postgres (setup.sh), поэтому права сервису выдаём явно.
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'pii_gateway') THEN
-    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations, payer_requisites TO pii_gateway;
+    GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, owner_registrations, payer_requisites, guest_consents TO pii_gateway;
     -- «Удалить мои данные» у гостя (kind guest_delete).
     GRANT DELETE ON guest_profiles, contact_records TO pii_gateway;
   END IF;

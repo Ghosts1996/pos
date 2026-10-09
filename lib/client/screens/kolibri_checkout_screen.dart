@@ -11,7 +11,9 @@ import '../../utils/money.dart';
 import '../../utils/phone_utils.dart';
 import '../services/delivery_order_service.dart';
 import '../theme/kolibri_theme.dart';
-import '../widgets/privacy_notice.dart';
+import '../services/guest_consent.dart';
+import '../services/kolibri_auth_service.dart';
+import '../widgets/guest_consent_checks.dart';
 import 'kolibri_order_screen.dart';
 
 /// Оформление доставки или «заберу сам». Заказ уходит на сервер: тот
@@ -56,6 +58,8 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
   final _floor = TextEditingController();
   final _intercom = TextEditingController();
   final _comment = TextEditingController();
+  final _consent = GuestConsent();
+  final _uid = KolibriAuthService().uid;
 
   List<OrderItem> get _allowed => widget.items.where((i) => !widget.banned.contains(i.menuItemId)).toList();
   List<OrderItem> get _skipped => widget.items.where((i) => widget.banned.contains(i.menuItemId)).toList();
@@ -67,6 +71,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
     _name.text = widget.defaultName;
     _phone.text = widget.defaultPhone.isEmpty ? '' : formatPhone(widget.defaultPhone);
     _restore();
+    _consent.load(_uid);
   }
 
   /// Адрес и имя прошлого заказа — на этом телефоне, никуда не уходят.
@@ -108,6 +113,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
     for (final c in [_name, _phone, _street, _flat, _entrance, _floor, _intercom, _comment]) {
       c.dispose();
     }
+    _consent.dispose();
     super.dispose();
   }
 
@@ -124,6 +130,7 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
     if (_phoneError != null || _addressError != null || _allowed.isEmpty) return;
     setState(() => _sending = true);
     try {
+      await _consent.commit(_uid);
       final r = await DeliveryOrderService.instance.place({
         'orderType': _delivery ? 'delivery' : 'takeaway',
         'name': _name.text.trim(),
@@ -297,13 +304,22 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
                   ),
                 ),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _sending || _allowed.isEmpty ? null : () => _submit(venue),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: _sending
-                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                      : Text('Оформить заказ · ${rub(_total)}'),
+              ListenableBuilder(
+                listenable: _consent,
+                builder: (context, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (!_consent.given) GuestConsentChecks(consent: _consent),
+                    FilledButton(
+                      onPressed: _sending || _allowed.isEmpty || !_consent.ready ? null : () => _submit(venue),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: _sending
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                            : Text('Оформить заказ · ${rub(_total)}'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 10),
@@ -313,12 +329,17 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
                   child: Text(venue.sellerLine, style: muted.copyWith(fontSize: 12), textAlign: TextAlign.center),
                 ),
               Text(
-                'Имя, телефон и адрес нужны заведению, чтобы подтвердить и передать заказ, '
-                'и хранятся на сервере в России. Через 30 дней после выполнения заказа они обезличиваются.',
-                style: muted.copyWith(fontSize: 12),
+                'Имя, телефон и адрес нужны заведению, чтобы подтвердить и передать заказ. '
+                'Сначала они записываются на сервер в России, через 30 дней после выполнения '
+                'заказа обезличиваются.',
+                style: muted.copyWith(fontSize: 12, height: 1.4),
                 textAlign: TextAlign.center,
               ),
-              const PrivacyNotice(),
+              ListenableBuilder(
+                listenable: _consent,
+                builder: (context, _) =>
+                    _consent.given ? GuestConsentChecks(consent: _consent) : const SizedBox.shrink(),
+              ),
             ],
           ),
         );
