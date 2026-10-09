@@ -2261,6 +2261,7 @@ class FirestoreService {
   /// значение (если сотрудник хочет пересчитать позицию заново).
   Future<void> setInventoryCountValue(String countId, String itemId, double? countedQty) async {
     final ref = AppScope.col('inventoryCounts').doc(countId);
+    final itemRef = AppScope.col('inventoryItems').doc(itemId);
     await _db.runTransaction((tx) async {
       final doc = await tx.get(ref);
       final data = doc.data();
@@ -2270,7 +2271,12 @@ class FirestoreService {
           .toList();
       final idx = entries.indexWhere((e) => e.itemId == itemId);
       if (idx < 0) return;
-      entries[idx] = entries[idx].copyWith(countedQty: countedQty, clear: countedQty == null);
+      // Запоминаем системный остаток в момент подсчёта — продажи после
+      // этого учтутся при завершении.
+      final item = countedQty == null ? null : await tx.get(itemRef);
+      final systemNow = (item?.data()?['quantity'] as num?)?.toDouble();
+      entries[idx] = entries[idx]
+          .copyWith(countedQty: countedQty, systemAtCount: systemNow, clear: countedQty == null);
       tx.update(ref, {'entries': entries.map((e) => e.toMap()).toList()});
     });
   }
@@ -2305,11 +2311,14 @@ class FirestoreService {
       final entry = entries[i];
       final snap = current[i];
       if (!snap.exists) continue; // позицию удалили, пока считали
-      final counted = entry.countedQty!;
       final before = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
+      final counted = inventoryCountFinalQty(
+          counted: entry.countedQty!, systemAtCount: entry.systemAtCount, currentQty: before);
       final diff = counted - before;
+      // Приращением, а не записью числа: продажа, прошедшая в эту же
+      // секунду, не потеряется.
       batch.update(snap.reference, {
-        'quantity': counted,
+        'quantity': FieldValue.increment(diff),
         'updatedAt': Timestamp.fromDate(now),
       });
       ops++;
