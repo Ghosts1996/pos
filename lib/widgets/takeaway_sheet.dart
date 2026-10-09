@@ -4,7 +4,9 @@ import '../models/delivery_status.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
 import '../screens/employee/table_detail_screen.dart';
+import '../services/app_scope.dart';
 import '../services/firestore_service.dart';
+import '../services/pii_gateway_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
 import '../utils/money.dart';
@@ -63,6 +65,13 @@ class TakeawaySheet extends StatelessWidget {
     final fs = FirestoreService();
     try {
       final table = await fs.ensureTakeawayTable();
+      // Телефон и адрес — сначала в базу в РФ (ч. 5 ст. 18 152-ФЗ), потом
+      // копия в чек. Без связи с сервером такой заказ не создаём.
+      final sessionId = AppScope.col('sessions').doc().id;
+      if (data.phone.isNotEmpty || data.address.isNotEmpty) {
+        await PiiGatewayService()
+            .recordContact(kind: 'delivery', id: sessionId, name: data.name, phone: data.phone, address: data.address);
+      }
       final now = TimeOfDay.now();
       final who = data.name.isNotEmpty
           ? data.name
@@ -76,6 +85,7 @@ class TakeawaySheet extends StatelessWidget {
         orderType: delivery ? 'delivery' : 'takeaway',
         customerPhone: data.phone,
         deliveryAddress: data.address,
+        sessionId: sessionId,
       );
       if (context.mounted) await _open(context, id);
     } catch (e) {
