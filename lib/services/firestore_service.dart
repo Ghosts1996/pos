@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
 import '../utils/shift_crew.dart';
 import 'package:uuid/uuid.dart';
@@ -1973,7 +1974,8 @@ class FirestoreService {
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
       final before = snap.exists ? Employee.fromDoc(snap) : e;
-      final update = <String, dynamic>{...e.toMap()};
+      // PIN открытым текстом в базе больше не держим.
+      final update = <String, dynamic>{...e.toMap(), 'pinCode': FieldValue.delete()};
       if (before.payTerms != e.payTerms) {
         final history = [...before.payHistory];
         // Первая правка: записываем, как было до неё, — «с самого начала».
@@ -2025,19 +2027,43 @@ class FirestoreService {
     return doc.exists ? Employee.fromDoc(doc) : null;
   }
 
+  /// Вход по PIN: ищем по хэшу. Старую запись с PIN открытым текстом
+  /// находим по нему и сразу переводим на хэш.
   Future<Employee?> findByPin(String pin) async {
-    final snap =
-        await AppScope.col('employees').where('pinCode', isEqualTo: pin).limit(1).get();
-    if (snap.docs.isEmpty) return null;
-    return Employee.fromDoc(snap.docs.first);
+    final hash = await PinHash.of(pin);
+    final snap = await AppScope.col('employees').where('pinHash', isEqualTo: hash).limit(1).get();
+    if (snap.docs.isNotEmpty) return Employee.fromDoc(snap.docs.first);
+    final legacy = await AppScope.col('employees').where('pinCode', isEqualTo: pin).limit(1).get();
+    if (legacy.docs.isEmpty) return null;
+    final doc = legacy.docs.first;
+    unawaited(_write(doc.reference.update({'pinHash': hash, 'pinCode': FieldValue.delete()})).catchError((Object _) {}));
+    return Employee.fromDoc(doc).copyWith(pinHash: hash, pinCode: '');
+  }
+
+  /// Перевод всех PIN заведения, ещё хранящихся открытым текстом, на хэши.
+  /// Вызывается при старте кассы; если таких нет — один пустой запрос.
+  Future<void> migratePlainPins() async {
+    try {
+      final snap = await AppScope.col('employees').where('pinCode', isGreaterThan: '').get();
+      for (final d in snap.docs) {
+        final pin = (d.data()['pinCode'] ?? '').toString();
+        if (pin.isEmpty) continue;
+        await _write(d.reference.update({'pinHash': await PinHash.of(pin), 'pinCode': FieldValue.delete()}));
+      }
+    } catch (_) {
+      // Не критично: переведём при следующем входе сотрудника.
+    }
   }
 
   /// Проверка, что PIN ещё не занят другим сотрудником (excludeId — при
   /// редактировании существующего сотрудника, чтобы не конфликтовать с самим собой)
   Future<bool> isPinTaken(String pin, {String? excludeId}) async {
-    final snap =
-        await AppScope.col('employees').where('pinCode', isEqualTo: pin).get();
-    return snap.docs.any((d) => d.id != excludeId);
+    final hash = await PinHash.of(pin);
+    final snaps = await Future.wait([
+      AppScope.col('employees').where('pinHash', isEqualTo: hash).get(),
+      AppScope.col('employees').where('pinCode', isEqualTo: pin).get(),
+    ]);
+    return snaps.any((s) => s.docs.any((d) => d.id != excludeId));
   }
 
   /// Удаляет стол, только если на нём сейчас нет открытых чеков — чтобы не

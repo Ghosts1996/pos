@@ -3713,6 +3713,12 @@ const DEMO_STAFF_RIVER = [
 ];
 
 /** PIN-коды для подсказки на экранах входа кассы (tenants.demoPins). */
+/** Хэш PIN сотрудника — тот же расчёт, что PinHash в кассе
+ *  (lib/utils/pin_hash.dart) и hashEmployeePin в кабинете. */
+function pinHashFor(pin, tenantId) {
+  return crypto.pbkdf2Sync(String(pin), `zalpos-pin:${tenantId}`, 20000, 32, "sha256").toString("hex");
+}
+
 function demoPinsOf(staff) {
   const pin = (key) => staff.find((e) => e.key === key)?.pinCode || "";
   return { admin: pin("admin"), hookah: pin("hookah"), waiter: pin("waiter"), bar: pin("bar") };
@@ -3842,7 +3848,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
 
   // Сотрудники
   const staff = {};
-  staffList.forEach(({ key, ...e }) => {
+  staffList.forEach(({ key, pinCode, ...e }) => {
     const ref = col("employees").doc();
     staff[key] = { id: ref.id, name: e.name, position: e.position };
     batch.set(ref, {
@@ -3850,6 +3856,8 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       overtimeEnabled: false, salesPercentEnabled: false, salesPercentRate: 0, tipsLink: "",
       checkPercentExcludesHookah: false, hookahPercentRate: 0, barPercentRate: 0,
       ...e,
+      // PIN в базе — только хэшем, как PinHash в кассе.
+      pinHash: pinHashFor(pinCode, tenantRef.id),
     });
   });
 
@@ -6718,4 +6726,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline });
+Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor });
