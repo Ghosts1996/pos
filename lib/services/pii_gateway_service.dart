@@ -90,7 +90,8 @@ String _serverReason(http.Response resp) {
 
 /// Первичная запись контакта брони или листа ожидания (имя, телефон) на
 /// сервере в РФ — ДО создания документа в Firestore (ст. 18 ч. 5 152-ФЗ).
-/// [kind] — 'reservation' или 'waitlist', [id] — id будущего документа.
+/// [kind] — 'reservation', 'waitlist' или 'delivery' (+ адрес), [id] — id
+/// будущего документа.
 /// Без PII_GATEWAY_URL (разработка, одно-арендная сборка) — ничего не
 /// делает; ошибку сети пробрасывает: без первичной записи бронь не создаём.
 extension PiiContactRecords on PiiGatewayService {
@@ -99,10 +100,11 @@ extension PiiContactRecords on PiiGatewayService {
     required String id,
     required String name,
     required String phone,
+    String address = '',
   }) async {
     final tenant = AppScope.tenantId ?? '';
     if (baseUrl.isEmpty || tenant.isEmpty) return;
-    if (name.trim().isEmpty && phone.trim().isEmpty) return;
+    if (name.trim().isEmpty && phone.trim().isEmpty && address.trim().isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
     final idToken = await user?.getIdToken();
     if (idToken == null || idToken.isEmpty) {
@@ -114,7 +116,14 @@ extension PiiContactRecords on PiiGatewayService {
           .post(
             Uri.parse(baseUrl),
             headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'},
-            body: jsonEncode({'tenantId': tenant, 'kind': kind, 'id': id, 'name': name, 'phone': phone}),
+            body: jsonEncode({
+              'tenantId': tenant,
+              'kind': kind,
+              'id': id,
+              'name': name,
+              'phone': phone,
+              if (address.isNotEmpty) 'address': address,
+            }),
           )
           .timeout(const Duration(seconds: 15));
     } catch (e) {

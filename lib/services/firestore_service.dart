@@ -448,9 +448,10 @@ class FirestoreService {
     String orderType = '',
     String customerPhone = '',
     String deliveryAddress = '',
+    String? sessionId,
   }) async {
     final tableRef = AppScope.col('tables').doc(table.id);
-    final sessionRef = AppScope.col('sessions').doc();
+    final sessionRef = AppScope.col('sessions').doc(sessionId);
     final now = DateTime.now();
 
     // Новый чек и стол: [write] получает свежие данные стола и пишет через
