@@ -167,7 +167,7 @@ class GuestLinkService {
       }, SetOptions(merge: true));
 
   /// Ищет профиль по номеру телефона в любом формате.
-  /// Нормализует запрос, поэтому 79995061580, +79995061580 и 89995061580
+  /// Нормализует запрос, поэтому 79001234567, +79001234567 и 89001234567
   /// дают одинаковый результат.
   Future<ClientProfile?> findByPhone(String phone) async {
     final normalized = normalizePhone(phone);

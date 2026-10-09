@@ -634,7 +634,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     if (ok) return true;
     setState(() => _phoneError = _phoneCtrl.text.trim().isEmpty
         ? 'Укажите номер — без него бронь не принимаем'
-        : 'Проверьте номер: нужно 10 цифр после +7');
+        : phoneProblem(_phoneCtrl.text) ?? 'Проверьте номер: нужно 10 цифр после +7');
     final field = _phoneKey.currentContext;
     if (field != null) {
       Scrollable.ensureVisible(field,

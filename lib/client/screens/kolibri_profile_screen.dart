@@ -274,8 +274,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
       // Номер новый (ещё не был занят этим профилем) — проверяем, не занят
       // ли он уже ДРУГИМ устройством, прежде чем сохранять.
       if (!_phoneLocked && phone.isNotEmpty) {
-        if (!isValidRuPhone(phone)) {
-          _snack('Введите корректный номер (например, 79995061580)');
+        final problem = phoneProblem(rawPhone);
+        if (problem != null) {
+          _snack(problem);
           return;
         }
 
