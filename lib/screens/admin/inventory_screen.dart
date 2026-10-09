@@ -156,6 +156,8 @@ class _StockTabState extends State<_StockTab> {
     final minCtrl = TextEditingController(
         text: item != null && item.minQuantity > 0 ? item.unit.format(item.minQuantity) : '');
     final noteCtrl = TextEditingController(text: item?.note ?? '');
+    final costCtrl = TextEditingController(
+        text: item != null && item.costPrice > 0 ? item.costPrice.toStringAsFixed(item.costPrice % 1 == 0 ? 0 : 2) : '');
     InventoryUnit unit = item?.unit ?? InventoryUnit.pcs;
 
     // Между await выше и открытием диалога экран мог быть закрыт —
@@ -230,6 +232,15 @@ class _StockTabState extends State<_StockTab> {
                 ),
                 const SizedBox(height: 12),
                 TextField(
+                  controller: costCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Цена закупки, ₽ за ${unit.priceUnit.label} (необязательно)',
+                    helperText: 'По ней считается себестоимость и фудкост блюд',
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                ),
+                const SizedBox(height: 12),
+                TextField(
                   controller: noteCtrl,
                   decoration: const InputDecoration(labelText: 'Заметка (необязательно)'),
                 ),
@@ -246,6 +257,7 @@ class _StockTabState extends State<_StockTab> {
     if (ok != true || nameCtrl.text.trim().isEmpty) return;
 
     final minQty = double.tryParse(minCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+    final cost = double.tryParse(costCtrl.text.trim().replaceAll(',', '.')) ?? 0;
 
     if (item == null) {
       final newItem = InventoryItem(
@@ -256,6 +268,7 @@ class _StockTabState extends State<_StockTab> {
         quantity: 0,
         minQuantity: minQty,
         note: noteCtrl.text.trim(),
+        costPrice: cost < 0 ? 0 : cost,
       );
       final id = await _fs.addInventoryItem(newItem);
       // Сразу предлагаем оприходовать стартовый остаток, чтобы не пришлось
@@ -272,6 +285,7 @@ class _StockTabState extends State<_StockTab> {
         unit: unit,
         minQuantity: minQty,
         note: noteCtrl.text.trim(),
+        costPrice: cost < 0 ? 0 : cost,
       ));
     }
   }
@@ -297,6 +311,7 @@ class _ItemTile extends StatelessWidget {
       subtitle: Text(
         [
           if (item.minQuantity > 0) 'мин. ${item.unit.formatWithLabel(item.minQuantity)}',
+          if (item.costPrice > 0) '${item.costPrice.toStringAsFixed(0)} ₽/${item.unit.priceUnit.label}',
           if (dimmed) 'отключена',
         ].join(' · '),
       ),
