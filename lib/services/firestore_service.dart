@@ -242,6 +242,7 @@ class FirestoreService {
     required String toTableId,
   }) async {
     if (fromTableId == toTableId) return;
+    _requireOnline('Пересадить гостей');
 
     final sessionRef = AppScope.col('sessions').doc(sessionId);
     final fromRef = AppScope.col('tables').doc(fromTableId);
@@ -312,13 +313,29 @@ class FirestoreService {
   /// Приложению гостя sessions читать нельзя (чужие счета), а карточку
   /// стола — можно, поэтому занятость для брони и очереди живёт на столе и
   /// её ведёт касса. Ошибки проглатываем: поле вспомогательное.
+  /// Действия, которым нужен сервер (переносят позиции между чеками
+  /// атомарно): без связи сразу понятная ошибка вместо долгого ожидания.
+  static void _requireOnline(String what) {
+    if (!NetStatus.online.value) {
+      throw StateError('$what можно, когда вернётся интернет. Заказы и оплата работают и без него.');
+    }
+  }
+
+  /// Запись без связи не ждём: подтверждение сервера придёт, только когда
+  /// интернет вернётся, а память устройства и экран обновляются сразу.
+  static Future<void> _write(Future<void> w) {
+    if (NetStatus.online.value) return w;
+    unawaited(w.catchError((Object _) {}));
+    return Future.value();
+  }
+
   Future<void> syncTableBusyUntil(String tableId) async {
     if (tableId.isEmpty) return;
     try {
       final snap = await AppScope.col('sessions')
           .where('tableId', isEqualTo: tableId)
           .where('status', isEqualTo: 'active')
-          .get();
+          .get(NetStatus.online.value ? null : const GetOptions(source: Source.cache));
 
       DateTime? maxEnd;
       final checks = <Map<String, dynamic>>[];
@@ -347,10 +364,10 @@ class FirestoreService {
         return x.compareTo(y);
       });
 
-      await AppScope.col('tables').doc(tableId).update({
+      await _write(AppScope.col('tables').doc(tableId).update({
         'busyUntil': maxEnd == null ? null : Timestamp.fromDate(maxEnd),
         'openChecks': checks,
-      });
+      }));
     } catch (_) {
       // Денормализация — не критичный путь.
     }
@@ -487,6 +504,7 @@ class FirestoreService {
     String employeeId = '',
     String guestTag = '',
   }) async {
+    _requireOnline('Разделить счёт');
     final fromRef = AppScope.col('sessions').doc(sessionId);
     final tableRef = AppScope.col('tables').doc(tableId);
     final newRef = AppScope.col('sessions').doc();
@@ -554,20 +572,20 @@ class FirestoreService {
       {int durationMinutes = AppConstants.defaultSessionMinutes,
       String tableId = ''}) async {
     final now = DateTime.now();
-    await AppScope.col('sessions').doc(sessionId).update({
+    await _write(AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(now.add(Duration(minutes: durationMinutes))),
       'refillCount': FieldValue.increment(1),
       'refillHistory': FieldValue.arrayUnion([
         {'time': Timestamp.fromDate(now)}
       ]),
-    });
+    }));
     await syncTableBusyUntil(tableId);
   }
 
   /// Установить/сменить подпись чека — кто сидит за столом (гость, номер
   /// компании и т.п.). Пустая строка убирает подпись.
   Future<void> setGuestTag(String sessionId, String tag, {String tableId = ''}) async {
-    await AppScope.col('sessions').doc(sessionId).update({'guestTag': tag});
+    await _write(AppScope.col('sessions').doc(sessionId).update({'guestTag': tag}));
     // Подпись — то, по чему гость узнаёт свой чек в списке за столом,
     // поэтому витрину открытых чеков надо обновить сразу.
     await syncTableBusyUntil(tableId);
@@ -577,17 +595,17 @@ class FirestoreService {
   Future<void> extendSession(String sessionId, DateTime currentPlannedEnd, int minutes,
       {String tableId = ''}) async {
     final newEnd = currentPlannedEnd.add(Duration(minutes: minutes));
-    await AppScope.col('sessions').doc(sessionId).update({
+    await _write(AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
-    });
+    }));
     await syncTableBusyUntil(tableId);
   }
 
   /// Установить таймер на конкретное время вручную
   Future<void> setSessionEnd(String sessionId, DateTime newEnd, {String tableId = ''}) async {
-    await AppScope.col('sessions').doc(sessionId).update({
+    await _write(AppScope.col('sessions').doc(sessionId).update({
       'plannedEnd': Timestamp.fromDate(newEnd),
-    });
+    }));
     await syncTableBusyUntil(tableId);
   }
 
@@ -787,10 +805,10 @@ class FirestoreService {
   }
 
   Future<void> applyDiscountCard(String sessionId, DiscountCard? card) {
-    return AppScope.col('sessions').doc(sessionId).update({
+    return _write(AppScope.col('sessions').doc(sessionId).update({
       'discountCardId': card?.id,
       'discountPercent': card?.discountPercent ?? 0,
-    });
+    }));
   }
 
   /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты,
