@@ -110,12 +110,16 @@ class FirestoreService {
   /// Следующий шаг заказа с собой/доставки (см. DeliveryFlow). Со связью —
   /// транзакцией: если тот же шаг уже нажали в Telegram или на другой
   /// кассе, второй раз он не пройдёт. Без связи — по копии на устройстве.
-  Future<void> setDeliveryStatus(String sessionId, String to, {String courierName = ''}) async {
+  Future<void> setDeliveryStatus(String sessionId, String to,
+      {String courierName = '', String courierPhone = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     Map<String, dynamic> patch() => {
           'deliveryStatus': to,
           'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
           if (courierName.isNotEmpty) 'courierName': courierName,
+          if (courierPhone.isNotEmpty) 'courierPhone': courierPhone,
+          // Номер курьера нужен гостю, только пока заказ в пути.
+          if (to == 'done') 'courierPhone': FieldValue.delete(),
           // Выдан/доставлен — из списка «в работе» уходит (неоплаченный
           // остаётся видным как открытый чек, пока его не закроют).
           if (to == 'done') 'deliveryOpen': false,
@@ -212,6 +216,7 @@ class FirestoreService {
         'cancelReason': reason,
         'cancelledBy': employeeName,
         'cancelledAt': now,
+        'courierPhone': FieldValue.delete(),
         if (wasActive) 'status': 'cancelled',
         if (wasActive) 'closedAt': now,
       });

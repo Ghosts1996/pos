@@ -106,6 +106,15 @@ class _OrderBody extends StatelessWidget {
         Text(type == 'delivery' ? 'Доставка' : 'С собой', style: KolibriFonts.display(30)),
         const SizedBox(height: 6),
         Text(_hint(status), style: TextStyle(color: cancelled ? Colors.redAccent : KolibriColors.textMuted, height: 1.4)),
+        // Курьер в пути и заведение указало его рабочий номер.
+        if (status == 'courier' && order.courierPhone.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => launchUrl(Uri.parse('tel:+${order.courierPhone.replaceAll(RegExp(r'\D'), '')}')),
+            icon: const Icon(Icons.phone_rounded),
+            label: Text('Позвонить курьеру${order.courierName.isNotEmpty ? ' · ${order.courierName}' : ''}'),
+          ),
+        ],
         const SizedBox(height: 18),
         if (!cancelled)
           for (var i = 0; i < path.length; i++)
