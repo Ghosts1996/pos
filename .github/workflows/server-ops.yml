@@ -1,0 +1,36 @@
+# Задачи обслуживания сервера по просьбе владельца: при пуше, который меняет
+# .github/server-ops/task.sh, скрипт выполняется на сервере (секреты
+# SERVER_IP / SERVER_USER / SERVER_PASSWORD). Пароль в журнал не попадает.
+name: Обслуживание сервера
+
+on:
+  push:
+    paths:
+      - ".github/server-ops/task.sh"
+
+concurrency:
+  group: server-ops
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Выполнить задачу на сервере
+        env:
+          HOST: ${{ secrets.SERVER_IP }}
+          USER_NAME: ${{ secrets.SERVER_USER }}
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$SSHPASS" ]; then
+            echo "::error::Нет секретов SERVER_IP / SERVER_PASSWORD"; exit 1
+          fi
+          sudo apt-get install -y sshpass >/dev/null
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no -o ServerAliveInterval=30 \
+            "${USER_NAME:-root}@$HOST" 'bash -s' < .github/server-ops/task.sh
