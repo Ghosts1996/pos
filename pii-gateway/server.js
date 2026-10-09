@@ -3,6 +3,7 @@
 const http = require("http");
 const { Pool } = require("pg");
 const admin = require("firebase-admin");
+const { createVault, VaultError } = require("./vault");
 
 /**
  * Первичная запись персональных данных в базу в РФ (ч. 5 ст. 18 152-ФЗ):
@@ -14,7 +15,13 @@ const admin = require("firebase-admin");
  *   PORT — по умолчанию 8080, слушаем только 127.0.0.1, снаружи nginx;
  *   PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD — локальный Postgres;
  *   FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта hoocah-pos (одно заведение);
- *   SAAS_FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта платформы saas-3bdc8.
+ *   SAAS_FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта платформы saas-3bdc8;
+ *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh).
+ *
+ * Справочник заведения (сотрудники, гости, контакты) и его режим — в
+ * vault.js. Режим заведения — tenants/{id}/meta/pii.mode: 'mirror' (пока
+ * все кассы не обновились: копия имён и телефонов идёт и в Firestore) или
+ * 'rf' (в Firestore только идентификаторы).
  */
 
 let pool;
@@ -55,13 +62,27 @@ function getSaasApp() {
   return saasApp;
 }
 
+/**
+ * Режим заведения: 'rf' — имена и телефоны в Firestore больше не копируем.
+ * Не прочитали — считаем 'mirror': лишняя копия лучше пустых имён на кассе.
+ */
+async function piiMode(db, tenantId) {
+  if (!tenantId) return "mirror";
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/meta/pii`).get();
+    return snap.exists && snap.data().mode === "rf" ? "rf" : "mirror";
+  } catch (_) {
+    return "mirror";
+  }
+}
+
 function sendJson(res, statusCode, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Pii-Internal",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   });
   res.end(body);
@@ -207,10 +228,14 @@ async function handleRegisterGuestProfile(req, res, body) {
     const path = chainId
       ? `chains/${chainId}/clients/${uid}`
       : tenant ? `tenants/${tenant}/clients/${uid}` : `clients/${uid}`;
+    // После переключения заведения на справочник в РФ имя и телефон в
+    // Firestore не копируем; профиль (бонусы, визиты) заводим пустым.
+    const rfOnly = (await piiMode(db, tenant)) === "rf";
     const patch = {};
-    if (name !== undefined) patch.name = name;
-    if (phone !== undefined) patch.phone = phone;
-    await db.doc(path).set(patch, { merge: true });
+    if (!rfOnly && name !== undefined) patch.name = name;
+    if (!rfOnly && phone !== undefined) patch.phone = phone;
+    if (rfOnly && !(await db.doc(path).get()).exists) patch.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    if (Object.keys(patch).length) await db.doc(path).set(patch, { merge: true });
   } catch (e) {
     // В РФ уже записано, копия догонит при следующем изменении профиля.
     return sendJson(res, 200, { ok: true, firestoreMirrorFailed: String(e.message || e) });
@@ -354,10 +379,11 @@ async function handleRecordContact(req, res, body) {
   }
   try {
     await getPool().query(
-      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, address, created_by, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, address, created_by, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, now())
        ON CONFLICT (tenant_id, kind, record_id)
-       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, address = EXCLUDED.address, updated_at = now()
+       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, address = EXCLUDED.address,
+         updated_by = EXCLUDED.updated_by, updated_at = now()
        WHERE contact_records.created_by = EXCLUDED.created_by`,
       [tenantId, kind, id, str(name, 200), str(phone, 40), str(address, 300), auth.decoded.uid]
     );
@@ -474,22 +500,16 @@ async function handleDeleteGuest(req, res, body) {
       OR (kind = 'reservation' AND record_id = ANY($3))
       OR (kind = 'waitlist' AND record_id = ANY($4)))`;
   const args = [tenantIds, uid, recordIds.reservation, recordIds.waitlist];
-  // Каждую таблицу — отдельно: нет права DELETE (42501, старая схема) —
-  // затираем значения, и одна неудача не отменяет вторую.
+  // Значения затираем, а строки оставляем: кассы держат копию справочника
+  // и узнают об удалении при следующей синхронизации (pii_sync) — строка
+  // без имени и телефона приходит к ним как «стёрто».
   const db = getPool();
-  const erase = async (table, cond, params, blank = "name = '', phone = ''") => {
-    try {
-      await db.query(`DELETE FROM ${table} WHERE ${cond}`, params);
-    } catch (e) {
-      if (!e || e.code !== "42501") throw e;
-      await db.query(`UPDATE ${table} SET ${blank}, updated_at = now() WHERE ${cond}`, params);
-    }
-  };
+  const erase = (table, cond, params, blank) => db.query(`UPDATE ${table} SET ${blank}, updated_at = now() WHERE ${cond}`, params);
   try {
-    await erase("guest_profiles", "tenant_id = $1 AND uid = $2", [storeKey, uid]);
+    await erase("guest_profiles", "tenant_id = $1 AND uid = $2", [storeKey, uid], "name = '', phone = ''");
     // Заказы доставки из приложения записаны токеном гостя (created_by) —
-    // вместе с ними уходит и адрес.
-    await erase("contact_records", where, args, "name = '', phone = '', address = ''");
+    // вместе с ними уходят адрес, пожелания и подпись чека.
+    await erase("contact_records", where, args, "name = '', phone = '', address = '', extra = '{}'::jsonb");
     // Отзыв согласия: сама отметка остаётся доказательством того, что
     // данные до удаления обрабатывались законно, но без IP и браузера.
     await db
@@ -506,12 +526,35 @@ async function handleDeleteGuest(req, res, body) {
   return sendJson(res, 200, { ok: true });
 }
 
+const HANDLERS_EXTRA = {};
+const vault = createVault({
+  query: (sql, params) => getPool().query(sql, params),
+  firestore: () => {
+    const app = getSaasApp();
+    if (!app) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
+    return admin.firestore(app);
+  },
+  verifyToken: (token) => {
+    const app = getSaasApp();
+    if (!app) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
+    return app.auth().verifyIdToken(token);
+  },
+  internalToken: process.env.PII_INTERNAL_TOKEN || "",
+});
+
+async function handleVault(req, res, body) {
+  const out = await vault.handle({ token: bearer(req), internal: String(req.headers["x-pii-internal"] || "") }, body);
+  sendJson(res, out.status, out.json);
+}
+for (const op of vault.ops) HANDLERS_EXTRA[op] = handleVault;
+
 const HANDLERS = {
   owner: handleRegisterOwner,
   owner_link: handleLinkOwner,
   guest_delete: handleDeleteGuest,
   guest_consent: handleGuestConsent,
   payer: handleRecordPayer,
+  ...HANDLERS_EXTRA,
 };
 
 const server = http.createServer((req, res) => {

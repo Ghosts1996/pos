@@ -140,6 +140,20 @@ async function run() {
     const noToken = await post({ tenantId: "t1", edition: "2026-10-09", pd: true, crossBorder: true });
     assert.strictEqual(noToken.statusCode, 401);
   }
+  {
+    // Справочник (vault.js): без заведения — 400, без токена и с чужим
+    // внутренним секретом (в тесте он не задан) — 401, до базы не доходит.
+    for (const kind of ["pii_sync", "pii_lookup", "pii_put", "pii_erase", "pii_search", "pii_phone"]) {
+      const noTenant = await request("POST", "/", { body: JSON.stringify({ kind }) });
+      assert.strictEqual(noTenant.statusCode, 400, kind);
+      const noToken = await request("POST", "/", { body: JSON.stringify({ kind, tenantId: "t1" }) });
+      assert.strictEqual(noToken.statusCode, 401, kind);
+      const internal = await request("POST", "/", { headers: { "X-Pii-Internal": "guess" }, body: JSON.stringify({ kind, tenantId: "t1" }) });
+      assert.strictEqual(internal.statusCode, 401, kind);
+    }
+    const unknown = await request("POST", "/", { body: JSON.stringify({ kind: "pii_drop", tenantId: "t1" }) });
+    assert.notStrictEqual(unknown.statusCode, 200);
+  }
   server.close(() => process.exit(0));
 }
 
