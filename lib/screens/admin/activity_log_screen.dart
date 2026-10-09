@@ -3,6 +3,7 @@ import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_scheduler.dart';
+import '../../services/ai/ai_settings.dart';
 import '../../services/audit_log_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
@@ -44,8 +45,69 @@ class ActivityLogScreen extends StatelessWidget {
   }
 }
 
-class _NotesTab extends StatelessWidget {
+class _NotesTab extends StatefulWidget {
   const _NotesTab();
+
+  @override
+  State<_NotesTab> createState() => _NotesTabState();
+}
+
+class _NotesTabState extends State<_NotesTab> {
+  bool _busy = false;
+
+  Future<void> _digestNow() async {
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final text = await AiScheduler.instance.digestNow();
+      messenger.showSnackBar(SnackBar(
+          content: Text(text == null
+              ? 'За последние сутки не было ни одного чека — разбирать пока нечего'
+              : 'Разбор готов — он первый в списке')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(humanError(e))));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _header() {
+    final ready = AiSettingsStore.instance.current.isReady;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ready ? AppColors.border : AppColors.warning.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            ready
+                ? 'ИИ сам разбирает продажи, смены, журнал кассы, брони, отзывы, бонусы '
+                    'и склад: каждое утро — сутки, по понедельникам — неделю. Имена '
+                    'гостей, телефоны и адреса в ИИ не уходят, сотрудники — под номерами.'
+                : 'ИИ не подключён, поэтому сводки не собираются. Добавьте ключ: '
+                    'раздел «Настройки ИИ» в этом же меню.',
+            style: const TextStyle(color: AppColors.textMuted, height: 1.4),
+          ),
+          if (ready) ...[
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: _busy ? null : _digestNow,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.auto_awesome, size: 18),
+              label: Text(_busy ? 'Собираю…' : 'Собрать разбор сейчас'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,21 +117,27 @@ class _NotesTab extends StatelessWidget {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snap.data!.docs;
         if (docs.isEmpty) {
-          return const Center(
-            child: Text('Сводок пока нет — агенты работают по расписанию',
-                style: TextStyle(color: AppColors.textMuted)),
-          );
+          return ListView(children: [
+            _header(),
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('Сводок пока нет',
+                  textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
+            ),
+          ]);
         }
         return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
+          padding: const EdgeInsets.only(bottom: 16),
+          itemCount: docs.length + 1,
           separatorBuilder: (_, __) => const SizedBox(height: 10),
           itemBuilder: (_, i) {
-            final d = docs[i].data();
+            if (i == 0) return _header();
+            final d = docs[i - 1].data();
             final warning = d['priority'] == 'warning';
             final ts = d['createdAt'];
             final date = ts is Timestamp ? ts.toDate() : DateTime.now();
             return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: AppColors.surface,
@@ -122,8 +190,17 @@ class _AiActionsTab extends StatelessWidget {
         final docs = snap.data!.docs;
         if (docs.isEmpty) {
           return const Center(
-            child: Text('ИИ пока ничего не менял',
-                style: TextStyle(color: AppColors.textMuted)),
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'Здесь появится то, что ИИ-помощник изменил по просьбе сотрудника: '
+                'поставил позицию в стоп-лист, создал бронь, отправил уведомление.\n\n'
+                'Сам по себе ИИ данные не меняет — он только собирает разборы '
+                'во вкладке «Сводки ИИ». Пусто — значит, никто его об этом не просил.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textMuted, height: 1.4),
+              ),
+            ),
           );
         }
         return ListView.builder(

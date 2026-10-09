@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_scope.dart';
 import '../venue_service.dart';
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
@@ -548,23 +550,87 @@ class AiService {
         extraContext: await hallContext(),
       );
 
+  /// Разбор периода по всем данным заведения (AiVenueDigest): продажи,
+  /// смены, журнал кассы, брони, отзывы, бонусы, склад. Сотрудники уходят
+  /// в ИИ под номерами и получают имена обратно уже в готовом ответе.
   Future<String> analyzeSales({
     required DateTime from,
     required DateTime to,
     String question = 'Проанализируй период и дай план действий.',
+  }) =>
+      _withDigest(AiAgents.analyst, question, from: from, to: to);
+
+  static const _keepAliases = 'Сотрудников называй так же, как в данных: «Сотрудник №N».';
+
+  Future<String> _withDigest(
+    AiAgent agent,
+    String question, {
+    required DateTime from,
+    required DateTime to,
   }) async {
-    final ctx = await _ctx.salesSnapshot(from: from, to: to);
-    return ask(AiAgents.analyst, question, extraContext: ctx);
+    final staff = AiPseudonyms();
+    final ctx = await _ctx.venueDigest(from: from, to: to, staff: staff);
+    return staff.restore(await ask(agent, '$question\n$_keepAliases', extraContext: ctx));
   }
 
-  Future<String> restockPlan({int days = 14}) =>
-      ask(AiAgents.inventory, 'Составь заявку на закупку на 7 дней вперёд по расходу за $days дней.');
+  /// Ежедневный разбор для владельца — то, что попадает в «Сводки ИИ».
+  /// null — за период не было ни одного чека: разбирать нечего, токены
+  /// не тратим.
+  Future<String?> venueDigest({int days = 1}) async {
+    final to = DateTime.now();
+    final from = to.subtract(Duration(days: days));
+    final any = await AppScope.col('sessions')
+        .where('closedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+        .limit(1)
+        .get();
+    if (any.docs.isEmpty) return null;
+    return _withDigest(
+      AiAgents.analyst,
+      days == 1
+          ? 'Разбери последние сутки заведения. Дай: 1) главное в цифрах; '
+              '2) что насторожило — отмены, возвраты, скидки, закрытия без оплаты, '
+              'низкие оценки, склад; 3) кто из сотрудников отличился и кому нужна '
+              'помощь; 4) три действия на завтра. До 250 слов.'
+          : 'Разбери неделю заведения: что выросло и упало, сильные и слабые дни '
+              'и часы, работа сотрудников, отзывы, склад. Дай пять действий на '
+              'следующую неделю с ожидаемым эффектом в рублях. До 300 слов.',
+      from: from,
+      to: to,
+    );
+  }
 
-  Future<String> menuEngineering({int days = 30}) =>
-      ask(AiAgents.pricing, 'Разбери меню по маржинальности за последние $days дней.');
+  Future<String> restockPlan({int days = 14}) async {
+    final to = DateTime.now();
+    final parts = await Future.wait([
+      _ctx.stockSnapshot(),
+      _ctx.salesSnapshot(from: to.subtract(Duration(days: days)), to: to),
+    ]);
+    return ask(
+      AiAgents.inventory,
+      'Составь заявку на закупку на 7 дней вперёд по расходу за $days дней.',
+      extraContext: 'ОСТАТКИ:\n${parts[0]}\n\nПРОДАЖИ ЗА $days ДНЕЙ:\n${parts[1]}',
+    );
+  }
 
-  Future<String> occupancyForecast() =>
-      ask(AiAgents.forecaster, 'Дай прогноз загрузки и график смен на 7 дней.');
+  Future<String> menuEngineering({int days = 30}) async {
+    final to = DateTime.now();
+    final parts = await Future.wait([
+      _ctx.salesSnapshot(from: to.subtract(Duration(days: days)), to: to),
+      _ctx.menuSnapshot(onlyAvailable: false),
+    ]);
+    return ask(AiAgents.pricing, 'Разбери меню по маржинальности за последние $days дней.',
+        extraContext: 'ПРОДАЖИ ЗА $days ДНЕЙ:\n${parts[0]}\n\nМЕНЮ:\n${parts[1]}');
+  }
+
+  Future<String> occupancyForecast() async {
+    final to = DateTime.now();
+    final parts = await Future.wait([
+      _ctx.salesSnapshot(from: to.subtract(const Duration(days: 28)), to: to),
+      _ctx.reservationsSnapshot(hours: 7 * 24),
+    ]);
+    return ask(AiAgents.forecaster, 'Дай прогноз загрузки и график смен на 7 дней.',
+        extraContext: 'ПРОДАЖИ ЗА 4 НЕДЕЛИ:\n${parts[0]}\n\nБРОНИ НА НЕДЕЛЮ:\n${parts[1]}');
+  }
 
   /// Контекст для контролёра: журнал кассы (передаётся отдельно вызывающим
   /// экраном — сам журнал не хранится здесь) плюс продажи за период. Без
@@ -591,8 +657,15 @@ class AiService {
     return 'ПРОДАЖИ ЗА $days ДНЕЙ:\n${parts[0]}\n\nПРОБЛЕМЫ СКЛАДА:\n${parts[1]}';
   }
 
-  Future<String> marketingIdeas({int days = 14}) =>
-      ask(AiAgents.marketing, 'Предложи акции на следующую неделю по данным за $days дней.');
+  Future<String> marketingIdeas({int days = 14}) async {
+    final to = DateTime.now();
+    final parts = await Future.wait([
+      _ctx.salesSnapshot(from: to.subtract(Duration(days: days)), to: to),
+      _ctx.stockSnapshot(),
+    ]);
+    return ask(AiAgents.marketing, 'Предложи акции на следующую неделю по данным за $days дней.',
+        extraContext: 'ПРОДАЖИ ЗА $days ДНЕЙ:\n${parts[0]}\n\nОСТАТКИ:\n${parts[1]}');
+  }
 
   Future<String> winbackMessage(String clientUid) => ask(
         AiAgents.loyalty,
@@ -630,17 +703,22 @@ class AiService {
         'Позиция: $name.${hint.isNotEmpty ? ' Уточнение: $hint.' : ''} Дай 3 варианта описания.',
       );
 
-  Future<String> reviewDigest() =>
-      ask(AiAgents.quality, 'Собери сводку по отзывам и что чинить в первую очередь.');
+  Future<String> reviewDigest() async => ask(
+        AiAgents.quality,
+        'Собери сводку по отзывам и что чинить в первую очередь.',
+        extraContext: 'ПОСЛЕДНИЕ ОТЗЫВЫ:\n${await _ctx.reviewsSnapshot()}',
+      );
 
   Future<String> reviewReply(int rating, String text) =>
       ask(AiAgents.quality, 'Напиши ответ гостю на отзыв ($rating/5): «$text»');
 
-  Future<String> shiftSummary({String employeeName = ''}) => ask(
-        AiAgents.shiftCoach,
-        'Подведи итоги смены для команды.',
-        employeeName: employeeName,
-      );
+  /// Итоги смены — по данным последних 18 часов (смена через полночь
+  /// целиком попадает в окно).
+  Future<String> shiftSummary({String employeeName = ''}) {
+    final to = DateTime.now();
+    return _withDigest(AiAgents.shiftCoach, 'Подведи итоги смены для команды.',
+        from: to.subtract(const Duration(hours: 18)), to: to);
+  }
 
   /// Подсказки допродаж по открытому чеку. Без инструментов — короткий
   /// JSON-запрос, чтобы подсказка появлялась за секунду и стоила копейки.
