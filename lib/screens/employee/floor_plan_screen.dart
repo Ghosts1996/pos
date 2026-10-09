@@ -21,6 +21,7 @@ import '../../widgets/employee_drawer.dart';
 import '../../widgets/guest_requests_banner.dart';
 import '../../widgets/hall_drawing_builder.dart';
 import '../../widgets/hall_plan_view.dart';
+import '../../widgets/offline_banner.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/table_tile.dart';
 import 'table_detail_screen.dart';
@@ -273,6 +274,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
 
     return Column(
       children: [
+        const OfflineBanner(),
         if (zoneKeys.isNotEmpty)
           SizedBox(
             height: 48,

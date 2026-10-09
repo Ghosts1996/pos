@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'net_status.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/client_models.dart';
 import '../utils/constants.dart';
@@ -29,6 +30,7 @@ import '../utils/startup_log.dart';
 /// не создавая циклический импорт main.dart ↔ экран.
 void startBackgroundServices() {
   StartupLog.step('фон: настройки оборудования, ИИ, push');
+  NetStatus.start();
   unawaited(loadSavedPrinterSettings());
   unawaited(loadSavedKassaSettings());
   unawaited(loadSavedTerminalSettings());

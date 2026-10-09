@@ -26,6 +26,7 @@ import '../utils/shift_time.dart';
 import '../utils/promo_policy.dart';
 import '../utils/sale_kind.dart';
 import 'audit_log_service.dart';
+import 'net_status.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 import '../utils/checkout_checks.dart';
@@ -351,9 +352,10 @@ class FirestoreService {
     final sessionRef = AppScope.col('sessions').doc();
     final now = DateTime.now();
 
-    await _db.runTransaction((tx) async {
-      final freshTable = await tx.get(tableRef);
-      final data = freshTable.data();
+    // Новый чек и стол: [write] получает свежие данные стола и пишет через
+    // [set]/[update] — транзакцией со связью или пакетом в память без неё.
+    void build(Map<String, dynamic>? data, void Function(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>) set,
+        void Function(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>) update) {
       final ids = ((data?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -373,7 +375,7 @@ class FirestoreService {
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
         guestTag: guestTag,
       );
-      tx.set(sessionRef, session.toMap());
+      set(sessionRef, session.toMap());
 
       ids.add(sessionRef.id);
       // busyUntil держим не меньше конца самого позднего чека стола:
@@ -381,13 +383,35 @@ class FirestoreService {
       final prevBusy = data?['busyUntil'];
       final prevEnd = prevBusy is Timestamp ? prevBusy.toDate() : null;
       final newEnd = session.plannedEnd;
-      tx.update(tableRef, {
+      update(tableRef, {
         'activeSessionIds': ids,
         'status': 'occupied',
         'busyUntil': Timestamp.fromDate(
             prevEnd != null && prevEnd.isAfter(newEnd) ? prevEnd : newEnd),
       });
-    });
+    }
+
+    var offline = !NetStatus.online.value;
+    if (!offline) {
+      try {
+        await _db.runTransaction((tx) async {
+          build((await tx.get(tableRef)).data(), tx.set, tx.update);
+        });
+      } on FirebaseException catch (e) {
+        if (e.code != 'unavailable') rethrow;
+        NetStatus.reportFailure();
+        offline = true;
+      }
+    }
+    if (offline) {
+      // Без связи: стол из памяти устройства, запись уйдёт на сервер сама.
+      final cached = await tableRef.get(const GetOptions(source: Source.cache));
+      final batch = _db.batch();
+      build(cached.data(), batch.set, batch.update);
+      unawaited(batch.commit().catchError((Object _) {}));
+      unawaited(syncTableBusyUntil(table.id).catchError((Object _) {}));
+      return sessionRef.id;
+    }
 
     // Витрину открытых чеков собираем после транзакции: внутри неё нельзя
     // прочитать запросом остальные чеки стола.
@@ -530,7 +554,6 @@ class FirestoreService {
       {int qty = 1, String employeeId = '', List<String> mods = const []}) async {
     final chosen = [for (final o in menuItem.optionsNamed(mods)) o.name];
     final lineId = OrderItem.lineIdOf(menuItem.id, chosen);
-    final ref = AppScope.col('sessions').doc(sessionId);
     // Кальян/табак — по флагу позиции, её названию или категории («Кальяны»):
     // на такие позиции не действуют скидки и бонусы (PromoPolicy).
     var noPromo = PromoPolicy.menuTobacco(menuItem);
@@ -548,10 +571,7 @@ class FirestoreService {
         ? SaleKind.hookah
         : SaleKind.forMenuItem(
             tobacco: menuItem.tobacco, itemName: menuItem.name, categoryKind: catKind, categoryName: catName);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
+    await _editCheckItems(sessionId, (items) {
       final idx = items.indexWhere((i) => i.lineId == lineId);
       if (idx >= 0) {
         items[idx] = items[idx].plus(qty, employeeId: employeeId);
@@ -568,7 +588,7 @@ class FirestoreService {
           since: DateTime.now(),
         ));
       }
-      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+      return true;
     });
   }
 
@@ -588,54 +608,39 @@ class FirestoreService {
   /// Изменить количество позиции в заказе на delta (может быть отрицательным).
   /// Если количество опускается до 0 или ниже — позиция удаляется из счёта.
   /// [lineId] — ключ строки (OrderItem.lineId).
-  Future<void> changeOrderItemQty(String sessionId, String lineId, int delta, {String employeeId = ''}) async {
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.lineId == lineId);
-      if (idx < 0) return;
-      final newQty = items[idx].qty + delta;
-      if (newQty <= 0) {
-        items.removeAt(idx);
-      } else {
-        items[idx] = delta > 0
-            ? items[idx].plus(delta, employeeId: employeeId)
-            : items[idx].minus(-delta, employeeId: employeeId);
-      }
-      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
-    });
-  }
+  Future<void> changeOrderItemQty(String sessionId, String lineId, int delta, {String employeeId = ''}) =>
+      _editCheckItems(sessionId, (items) {
+        final idx = items.indexWhere((i) => i.lineId == lineId);
+        if (idx < 0) return false;
+        final newQty = items[idx].qty + delta;
+        if (newQty <= 0) {
+          items.removeAt(idx);
+        } else {
+          items[idx] = delta > 0
+              ? items[idx].plus(delta, employeeId: employeeId)
+              : items[idx].minus(-delta, employeeId: employeeId);
+        }
+        return true;
+      });
 
   /// Экран «Кухня и бар»: отметить строки чека готовыми целиком.
-  Future<void> markItemsReady(String sessionId, Set<String> lineIds) async {
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
-      var changed = false;
-      for (var k = 0; k < items.length; k++) {
-        if (lineIds.contains(items[k].lineId) && items[k].pending > 0) {
-          items[k] = items[k].markReady();
-          changed = true;
+  Future<void> markItemsReady(String sessionId, Set<String> lineIds) => _editCheckItems(sessionId, (items) {
+        var changed = false;
+        for (var k = 0; k < items.length; k++) {
+          if (lineIds.contains(items[k].lineId) && items[k].pending > 0) {
+            items[k] = items[k].markReady();
+            changed = true;
+          }
         }
-      }
-      if (changed) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
-    });
-  }
+        return changed;
+      });
 
   /// Бегунок напечатан: [sentQty] — сколько штук каждой строки (lineId →
   /// количество) было в строке на момент печати. Добавленное за это время
   /// останется неотправленным и уйдёт следующим бегунком.
   Future<void> markItemsSent(String sessionId, Map<String, int> sentQty) async {
     if (sentQty.isEmpty) return;
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
+    await _editCheckItems(sessionId, (items) {
       var changed = false;
       for (var k = 0; k < items.length; k++) {
         final count = sentQty[items[k].lineId];
@@ -643,7 +648,7 @@ class FirestoreService {
         items[k] = items[k].markSent(count);
         changed = true;
       }
-      if (changed) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+      return changed;
     });
   }
 
@@ -656,54 +661,66 @@ class FirestoreService {
           .map((snap) => snap.docs.map((d) => SessionModel.fromDoc(d)).toList()));
 
   /// Пожелание к строке заказа («без льда», «покрепче»). Пусто — убрать.
-  Future<void> setOrderItemNote(String sessionId, String lineId, String note) async {
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.lineId == lineId);
-      if (idx < 0) return;
-      items[idx] = items[idx].withNote(note);
-      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
-    });
-  }
+  Future<void> setOrderItemNote(String sessionId, String lineId, String note) =>
+      _editLine(sessionId, lineId, (i) => i.withNote(note));
 
   /// «Подать позже» для строки ([hold] = true) или вернуть её в работу.
-  Future<void> setOrderItemHold(String sessionId, String lineId, bool hold) async {
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.lineId == lineId);
-      if (idx < 0) return;
-      items[idx] = items[idx].withHold(hold);
-      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
-    });
-  }
+  Future<void> setOrderItemHold(String sessionId, String lineId, bool hold) =>
+      _editLine(sessionId, lineId, (i) => i.withHold(hold));
 
   /// «Подать»: все отложенные строки счёта уходят на кухню и бар.
-  Future<void> fireHeldItems(String sessionId) async {
-    final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data);
-      if (!items.any((i) => i.hold)) return;
-      tx.update(ref, {'orderItems': items.map((e) => e.withHold(false).toMap()).toList()});
-    });
-  }
+  Future<void> fireHeldItems(String sessionId) => _editCheckItems(sessionId, (items) {
+        if (!items.any((i) => i.hold)) return false;
+        for (var k = 0; k < items.length; k++) {
+          items[k] = items[k].withHold(false);
+        }
+        return true;
+      });
 
   /// Полностью убрать позицию из заказа независимо от количества.
-  Future<void> removeOrderItem(String sessionId, String lineId) async {
+  Future<void> removeOrderItem(String sessionId, String lineId) => _editCheckItems(sessionId, (items) {
+        final before = items.length;
+        items.removeWhere((i) => i.lineId == lineId);
+        return items.length != before;
+      });
+
+  Future<void> _editLine(String sessionId, String lineId, OrderItem Function(OrderItem) change) =>
+      _editCheckItems(sessionId, (items) {
+        final idx = items.indexWhere((i) => i.lineId == lineId);
+        if (idx < 0) return false;
+        items[idx] = change(items[idx]);
+        return true;
+      });
+
+  /// Правка строк открытого чека. Есть связь — транзакцией (два планшета
+  /// не перезапишут друг друга). Нет связи — по копии чека в памяти
+  /// устройства: экран обновляется сразу, а запись уйдёт на сервер сама,
+  /// когда интернет вернётся. Сервис не останавливается.
+  /// [edit] меняет список и возвращает true, если есть что сохранить.
+  Future<void> _editCheckItems(String sessionId, bool Function(List<OrderItem> items) edit) async {
     final ref = AppScope.col('sessions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final data = (await tx.get(ref)).data();
-      if (data == null) return;
-      final items = _openCheckItems(data)..removeWhere((i) => i.lineId == lineId);
-      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
-    });
+    if (NetStatus.online.value) {
+      try {
+        await _db.runTransaction((tx) async {
+          final data = (await tx.get(ref)).data();
+          if (data == null) return;
+          final items = _openCheckItems(data);
+          if (edit(items)) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+        });
+        return;
+      } on FirebaseException catch (e) {
+        if (e.code != 'unavailable') rethrow;
+        NetStatus.reportFailure();
+      }
+    }
+    final snap = await ref.get(const GetOptions(source: Source.cache));
+    final data = snap.data();
+    if (data == null) throw StateError('Чека нет в памяти устройства — дождитесь связи');
+    final items = _openCheckItems(data);
+    if (!edit(items)) return;
+    // Без await: без сети подтверждение сервера придёт только после её
+    // возвращения, а локальная копия обновляется сразу.
+    unawaited(ref.update({'orderItems': items.map((e) => e.toMap()).toList()}).catchError((Object _) {}));
   }
 
   /// Позиции чека, который ещё можно править. Закрытый чек уже оплачен и
@@ -762,20 +779,45 @@ class FirestoreService {
     //    идемпотентным: повторное «Оплатить» после сбоя сети не спишет
     //    склад второй раз.
     final sessionRef = AppScope.col('sessions').doc(sessionId);
+    // Без связи чек закрывается по копии в памяти устройства, а оплата
+    // уходит на сервер сама, когда интернет вернётся (см. _editCheckItems).
+    var offline = !NetStatus.online.value;
     // Транзакция читает чек с сервера, а экран показывал его вместе с ещё
     // не отправленными правками этого планшета (слабая сеть): без ожидания
     // только что добавленная позиция выглядела бы как «счёт изменился».
-    try {
-      await _db.waitForPendingWrites().timeout(const Duration(seconds: 8));
-    } on TimeoutException {
-      throw StateError('Нет связи с сервером: последние изменения чека ещё не отправлены. '
-          'Проверьте интернет и нажмите «Оплатить» ещё раз');
-    } catch (_) {
-      // Платформа без ожидания записей — проверит сама транзакция.
+    if (!offline) {
+      try {
+        await _db.waitForPendingWrites().timeout(const Duration(seconds: 8));
+      } on TimeoutException {
+        NetStatus.reportFailure();
+        offline = true;
+      } catch (_) {
+        // Платформа без ожидания записей — проверит сама транзакция.
+      }
     }
+    final closeData = <String, dynamic>{
+      'status': 'closed',
+      'closedAt': Timestamp.fromDate(DateTime.now()),
+      'paymentCash': cash,
+      'paymentCard': card,
+      'paymentTerminal': terminal,
+      'paymentComp': comp,
+      'guestContact': guestContact,
+      'closedWithoutPayment': closedWithoutPayment,
+      'receiptPrinted': receiptPrinted,
+      'fiscalReceiptPrinted': fiscalReceiptPrinted,
+      'tipsCash': tipsCash,
+      'tipsCard': tipsCard,
+      if (loyaltyClientUid.isNotEmpty) 'loyaltyClientUid': loyaltyClientUid,
+    };
+    final tipNow = Timestamp.fromDate(DateTime.now());
+    final tipUpdates = <DocumentReference<Map<String, dynamic>>, Map<String, dynamic>>{
+      for (final e in tipsPaidVia.entries)
+        AppScope.col('tips').doc(e.key): {'status': 'paid', 'paidAt': tipNow, 'paidVia': e.value},
+      for (final id in tipsCancelled) AppScope.col('tips').doc(id): {'status': 'cancelled', 'cancelledAt': tipNow},
+    };
     SessionModel? changed;
-    final outcome = await _db.runTransaction<_CloseOutcome>((tx) async {
-      final snap = await tx.get(sessionRef);
+    _CloseOutcome check(DocumentSnapshot<Map<String, dynamic>> snap) {
       if ((snap.data()?['status'] as String?) == 'closed') return _CloseOutcome.alreadyClosed;
       if (expectedTotal != null && snap.exists) {
         final actual = SessionModel.fromDoc(snap);
@@ -784,33 +826,36 @@ class FirestoreService {
           return _CloseOutcome.billChanged;
         }
       }
-      tx.update(sessionRef, {
-        'status': 'closed',
-        'closedAt': Timestamp.fromDate(DateTime.now()),
-        'paymentCash': cash,
-        'paymentCard': card,
-        'paymentTerminal': terminal,
-        'paymentComp': comp,
-        'guestContact': guestContact,
-        'closedWithoutPayment': closedWithoutPayment,
-        'receiptPrinted': receiptPrinted,
-        'fiscalReceiptPrinted': fiscalReceiptPrinted,
-        'tipsCash': tipsCash,
-        'tipsCard': tipsCard,
-        if (loyaltyClientUid.isNotEmpty) 'loyaltyClientUid': loyaltyClientUid,
-      });
-      // Чаевые, взятые вместе со счётом, отмечаются оплаченными в той же
-      // транзакции: чек не может закрыться, а чаевые — повиснуть «к счёту»
-      // (и наоборот, повторное нажатие не отметит их второй раз).
-      final now = Timestamp.fromDate(DateTime.now());
-      tipsPaidVia.forEach((id, via) {
-        tx.update(AppScope.col('tips').doc(id), {'status': 'paid', 'paidAt': now, 'paidVia': via});
-      });
-      for (final id in tipsCancelled) {
-        tx.update(AppScope.col('tips').doc(id), {'status': 'cancelled', 'cancelledAt': now});
-      }
       return _CloseOutcome.closed;
-    });
+    }
+
+    var outcome = _CloseOutcome.closed;
+    if (!offline) {
+      try {
+        outcome = await _db.runTransaction<_CloseOutcome>((tx) async {
+          final verdict = check(await tx.get(sessionRef));
+          if (verdict != _CloseOutcome.closed) return verdict;
+          tx.update(sessionRef, closeData);
+          // Чаевые, взятые вместе со счётом, отмечаются оплаченными в той же
+          // транзакции: чек не может закрыться, а чаевые — повиснуть «к счёту»
+          // (и наоборот, повторное нажатие не отметит их второй раз).
+          tipUpdates.forEach(tx.update);
+          return _CloseOutcome.closed;
+        });
+      } on FirebaseException catch (e) {
+        if (e.code != 'unavailable') rethrow;
+        NetStatus.reportFailure();
+        offline = true;
+      }
+    }
+    if (offline) {
+      outcome = check(await sessionRef.get(const GetOptions(source: Source.cache)));
+      if (outcome == _CloseOutcome.closed) {
+        final batch = _db.batch()..update(sessionRef, closeData);
+        tipUpdates.forEach(batch.update);
+        unawaited(batch.commit().catchError((Object _) {}));
+      }
+    }
     // Бросаем после транзакции: в вебе исключение изнутри неё теряет текст.
     if (outcome == _CloseOutcome.billChanged) {
       final actual = changed;
@@ -829,19 +874,27 @@ class FirestoreService {
 
     // 2. Убираем сессию из стола
     final tableRef = AppScope.col('tables').doc(tableId);
+    Map<String, dynamic> freed(Map<String, dynamic>? data) {
+      final ids = ((data?['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList()..remove(sessionId);
+      return {'activeSessionIds': ids, 'status': ids.isEmpty ? 'free' : 'occupied'};
+    }
+
+    if (offline) {
+      final doc = await tableRef.get(const GetOptions(source: Source.cache)).catchError((Object _) => tableRef.get());
+      unawaited(tableRef.update(freed(doc.data())).catchError((Object _) {}));
+      // Остальное — после возвращения связи, не задерживая кассира.
+      unawaited(_afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName).catchError((Object _) {}));
+      return;
+    }
     await _db.runTransaction((tx) async {
       final doc = await tx.get(tableRef);
-      final data = doc.data();
-      final ids = ((data?['activeSessionIds'] ?? []) as List)
-          .map((e) => e.toString())
-          .toList();
-      ids.remove(sessionId);
-      tx.update(tableRef, {
-        'activeSessionIds': ids,
-        'status': ids.isEmpty ? 'free' : 'occupied',
-      });
+      tx.update(tableRef, freed(doc.data()));
     });
+    await _afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName);
+  }
 
+  Future<void> _afterClose(
+      String sessionId, String tableId, bool alreadyClosed, List<OrderItem> orderItems, String employeeName) async {
     // 3. Пересчитываем занятость стола для гостевого приложения и снимаем
     //    закрепление чека за гостем: счёт закрыт, держать его незачем.
     await syncTableBusyUntil(tableId);
@@ -2017,6 +2070,30 @@ class FirestoreService {
     final itemRef = AppScope.col('inventoryItems').doc(itemId);
     final moveRef = AppScope.col('inventoryMovements').doc();
     var after = 0.0;
+    if (!NetStatus.online.value) {
+      // Без связи: атомарное приращение (сервер сложит сам), остаток для
+      // журнала — по памяти устройства.
+      final cached = await itemRef.get(const GetOptions(source: Source.cache)).catchError((Object _) => itemRef.get());
+      after = ((cached.data()?['quantity'] as num?)?.toDouble() ?? 0) + delta;
+      final batch = _db.batch()
+        ..update(itemRef, {'quantity': FieldValue.increment(delta), 'updatedAt': Timestamp.fromDate(DateTime.now())})
+        ..set(
+            moveRef,
+            InventoryMovement(
+              id: moveRef.id,
+              itemId: itemId,
+              itemName: itemName,
+              unit: unit,
+              type: type,
+              delta: delta,
+              resultingQty: after,
+              reason: reason,
+              employeeName: employeeName,
+              createdAt: DateTime.now(),
+            ).toMap());
+      unawaited(batch.commit().catchError((Object _) {}));
+      return;
+    }
     await _db.runTransaction((tx) async {
       final snap = await tx.get(itemRef);
       final current = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
