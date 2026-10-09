@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/session_model.dart';
 import '../../models/shift_model.dart';
+import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shift_open_dialog.dart';
@@ -194,11 +195,27 @@ class _XReportScreenState extends State<XReportScreen> {
     setState(() => _busy = true);
     await closeVenueShift(context, shift: shift, me: widget.employee);
     if (!mounted) return;
+    // Смену закрыли — показываем её итоговый отчёт (его можно напечатать).
+    ShiftModel? closed;
+    try {
+      closed = (await _fs.recentShifts()).where((s) => s.id == shift.id && !s.isOpen).firstOrNull;
+    } catch (_) {}
+    if (!mounted) return;
     setState(() {
       _busy = false;
-      _period = _Period.shift;
+      if (closed != null) {
+        _selectedPastShift = closed;
+        _period = _Period.pastShift;
+      } else {
+        _period = _Period.shift;
+      }
     });
     _reloadShiftInfo();
+    if (closed != null) {
+      _load();
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Смена закрыта — отчёт о закрытии можно распечатать')));
+    }
   }
 
   @override
@@ -708,11 +725,28 @@ class _XReportScreenState extends State<XReportScreen> {
       if (data.unpaidCount > 0) ReportLine('Без оплаты: ${data.unpaidCount}', right: rub(data.unpaidAmount)),
       if (refundsCount > 0) ReportLine('Возвратов: $refundsCount'),
     ];
+    // Закрытая смена — отчёт о закрытии: пересчёт кассы и отмены.
+    final closed = cash?.shift != null && !cash!.shift!.isOpen ? cash.shift : null;
+    if (closed != null) {
+      final diff = closed.closingDiff;
+      lines.addAll([
+        const ReportLine.separator(),
+        if (closed.closingExpectedCash != null) ReportLine('Должно быть в кассе', right: rub(closed.closingExpectedCash!)),
+        if (closed.closingCountedCash != null) ReportLine('Пересчитано', right: rub(closed.closingCountedCash!)),
+        if (diff != null)
+          ReportLine(diff == 0 ? 'Расхождение' : (diff < 0 ? 'Недостача' : 'Излишек'),
+              right: rub(diff.abs()), bold: true),
+        if (closed.closingCollected != null) ReportLine('Инкассировано', right: rub(closed.closingCollected!)),
+        if (closed.closingLeftCash != null) ReportLine('Оставлено на размен', right: rub(closed.closingLeftCash!)),
+      ]);
+      final voids = await AuditLogService.instance.voidsBetween(closed.openedAt, closed.closedAt ?? DateTime.now());
+      if (voids != null && voids.$1 > 0) lines.add(ReportLine('Отмен позиций: ${voids.$1}', right: rub(voids.$2)));
+    }
     final now = DateTime.now();
     final venue = VenueService.instance.cached.name;
     try {
       await printer.printReport(ReportPrint(
-        title: 'X-ОТЧЁТ',
+        title: closed != null ? 'ЗАКРЫТИЕ СМЕНЫ' : 'X-ОТЧЁТ',
         subtitle: [
           if (venue.isNotEmpty) venue,
           _periodTitle(cash),
