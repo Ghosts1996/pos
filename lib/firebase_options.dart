@@ -1,8 +1,9 @@
 // Файл конфигурации Firebase с заполненными ключами проекта
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform, visibleForTesting;
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'build_info.dart';
 
 class DefaultFirebaseOptions {
@@ -46,20 +47,54 @@ class DefaultFirebaseOptions {
   /// /firebaseConfig saas-gateway, а не через --dart-define: конфиг публичный,
   /// а десктопным плагинам хватает apiKey и projectId веб-приложения — лишняя
   /// регистрация и секреты не нужны. Вызывается до Firebase.initializeApp().
+  ///
+  /// Последняя удачная конфигурация хранится на устройстве (это публичные
+  /// ключи веб-приложения, не секрет): без неё касса без интернета не
+  /// запустилась бы вовсе, хотя дальше всё работает из локального кэша
+  /// Firestore. Без сети и без сохранённой копии — исходная ошибка.
   static Future<void> resolveWindowsOptions() async {
     if (_windowsOptions != null) return;
-    final uri = Uri.parse('$kSaasGatewayUrl/firebaseConfig');
-    final res = await http.get(uri).timeout(const Duration(seconds: 20));
-    if (res.statusCode != 200) {
-      throw StateError('saas-gateway /firebaseConfig ответил ${res.statusCode}');
+    try {
+      final uri = Uri.parse('$kSaasGatewayUrl/firebaseConfig');
+      final res = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) {
+        throw StateError('saas-gateway /firebaseConfig ответил ${res.statusCode}');
+      }
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      _windowsOptions = optionsFromJson(json);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_windowsConfigKey, res.body);
+      } catch (_) {}
+    } catch (e) {
+      final cached = await cachedWindowsOptions();
+      if (cached == null) rethrow;
+      _windowsOptions = cached;
     }
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static const _windowsConfigKey = 'firebase_web_config_v1';
+
+  @visibleForTesting
+  static Future<FirebaseOptions?> cachedWindowsOptions() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_windowsConfigKey);
+      if (raw == null || raw.isEmpty) return null;
+      return optionsFromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  static FirebaseOptions optionsFromJson(Map<String, dynamic> json) {
     final projectId = json['projectId'] as String?;
     final apiKey = json['apiKey'] as String?;
     if (projectId == null || projectId.isEmpty || apiKey == null || apiKey.isEmpty) {
       throw StateError('saas-gateway /firebaseConfig вернул неполную конфигурацию');
     }
-    _windowsOptions = FirebaseOptions(
+    return FirebaseOptions(
       apiKey: apiKey,
       appId: (json['appId'] as String?) ?? '',
       messagingSenderId: (json['messagingSenderId'] as String?) ?? '',
