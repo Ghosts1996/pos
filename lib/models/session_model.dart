@@ -54,6 +54,10 @@ class OrderItem {
   /// строки, см. [lineId].
   final List<String> mods;
 
+  /// «Подать позже» (следующий курс): строка ждёт команды официанта — не
+  /// уходит бегунком и не видна на экране кухни, пока её не «подали».
+  final bool hold;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
@@ -67,6 +71,7 @@ class OrderItem {
     this.since,
     int sent = 0,
     this.mods = const [],
+    this.hold = false,
   })  : ready = _clampQty(ready, qty),
         sent = _clampQty(sent, qty);
 
@@ -85,7 +90,7 @@ class OrderItem {
 
   /// Штук для следующего бегунка: не отправленные и не отмеченные готовыми.
   /// Строки без «ждёт с» — из чеков до бегунков, их давно вынесли.
-  int get unsent => since == null ? 0 : qty - (sent > ready ? sent : ready);
+  int get unsent => since == null || hold ? 0 : qty - (sent > ready ? sent : ready);
 
   static String cleanNote(Object? raw) {
     final s = (raw ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -114,6 +119,7 @@ class OrderItem {
       ready: m['ready'] is num ? (m['ready'] as num).toInt() : 0,
       since: m['since'] is num ? DateTime.fromMillisecondsSinceEpoch((m['since'] as num).toInt()) : null,
       sent: m['sent'] is num ? (m['sent'] as num).toInt() : 0,
+      hold: m['hold'] == true,
       mods: m['mods'] is List
           ? [for (final v in m['mods'] as List) if (v != null && v.toString().trim().isNotEmpty) v.toString().trim()]
           : const [],
@@ -133,6 +139,7 @@ class OrderItem {
         if (since != null) 'since': since!.millisecondsSinceEpoch,
         if (sent > 0) 'sent': sent,
         if (mods.isNotEmpty) 'mods': mods,
+        if (hold) 'hold': true,
       };
 
   /// Всё готово: [ready] = [qty].
@@ -145,9 +152,16 @@ class OrderItem {
   /// Та же строка с другим пожеланием (пусто — убрать).
   OrderItem withNote(String value) => _with(note: cleanNote(value));
 
+  /// Отложить до команды или «подать»: поданная строка ждёт с этой минуты.
+  OrderItem withHold(bool value) => value == hold
+      ? this
+      : OrderItem(
+          menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
+          note: note, ready: ready, since: value ? since : DateTime.now(), sent: sent, mods: mods, hold: value);
+
   OrderItem _with({String? note, int? ready, int? sent}) => OrderItem(
       menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
-      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent, mods: mods);
+      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent, mods: mods, hold: hold);
 
   /// Новое количество. Если штук стало меньше, учёт авторов урезается с
   /// самых крупных долей — сумма никогда не больше [qty].
@@ -166,6 +180,7 @@ class OrderItem {
       since: since,
       sent: sent,
       mods: mods,
+      hold: hold,
     );
   }
 
@@ -187,6 +202,7 @@ class OrderItem {
       since: n > 0 && pending <= 0 ? DateTime.now() : since,
       sent: sent,
       mods: mods,
+      hold: hold,
     );
   }
 
@@ -220,6 +236,7 @@ class OrderItem {
       since: since,
       sent: sent,
       mods: mods,
+      hold: hold,
     );
   }
 
@@ -250,7 +267,7 @@ class OrderItem {
     final sentOut = sent < n ? sent : n;
     OrderItem part(int q, Map<String, int> b, int r, int sn) => OrderItem(
         menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b, note: note,
-        ready: r, since: since, sent: sn, mods: mods);
+        ready: r, since: since, sent: sn, mods: mods, hold: hold);
     return (part(n, taken, readyOut, sentOut), part(qty - n, kept, ready - readyOut, sent - sentOut));
   }
 

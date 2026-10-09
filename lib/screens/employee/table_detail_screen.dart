@@ -358,6 +358,91 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     );
   }
 
+  /// «Подать позже» / «ждёт команды» под строкой заказа.
+  Widget _holdLink(String sessionId, OrderItem i) => InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: () async {
+          try {
+            await _fs.setOrderItemHold(sessionId, i.lineId, !i.hold);
+          } catch (e) {
+            _showError('Не удалось изменить подачу: ${humanError(e, lower: true)}');
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(i.hold ? Icons.pause_circle_filled : Icons.schedule,
+                  size: 16, color: i.hold ? AppColors.warning : AppColors.textMuted),
+              const SizedBox(width: 4),
+              Text(i.hold ? 'ждёт команды' : 'подать позже',
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: i.hold ? AppColors.warning : AppColors.textMuted,
+                      fontWeight: i.hold ? FontWeight.w600 : FontWeight.normal)),
+            ],
+          ),
+        ),
+      );
+
+  /// Плашка «Ждут команды: N шт.» с кнопкой «Подать» — следующий курс.
+  Widget _heldStrip(SessionModel session) {
+    final n = session.orderItems.where((i) => i.hold).fold<int>(0, (a, i) => a + i.qty);
+    if (n == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.pause_circle_outline, size: 20, color: AppColors.warning),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Ждут команды: $n шт.', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('следующий курс — кухня его пока не видит',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+              onPressed: () => _fireHeld(session),
+              icon: const Icon(Icons.play_arrow_rounded, size: 20),
+              label: const Text('Подать'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _fireHeld(SessionModel session) async {
+    try {
+      await _fs.fireHeldItems(session.id);
+    } catch (e) {
+      _showError('Не удалось подать: ${humanError(e, lower: true)}');
+      return;
+    }
+    // Бегунки сразу — если так настроено в «Интеграциях».
+    if (printKitchenTickets && printKitchenAuto && mounted) {
+      final fresh = await _fs.sessionStream(session.id).first;
+      if (fresh != null && mounted) await _sendToKitchen(fresh, auto: true);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Подано — позиции ушли на кухню и бар')));
+    }
+  }
+
   Future<void> _editNote(String sessionId, OrderItem i) async {
     final note = await showOrderNoteSheet(context, i);
     if (note == null || note == i.note || !mounted) return;
@@ -708,6 +793,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 const SizedBox(height: 24),
                 _orderHeader(session),
                 const SizedBox(height: 10),
+                _heldStrip(session),
                 _kitchenStrip(session),
                 if (session.orderItems.isEmpty)
                   _emptyOrder(session)
@@ -820,7 +906,16 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                       ],
                     ],
                   ),
-                  if (i.menuItemId.isNotEmpty) _noteLink(session.id, i),
+                  if (i.menuItemId.isNotEmpty)
+                    Wrap(
+                      spacing: 14,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _noteLink(session.id, i),
+                        // Следующий курс: не уходит на кухню до «Подать».
+                        if (i.hold || i.unsent > 0) _holdLink(session.id, i),
+                      ],
+                    ),
                 ],
               ),
             ),

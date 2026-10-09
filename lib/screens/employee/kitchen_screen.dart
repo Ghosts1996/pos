@@ -40,7 +40,7 @@ class KitchenScreen extends StatefulWidget {
     for (final s in checks) {
       // Строки без «ждёт с» — из чеков до появления этого экрана: их
       // давно вынесли, на кухне им не место.
-      final lines = s.orderItems.where((i) => i.pending > 0 && i.since != null && i.effectiveKind == station).toList();
+      final lines = s.orderItems.where((i) => i.pending > 0 && i.since != null && !i.hold && i.effectiveKind == station).toList();
       if (lines.isEmpty) continue;
       final oldest = lines.map((i) => i.since!).reduce((a, b) => a.isBefore(b) ? a : b);
       out.add(KitchenTicket(session: s, lines: lines, since: oldest));
