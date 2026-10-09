@@ -506,3 +506,11 @@ h2.mh { margin: 26px 0 12px; }
 .tobacco-tile .tt-text { flex: 1; }
 .tobacco-tile .tt-text b { display: block; font-weight: 600; margin-bottom: 2px; }
 .tobacco-tile .tt-go { flex: none; }
+
+/* Выбор модификаторов (размер, добавки) — снизу экрана, как в кассе. */
+.modsheet { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .45);
+  display: flex; align-items: flex-end; justify-content: center; }
+.modsheet-body { background: var(--surface, #fff); width: 100%; max-width: 560px; max-height: 86vh; overflow: auto;
+  border-radius: 20px 20px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }
+.modsheet-body .btn-primary, .modsheet-body .btn-ghost { width: 100%; }
+.modsheet-body .btn-primary[disabled] { opacity: .55; }

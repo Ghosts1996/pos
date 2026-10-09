@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../models/menu_models.dart';
-import '../theme/app_colors.dart';
 import '../utils/money.dart';
 
 /// Выбор модификаторов позиции перед добавлением в счёт: молоко, сироп,
@@ -11,7 +10,8 @@ Future<List<String>?> showModifierPicker(BuildContext context, MenuItem item) =>
     showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.surface,
+      // Цвета из темы: тем же листом пользуются касса и приложение гостя.
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
       builder: (_) => ModifierPickerSheet(item: item),
     );
@@ -83,7 +83,7 @@ class _ModifierPickerSheetState extends State<ModifierPickerSheet> {
                       children: [
                         Text(g.name, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
                         const SizedBox(width: 8),
-                        Text(_hint(g), style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                        Text(_hint(g), style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -114,7 +114,7 @@ class _ModifierPickerSheetState extends State<ModifierPickerSheet> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(problem,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13)),
                     ),
                   FilledButton(
                     style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),

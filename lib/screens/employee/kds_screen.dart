@@ -106,7 +106,7 @@ class KdsScreen extends StatelessWidget {
       subtitle: '${preparing ? 'Готовим' : 'Заказ из приложения'}'
           '${o.targetPosition.isEmpty ? '' : ' · ${AppConstants.orderTargetDat(o.targetPosition)}'}'
           ' · ${rub(o.total)}',
-      body: o.items.map((i) => '${i.name} ×${i.qty}').join('\n'),
+      body: o.items.map((i) => '${i.displayName} ×${i.qty}').join('\n'),
       minutes: waiting,
       actionLabel: preparing ? 'Готово' : 'Принять в чек',
       onAction: () async {
