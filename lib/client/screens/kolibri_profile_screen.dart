@@ -1,5 +1,4 @@
 import 'dart:convert';
-import '../../services/venue_service.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -120,9 +119,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           scrollable: true,
           backgroundColor: KolibriColors.surface,
           title: const Text('Другое заведение сети'),
-          content: Text(
+          content: const Text(
             'У вас открыт стол в этом заведении. Счёт останется открытым — '
-            'закрыть его сможет ${VenueService.instance.terms.staff}, а в приложении он снова '
+            'закрыть его сможет сотрудник, а в приложении он снова '
             'появится, когда вы вернётесь в это заведение. Перейти всё равно?',
           ),
           actions: [
@@ -296,9 +295,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               title: const Text('Номер уже зарегистрирован'),
               // Про чужой профиль ничего не рассказываем — ни имени, ни
               // баланса: иначе их увидел бы любой, кто угадал номер.
-              content: Text(
+              content: const Text(
                 'На этот номер уже есть профиль. Чтобы его бонусы и история '
-                'появились на этом устройстве, назовите ${VenueService.instance.terms.staffDat} номер и '
+                'появились на этом устройстве, назовите сотруднику номер и '
                 '«ID устройства» ниже — он объединит профили на кассе за пару '
                 'секунд.',
               ),
@@ -503,7 +502,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                     child: Text(
                       'Бонусы копятся на этом устройстве и находятся по вашему номеру '
                       'на кассе. Сменили телефон — назовите номер и покажите ID '
-                      'устройства ниже ${VenueService.instance.terms.staffDat}, и мы перенесём историю визитов.',
+                      'устройства ниже сотруднику, и мы перенесём историю визитов.',
                       style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
                     ),
                   ),

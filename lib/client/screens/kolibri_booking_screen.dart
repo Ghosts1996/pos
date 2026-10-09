@@ -372,7 +372,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
                   // Часы работы не заполнены вовсе — это не «закрыто
                   // каждый день», и гостю нужен рабочий путь, а не тупик.
                   ? 'Онлайн-бронь пока недоступна — заведение ещё не указало часы работы. '
-                      '${(_venue?.phone ?? '').isNotEmpty ? 'Забронируйте по телефону ${_venue!.phone}.' : 'Забронируйте по телефону или у ${VenueService.instance.terms.staffAcc}.'}'
+                      '${(_venue?.phone ?? '').isNotEmpty ? 'Забронируйте по телефону ${_venue!.phone}.' : 'Забронируйте по телефону или у сотрудника.'}'
                   : _venue?.workingHours[_day.weekday]?.isNotEmpty == true
                       ? 'На этот день свободного времени нет — выберите другую дату'
                       : 'В этот день мы закрыты — выберите другую дату',
@@ -724,7 +724,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
               'Если планы поменяются — отмените её здесь же.'
               '${takenByOther ? '\n\nНа этот номер уже есть другой профиль. Чтобы '
                   'бонусы копились в одном месте, назовите '
-                  '${VenueService.instance.terms.staffDat} номер и «ID устройства» '
+                  'сотруднику номер и «ID устройства» '
                   'из профиля — он объединит профили.' : ''}'),
           actions: [
             FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Хорошо')),
