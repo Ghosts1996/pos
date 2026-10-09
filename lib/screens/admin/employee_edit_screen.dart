@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../utils/pin_hash.dart';
 import '../../models/employee.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
@@ -32,7 +33,10 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
   Employee? get _emp => widget.employee;
 
   late final _name = TextEditingController(text: _emp?.name ?? '');
-  late final _pin = TextEditingController(text: _emp?.pinCode ?? '');
+  // PIN хранится только хэшем — показать старый нельзя. Пусто при правке —
+  // PIN остаётся прежним.
+  late final _pin = TextEditingController();
+  bool get _hasPin => _emp != null && (_emp!.pinHash.isNotEmpty || _emp!.pinCode.isNotEmpty);
   late final _tipsLink = TextEditingController(text: _emp?.tipsLink ?? '');
   late final _hourlyRate = TextEditingController(text: _numOrEmpty(_emp?.hourlyRate ?? 0));
   late final _shiftRate = TextEditingController(text: _numOrEmpty(_emp?.shiftRate ?? 0));
@@ -144,7 +148,8 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
 
   String? _validate(Employee e) {
     if (e.name.isEmpty) return 'Введите имя сотрудника';
-    if (e.pinCode.length != _pinLength || int.tryParse(e.pinCode) == null) {
+    final keepPin = e.pinCode.isEmpty && _hasPin && _emp!.role == _role;
+    if (!keepPin && (e.pinCode.length != _pinLength || int.tryParse(e.pinCode) == null)) {
       return _role == AppConstants.roleAdmin
           ? 'PIN администратора — ровно $_pinLength цифр'
           : 'PIN сотрудника — ровно $_pinLength цифры';
@@ -177,7 +182,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
     if (_timePay == _TimePay.shift && _overtime && _parse(_overtimeHourRate) <= 0 && _suggestedOvertimeHour > 0) {
       _overtimeHourRate.text = _num(_suggestedOvertimeHour);
     }
-    final e = _build();
+    var e = _build();
     final problem = _validate(e);
     if (problem != null) {
       setState(() => _error = problem);
@@ -188,7 +193,11 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       _error = null;
     });
     try {
-      if (await _fs.isPinTaken(e.pinCode, excludeId: _emp?.id)) {
+      if (e.pinCode.isEmpty) {
+        // PIN не меняли — оставляем прежний (старый открытый — переводим в хэш).
+        final old = _emp!;
+        e = e.copyWith(pinHash: old.pinHash.isNotEmpty ? old.pinHash : await PinHash.of(old.pinCode));
+      } else if (await _fs.isPinTaken(e.pinCode, excludeId: _emp?.id)) {
         if (!mounted) return;
         setState(() {
           _saving = false;
@@ -203,6 +212,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       });
       return;
     }
+    if (e.pinCode.isNotEmpty) e = e.copyWith(pinHash: await PinHash.of(e.pinCode), pinCode: '');
     if (mounted) Navigator.of(context).pop(e);
   }
 
@@ -258,8 +268,8 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
                 maxLength: _pinLength,
                 obscureText: !_showPin,
                 decoration: InputDecoration(
-                  labelText: 'PIN-код для входа',
-                  helperText: '$_pinLength ${_pinLength == 4 ? 'цифры' : 'цифр'}',
+                  labelText: _hasPin ? 'Новый PIN-код (пусто — оставить прежний)' : 'PIN-код для входа',
+                  helperText: '$_pinLength ${_pinLength == 4 ? 'цифры' : 'цифр'} · хранится зашифрованным, посмотреть его нельзя',
                   suffixIcon: IconButton(
                     tooltip: _showPin ? 'Скрыть' : 'Показать',
                     icon: Icon(_showPin ? Icons.visibility_off_outlined : Icons.visibility_outlined),

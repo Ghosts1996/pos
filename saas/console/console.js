@@ -67,6 +67,17 @@ if (/(^|\.)hookahpos\.su$/.test(location.hostname)) {
     .catch(() => {});
 }
 
+/** Хэш PIN сотрудника — как PinHash в кассе (lib/utils/pin_hash.dart) и
+ *  pinHashFor на сервере: PBKDF2-SHA256, 20 000 итераций, соль — заведение.
+ *  Открытым текстом PIN в базу не пишем. */
+async function hashEmployeePin(pin, tenantId) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(`zalpos-pin:${tenantId}`), iterations: 20000 }, key, 256);
+  return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /** Вызов saas-gateway с ID-токеном пользователя. Бросает Error с текстом,
  *  который можно показать пользователю. */
 async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
@@ -3111,7 +3122,6 @@ function watchDashboardData(tenantId) {
   let employees = null;
   // Сотрудник в форме редактирования; null — форма добавления.
   let editingEmployeeId = null;
-  const revealedEmpPins = new Set();
   // Загруженный, но ещё не сохранённый логотип.
   let pendingLogoUrl = null;
   // Пока логотип грузится, сохранение брендинга ждёт: иначе сохранились бы
@@ -3744,14 +3754,13 @@ function watchDashboardData(tenantId) {
           ? '<div class="small muted">Пока нет ни одного сотрудника с PIN-входом</div>'
           : employees.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((e) => {
             const pinLen = e.role === 'admin' ? 6 : 4;
-            const revealed = revealedEmpPins.has(e.id);
             return `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div class="grow" style="min-width:0">
               <div class="ellipsis">${esc(e.name || '')}</div>
               <div class="small muted">
                 ${e.role === 'admin' ? 'Администратор' : 'Сотрудник'} · PIN
-                <span class="f-emp-pin" data-id="${esc(e.id)}" style="cursor:pointer" title="Нажмите, чтобы ${revealed ? 'скрыть' : 'показать'}">${revealed ? esc(e.pinCode || '') : '•'.repeat(pinLen)}</span>
+                <span title="PIN хранится зашифрованным — посмотреть его нельзя, только задать новый">${'•'.repeat(pinLen)}</span>
                 ${e.position && e.position !== 'universal' ? ` · ${esc(POSITION_LABELS[e.position] || e.position)}` : ''}
               </div>
             </div>
@@ -3776,7 +3785,7 @@ function watchDashboardData(tenantId) {
               </select>
             </div>
             <label class="field"><span>PIN-код</span>
-              <input id="f-emp-pin" type="text" inputmode="numeric" placeholder="0000" maxlength="6">
+              <input id="f-emp-pin" type="text" inputmode="numeric" placeholder="${editingEmployeeId ? 'пусто — оставить прежний' : '0000'}" maxlength="6">
             </label>
             <label class="field"><span>Специализация</span>
               <select id="f-emp-position">
@@ -4619,12 +4628,6 @@ function watchDashboardData(tenantId) {
       };
     }
 
-    document.querySelectorAll('.f-emp-pin').forEach((el) => {
-      el.onclick = () => {
-        revealedEmpPins.has(el.dataset.id) ? revealedEmpPins.delete(el.dataset.id) : revealedEmpPins.add(el.dataset.id);
-        draw();
-      };
-    });
     document.querySelectorAll('.f-emp-edit').forEach((el) => {
       el.onclick = () => {
         const emp = (employees || []).find((x) => x.id === el.dataset.id);
@@ -4633,7 +4636,8 @@ function watchDashboardData(tenantId) {
         // Заполняем текущие поля — draw() перенесёт значения в новую разметку.
         if ($('f-emp-name')) $('f-emp-name').value = emp.name || '';
         if ($('f-emp-role')) $('f-emp-role').value = emp.role || 'employee';
-        if ($('f-emp-pin')) $('f-emp-pin').value = emp.pinCode || '';
+        // PIN хранится хэшем: пустое поле при правке — оставить прежний.
+        if ($('f-emp-pin')) $('f-emp-pin').value = '';
         if ($('f-emp-position')) $('f-emp-position').value = emp.position || 'universal';
         draw();
       };
@@ -4672,21 +4676,29 @@ function watchDashboardData(tenantId) {
         // не примет.
         const requiredLen = role === 'admin' ? 6 : 4;
         if (!name) { errEl.textContent = 'Введите имя'; return; }
-        if (!/^\d+$/.test(pin) || pin.length !== requiredLen) {
+        const editing = editingEmployeeId ? (employees || []).find((e) => e.id === editingEmployeeId) : null;
+        // При правке без смены роли пустой PIN — оставить прежний.
+        const keepPin = !pin && editing && (editing.role || 'employee') === role && (editing.pinHash || editing.pinCode);
+        if (!keepPin && (!/^\d+$/.test(pin) || pin.length !== requiredLen)) {
           errEl.textContent = `PIN-код должен состоять ровно из ${requiredLen} цифр`;
           return;
         }
-        const taken = (employees || []).some((e) => e.pinCode === pin && e.id !== editingEmployeeId);
-        if (taken) { errEl.textContent = 'Этот PIN-код уже занят другим сотрудником'; return; }
         $('f-emp-submit').disabled = true;
         try {
+          const pinHash = pin ? await hashEmployeePin(pin, tenantId) : '';
+          if (pin && (employees || []).some((e) => e.id !== editingEmployeeId && (e.pinHash === pinHash || e.pinCode === pin))) {
+            errEl.textContent = 'Этот PIN-код уже занят другим сотрудником';
+            return;
+          }
           if (editingEmployeeId) {
-            await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), { name, role, pinCode: pin, position });
+            const upd = { name, role, position };
+            if (pinHash) Object.assign(upd, { pinHash, pinCode: deleteField() });
+            await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), upd);
             toast('Сотрудник обновлён');
           } else {
             // Остальные поля — дефолты Employee() из lib/models/employee.dart.
             await addDoc(collection(state.db, 'tenants', tenantId, 'employees'), {
-              name, role, pinCode: pin, position,
+              name, role, pinHash, position,
               hourlyRateEnabled: false, hourlyRate: 0,
               overtimeEnabled: false, overtimeThresholdHours: 8, overtimeMultiplier: 1.5,
               salesPercentEnabled: false, salesPercentRate: 0,

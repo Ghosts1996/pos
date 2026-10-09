@@ -5,7 +5,12 @@ import 'pay_terms.dart';
 class Employee {
   final String id;
   final String name;
-  final String pinCode; // 4-значный пин для входа
+  /// PIN в открытом виде — только что введённый в редакторе (в базу не
+  /// пишется) или старая запись до перевода на хэш.
+  final String pinCode;
+
+  /// Хэш PIN (см. PinHash) — так PIN хранится в базе.
+  final String pinHash;
   final String role;    // 'admin' | 'employee'
 
   /// Специализация — официант/кальянщик/бармен/универсал (см.
@@ -52,6 +57,7 @@ class Employee {
     required this.id,
     required this.name,
     required this.pinCode,
+    this.pinHash = '',
     required this.role,
     this.position = AppConstants.positionUniversal,
     this.hourlyRateEnabled = false,
@@ -112,6 +118,7 @@ class Employee {
       id: doc.id,
       name: data['name'] ?? '',
       pinCode: data['pinCode'] ?? '',
+      pinHash: (data['pinHash'] ?? '').toString(),
       role: data['role'] ?? 'employee',
       position: AppConstants.normalizePosition(data['position'] as String?),
       hourlyRateEnabled: data['hourlyRateEnabled'] ?? false,
@@ -137,7 +144,7 @@ class Employee {
 
   Map<String, dynamic> toMap() => {
         'name': name,
-        'pinCode': pinCode,
+        if (pinHash.isNotEmpty) 'pinHash': pinHash,
         'role': role,
         'position': position,
         'hourlyRateEnabled': hourlyRateEnabled,
@@ -159,6 +166,7 @@ class Employee {
   Employee copyWith({
     String? name,
     String? pinCode,
+    String? pinHash,
     String? role,
     String? position,
     bool? hourlyRateEnabled,
@@ -180,6 +188,7 @@ class Employee {
       id: id,
       name: name ?? this.name,
       pinCode: pinCode ?? this.pinCode,
+      pinHash: pinHash ?? this.pinHash,
       role: role ?? this.role,
       position: position ?? this.position,
       hourlyRateEnabled: hourlyRateEnabled ?? this.hourlyRateEnabled,

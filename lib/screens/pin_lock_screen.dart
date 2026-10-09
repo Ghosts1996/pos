@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../utils/pin_hash.dart';
 import '../models/employee.dart';
 import '../services/app_lock.dart';
 import '../services/app_scope.dart';
@@ -59,7 +60,13 @@ class _PinLockScreenState extends State<PinLockScreen> {
 
   Future<void> _check() async {
     final pin = _pin;
-    var ok = pin == _employee.pinCode;
+    String? hash;
+    Future<bool> matches(Employee e) async {
+      if (e.pinHash.isEmpty) return e.pinCode.isNotEmpty && e.pinCode == pin;
+      return e.pinHash == (hash ??= await PinHash.of(pin));
+    }
+
+    var ok = await matches(_employee);
     Employee? fresh;
     if (!ok) {
       // PIN могли поменять, пока касса работала, — сверяем со свежей
@@ -67,7 +74,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
       setState(() => _checking = true);
       try {
         fresh = await FirestoreService().employeeById(_employee.id).timeout(const Duration(seconds: 5));
-        ok = fresh != null && fresh.pinCode == pin;
+        ok = fresh != null && await matches(fresh);
       } catch (_) {}
       if (!mounted) return;
     }

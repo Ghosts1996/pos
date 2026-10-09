@@ -28,7 +28,6 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   // PIN-коды по умолчанию скрыты точками — их видно только сотруднику,
   // который вводит свой PIN на входе. Чтобы посмотреть чужой PIN в
   // админке, нужно осознанно нажать на значок глаза у конкретной строки.
-  final Set<String> _revealed = {};
   // Сколько сотрудников уже есть — для лимита тарифа (см. _add).
   int _count = 0;
   // Последний список — чтобы понять, есть ли другой администратор.
@@ -88,7 +87,6 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   }
 
   Widget _card(Employee e) {
-    final revealed = _revealed.contains(e.id);
     final admin = e.role == AppConstants.roleAdmin;
     final pay = payrollSummary(e);
     return Material(
@@ -133,20 +131,15 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                   ],
                 ),
               ),
-              // PIN — по нажатию на глаз.
-              InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => setState(() => revealed ? _revealed.remove(e.id) : _revealed.add(e.id)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(revealed ? e.pinCode : '•' * AppConstants.pinLengthForRole(e.role),
-                        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()], color: AppColors.textMuted)),
-                    const SizedBox(width: 4),
-                    Icon(revealed ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                        size: 18, color: AppColors.textMuted),
-                  ]),
-                ),
+              // PIN хранится хэшем — показываем только, что он задан.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
+                  const SizedBox(width: 4),
+                  Text('•' * AppConstants.pinLengthForRole(e.role),
+                      style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()], color: AppColors.textMuted)),
+                ]),
               ),
               PopupMenuButton<String>(
                 tooltip: 'Ещё',

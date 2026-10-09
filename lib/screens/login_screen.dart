@@ -253,6 +253,8 @@ class _LoginScreenState extends State<LoginScreen> {
     // Проверка стоит один документ и ничего не делает, если всё на месте.
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
+    // PIN, ещё хранящиеся открытым текстом, — в хэши.
+    unawaited(_fs.migratePlainPins());
     // Секреты столов для QR-наклеек — столам, у которых их ещё нет.
     unawaited(TableKeyService.instance.ensureKeys().catchError((_) => 0));
     unawaited(GuestLinkService().backfillGuestIndexes());

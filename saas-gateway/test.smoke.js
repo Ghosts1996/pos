@@ -237,6 +237,8 @@ async function main() {
       { closedWithoutPayment: true, orderItems: [{ name: "Чай", price: 300, qty: 1 }] },
     ], audit: [] });
     check("telegram: итоги — выручка и закрытые без оплаты", text.includes("Выручка: 600 ₽") && text.includes("закрыто без оплаты: 1"));
+    check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
+      server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     check("telegram: мелкая скидка не сигналит", tg.alertText("Тест", { action: "discount_applied", details: { percent: 5 } }) === null);
   }
 
