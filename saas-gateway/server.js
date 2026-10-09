@@ -22,6 +22,7 @@ const net = require("net");
 const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
 const { createGuestPay } = require("./guest-pay");
+const { createTelegram } = require("./telegram");
 
 /**
  * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
@@ -6556,9 +6557,24 @@ const guestPay = createGuestPay({
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
 });
 
+// Telegram-бот владельцев: итоги смены и сигналы — см. telegram.js.
+const telegram = createTelegram({
+  db,
+  admin,
+  verifyAuth,
+  parseJsonBody,
+  sendJson,
+  HttpError,
+  requireTenantRole,
+  token: (process.env.TELEGRAM_BOT_TOKEN || "").trim(),
+});
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
+  "/telegramLinkCode": telegram.handleLinkCode,
+  "/telegramStatus": telegram.handleStatus,
+  "/telegramUnlink": telegram.handleUnlink,
   // Гость платит счёт по СБП со стола (Т-Банк) — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
@@ -6692,6 +6708,8 @@ scheduleAiSecretsMigration();
 scheduleBuildsSweep();
 scheduleAppRollout();
 scheduleMenuPopularity();
+// Smoke-тесты поднимают сервер без секретов — бот там не нужен.
+if (process.env.PORT !== "8099") telegram.start();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
