@@ -91,6 +91,81 @@ class MenuItemComponent {
       );
 }
 
+/// Вариант модификатора: «Кокосовое молоко +60 ₽», «Medium», «Без лука».
+/// Может списывать продукт со склада (сироп 20 мл) — как простая позиция.
+class ModifierOption {
+  final String name;
+
+  /// Доплата за вариант, ₽ (0 — бесплатно).
+  final double price;
+  final String inventoryItemId;
+  final double weight;
+  final InventoryUnit weightUnit;
+
+  const ModifierOption({
+    required this.name,
+    this.price = 0,
+    this.inventoryItemId = '',
+    this.weight = 0,
+    this.weightUnit = InventoryUnit.g,
+  });
+
+  bool get hasInventoryLink => inventoryItemId.isNotEmpty && weight > 0;
+
+  factory ModifierOption.fromMap(Map<String, dynamic> m) => ModifierOption(
+        name: (m['name'] ?? '').toString().trim(),
+        price: (m['price'] as num?)?.toDouble() ?? 0,
+        inventoryItemId: (m['inventoryItemId'] ?? '').toString(),
+        weight: (m['weight'] as num?)?.toDouble() ?? 0,
+        weightUnit: InventoryUnitX.fromName(m['weightUnit'] as String?),
+      );
+
+  Map<String, dynamic> toMap() => {
+        'name': name,
+        'price': price,
+        if (inventoryItemId.isNotEmpty) 'inventoryItemId': inventoryItemId,
+        if (weight > 0) 'weight': weight,
+        if (inventoryItemId.isNotEmpty) 'weightUnit': weightUnit.name,
+      };
+}
+
+/// Группа модификаторов позиции: «Молоко» (выбрать одно), «Добавки» (сколько
+/// угодно), «Прожарка» (обязательно одно). [min] > 0 — выбор обязателен,
+/// [max] = 1 — один вариант из списка.
+class ModifierGroup {
+  final String name;
+  final int min;
+  final int max;
+  final List<ModifierOption> options;
+
+  const ModifierGroup({required this.name, this.min = 0, this.max = 1, this.options = const []});
+
+  bool get required => min > 0;
+  bool get single => max == 1;
+
+  factory ModifierGroup.fromMap(Map<String, dynamic> m) {
+    final opts = ((m['options'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => ModifierOption.fromMap(Map<String, dynamic>.from(e)))
+        .where((o) => o.name.isNotEmpty)
+        .toList();
+    final max = (m['max'] as num?)?.toInt() ?? 1;
+    final min = (m['min'] as num?)?.toInt() ?? 0;
+    return ModifierGroup(
+      name: (m['name'] ?? '').toString().trim(),
+      max: max < 0 ? 0 : max,
+      min: min.clamp(0, opts.length),
+      options: opts,
+    );
+  }
+
+  Map<String, dynamic> toMap() =>
+      {'name': name, 'min': min, 'max': max, 'options': options.map((o) => o.toMap()).toList()};
+
+  ModifierGroup copyWith({String? name, int? min, int? max, List<ModifierOption>? options}) => ModifierGroup(
+      name: name ?? this.name, min: min ?? this.min, max: max ?? this.max, options: options ?? this.options);
+}
+
 class MenuItem {
   final String id;
   final String categoryId;
@@ -142,6 +217,10 @@ class MenuItem {
   /// toMap() намеренно не пишется — правка позиции его не сотрёт.
   final int popularRank;
 
+  /// Модификаторы: молоко, сиропы, прожарка, соус. Пусто — позиция
+  /// добавляется в счёт сразу, без окна выбора.
+  final List<ModifierGroup> modifierGroups;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -158,7 +237,35 @@ class MenuItem {
     this.description = '',
     this.tobacco = false,
     this.popularRank = 0,
+    this.modifierGroups = const [],
   });
+
+  bool get hasModifiers => modifierGroups.any((g) => g.options.isNotEmpty);
+
+  /// Выбранные варианты по названиям (в порядке групп) — существующие в
+  /// меню. Неизвестные названия отбрасываются.
+  List<ModifierOption> optionsNamed(Iterable<String> names) {
+    final want = names.toSet();
+    return [
+      for (final g in modifierGroups)
+        for (final o in g.options)
+          if (want.contains(o.name)) o,
+    ];
+  }
+
+  /// Цена штуки с выбранными модификаторами.
+  double priceWith(Iterable<String> mods) => price + optionsNamed(mods).fold<double>(0, (a, o) => a + o.price);
+
+  /// Пустая строка — выбор подходит; иначе — что не так (для подсказки).
+  String checkModifiers(Iterable<String> mods) {
+    final chosen = mods.toSet();
+    for (final g in modifierGroups) {
+      final n = g.options.where((o) => chosen.contains(o.name)).length;
+      if (n < g.min) return g.min == 1 ? 'Выберите: ${g.name}' : '${g.name}: выберите не меньше ${g.min}';
+      if (g.max > 0 && n > g.max) return '${g.name}: не больше ${g.max}';
+    }
+    return '';
+  }
 
   /// Входит в пятёрку самых популярных — бейдж «Хит» у гостя.
   bool get isHit => popularRank > 0 && popularRank <= 5;
@@ -193,6 +300,11 @@ class MenuItem {
       description: (data['description'] as String?) ?? '',
       tobacco: data['tobacco'] == true,
       popularRank: (data['popularRank'] as num?)?.toInt() ?? 0,
+      modifierGroups: ((data['modifierGroups'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => ModifierGroup.fromMap(Map<String, dynamic>.from(e)))
+          .where((g) => g.name.isNotEmpty && g.options.isNotEmpty)
+          .toList(),
     );
   }
 
@@ -210,6 +322,7 @@ class MenuItem {
         'weightUnit': weightUnit.name,
         'inventoryItemId': inventoryItemId,
         'components': components.map((c) => c.toMap()).toList(),
+        'modifierGroups': modifierGroups.map((g) => g.toMap()).toList(),
       };
 
   MenuItem copyWith({
@@ -226,9 +339,11 @@ class MenuItem {
     String? fiscalSubject,
     String? description,
     bool? tobacco,
+    List<ModifierGroup>? modifierGroups,
   }) =>
       MenuItem(
         id: id,
+        modifierGroups: modifierGroups ?? this.modifierGroups,
         description: description ?? this.description,
         tobacco: tobacco ?? this.tobacco,
         popularRank: popularRank,
