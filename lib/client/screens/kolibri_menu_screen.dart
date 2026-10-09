@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../widgets/modifier_picker_sheet.dart';
 import '../../services/venue_service.dart';
 import 'package:flutter/material.dart';
 import '../../models/client_models.dart';
@@ -341,7 +342,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// Карточка позиции: фото, название, состав, цена и «+» / «− N +».
   /// Нажатие на карточку — подробности (крупное фото и полный состав).
   Widget _itemCard(MenuItem item) {
-    final inCart = _cart[item.id]?.qty ?? 0;
+    final inCart = _qtyOf(item.id);
     return Material(
       color: KolibriColors.surface,
       clipBehavior: Clip.antiAlias,
@@ -480,7 +481,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
-          final inCart = _cart[item.id]?.qty ?? 0;
+          final inCart = _qtyOf(item.id);
           void change(void Function() f) {
             f();
             setSheet(() {});
@@ -633,7 +634,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   }
 
   Widget _tobaccoRow(MenuItem item) {
-    final inCart = _cart[item.id]?.qty ?? 0;
+    final inCart = _qtyOf(item.id);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
@@ -710,7 +711,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   }
 
   Widget _itemTile(MenuItem item) {
-    final inCart = _cart[item.id]?.qty ?? 0;
+    final inCart = _qtyOf(item.id);
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -819,28 +820,49 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     );
   }
 
-  void _add(MenuItem item) {
+  /// Сколько штук позиции в корзине — по всем вариантам модификаторов.
+  int _qtyOf(String menuItemId) =>
+      _cart.values.where((i) => i.menuItemId == menuItemId).fold(0, (n, i) => n + i.qty);
+
+  /// Ключи корзины в порядке добавления: «−» убирает последний вариант.
+  final List<String> _cartOrder = [];
+
+  Future<void> _add(MenuItem item) async {
+    var mods = const <String>[];
+    if (item.hasModifiers) {
+      final picked = await showModifierPicker(context, item);
+      if (picked == null || !mounted) return;
+      mods = picked;
+    }
     setState(() {
-      final existing = _cart[item.id];
-      _cart[item.id] = OrderItem(
+      final key = OrderItem.lineIdOf(item.id, mods);
+      final existing = _cart[key];
+      _cart[key] = OrderItem(
         menuItemId: item.id,
         name: item.name,
-        price: item.price,
+        price: item.priceWith(mods),
         qty: (existing?.qty ?? 0) + 1,
+        mods: mods,
         // Кальян/табак: по этому признаку заказ уйдёт кальянщику.
         noPromo: PromoPolicy.menuTobacco(item, _catNames[item.categoryId] ?? ''),
       );
+      _cartOrder
+        ..remove(key)
+        ..add(key);
     });
   }
 
   void _remove(MenuItem item) {
     setState(() {
-      final existing = _cart[item.id];
-      if (existing == null) return;
+      final keys = _cartOrder.where((k) => _cart[k]?.menuItemId == item.id).toList();
+      final key = keys.isNotEmpty ? keys.last : (_cart.containsKey(item.id) ? item.id : null);
+      final existing = key == null ? null : _cart[key];
+      if (key == null || existing == null) return;
       if (existing.qty <= 1) {
-        _cart.remove(item.id);
+        _cart.remove(key);
+        _cartOrder.remove(key);
       } else {
-        _cart[item.id] = existing.copyWith(qty: existing.qty - 1);
+        _cart[key] = existing.copyWith(qty: existing.qty - 1);
       }
     });
   }

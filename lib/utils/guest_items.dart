@@ -28,7 +28,11 @@ List<OrderItem> priceGuestItems(
     final m = menu[item.menuItemId];
     if (m == null || item.qty <= 0) continue;
     final qty = math.min(item.qty, kMaxGuestQty);
-    final idx = out.indexWhere((o) => o.menuItemId == m.id);
+    // Модификаторы — только те, что есть у позиции в меню; цена — по меню.
+    final known = m.optionsNamed(item.mods).map((o) => o.name).toSet();
+    final mods = [for (final n in item.mods) if (known.contains(n)) n];
+    final lineId = OrderItem.lineIdOf(m.id, mods);
+    final idx = out.indexWhere((o) => o.lineId == lineId);
     if (idx >= 0) {
       out[idx] = out[idx].copyWith(qty: math.min(out[idx].qty + qty, kMaxGuestQty));
       continue;
@@ -37,8 +41,9 @@ List<OrderItem> priceGuestItems(
     out.add(OrderItem(
       menuItemId: m.id,
       name: m.name,
-      price: m.price,
+      price: m.priceWith(mods),
       qty: qty,
+      mods: mods,
       noPromo: noPromo,
       kind: noPromo
           ? SaleKind.hookah

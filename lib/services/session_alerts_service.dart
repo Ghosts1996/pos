@@ -458,7 +458,7 @@ class SessionAlertsService {
         unawaited(_notify.show(
           id: NotificationService.idFor('order_${o.id}'),
           title: 'Заказ из приложения · ${o.tableName.isEmpty ? 'стол' : o.tableName}',
-          body: o.items.map((i) => '${i.name} ×${i.qty}').join(', '),
+          body: o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '),
         ));
       }
     }, onError: (_) {});

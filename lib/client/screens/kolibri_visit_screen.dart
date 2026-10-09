@@ -406,7 +406,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                                 ? KolibriColors.danger
                                 : KolibriColors.warning,
                       ),
-                      title: Text(o.items.map((i) => '${i.name}×${i.qty}').join(', '),
+                      title: Text(o.items.map((i) => '${i.displayName}×${i.qty}').join(', '),
                           style: const TextStyle(fontSize: 13)),
                       subtitle: Text(
                         switch (o.status) {

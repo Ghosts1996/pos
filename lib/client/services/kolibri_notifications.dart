@@ -311,7 +311,7 @@ class KolibriNotifications {
           title: title,
           body: o.status == 'rejected' && o.rejectReason.isNotEmpty
               ? o.rejectReason
-              : o.items.map((i) => '${i.name} ×${i.qty}').join(', '),
+              : o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '),
         ));
       }
       _persistOrders();
