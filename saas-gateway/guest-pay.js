@@ -2,8 +2,15 @@
 const { requisitesProblem } = require("./requisites");
 /**
  * Онлайн-оплата гостем — счёт за столом и заказ доставки/с собой — через
- * банк заведения: Т-Банк (QR СБП), Робокасса, Сбербанк и Альфа-Банк
- * (интернет-эквайринг).
+ * банк заведения:
+ *  • Т-Банк — СБП (QR) или страница банка (карта, СБП, T-Pay);
+ *  • Сбербанк, Альфа-Банк, ВТБ, МТС Банк — интернет-эквайринг на платёжном
+ *    шлюзе RBS (страница банка: карта и СБП, если её включил банк);
+ *  • другой банк на шлюзе RBS — по адресу API, который выдал банк;
+ *  • Райффайзенбанк — СБП (динамический QR);
+ *  • Робокасса — СБП и карты.
+ * Тот же банк показывает QR на экране кассы (handleKassa*): гость у стойки
+ * платит телефоном, без терминала.
  *
  * Гость нажимает «Оплатить» → шлюз сам считает сумму по счёту (цифре с
  * телефона не доверяем), заводит платёж в банке и отдаёт ссылку → гость
@@ -22,8 +29,10 @@ const { requisitesProblem } = require("./requisites");
  * всём процессе.
  */
 const crypto = require("crypto");
+const dns = require("dns");
 const fs = require("fs");
 const https = require("https");
+const net = require("net");
 const path = require("path");
 const tls = require("tls");
 
@@ -33,16 +42,31 @@ const ROBOKASSA_STATE_URL = "https://auth.robokassa.ru/Merchant/WebService/Servi
 const RBS_URLS = {
   sber: { prod: "https://securepayments.sberbank.ru/payment/rest", test: "https://3dsec.sberbank.ru/payment/rest" },
   alfa: { prod: "https://payment.alfabank.ru/payment/rest", test: "https://alfa.rbsuat.com/payment/rest" },
+  vtb: { prod: "https://platezh.vtb24.ru/payment/rest", test: "https://vtb.rbsuat.com/payment/rest" },
+  mts: { prod: "https://oplata.mtsbank.ru/payment/rest", test: "https://mts.rbsuat.com/payment/rest" },
 };
+const RAIF_URLS = { prod: "https://e-commerce.raiffeisen.ru/api", test: "https://test.ecom.raiffeisen.ru/api" };
 const ROBOKASSA_HASHES = ["md5", "sha1", "sha256", "sha384", "sha512"];
 
 /** Банки, через которые гость платит онлайн. id хранится в настройках. */
 const PROVIDERS = {
   tinkoff: "Т-Банк",
-  robokassa: "Робокасса",
+  tinkoff_form: "Т-Банк",
   sber: "Сбербанк",
   alfa: "Альфа-Банк",
+  vtb: "ВТБ",
+  mts: "МТС Банк",
+  raiffeisen: "Райффайзенбанк",
+  rbs_custom: "Банк",
+  robokassa: "Робокасса",
 };
+
+/** Банки на платёжном шлюзе RBS: register.do / getOrderStatusExtended.do. */
+const RBS = new Set(["sber", "alfa", "vtb", "mts", "rbs_custom"]);
+/** Где гость платит именно по СБП (QR / ссылка НСПК), а не на странице банка. */
+const SBP_ONLY = new Set(["tinkoff", "raiffeisen"]);
+/** У кого есть тестовый контур, включаемый флажком «Тестовый режим». */
+const HAS_TEST = new Set(["robokassa", "sber", "alfa", "vtb", "mts", "raiffeisen"]);
 
 const TOBACCO = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
 const LINK_TTL_MS = 15 * 60 * 1000;
@@ -59,8 +83,58 @@ const BANK_CA = RU_ROOT ? [...tls.rootCertificates, RU_ROOT] : undefined;
 
 class BankUnreachable extends Error {}
 
+/** Адрес из внутренней сети (localhost, 10/8, 192.168/16, fc00::/7 …). */
+function privateIp(ip) {
+  const v = String(ip || "").toLowerCase();
+  if (v.startsWith("::ffff:")) return privateIp(v.slice(7));
+  if (net.isIPv4(v)) {
+    const [a, b] = v.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19));
+  }
+  if (net.isIPv6(v)) return v === "::" || v === "::1" || /^f[cd]/.test(v) || /^fe[89ab]/.test(v);
+  return true;
+}
+
+/**
+ * Адрес API «другого банка на шлюзе RBS» — его вписывает владелец, поэтому
+ * сервер ходит туда только по https, по доменному имени (не IP) и в путь
+ * …/payment/rest. Чужие адреса вроде http://localhost:5432 отсекаются здесь,
+ * а домен, который указывает во внутреннюю сеть, — при соединении
+ * (publicLookup). null — адрес не годится.
+ */
+function rbsCustomUrl(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || "").trim());
+  } catch (_) {
+    return null;
+  }
+  if (u.protocol !== "https:" || u.username || u.password || (u.port && u.port !== "443") || u.search || u.hash) return null;
+  const host = u.hostname.toLowerCase();
+  if (!/^([a-z0-9-]+\.)+([a-z]{2,}|xn--[a-z0-9-]+)$/.test(host)) return null;
+  if (/(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain)$/.test(host)) return null;
+  const p = u.pathname.replace(/\/+$/, "");
+  if (!/^(\/[A-Za-z0-9._~-]+)*\/payment\/rest$/.test(p)) return null;
+  return `https://${host}${p}`;
+}
+
+/** DNS для адресов, которые вписал владелец: внутренние IP — отказ. */
+function publicLookup(hostname, options, cb) {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return cb(err);
+    const list = Array.isArray(address) ? address : [{ address }];
+    if (list.some((a) => privateIp(a.address))) return cb(new Error(`${hostname}: адрес во внутренней сети`));
+    cb(null, address, family);
+  });
+}
+
+const MAX_BANK_REPLY = 1024 * 1024;
+
 /** HTTPS-запрос к банку с корнем Минцифры. → { status, text }. */
-function bankHttp(url, { method = "GET", headers = {}, body = null, timeoutMs = 15000 } = {}) {
+function bankHttp(url, { method = "GET", headers = {}, body = null, timeoutMs = 15000, publicOnly = false } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const payload = body == null ? null : Buffer.from(body, "utf8");
@@ -72,9 +146,16 @@ function bankHttp(url, { method = "GET", headers = {}, body = null, timeoutMs = 
       headers: { ...headers, ...(payload ? { "Content-Length": payload.length } : {}) },
       ca: BANK_CA,
       timeout: timeoutMs,
+      ...(publicOnly ? { lookup: publicLookup } : {}),
     }, (res) => {
       const chunks = [];
-      res.on("data", (c) => chunks.push(c));
+      let size = 0;
+      res.on("data", (c) => {
+        size += c.length;
+        if (size > MAX_BANK_REPLY) return req.destroy(new Error("слишком длинный ответ"));
+        chunks.push(c);
+      });
+      res.on("error", (e) => reject(new BankUnreachable(e.message || String(e))));
       res.on("end", () => resolve({ status: res.statusCode || 0, text: Buffer.concat(chunks).toString("utf8") }));
     });
     req.on("timeout", () => req.destroy(new Error("timeout")));
@@ -148,9 +229,11 @@ function sellerReady(v) {
  */
 function credsPrint(c) {
   if (!c) return "";
-  return crypto.createHash("sha256")
-    .update([c.provider, c.login, c.password, c.password2, c.test ? 1 : 0, c.hash].join("\u0001"))
-    .digest("hex");
+  const parts = [c.provider, c.login, c.password, c.password2, c.test ? 1 : 0, c.hash];
+  // Адрес API — только у «другого банка»: у остальных отпечаток прежний,
+  // и уже проверенные подключения не слетают.
+  if (c.url) parts.push(c.url);
+  return crypto.createHash("sha256").update(parts.join("\u0001")).digest("hex");
 }
 
 /**
@@ -167,23 +250,43 @@ function onlinePaySettings(s) {
     login = String(s.terminalLogin || "").trim();
     password = String(s.terminalPassword || "").trim();
   }
-  if (!PROVIDERS[provider] || !login || !password) return null;
+  if (!Object.prototype.hasOwnProperty.call(PROVIDERS, provider) || !login || !password) return null;
   const password2 = String(s.onlinePayPassword2 || "").trim();
   if (provider === "robokassa" && !password2) return null;
+  let url = "";
+  if (provider === "rbs_custom") {
+    url = rbsCustomUrl(s.onlinePayUrl) || "";
+    if (!url) return null;
+  }
   const hash = String(s.onlinePayHash || "md5").toLowerCase();
   return {
     provider,
     login,
     password,
     password2,
+    // Флажок хранится как есть (он входит в отпечаток проверки); у банков
+    // без тестового контура ни на что не влияет.
     test: s.onlinePayTest === true,
     hash: ROBOKASSA_HASHES.includes(hash) ? hash : "md5",
+    ...(url ? { url } : {}),
   };
 }
 
 function rbsBase(c) {
+  if (c.provider === "rbs_custom") return c.url;
   const urls = RBS_URLS[c.provider];
   return c.test ? urls.test : urls.prod;
+}
+
+/** Как банк назвать гостю и в ошибках: у «другого банка» — по домену. */
+function bankName(c) {
+  if (c && c.provider === "rbs_custom" && c.url) return `Банк (${new URL(c.url).hostname})`;
+  return PROVIDERS[c && c.provider] || "Банк";
+}
+
+/** Время по Москве в виде 2026-10-09T15:04:05+03:00 — так его ждёт Райффайзен. */
+function moscowIso(ms) {
+  return `${new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 19)}+03:00`;
 }
 
 function form(params) {
@@ -244,8 +347,40 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: form({ userName: c.login, password: c.password, ...params }),
-    }, PROVIDERS[c.provider]);
+      publicOnly: c.provider === "rbs_custom",
+    }, bankName(c));
     return parseJson(r.text);
+  }
+
+  /** СБП Райффайзенбанка: регистрация QR без ключа, статус и отмена — с секретным ключом. */
+  async function raif(c, method, apiPath, body) {
+    const headers = { "Content-Type": "application/json" };
+    if (method !== "POST") headers.Authorization = `Bearer ${c.password}`;
+    const r = await call(`${c.test ? RAIF_URLS.test : RAIF_URLS.prod}${apiPath}`, {
+      method,
+      headers,
+      body: body == null ? null : JSON.stringify(body),
+    }, "Райффайзенбанк");
+    return { status: r.status, data: parseJson(r.text) };
+  }
+
+  async function raifRegister(c, { amount, orderId, description, ttlMs }) {
+    const { data } = await raif(c, "POST", "/sbp/v1/qr/register", {
+      amount: Number(amount.toFixed(2)),
+      currency: "RUB",
+      order: orderId,
+      paymentDetails: description.slice(0, 140),
+      qrType: "QRDynamic",
+      qrExpirationDate: moscowIso(Date.now() + ttlMs),
+      sbpMerchantId: c.login,
+    });
+    if (data.code !== "SUCCESS" || !data.qrId || !data.payload) {
+      const why = data.code === "ERROR.MERCHANT_NOT_REGISTERED"
+        ? `нет партнёра СБП с ID ${c.login}${c.test ? " в тестовом контуре" : ""}`
+        : data.message || data.code || "запрос отклонён";
+      throw new HttpError(502, `Райффайзенбанк: ${why}`);
+    }
+    return data;
   }
 
   async function nextRobokassaInvId(tenantId) {
@@ -259,22 +394,36 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     });
   }
 
-  /** Заводит платёж. → { docId, providerId, url } (url — ссылка СБП или страница банка). */
-  async function createPayment(c, { tenantId, amount, orderId, description }) {
+  /**
+   * Заводит платёж. → { docId, providerId, url } (url — ссылка СБП или
+   * страница банка). ttlMs — сколько ссылка живёт: гостю в приложении
+   * 15 минут, на экране кассы — 5.
+   */
+  async function createPayment(c, { tenantId, amount, orderId, description, ttlMs = LINK_TTL_MS }) {
     const kopecks = Math.round(amount * 100);
     switch (c.provider) {
-      case "tinkoff": {
-        const due = new Date(Date.now() + LINK_TTL_MS);
+      case "tinkoff":
+      case "tinkoff_form": {
+        const due = new Date(Date.now() + ttlMs);
         const init = await tbank(c, "Init", {
           Amount: kopecks,
           OrderId: orderId,
           Description: description.slice(0, 140),
           NotificationURL: `${publicUrl}/guestPayNotify?t=${encodeURIComponent(tenantId)}`,
           RedirectDueDate: due.toISOString().replace(/\.\d{3}Z$/, "+00:00"),
+          ...(c.provider === "tinkoff_form" ? { SuccessURL: doneUrl, FailURL: doneUrl } : {}),
         });
         const id = String(init.PaymentId);
+        if (c.provider === "tinkoff_form") {
+          if (!init.PaymentURL) throw new HttpError(502, "Т-Банк не вернул ссылку на оплату");
+          return { docId: id, providerId: id, url: String(init.PaymentURL) };
+        }
         const qr = await tbank(c, "GetQr", { PaymentId: id, DataType: "PAYLOAD" });
         return { docId: id, providerId: id, url: String(qr.Data || "") };
+      }
+      case "raiffeisen": {
+        const qr = await raifRegister(c, { amount, orderId, description, ttlMs });
+        return { docId: null, providerId: String(qr.qrId), url: String(qr.payload) };
       }
       case "robokassa": {
         const invId = await nextRobokassaInvId(tenantId);
@@ -294,7 +443,10 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         return { docId: null, providerId: String(invId), url: `${ROBOKASSA_PAY_URL}?${params.toString()}` };
       }
       case "sber":
-      case "alfa": {
+      case "alfa":
+      case "vtb":
+      case "mts":
+      case "rbs_custom": {
         const data = await rbs(c, "register.do", {
           orderNumber: orderId,
           amount: kopecks,
@@ -302,10 +454,10 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
           failUrl: doneUrl,
           description: description.slice(0, 99),
           language: "ru",
-          sessionTimeoutSecs: 1200,
+          sessionTimeoutSecs: Math.round(ttlMs / 1000) + 300,
         });
         if (!data.orderId || !data.formUrl) {
-          throw new HttpError(502, `${PROVIDERS[c.provider]}: ${data.errorMessage || "запрос отклонён"}`);
+          throw new HttpError(502, `${bankName(c)}: ${data.errorMessage || "запрос отклонён"}`);
         }
         return { docId: null, providerId: String(data.orderId), url: String(data.formUrl) };
       }
@@ -316,10 +468,18 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   /** Статус платежа в банке: 'paid' | 'failed' | 'pending'. */
   async function bankStatus(c, providerId) {
     switch (c.provider) {
-      case "tinkoff": {
+      case "tinkoff":
+      case "tinkoff_form": {
         const st = await tbank(c, "GetState", { PaymentId: providerId });
         if (st.Status === "CONFIRMED") return "paid";
         if (["REJECTED", "DEADLINE_EXPIRED", "CANCELED", "AUTH_FAIL", "REVERSED", "REFUNDED"].includes(st.Status)) return "failed";
+        return "pending";
+      }
+      case "raiffeisen": {
+        const { status, data } = await raif(c, "GET", `/sbp/v1/qr/${encodeURIComponent(providerId)}/payment-info`);
+        if (status !== 200) return "pending";
+        if (data.paymentStatus === "SUCCESS") return "paid";
+        if (data.paymentStatus === "DECLINED") return "failed";
         return "pending";
       }
       case "robokassa": {
@@ -336,7 +496,10 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         return "pending";
       }
       case "sber":
-      case "alfa": {
+      case "alfa":
+      case "vtb":
+      case "mts":
+      case "rbs_custom": {
         const data = await rbs(c, "getOrderStatusExtended.do", { orderId: providerId });
         const s = Number(data.orderStatus);
         if (s === 2) return "paid";
@@ -345,6 +508,23 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       }
     }
     return "pending";
+  }
+
+  /**
+   * Отменяет неоплаченный платёж, чтобы по закрытой ссылке уже нельзя было
+   * заплатить мимо чека. Получилось ли — неважно: итог всё равно решает
+   * статус в банке, а брошенный платёж досматривает фоновая проверка.
+   */
+  async function cancelPayment(c, providerId) {
+    try {
+      if (c.provider === "tinkoff" || c.provider === "tinkoff_form") {
+        await tbank(c, "Cancel", { PaymentId: providerId });
+      } else if (c.provider === "raiffeisen") {
+        await raif(c, "DELETE", `/sbp/v2/qrs/${encodeURIComponent(providerId)}`);
+      } else if (RBS.has(c.provider)) {
+        await rbs(c, "decline.do", { orderId: providerId });
+      }
+    } catch (_) { /* уже отменён, истёк или банк не умеет — не страшно */ }
   }
 
   // ------------------------------------------------------------ заведение
@@ -487,7 +667,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       provider: creds.provider,
       providerId: made.providerId,
       url: made.url,
-      test: creds.test === true,
+      test: HAS_TEST.has(creds.provider) && creds.test === true,
       status: "pending",
       createdAt: now,
     });
@@ -522,9 +702,13 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       throw new HttpError(400, "bad body");
     }
     const { creds } = await venueSettings(tenantId);
-    if (!creds || creds.provider !== "tinkoff" || !body || !tokenValid(body, creds.password)) throw new HttpError(403, "bad token");
+    if (!creds || !["tinkoff", "tinkoff_form"].includes(creds.provider) || !body || !tokenValid(body, creds.password)) {
+      throw new HttpError(403, "bad token");
+    }
     if (body.Status === "CONFIRMED" && body.Success !== false) {
-      await markPaid(tenantId, String(body.PaymentId));
+      const id = String(body.PaymentId);
+      await markPaid(tenantId, id);
+      await kassaSettle(tenantId, id, "paid");
     }
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("OK");
@@ -555,6 +739,9 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       .where("providerId", "==", invId).limit(5).get();
     const doc = snap.docs.find((d) => d.data().provider === "robokassa");
     if (doc) await markPaid(tenantId, doc.id);
+    const kassa = (await tenantRef(tenantId).collection("kassaPayments")
+      .where("providerId", "==", invId).limit(5).get()).docs.find((d) => d.data().provider === "robokassa");
+    if (kassa) await kassaSettle(tenantId, kassa.id, "paid");
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end(`OK${invId}`);
   }
@@ -574,9 +761,11 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
    * на 1 ₽ и сразу отменяем.
    */
   async function checkCreds(c) {
-    const bank = PROVIDERS[c.provider];
+    const bank = bankName(c);
+    const contour = c.test && HAS_TEST.has(c.provider) ? " (тестовый контур)" : "";
     switch (c.provider) {
-      case "tinkoff": {
+      case "tinkoff":
+      case "tinkoff_form": {
         try {
           const init = await tbank(c, "Init", { Amount: 100, OrderId: `check${Date.now().toString(36)}`, Description: "Проверка подключения" });
           await tbank(c, "Cancel", { PaymentId: String(init.PaymentId) }).catch(() => {});
@@ -595,10 +784,37 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         return { ok: false, message: `Робокасса ответила кодом ${code ?? "?"}` };
       }
       case "sber":
-      case "alfa": {
-        const data = await rbs(c, "getOrderStatusExtended.do", { orderId: "00000000-0000-0000-0000-000000000000" });
-        if (String(data.errorCode) === "5") return { ok: false, message: `${bank}: неверный логин или пароль API${c.test ? " тестового контура" : ""}` };
-        return { ok: true, message: `${bank} принял логин и пароль${c.test ? " (тестовый контур)" : ""}` };
+      case "alfa":
+      case "vtb":
+      case "mts":
+      case "rbs_custom": {
+        let data;
+        try {
+          data = await rbs(c, "getOrderStatusExtended.do", { orderId: "00000000-0000-0000-0000-000000000000" });
+        } catch (e) {
+          if (c.provider !== "rbs_custom") throw e;
+          return { ok: false, message: `${bank} не отвечает по этому адресу — проверьте адрес API у банка` };
+        }
+        if (String(data.errorCode) === "5") return { ok: false, message: `${bank}: неверный логин или пароль API${contour ? " тестового контура" : ""}` };
+        // Чужой сервер ответил не как шлюз RBS — не считаем это подтверждением.
+        if (c.provider === "rbs_custom" && data.errorCode === undefined && data.orderStatus === undefined) {
+          return { ok: false, message: `${bank}: по этому адресу не платёжный шлюз RBS — уточните адрес API у банка` };
+        }
+        return { ok: true, message: `${bank} принял логин и пароль${contour}` };
+      }
+      case "raiffeisen": {
+        // Регистрация QR проверяет ID партнёра СБП, статус — секретный ключ.
+        let qr;
+        try {
+          qr = await raifRegister(c, { amount: 1, orderId: `check${Date.now().toString(36)}`, description: "Проверка подключения", ttlMs: 2 * 60 * 1000 });
+        } catch (e) {
+          return { ok: false, message: e.message || `${bank} отклонил ID партнёра СБП` };
+        }
+        const { status } = await raif(c, "GET", `/sbp/v1/qr/${encodeURIComponent(qr.qrId)}/payment-info`);
+        await raif(c, "DELETE", `/sbp/v2/qrs/${encodeURIComponent(qr.qrId)}`).catch(() => {});
+        if (status === 401 || status === 403) return { ok: false, message: `${bank}: неверный секретный ключ${contour ? " тестового контура" : ""}` };
+        if (status !== 200) return { ok: false, message: `${bank} ответил кодом ${status} — попробуйте ещё раз через минуту` };
+        return { ok: true, message: `${bank} принял ID партнёра СБП и секретный ключ${contour}` };
       }
     }
     return { ok: false, message: "Банк не выбран" };
@@ -626,14 +842,195 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, { ...r, enabled, sellerReady: seller });
   }
 
+  // ------------------------------------------------------------ касса
+
+  /*
+   * QR на экране кассы через тот же банк, что и онлайн-оплата гостей:
+   * гость у стойки сканирует код телефоном и платит (СБП или страница
+   * банка). Касса работает с ним как с терминалом — итог идёт в оплату
+   * счёта, поэтому в счёт (guestPaidTotal) платёж не пишется: иначе сумма
+   * засчиталась бы дважды. Платежи — в kassaPayments, пишет только шлюз.
+   */
+  const KASSA_TTL_MS = 5 * 60 * 1000;
+  // Пока окно с QR открыто, касса сама спрашивает статус; фоновая
+  // проверка берётся за платёж только после этого запаса.
+  const KASSA_GRACE_MS = KASSA_TTL_MS + 3 * 60 * 1000;
+  const STAFF = ["owner", "admin", "manager", "employee"];
+  const kassaRef = (tenantId, id) => tenantRef(tenantId).collection("kassaPayments").doc(id);
+
+  function checkPaymentId(id) {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new HttpError(400, "Не указан платёж");
+  }
+
+  /** Подключённый и проверенный банк заведения — для QR на кассе. */
+  async function kassaCreds(tenantId) {
+    const integ = (await tenantRef(tenantId).collection("settings").doc("integrations").get()).data() || {};
+    const c = onlinePaySettings(integ);
+    if (!c) throw new HttpError(409, "Банк не подключён: Настройки → Интеграции → «Онлайн-оплата гостей»");
+    if (integ.onlinePayVerified !== credsPrint(c)) {
+      throw new HttpError(409, "Банк ещё не подтвердил реквизиты: Интеграции → «Сохранить и проверить подключение»");
+    }
+    return c;
+  }
+
+  /** Итог платежа на кассе — один раз; «пришло после закрытия окна» — персоналу. */
+  async function kassaSettle(tenantId, id, status) {
+    const ref = kassaRef(tenantId, id);
+    let late = null;
+    await db().runTransaction(async (tx) => {
+      const p = (await tx.get(ref)).data();
+      if (!p || !["pending", "cancelled"].includes(p.status)) return;
+      const now = admin.firestore.Timestamp.now();
+      if (status === "paid" && p.status === "cancelled") {
+        tx.update(ref, { status: "paid_late", paidAt: now });
+        late = { amount: p.amount, provider: p.provider, now };
+        return;
+      }
+      if (status === "paid") tx.update(ref, { status: "paid", paidAt: now });
+      else if (p.status === "pending") tx.update(ref, { status });
+    });
+    if (late) {
+      await tenantRef(tenantId).collection("waiterCalls").add({
+        tableId: "",
+        tableName: "Касса",
+        sessionId: "",
+        clientUid: "",
+        guestName: "",
+        type: "paid",
+        comment: `Оплата по QR на кассе пришла после закрытия окна: ${late.amount} ₽ (${PROVIDERS[late.provider] || "банк"}) — найдите гостя и пробейте чек или верните деньги в кабинете банка`,
+        status: "new",
+        createdAt: late.now,
+      });
+    }
+    if (status !== "pending") await pendingCol().doc(`${tenantId}__${id}`).delete().catch(() => {});
+  }
+
+  async function handleKassaStart(req, res) {
+    const decoded = await verifyAuth(req);
+    const { tenantId, amount } = await parseJsonBody(req);
+    checkTenantId(tenantId);
+    await requireTenantRole(tenantId, decoded.uid, STAFF);
+    const sum = round2(Number(amount));
+    if (!Number.isFinite(sum) || sum < 1 || sum > 1000000) throw new HttpError(400, "Сумма — от 1 до 1 000 000 ₽");
+    const c = await kassaCreds(tenantId);
+    const orderId = `k${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
+    const made = await createPayment(c, { tenantId, amount: sum, orderId, description: "Оплата на кассе", ttlMs: KASSA_TTL_MS });
+    const paymentId = made.docId || `k_${orderId}`;
+    const now = admin.firestore.Timestamp.now();
+    await kassaRef(tenantId, paymentId).set({
+      amount: sum,
+      orderId,
+      provider: c.provider,
+      providerId: made.providerId,
+      url: made.url,
+      test: HAS_TEST.has(c.provider) && c.test === true,
+      status: "pending",
+      createdBy: decoded.uid,
+      createdAt: now,
+    });
+    await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, kind: "kassa", createdAt: now });
+    sendJson(res, 200, {
+      paymentId,
+      url: made.url,
+      amount: sum,
+      provider: c.provider,
+      bank: bankName(c),
+      sbp: SBP_ONLY.has(c.provider),
+      test: HAS_TEST.has(c.provider) && c.test === true,
+      ttlSec: KASSA_TTL_MS / 1000,
+    });
+  }
+
+  /** Статус в банке для платежа на кассе. → 'paid' | 'failed' | 'pending'. */
+  async function kassaResolve(tenantId, id, p) {
+    const c = onlinePaySettings((await tenantRef(tenantId).collection("settings").doc("integrations").get()).data());
+    if (!c || c.provider !== p.provider) return "pending";
+    const st = await bankStatus(c, p.providerId);
+    if (st !== "pending") await kassaSettle(tenantId, id, st);
+    return st;
+  }
+
+  async function kassaLoad(req) {
+    const decoded = await verifyAuth(req);
+    const { tenantId, paymentId } = await parseJsonBody(req);
+    checkTenantId(tenantId);
+    checkPaymentId(paymentId);
+    await requireTenantRole(tenantId, decoded.uid, STAFF);
+    const p = (await kassaRef(tenantId, paymentId).get()).data();
+    if (!p) throw new HttpError(404, "Платёж не найден");
+    return { tenantId, paymentId, p };
+  }
+
+  const kassaFinal = (s) => (s === "paid" || s === "paid_late" ? "paid" : "failed");
+
+  async function handleKassaStatus(req, res) {
+    const { tenantId, paymentId, p } = await kassaLoad(req);
+    if (p.status !== "pending") return sendJson(res, 200, { status: kassaFinal(p.status) });
+    const st = await kassaResolve(tenantId, paymentId, p).catch(() => "pending");
+    sendJson(res, 200, { status: st });
+  }
+
+  /**
+   * Кассир закрыл окно с QR (или оно истекло): сперва — не успел ли гость
+   * заплатить; нет — отменяем платёж в банке. Если деньги всё же придут,
+   * фоновая проверка позовёт персонал.
+   */
+  async function handleKassaCancel(req, res) {
+    const { tenantId, paymentId, p } = await kassaLoad(req);
+    if (p.status !== "pending") return sendJson(res, 200, { status: kassaFinal(p.status) });
+    const c = onlinePaySettings((await tenantRef(tenantId).collection("settings").doc("integrations").get()).data());
+    if (c && c.provider === p.provider) {
+      if (await bankStatus(c, p.providerId).catch(() => "pending") === "paid") {
+        await kassaSettle(tenantId, paymentId, "paid");
+        return sendJson(res, 200, { status: "paid" });
+      }
+      await cancelPayment(c, p.providerId);
+      if (await bankStatus(c, p.providerId).catch(() => "pending") === "paid") {
+        await kassaSettle(tenantId, paymentId, "paid");
+        return sendJson(res, 200, { status: "paid" });
+      }
+    }
+    await db().runTransaction(async (tx) => {
+      const cur = (await tx.get(kassaRef(tenantId, paymentId))).data();
+      if (cur && cur.status === "pending") tx.update(kassaRef(tenantId, paymentId), { status: "cancelled", cancelledAt: admin.firestore.Timestamp.now() });
+    });
+    const now = (await kassaRef(tenantId, paymentId).get()).data();
+    sendJson(res, 200, { status: now && now.status === "paid" ? "paid" : "cancelled" });
+  }
+
+  /** Фоновая проверка платежа на кассе: брошенное окно, деньги пришли позже. */
+  async function sweepKassa(tenantId, paymentId, createdAt) {
+    const p = (await kassaRef(tenantId, paymentId).get()).data();
+    if (!p || !["pending", "cancelled"].includes(p.status)) {
+      await pendingCol().doc(`${tenantId}__${paymentId}`).delete().catch(() => {});
+      return;
+    }
+    const age = Date.now() - (createdAt?.toMillis?.() || 0);
+    if (p.status === "pending" && age < KASSA_GRACE_MS) return;
+    // Окно уже закрыто (или касса пропала) — дальше это «отменённый» платёж.
+    if (p.status === "pending") {
+      await kassaRef(tenantId, paymentId).update({ status: "cancelled", cancelledAt: admin.firestore.Timestamp.now() });
+      p.status = "cancelled";
+    }
+    const st = await kassaResolve(tenantId, paymentId, p);
+    if (st === "pending" && age > PENDING_TTL_MS) {
+      await kassaRef(tenantId, paymentId).update({ status: "expired" });
+      await pendingCol().doc(`${tenantId}__${paymentId}`).delete().catch(() => {});
+    }
+  }
+
   // ------------------------------------------------------------ фон
 
   /** Раз в минуту — платежи, о которых банк ещё не сообщил (гость мог закрыть приложение). */
   async function sweep() {
     const snap = await pendingCol().limit(200).get();
     for (const d of snap.docs) {
-      const { tenantId, paymentId, createdAt } = d.data();
+      const { tenantId, paymentId, createdAt, kind } = d.data();
       try {
+        if (kind === "kassa") {
+          await sweepKassa(tenantId, paymentId, createdAt);
+          continue;
+        }
         const ref = tenantRef(tenantId).collection("guestPayments").doc(paymentId);
         const p = (await ref.get()).data();
         if (!p || p.status !== "pending") {
@@ -655,12 +1052,13 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
 
   return {
     handleStart, handleStatus, handleNotify, handleRobokassaResult, handleDone, handleCheck,
-    markPaid, sweep, startSweeper, createPayment, bankStatus, checkCreds,
+    handleKassaStart, handleKassaStatus, handleKassaCancel,
+    markPaid, sweep, startSweeper, createPayment, bankStatus, cancelPayment, checkCreds,
   };
 }
 
 module.exports = {
   createGuestPay, tbankToken, tokenValid, sessionBill, amountDue, onlinePaySettings, robokassaSig, xmlCode,
-  sellerReady, credsPrint,
-  PROVIDERS, RBS_URLS, BankUnreachable,
+  sellerReady, credsPrint, rbsCustomUrl, privateIp, moscowIso,
+  PROVIDERS, RBS_URLS, RAIF_URLS, SBP_ONLY, BankUnreachable,
 };

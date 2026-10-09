@@ -1653,9 +1653,9 @@ function pollSbp(s) {
 
 /// Банки, у которых гость платит только по СБП; у остальных — страница
 /// оплаты банка, где можно и по СБП, и картой (как sbpOnly в online_pay.dart).
-const SBP_ONLY = ['tinkoff'];
+const SBP_ONLY = ['tinkoff', 'raiffeisen'];
 /// Банки, которые сейчас поддерживает шлюз (guest-pay.js, PROVIDERS).
-const PAY_PROVIDERS = ['tinkoff', 'robokassa', 'sber', 'alfa'];
+const PAY_PROVIDERS = ['tinkoff', 'tinkoff_form', 'sber', 'alfa', 'vtb', 'mts', 'raiffeisen', 'robokassa', 'rbs_custom'];
 
 /// Реквизиты продавца — гость видит их до заказа и оплаты (закон «О защите
 /// прав потребителей»). Без них заказ и оплата из приложения недоступны.
