@@ -299,3 +299,26 @@ node migrate-single-tenant-to-tenant.js \
 
 Скрипт только читает `hoocah-pos` и пишет в платформу — живое заведение
 работает всё это время.
+
+## Telegram через Cloudflare
+
+С сервера в РФ `api.telegram.org` недоступен, а Telegram не всегда
+достучится до сервера. Боты заведений ходят через ретранслятор на
+Cloudflare Workers (бесплатного тарифа хватает): сервер → Telegram и
+нажатия кнопок Telegram → сервер.
+
+1. dash.cloudflare.com → Workers & Pages → Create → Worker → «Hello World»,
+   имя, например, `zalpos-tg` → Deploy → Edit code: заменить код
+   содержимым `saas-gateway/telegram-relay-worker.js` → Deploy.
+2. Worker → Settings → Variables and Secrets → Add: тип Secret, имя
+   `RELAY_SECRET`, значение — 32+ случайные латинские буквы и цифры.
+3. GitHub → Settings → Secrets and variables → Actions → New repository
+   secret `TELEGRAM_RELAY_URL` =
+   `https://zalpos-tg.<аккаунт>.workers.dev/<RELAY_SECRET>`.
+4. Задача обслуживания сервера (`.github/server-ops/task.sh`) проверяет
+   путь в обе стороны и только тогда пишет в `/etc/saas-gateway.env`
+   `TELEGRAM_API_BASE` и `TELEGRAM_HOOK_BASE` и перезапускает шлюз.
+   Вебхуки уже подключённых ботов шлюз переставляет сам.
+
+Отключить: убрать обе строки из `/etc/saas-gateway.env` и перезапустить
+шлюз — вебхуки вернутся на `https://pii.zalpos.ru/saas/tgHook/…`.
