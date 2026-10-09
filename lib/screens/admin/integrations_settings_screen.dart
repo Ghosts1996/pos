@@ -143,6 +143,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _onlineLoginCtrl.text = data['terminalLogin'] as String? ?? '';
       _onlinePasswordCtrl.text = data['terminalPassword'] as String? ?? '';
     }
+    _onlineSaved = _onlineSignature;
     _applyActivePrinter();
     setState(() => _loading = false);
   }
@@ -217,11 +218,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'onlinePayHash': _onlineHash,
     }, SetOptions(merge: true));
     // Гостю — только какой банк подключён (без ключей): по нему приложение
-    // показывает кнопку оплаты. Реквизиты неполные — кнопки нет.
-    await AppScope.col('meta').doc('venueProfile').set(
-      {'onlinePay': _onlineReady ? _onlineProvider : ''},
-      SetOptions(merge: true),
-    );
+    // показывает кнопку оплаты. Ставит его шлюз, когда банк подтвердил
+    // реквизиты (onlinePayCheck). Реквизиты поменяли или убрали — кнопку
+    // прячем до новой проверки.
+    if (_onlineSignature != _onlineSaved || !_onlineReady) {
+      await AppScope.col('meta').doc('venueProfile').set({'onlinePay': ''}, SetOptions(merge: true));
+    }
+    _onlineSaved = _onlineSignature;
     _applyActivePrinter();
     _applyActiveKassa();
     _applyActiveEgais();
@@ -231,6 +234,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сохранено')));
     }
   }
+
+  /// Реквизиты онлайн-оплаты, с которыми их последний раз сохранили.
+  String _onlineSaved = '';
+  String get _onlineSignature => [
+        _onlineProvider,
+        _onlineLoginCtrl.text.trim(),
+        _onlinePasswordCtrl.text.trim(),
+        _onlinePassword2Ctrl.text.trim(),
+        _onlineTest,
+        _onlineHash,
+      ].join('\u0001');
 
   bool get _onlineReady {
     final p = OnlinePayProvider.byId(_onlineProvider);
@@ -250,8 +264,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       final r = await GatewayApi.post('onlinePayCheck');
       final ok = r['ok'] == true;
       final enabled = r['enabled'] == true;
+      final seller = r['sellerReady'] == true;
       _onlineCheckResult = '${ok ? '✓' : '✗'} ${r['message'] ?? ''}'
-          '${ok && !enabled ? '\nВключите «Гость оплачивает онлайн» в Профиле заведения — тогда гости увидят кнопку оплаты.' : ''}';
+          '${ok && !enabled ? '\nВключите «Гость оплачивает онлайн» в Профиле заведения — тогда гости увидят кнопку оплаты.' : ''}'
+          '${ok && !seller ? '\nЗаполните реквизиты продавца в Профиле заведения — без них кнопки оплаты у гостей не будет.' : ''}';
     } catch (e) {
       _onlineCheckResult = '✗ $e';
     }

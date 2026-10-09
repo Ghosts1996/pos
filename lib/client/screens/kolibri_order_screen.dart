@@ -146,6 +146,12 @@ class _OrderBody extends StatelessWidget {
             label: Text('Позвонить в заведение · ${venue.phone}'),
           ),
         ],
+        if (venue.sellerLine.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(venue.sellerLine,
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 12, height: 1.35), textAlign: TextAlign.center),
+          ),
       ],
     );
   }

@@ -27,6 +27,10 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _rules = TextEditingController();
   final _lat = TextEditingController();
   final _lon = TextEditingController();
+  final _sellerName = TextEditingController();
+  final _sellerInn = TextEditingController();
+  final _sellerOgrn = TextEditingController();
+  final _sellerAddress = TextEditingController();
   final _hours = <int, TextEditingController>{};
 
   bool _loading = true;
@@ -63,6 +67,10 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _tipsTeamEnabled = p.tipsTeamEnabled;
     _guestSbpPay = p.guestSbpPay;
     _deliveryEnabled = p.deliveryEnabled;
+    _sellerName.text = p.sellerName;
+    _sellerInn.text = p.sellerInn;
+    _sellerOgrn.text = p.sellerOgrn;
+    _sellerAddress.text = p.sellerAddress;
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -85,6 +93,10 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       tipsTeamEnabled: _tipsTeamEnabled,
       guestSbpPay: _guestSbpPay,
       deliveryEnabled: _deliveryEnabled,
+      sellerName: _sellerName.text.trim(),
+      sellerInn: _sellerInn.text.replaceAll(RegExp(r'\D'), ''),
+      sellerOgrn: _sellerOgrn.text.replaceAll(RegExp(r'\D'), ''),
+      sellerAddress: _sellerAddress.text.trim(),
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
@@ -262,10 +274,39 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 'Счёт за столом и заказ доставки или с собой: гость платит из своего банка, '
                 'персоналу приходит «Оплачено онлайн», касса подставляет сумму при закрытии. '
                 'Банк подключается в Настройки → Интеграции → «Онлайн-оплата гостей»: '
-                'Т-Банк, Робокасса, Сбербанк или Альфа-Банк. Комиссия СБП обычно ниже, чем по картам.'
-                '${_guestSbpPay && VenueService.instance.cached.onlinePay.isEmpty ? '\n⚠ Банк ещё не подключён — гости не увидят кнопку оплаты.' : ''}',
+                'Т-Банк, Робокасса, Сбербанк или Альфа-Банк. Кнопка оплаты появится у гостей, только когда банк '
+                'подтвердит реквизиты («Сохранить и проверить подключение») и ниже заполнены реквизиты продавца.'
+                '${_guestSbpPay && VenueService.instance.cached.onlinePay.isEmpty ? '\n⚠ Банк ещё не подключён или не проверен — гости не увидят кнопку оплаты.' : ''}',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
+            ),
+            const SizedBox(height: 12),
+            const Text('Реквизиты продавца', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            const Text(
+              'Их видит гость перед заказом и оплатой из приложения — так требует закон «О защите прав '
+              'потребителей». Без них заказ доставки и онлайн-оплата у гостей недоступны.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+            TextField(
+              controller: _sellerName,
+              decoration: const InputDecoration(labelText: 'Продавец', hintText: 'ООО «Лето» или ИП Иванов Иван Иванович'),
+            ),
+            TextField(
+              controller: _sellerInn,
+              keyboardType: TextInputType.number,
+              maxLength: 12,
+              decoration: const InputDecoration(labelText: 'ИНН', helperText: '10 цифр у организации, 12 у ИП', counterText: ''),
+            ),
+            TextField(
+              controller: _sellerOgrn,
+              keyboardType: TextInputType.number,
+              maxLength: 15,
+              decoration: const InputDecoration(labelText: 'ОГРН или ОГРНИП', helperText: '13 цифр у организации, 15 у ИП', counterText: ''),
+            ),
+            TextField(
+              controller: _sellerAddress,
+              decoration: const InputDecoration(labelText: 'Адрес продавца', hintText: 'Юридический адрес или адрес регистрации ИП'),
             ),
 
             // Только сборка одного заведения на своём Firebase: на
