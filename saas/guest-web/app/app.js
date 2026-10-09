@@ -680,6 +680,159 @@ function privacyNotice() {
     <a class="policy-link" href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
 }
 
+// ---------- СОГЛАСИЯ ГОСТЯ ----------
+// Две галочки перед первой отправкой имени, телефона или адреса: на
+// обработку персональных данных (ст. 9 152-ФЗ) и на трансграничную
+// передачу (ст. 12) — профиль, брони и заказы синхронизируются через
+// Google Firebase. С 1 сентября 2025 года согласие оформляется отдельно
+// от других документов. Отметка пишется на сервер в РФ (доказательство),
+// её редакция — в профиль и в localStorage. Тексты — как в приложении
+// (lib/client/services/guest_consent.dart).
+const CONSENT_EDITION = '2026-10-09';
+const CONSENT_EDITION_LABEL = 'Редакция от 9 октября 2026 г.';
+const consentKey = () => `guest_consent:${state.tenantId}:${state.uid}`;
+
+function consentGiven() {
+  if ((state.profile || {}).consentEdition === CONSENT_EDITION) return true;
+  try { return localStorage.getItem(consentKey()) === CONSENT_EDITION; } catch (_) { return false; }
+}
+
+/** Галочки над кнопкой отправки; согласия уже даны — ссылка на политику. */
+function consentHtml() {
+  if (consentGiven()) return '';
+  return `<div class="consent" data-consent-box>
+    <label class="consent-row"><input type="checkbox" data-consent="pd">
+      <span>Даю <a href="#" data-consent-text="pd">согласие на обработку персональных данных</a>
+      и принимаю <a href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">политику конфиденциальности</a></span></label>
+    <label class="consent-row"><input type="checkbox" data-consent="xb">
+      <span>Даю <a href="#" data-consent-text="xb">согласие на трансграничную передачу</a>
+      данных (сервис Google Firebase)</span></label>
+    <p class="small muted consent-hint">Отметьте оба пункта, чтобы продолжить</p>
+  </div>`;
+}
+
+/** Оживляет галочки над кнопкой [btn]: кнопка неактивна, пока обе не
+ *  отмечены. [extraOk] — остальные условия кнопки (корзина не пуста). */
+function consentBoxOf(btn) {
+  return btn && btn.parentElement && btn.parentElement.querySelector('[data-consent-box]');
+}
+
+/** Обе галочки у кнопки [btn] отмечены (или согласия уже даны). */
+function consentReady(btn) {
+  const box = consentBoxOf(btn);
+  return consentGiven() || (!!box && [...box.querySelectorAll('[data-consent]')].every((c) => c.checked));
+}
+
+function bindConsent(btn, extraOk = () => true) {
+  const box = consentBoxOf(btn);
+  const ready = () => consentReady(btn);
+  const sync = () => {
+    if (btn) btn.disabled = !(ready() && extraOk());
+    const hint = box && box.querySelector('.consent-hint');
+    if (hint) hint.style.display = ready() ? 'none' : '';
+  };
+  if (box) {
+    box.querySelectorAll('[data-consent]').forEach((c) => c.addEventListener('change', sync));
+    box.querySelectorAll('[data-consent-text]').forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault();
+      showConsentText(a.dataset.consentText === 'xb');
+    }));
+  }
+  sync();
+  return { ready, sync };
+}
+
+/** Записать согласие на сервер в РФ до отправки данных. */
+async function commitConsent() {
+  if (consentGiven()) return;
+  try {
+    await piiPost({ tenantId: state.tenantId, kind: 'guest_consent', edition: CONSENT_EDITION, pd: true, crossBorder: true });
+  } catch (_) {
+    throw new Error('Согласие не сохранилось — проверьте интернет и попробуйте снова');
+  }
+  try { localStorage.setItem(consentKey(), CONSENT_EDITION); } catch (_) {}
+}
+
+/** Оператор: продавец из Профиля заведения, а пока его нет — заведение. */
+function consentOperator() {
+  const v = state.venue || {};
+  if (sellerReady()) {
+    return `${v.sellerName.trim()} (ИНН ${v.sellerInn}, ${v.sellerOgrn.length === 15 ? 'ОГРНИП' : 'ОГРН'} ${v.sellerOgrn}, адрес: ${v.sellerAddress.trim()})`;
+  }
+  const name = String(v.name || '').trim();
+  return `${name ? `заведение «${name}»` : 'заведение'}, чьим приложением я пользуюсь (полные реквизиты — у персонала заведения)`;
+}
+
+function consentTexts(crossBorder) {
+  const op = consentOperator();
+  return crossBorder ? {
+    title: 'Согласие на трансграничную передачу персональных данных',
+    body: [
+      `Отмечая этот пункт, я даю согласие оператору — ${op} — на трансграничную передачу моих персональных данных компании Google LLC (сервис Firebase): хранение и синхронизация — в центрах обработки данных в Бельгии и Нидерландах, вход в приложение и push-уведомления — на серверах в США.`,
+      'Передаются: имя, номер телефона, дата рождения, адрес доставки, сведения о бронированиях, заказах, посещениях и бонусах, идентификатор устройства. Первично данные записываются на сервер в России.',
+      'Зачем: чтобы приложение работало вместе с кассой заведения — персонал видел бронь и заказ, начислял бонусы, а приложение присылало уведомления. Получатель защищает данные: шифрование при хранении и передаче, сертификаты ISO/IEC 27001, 27017, 27018.',
+      'Срок и порядок отзыва — как в согласии на обработку персональных данных. Без этого согласия приложение не может сохранить профиль, бронь или заказ.',
+    ],
+  } : {
+    title: 'Согласие на обработку персональных данных',
+    body: [
+      `Отмечая этот пункт, я свободно, своей волей и в своём интересе даю согласие оператору — ${op} — на обработку моих персональных данных на условиях ниже.`,
+      'Какие данные: имя; номер телефона; дата рождения, если я её укажу; адрес доставки, если я оформлю доставку; сведения о бронированиях, заказах, посещениях, бонусах и отзывах; идентификатор устройства.',
+      'Зачем: программа лояльности (бонусы, уровни, скидки); бронирование столов и лист ожидания; приём, оплата и доставка заказов; связь со мной по брони и заказу; уведомления в приложении.',
+      'Что с ними делают: сбор, запись, систематизация, накопление, хранение, уточнение, извлечение, использование, передача (предоставление, доступ) работникам заведения и обработчику, блокирование, удаление и уничтожение — с использованием средств автоматизации.',
+      'По поручению оператора данные обрабатывает сервис ZalPOS (индивидуальный предприниматель, реквизиты — в политике конфиденциальности). Имя, телефон и адрес сначала записываются на сервер в России.',
+      'Согласие действует до его отзыва, но не дольше 3 лет с последнего посещения. Отозвать согласие и удалить данные можно кнопкой «Удалить мои данные» в профиле или обратившись в заведение; накопленные бонусы при этом аннулируются.',
+    ],
+  };
+}
+
+/** Согласий ещё нет, а действие отправит данные из профиля (лист
+ *  ожидания): спрашиваем отдельным окном. true — согласия записаны. */
+function askConsent() {
+  if (consentGiven()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const el = document.createElement('div');
+    el.className = 'sheet-backdrop';
+    el.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Нужно ваше согласие">
+      <div class="sheet-grip"></div>
+      <h2 style="margin:0 0 12px">Нужно ваше согласие</h2>
+      <div>${consentHtml()}<button class="btn-primary" data-ok>Продолжить</button></div>
+      <button class="btn-ghost" data-cancel style="margin-top:10px">Отмена</button>
+    </div>`;
+    document.body.appendChild(el);
+    const ok = el.querySelector('[data-ok]');
+    bindConsent(ok);
+    const done = (v) => { el.remove(); resolve(v); };
+    el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-cancel]')) done(false); });
+    ok.onclick = async () => {
+      ok.disabled = true;
+      try {
+        await commitConsent();
+        done(true);
+      } catch (e) {
+        toast(e.message);
+        ok.disabled = false;
+      }
+    };
+  });
+}
+
+function showConsentText(crossBorder) {
+  const t = consentTexts(crossBorder);
+  const el = document.createElement('div');
+  el.className = 'sheet-backdrop';
+  el.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(t.title)}">
+    <div class="sheet-grip"></div>
+    <h2 style="margin:0 0 4px">${esc(t.title)}</h2>
+    <p class="small muted" style="margin:0 0 14px">${CONSENT_EDITION_LABEL}</p>
+    ${t.body.map((p) => `<p style="margin:0 0 12px;line-height:1.5">${esc(p)}</p>`).join('')}
+    <button class="btn-primary" data-close style="margin-top:8px">Понятно</button>
+  </div>`;
+  const close = () => el.remove();
+  el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-close]')) close(); });
+  document.body.appendChild(el);
+}
+
 // 15-ФЗ: табак нельзя рекламировать и продавать дистанционно, а в месте
 // продажи его показывают списком без изображений. Поэтому вне заведения
 // табачных позиций в меню не видно, а за столом они идут без фото.
@@ -1673,10 +1826,13 @@ async function screenCheckout() {
       Не продаются с собой и с доставкой: ${esc(skipped.map((l) => l.name).join(', '))}.
       Табак, кальяны и алкоголь — только в заведении (законы № 15-ФЗ и № 171-ФЗ).</div>` : ''}
 
-    <button class="btn-primary" id="dSend" ${allowed.length ? '' : 'disabled'}>Оформить заказ · ${money(total)}</button>
+    <div>
+      ${consentHtml()}
+      <button class="btn-primary" id="dSend" ${allowed.length ? '' : 'disabled'}>Оформить заказ · ${money(total)}</button>
+    </div>
     ${sellerHtml()}
     <p class="small muted center" style="margin:12px 0 0">Имя, телефон и адрес нужны заведению, чтобы подтвердить
-      и передать заказ, и хранятся на сервере в России. Через 30 дней после выполнения заказа они обезличиваются.</p>
+      и передать заказ. Сначала они записываются на сервер в России, через 30 дней после выполнения заказа обезличиваются.</p>
     ${privacyNotice()}`;
 
   const paint = () => {
@@ -1699,7 +1855,9 @@ async function screenCheckout() {
   screenEl().querySelector('[data-back]').onclick = () => { location.hash = '#/menu'; };
 
   const send = $('dSend');
+  const consent = bindConsent(send, () => allowed.length > 0);
   send.onclick = async () => {
+    if (!consent.ready()) return toast('Отметьте оба согласия');
     const val = (id) => $(id).value.trim();
     const name = val('dName');
     const phoneRaw = val('dPhone');
@@ -1715,6 +1873,7 @@ async function screenCheckout() {
     };
     send.disabled = true;
     try {
+      await commitConsent();
       const r = await gatewayPost('/guestDeliveryOrder', {
         orderType: delivery ? 'delivery' : 'takeaway',
         name,
@@ -2145,7 +2304,10 @@ function screenBooking() {
 
       <label class="field"><span>Пожелания (необязательно)</span>
         <input id="bComment" placeholder="Диван у окна, день рождения, без музыки…"></label>
-      <button class="btn-primary" id="bSend">Отправить заявку</button>
+      <div>
+        ${consentHtml()}
+        <button class="btn-primary" id="bSend">Отправить заявку</button>
+      </div>
       ${privacyNotice()}
       <p class="small muted center" style="margin:12px 0 0">
         Мы подтвердим бронь и закрепим стол.</p>
@@ -2168,6 +2330,7 @@ function screenBooking() {
   const clear = $('bClearTable');
   if (clear) clear.onclick = () => { pickedTable = null; route(); };
 
+  bindConsent($('bSend'));
   $('bSend').onclick = sendBooking;
   if (win) loadSlots(day, win);
   renderBookingSoon('soon');
@@ -2466,8 +2629,14 @@ async function sendBooking() {
     return toast('В это время мы закрыты — выберите время из списка');
   }
 
+  if (!consentReady($('bSend'))) return toast('Отметьте оба согласия');
   $('bSend').disabled = true;
   try {
+    try {
+      await commitConsent();
+    } catch (e) {
+      return toast(e.message);
+    }
     // Стол назначаем всегда, как в приложении: не выбран — подбираем сами,
     // выбран — перепроверяем, пока гость листал карту, его могли занять.
     let table = pickedTable;
@@ -2783,7 +2952,10 @@ function screenProfile() {
         ${p.phone
           ? ic('lock', 'inline') + 'Сменить номер можно только через администратора'
           : 'Укажите номер в любом формате: +7, 8 или просто 9…'}</p>
-      <button class="btn-primary" id="pSave">Сохранить</button>
+      <div>
+        ${consentHtml()}
+        <button class="btn-primary" id="pSave">Сохранить</button>
+      </div>
       ${privacyNotice()}
     </div>
 
@@ -2830,6 +3002,7 @@ function screenProfile() {
     <p class="small muted center" style="margin-top:28px">
       ${esc(brandDisplayName())} · веб-версия</p>`;
 
+  bindConsent($('pSave'));
   $('pSave').onclick = saveProfile;
   $('deleteDataBtn').onclick = deleteMyData;
   state.profileDirty = false;
@@ -2974,6 +3147,7 @@ async function saveProfile() {
       }
     }
 
+    await commitConsent();
     const patch = { name: $('pName').value.trim() };
     if (!locked && phone) patch.phone = phone;
     // Имя и телефон — сначала в базу в РФ, сервер сам копирует их в профиль
@@ -2989,8 +3163,9 @@ async function saveProfile() {
       try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
     }
     toast('Сохранено');
-  } catch (_) {
-    toast('Не удалось сохранить: проверьте интернет и попробуйте снова');
+  } catch (e) {
+    toast(String((e && e.message) || '').startsWith('Согласие')
+      ? e.message : 'Не удалось сохранить: проверьте интернет и попробуйте снова');
   } finally {
     const b = $('pSave');
     if (b) { b.disabled = false; b.textContent = 'Сохранить'; }
@@ -3579,6 +3754,7 @@ async function joinQueue(guests, btn) {
     location.hash = '#/profile';
     return;
   }
+  if (!(await askConsent())) return;
   btn.disabled = true;
   try {
     const minutes = await estimateWait(guests);
