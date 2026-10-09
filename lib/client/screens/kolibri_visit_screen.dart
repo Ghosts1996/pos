@@ -7,6 +7,7 @@ import '../../utils/constants.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/venue_service.dart';
 import '../../services/tips_service.dart';
+import '../widgets/guest_sbp_pay_card.dart';
 import '../widgets/kolibri_tips_panel.dart';
 import '../../widgets/clock_ticker.dart';
 import '../services/kolibri_auth_service.dart';
@@ -351,6 +352,11 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               ],
             ),
           ),
+
+        if (VenueService.instance.cached.guestSbpPay && s.orderItems.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          GuestSbpPayCard(sessionId: s.id, paidAlready: s.guestPaidTotal),
+        ],
 
         // ---- Чаевые ----
         // Рядом со счётом, а не только в «Ещё»: о чаевых думают именно

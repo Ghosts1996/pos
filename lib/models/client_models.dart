@@ -348,7 +348,7 @@ class GuestVisitItem {
 /// много персонала разных специализаций и один пункт "Позвать" перестал
 /// различать, кого именно нужно (см. AppConstants.position* и
 /// [targetPosition] ниже — по нему фильтруется адресат вызова).
-enum GuestCallType { waiter, coal, bill, refill, callWaiter }
+enum GuestCallType { waiter, coal, bill, refill, callWaiter, paid }
 
 extension GuestCallTypeX on GuestCallType {
   String get code => name;
@@ -365,6 +365,8 @@ extension GuestCallTypeX on GuestCallType {
         return 'Перезабивка';
       case GuestCallType.callWaiter:
         return 'Позвать официанта';
+      case GuestCallType.paid:
+        return 'Оплачено по СБП';
     }
   }
 
@@ -380,6 +382,7 @@ extension GuestCallTypeX on GuestCallType {
         return AppConstants.positionHookahMaster;
       case GuestCallType.bill:
       case GuestCallType.callWaiter:
+      case GuestCallType.paid:
         return AppConstants.positionWaiter;
     }
   }

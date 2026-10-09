@@ -156,7 +156,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     // По умолчанию вся сумма — наличными: сотрудник просто переносит часть
     // на другой способ оплаты, если гость платит смешанно (как на кассе Restik).
-    _cash.controller.text = _fmt(_total);
+    // Что гость уже оплатил по СБП со стола — сразу в «Оплату с терминала».
+    _guestPaid = widget.session.guestPaidTotal;
+    _defaultSplit(_total);
+    _sessionSub = _fs.sessionStream(widget.session.id).listen((s) {
+      if (!mounted || s == null || (s.guestPaidTotal - _guestPaid).abs() < 0.005) return;
+      setState(() {
+        _guestPaid = s.guestPaidTotal;
+        if (_revealed.isEmpty) _defaultSplit(_due);
+      });
+    }, onError: (_) {});
 
     for (final m in _methods) {
       m.controller.addListener(() => setState(() {}));
@@ -168,12 +177,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         _tips = all.where((t) => t.onBill).toList();
         // Пока кассир ничего не трогал руками, сумма «наличными» следит за
         // итогом: гость добавил чаевые из приложения — поле уже с ними.
-        if (_revealed.isEmpty) {
-          _cash.controller.text = _fmt(_due);
-          for (final m in _methods) {
-            if (m != _cash) m.controller.text = '0';
-          }
-        }
+        if (_revealed.isEmpty) _defaultSplit(_due);
       });
     }, onError: (_) {});
 
@@ -193,8 +197,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
     });
   }
 
+  /// Оплачено гостем по СБП со стола — деньги уже на счёте заведения.
+  double _guestPaid = 0;
+  StreamSubscription<SessionModel?>? _sessionSub;
+
+  /// Раскладка по умолчанию: оплаченное гостем по СБП — терминалом, остальное
+  /// наличными.
+  void _defaultSplit(double due) {
+    final sbp = _guestPaid > due ? due : _guestPaid;
+    _terminal.controller.text = sbp > 0.004 ? _fmt(sbp) : '0';
+    _cash.controller.text = _fmt(due - sbp);
+    _card.controller.text = '0';
+    _comp.controller.text = '0';
+  }
+
   @override
   void dispose() {
+    _sessionSub?.cancel();
     _tipsSub?.cancel();
     for (final m in _methods) {
       m.dispose();
@@ -739,6 +758,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
             children: [
               Text('К оплате: ${_fmt(_due)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
+              if (_guestPaid > 0.004)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Гость оплатил по СБП со стола: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
+                    'сумма уже в «Оплате с терминала»',
+                    style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600),
+                  ),
+                ),
               if (_tipsTotal > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),

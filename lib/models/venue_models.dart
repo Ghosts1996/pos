@@ -66,6 +66,10 @@ class VenueProfile {
   /// сумма делится поровну между теми, кто был на смене в этот момент.
   final bool tipsTeamEnabled;
 
+  /// Гость оплачивает счёт по СБП прямо со стола (через Т-Банк из
+  /// «Интеграций»; пароль терминала остаётся на сервере).
+  final bool guestSbpPay;
+
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
     // нельзя — оно уходило в чек и в ИИ. См. VenueService.displayNameOf.
@@ -85,6 +89,7 @@ class VenueProfile {
     this.hookahEnabled,
     this.tipsEnabled = true,
     this.tipsTeamEnabled = true,
+    this.guestSbpPay = false,
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -113,6 +118,7 @@ class VenueProfile {
       hookahEnabled: data['hookahEnabled'] is bool ? data['hookahEnabled'] as bool : null,
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
+      guestSbpPay: data['guestSbpPay'] == true,
     );
   }
 
@@ -133,6 +139,7 @@ class VenueProfile {
         if (hookahEnabled != null) 'hookahEnabled': hookahEnabled,
         'tipsEnabled': tipsEnabled,
         'tipsTeamEnabled': tipsTeamEnabled,
+        'guestSbpPay': guestSbpPay,
       };
 
   VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
@@ -157,6 +164,7 @@ class VenueProfile {
     bool? hookahEnabled,
     bool? tipsEnabled,
     bool? tipsTeamEnabled,
+    bool? guestSbpPay,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -175,6 +183,7 @@ class VenueProfile {
         hookahEnabled: hookahEnabled ?? this.hookahEnabled,
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
+        guestSbpPay: guestSbpPay ?? this.guestSbpPay,
       );
 }
 

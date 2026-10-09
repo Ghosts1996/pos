@@ -35,6 +35,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   bool _hookah = true;
   bool _tipsEnabled = true;
   bool _tipsTeamEnabled = true;
+  bool _guestSbpPay = false;
 
   static const _days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -59,6 +60,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _hookah = p.terms.isHookah;
     _tipsEnabled = p.tipsEnabled;
     _tipsTeamEnabled = p.tipsTeamEnabled;
+    _guestSbpPay = p.guestSbpPay;
     for (var i = 1; i <= 7; i++) {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
@@ -79,6 +81,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       hookahEnabled: _hookah,
       tipsEnabled: _tipsEnabled,
       tipsTeamEnabled: _tipsTeamEnabled,
+      guestSbpPay: _guestSbpPay,
       workingHours: {
         for (var i = 1; i <= 7; i++)
           if (_hours[i]!.text.trim().isNotEmpty) i: _hours[i]!.text.trim(),
@@ -236,6 +239,19 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                   style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
               ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _guestSbpPay,
+              onChanged: (v) => setState(() => _guestSbpPay = v),
+              title: const Text('Гость оплачивает счёт по СБП со стола'),
+              subtitle: const Text(
+                'В приложении гостя появится «Оплатить по СБП»: гость платит из своего банка, '
+                'официанту приходит «Стол оплатил», касса подставляет сумму при закрытии. '
+                'Нужен Т-Банк — «QR СБП» в Настройки → Интеграции. Комиссия СБП обычно '
+                'ниже, чем по картам.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+            ),
 
             // Только сборка одного заведения на своём Firebase: на
             // платформе Cloud Functions нет, владельцу этот выбор не нужен.

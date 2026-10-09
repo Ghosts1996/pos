@@ -21,6 +21,7 @@ const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
+const { createGuestPay } = require("./guest-pay");
 
 /**
  * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
@@ -88,7 +89,7 @@ const TENANT_SUBCOLLECTIONS = [
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
   "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
-  "waiterCalls", "waitlist",
+  "waiterCalls", "waitlist", "guestPayments",
 ];
 
 // Демо-заведения создаются анонимно и живут 3 дня с момента запуска демо
@@ -6540,9 +6541,26 @@ async function handleSendAuthEmail(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+// ------------------------------------------------------------- оплата со стола
+
+const guestPay = createGuestPay({
+  db,
+  admin,
+  verifyAuth,
+  parseJsonBody,
+  readBody,
+  sendJson,
+  HttpError,
+  publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+});
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
+  // Гость платит счёт по СБП со стола (Т-Банк) — см. guest-pay.js.
+  "/guestPayStart": guestPay.handleStart,
+  "/guestPayStatus": guestPay.handleStatus,
+  "/guestPayNotify": guestPay.handleNotify,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,

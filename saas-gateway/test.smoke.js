@@ -210,6 +210,21 @@ async function main() {
     check("POST /sendAuthEmail: без SMTP -> 503", r.status === 503);
   }
 
+  {
+    // Оплата со стола: без входа — 401, уведомление без заведения — 400.
+    let r = await request("POST", "/guestPayStart", { body: { tenantId: "t1", sessionId: "s1" } });
+    check("POST /guestPayStart: без токена -> 401", r.status === 401);
+    r = await request("POST", "/guestPayNotify", { body: {} });
+    check("POST /guestPayNotify: без заведения -> 400", r.status === 400);
+    const gp = require("./guest-pay.js");
+    check("guest-pay: счёт со скидкой без кальяна",
+      gp.sessionBill({ orderItems: [{ name: "Чай", price: 300, qty: 2 }, { name: "Кальян", price: 1500, qty: 1 }], discountPercent: 10 }) === 2040);
+    check("guest-pay: к оплате = счёт + чаевые − оплачено", gp.amountDue({ bill: 2040, tips: 200, paid: 1000 }) === 1240);
+    const n = { TerminalKey: "K", PaymentId: 5, Status: "CONFIRMED", Success: true, Amount: 100, Data: { a: 1 } };
+    n.Token = gp.tbankToken(n, "p");
+    check("guest-pay: подпись уведомления Т-Банка", gp.tokenValid(n, "p") && !gp.tokenValid(n, "q"));
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);
