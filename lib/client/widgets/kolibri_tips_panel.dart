@@ -281,7 +281,7 @@ class _KolibriTipsPanelState extends State<KolibriTipsPanel> {
       _snack(method == 'link'
           ? 'Спасибо! ${to?.name ?? 'Сотрудник'} увидит, что вы перевели чаевые'
           : 'Спасибо! ${rub(amount)} добавим к счёту — '
-              '${VenueService.instance.terms.staff} возьмёт их при оплате');
+              'сотрудник возьмёт их при оплате');
     } catch (_) {
       _snack('Не удалось отправить — проверьте связь');
     } finally {

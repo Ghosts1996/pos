@@ -81,12 +81,10 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           const MyDeliveryOrders(),
           Text('Мой стол', style: KolibriFonts.display(34)),
           const SizedBox(height: 8),
+          // Без «таймера» и «кальянщика»: не у всех заведений они есть, а
+          // таймер и нужные кнопки появятся сами, когда гость сядет за стол.
           Text(
-            VenueService.instance.terms.isHookah
-                ? 'Отсканируйте QR-код на своём столе — откроются счёт, таймер '
-                    'сеанса и кнопки вызова кальянщика.'
-                : 'Отсканируйте QR-код на своём столе — откроются счёт и '
-                    'кнопки вызова ${VenueService.instance.terms.staffAcc}.',
+            'Отсканируйте QR-код на своём столе — откроется ваш счёт и кнопки вызова персонала.',
             style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
           ),
           const SizedBox(height: 24),
@@ -117,8 +115,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           Text(
             'Стол открывается только по коду с самого стола — так вы '
             'наверняка попадёте на свой счёт, а не на соседний. Если код '
-            'не сканируется, позовите ${VenueService.instance.terms.staffAcc}: '
-            'он откроет стол сам.',
+            'не сканируется, попросите сотрудника — он откроет стол сам.',
             style: TextStyle(
                 color: KolibriColors.textMuted, fontSize: 12, height: 1.5),
           ),
@@ -349,7 +346,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
                   const SizedBox(height: 8),
                   Text(
                     'Доступно бонусов: ${rub(widget.profile!.bonusBalance)} — '
-                    'скажите ${VenueService.instance.terms.staffDat}, чтобы списать при оплате',
+                    'скажите сотруднику, чтобы списать при оплате',
                     style: TextStyle(color: KolibriColors.gold, fontSize: 12),
                   ),
                 ],
