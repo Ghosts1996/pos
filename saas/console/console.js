@@ -89,7 +89,8 @@ function telegramBoxHtml(st) {
     return `
       <p class="small muted">Свой бот заведения: заказы с собой и доставки — в рабочую группу с кнопками статусов,
       владельцу — выручка, средний чек, посадка и смена по кнопкам, начало и конец смен, отмены позиций,
-      закрытие без оплаты и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.</p>
+      закрытие без оплаты и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.
+      Управлять ботом смогут только те, чей Telegram ID вы впишете после подключения.</p>
       <ol class="small muted" style="padding-left:18px;margin:8px 0">
         <li>В Telegram откройте <b>@BotFather</b> → <b>/newbot</b>, придумайте имя и адрес бота.</li>
         <li>Скопируйте токен (вида <code>123456:ABC…</code>) и вставьте сюда.</li>
@@ -102,12 +103,41 @@ function telegramBoxHtml(st) {
   const n = st.notify || {};
   const cb = (key, label) => `<label class="field-checkbox" style="display:flex;gap:8px;align-items:center;margin:4px 0">
     <input type="checkbox" class="f-tg-notify" data-key="${key}" style="width:auto" ${n[key] === false ? '' : 'checked'}> <span class="small">${label}</span></label>`;
+  const allowed = st.allowed || [];
+  const hasOwner = allowed.some((a) => a.role === 'owner');
+  const ROLE = { owner: 'владелец или управляющий', staff: 'сотрудник — только кнопки заказов' };
   return `
     <div class="small">Бот: <b>@${esc(st.username)}</b> · токен хранится зашифрованным</div>
-    <div class="small" style="margin-top:6px">Владелец: ${st.owners.length ? esc(st.owners.join(', ')) : '<span class="muted">не подключён</span>'}</div>
-    <button class="btn btn-ghost" id="f-tg-owner" style="margin-top:6px">Подключить мой Telegram</button>
+
+    <div style="font-weight:600;margin:14px 0 4px">Кто управляет ботом</div>
+    <p class="small muted" style="margin:0 0 8px">Отчёты, уведомления, подключение чатов и кнопки заказов — только для этих
+      Telegram ID. Остальным бот ответит «Нет доступа», даже в рабочей группе. Свой ID узнаете, написав боту
+      <b>/id</b> в Telegram.</p>
+    ${allowed.length ? `<div style="margin-bottom:8px">${allowed.map((a, i) => `
+      <div class="row" style="justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span class="small"><b>${esc(a.name || 'Без имени')}</b> · ID ${esc(String(a.id))}<br><span class="muted">${ROLE[a.role] || ROLE.owner}</span></span>
+        <button class="btn-link f-tg-del" data-i="${i}" style="color:var(--danger)">Убрать</button>
+      </div>`).join('')}</div>` : '<p class="small" style="color:var(--danger);margin:0 0 8px">Список пуст — сначала впишите свой Telegram ID.</p>'}
+    <div class="row" style="flex-wrap:wrap;gap:8px;align-items:flex-end">
+      <label class="field" style="flex:1 1 140px;margin:0"><span>Telegram ID</span>
+        <input id="f-tg-uid" inputmode="numeric" autocomplete="off" maxlength="15" placeholder="123456789"></label>
+      <label class="field" style="flex:1 1 140px;margin:0"><span>Имя</span>
+        <input id="f-tg-uname" maxlength="40" placeholder="Олег"></label>
+      <label class="field" style="flex:1 1 180px;margin:0"><span>Права</span>
+        <select id="f-tg-urole">
+          <option value="owner">Владелец, управляющий</option>
+          <option value="staff">Сотрудник</option>
+        </select></label>
+      <button class="btn btn-ghost" id="f-tg-add" style="width:auto">Добавить</button>
+    </div>
+    <p class="small muted" style="margin:6px 0 0">Владелец и управляющий получают отчёты и уведомления. Сотрудник — только
+      нажимает кнопки заказов в рабочей группе.</p>
+
+    <div class="small" style="margin-top:14px">Владелец: ${st.owners.length ? esc(st.owners.join(', ')) : '<span class="muted">не подключён</span>'}</div>
+    <button class="btn btn-ghost" id="f-tg-owner" style="margin-top:6px" ${hasOwner ? '' : 'disabled'}>Подключить мой Telegram</button>
     <div class="small" style="margin-top:10px">Рабочая группа: ${st.staffChat ? esc(st.staffChat) : '<span class="muted">не подключена</span>'}</div>
-    <button class="btn btn-ghost" id="f-tg-staff" style="margin-top:6px">${st.staffChat ? 'Сменить группу' : 'Подключить группу сотрудников'}</button>
+    <button class="btn btn-ghost" id="f-tg-staff" style="margin-top:6px" ${hasOwner ? '' : 'disabled'}>${st.staffChat ? 'Сменить группу' : 'Подключить группу сотрудников'}</button>
+    ${hasOwner ? '' : '<div class="small muted" style="margin-top:6px">Кнопки подключения заработают, когда в списке будет хотя бы один владелец или управляющий.</div>'}
     <div class="small muted" style="margin:10px 0 4px">Что присылать</div>
     ${cb('delivery', 'Заказы с собой и доставки — в группу, с кнопками')}
     ${cb('shifts', 'Начало и конец смен — владельцу')}
@@ -159,8 +189,39 @@ function bindTelegramBox(tenantId, redraw) {
       $('f-tg-setup').disabled = false;
     }
   };
-  if ($('f-tg-owner')) $('f-tg-owner').onclick = () => openLink('owner', 'Нажмите «Запустить» в Telegram — и вы подключены. Обновите страницу, чтобы увидеть.');
-  if ($('f-tg-staff')) $('f-tg-staff').onclick = () => openLink('staff', 'Выберите рабочую группу в Telegram и добавьте бота — группа подключится сама.');
+  if ($('f-tg-owner')) $('f-tg-owner').onclick = () => openLink('owner', 'Нажмите «Запустить» в Telegram — и вы подключены, если ваш Telegram ID в списке. Обновите страницу, чтобы увидеть.');
+  if ($('f-tg-staff')) $('f-tg-staff').onclick = () => openLink('staff', 'Выберите рабочую группу в Telegram и добавьте бота — группа подключится сама. Добавлять бота должен человек из списка с правами владельца.');
+  // Кто управляет ботом: список уходит на сервер целиком.
+  const saveAccess = async (allowed, done) => {
+    try {
+      const r = await callSaasGateway('telegramAccess', { tenantId, allowed });
+      const st = tgStatusCache.get(tenantId);
+      if (st) {
+        st.allowed = r.data.allowed;
+        st.owners = r.data.owners || [];
+      }
+      redraw();
+      if (done) msg(done);
+    } catch (e) {
+      msg(e.message, true);
+    }
+  };
+  if ($('f-tg-add')) $('f-tg-add').onclick = () => {
+    const id = ($('f-tg-uid').value || '').replace(/\s+/g, '');
+    if (!/^[1-9]\d{0,14}$/.test(id)) return msg('Telegram ID — это число. Напишите своему боту /id — он пришлёт его.', true);
+    const st = tgStatusCache.get(tenantId) || {};
+    const list = (st.allowed || []).filter((a) => String(a.id) !== id);
+    list.push({ id, name: ($('f-tg-uname').value || '').trim(), role: $('f-tg-urole').value });
+    saveAccess(list, 'Добавлено. Теперь этот человек может управлять ботом.');
+  };
+  document.querySelectorAll('.f-tg-del').forEach((el) => {
+    el.onclick = () => {
+      const st = tgStatusCache.get(tenantId) || {};
+      const a = (st.allowed || [])[Number(el.dataset.i)];
+      if (!a || !confirm(`Убрать ${a.name || 'ID ' + a.id} из списка? Бот перестанет его слушаться, отчёты приходить не будут.`)) return;
+      saveAccess((st.allowed || []).filter((_, i) => i !== Number(el.dataset.i)), 'Убрано.');
+    };
+  });
   document.querySelectorAll('.f-tg-notify').forEach((el) => {
     el.onchange = async () => {
       const notify = {};
@@ -1685,8 +1746,8 @@ function screenLanding() {
             или картой, деньги сразу на&nbsp;ваш счёт. «Готовится», «У&nbsp;курьера», «Доставлен» гость видит
             в&nbsp;приложении.</span></div>
           <div class="risk-item"><b>Курьеры в&nbsp;Telegram</b><span>Свой бот заведения присылает заказы в&nbsp;рабочую
-            группу с&nbsp;кнопками статусов. Адрес открывается по&nbsp;временной ссылке, телефоны гостей
-            в&nbsp;переписке не&nbsp;остаются.</span></div>
+            группу с&nbsp;кнопками статусов. Нажимать их могут только те, чей Telegram ID вы вписали в&nbsp;кабинете.
+            Телефоны гостей в&nbsp;переписке не&nbsp;остаются.</span></div>
         </div>
         <div class="scale-strip">
           <div><b>Онлайн-оплата через ваш банк</b><span>Т-Банк, ЮKassa, Робокасса, Сбербанк или Альфа-Банк. Реквизиты
