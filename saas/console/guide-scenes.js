@@ -70,6 +70,10 @@ const P = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/>',
   mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4 7 8 6 8-6"/>',
   gem: '<path d="M6.5 4h11l3.5 5-9 11-9-11zM3 9h18M9.5 4 8 9l4 11 4-11-1.5-5"/>',
+  bag: '<path d="M5.5 8h13l-1 12.5h-11zM9 8V6.5a3 3 0 0 1 6 0V8"/>',
+  call: '<path d="M6.5 3.5h3l1.5 4-2 1.3a10 10 0 0 0 5.2 5.2l1.3-2 4 1.5v3a2 2 0 0 1-2 2A16 16 0 0 1 4.5 5.5a2 2 0 0 1 2-2z"/>',
+  send: '<path d="M21 3.5 10.5 14M21 3.5l-6.5 17-4-6.5-6.5-4z"/>',
+  truck: '<path d="M3 6.5h11v9H3zM14 9.5h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
 };
 
@@ -86,11 +90,12 @@ const cls = (...c) => c.filter(Boolean).join(' ');
 const status = (time = '19:42') =>
   `<div class="gx-status"><span>${time}</span><span style="display:flex;gap:6px;align-items:center">${ic('wifi', 13, 2)}<i></i></span></div>`;
 
-function appBar({ title, sub = '', left = 'menu', right = [], tapLeft = '', tapRight = {} }) {
+function appBar({ title, sub = '', left = 'menu', right = [], tapLeft = '', tapRight = {}, badge = {} }) {
   return `<div class="gx-bar">
     <div class="gx-bar-btn"${tp(tapLeft)}>${ic(left === 'menu' ? 'menu' : 'back', 24)}</div>
     <div class="gx-bar-title"><b>${title}</b>${sub ? `<span>${sub}</span>` : ''}</div>
-    ${right.map((r) => `<div class="gx-bar-btn"${tp(tapRight[r])}>${ic(r, 22)}</div>`).join('')}
+    ${right.map((r) => `<div class="gx-bar-btn" style="position:relative"${tp(tapRight[r])}>${ic(r, 22)}${badge[r]
+    ? `<span class="gx-badge" style="position:absolute;top:2px;right:0;min-width:18px;height:18px;font-size:11px">${badge[r]}</span>` : ''}</div>`).join('')}
   </div>`;
 }
 
@@ -117,9 +122,10 @@ function tableCard(t, { tap = '', mark = '' } = {}) {
   </div>`;
 }
 
-function hall({ who = 'Алина', tapTable = '', tapMenu = '', tapBanner = '', tables = HALL } = {}) {
+function hall({ who = 'Алина', tapTable = '', tapMenu = '', tapBanner = '', tables = HALL, takeaway = 0, tapTakeaway = '' } = {}) {
   return `<div class="gx-app">${status()}
-    ${appBar({ title: 'Зал', sub: who, left: 'menu', right: ['map', 'spark'], tapLeft: tapMenu })}
+    ${appBar({ title: 'Зал', sub: who, left: 'menu', right: takeaway ? ['bag', 'map', 'spark'] : ['map', 'spark'], tapLeft: tapMenu,
+    tapRight: { bag: tapTakeaway }, badge: { bag: takeaway } })}
     <div class="gx-banner">${ic('bell', 17)}<span>Гости зовут: 3 · ждут 3 мин</span><span class="gx-mu"${tp(tapBanner)}>Показать ›</span></div>
     <div class="gx-chips"><span class="gx-chip on">${ic('check', 14, 2.2)} Все зоны</span><span class="gx-chip">Основной зал</span><span class="gx-chip">2 этаж</span><span class="gx-chip">Терраса</span></div>
     <div class="gx-chips"><span class="gx-chip on">Все 27</span><span class="gx-chip"><span class="dot" style="background:var(--ok)"></span>Свободны 19</span><span class="gx-chip"><span class="dot" style="background:var(--busy)"></span>Заняты 8</span></div>
@@ -270,12 +276,12 @@ const ADMIN_TILES = [
   ['box', 'Склад'], ['users', 'Сотрудники'], ['timer', 'Смены сотрудников'], ['wallet', 'Зарплата'],
 ];
 
-function adminHome({ tap = '' } = {}) {
+function adminHome({ tap = '', tiles = ADMIN_TILES } = {}) {
   return `<div class="gx-app">${status()}
     <div class="gx-bar" style="padding-left:16px"><div class="gx-bar-title"><b style="font-size:17px">Админ · Ольга</b></div>
       <div class="gx-bar-btn">${ic('dl', 20)}</div><div class="gx-bar-btn">${ic('logout', 20)}</div></div>
     <div class="gx-h" style="color:var(--tx);font-size:14px">Работа заведения</div>
-    <div class="gx-tiles" style="gap:10px">${ADMIN_TILES.map(([icn, t]) => `<div class="gx-card" style="height:96px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px"${tp(t === tap ? 'tile' : '')}>
+    <div class="gx-tiles" style="gap:10px">${tiles.map(([icn, t]) => `<div class="gx-card" style="height:96px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px"${tp(t === tap ? 'tile' : '')}>
       ${ic(icn, 24)}<span style="font-size:13px;font-weight:500">${t}</span></div>`).join('')}</div></div>`;
 }
 
@@ -288,7 +294,7 @@ const switchRow = (t, s, { on = false, tap = '', mark = '' } = {}) =>
    Один и тот же экран кабинета рисуется двумя способами: на широкой
    странице — окно браузера с меню слева, на телефоне — мобильная версия
    сайта в рамке телефона: адресная строка, кнопка ☰ и название раздела. */
-const WEB_NAV = [['home', 'Обзор'], ['phone', 'Устройства'], ['card', 'Оплата'], ['gem', 'Тарифы'], ['palette', 'Брендинг'], ['users', 'Команда'], ['spark', 'ИИ']];
+const WEB_NAV = [['home', 'Обзор'], ['phone', 'Устройства'], ['card', 'Оплата'], ['gem', 'Тарифы'], ['palette', 'Брендинг'], ['users', 'Команда'], ['spark', 'ИИ'], ['gear', 'Настройки']];
 function web(active, main, { tap = {} } = {}) {
   // Переход в другой раздел: на широкой странице — пункт меню слева, на
   // телефоне — кнопка ☰ (у проигрывателя тот же ключ касания).
@@ -676,6 +682,128 @@ const startDialog = (since = '17:40') => dialog('Начать вашу смен�
   `<p>Смена заведения открыта в ${since}.<br>Начните смену, если вы сейчас работаете: вызовы гостей будут приходить и вам, а время посчитается в зарплату.</p>`,
   `${btn('Не сейчас', { kind: 'text' })}${btn('Начать смену', { kind: 'sm', tap: 'go' })}`);
 
+/* ---- Доставка и с собой из приложения гостя ---- */
+// Лист «С собой и доставка» с заказом из приложения: звонок, подтверждение.
+function takeawaySheet() {
+  return sheet(`<b style="display:block;font-size:19px;margin-bottom:10px">С собой и доставка</b>
+    <div class="gx-card" style="padding:12px 14px;border-color:var(--pr);border-width:1.5px">
+      <div style="display:flex;align-items:center;gap:10px"><span class="gx-brass">${ic('truck', 24)}</span>
+        <b style="flex:1;font-size:16px">Доставка · Аня</b>
+        <span style="font-size:11px;padding:3px 8px;border-radius:10px;background:var(--el);display:flex;align-items:center;gap:4px">${ic('phone', 13)}Приложение</span></div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;color:var(--pr);font-weight:600;font-size:14px"${tp('call')}>${ic('call', 17)}+7 (999) 123-45-67</div>
+      <div style="font-size:13px;margin-top:4px">ул. Ленина, 5, кв. 12, подъезд 2, этаж 3</div>
+      <div class="gx-mu" style="font-size:12px;margin-top:3px;font-style:italic">«Позвоните за 10 минут»</div>
+      <div style="font-size:12.5px;font-weight:600;margin-top:4px" class="gx-mu">Оплатит онлайн после подтверждения</div>
+      <div class="gx-mu" style="font-size:12px;margin-top:3px">2 мин назад · Том ям ×1, Чай улун ×1 · 940 ₽</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <span style="font-size:12px;padding:5px 10px;border-radius:12px;background:var(--el)"${mk('acc')}><span class="gx-show"${mk('acc')}>Новый</span><span class="gx-alt"${mk('acc')}>Принят</span></span>
+        <span class="gx-show"${mk('acc')}><span style="display:inline-flex;gap:8px">${btn('Подтвердить', { kind: 'ok sm', icon: 'check', tap: 'accept' })}${btn('Отклонить', { kind: 'ghost sm' })}</span></span>
+        <span class="gx-alt"${mk('acc')}><span style="display:inline-flex;gap:8px">${btn('Начать готовить', { kind: 'sm', tap: 'cook' })}${btn('Отменить', { kind: 'text' })}</span></span>
+      </div></div>
+    <div class="gx-mu" style="font-size:12px;line-height:1.4;margin-top:10px">Позвоните гостю: сверьте состав, адрес и время. После подтверждения позиции встанут в чек, гость увидит «Принят».</div>`);
+}
+
+function callScreen() {
+  return `<div class="gx-app" style="display:flex;flex-direction:column;align-items:center;padding-top:150px">
+    <div style="width:84px;height:84px;border-radius:50%;background:var(--el);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:600">А</div>
+    <b style="font-size:24px;margin-top:16px">+7 (999) 123-45-67</b><span class="gx-mu" style="margin-top:6px">Вызов…</span>
+    <div style="position:absolute;bottom:90px;width:64px;height:64px;border-radius:50%;background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:center">${ic('call', 28)}</div></div>`;
+}
+
+// Касса → Админ → Интеграции → «Онлайн-оплата гостей».
+function onlinePayScreen() {
+  return `<div class="gx-app">${status()}${appBar({ title: 'Интеграции', left: 'back' })}<div style="padding:0 14px">
+    <div class="gx-card" style="padding:14px">
+      <b style="display:flex;align-items:center;gap:8px;font-size:16px"><span class="gx-brass">${ic('card', 19)}</span>Онлайн-оплата гостей</b>
+      <div class="gx-mu" style="font-size:11.5px;line-height:1.4;margin:4px 0 12px">Гость платит из приложения сам: счёт за столом и заказ доставки или с собой. Деньги приходят на ваш счёт в банке.</div>
+      <div class="gx-f" style="height:52px"${tp('bank')}><span class="gx-f-l">Банк</span><span class="gx-val"><span class="gx-show"${mk('bank')}>Не подключён</span><span class="gx-alt"${mk('bank')}>Робокасса — СБП и карты</span></span></div>
+      <div class="gx-unfold"${mk('bank')}><div style="padding-top:10px">
+        ${field('Идентификатор магазина', { type: 'shop', style: 'height:48px;margin-bottom:8px' })}
+        ${field('Пароль №1', { val: '••••••••', style: 'height:48px;margin-bottom:8px' })}
+        ${field('Пароль №2', { val: '••••••••', style: 'height:48px' })}</div></div>
+      ${btn('Сохранить и проверить подключение', { kind: 'ghost sm', icon: 'check', tap: 'check', style: 'margin-top:12px;width:100%' })}
+      <div class="gx-unfold"${mk('ok')}><div style="color:var(--ok);font-size:12.5px;font-weight:600;line-height:1.4;margin-top:10px">✓ Робокасса приняла идентификатор и пароль №2. Пароль №1 проверится при первой оплате</div></div>
+    </div></div></div>`;
+}
+
+// Касса → Админ → Профиль заведения: переключатели доставки и оплаты.
+function venueToggles() {
+  return `<div class="gx-app">${status()}${appBar({ title: 'Профиль заведения', left: 'back' })}<div style="padding:0 16px">
+    ${switchRow('Заказы с собой и доставка', 'Кнопка в шапке зала, а у гостя в меню — «Доставка или с собой».', { on: true })}
+    ${switchRow('Гость оплачивает онлайн из приложения', 'Счёт за столом и заказ доставки: гость платит из своего банка, персоналу приходит «Оплачено онлайн».', { tap: 'pay', mark: 'pay' })}
+    </div>
+    <div class="gx-bottom">${btn('Сохранить', { icon: 'check', tap: 'save' })}</div></div>`;
+}
+
+/* ---- Приложение гостя ---- */
+function guestMenu() {
+  return `<div class="gx-app">${status()}<div style="padding:8px 16px 0"><b style="font-size:28px;font-family:var(--serif, serif)">Меню</b></div>
+    <div class="gx-search" style="margin-top:10px">${ic('search', 18)}Поиск по меню</div>
+    <div class="gx-tiles" style="gap:10px">${[['Том ям', '640 ₽', 1], ['Чай улун', '300 ₽', 1], ['Пад тай', '520 ₽', 0], ['Пиво светлое', '350 ₽', -1]].map(([n, p, q]) => `
+      <div class="gx-card" style="padding:12px;height:118px;display:flex;flex-direction:column;justify-content:space-between${q > 0 ? ';border-color:var(--pr)' : ''}">
+        <b style="font-size:13.5px">${n}</b>
+        <div style="display:flex;align-items:center;justify-content:space-between"><span class="gx-brass" style="font-weight:600">${p}</span>
+        ${q < 0 ? '<span class="gx-mu" style="font-size:10.5px;text-align:right;line-height:1.2">Только<br>в заведении</span>'
+    : `<span style="display:flex;align-items:center;gap:6px">${q ? '<b>1</b>' : ''}<span style="width:26px;height:26px;border-radius:50%;background:var(--pr);color:#FFF7F0;display:flex;align-items:center;justify-content:center">${ic('plus', 15, 2.4)}</span></span>`}</div></div>`).join('')}</div>
+    <div class="gx-card" style="margin:14px 14px 0;padding:14px"><b style="font-size:14px">Ваш заказ: 2 позиции · 940 ₽</b>
+      <div class="gx-mu" style="font-size:12px;margin:4px 0 10px">Доставка или самовывоз: заведение позвонит и подтвердит заказ.</div>
+      ${btn('Доставка или с собой', { icon: 'bag', tap: 'go' })}</div></div>`;
+}
+
+function guestCheckout() {
+  return `<div class="gx-app">${status()}${appBar({ title: 'Оформление заказа', left: 'back' })}<div style="padding:0 14px">
+    <div class="gx-seg2" style="width:100%;height:38px;margin-bottom:12px"><span class="on">Доставка</span><span>Заберу сам</span></div>
+    ${field('Как к вам обращаться', { val: 'Аня', style: 'height:46px;margin-bottom:8px' })}
+    ${field('Телефон', { type: 'tel', ph: '+7 9XX XXX-XX-XX', style: 'height:46px;margin-bottom:8px' })}
+    ${field('Улица и дом', { type: 'street', style: 'height:46px;margin-bottom:8px' })}
+    <div style="display:flex;gap:8px">${field('Кв./офис', { val: '12', style: 'height:46px;flex:1' })}${field('Подъезд', { val: '2', style: 'height:46px;flex:1' })}</div>
+    <b style="display:block;font-size:14px;margin:14px 0 8px">Оплата</b>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <span class="gx-chip"${mk('on')} style="padding:7px 12px"><span class="gx-show"${mk('on')}>✓ </span>При получении</span>
+      <span class="gx-chip"${tp('online')}${mk('on')} style="padding:7px 12px"><span class="gx-alt"${mk('on')}>✓ </span>Онлайн — СБП или картой</span></div>
+    <div class="gx-mu" style="font-size:11.5px;margin-top:8px">Кнопка оплаты появится после того, как заведение подтвердит заказ.</div></div>
+    <div class="gx-bottom">${btn('Оформить заказ · 940 ₽', { tap: 'send' })}</div></div>`;
+}
+
+function guestOrder() {
+  const step = (t, i) => `<div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:14px">
+    <span style="width:20px;height:20px;border-radius:50%;border:2px solid ${i === 0 ? 'var(--pr)' : 'var(--bd)'};display:flex;align-items:center;justify-content:center;flex:none"${i === 0 ? mk('acc') : ''}>${i === 0 ? `<span class="gx-alt"${mk('acc')} style="color:var(--pr)">${ic('check', 12, 3)}</span>` : ''}</span>
+    <span${i < 2 ? '' : ' class="gx-mu"'}>${i === 1 ? `<span class="gx-show"${mk('acc')} style="color:var(--mu)">${t}</span><b class="gx-alt"${mk('acc')}>${t}</b>` : i === 0 ? `<b class="gx-show"${mk('acc')}>${t}</b><span class="gx-alt"${mk('acc')}>${t}</span>` : t}</span></div>`;
+  return `<div class="gx-app">${status()}<div style="padding:8px 16px 0">
+    <div class="gx-mu" style="font-size:11px;letter-spacing:.14em;font-weight:600">ЗАКАЗ №6SRG</div>
+    <b style="font-size:28px">Доставка</b>
+    <div class="gx-mu" style="font-size:13px;line-height:1.4;margin:6px 0 12px"><span class="gx-show"${mk('acc')}>Заказ получен. Заведение позвонит вам, чтобы подтвердить состав и адрес — держите телефон рядом.</span><span class="gx-alt"${mk('acc')}>Заказ подтверждён и скоро начнут готовить.</span></div>
+    <div class="gx-card" style="padding:10px 14px">${['Ждёт подтверждения', 'Принят', 'Готовится', 'У курьера', 'Доставлен'].map(step).join('')}</div>
+    <div class="gx-card" style="padding:12px 14px;margin-top:10px">
+      <div class="gx-show"${mk('acc')}><span class="gx-mu" style="font-size:12.5px">Оплата онлайн станет доступна сразу после подтверждения заказа.</span></div>
+      <div class="gx-alt"${mk('acc')}><span class="gx-mu" style="font-size:12.5px;display:block;margin-bottom:10px">Оплатите заказ сейчас — СБП или картой. Чек — от заведения.</span>${btn('Оплатить онлайн', { tap: 'pay', style: 'width:100%' })}</div></div>
+    </div></div>`;
+}
+
+/* ---- Telegram-бот (кабинет → Настройки) ---- */
+function webTelegram() {
+  return web('Настройки', `<h3>Настройки</h3>
+    <div class="gx-web-card"><h5>Telegram-бот заведения</h5>
+      <div class="gx-fold"${mk('bot')}><div class="gx-mu" style="font-size:12.5px;line-height:1.5;max-width:560px">Заказы с собой и доставки — в рабочую группу с кнопками статусов, владельцу — выручка, смены, отмены и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.</div>
+        ${wField('Токен бота', { type: 'token', ph: '123456789:AA…' })}
+        ${wBtn('Подключить бота', { tap: 'connect' })}</div>
+      <div class="gx-unfold"${mk('bot')}><div style="font-size:13.5px;line-height:1.8">Бот: <b>@kafe_leto_bot</b> · токен хранится зашифрованным<br>
+        Владелец: <span class="gx-show"${mk('own')}><span class="gx-mu">не подключён</span></span><span class="gx-alt"${mk('own')}><b>Ольга</b></span></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">${wBtn('Подключить мой Telegram', { tap: 'owner', ghost: true })}${wBtn('Подключить группу сотрудников', { tap: 'group', ghost: true })}</div>
+        <div style="font-size:13px;margin-top:10px">Рабочая группа: <span class="gx-show"${mk('grp')}><span class="gx-mu">не подключена</span></span><span class="gx-alt"${mk('grp')}><b>Кухня и курьеры</b></span></div></div>
+    </div>`, {});
+}
+
+function tgChat() {
+  return webPage(`<div class="gx-web-card gx-web-narrow" style="padding:14px 16px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="width:36px;height:36px;border-radius:50%;background:#2AABEE;color:#fff;display:flex;align-items:center;justify-content:center">${ic('send', 18)}</span><b>Кухня и курьеры</b></div>
+    <div style="background:var(--s2, rgba(127,127,127,.12));border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55">
+      🛵 <b>Доставка №6SRG</b> · 📱 из приложения<br>Статус: <span class="gx-show"${mk('st')}>Принят</span><span class="gx-alt"${mk('st')}>Готовится</span><br>
+      Позиций: 2 · 940 ₽<br>Оплата: онлайн после подтверждения<br>• Том ям (Огонь) ×1<br>• Чай улун ×1</div>
+    <div style="margin-top:8px">${wBtn('<span class="gx-show" data-mark="st">▶️ Начать готовить</span><span class="gx-alt" data-mark="st">▶️ Передать курьеру</span>', { tap: 'cook', ghost: true, style: 'width:100%;justify-content:center' })}</div>
+    <div style="display:flex;gap:8px;margin-top:8px">${wBtn('🚴 Назначить курьера', { ghost: true, style: 'flex:1;justify-content:center' })}${wBtn('📍 Адрес', { ghost: true, style: 'flex:1;justify-content:center' })}</div></div>`, { url: 'Telegram' });
+}
+
 export const SCENES = {
   login: {
     label: 'Вход в кассу по PIN',
@@ -923,6 +1051,49 @@ export const SCENES = {
       { screen: webAiProvider(), url: 'сайт сервиса ИИ', cap: '«Создать ключ» — и «Скопировать». Ключ как пароль: никому его не пересылайте.', acts: [{ tap: 'newkey', mark: 'key' }, { wait: 500 }, { tap: 'copy', mark: 'copied' }, { wait: 700 }] },
       { screen: webAi(), cap: 'Кабинет ZalPOS → «ИИ». Включите помощников и вставьте ключ. Модель уже стоит — gpt-4o-mini.', acts: [{ tap: 'ai', mark: 'ai' }, { type: 'key', text: 'sk-••••••7f3a' }, { tap: 'aisave' }] },
       { screen: webAi(), cap: '«Проверить связь» → «Связь есть». Готово: ассистент работает в кассе, помощник — у гостей.', acts: [{ tap: 'aitest', mark: 'ok' }, { wait: 2000 }] },
+    ],
+  },
+
+  'delivery-in': {
+    label: 'Заказ доставки из приложения: звонок и подтверждение',
+    frames: [
+      { screen: hall({ takeaway: 1, tapTakeaway: 'bag' }), cap: 'Гость оформил доставку — у кнопки «С собой и доставка» в шапке зала появилась цифра. Нажмите её.', acts: [{ wait: 500 }, { tap: 'bag' }] },
+      { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, cap: 'Заказ из приложения ждёт звонка. Нажмите на телефон — касса наберёт гостя.', acts: [{ wait: 900 }, { tap: 'call' }] },
+      { screen: callScreen(), enter: 'fade', cap: 'Сверьте состав, адрес и время доставки. Имя и номер гость указал сам.', acts: [{ wait: 1800 }] },
+      { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, enter: 'fade', cap: 'Всё верно — «Подтвердить». Позиции встанут в чек, кухня увидит заказ, гость — «Принят».', acts: [{ tap: 'accept', mark: 'acc' }, { wait: 900 }] },
+      { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, cap: 'Дальше по шагам: «Начать готовить», «Передать курьеру», «Доставлен». Гость видит каждый шаг у себя.', acts: [{ wait: 600 }, { tap: 'cook' }, { wait: 900 }] },
+    ],
+  },
+
+  'online-pay': {
+    label: 'Подключить онлайн-оплату гостей',
+    frames: [
+      { screen: adminHome({ tap: 'Интеграции', tiles: [['chart', 'Отчёты'], ['map', 'Карта зала'], ['fork', 'Меню'], ['users', 'Сотрудники'], ['store', 'Профиль заведения'], ['gear', 'Интеграции']] }), cap: 'Войдите в кассу по PIN администратора и откройте «Интеграции».', acts: [{ wait: 400 }, { tap: 'tile' }] },
+      { screen: onlinePayScreen(), enter: 'push', cap: '«Онлайн-оплата гостей» → «Банк»: Т-Банк, ЮKassa, Робокасса, Сбербанк или Альфа-Банк — тот, с кем у вас договор эквайринга.', acts: [{ tap: 'bank', mark: 'bank' }, { wait: 500 }] },
+      { screen: onlinePayScreen(), cap: 'Впишите реквизиты из кабинета банка. Нажмите «Сохранить и проверить подключение» — деньги при проверке не списываются.', acts: [{ type: 'shop', text: 'kafe-leto' }, { tap: 'check', mark: 'ok' }, { wait: 1400 }] },
+      { screen: adminHome({ tap: 'Профиль заведения', tiles: [['chart', 'Отчёты'], ['map', 'Карта зала'], ['fork', 'Меню'], ['users', 'Сотрудники'], ['store', 'Профиль заведения'], ['gear', 'Интеграции']] }), enter: 'back', cap: 'Вернитесь и откройте «Профиль заведения».', acts: [{ tap: 'tile' }] },
+      { screen: venueToggles(), enter: 'push', cap: 'Включите «Гость оплачивает онлайн из приложения» и «Сохранить». Кнопка оплаты появится у гостей за столом и в заказах доставки.', acts: [{ tap: 'pay', mark: 'pay' }, { wait: 400 }, { tap: 'save' }, { wait: 900 }] },
+    ],
+  },
+
+  'guest-delivery': {
+    label: 'Как гость заказывает доставку',
+    frames: [
+      { screen: guestMenu(), cap: 'Гость собирает заказ в меню приложения. Табак и алкоголь с доставкой не продаются — у них «Только в заведении».', acts: [{ wait: 900 }, { tap: 'go' }] },
+      { screen: guestCheckout(), enter: 'push', cap: 'Доставка или «Заберу сам», телефон и адрес. Оплата — при получении или онлайн, если у заведения подключён банк.', acts: [{ type: 'tel', text: '+7 999 123-45-67' }, { type: 'street', text: 'ул. Ленина, 5' }, { tap: 'online', mark: 'on' }, { tap: 'send' }] },
+      { screen: guestOrder(), enter: 'push', cap: 'Заказ ушёл на кассу. Гость видит «Ждёт подтверждения» — заведение позвонит.', acts: [{ wait: 1800 }] },
+      { screen: guestOrder(), cap: 'Кассир подтвердил — статус «Принят», и появилась кнопка «Оплатить онлайн». Деньги списываются только за подтверждённый заказ.', acts: [{ mark: 'acc' }, { wait: 900 }, { tap: 'pay' }, { wait: 900 }] },
+    ],
+  },
+
+  telegram: {
+    label: 'Подключить Telegram-бота заведения',
+    device: 'web',
+    frames: [
+      { screen: webTelegram(), cap: 'В Telegram откройте @BotFather → /newbot, придумайте имя и адрес бота — он пришлёт токен. Кабинет → «Настройки»: вставьте токен и «Подключить бота».', acts: [{ type: 'token', text: '7012345678:AAH…' }, { tap: 'connect', mark: 'bot' }, { wait: 700 }] },
+      { screen: webTelegram(), cap: '«Подключить мой Telegram» — откроется ваш бот, нажмите «Запустить». Вам будут приходить выручка, смены, отмены и итоги дня.', acts: [{ tap: 'owner', mark: 'own' }, { wait: 900 }] },
+      { screen: webTelegram(), cap: '«Подключить группу сотрудников» — выберите рабочую группу и добавьте туда бота.', acts: [{ tap: 'group', mark: 'grp' }, { wait: 900 }] },
+      { screen: tgChat(), enter: 'fade', cap: 'Заказы с собой и доставки приходят в группу с кнопками — следующий шаг, курьер, адрес. Телефона и адреса в самом сообщении нет: адрес открывается по временной ссылке.', acts: [{ wait: 600 }, { tap: 'cook', mark: 'st' }, { wait: 1200 }] },
     ],
   },
 };
