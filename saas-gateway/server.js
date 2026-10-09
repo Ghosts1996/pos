@@ -6668,6 +6668,7 @@ const telegram = createTelegram({
 const ROUTES = {
   "/telegramSetup": telegram.handleSetup,
   "/telegramLinkCode": telegram.handleLinkCode,
+  "/telegramAccess": telegram.handleAccess,
   "/telegramStatus": telegram.handleStatus,
   "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,

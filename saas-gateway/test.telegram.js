@@ -119,6 +119,17 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await tg.handleHook(mkReq({ message: {} }, { "x-telegram-bot-api-secret-token": store.get("telegramBots/B").hookSecret }), res, "A");
   assert.equal(res.code, 403, "секрет заведения Б не пускает в бота А");
 
+  // Без списка «Кто управляет ботом» ссылку привязки не выдаём
+  res = mkRes();
+  await assert.rejects(tg.handleLinkCode(mkReq({ tenantId: "A", kind: "owner" }), res), /Telegram ID/);
+  // Неверный ID — понятная ошибка
+  await assert.rejects(tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: "олег", role: "owner" }] }), mkRes()), /не Telegram ID/);
+  // Владелец А вписывает свой ID и ID повара
+  res = mkRes();
+  await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: "501", name: "Олег", role: "owner" }, { id: 601, name: "Повар", role: "staff" }, { id: "501", role: "staff" }] }), res);
+  assert.deepEqual(res.body.allowed, [{ id: 501, name: "Олег", role: "owner" }, { id: 601, name: "Повар", role: "staff" }], "повтор ID отброшен");
+  await tick();
+
   // Владелец А привязывает личный чат и группу
   res = mkRes();
   await tg.handleLinkCode(mkReq({ tenantId: "A", kind: "owner" }), res);
@@ -127,8 +138,14 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await tg.handleLinkCode(mkReq({ tenantId: "A", kind: "staff" }), res);
   const staffCode = res.body.link.split("startgroup=")[1];
   const hookA = (update) => tg.handleHook(mkReq(update, { "x-telegram-bot-api-secret-token": store.get("telegramBots/A").hookSecret }), mkRes(), "A");
-  await hookA({ message: { chat: { id: 501, type: "private", first_name: "Олег" }, text: `/start ${ownerCode}` } });
-  await hookA({ message: { chat: { id: -900, type: "supergroup", title: "Кухня А" }, text: `/start@venue_a_bot ${staffCode}` } });
+  // Пересланная ссылка не сработает у чужого: его ID нет в списке
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 502, type: "private", first_name: "Чужой" }, from: { id: 502 }, text: `/start ${ownerCode}` } });
+  assert.ok(sent.some((m) => m.body.chat_id === 502 && /Ваш Telegram ID: 502/.test(m.body.text)), "чужому — его ID и как получить доступ");
+  // Сотрудник из списка не может подключить группу
+  await hookA({ message: { chat: { id: -901, type: "supergroup", title: "Левая" }, from: { id: 601 }, text: `/start@venue_a_bot ${staffCode}` } });
+  await hookA({ message: { chat: { id: 501, type: "private", first_name: "Олег" }, from: { id: 501 }, text: `/start ${ownerCode}` } });
+  await hookA({ message: { chat: { id: -900, type: "supergroup", title: "Кухня А" }, from: { id: 501 }, text: `/start@venue_a_bot ${staffCode}` } });
   await tick();
   assert.deepEqual(store.get("telegramBots/A").ownerChats, [{ id: 501, name: "Олег" }]);
   assert.equal(store.get("telegramBots/A").staffChat.id, -900);
@@ -136,7 +153,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   const hookB = (update) => tg.handleHook(mkReq(update, { "x-telegram-bot-api-secret-token": store.get("telegramBots/B").hookSecret }), mkRes(), "B");
   res = mkRes();
   await tg.handleLinkCode(mkReq({ tenantId: "A", kind: "owner" }), res);
-  await hookB({ message: { chat: { id: 777, type: "private" }, text: `/start ${res.body.link.split("start=")[1]}` } });
+  await hookB({ message: { chat: { id: 777, type: "private" }, from: { id: 777 }, text: `/start ${res.body.link.split("start=")[1]}` } });
   assert.equal((store.get("telegramBots/B").ownerChats || []).length, 0, "код заведения А не привязывает чат к Б");
 
   // Новый заказ доставки в А → карточка в группу А без ПДн
@@ -151,29 +168,42 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.equal(card.body.reply_markup.inline_keyboard[0][0].callback_data, "s:s1abcd:accepted");
   assert.ok(sent.every((m) => m.body.chat_id !== 777), "в чаты Б ничего не ушло");
 
+  // Человек из группы, которого нет в списке, кнопку нажать не может
+  sent.length = 0;
+  await hookA({ callback_query: { id: "q0", from: { id: 700, first_name: "Гость группы" }, data: "s:s1abcd:accepted", message: { chat: { id: -900 }, message_id: 101 } } });
+  assert.equal(store.get("tenants/A/sessions/s1abcd").deliveryStatus, "new", "чужое нажатие не меняет статус");
+  const denied = sent.find((m) => m.method === "answerCallbackQuery");
+  assert.ok(denied.body.show_alert && /700/.test(denied.body.text), "чужому — его ID во всплывающем окне");
   // Кнопка «Принять» из группы → статус в базе
-  await hookA({ callback_query: { id: "q1", from: { first_name: "Повар" }, data: "s:s1abcd:accepted", message: { chat: { id: -900 }, message_id: 101 } } });
+  await hookA({ callback_query: { id: "q1", from: { id: 601, first_name: "Повар" }, data: "s:s1abcd:accepted", message: { chat: { id: -900 }, message_id: 101 } } });
   assert.equal(store.get("tenants/A/sessions/s1abcd").deliveryStatus, "accepted");
   // Повторное нажатие того же шага не проходит
-  await hookA({ callback_query: { id: "q2", from: { first_name: "Повар" }, data: "s:s1abcd:accepted", message: { chat: { id: -900 }, message_id: 101 } } });
+  await hookA({ callback_query: { id: "q2", from: { id: 601, first_name: "Повар" }, data: "s:s1abcd:accepted", message: { chat: { id: -900 }, message_id: 101 } } });
   assert.equal(store.get("tenants/A/sessions/s1abcd").deliveryStatus, "accepted");
   const ans = sent.filter((m) => m.method === "answerCallbackQuery").pop();
   assert.match(ans.body.text, /уже/);
   // Кнопка из чужого чата — нет доступа
-  await hookA({ callback_query: { id: "q3", from: {}, data: "s:s1abcd:cooking", message: { chat: { id: 12345 }, message_id: 101 } } });
+  await hookA({ callback_query: { id: "q3", from: { id: 601 }, data: "s:s1abcd:cooking", message: { chat: { id: 12345 }, message_id: 101 } } });
   assert.equal(store.get("tenants/A/sessions/s1abcd").deliveryStatus, "accepted");
   await tick(); await tick();
   assert.ok(sent.some((m) => m.method === "editMessageText" && /Принят/.test(m.body.text)), "карточка обновилась");
 
   // Отчёт «Посадка» владельцу А
   sent.length = 0;
-  await hookA({ message: { chat: { id: 501, type: "private" }, text: "🪑 Посадка" } });
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🪑 Посадка" } });
   const rep = sent.find((m) => m.method === "sendMessage" && m.body.chat_id === 501);
   assert.match(rep.body.text, /занято 1 из 2/);
-  // Посторонний в личке бота А отчёт не получит
+  // Посторонний в личке бота А отчёт не получит, а сотрудник из списка — тоже
   sent.length = 0;
-  await hookA({ message: { chat: { id: 999, type: "private" }, text: "💰 Выручка сегодня" } });
-  assert.ok(!/Выручка/.test(sent[0].body.text), "посторонний не видит выручку");
+  await hookA({ message: { chat: { id: 999, type: "private" }, from: { id: 999 }, text: "💰 Выручка сегодня" } });
+  assert.ok(!/Выручка/.test(sent[0].body.text) && /999/.test(sent[0].body.text), "посторонний не видит выручку, видит свой ID");
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 601, type: "private" }, from: { id: 601 }, text: "💰 Выручка сегодня" } });
+  assert.ok(/сотрудников/.test(sent[0].body.text), "сотруднику отчёты не положены");
+  // /id — любому, свой ID
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 888, type: "private" }, from: { id: 888 }, text: "/id" } });
+  assert.match(sent[0].body.text, /Ваш Telegram ID: 888/);
 
   // Закрытие заказа → карточка закрыта
   sent.length = 0;
@@ -190,6 +220,17 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   fire(); await tick(); await tick();
   assert.ok(sent.some((m) => m.body.chat_id === 501 && /закрыт без оплаты на 1\s500/.test(m.body.text)), "сигнал о закрытии без оплаты");
   assert.ok(sent.some((m) => m.body.chat_id === 501 && /Начал смену: Анна \(официант\)/.test(m.body.text)), "начало смены");
+  // Владелец убрал себя из списка — личный чат больше ничего не получает
+  res = mkRes();
+  await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: 601, name: "Повар", role: "staff" }] }), res);
+  await tick();
+  assert.deepEqual(store.get("telegramBots/A").ownerChats, [], "чат владельца отвязан");
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "💰 Выручка сегодня" } });
+  assert.ok(!/Выручка сегодня:/.test(sent[0].body.text), "без доступа отчётов нет");
+  // Бот, подключённый до списка доступа: владельцы чатов — в списке сами
+  assert.deepEqual(tgmod.allowedList({ ownerChats: [{ id: 42, name: "Ира" }] }), [{ id: 42, name: "Ира", role: "owner" }]);
+
   // Страница адреса: верная подпись — адрес, неверная — 403
   const key = require("crypto").createHash("sha256").update("sim-key").digest();
   const exp = Date.now() + 60000;

@@ -787,8 +787,11 @@ function webTelegram() {
       <div class="gx-fold"${mk('bot')}><div class="gx-mu" style="font-size:12.5px;line-height:1.5;max-width:560px">Заказы с собой и доставки — в рабочую группу с кнопками статусов, владельцу — выручка, смены, отмены и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.</div>
         ${wField('Токен бота', { type: 'token', ph: '123456789:AA…' })}
         ${wBtn('Подключить бота', { tap: 'connect' })}</div>
-      <div class="gx-unfold"${mk('bot')}><div style="font-size:13.5px;line-height:1.8">Бот: <b>@kafe_leto_bot</b> · токен хранится зашифрованным<br>
-        Владелец: <span class="gx-show"${mk('own')}><span class="gx-mu">не подключён</span></span><span class="gx-alt"${mk('own')}><b>Ольга</b></span></div>
+      <div class="gx-unfold"${mk('bot')} style="--max:420px"><div style="font-size:13.5px;line-height:1.8">Бот: <b>@kafe_leto_bot</b> · токен хранится зашифрованным</div>
+        <div style="font-size:13.5px;font-weight:600;margin-top:8px">Кто управляет ботом</div>
+        <div class="gx-unfold"${mk('acc')}><div class="gx-web-row" style="border-top:none"><span style="flex:1">Ольга · ID 123456789<br><span class="gx-mu" style="font-size:12px">владелец, управляющий</span></span><span class="gx-web-link">Убрать</span></div></div>
+        <div class="gx-cols" style="margin-top:6px">${wField('Telegram ID', { type: 'tgid', ph: '123456789' })}${wField('Права', { val: 'Владелец, управляющий' })}<div style="display:flex;align-items:flex-end">${wBtn('Добавить', { tap: 'addid', ghost: true })}</div></div>
+        <div style="font-size:13.5px;line-height:1.8;margin-top:6px">Владелец: <span class="gx-show"${mk('own')}><span class="gx-mu">не подключён</span></span><span class="gx-alt"${mk('own')}><b>Ольга</b></span></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">${wBtn('Подключить мой Telegram', { tap: 'owner', ghost: true })}${wBtn('Подключить группу сотрудников', { tap: 'group', ghost: true })}</div>
         <div style="font-size:13px;margin-top:10px">Рабочая группа: <span class="gx-show"${mk('grp')}><span class="gx-mu">не подключена</span></span><span class="gx-alt"${mk('grp')}><b>Кухня и курьеры</b></span></div></div>
     </div>`, {});
@@ -1091,9 +1094,10 @@ export const SCENES = {
     device: 'web',
     frames: [
       { screen: webTelegram(), cap: 'В Telegram откройте @BotFather → /newbot, придумайте имя и адрес бота — он пришлёт токен. Кабинет → «Настройки»: вставьте токен и «Подключить бота».', acts: [{ type: 'token', text: '7012345678:AAH…' }, { tap: 'connect', mark: 'bot' }, { wait: 700 }] },
+      { screen: webTelegram(), cap: 'Управлять ботом смогут только те, чей Telegram ID в списке. Напишите боту /id — он пришлёт число. Впишите его и «Добавить».', acts: [{ type: 'tgid', text: '123456789' }, { tap: 'addid', mark: 'acc' }, { wait: 700 }] },
       { screen: webTelegram(), cap: '«Подключить мой Telegram» — откроется ваш бот, нажмите «Запустить». Вам будут приходить выручка, смены, отмены и итоги дня.', acts: [{ tap: 'owner', mark: 'own' }, { wait: 900 }] },
-      { screen: webTelegram(), cap: '«Подключить группу сотрудников» — выберите рабочую группу и добавьте туда бота.', acts: [{ tap: 'group', mark: 'grp' }, { wait: 900 }] },
-      { screen: tgChat(), enter: 'fade', cap: 'Заказы с собой и доставки приходят в группу с кнопками — следующий шаг, курьер, адрес. Телефона и адреса в самом сообщении нет: адрес открывается по временной ссылке.', acts: [{ wait: 600 }, { tap: 'cook', mark: 'st' }, { wait: 1200 }] },
+      { screen: webTelegram(), cap: '«Подключить группу сотрудников» — выберите рабочую группу и добавьте бота. Курьеров и поваров, которые жмут кнопки, впишите в список с правами «Сотрудник».', acts: [{ tap: 'group', mark: 'grp' }, { wait: 900 }] },
+      { screen: tgChat(), enter: 'fade', cap: 'Заказы приходят в группу с кнопками — следующий шаг, курьер, адрес. Нажать их может только тот, кто в списке; остальным бот ответит «Нет доступа».', acts: [{ wait: 600 }, { tap: 'cook', mark: 'st' }, { wait: 1200 }] },
     ],
   },
 };

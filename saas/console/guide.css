@@ -327,7 +327,7 @@
 .gx-fold.on { opacity: 0; max-height: 0; }
 /* И наоборот: появляется после касания. */
 .gx-unfold { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .45s cubic-bezier(.4, 0, .2, 1), opacity .3s ease .12s; }
-.gx-unfold.on { max-height: 200px; opacity: 1; }
+.gx-unfold.on { max-height: var(--max, 200px); opacity: 1; }
 /* Переключатель, включённый с самого начала: касание его выключает. */
 .gx-sw.inv { background: var(--pr); }
 .gx-sw.inv::after { transform: translateX(16px); background: #FFF7F0; }

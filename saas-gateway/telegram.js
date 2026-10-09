@@ -9,6 +9,9 @@
  *    X-Telegram-Bot-Api-Secret-Token) — чужой секрет не пройдёт;
  *  - отвечаем и пишем только токеном этого заведения и только в чаты,
  *    привязанные к нему одноразовым кодом из кабинета;
+ *  - управлять ботом (отчёты, привязка чатов, кнопки заказов) могут только
+ *    те, чей Telegram ID владелец вписал в кабинете (allowed): даже в
+ *    рабочей группе чужой человек кнопку не нажмёт;
  *  - один бот (botId) — одно заведение: второй раз тот же токен не примем.
  *
  * Токен в базе — только зашифрованным (AES-256-GCM). Ключ живёт на сервере
@@ -53,6 +56,7 @@ const SUMMARY_HOUR = 10;
 const BIG_DISCOUNT_PERCENT = 20;
 const ADDRESS_LINK_TTL_MS = 12 * 3600 * 1000;
 const TAKEAWAY_TABLE = "takeaway";
+const MAX_ALLOWED = 30;
 const POSITIONS = { waiter: "официант", hookah_master: "кальянщик", bartender: "бармен", universal: "универсал" };
 
 const MENU = {
@@ -75,6 +79,45 @@ const MENU_KEYBOARD = {
 
 const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
 const toDate = (v) => (v && typeof v.toDate === "function" ? v.toDate() : v instanceof Date ? v : null);
+
+// ---------------------------------------------------------------- доступ
+
+/**
+ * Кто управляет ботом: [{ id, name, role }] — Telegram ID, вписанные
+ * владельцем в кабинете. role 'owner' — владелец или управляющий: отчёты,
+ * уведомления, привязка чатов, кнопки; 'staff' — сотрудник: только кнопки
+ * заказов в рабочей группе. До появления списка — владельцы, уже
+ * привязавшие личный чат (личный чат в Telegram = ID пользователя).
+ */
+function allowedList(cfg) {
+  if (Array.isArray(cfg && cfg.allowed)) return cfg.allowed;
+  return ((cfg && cfg.ownerChats) || []).map((c) => ({ id: c.id, name: c.name || "", role: "owner" }));
+}
+
+const roleOf = (cfg, userId) => {
+  const a = allowedList(cfg).find((x) => x.id === userId);
+  return a ? a.role : null;
+};
+
+/** Список из кабинета → проверенный: ID — положительное число до 15 цифр, без повторов. */
+function parseAllowed(raw, HttpError) {
+  if (!Array.isArray(raw)) throw new HttpError(400, "Список доступа не передан");
+  if (raw.length > MAX_ALLOWED) throw new HttpError(400, `Не больше ${MAX_ALLOWED} человек`);
+  const out = [];
+  const seen = new Set();
+  for (const a of raw) {
+    const idStr = String(a && a.id != null ? a.id : "").trim();
+    if (!/^[1-9]\d{0,14}$/.test(idStr)) {
+      throw new HttpError(400, `«${idStr.slice(0, 20) || "пусто"}» — не Telegram ID. Это число, его пришлёт ваш бот в ответ на /id`);
+    }
+    const id = Number(idStr);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const name = String((a && a.name) || "").replace(/[\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+    out.push({ id, name, role: a && a.role === "staff" ? "staff" : "owner" });
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- шифрование
 
@@ -398,6 +441,8 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       hookSecret,
       hookUrl: hookUrl(tenantId),
       ownerChats: sameBot ? prev.ownerChats || [] : [],
+      // Список людей — заведения, а не бота: при смене бота не теряется.
+      allowed: allowedList(prev),
       staffChat: sameBot ? prev.staffChat || null : null,
       notify: prev.notify || { delivery: true, shifts: true, alerts: true, summary: true },
       auditCursor: prev.auditCursor || admin.firestore.Timestamp.now(),
@@ -414,7 +459,8 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, {
       configured: true,
       username: d.username || "",
-      owners: (d.ownerChats || []).map((c) => c.name || "Чат"),
+      owners: (d.ownerChats || []).filter((c) => roleOf(d, c.id) === "owner").map((c) => c.name || "Чат"),
+      allowed: allowedList(d),
       staffChat: d.staffChat ? d.staffChat.title || "Группа" : "",
       notify: d.notify || {},
     });
@@ -426,6 +472,9 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const kind = body.kind === "staff" ? "staff" : "owner";
     const d = (await botsCol().doc(body.tenantId).get()).data();
     if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
+    if (!allowedList(d).some((a) => a.role === "owner")) {
+      throw new HttpError(409, "Сначала впишите свой Telegram ID в «Кто управляет ботом» — его пришлёт бот в ответ на /id");
+    }
     const code = crypto.randomBytes(9).toString("hex");
     await linkRef(code).set({
       tenantId: body.tenantId, kind,
@@ -435,6 +484,19 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       ? `https://t.me/${d.username}?startgroup=${code}`
       : `https://t.me/${d.username}?start=${code}`;
     sendJson(res, 200, { link });
+  }
+
+  /** Кто управляет ботом. Убрали человека — его личный чат больше ничего не получает. */
+  async function handleAccess(req, res) {
+    const { body } = await guard(req);
+    const ref = botsCol().doc(body.tenantId);
+    const d = (await ref.get()).data();
+    if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
+    const allowed = parseAllowed(body.allowed, HttpError);
+    const owners = new Set(allowed.filter((a) => a.role === "owner").map((a) => a.id));
+    const chats = (d.ownerChats || []).filter((c) => owners.has(c.id));
+    await ref.update({ allowed, ownerChats: chats });
+    sendJson(res, 200, { allowed, owners: chats.map((c) => c.name || "Чат") });
   }
 
   async function handleNotify(req, res) {
@@ -526,7 +588,11 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     }
   }
 
-  const isOwnerChat = (bot, chatId) => (bot.cfg.ownerChats || []).some((c) => c.id === chatId);
+  // Личный чат владельца: привязан и его ID по-прежнему в списке владельцев.
+  const ownerChats = (cfg) => (cfg.ownerChats || []).filter((c) => roleOf(cfg, c.id) === "owner");
+  const isOwnerChat = (bot, chatId) => ownerChats(bot.cfg).some((c) => c.id === chatId);
+  const noAccess = (userId) => `Ваш Telegram ID: ${userId}. Управлять ботом могут только те, кого владелец `
+    + "добавил в кабинете ZalPOS → Настройки → Telegram-бот → «Кто управляет ботом». Перешлите ему это число.";
   const isStaffChat = (bot, chatId) => !!bot.cfg.staffChat && bot.cfg.staffChat.id === chatId;
 
   async function onMessage(bot, msg) {
@@ -536,6 +602,16 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     const group = chat.type === "group" || chat.type === "supergroup";
     const [cmdRaw, arg] = text.split(/\s+/, 2);
     const cmd = cmdRaw.replace(/@\w+$/, "");
+    const userId = msg.from && msg.from.id;
+    if (!userId) return;
+    const role = roleOf(bot.cfg, userId);
+
+    // Свой Telegram ID — любому, чтобы передать его владельцу.
+    if (cmd === "/id") {
+      return say(bot, chat.id, role
+        ? `Ваш Telegram ID: ${userId}. Вы в списке: ${role === "owner" ? "владелец или управляющий" : "сотрудник"}.`
+        : `Ваш Telegram ID: ${userId}. Перешлите это число владельцу заведения — он добавит его в кабинете ZalPOS → Настройки → Telegram-бот.`);
+    }
 
     if (cmd === "/start" && arg) {
       const ref = linkRef(arg.replace(/[^a-f0-9]/g, "").slice(0, 32) || "-");
@@ -546,11 +622,14 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       const venue = (await tenantRef(bot.tenantId).get()).data() || {};
       if (link.kind === "staff") {
         if (!group) return say(bot, chat.id, "Эту ссылку нужно открыть, добавляя бота в рабочую группу сотрудников.");
+        if (role !== "owner") return say(bot, chat.id, `Подключить группу может только владелец или управляющий из списка. ${noAccess(userId)}`);
         await botsCol().doc(bot.tenantId).update({ staffChat: { id: chat.id, title: chat.title || "Группа" } });
         await ref.delete();
         return say(bot, chat.id, `Группа подключена к «${venue.name || "заведению"}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.`);
       }
       if (group) return say(bot, chat.id, "Эта ссылка — для личного чата владельца, а не для группы.");
+      // Ссылку могли переслать: подключается только ID из списка владельцев.
+      if (role !== "owner" || chat.id !== userId) return say(bot, chat.id, noAccess(userId));
       const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ") || "Владелец";
       await db().runTransaction(async (tx) => {
         const r = botsCol().doc(bot.tenantId);
@@ -575,8 +654,13 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     }
 
     if (group) return; // в группе — только кнопки карточек
+    if (role === "staff") {
+      return say(bot, chat.id, "Вы в списке сотрудников: заказы ведёте кнопками в рабочей группе. Отчёты получает владелец.");
+    }
+    if (role !== "owner" || chat.id !== userId) return say(bot, chat.id, noAccess(userId));
     if (!isOwnerChat(bot, chat.id)) {
-      return say(bot, chat.id, "Это бот заведения. Доступ выдаёт владелец в кабинете ZalPOS → Настройки → Telegram.");
+      return say(bot, chat.id, "Ваш ID в списке владельцев. Чтобы получать отчёты и уведомления, нажмите в кабинете "
+        + "«Подключить мой Telegram».");
     }
     const report = REPORTS[Object.keys(MENU).find((k) => MENU[k] === text)];
     if (report) return say(bot, chat.id, await report(bot), { reply_markup: MENU_KEYBOARD });
@@ -585,8 +669,13 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
 
   async function onCallback(bot, q) {
     const chatId = q.message && q.message.chat && q.message.chat.id;
-    const answer = (text) => api(bot.token, "answerCallbackQuery", { callback_query_id: q.id, text: text || "" }).catch(() => {});
+    const answer = (text, alert = false) => api(bot.token, "answerCallbackQuery", { callback_query_id: q.id, text: text || "", show_alert: alert }).catch(() => {});
     if (!chatId || (!isStaffChat(bot, chatId) && !isOwnerChat(bot, chatId))) return answer("Нет доступа");
+    // Нажимать кнопки могут только люди из списка — даже в рабочей группе.
+    const userId = q.from && q.from.id;
+    if (!userId || !roleOf(bot.cfg, userId)) {
+      return answer(`Нет доступа. Ваш Telegram ID: ${userId || "?"} — попросите владельца добавить его в кабинете.`, true);
+    }
     const [kind, sessionId, arg] = String(q.data || "").split(":");
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId || "")) return answer();
     const sesRef = tenantRef(bot.tenantId).collection("sessions").doc(sessionId);
@@ -824,7 +913,7 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
         .catch((e) => console.error(`telegram webhook (${tenantId}):`, e.message));
     }
     const t = tenantRef(tenantId);
-    const owners = () => bot.cfg.ownerChats || [];
+    const owners = () => ownerChats(bot.cfg);
     const on = (flag) => !bot.cfg.notify || bot.cfg.notify[flag] !== false;
 
     // Заказы с собой и доставки в работе: открытые чеки и уже оплаченные,
@@ -908,7 +997,7 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     for (const bot of bots.values()) {
       try {
         if (bot.cfg.notify && bot.cfg.notify.summary === false) continue;
-        const owners = bot.cfg.ownerChats || [];
+        const owners = ownerChats(bot.cfg);
         if (!owners.length) continue;
         const venue = await venueOf(bot.tenantId);
         if (venue.status === "deleted" || venue.status === "disabled") continue;
@@ -949,11 +1038,11 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
   }
 
   return {
-    handleSetup, handleStatus, handleLinkCode, handleNotify, handleUnlink, handleAddress, handleHook, start,
+    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleAddress, handleHook, start,
   };
 }
 
 module.exports = {
   createTelegram, buildSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
-  deliveryCardText, deliveryKeyboard, salesStats, addressSig,
+  deliveryCardText, deliveryKeyboard, salesStats, addressSig, allowedList, parseAllowed,
 };
