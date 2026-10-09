@@ -100,7 +100,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
     final entries = count.entries;
     final countedNow = entries.where((e) => _localCounted(e) != null).length;
     final discrepanciesNow =
-        entries.where((e) => _localCounted(e) != null && (_localCounted(e)! - e.expectedQty).abs() > 0.0001).length;
+        entries.where((e) => _localCounted(e) != null && (_localCounted(e)! - e.systemQty).abs() > 0.0001).length;
 
     final categories = entries.map((e) => e.category).toSet().toList()..sort();
 
@@ -284,7 +284,7 @@ class _CountRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final diff = localCounted == null ? null : localCounted! - entry.expectedQty;
+    final diff = localCounted == null ? null : localCounted! - entry.systemQty;
     Color diffColor = AppColors.textMuted;
     String diffText = 'не посчитано';
     if (diff != null) {
@@ -313,7 +313,7 @@ class _CountRow extends StatelessWidget {
                 children: [
                   Text(entry.name, style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text('по системе: ${entry.unit.formatWithLabel(entry.expectedQty)}',
+                  Text('по системе: ${entry.unit.formatWithLabel(entry.systemQty)}',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
                   Text(diffText, style: TextStyle(color: diffColor, fontSize: 12, fontWeight: FontWeight.w600)),
                 ],
