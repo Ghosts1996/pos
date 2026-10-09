@@ -25,7 +25,9 @@ class AuditLogService {
     Map<String, dynamic> details = const {},
   }) async {
     try {
-      await AppScope.col('auditLog').add({
+      // Без await: запись сразу ложится в память устройства, а без связи
+      // ответ сервера пришёл бы только после её возвращения — кассир ждал бы.
+      unawaited(AppScope.col('auditLog').add({
         'action': action,
         'employeeName': employeeName,
         'sessionId': sessionId,
@@ -33,7 +35,7 @@ class AuditLogService {
         'amount': amount,
         'details': details,
         'createdAt': Timestamp.fromDate(DateTime.now()),
-      });
+      }).then((_) {}, onError: (Object _) {}));
     } catch (_) {
       // Журнал не должен ломать основную операцию кассира.
     }
