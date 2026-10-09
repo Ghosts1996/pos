@@ -1,5 +1,5 @@
 #!/bin/bash
-# Задача 8: заменить истёкший ключ GitHub (GITHUB_PAT) в /etc/saas-gateway.env
+# Задача 8 (запуск 2): заменить истёкший ключ GitHub (GITHUB_PAT) в /etc/saas-gateway.env
 # на секрет SAAS_GITHUB_PAT и перезапустить автообновление приложений.
 # NEW_GITHUB_PAT приходит первой строкой stdin из workflow; не печатается.
 set -u
