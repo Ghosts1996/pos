@@ -1398,6 +1398,10 @@ async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
     }
   }
 
+  // Приложение гостя сети помечаем кодом сети: обновлять приложение сети
+  // можно только такой сборкой (handleAppUpdate).
+  if (jobRefKolibri && chainSlug) await jobRefKolibri.update({ chainSlug }).catch(() => {});
+
   try {
     await githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosWindows, appLabel, logoUrl, tenantSlug, inviteCode, chainSlug });
   } catch (e) {
@@ -3018,6 +3022,7 @@ async function latestTenantBuilds(tenantId) {
         platform: j.platform || "android",
         buildNumber: Number.isInteger(j.buildNumber) ? j.buildNumber : 0,
         completedAt: j.completedAt && typeof j.completedAt.toDate === "function" ? j.completedAt.toDate().toISOString() : null,
+        chainSlug: typeof j.chainSlug === "string" ? j.chainSlug : "",
       }));
     jobs = await buildsOf(tenantId);
     // Точка сети: касса могла перейти сюда из другой точки, а у этой своих
@@ -3060,7 +3065,13 @@ async function handleAppUpdate(req, res) {
 
   const jobs = await latestTenantBuilds(tenantId);
   if (jobs === null) throw new HttpError(404, "Заведение не найдено");
-  const latest = jobs.find((j) => j.type === type && j.platform === platform);
+  const candidates = jobs.filter((j) => j.type === type && j.platform === platform);
+  // Приложение гостя сети — только сборкой этой сети. Сборки до пометки
+  // кодом сети (у точек сети они тоже сетевые) — если помеченных ещё нет.
+  const chainSlug = type === "guest" && typeof body.chainSlug === "string" ? body.chainSlug : "";
+  const latest = chainSlug
+    ? candidates.find((j) => j.chainSlug === chainSlug) || candidates.find((j) => !j.chainSlug)
+    : candidates[0];
   const buildNumber = latest ? latest.buildNumber : 0;
   if (!latest || buildNumber <= current) return sendJson(res, 200, { update: false, buildNumber });
 

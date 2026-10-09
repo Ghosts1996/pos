@@ -347,6 +347,9 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
         _appTitle = branding.appName;
       }
       setState(() => _phase = _ChainBootPhase.ready);
+      // Обновления изнутри — у приложения сети из «Собрать APK» (у демо-
+      // сборки, где код сети вводят руками, своё обновление — с сайта).
+      if (widget.onChainMissing == null) AppUpdateService.start(app: 'guest');
       unawaited(AiSettingsStore.instance.init());
       unawaited(loadLoyaltyTierSettings());
       VenueService.instance.watch();
@@ -405,7 +408,8 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
       darkTheme: KolibriTheme.dark,
       themeMode: ThemeMode.dark,
       home: home,
-      builder: (context, child) => AdaptiveAppFrame(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) =>
+          AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink())),
     );
   }
 }
