@@ -84,7 +84,7 @@ const TENANT_SUBCOLLECTIONS = [
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
   "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
-  "marking_codes_sold", "menuCategories", "menuItems", "meta", "phoneIndex",
+  "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
   "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
