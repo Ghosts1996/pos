@@ -10,6 +10,7 @@ import '../../services/payment_terminal_service.dart';
 import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
+import '../../utils/phone_utils.dart';
 import '../../services/chestny_znak_service.dart';
 import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
@@ -182,6 +183,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (_revealed.isEmpty) _defaultSplit(_due);
       });
     }, onError: (_) {});
+
+    // Заказ доставки/с собой: телефон гостя уже есть — электронный чек
+    // уйдёт ему (при оплате онлайн это обязательно по 54-ФЗ).
+    if (widget.session.customerPhone.isNotEmpty) {
+      final p = normalizePhone(widget.session.customerPhone);
+      _contactCtrl.text = isValidRuPhone(p) ? '+$p' : widget.session.customerPhone;
+    }
 
     // Гость из приложения, сидящий за этим чеком, — нужен для
     // бонусов и реферальной программы. Если приложения у гостя нет,

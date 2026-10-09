@@ -14,6 +14,9 @@ import '../../utils/table_label.dart';
 import '../../utils/money.dart';
 import '../../utils/constants.dart';
 import '../../utils/promo_policy.dart';
+import '../../models/venue_models.dart';
+import '../../utils/remote_sale.dart';
+import 'kolibri_checkout_screen.dart';
 
 /// Живое меню заведения для гостя — как в кассе: сначала плитки категорий
 /// с фото (и «Популярное» лентой), внутри категории — карточки позиций
@@ -53,6 +56,13 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   late final Stream<ClientProfile?> _profile = _link.profileStream(_auth.uid);
 
   double get _cartTotal => _cart.values.fold(0.0, (s, i) => s + i.total);
+
+  /// Гость сейчас за столом — заказ уходит на стол; иначе, если заведение
+  /// возит и отдаёт с собой, — оформление доставки.
+  bool _atTable = false;
+
+  /// Текущее меню по id — для правил продажи навынос в корзине.
+  Map<String, MenuItem> _menuById = const {};
 
   @override
   Widget build(BuildContext context) => StreamBuilder<ClientProfile?>(
@@ -100,6 +110,8 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             }
 
             final items = itemSnap.data!;
+            _atTable = atTable;
+            _menuById = {for (final i in items) i.id: i};
             final regular = items.where((i) => !tobacco(i)).toList();
             // Табак — только гостю за столом: продавать его дистанционно нельзя.
             final tobaccoItems = atTable ? (items.where(tobacco).toList()..sort(_byName)) : <MenuItem>[];
@@ -896,16 +908,51 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
                 child: const Text('В предзаказ'),
               )
             else
-              FilledButton(
-                onPressed: _sending ? null : _sendOrder,
-                child: _sending
-                    ? const SizedBox(
-                        height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Заказать за стол'),
+              ValueListenableBuilder<VenueProfile>(
+                valueListenable: VenueService.instance.notifier,
+                builder: (context, venue, _) => !_atTable && venue.deliveryEnabled && !widget.tableOrderMode
+                    ? FilledButton.icon(
+                        onPressed: _checkout,
+                        icon: const Icon(Icons.delivery_dining_rounded),
+                        label: const Text('Доставка или с собой'),
+                      )
+                    : FilledButton(
+                        onPressed: _sending ? null : _sendOrder,
+                        child: _sending
+                            ? const SizedBox(
+                                height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Text('Заказать за стол'),
+                      ),
               ),
           ],
         ),
       );
+
+  /// Оформление доставки или «заберу сам»: табак, кальяны и алкоголь в
+  /// корзине помечаются — навынос их не продают.
+  Future<void> _checkout() async {
+    final banned = <String>{
+      for (final i in _cart.values)
+        if (_menuById[i.menuItemId] case final m?)
+          if (RemoteSale.banned(m, categoryName: _catNames[m.categoryId] ?? '')) i.menuItemId,
+    };
+    final profile = await _link.profileStream(_auth.uid).first;
+    if (!mounted) return;
+    final done = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => KolibriCheckoutScreen(
+        items: _cart.values.toList(),
+        banned: banned,
+        defaultName: profile?.name ?? '',
+        defaultPhone: profile?.phone ?? '',
+      ),
+    ));
+    if (done == true && mounted) {
+      setState(() {
+        _cart.clear();
+        _cartOrder.clear();
+      });
+    }
+  }
 
   /// Отправка заказа на POS. Заказ не попадает в чек автоматически: блюда
   /// и напитки подтверждает официант, кальян — кальянщик, каждый у себя.

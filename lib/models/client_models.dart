@@ -486,6 +486,10 @@ class GuestOrder {
   /// 'new' | 'preparing' | 'ready' | 'rejected'
   final String status;
   final String rejectReason;
+
+  /// Заказ с собой ('takeaway') или доставка ('delivery') из приложения —
+  /// пусто у заказа за столом.
+  final String orderType;
   final DateTime createdAt;
   final DateTime? handledAt;
   final String handledBy;
@@ -502,6 +506,7 @@ class GuestOrder {
     this.targetPosition = '',
     this.status = 'new',
     this.rejectReason = '',
+    this.orderType = '',
     required this.createdAt,
     this.handledAt,
     this.handledBy = '',
@@ -551,6 +556,7 @@ class GuestOrder {
       targetPosition: asText(data['targetPosition']),
       status: asText(data['status'], 'new'),
       rejectReason: asText(data['rejectReason']),
+      orderType: asText(data['orderType']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       handledAt: handled is Timestamp ? handled.toDate() : null,
       handledBy: asText(data['handledBy']),

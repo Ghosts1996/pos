@@ -4,12 +4,13 @@
 ///
 /// Доставка:  new → accepted → cooking → courier → done («Доставлен»)
 /// С собой:   new → accepted → cooking → ready   → done («Выдан»)
+/// Отменить (cancelled) можно на любом шаге до последнего.
 ///
 /// Те же правила — в saas-gateway/delivery-flow.js (кнопки Telegram).
 class DeliveryFlow {
   DeliveryFlow._();
 
-  static const statuses = ['new', 'accepted', 'cooking', 'courier', 'ready', 'done'];
+  static const statuses = ['new', 'accepted', 'cooking', 'courier', 'ready', 'done', 'cancelled'];
 
   static List<String> path(String orderType) => orderType == 'delivery'
       ? const ['new', 'accepted', 'cooking', 'courier', 'done']
@@ -17,7 +18,16 @@ class DeliveryFlow {
 
   /// Текущий статус; у заказов до появления статусов — «new».
   static String normalize(String orderType, String? status) =>
-      path(orderType).contains(status) ? status! : 'new';
+      status == 'cancelled' || path(orderType).contains(status) ? status! : 'new';
+
+  /// Заказ завершён: выдан, доставлен или отменён.
+  static bool isFinal(String orderType, String? status) {
+    final s = normalize(orderType, status);
+    return s == 'done' || s == 'cancelled';
+  }
+
+  /// Отменить можно всё, что ещё не выдано и не отменено.
+  static bool canCancel(String orderType, String? status) => !isFinal(orderType, status);
 
   static String? next(String orderType, String? status) {
     final p = path(orderType);
@@ -41,6 +51,8 @@ class DeliveryFlow {
         return 'Готов к выдаче';
       case 'done':
         return orderType == 'delivery' ? 'Доставлен' : 'Выдан';
+      case 'cancelled':
+        return 'Отменён';
     }
     return '';
   }

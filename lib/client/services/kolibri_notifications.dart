@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../models/delivery_status.dart';
 import '../../models/reservation_model.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
@@ -10,6 +11,7 @@ import '../../services/reservation_service.dart';
 import '../../services/venue_service.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
+import 'delivery_order_service.dart';
 
 /// Уведомления гостя без сервера — Cloud Functions у проектов нет.
 ///
@@ -30,6 +32,11 @@ class KolibriNotifications {
 
   StreamSubscription? _resSub;
   StreamSubscription? _ordersSub;
+  StreamSubscription? _deliverySub;
+
+  /// Статусы заказов доставки/с собой: null — первый снимок, от него
+  /// отсчитываем изменения.
+  Map<String, String>? _deliveryStatus;
   StreamSubscription? _profileSub;
 
   String _uid = '';
@@ -70,6 +77,7 @@ class KolibriNotifications {
 
     _watchReservations();
     _watchOrders();
+    _watchDeliveries();
     _watchBonuses();
   }
 
@@ -130,7 +138,9 @@ class KolibriNotifications {
     await _resSub?.cancel();
     await _ordersSub?.cancel();
     await _profileSub?.cancel();
-    _resSub = _ordersSub = _profileSub = null;
+    await _deliverySub?.cancel();
+    _resSub = _ordersSub = _profileSub = _deliverySub = null;
+    _deliveryStatus = null;
     _resStatus.clear();
     _orderStatus.clear();
     _lastBonusBalance = null;
@@ -315,6 +325,38 @@ class KolibriNotifications {
         ));
       }
       _persistOrders();
+    }, onError: (_) {});
+  }
+
+  // ---------- ДОСТАВКА И С СОБОЙ ----------
+
+  /// Статус заказа из приложения: принят — сообщает заказ (выше), дальше —
+  /// готовим, курьер в пути, готов к выдаче, доставлен.
+  void _watchDeliveries() {
+    _deliveryStatus = null;
+    _deliverySub = DeliveryOrderService.instance.myOrders(_uid).listen((list) {
+      final known = _deliveryStatus;
+      final now = {for (final o in list) o.id: DeliveryFlow.normalize(o.orderType, o.deliveryStatus)};
+      _deliveryStatus = now;
+      if (known == null || _silenced) return;
+      for (final o in list) {
+        final st = now[o.id]!;
+        if (known[o.id] == st) continue;
+        final delivery = o.orderType == 'delivery';
+        final title = switch (st) {
+          'cooking' => 'Готовим ваш заказ',
+          'courier' => 'Курьер в пути',
+          'ready' => 'Заказ готов — можно забирать',
+          'done' => delivery ? 'Заказ доставлен' : 'Заказ выдан',
+          _ => null,
+        };
+        if (title == null) continue;
+        unawaited(_notify.show(
+          id: NotificationService.idFor('delivery_${o.id}_$st'),
+          title: title,
+          body: '${delivery ? 'Доставка' : 'С собой'} №${orderNumber(o.id)}',
+        ));
+      }
     }, onError: (_) {});
   }
 

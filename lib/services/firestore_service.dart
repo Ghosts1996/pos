@@ -32,6 +32,9 @@ import 'net_status.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 import '../utils/checkout_checks.dart';
+import '../utils/streams.dart';
+import '../models/client_models.dart';
+import 'guest_link_service.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -112,6 +115,9 @@ class FirestoreService {
           'deliveryStatus': to,
           'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
           if (courierName.isNotEmpty) 'courierName': courierName,
+          // Выдан/доставлен — из списка «в работе» уходит (неоплаченный
+          // остаётся видным как открытый чек, пока его не закроют).
+          if (to == 'done') 'deliveryOpen': false,
         };
     void check(Map<String, dynamic>? data) {
       if (data == null) throw StateError('Заказ не найден');
@@ -137,11 +143,93 @@ class FirestoreService {
     await _write(ref.update(patch()));
   }
 
-  Stream<List<SessionModel>> takeawaySessionsStream() => AppScope.col('sessions')
-      .where('tableId', isEqualTo: TableModel.takeawayId)
-      .where('status', isEqualTo: 'active')
-      .snapshots()
-      .map((s) => s.docs.map(SessionModel.fromDoc).toList()..sort((a, b) => a.startTime.compareTo(b.startTime)));
+  /// Заказы с собой и доставка в работе: открытые чеки служебного стола и
+  /// уже оплаченные, но ещё не выданные (чек закрыт при оплате онлайн или
+  /// на стойке, а заказ ещё готовят или везут). Брошенные дольше суток не
+  /// показываем.
+  Stream<List<SessionModel>> takeawaySessionsStream() {
+    final col = AppScope.col('sessions').where('tableId', isEqualTo: TableModel.takeawayId);
+    return combineLatest2(
+      col.where('status', isEqualTo: 'active').snapshots(),
+      col.where('deliveryOpen', isEqualTo: true).snapshots(),
+      (QuerySnapshot<Map<String, dynamic>> active, QuerySnapshot<Map<String, dynamic>> open) {
+        final byId = <String, SessionModel>{};
+        for (final d in [...active.docs, ...open.docs]) {
+          byId[d.id] = SessionModel.fromDoc(d);
+        }
+        final dayAgo = DateTime.now().subtract(const Duration(hours: 24));
+        return byId.values
+            .where((s) => s.status == 'active' || (s.status == 'closed' && s.deliveryOpen && s.startTime.isAfter(dayAgo)))
+            .toList()
+          ..sort((a, b) => a.startTime.compareTo(b.startTime));
+      },
+    );
+  }
+
+  /// Гость оформил заказ в приложении, сотрудник позвонил и подтверждает:
+  /// позиции встают в чек (цены — из меню), статус — «Принят».
+  Future<void> acceptAppOrder(SessionModel session, {required String employeeName, String employeeId = ''}) async {
+    final link = GuestLinkService();
+    final pending = await AppScope.col('guestOrders')
+        .where('sessionId', isEqualTo: session.id)
+        .where('status', isEqualTo: 'new')
+        .get();
+    for (final d in pending.docs) {
+      await link.acceptGuestOrder(GuestOrder.fromDoc(d), employeeName, employeeId: employeeId);
+    }
+    final fresh = (await AppScope.col('sessions').doc(session.id).get()).data();
+    if (DeliveryFlow.normalize(session.orderType, fresh?['deliveryStatus'] as String?) == 'new') {
+      await setDeliveryStatus(session.id, 'accepted');
+    }
+  }
+
+  /// Отмена заказа с собой/доставки: чек уходит из работы, новые позиции
+  /// гостя отклоняются, гость видит причину. Деньги, уже оплаченные онлайн,
+  /// возвращаются в кабинете банка — касса предупреждает об этом.
+  Future<void> cancelDeliveryOrder(String sessionId, {required String reason, required String employeeName}) async {
+    _requireOnline('Отменить заказ');
+    final ref = AppScope.col('sessions').doc(sessionId);
+    final tableRef = AppScope.col('tables').doc(TableModel.takeawayId);
+    final pending = await AppScope.col('guestOrders')
+        .where('sessionId', isEqualTo: sessionId)
+        .where('status', isEqualTo: 'new')
+        .get();
+    final problem = await _db.runTransaction<String?>((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return 'Заказ не найден';
+      final type = (data['orderType'] ?? '').toString();
+      if (!DeliveryFlow.canCancel(type, data['deliveryStatus'] as String?)) {
+        return 'Заказ уже ${DeliveryFlow.label(type, data['deliveryStatus'] as String?).toLowerCase()}';
+      }
+      final table = (await tx.get(tableRef)).data();
+      final now = Timestamp.fromDate(DateTime.now());
+      final wasActive = (data['status'] ?? 'active') == 'active';
+      tx.update(ref, {
+        'deliveryStatus': 'cancelled',
+        'deliveryStatusAt': now,
+        'deliveryOpen': false,
+        'cancelReason': reason,
+        'cancelledBy': employeeName,
+        'cancelledAt': now,
+        if (wasActive) 'status': 'cancelled',
+        if (wasActive) 'closedAt': now,
+      });
+      if (wasActive && table != null) {
+        final ids = ((table['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList()..remove(sessionId);
+        tx.update(tableRef, {'activeSessionIds': ids, 'status': ids.isEmpty ? 'free' : 'occupied'});
+      }
+      for (final d in pending.docs) {
+        tx.update(d.reference, {
+          'status': 'rejected',
+          'rejectReason': reason,
+          'handledAt': now,
+          'handledBy': employeeName,
+        });
+      }
+      return null;
+    });
+    if (problem != null) throw StateError(problem);
+  }
 
   Future<void> addTable(TableModel table) async {
     await AppScope.col('tables').doc(table.id).set(table.toMap());
@@ -448,6 +536,7 @@ class FirestoreService {
     String orderType = '',
     String customerPhone = '',
     String deliveryAddress = '',
+    String customerName = '',
     String? sessionId,
   }) async {
     final tableRef = AppScope.col('tables').doc(table.id);
@@ -479,6 +568,7 @@ class FirestoreService {
         orderType: orderType,
         customerPhone: customerPhone,
         deliveryAddress: deliveryAddress,
+        customerName: customerName,
       );
       set(sessionRef, session.toMap());
 

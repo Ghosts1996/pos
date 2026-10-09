@@ -409,17 +409,19 @@ async function handleDeleteGuest(req, res, body) {
   // Каждую таблицу — отдельно: нет права DELETE (42501, старая схема) —
   // затираем значения, и одна неудача не отменяет вторую.
   const db = getPool();
-  const erase = async (table, cond, params) => {
+  const erase = async (table, cond, params, blank = "name = '', phone = ''") => {
     try {
       await db.query(`DELETE FROM ${table} WHERE ${cond}`, params);
     } catch (e) {
       if (!e || e.code !== "42501") throw e;
-      await db.query(`UPDATE ${table} SET name = '', phone = '', updated_at = now() WHERE ${cond}`, params);
+      await db.query(`UPDATE ${table} SET ${blank}, updated_at = now() WHERE ${cond}`, params);
     }
   };
   try {
     await erase("guest_profiles", "tenant_id = $1 AND uid = $2", [storeKey, uid]);
-    await erase("contact_records", where, args);
+    // Заказы доставки из приложения записаны токеном гостя (created_by) —
+    // вместе с ними уходит и адрес.
+    await erase("contact_records", where, args, "name = '', phone = '', address = ''");
   } catch (e) {
     console.error(`guest_delete ${tenantId}/${uid}: ${e?.code || ""} ${e?.message || e}`);
     return sendJson(res, 500, { error: `не удалось удалить данные в первичной базе (${e?.code || "нет связи с базой"})` });

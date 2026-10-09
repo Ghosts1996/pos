@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../models/delivery_status.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
 import '../screens/employee/table_detail_screen.dart';
@@ -9,7 +8,7 @@ import '../services/firestore_service.dart';
 import '../services/pii_gateway_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
-import '../utils/money.dart';
+import 'delivery_order_card.dart';
 
 /// Кнопка «С собой и доставка» в шапке зала — со счётчиком открытых заказов.
 class TakeawayButton extends StatelessWidget {
@@ -83,6 +82,7 @@ class TakeawaySheet extends StatelessWidget {
         guestTag: data.name,
         tableName: '${delivery ? 'Доставка' : 'С собой'} · $who',
         orderType: delivery ? 'delivery' : 'takeaway',
+        customerName: data.name,
         customerPhone: data.phone,
         deliveryAddress: data.address,
         sessionId: sessionId,
@@ -151,25 +151,12 @@ class TakeawaySheet extends StatelessWidget {
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, i) {
                       final s = list[i];
-                      final delivery = s.orderType == 'delivery';
-                      final mins = DateTime.now().difference(s.startTime).inMinutes;
-                      final sub = [
-                        DeliveryFlow.label(s.orderType, s.deliveryStatus),
-                        if (s.customerPhone.isNotEmpty) s.customerPhone,
-                        if (s.deliveryAddress.isNotEmpty) s.deliveryAddress,
-                        '$mins мин',
-                      ].join(' · ');
-                      return Card(
-                        margin: EdgeInsets.zero,
-                        child: ListTile(
-                          leading: Icon(delivery ? Icons.delivery_dining_rounded : Icons.shopping_bag_outlined,
-                              color: AppColors.primary),
-                          title: Text(s.tableName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: Text(sub, maxLines: 2, overflow: TextOverflow.ellipsis),
-                          trailing: Text(rub(s.totalWithDiscount),
-                              style: const TextStyle(fontWeight: FontWeight.w700)),
-                          onTap: () => _open(context, s.id),
-                        ),
+                      // Открытый чек — в экран заказа (меню, оплата); уже
+                      // оплаченный и ждущий выдачи — статусы прямо здесь.
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: s.status == 'active' ? () => _open(context, s.id) : null,
+                        child: DeliveryOrderCard(session: s, employee: employee, compact: true),
                       );
                     },
                   );

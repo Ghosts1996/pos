@@ -116,6 +116,36 @@ describe("Изоляция арендаторов — сотрудники", () 
   });
 });
 
+describe("Заказы доставки из приложения", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/clients/guestA2"), { name: "Другой гость" });
+      await setDoc(doc(db, "tenants/tenantA/sessions/appOrder"), {
+        status: "active", tableId: "takeaway", source: "app", clientUid: "guestA", orderType: "delivery",
+      });
+      await setDoc(doc(db, "tenants/tenantA/sessions/cashierOrder"), {
+        status: "active", tableId: "takeaway", clientUid: "guestA", orderType: "delivery",
+      });
+    });
+  });
+
+  it("гость видит свой заказ из приложения и находит его запросом", async () => {
+    const db = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantA/sessions/appOrder")));
+    await assertSucceeds(getDocs(query(collection(db, "tenants/tenantA/sessions"),
+      where("clientUid", "==", "guestA"), where("source", "==", "app"))));
+  });
+
+  it("чужой заказ, заказ кассы и правка — нельзя", async () => {
+    await assertFails(getDoc(doc(ctxFor("guestA2"), "tenants/tenantA/sessions/appOrder")));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/sessions/cashierOrder")));
+    await assertFails(updateDoc(doc(ctxFor("guestA"), "tenants/tenantA/sessions/appOrder"), { deliveryStatus: "done" }));
+    await assertFails(getDoc(doc(ctxFor("guestB"), "tenants/tenantA/sessions/appOrder")));
+  });
+});
+
 describe("Изоляция арендаторов — гости", () => {
   beforeEach(seedTwoTenants);
 

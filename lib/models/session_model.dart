@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/promo_policy.dart';
 import '../utils/parse.dart';
 import '../utils/sale_kind.dart';
+import 'delivery_status.dart';
 
 class OrderItem {
   // Id позиции меню, из которой добавлена эта строка заказа.
@@ -332,7 +333,7 @@ class SessionModel {
   final String? discountCardId;
   final double discountPercent;
   final List<OrderItem> orderItems;
-  final String status; // 'active' | 'closed'
+  final String status; // 'active' | 'closed' | 'cancelled'
   final DateTime? closedAt;
 
   // ---- Оплата (заполняется на экране оплаты при закрытии чека) ----
@@ -353,7 +354,34 @@ class SessionModel {
   final String deliveryStatus;
   final String courierName;
 
+  /// Имя гостя для звонка (заказ из приложения или записанный кассиром).
+  final String customerName;
+
+  /// Пожелания гостя: подъезд, «позвоните за 10 минут», без лука.
+  final String deliveryComment;
+
+  /// 'app' — заказ оформил гость в приложении; пусто — касса.
+  final String source;
+
+  /// Гость приложения, оформивший заказ (видит его статус и платит онлайн).
+  final String clientUid;
+
+  /// Как гость собирается платить: 'online' — онлайн после подтверждения,
+  /// 'on_receipt' — при получении. Пусто — касса не спрашивала.
+  final String payMethod;
+
+  /// Почему заказ отменили — видно гостю.
+  final String cancelReason;
+
+  /// Заказ ещё в работе (не выдан, не доставлен и не отменён) — даже если
+  /// чек уже закрыт: оплаченный заранее заказ остаётся в «С собой и
+  /// доставка», пока его не вручат.
+  final bool deliveryOpen;
+
   bool get isTakeaway => orderType == 'takeaway' || orderType == 'delivery';
+
+  /// Заказ оформил гость в приложении.
+  bool get fromApp => source == 'app';
   final String guestContact; // телефон/email гостя, необязательно
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   final bool receiptPrinted;
@@ -400,6 +428,13 @@ class SessionModel {
     this.deliveryAddress = '',
     this.deliveryStatus = '',
     this.courierName = '',
+    this.customerName = '',
+    this.deliveryComment = '',
+    this.source = '',
+    this.clientUid = '',
+    this.payMethod = '',
+    this.cancelReason = '',
+    this.deliveryOpen = false,
     this.guestContact = '',
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
@@ -446,6 +481,13 @@ class SessionModel {
       deliveryAddress: asText(data['deliveryAddress']),
       deliveryStatus: asText(data['deliveryStatus']),
       courierName: asText(data['courierName']),
+      customerName: asText(data['customerName']),
+      deliveryComment: asText(data['deliveryComment']),
+      source: asText(data['source']),
+      clientUid: asText(data['clientUid']),
+      payMethod: asText(data['payMethod']),
+      cancelReason: asText(data['cancelReason']),
+      deliveryOpen: data['deliveryOpen'] == true,
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
@@ -470,6 +512,13 @@ class SessionModel {
       if (deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
       if (orderType.isNotEmpty) 'deliveryStatus': deliveryStatus.isEmpty ? 'new' : deliveryStatus,
       if (courierName.isNotEmpty) 'courierName': courierName,
+      if (customerName.isNotEmpty) 'customerName': customerName,
+      if (deliveryComment.isNotEmpty) 'deliveryComment': deliveryComment,
+      if (source.isNotEmpty) 'source': source,
+      if (clientUid.isNotEmpty) 'clientUid': clientUid,
+      if (payMethod.isNotEmpty) 'payMethod': payMethod,
+      // Новый заказ с собой/доставка — в работе, пока его не вручат.
+      if (orderType.isNotEmpty) 'deliveryOpen': deliveryOpen || !DeliveryFlow.isFinal(orderType, deliveryStatus),
       'startTime': Timestamp.fromDate(startTime),
       'plannedEnd': Timestamp.fromDate(plannedEnd),
       'refillCount': refillCount,
