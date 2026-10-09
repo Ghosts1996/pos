@@ -3099,6 +3099,8 @@ function watchDashboardData(tenantId) {
   let liveOpenSessions = null;
   let liveOnShift = null;
   let todayRevenue = null;
+  // Точки сети: выручка и чеки за сегодня — для сравнения на «Обзоре».
+  const chainToday = {};
   let todayChecksCount = null;
   // Кассовые смены, закрытые за последние 7 дней, — для недостачи
   // наличных в «Требует внимания» (пересчёт при закрытии в кассе).
@@ -3280,12 +3282,23 @@ function watchDashboardData(tenantId) {
           <div class="muted small">Сеть заведений</div>
           <div style="font-size:16px;font-weight:700;margin:4px 0">${esc(chainName)}</div>
           <div class="small muted" style="margin-bottom:8px">Общий биллинг и лояльность на все точки сети.</div>
-          ${locations.map((t) => `
-            <div class="row" style="justify-content:space-between;padding:5px 0">
-              <div class="grow">${esc(t.name || t.id)}${t.id === tenantId ? ' <span class="muted small">(эта)</span>' : ''}</div>
-              ${t.id !== tenantId ? `<button class="btn-link f-chain-location-switch" data-id="${esc(t.id)}" style="width:auto">Открыть</button>` : ''}
-            </div>
-          `).join('')}
+          ${(() => {
+            const max = Math.max(1, ...locations.map((t) => (chainToday[t.id] || {}).revenue || 0));
+            return locations.map((t) => {
+              const st = chainToday[t.id];
+              const rev = st ? st.revenue : null;
+              const avg = st && st.checks ? Math.round(st.revenue / st.checks) : 0;
+              return `
+            <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+              <div class="row" style="justify-content:space-between">
+                <div class="grow">${esc(t.name || t.id)}${t.id === tenantId ? ' <span class="muted small">(эта)</span>' : ''}</div>
+                ${t.id !== tenantId ? `<button class="btn-link f-chain-location-switch" data-id="${esc(t.id)}" style="width:auto">Открыть</button>` : ''}
+              </div>
+              <div class="small muted">Сегодня: ${rev === null ? '—' : `${Number(rev).toLocaleString('ru-RU')} ₽ · чеков ${st.checks}${avg ? ` · средний ${avg.toLocaleString('ru-RU')} ₽` : ''}`}</div>
+              ${rev ? `<div style="height:4px;border-radius:2px;background:var(--primary);opacity:.75;margin-top:4px;width:${Math.round((rev / max) * 100)}%"></div>` : ''}
+            </div>`;
+            }).join('');
+          })()}
           <button class="btn btn-ghost" id="f-add-chain-location" style="margin-top:8px">+ Добавить точку сети</button>
         </div>
       `;
@@ -4957,6 +4970,33 @@ function watchDashboardData(tenantId) {
       },
       () => { todayChecksCount = 0; todayRevenue = 0; draw(); },
     ));
+    // Остальные точки сети — те же цифры, чтобы сравнить точки между собой.
+    const me = state.tenants.find((t) => t.id === tenantId);
+    if (me && me.chainId) {
+      state.tenants.filter((t) => t.chainId === me.chainId).forEach((t) => {
+        sub(onSnapshot(
+          query(
+            collection(state.db, 'tenants', t.id, 'sessions'),
+            where('status', '==', 'closed'),
+            where('closedAt', '>=', Timestamp.fromDate(startOfToday)),
+          ),
+          (snap) => {
+            let revenue = 0;
+            let checks = 0;
+            snap.docs.forEach((d) => {
+              const s = d.data();
+              if (s.refunded === true) return;
+              checks++;
+              revenue += (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
+                (Number(s.paymentTerminal) || 0) + (Number(s.paymentComp) || 0);
+            });
+            chainToday[t.id] = { revenue, checks };
+            draw();
+          },
+          () => {},
+        ));
+      });
+    }
   }
 }
 
