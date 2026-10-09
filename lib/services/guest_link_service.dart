@@ -804,6 +804,7 @@ class GuestLinkService {
             name: incoming.name,
             price: incoming.price,
             qty: incoming.qty,
+            mods: incoming.mods,
             noPromo: incoming.noPromo,
             kind: incoming.kind,
             by: employeeId.isEmpty ? const {} : {employeeId: incoming.qty},
@@ -843,7 +844,7 @@ class GuestLinkService {
       token: token,
       clientUid: order.clientUid,
       title: 'Заказ готов',
-      body: order.items.map((i) => i.name).join(', '),
+      body: order.items.map((i) => i.displayName).join(', '),
     );
   }
 

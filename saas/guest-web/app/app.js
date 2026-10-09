@@ -714,18 +714,19 @@ function screenMenu() {
     const isHit = (i) => Number(i.popularRank) > 0 && Number(i.popularRank) <= 5;
     const qtyControls = (i) => `
               <div class="qty">
-                ${state.cart[i.id] ? `
+                ${cartQty(i.id) ? `
                   <button data-minus="${esc(i.id)}">−</button>
-                  <span>${state.cart[i.id]}</span>` : ''}
+                  <span>${cartQty(i.id)}</span>` : ''}
                 <button data-plus="${esc(i.id)}">+</button>
               </div>`;
     const itemCard = (i) => `
-      <div class="mcard${state.cart[i.id] ? ' on' : ''}">
+      <div class="mcard${cartQty(i.id) ? ' on' : ''}">
         <div class="mphoto">${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
           ${isHit(i) ? '<span class="hit">Хит</span>' : ''}</div>
         <div class="mbody">
           <div class="mname">${esc(i.name)}</div>
           ${i.description ? `<div class="small muted mdesc">${esc(i.description)}</div>` : ''}
+          ${hasMods(i) ? '<div class="small muted">Можно выбрать добавки</div>' : ''}
           <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable ? qtyControls(i) : ''}</div>
         </div>
       </div>`;
@@ -814,7 +815,7 @@ function screenMenu() {
       el.onclick = () => { activeCat = null; draw(); };
     });
     box.querySelectorAll('[data-plus]').forEach((el) => {
-      el.onclick = () => { addToCart(el.dataset.plus, items); draw(); };
+      el.onclick = () => addToCart(el.dataset.plus, items, draw);
     });
     box.querySelectorAll('[data-minus]').forEach((el) => {
       el.onclick = () => { removeFromCart(el.dataset.minus); draw(); };
@@ -842,7 +843,11 @@ function cartBlock(items = []) {
   // Итог видно из любой категории: гость ходит по плиткам и не должен
   // вспоминать, что уже выбрал.
   const count = ids.reduce((n, id) => n + state.cart[id], 0);
-  const total = ids.reduce((sum, id) => sum + (Number(items.find((i) => i.id === id)?.price) || 0) * state.cart[id], 0);
+  const total = ids.reduce((sum, key) => {
+    const { id, mods } = parseLine(key);
+    const it = items.find((i) => i.id === id);
+    return sum + (it ? priceWith(it, mods) : 0) * state.cart[key];
+  }, 0);
   return `
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">Ваш заказ: ${count} ${plural(count, 'позиция', 'позиции', 'позиций')} · ${money(total)}</div>
@@ -853,15 +858,109 @@ function cartBlock(items = []) {
     </div>`;
 }
 
-function addToCart(id, items) {
+// Строка корзины: id позиции и выбранные модификаторы — как lineId в кассе.
+const lineKey = (id, mods) => (mods.length ? `${id}|${mods.join('|')}` : id);
+function parseLine(key) {
+  const [id, ...mods] = String(key).split('|');
+  return { id, mods };
+}
+const modGroups = (i) => (Array.isArray(i.modifierGroups) ? i.modifierGroups : [])
+  .filter((g) => g && Array.isArray(g.options) && g.options.length);
+const hasMods = (i) => modGroups(i).length > 0;
+function priceWith(item, mods) {
+  const set = new Set(mods);
+  let p = Number(item.price) || 0;
+  modGroups(item).forEach((g) => g.options.forEach((o) => { if (set.has(o.name)) p += Number(o.price) || 0; }));
+  return p;
+}
+function cartQty(id) {
+  return Object.keys(state.cart).reduce((n, k) => n + (parseLine(k).id === id ? state.cart[k] : 0), 0);
+}
+
+function addToCart(id, items, redraw) {
   const item = items.find((i) => i.id === id);
   if (!item) return;
-  state.cart[id] = (state.cart[id] || 0) + 1;
+  if (!hasMods(item)) {
+    state.cart[id] = (state.cart[id] || 0) + 1;
+    state.cartOrder = [...(state.cartOrder || []).filter((k) => k !== id), id];
+    return redraw();
+  }
+  pickModifiers(item, (mods) => {
+    const key = lineKey(id, mods);
+    state.cart[key] = (state.cart[key] || 0) + 1;
+    state.cartOrder = [...(state.cartOrder || []).filter((k) => k !== key), key];
+    redraw();
+  });
 }
+/// «−» у позиции убирает последнюю добавленную её строку.
 function removeFromCart(id) {
-  if (!state.cart[id]) return;
-  state.cart[id] -= 1;
-  if (state.cart[id] <= 0) delete state.cart[id];
+  const keys = (state.cartOrder || []).filter((k) => parseLine(k).id === id && state.cart[k]);
+  const key = keys.length ? keys[keys.length - 1] : (state.cart[id] ? id : null);
+  if (!key) return;
+  state.cart[key] -= 1;
+  if (state.cart[key] <= 0) {
+    delete state.cart[key];
+    state.cartOrder = (state.cartOrder || []).filter((k) => k !== key);
+  }
+}
+
+/// Выбор модификаторов: группы с ограничениями «от … до …», как в кассе.
+function pickModifiers(item, done) {
+  const groups = modGroups(item);
+  const chosen = groups.map(() => new Set());
+  const wrap = document.createElement('div');
+  wrap.className = 'modsheet';
+  const check = () => {
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      const n = chosen[gi].size;
+      const min = Number(g.min) || 0;
+      const max = g.max == null ? 1 : Number(g.max);
+      if (n < min) return min === 1 ? `Выберите: ${g.name}` : `${g.name}: выберите не меньше ${min}`;
+      if (max > 0 && n > max) return `${g.name}: не больше ${max}`;
+    }
+    return '';
+  };
+  const paint = () => {
+    const mods = groups.flatMap((g, gi) => g.options.filter((o) => chosen[gi].has(o.name)).map((o) => o.name));
+    const problem = check();
+    wrap.innerHTML = `
+      <div class="modsheet-body" role="dialog" aria-label="${esc(item.name)}">
+        <div style="font-size:20px;font-weight:700;margin-bottom:4px">${esc(item.name)}</div>
+        ${groups.map((g, gi) => {
+          const max = g.max == null ? 1 : Number(g.max);
+          const hint = (Number(g.min) || 0) > 0 ? 'обязательно' : max === 1 ? 'по желанию, одно' : 'по желанию';
+          return `<div class="small muted" style="margin:14px 0 8px">${esc(g.name)} · ${hint}</div>
+            <div class="chips">${g.options.map((o) => `<button class="chip${chosen[gi].has(o.name) ? ' on' : ''}"
+              data-g="${gi}" data-o="${esc(o.name)}">${esc(o.name)}${Number(o.price) ? ` +${money(o.price)}` : ''}</button>`).join('')}</div>`;
+        }).join('')}
+        <button class="btn-primary" id="modsOk" style="margin-top:18px" ${problem ? 'disabled' : ''}>
+          ${problem ? esc(problem) : `Добавить · ${money(priceWith(item, mods))}`}</button>
+        <button class="btn-ghost" id="modsCancel" style="margin-top:10px">Отмена</button>
+      </div>`;
+    wrap.querySelectorAll('[data-g]').forEach((el) => {
+      el.onclick = () => {
+        const gi = Number(el.dataset.g);
+        const set = chosen[gi];
+        const max = groups[gi].max == null ? 1 : Number(groups[gi].max);
+        if (set.has(el.dataset.o)) set.delete(el.dataset.o);
+        else {
+          if (max === 1) set.clear();
+          set.add(el.dataset.o);
+        }
+        paint();
+      };
+    });
+    wrap.querySelector('#modsOk').onclick = () => {
+      if (check()) return;
+      wrap.remove();
+      done(groups.flatMap((g, gi) => g.options.filter((o) => chosen[gi].has(o.name)).map((o) => o.name)));
+    };
+    wrap.querySelector('#modsCancel').onclick = () => wrap.remove();
+  };
+  wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
+  paint();
+  document.body.appendChild(wrap);
 }
 
 /// Кому уходит часть заказа (как AppConstants.guestOrderTarget в
@@ -886,9 +985,10 @@ function orderSentText(targets) {
 async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.name || '')) {
   const p = state.profile;
   if (!p || !p.activeSessionId) return toast('Сначала откройте свой стол');
-  const chosen = Object.entries(state.cart).map(([id, qty]) => {
+  const chosen = Object.entries(state.cart).map(([key, qty]) => {
+    const { id, mods } = parseLine(key);
     const it = items.find((i) => i.id === id);
-    return it ? { item: { menuItemId: it.id, name: it.name, price: Number(it.price) || 0, qty },
+    return it ? { item: { menuItemId: it.id, name: it.name, price: priceWith(it, mods), qty, ...(mods.length ? { mods } : {}) },
       target: orderTarget(isTobacco(it)) } : null;
   }).filter(Boolean);
   if (!chosen.length) return;

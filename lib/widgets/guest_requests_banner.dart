@@ -241,7 +241,7 @@ class GuestRequestsBanner extends StatelessWidget {
                 ),
                 Text(
                   '${o.tableName.isEmpty ? 'Стол' : o.tableName} · '
-                  '${o.items.map((i) => '${i.name}×${i.qty}').join(', ')} · '
+                  '${o.items.map((i) => '${i.displayName}×${i.qty}').join(', ')} · '
                   '${rub(o.total)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
