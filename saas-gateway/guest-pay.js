@@ -1,4 +1,5 @@
 "use strict";
+const { requisitesProblem } = require("./requisites");
 /**
  * Онлайн-оплата гостем — счёт за столом и заказ доставки/с собой — через
  * банк заведения: Т-Банк (QR СБП), Робокасса, Сбербанк и Альфа-Банк
@@ -132,9 +133,11 @@ function amountDue({ bill, tips, paid }) {
  */
 function sellerReady(v) {
   v = v || {};
+  // Не просто длина: контрольные цифры и тип (организация/ИП) — см. requisites.js.
   return String(v.sellerName || "").trim().length >= 3 &&
     /^(\d{10}|\d{12})$/.test(String(v.sellerInn || "")) &&
     /^(\d{13}|\d{15})$/.test(String(v.sellerOgrn || "")) &&
+    requisitesProblem(v.sellerInn, v.sellerOgrn) === null &&
     String(v.sellerAddress || "").trim().length >= 5;
 }
 

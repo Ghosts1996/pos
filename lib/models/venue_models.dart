@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/venue_terms.dart';
 import '../utils/parse.dart';
+import '../utils/ru_requisites.dart';
 import '../build_info.dart';
 import 'online_pay.dart';
 
@@ -94,6 +95,7 @@ class VenueProfile {
       sellerName.trim().length >= 3 &&
       RegExp(r'^(\d{10}|\d{12})$').hasMatch(sellerInn) &&
       RegExp(r'^(\d{13}|\d{15})$').hasMatch(sellerOgrn) &&
+      requisitesValid(sellerInn, sellerOgrn) &&
       sellerAddress.trim().length >= 5;
 
   /// Одной строкой — под оформлением заказа и оплатой.
