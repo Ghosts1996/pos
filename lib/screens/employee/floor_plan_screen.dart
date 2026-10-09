@@ -42,6 +42,8 @@ class FloorPlanScreen extends StatefulWidget {
 
 class _FloorPlanScreenState extends State<FloorPlanScreen> {
   static const _viewKey = 'hall_view_mode_v1';
+  static const _listKey = 'hall_plan_list_open_v1';
+  bool _listOpen = true;
   final _fs = FirestoreService();
 
   // Стримы создаются один раз: StreamBuilder сравнивает стримы по ссылке, и
@@ -88,7 +90,22 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final v = prefs.getString(_viewKey);
-      if (v != null && mounted) setState(() => _planMode = v == 'plan');
+      final list = prefs.getBool(_listKey);
+      if (mounted) {
+        setState(() {
+          if (v != null) _planMode = v == 'plan';
+          if (list != null) _listOpen = list;
+        });
+      }
+    } catch (_) {}
+  }
+
+  /// Список столов под картой можно спрятать — карта займёт весь экран.
+  Future<void> _setListOpen(bool open) async {
+    setState(() => _listOpen = open);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_listKey, open);
     } catch (_) {}
   }
 
@@ -288,10 +305,29 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         ),
         // «Схема»: карта зала сверху, под ней список тех же столов — и
         // видно расстановку, и до стола дотянуться одним касанием.
-        if (plan) ...[
-          Expanded(flex: 3, child: _plan(inZone, zone ?? '', states, callTables, reservations)),
-          Expanded(flex: 2, child: _grid(inZone, states, callTables, reservations, showZone: false)),
-        ] else
+        // Список можно свернуть: карта плавно растягивается до низа, а
+        // кнопка «Показать список» остаётся под ней.
+        if (plan)
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final listHeight = _listOpen ? box.maxHeight * 0.4 : 0.0;
+                return Column(
+                  children: [
+                    Expanded(child: _plan(inZone, zone ?? '', states, callTables, reservations)),
+                    _listToggle(inZone.length),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                      height: listHeight,
+                      child: ClipRect(child: _grid(inZone, states, callTables, reservations, showZone: false)),
+                    ),
+                  ],
+                );
+              },
+            ),
+          )
+        else
           Expanded(child: _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
       ],
     );
@@ -341,6 +377,42 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
       );
+
+  /// Кнопка под картой: свернуть или развернуть список столов.
+  Widget _listToggle(int count) {
+    final open = _listOpen;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Center(
+        child: Material(
+          color: AppColors.surface,
+          shape: const StadiumBorder(side: BorderSide(color: AppColors.border)),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: () => _setListOpen(!open),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 7, 18, 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedRotation(
+                    turns: open ? 0 : 0.5,
+                    duration: const Duration(milliseconds: 280),
+                    child: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    open ? 'Скрыть список' : 'Показать список · $count',
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.textMuted),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   /// Схема в рамке: скруглённая «площадка» зала.
   Widget _mapFrame(Widget map) => DecoratedBox(
