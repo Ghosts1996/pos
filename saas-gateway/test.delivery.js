@@ -10,6 +10,8 @@ let n = 0;
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
+const SELLER = { sellerName: "ООО «Лето»", sellerInn: "7701234567", sellerOgrn: "1027700000000", sellerAddress: "Москва, ул. Летняя, 1" };
+
 function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false } = {}) {
   const { db, store } = fakeDb();
   const recorded = [];
@@ -27,7 +29,7 @@ function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false } = {}) 
   });
   store.set("tenants/t1", { status: "active", timezone: "Europe/Moscow" });
   store.set("tenants/t1/clients/g1", { name: "Аня" });
-  store.set("tenants/t1/meta/venueProfile", { deliveryEnabled: true, workingHours: { 1: "14:00-06:00", 2: "14:00-06:00", 3: "14:00-06:00", 4: "14:00-06:00", 5: "14:00-06:00", 6: "12:00-06:00", 7: "12:00-02:00" } });
+  store.set("tenants/t1/meta/venueProfile", { deliveryEnabled: true, ...SELLER, workingHours: { 1: "14:00-06:00", 2: "14:00-06:00", 3: "14:00-06:00", 4: "14:00-06:00", 5: "14:00-06:00", 6: "12:00-06:00", 7: "12:00-02:00" } });
   store.set("tenants/t1/menuCategories/food", { name: "Горячее" });
   store.set("tenants/t1/menuCategories/bar", { name: "Пиво и сидр" });
   store.set("tenants/t1/menuCategories/hookah", { name: "Кальяны" });
@@ -126,8 +128,10 @@ test("табак и пиво из корзины не проходят; толь
 
 test("проверки: доставка выключена, ночь вне часов, нет адреса, плохой телефон, нет добавки, снято с продажи", async () => {
   let { api, store } = setup();
-  store.set("tenants/t1/meta/venueProfile", { deliveryEnabled: false });
+  store.set("tenants/t1/meta/venueProfile", { deliveryEnabled: false, ...SELLER });
   await assert.rejects(call(api.handleCreate, order()), (e) => e.status === 409);
+  store.set("tenants/t1/meta/venueProfile", { deliveryEnabled: true });
+  await assert.rejects(call(api.handleCreate, order()), (e) => e.status === 409 && /реквизиты продавца/.test(e.message), "без реквизитов продавца заказа нет");
   ({ api } = setup({ now: new Date("2026-10-09T04:30:00Z") })); // пятница 07:30 по Москве
   await assert.rejects(call(api.handleCreate, order()), (e) => e.status === 409 && /закрыто/.test(e.message));
   ({ api } = setup());

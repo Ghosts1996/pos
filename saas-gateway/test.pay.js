@@ -133,6 +133,54 @@ test("Result URL Робокассы: верная подпись — оплач�
     (e) => e.status === 403);
 });
 
+test("кнопка оплаты — только когда банк подтвердил реквизиты и указан продавец", async () => {
+  const { pay, store } = makePay((url) => ({
+    status: 200,
+    text: JSON.stringify(/register\.do/.test(url) ? { orderId: "o-1", formUrl: "https://pay.example/o-1" } : { errorCode: "6", errorMessage: "Заказ не найден" }),
+  }));
+  const creds = { onlinePayProvider: "sber", onlinePayLogin: "shop-api", onlinePayPassword: "pw" };
+  store.set("tenants/t1", { status: "active" });
+  store.set("tenants/t1/settings/integrations", creds);
+  store.set("tenants/t1/meta/venueProfile", { guestSbpPay: true, onlinePay: "sber" });
+  store.set("tenants/t1/sessionClaims/s1", { uid: "guest1" });
+  store.set("tenants/t1/sessions/s1", { status: "active", orderItems: [{ name: "Чай", price: 300, qty: 2 }] });
+  const start = () => pay.handleStart({ body: { tenantId: "t1", sessionId: "s1" } }, {});
+  // Реквизиты сохранили, но не проверили — гость не платит, даже если кто-то поставил onlinePay.
+  await assert.rejects(start(), (e) => e.status === 409 && /не проверило/.test(e.message));
+  // Проверка: банк принял — шлюз сам публикует банк и отпечаток реквизитов.
+  const res = {};
+  await pay.handleCheck({ body: { tenantId: "t1" } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.sellerReady, false);
+  assert.equal(store.get("tenants/t1/meta/venueProfile").onlinePay, "sber");
+  assert.ok(store.get("tenants/t1/settings/integrations").onlinePayVerified);
+  // Нет реквизитов продавца — оплаты нет.
+  await assert.rejects(start(), (e) => e.status === 409 && /реквизиты продавца/.test(e.message));
+  store.set("tenants/t1/meta/venueProfile", { ...store.get("tenants/t1/meta/venueProfile"),
+    sellerName: "ООО «Лето»", sellerInn: "7701234567", sellerOgrn: "1027700000000", sellerAddress: "Москва, ул. Летняя, 1" });
+  const ok = {};
+  await pay.handleStart({ body: { tenantId: "t1", sessionId: "s1" } }, ok);
+  assert.equal(ok.body.url, "https://pay.example/o-1");
+  // Поменяли пароль — до новой проверки оплаты нет.
+  store.set("tenants/t1/settings/integrations", { ...store.get("tenants/t1/settings/integrations"), onlinePayPassword: "new" });
+  await assert.rejects(start(), (e) => e.status === 409 && /не проверило/.test(e.message));
+  // Банк отклонил — кнопка у гостей пропадает.
+  const { pay: pay2, store: store2 } = makePay(() => ({ status: 200, text: JSON.stringify({ errorCode: "5", errorMessage: "Access denied" }) }));
+  store2.set("tenants/t1/settings/integrations", creds);
+  store2.set("tenants/t1/meta/venueProfile", { guestSbpPay: true, onlinePay: "sber" });
+  await pay2.handleCheck({ body: { tenantId: "t1" } }, {});
+  assert.equal(store2.get("tenants/t1/meta/venueProfile").onlinePay, "");
+});
+
+test("реквизиты продавца: ИНН 10/12 цифр, ОГРН 13/15, имя и адрес", () => {
+  const v = { sellerName: "ИП Иванов И. И.", sellerInn: "770123456789", sellerOgrn: "304770000000012", sellerAddress: "Москва, ул. 1" };
+  assert.equal(gp.sellerReady(v), true);
+  assert.equal(gp.sellerReady({ ...v, sellerInn: "12345" }), false);
+  assert.equal(gp.sellerReady({ ...v, sellerOgrn: "123" }), false);
+  assert.equal(gp.sellerReady({ ...v, sellerName: "" }), false);
+  assert.equal(gp.sellerReady(null), false);
+});
+
 test("проверка реквизитов без денег: верные/неверные", async () => {
   let reply = { status: 200, text: JSON.stringify({ errorCode: "6", errorMessage: "Заказ не найден" }) };
   let { pay } = makePay(() => reply);

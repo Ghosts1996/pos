@@ -910,7 +910,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
             else
               ValueListenableBuilder<VenueProfile>(
                 valueListenable: VenueService.instance.notifier,
-                builder: (context, venue, _) => !_atTable && venue.deliveryEnabled && !widget.tableOrderMode
+                builder: (context, venue, _) => !_atTable && venue.deliveryEnabled && venue.sellerReady && !widget.tableOrderMode
                     ? FilledButton.icon(
                         onPressed: _checkout,
                         icon: const Icon(Icons.delivery_dining_rounded),

@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/online_pay.dart';
 import '../../services/gateway_api.dart';
+import '../../services/venue_service.dart';
 import '../../utils/money.dart';
 import '../theme/kolibri_theme.dart';
 
@@ -168,6 +169,13 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
                   style: TextStyle(color: KolibriColors.gold)),
             ),
           body,
+          // У кого гость покупает — до оплаты (закон «О защите прав потребителей»).
+          if (VenueService.instance.cached.sellerLine.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(VenueService.instance.cached.sellerLine,
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 11, height: 1.35)),
+            ),
         ],
       ),
     );

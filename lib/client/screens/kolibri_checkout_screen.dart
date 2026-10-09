@@ -307,6 +307,11 @@ class _KolibriCheckoutScreenState extends State<KolibriCheckoutScreen> {
                 ),
               ),
               const SizedBox(height: 10),
+              if (venue.sellerLine.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(venue.sellerLine, style: muted.copyWith(fontSize: 12), textAlign: TextAlign.center),
+                ),
               Text(
                 'Имя, телефон и адрес нужны заведению, чтобы подтвердить и передать заказ, '
                 'и хранятся на сервере в России. Через 30 дней после выполнения заказа они обезличиваются.',

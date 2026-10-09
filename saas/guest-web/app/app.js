@@ -1431,6 +1431,7 @@ function paintSbp(s, boxId = 'sbpPanel', takeaway = false) {
         Чаевые, добавленные к счёту, войдут в сумму.`}</p>
       <button class="btn-primary" id="sbpPay">${sbpOnly ? 'Оплатить по СБП' : 'Оплатить онлайн'}</button>`;
   }
+  box.insertAdjacentHTML('beforeend', sellerHtml());
   const btn = $('sbpPay');
   if (btn) btn.onclick = () => startSbp(s, btn, boxId, takeaway);
 }
@@ -1498,9 +1499,29 @@ const SBP_ONLY = ['tinkoff'];
 /// Банки, которые сейчас поддерживает шлюз (guest-pay.js, PROVIDERS).
 const PAY_PROVIDERS = ['tinkoff', 'robokassa', 'sber', 'alfa'];
 
-const deliveryOn = () => (state.venue || {}).deliveryEnabled === true;
-/// Владелец включил оплату из приложения и подключил банк в «Интеграциях».
-const onlinePayReady = () => (state.venue || {}).guestSbpPay === true && PAY_PROVIDERS.includes((state.venue || {}).onlinePay);
+/// Реквизиты продавца — гость видит их до заказа и оплаты (закон «О защите
+/// прав потребителей»). Без них заказ и оплата из приложения недоступны.
+/// Как sellerReady в lib/models/venue_models.dart и guest-pay.js.
+function sellerReady() {
+  const v = state.venue || {};
+  return String(v.sellerName || '').trim().length >= 3
+    && /^(\d{10}|\d{12})$/.test(String(v.sellerInn || ''))
+    && /^(\d{13}|\d{15})$/.test(String(v.sellerOgrn || ''))
+    && String(v.sellerAddress || '').trim().length >= 5;
+}
+function sellerLine() {
+  if (!sellerReady()) return '';
+  const v = state.venue;
+  return `Продавец: ${v.sellerName.trim()}, ИНН ${v.sellerInn}, ${v.sellerOgrn.length === 15 ? 'ОГРНИП' : 'ОГРН'} ${v.sellerOgrn}, ${v.sellerAddress.trim()}`;
+}
+const sellerHtml = () => (sellerReady()
+  ? `<p class="small muted center" style="margin:10px 0 0;font-size:11.5px">${esc(sellerLine())}</p>` : '');
+
+const deliveryOn = () => (state.venue || {}).deliveryEnabled === true && sellerReady();
+/// Владелец включил оплату из приложения, банк подтвердил реквизиты
+/// (шлюз ставит onlinePay после проверки) и указан продавец.
+const onlinePayReady = () => (state.venue || {}).guestSbpPay === true
+  && PAY_PROVIDERS.includes((state.venue || {}).onlinePay) && sellerReady();
 
 // Дистанционно нельзя продавать табак и кальяны (ст. 19 закона № 15-ФЗ) и
 // алкоголь, включая пиво (ст. 16 закона № 171-ФЗ). Те же правила — на
@@ -1653,6 +1674,7 @@ async function screenCheckout() {
       Табак, кальяны и алкоголь — только в заведении (законы № 15-ФЗ и № 171-ФЗ).</div>` : ''}
 
     <button class="btn-primary" id="dSend" ${allowed.length ? '' : 'disabled'}>Оформить заказ · ${money(total)}</button>
+    ${sellerHtml()}
     <p class="small muted center" style="margin:12px 0 0">Имя, телефон и адрес нужны заведению, чтобы подтвердить
       и передать заказ, и хранятся на сервере в России. Через 30 дней после выполнения заказа они обезличиваются.</p>
     ${privacyNotice()}`;
@@ -1784,7 +1806,8 @@ function screenOrder(id) {
         <a class="btn btn-ghost" href="tel:${esc(String(v.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}Позвонить в заведение</a>
         <p class="small muted center" style="margin:6px 0 0">${esc(v.phone)}</p>` : ''}
       <div style="height:10px"></div>
-      <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>`;
+      <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>
+      ${sellerHtml()}`;
 
     if ($('payPanel')) paintSbp(s, 'payPanel', true);
     const cancel = $('oCancel');

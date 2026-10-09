@@ -16,6 +16,7 @@
  * поэтому за отклонённый заказ деньги не списываются.
  */
 const flow = require("./delivery-flow");
+const { sellerReady } = require("./guest-pay");
 
 const TAKEAWAY_TABLE = "takeaway";
 const TOBACCO = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар|чаш[аи]|забивк/i;
@@ -151,6 +152,9 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
 
     const venue = (await t.collection("meta").doc("venueProfile").get()).data() || {};
     if (venue.deliveryEnabled !== true) throw new HttpError(409, "Заведение сейчас не принимает заказы с собой и доставку");
+    // Дистанционная продажа: гость должен видеть, у кого покупает (ст. 26.1
+    // закона «О защите прав потребителей»).
+    if (!sellerReady(venue)) throw new HttpError(409, "Заведение ещё не указало реквизиты продавца — заказ из приложения пока недоступен");
     const local = localNow(now(), tenant.timezone);
     const hours = openNow(venue.workingHours, local);
     if (!hours.open) {

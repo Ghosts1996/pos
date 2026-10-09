@@ -125,6 +125,32 @@ function amountDue({ bill, tips, paid }) {
 }
 
 /**
+ * Реквизиты продавца в профиле заведения (meta/venueProfile): без них заказ
+ * и оплата из приложения недоступны — гость должен видеть, у кого покупает
+ * (ст. 9 и 26.1 закона «О защите прав потребителей»). Как sellerReady в
+ * lib/models/venue_models.dart.
+ */
+function sellerReady(v) {
+  v = v || {};
+  return String(v.sellerName || "").trim().length >= 3 &&
+    /^(\d{10}|\d{12})$/.test(String(v.sellerInn || "")) &&
+    /^(\d{13}|\d{15})$/.test(String(v.sellerOgrn || "")) &&
+    String(v.sellerAddress || "").trim().length >= 5;
+}
+
+/**
+ * Отпечаток реквизитов банка: им шлюз помечает реквизиты, которые банк
+ * подтвердил при «Сохранить и проверить подключение». Поменяли реквизиты —
+ * отпечаток другой, и до новой проверки гость оплатить не сможет.
+ */
+function credsPrint(c) {
+  if (!c) return "";
+  return crypto.createHash("sha256")
+    .update([c.provider, c.login, c.password, c.password2, c.test ? 1 : 0, c.hash].join("\u0001"))
+    .digest("hex");
+}
+
+/**
  * Реквизиты онлайн-оплаты из settings/integrations. Раньше Т-Банк QR СБП
  * выбирался как «терминал» — такие настройки работают и дальше.
  */
@@ -320,14 +346,23 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
 
   // ------------------------------------------------------------ заведение
 
+  /**
+   * Онлайн-оплата заведения: включена ли владельцем (enabled), реквизиты
+   * банка (creds), подтвердил ли их банк (verified) и указан ли продавец.
+   * Гость платит, только когда верно всё (ready).
+   */
   async function venueSettings(tenantId) {
     const [integ, venue] = await Promise.all([
       tenantRef(tenantId).collection("settings").doc("integrations").get(),
       tenantRef(tenantId).collection("meta").doc("venueProfile").get(),
     ]);
-    const enabled = (venue.data() || {}).guestSbpPay === true;
-    const c = onlinePaySettings(integ.data());
-    return { enabled, creds: c };
+    const v = venue.data() || {};
+    const i = integ.data() || {};
+    const enabled = v.guestSbpPay === true;
+    const c = onlinePaySettings(i);
+    const verified = !!c && i.onlinePayVerified === credsPrint(c);
+    const seller = sellerReady(v);
+    return { enabled, creds: c, verified, seller, ready: enabled && verified && seller };
   }
 
   function checkTenantId(tenantId) {
@@ -406,8 +441,10 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         ? "Заказ отменён — оплачивать его не нужно"
         : "Оплатить можно после подтверждения заказа — заведение вам позвонит");
     }
-    const { enabled, creds } = await venueSettings(tenantId);
+    const { enabled, creds, verified, seller } = await venueSettings(tenantId);
     if (!enabled || !creds) throw new HttpError(409, "Онлайн-оплата в этом заведении не включена");
+    if (!verified) throw new HttpError(409, "Заведение ещё не проверило подключение банка — оплатите на месте");
+    if (!seller) throw new HttpError(409, "Заведение не указало реквизиты продавца — оплатите на месте");
 
     const loyalty = (await t.collection("settings").doc("loyalty").get()).data() || {};
     const excludeTobacco = typeof loyalty.excludeTobaccoFromPromo === "boolean" ? loyalty.excludeTobaccoFromPromo : true;
@@ -569,10 +606,21 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const { tenantId } = await parseJsonBody(req);
     checkTenantId(tenantId);
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin", "manager", "employee"]);
-    const { enabled, creds } = await venueSettings(tenantId);
-    if (!creds) return sendJson(res, 200, { ok: false, enabled, message: "Заполните реквизиты банка и сохраните" });
+    const { enabled, creds, seller } = await venueSettings(tenantId);
+    const t = tenantRef(tenantId);
+    const publish = (provider, print) => Promise.all([
+      t.collection("settings").doc("integrations").set({ onlinePayVerified: print }, { merge: true }),
+      // Гостю — только id банка: по нему приложение показывает кнопку оплаты.
+      t.collection("meta").doc("venueProfile").set({ onlinePay: provider }, { merge: true }),
+    ]);
+    if (!creds) {
+      await publish("", "");
+      return sendJson(res, 200, { ok: false, enabled, sellerReady: seller, message: "Заполните реквизиты банка и сохраните" });
+    }
     const r = await checkCreds(creds);
-    sendJson(res, 200, { ...r, enabled });
+    // Кнопка оплаты у гостей — только с реквизитами, которые банк подтвердил.
+    await publish(r.ok ? creds.provider : "", r.ok ? credsPrint(creds) : "");
+    sendJson(res, 200, { ...r, enabled, sellerReady: seller });
   }
 
   // ------------------------------------------------------------ фон
@@ -610,5 +658,6 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
 
 module.exports = {
   createGuestPay, tbankToken, tokenValid, sessionBill, amountDue, onlinePaySettings, robokassaSig, xmlCode,
+  sellerReady, credsPrint,
   PROVIDERS, RBS_URLS, BankUnreachable,
 };

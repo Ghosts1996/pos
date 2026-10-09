@@ -72,15 +72,39 @@ class VenueProfile {
   final bool guestSbpPay;
 
   /// Какой банк подключён для онлайн-оплаты гостей (OnlinePayProvider.id),
-  /// пусто — не подключён. Пишет экран «Интеграции», в toMap() не входит.
+  /// пусто — не подключён. Ставит шлюз, когда банк подтвердил реквизиты
+  /// («Сохранить и проверить подключение»); в toMap() не входит.
   final String onlinePay;
+
+  /// Реквизиты продавца — их видит гость перед заказом и оплатой из
+  /// приложения (ст. 9 и 26.1 закона «О защите прав потребителей»):
+  /// ООО «…» или ИП Фамилия И. О., ИНН, ОГРН/ОГРНИП, адрес.
+  final String sellerName;
+  final String sellerInn;
+  final String sellerOgrn;
+  final String sellerAddress;
 
   /// Модуль «С собой и доставка»: кнопка в зале кассы. Выключение прячет её
   /// на всех кассах сразу, без перезапуска.
   final bool deliveryEnabled;
 
-  /// Гость может заплатить онлайн: включено в профиле и банк подключён.
-  bool get onlinePayReady => guestSbpPay && OnlinePayProvider.byId(onlinePay) != null;
+  /// Реквизиты продавца заполнены верно: без них заказ и оплата из
+  /// приложения недоступны. Те же правила — в saas-gateway (sellerReady).
+  bool get sellerReady =>
+      sellerName.trim().length >= 3 &&
+      RegExp(r'^(\d{10}|\d{12})$').hasMatch(sellerInn) &&
+      RegExp(r'^(\d{13}|\d{15})$').hasMatch(sellerOgrn) &&
+      sellerAddress.trim().length >= 5;
+
+  /// Одной строкой — под оформлением заказа и оплатой.
+  String get sellerLine => sellerReady
+      ? 'Продавец: ${sellerName.trim()}, ИНН $sellerInn, ${sellerOgrn.length == 15 ? 'ОГРНИП' : 'ОГРН'} $sellerOgrn, '
+          '${sellerAddress.trim()}'
+      : '';
+
+  /// Гость может заплатить онлайн: включено в профиле, банк подтвердил
+  /// реквизиты и указан продавец.
+  bool get onlinePayReady => guestSbpPay && OnlinePayProvider.byId(onlinePay) != null && sellerReady;
 
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
@@ -104,6 +128,10 @@ class VenueProfile {
     this.guestSbpPay = false,
     this.onlinePay = '',
     this.deliveryEnabled = false,
+    this.sellerName = '',
+    this.sellerInn = '',
+    this.sellerOgrn = '',
+    this.sellerAddress = '',
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -135,6 +163,10 @@ class VenueProfile {
       guestSbpPay: data['guestSbpPay'] == true,
       onlinePay: asText(data['onlinePay']),
       deliveryEnabled: data['deliveryEnabled'] == true,
+      sellerName: asText(data['sellerName']),
+      sellerInn: asText(data['sellerInn']),
+      sellerOgrn: asText(data['sellerOgrn']),
+      sellerAddress: asText(data['sellerAddress']),
     );
   }
 
@@ -157,6 +189,10 @@ class VenueProfile {
         'tipsTeamEnabled': tipsTeamEnabled,
         'guestSbpPay': guestSbpPay,
         'deliveryEnabled': deliveryEnabled,
+        'sellerName': sellerName,
+        'sellerInn': sellerInn,
+        'sellerOgrn': sellerOgrn,
+        'sellerAddress': sellerAddress,
       };
 
   VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
@@ -183,6 +219,10 @@ class VenueProfile {
     bool? tipsTeamEnabled,
     bool? guestSbpPay,
     bool? deliveryEnabled,
+    String? sellerName,
+    String? sellerInn,
+    String? sellerOgrn,
+    String? sellerAddress,
   }) =>
       VenueProfile(
         name: name ?? this.name,
@@ -204,6 +244,10 @@ class VenueProfile {
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
         onlinePay: onlinePay,
         deliveryEnabled: deliveryEnabled ?? this.deliveryEnabled,
+        sellerName: sellerName ?? this.sellerName,
+        sellerInn: sellerInn ?? this.sellerInn,
+        sellerOgrn: sellerOgrn ?? this.sellerOgrn,
+        sellerAddress: sellerAddress ?? this.sellerAddress,
       );
 }
 
