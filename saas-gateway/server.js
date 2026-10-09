@@ -42,9 +42,7 @@ const { createTelegram } = require("./telegram");
  *     в секретах репозитория;
  *   GITHUB_REF — ветка, из которой запускаются сборки;
  *   ROBOKASSA_LOGIN / ROBOKASSA_PASSWORD1 / ROBOKASSA_PASSWORD2 — магазин
- *     Робокассы; если заданы, подписки оплачиваются через неё;
- *   YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY — запасной вариант ЮKassa
- *     (выбор можно задать явно: BILLING_PROVIDER=robokassa|yookassa).
+ *     Робокассы, через который оплачиваются подписки.
  */
 
 const GITHUB_OWNER = "Ghosts1996";
@@ -1141,34 +1139,15 @@ async function handleChainLocationCheckout(req, res) {
   const location = { name: name.trim(), slug, venueType };
   const email = decoded.email || await billingOwnerEmail(true, chainId);
   const description = `ZalPOS: новая точка сети «${location.name}» до конца оплаченного периода (${quote.remainingDays} дн.)`;
-  if (billingProvider() === "robokassa") {
-    const invoice = await createRobokassaInvoice({
-      tenantId: null, chainId, planId: null, billingPeriod: quote.billingPeriod, purpose: "chainLocation",
-      amount: quote.amount, email, returnUrl, requestedBy: decoded.uid, recurring: false, location,
-    });
-    const url = robokassaPaymentUrl({
-      invId: invoice.invId, outSum: invoice.outSum, description, email, recurring: false,
-      receipt: robokassaReceipt(description, quote.amount),
-    });
-    sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId), amount: quote.amount });
-    return;
-  }
-  const payment = await yookassaRequest("payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: { value: quote.amount.toFixed(2), currency: "RUB" },
-      capture: true,
-      confirmation: { type: "redirect", return_url: returnUrl },
-      description,
-      receipt: yookassaReceipt(description, quote.amount, email),
-      metadata: {
-        chainId, purpose: "chainLocation", requestedBy: decoded.uid,
-        locName: location.name, locSlug: location.slug, venueType: location.venueType,
-      },
-    },
+  const invoice = await createRobokassaInvoice({
+    tenantId: null, chainId, planId: null, billingPeriod: quote.billingPeriod, purpose: "chainLocation",
+    amount: quote.amount, email, returnUrl, requestedBy: decoded.uid, recurring: false, location,
   });
-  sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id, amount: quote.amount });
+  const url = robokassaPaymentUrl({
+    invId: invoice.invId, outSum: invoice.outSum, description, email, recurring: false,
+    receipt: robokassaReceipt(description, quote.amount),
+  });
+  sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId), amount: quote.amount });
 }
 
 /**
@@ -1562,50 +1541,6 @@ function billingPrice(plan, sub, planId, compute) {
   return was > 0 && was < now ? was : now;
 }
 
-async function yookassaRequest(path, { method = "GET", body, idempotenceKey } = {}) {
-  const shopId = process.env.YOOKASSA_SHOP_ID;
-  const secretKey = process.env.YOOKASSA_SECRET_KEY;
-  if (!shopId || !secretKey) {
-    throw new Error("YOOKASSA_SHOP_ID/YOOKASSA_SECRET_KEY не настроены на сервере");
-  }
-  const auth = Buffer.from(`${shopId}:${secretKey}`).toString("base64");
-  const headers = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
-  if (idempotenceKey) headers["Idempotence-Key"] = idempotenceKey;
-  const base = (process.env.YOOKASSA_API_URL || "https://api.yookassa.ru/v3").replace(/\/+$/, "");
-  const res = await fetch(`${base}/${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`YooKassa ${method} ${path} -> ${res.status}: ${JSON.stringify(json)}`);
-  return json;
-}
-
-/**
- * Чек 54-ФЗ от ЮKassa. Включается YOOKASSA_RECEIPTS=1, только если в
- * кабинете ЮKassa подключены чеки: тогда платёж без чека отклоняется.
- * НДС — YOOKASSA_VAT_CODE (по умолчанию 1, «без НДС»), СНО —
- * YOOKASSA_TAX_SYSTEM_CODE (1–6).
- */
-function yookassaReceipt(description, price, email) {
-  if (process.env.YOOKASSA_RECEIPTS !== "1" || !email) return undefined;
-  const receipt = {
-    customer: { email },
-    items: [{
-      description: description.slice(0, 128),
-      quantity: "1.00",
-      amount: { value: price.toFixed(2), currency: "RUB" },
-      vat_code: Number(process.env.YOOKASSA_VAT_CODE) || 1,
-      payment_mode: "full_payment",
-      payment_subject: "service",
-    }],
-  };
-  const tax = Number(process.env.YOOKASSA_TAX_SYSTEM_CODE);
-  if (tax >= 1 && tax <= 6) receipt.tax_system_code = tax;
-  return receipt;
-}
-
 /** E-mail владельца заведения/сети — для чека автопродления. */
 async function billingOwnerEmail(isChain, id) {
   const doc = await db().collection(isChain ? "chains" : "tenants").doc(id).get();
@@ -1680,53 +1615,25 @@ async function handleCreateCheckoutSession(req, res) {
   const tenantId = body.tenantId;
   const chainId = body.chainId;
 
-  const description = isChain
-    ? `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), сеть ${chainId} × ${locationCount} ${pointsWord(locationCount)}`
-    : `ZalPOS — тариф «${plan.name || planId}» (${periodLabel}), заведение ${tenantId}`;
-
-  if (billingProvider() === "robokassa") {
-    // Автосписание только с явного согласия (галочка «Автопродление»,
-    // по умолчанию снята) — правила Робокассы и ст. 16 закона № 2300-1.
-    const recurring = robokassaConfig().recurring && autoRenew === true;
-    const invoice = await createRobokassaInvoice({
-      tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
-      planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
-      locationCount: isChain ? locationCount : null, requestedBy: decoded.uid, recurring,
-      // Картой платят как физлицо: чек в «Мой налог» без ИНН покупателя.
-      payerType: "individual",
-    });
-    const url = robokassaPaymentUrl({
-      invId: invoice.invId, outSum: invoice.outSum,
-      description: `ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`,
-      email, recurring,
-      // С включёнными «Робочеками» платёж без чека Робокасса отклонит —
-      // автопродление чек уже передаёт, первая оплата тоже должна.
-      receipt: robokassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price),
-    });
-    sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId) });
-    return;
-  }
-
-  const payment = await yookassaRequest("payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: { value: price.toFixed(2), currency: "RUB" },
-      capture: true,
-      save_payment_method: true,
-      confirmation: { type: "redirect", return_url: returnUrl },
-      description,
-      receipt: yookassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price, email),
-      metadata: {
-        tenantId: isChain ? null : tenantId,
-        chainId: isChain ? chainId : null,
-        planId, billingPeriod, purpose: "subscription",
-        locationCount: isChain ? locationCount : null,
-      },
-    },
+  // Автосписание только с явного согласия (галочка «Автопродление»,
+  // по умолчанию снята) — правила Робокассы и ст. 16 закона № 2300-1.
+  const recurring = robokassaConfig().recurring && autoRenew === true;
+  const invoice = await createRobokassaInvoice({
+    tenantId: isChain ? null : tenantId, chainId: isChain ? chainId : null,
+    planId, billingPeriod, purpose: "subscription", amount: price, email, returnUrl,
+    locationCount: isChain ? locationCount : null, requestedBy: decoded.uid, recurring,
+    // Картой платят как физлицо: чек в «Мой налог» без ИНН покупателя.
+    payerType: "individual",
   });
-
-  sendJson(res, 200, { confirmationUrl: payment.confirmation?.confirmation_url || null, paymentId: payment.id });
+  const url = robokassaPaymentUrl({
+    invId: invoice.invId, outSum: invoice.outSum,
+    description: `ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`,
+    email, recurring,
+    // С включёнными «Робочеками» платёж без чека Робокасса отклонит —
+    // автопродление чек уже передаёт, первая оплата тоже должна.
+    receipt: robokassaReceipt(`Подписка ZalPOS: тариф «${plan.name || planId}», ${periodLabel}`, price),
+  });
+  sendJson(res, 200, { confirmationUrl: url, paymentId: String(invoice.invId) });
 }
 
 // ---------------------------------------------- счета для ИП и организаций
@@ -1946,14 +1853,6 @@ const ROBOKASSA_PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx";
 const ROBOKASSA_RECURRING_URL = "https://auth.robokassa.ru/Merchant/Recurring";
 const ROBOKASSA_HASHES = ["md5", "sha1", "sha256", "sha384", "sha512"];
 
-/** Какой провайдер принимает оплату: явно BILLING_PROVIDER, иначе
- *  Робокасса, если заданы её реквизиты, иначе ЮKassa. */
-function billingProvider() {
-  const p = String(process.env.BILLING_PROVIDER || "").trim().toLowerCase();
-  if (p === "robokassa" || p === "yookassa") return p;
-  return process.env.ROBOKASSA_LOGIN ? "robokassa" : "yookassa";
-}
-
 function robokassaConfig() {
   const login = String(process.env.ROBOKASSA_LOGIN || "").trim();
   const password1 = String(process.env.ROBOKASSA_PASSWORD1 || "");
@@ -2162,6 +2061,29 @@ async function handleRobokassaReturn(req, res) {
   res.end();
 }
 
+/**
+ * Один магазин Робокассы может принимать и подписки ZalPOS, и оплату гостей
+ * заведения, а в «Технических настройках» у магазина один Result URL и один
+ * Success/Fail URL. Поэтому любой из наших адресов принимает оба вида:
+ * у платежа гостя есть Shp_t (заведение, входит в подпись), у подписки —
+ * нет. Тело запроса читаем один раз и передаём обработчику как GET.
+ */
+function robokassaAsGet(req, p) {
+  return { method: "GET", url: `/robokassa?${new URLSearchParams(p).toString()}`, headers: req.headers };
+}
+
+async function handleAnyRobokassaResult(req, res) {
+  const p = await readRobokassaParams(req);
+  const guest = Object.keys(p).some((k) => k.toLowerCase() === "shp_t");
+  return guest ? guestPay.handleRobokassaResult(robokassaAsGet(req, p), res) : handleRobokassaResult(robokassaAsGet(req, p), res);
+}
+
+async function handleAnyRobokassaReturn(req, res) {
+  const p = await readRobokassaParams(req);
+  const guest = Object.keys(p).some((k) => k.toLowerCase() === "shp_t");
+  return guest ? guestPay.handleDone(robokassaAsGet(req, p), res) : handleRobokassaReturn(robokassaAsGet(req, p), res);
+}
+
 /** Автосписание очередного периода по родительскому платежу. Возвращает
  *  номер нового счёта; результат придёт на Result URL. */
 async function robokassaCharge({ sub, targetId, isChain, price, billingPeriod, description, locationCount }) {
@@ -2195,88 +2117,10 @@ async function robokassaCharge({ sub, targetId, isChain, price, billingPeriod, d
 }
 
 /**
- * Webhook ЮKassa. Она не подписывает уведомления, поэтому телу не верим:
- * перепроверяем платёж по id в её API своим ключом. Повторная доставка
- * не применяется дважды (billingEvents/{paymentId}).
- */
-async function handleBillingWebhook(req, res) {
-  const body = await parseJsonBody(req);
-  const paymentId = body?.object?.id;
-  if (typeof paymentId !== "string" || !paymentId) throw new HttpError(400, "bad request");
-  // Для чек-листа «Безопасность → Платформа»: давно нет уведомлений —
-  // возможно, в кабинете ЮKassa сбился адрес webhook.
-  db().collection("platformStatus").doc("billingWebhook").set({
-    lastReceivedAt: admin.firestore.FieldValue.serverTimestamp(),
-    lastEvent: typeof body.event === "string" ? body.event.slice(0, 60) : null,
-  }, { merge: true }).catch((e) => console.error("platformStatus/billingWebhook:", e.message || e));
-
-  // Уведомления о возвратах несут id возврата, а не платежа: перепроверка
-  // по payments/{id} дала бы 404 → 502, и ЮKassa ретраила бы их сутки.
-  // Возвраты оформляются вручную из кабинета ЮKassa — здесь только журнал.
-  if (typeof body.event === "string" && body.event.startsWith("refund.")) {
-    await writeAuditLog({ tenantId: null, actorId: null, action: "billingRefundNotified", metadata: { refundId: paymentId } });
-    sendJson(res, 200, { ok: true, ignored: true });
-    return;
-  }
-
-  let payment;
-  try {
-    payment = await yookassaRequest(`payments/${paymentId}`);
-  } catch (e) {
-    console.error("saas-gateway: не удалось перепроверить платёж в ЮKassa", e.message || e);
-    throw new HttpError(502, "upstream error");
-  }
-
-  const tenantId = payment.metadata?.tenantId || null;
-  const chainId = payment.metadata?.chainId || null;
-  const billingId = chainId || tenantId;
-  const planId = payment.metadata?.planId;
-  // У старых платежей периода нет — тогда они были только помесячные.
-  const billingPeriod = normalizeBillingPeriod(payment.metadata?.billingPeriod);
-  if (payment.metadata?.purpose === "chainLocation" && chainId) {
-    if (payment.status === "succeeded") {
-      await applyChainLocationPayment({
-        eventId: paymentId, provider: "yookassa", chainId,
-        amount: Number(payment.amount?.value) || 0,
-        location: { name: payment.metadata.locName, slug: payment.metadata.locSlug, venueType: payment.metadata.venueType },
-        requestedBy: payment.metadata.requestedBy || null, test: payment.test === true,
-      });
-    }
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-  if (!billingId || !planId) {
-    // Не наш платёж. Отвечаем 200, иначе ЮKassa будет присылать его снова.
-    sendJson(res, 200, { ok: true, ignored: true });
-    return;
-  }
-  // Промежуточные статусы (pending, waiting_for_capture) ничего не меняют —
-  // и НЕ записываются как обработанные, иначе уведомление об успешной
-  // оплате того же платежа потом было бы проигнорировано.
-  if (payment.status !== "succeeded" && payment.status !== "canceled") {
-    sendJson(res, 200, { ok: true, pending: true });
-    return;
-  }
-
-  await applySubscriptionPayment({
-    eventId: paymentId,
-    provider: "yookassa",
-    status: payment.status,
-    tenantId, chainId, planId, billingPeriod,
-    amount: Number(payment.amount?.value) || 0,
-    purpose: payment.metadata?.purpose || "subscription",
-    // Способ оплаты сохраняем, только если ЮKassa подтвердила сохранение.
-    extra: payment.payment_method?.saved ? { paymentMethodId: payment.payment_method.id } : {},
-  });
-  sendJson(res, 200, { ok: true });
-}
-
-/**
- * Зачисление оплаты подписки — общее для ЮKassa (handleBillingWebhook) и
- * Робокассы (handleRobokassaResult). Идемпотентно через
+ * Зачисление оплаты подписки (handleRobokassaResult). Идемпотентно через
  * billingEvents/{eventId}: повторная доставка того же уведомления не
  * продлевает подписку дважды. [extra] — поля провайдера для автопродления
- * (paymentMethodId у ЮKassa, robokassaParentInvId у Робокассы).
+ * (robokassaParentInvId — родительский платёж Робокассы).
  */
 async function applySubscriptionPayment({ eventId, provider, status, tenantId, chainId, planId, billingPeriod, amount, purpose, test = false, extra = {} }) {
   const billingId = chainId || tenantId;
@@ -2330,8 +2174,8 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
         renewalAttemptedAt: admin.firestore.FieldValue.delete(),
         ...extra,
       };
-      // set+merge, а не update: не роняем webhook 500-й ошибкой (ЮKassa
-      // будет бесконечно ретраить), если документа почему-то ещё нет.
+      // set+merge, а не update: не роняем уведомление 500-й ошибкой
+      // (Робокасса будет его повторять), если документа почему-то ещё нет.
       tx.set(subRef, update, { merge: true });
     });
     await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).set({
@@ -2437,16 +2281,17 @@ async function runChargeRecurringSubscriptions() {
     .where("provider", "==", provider)
     .where("currentPeriodEnd", "<=", withinADay)
     .get()).docs;
-  const docs = [...await byProvider("yookassa"), ...await byProvider("robokassa")];
+  // Подписки, оплаченные раньше через ЮKassa, автоматически не продлеваются:
+  // владелец оплачивает следующий период из кабинета (через Робокассу).
+  const docs = await byProvider("robokassa");
 
   for (const subDoc of docs) {
     const sub = subDoc.data();
     const targetId = subDoc.id;
     const isChain = !!sub.chainId;
-    const viaRobokassa = sub.provider === "robokassa";
     if (sub.cancelAtPeriodEnd) continue;
     // Нечем списать — подписка уйдёт в past_due сама, владелец оплатит из кабинета.
-    if (viaRobokassa ? !sub.robokassaParentInvId : !sub.paymentMethodId) continue;
+    if (!sub.robokassaParentInvId) continue;
 
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
@@ -2462,35 +2307,11 @@ async function runChargeRecurringSubscriptions() {
 
     await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
     try {
-      if (viaRobokassa) {
-        const invId = await robokassaCharge({
-          sub, targetId, isChain, price, billingPeriod, locationCount,
-          description: `ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
-        });
-        await subDoc.ref.update({ renewalInvId: invId });
-        continue;
-      }
-      const receipt = yookassaReceipt(`Подписка ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
-        price, await billingOwnerEmail(isChain, targetId));
-      await yookassaRequest("payments", {
-        method: "POST",
-        // Ключ зависит от конца периода: повторный прогон не создаст второй платёж.
-        idempotenceKey: `renewal_${targetId}_${sub.currentPeriodEnd.toMillis()}`,
-        body: {
-          amount: { value: price.toFixed(2), currency: "RUB" },
-          capture: true,
-          payment_method_id: sub.paymentMethodId,
-          receipt,
-          description: isChain
-            ? `ZalPOS — продление тарифа «${sub.planId}» (${periodLabel}), сеть ${targetId} × ${locationCount} ${pointsWord(locationCount)}`
-            : `ZalPOS — продление тарифа «${sub.planId}» (${periodLabel}), заведение ${targetId}`,
-          metadata: {
-            tenantId: isChain ? null : targetId,
-            chainId: isChain ? targetId : null,
-            planId: sub.planId, billingPeriod, purpose: "renewal",
-          },
-        },
+      const invId = await robokassaCharge({
+        sub, targetId, isChain, price, billingPeriod, locationCount,
+        description: `ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
       });
+      await subDoc.ref.update({ renewalInvId: invId });
     } catch (e) {
       console.error(`saas-gateway: не удалось продлить ${targetId}`, e.message || e);
       await markPastDue(targetId, subDoc.ref, isChain);
@@ -5426,7 +5247,7 @@ function scheduleFirestoreBackup() {
 /**
  * Чек-лист «Безопасность → Платформа»: что можно проверить только на
  * сервере — заданы ли секреты (без значений), доходят ли уведомления
- * ЮKassa, сроки сертификатов, резервные копии, актуальны ли правила базы,
+ * Робокассы, сроки сертификатов, резервные копии, актуальны ли правила базы,
  * передаёт ли nginx настоящий IP.
  */
 const SECURITY_SECRETS_BASE = [
@@ -5435,17 +5256,11 @@ const SECURITY_SECRETS_BASE = [
   ["GITHUB_PAT", "GitHub: токен для сборки APK"],
   ["BUILD_CALLBACK_SECRET", "Секрет ответа сборки APK"],
 ];
-const BILLING_SECRETS = {
-  robokassa: [
-    ["ROBOKASSA_LOGIN", "Робокасса: идентификатор магазина"],
-    ["ROBOKASSA_PASSWORD1", "Робокасса: пароль №1"],
-    ["ROBOKASSA_PASSWORD2", "Робокасса: пароль №2"],
-  ],
-  yookassa: [
-    ["YOOKASSA_SHOP_ID", "ЮKassa: идентификатор магазина"],
-    ["YOOKASSA_SECRET_KEY", "ЮKassa: секретный ключ"],
-  ],
-};
+const BILLING_SECRETS = [
+  ["ROBOKASSA_LOGIN", "Робокасса: идентификатор магазина"],
+  ["ROBOKASSA_PASSWORD1", "Робокасса: пароль №1"],
+  ["ROBOKASSA_PASSWORD2", "Робокасса: пароль №2"],
+];
 // Строки из актуального saas/firestore.rules — по ним видно, опубликованы
 // ли последние правила (защита сеансов супер-админов, склад кассы, ключи
 // ИИ отдельно от гостей, реквизиты платформы).
@@ -5518,9 +5333,9 @@ async function handleSecurityStatus(req, res) {
   const b = billing.exists ? billing.data() : {};
   const lp = lastPayment && !lastPayment.empty ? lastPayment.docs[0].data() : null;
   sendJson(res, 200, {
-    secrets: [...SECURITY_SECRETS_BASE.slice(0, 2), ...BILLING_SECRETS[billingProvider()], ...SECURITY_SECRETS_BASE.slice(2)]
+    secrets: [...SECURITY_SECRETS_BASE.slice(0, 2), ...BILLING_SECRETS, ...SECURITY_SECRETS_BASE.slice(2)]
       .map(([key, label]) => ({ key, label, set: !!(process.env[key] && String(process.env[key]).trim()) })),
-    billingProvider: billingProvider(),
+    billingProvider: "robokassa",
     robokassaTest: process.env.ROBOKASSA_TEST === "1",
     githubRef: GITHUB_REF,
     billingWebhook: { lastReceivedAt: ts(b.lastReceivedAt), lastEvent: b.lastEvent || null, lastPaymentAt: lp ? ts(lp.receivedAt) : null },
@@ -6676,7 +6491,7 @@ const ROUTES = {
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
   "/guestPayNotify": guestPay.handleNotify,
-  "/guestPayRobokassa": guestPay.handleRobokassaResult,
+  "/guestPayRobokassa": handleAnyRobokassaResult,
   "/onlinePayCheck": guestPay.handleCheck,
   // Заказ доставки/с собой из приложения гостя и его отмена гостем.
   "/guestDeliveryOrder": guestDelivery.handleCreate,
@@ -6747,13 +6562,12 @@ const ROUTES = {
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,
   "/recordAdminLogin": handleRecordAdminLogin,
-  // Webhook ЮKassa: без входа, подлинность проверяет сам обработчик.
-  "/billingWebhook": handleBillingWebhook,
-  // Робокасса: Result URL (оплата прошла) и возврат владельца в кабинет.
+  // Робокасса: Result URL (оплата прошла) и возврат после оплаты.
   // Подлинность Result URL — подпись паролем №2 внутри обработчика.
-  "/robokassaResult": handleRobokassaResult,
-  "/robokassaSuccess": handleRobokassaReturn,
-  "/robokassaFail": handleRobokassaReturn,
+  // Любой из адресов принимает и подписки, и оплату гостей (см. ниже).
+  "/robokassaResult": handleAnyRobokassaResult,
+  "/robokassaSuccess": handleAnyRobokassaReturn,
+  "/robokassaFail": handleAnyRobokassaReturn,
 };
 
 function runHandler(handler, req, res) {
@@ -6796,11 +6610,11 @@ const server = http.createServer((req, res) => {
   }
   // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
   // «Технических настройках» магазина).
-  if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleRobokassaResult, req, res);
-  if (req.method === "GET" && (urlPath === "/robokassaSuccess" || urlPath === "/robokassaFail")) return runHandler(handleRobokassaReturn, req, res);
+  if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleAnyRobokassaResult, req, res);
+  if (req.method === "GET" && (urlPath === "/robokassaSuccess" || urlPath === "/robokassaFail")) return runHandler(handleAnyRobokassaReturn, req, res);
   // Онлайн-оплата гостя: Result URL Робокассы заведения и страница возврата из банка.
-  if (req.method === "GET" && urlPath === "/guestPayRobokassa") return runHandler(guestPay.handleRobokassaResult, req, res);
-  if (req.method === "GET" && urlPath === "/guestPayDone") return runHandler(guestPay.handleDone, req, res);
+  if (req.method === "GET" && urlPath === "/guestPayRobokassa") return runHandler(handleAnyRobokassaResult, req, res);
+  if (req.method === "GET" && urlPath === "/guestPayDone") return runHandler(handleAnyRobokassaReturn, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];

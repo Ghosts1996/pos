@@ -220,11 +220,24 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   fire(); await tick(); await tick();
   assert.ok(sent.some((m) => m.body.chat_id === 501 && /закрыт без оплаты на 1\s500/.test(m.body.text)), "сигнал о закрытии без оплаты");
   assert.ok(sent.some((m) => m.body.chat_id === 501 && /Начал смену: Анна \(официант\)/.test(m.body.text)), "начало смены");
+  // Управляющий из списка подключается без ссылки: открыл бота — «Запустить»
+  await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: 501, name: "Олег", role: "owner" }, { id: 601, name: "Повар", role: "staff" }, { id: 503, name: "Ира", role: "owner" }] }), mkRes());
+  await tick();
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 503, type: "private", first_name: "Ира" }, from: { id: 503 }, text: "/start" } });
+  await tick();
+  assert.ok(store.get("telegramBots/A").ownerChats.some((c) => c.id === 503), "чат управляющего привязан по ID");
+  assert.ok(sent.some((m) => m.body.chat_id === 503 && /подключено/.test(m.body.text)));
+  // Сотрудник так не подключится к отчётам
+  await hookA({ message: { chat: { id: 601, type: "private", first_name: "Повар" }, from: { id: 601 }, text: "/start" } });
+  await tick();
+  assert.ok(!store.get("telegramBots/A").ownerChats.some((c) => c.id === 601), "сотрудник не получает отчёты");
+
   // Владелец убрал себя из списка — личный чат больше ничего не получает
   res = mkRes();
   await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: 601, name: "Повар", role: "staff" }] }), res);
   await tick();
-  assert.deepEqual(store.get("telegramBots/A").ownerChats, [], "чат владельца отвязан");
+  assert.deepEqual(store.get("telegramBots/A").ownerChats, [], "чаты владельца и управляющей отвязаны");
   sent.length = 0;
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "💰 Выручка сегодня" } });
   assert.ok(!/Выручка сегодня:/.test(sent[0].body.text), "без доступа отчётов нет");

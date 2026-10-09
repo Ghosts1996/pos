@@ -42,15 +42,6 @@ class OnlinePayProvider {
           'Оплату через СБП включите в настройках магазина. Тестовый терминал — ключ с DEMO на конце.',
     ),
     OnlinePayProvider(
-      id: 'yookassa',
-      label: 'ЮKassa — СБП',
-      loginLabel: 'shopId',
-      passwordLabel: 'Секретный ключ',
-      sbpOnly: true,
-      hint: 'ЮKassa → Интеграция → Ключи API: shopId и секретный ключ. Подключите способ оплаты СБП. '
-          '«Чеки от ЮKassa» не включайте — чек пробивает касса заведения. Для проверки можно взять тестовый магазин ЮKassa.',
-    ),
-    OnlinePayProvider(
       id: 'robokassa',
       label: 'Робокасса — СБП и карты',
       loginLabel: 'Идентификатор магазина',

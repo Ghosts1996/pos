@@ -17,7 +17,7 @@
   `GET downloadBuild`, `GET publicGuestApk` (гостевой APK по QR, без входа),
   `appUpdate` (приложения сами проверяют новую версию).
 - **Оплата:** `createCheckoutSession`, `robokassaResult` / `robokassaSuccess` /
-  `robokassaFail`, запасной `billingWebhook` (ЮKassa), счета для ИП и
+  `robokassaFail` (они же принимают оплату гостей заведения), счета для ИП и
   организаций (`createBankInvoice`, `markBankInvoicePaid`,
   `markBankInvoiceReceipt`, `cancelBankInvoice`), `cancelSubscription` /
   `resumeSubscription`. Раз в сутки — автопродление и перевод в `past_due`
@@ -102,11 +102,6 @@ cd saas-gateway
    в одну строку. Нужен, чтобы `saas/guest-web/` на поддоменах
    `{slug}.zalpos.ru` мог инициализировать Firebase — см. `firebaseConfig`
    выше и докстринг `handleFirebaseWebConfig` в `server.js`.
-5. **Реквизиты магазина ЮKassa** (`YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`)
-   — тот же кабинет ЮKassa, что уже используется (или будет использоваться)
-   для приёма платежей. Личный кабинет ЮKassa → Настройки → API-ключи и
-   HTTP-уведомления → shopId и секретный ключ (или тестовые значения на
-   время проверки). См. раздел «Биллинг» ниже про webhook.
 
 **Если сервис уже установлен раньше** (обновляете существующий, а не
 ставите с нуля) — `setup.sh` повторно не запускать, просто добавить
@@ -114,8 +109,6 @@ cd saas-gateway
 
 ```bash
 echo 'FIREBASE_WEB_CONFIG_JSON={"apiKey":"...","authDomain":"...",...}' >> /etc/saas-gateway.env
-echo 'YOOKASSA_SHOP_ID=...' >> /etc/saas-gateway.env
-echo 'YOOKASSA_SECRET_KEY=...' >> /etc/saas-gateway.env
 systemctl restart saas-gateway
 ```
 
@@ -167,9 +160,7 @@ workflow `.github/workflows/saas-rollout.yml` сообщает серверу к
 
 ## Оплата через Робокассу
 
-Если на сервере заданы реквизиты Робокассы, подписки оплачиваются через неё
-(ЮKassa остаётся в коде запасным вариантом и без своих ключей не
-включается; явно — `BILLING_PROVIDER=robokassa|yookassa`). Для
+Подписки оплачиваются только через Робокассу (ЮKassa убрана). Для
 самозанятого чек в «Мой налог» Робокасса формирует сама — чек из
 платформы не передаётся.
 
@@ -178,9 +169,19 @@ workflow `.github/workflows/saas-rollout.yml` сообщает серверу к
 | Поле | Значение |
 |---|---|
 | Алгоритм расчёта хеша | `SHA256` (то же — в `ROBOKASSA_HASH`) |
-| Result Url | `https://pii.zalpos.ru/saas/robokassaResult`, метод **POST** |
+| Result Url | `https://pii.zalpos.ru/saas/robokassaResult`, метод GET или POST |
 | Success Url | `https://pii.zalpos.ru/saas/robokassaSuccess`, метод GET |
 | Fail Url | `https://pii.zalpos.ru/saas/robokassaFail`, метод GET |
+
+Адреса взаимозаменяемы с гостевыми (`guestPayRobokassa`, `guestPayDone`):
+платёж гостя заведения узнаётся по `Shp_t`, подписка — по его отсутствию.
+Поэтому один магазин может принимать и то и другое — но магазин
+самозанятого для продаж заведения не годится: каждый платёж гостя
+Робокасса зарегистрирует в «Мой налог» как доход самозанятого, а кафе или
+кальянная с сотрудниками под НПД не подпадают (нельзя нанимать работников,
+перепродавать товары и продавать подакцизное). Заведению — отдельный
+магазин Робокассы на его ИП или ООО; чек по 54-ФЗ пробивает касса
+заведения, «Робочеки» в таком магазине не включать.
 | Пароль №1, Пароль №2 | придумать (разные) и вписать на сервер |
 
 **Сервер** (`/etc/saas-gateway.env`, затем `systemctl restart saas-gateway`):
@@ -234,19 +235,6 @@ ROBOKASSA_TEST=1                  # пока магазин не активир�
 - Затем в «Мой налог» — чек на ИП/организацию с ИНН из счёта, не позднее
   9-го числа следующего месяца; ссылку на чек вставить кнопкой «Чек выдан» —
   владелец увидит её в кабинете.
-
-## Оплата через ЮKassa (запасной вариант)
-
-1. `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` в `/etc/saas-gateway.env`,
-   перезапустить сервис.
-2. В кабинете ЮKassa → HTTP-уведомления: `https://pii.zalpos.ru/saas/billingWebhook`,
-   события `payment.succeeded` и `payment.canceled`.
-3. Проверка: `curl -X POST https://pii.zalpos.ru/saas/billingWebhook` без
-   тела отвечает 400 `{"error":"bad request"}`, а не 404.
-4. Если подключены «Чеки от ЮKassa» — `YOOKASSA_RECEIPTS=1` (без чека такие
-   платежи отклоняются). НДС — `YOOKASSA_VAT_CODE` (по умолчанию `1`, без
-   НДС), система налогообложения — `YOOKASSA_TAX_SYSTEM_CODE` (1–6). Чек
-   уходит на email владельца.
 
 Как считается период: оплата раньше срока (или автопродление) добавляет
 месяц/полгода/год к концу текущего оплаченного или пробного периода, а не
@@ -432,7 +420,7 @@ Android-приложения гостя → `POST /requestGuestDataDeletion`), �
 `platformConfig/legal` (читают все, пишет только сервер). Они
 подставляются в оферту и политику вместо «[указать]» и выводятся в
 подвале сайта — без них нельзя принимать оплату (54-ФЗ, модерация
-ЮKassa). Пока не заполнены, чек-лист раздела показывает красный пункт.
+Робокассы). Пока не заполнены, чек-лист раздела показывает красный пункт.
 
 ## ИИ: ключи провайдеров и гостевой прокси
 

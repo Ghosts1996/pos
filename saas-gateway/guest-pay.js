@@ -1,8 +1,8 @@
 "use strict";
 /**
  * Онлайн-оплата гостем — счёт за столом и заказ доставки/с собой — через
- * банк заведения: Т-Банк (QR СБП), ЮKassa (СБП), Робокасса, Сбербанк и
- * Альфа-Банк (интернет-эквайринг).
+ * банк заведения: Т-Банк (QR СБП), Робокасса, Сбербанк и Альфа-Банк
+ * (интернет-эквайринг).
  *
  * Гость нажимает «Оплатить» → шлюз сам считает сумму по счёту (цифре с
  * телефона не доверяем), заводит платёж в банке и отдаёт ссылку → гость
@@ -27,7 +27,6 @@ const path = require("path");
 const tls = require("tls");
 
 const TBANK_URL = "https://securepay.tinkoff.ru/v2";
-const YOOKASSA_URL = "https://api.yookassa.ru/v3";
 const ROBOKASSA_PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx";
 const ROBOKASSA_STATE_URL = "https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpStateExt";
 const RBS_URLS = {
@@ -39,7 +38,6 @@ const ROBOKASSA_HASHES = ["md5", "sha1", "sha256", "sha384", "sha512"];
 /** Банки, через которые гость платит онлайн. id хранится в настройках. */
 const PROVIDERS = {
   tinkoff: "Т-Банк",
-  yookassa: "ЮKassa",
   robokassa: "Робокасса",
   sber: "Сбербанк",
   alfa: "Альфа-Банк",
@@ -212,14 +210,6 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return data;
   }
 
-  function yookassaHeaders(c, idempotenceKey) {
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${Buffer.from(`${c.login}:${c.password}`).toString("base64")}`,
-      ...(idempotenceKey ? { "Idempotence-Key": idempotenceKey } : {}),
-    };
-  }
-
   async function rbs(c, method, params) {
     const r = await call(`${rbsBase(c)}/${method}`, {
       method: "POST",
@@ -256,32 +246,6 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         const id = String(init.PaymentId);
         const qr = await tbank(c, "GetQr", { PaymentId: id, DataType: "PAYLOAD" });
         return { docId: id, providerId: id, url: String(qr.Data || "") };
-      }
-      case "yookassa": {
-        const r = await call(`${YOOKASSA_URL}/payments`, {
-          method: "POST",
-          headers: yookassaHeaders(c, orderId),
-          body: JSON.stringify({
-            amount: { value: amount.toFixed(2), currency: "RUB" },
-            capture: true,
-            payment_method_data: { type: "sbp" },
-            confirmation: { type: "redirect", return_url: doneUrl },
-            description: description.slice(0, 128),
-            metadata: { orderId, tenantId },
-          }),
-        }, "ЮKassa");
-        const data = parseJson(r.text);
-        if (r.status >= 300 || !data.id) {
-          const d = String(data.description || "");
-          if (/receipt/i.test(d)) {
-            throw new HttpError(502, "ЮKassa требует чек от ЮKassa — в личном кабинете ЮKassa отключите «Чеки от ЮKassa»: чек пробивает касса заведения");
-          }
-          if (/sbp|payment_method/i.test(d)) {
-            throw new HttpError(502, "В магазине ЮKassa не подключена оплата через СБП — включите её в личном кабинете ЮKassa");
-          }
-          throw new HttpError(502, `ЮKassa: ${d || `ошибка ${r.status}`}`);
-        }
-        return { docId: null, providerId: String(data.id), url: String(data.confirmation?.confirmation_url || "") };
       }
       case "robokassa": {
         const invId = await nextRobokassaInvId(tenantId);
@@ -327,13 +291,6 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         const st = await tbank(c, "GetState", { PaymentId: providerId });
         if (st.Status === "CONFIRMED") return "paid";
         if (["REJECTED", "DEADLINE_EXPIRED", "CANCELED", "AUTH_FAIL", "REVERSED", "REFUNDED"].includes(st.Status)) return "failed";
-        return "pending";
-      }
-      case "yookassa": {
-        const r = await call(`${YOOKASSA_URL}/payments/${encodeURIComponent(providerId)}`, { headers: yookassaHeaders(c) }, "ЮKassa");
-        const data = parseJson(r.text);
-        if (data.status === "succeeded") return "paid";
-        if (data.status === "canceled") return "failed";
         return "pending";
       }
       case "robokassa": {
@@ -587,12 +544,6 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         } catch (e) {
           return { ok: false, message: e.message || `${bank} отклонил реквизиты` };
         }
-      }
-      case "yookassa": {
-        const r = await call(`${YOOKASSA_URL}/payments/00000000-0000-0000-0000-000000000000`, { headers: yookassaHeaders(c) }, bank);
-        if (r.status === 401 || r.status === 403) return { ok: false, message: "ЮKassa не приняла shopId или секретный ключ" };
-        if (r.status === 404 || r.status === 400 || r.status === 200) return { ok: true, message: "ЮKassa приняла реквизиты" };
-        return { ok: false, message: `ЮKassa ответила ${r.status}` };
       }
       case "robokassa": {
         const q = new URLSearchParams({ MerchantLogin: c.login, InvoiceID: "1", Signature: robokassaSig(c.hash, [c.login, "1", c.password2]) });
