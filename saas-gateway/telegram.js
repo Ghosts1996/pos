@@ -40,6 +40,10 @@ const flow = require("./delivery-flow");
 // /etc/saas-gateway.env), например Cloudflare Worker, пересылающий запросы
 // на api.telegram.org как есть.
 const API_BASE = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/+$/, "");
+// Куда Telegram шлёт нажатия кнопок и сообщения. Если до сервера в РФ
+// Telegram не достучится, сюда ставится тот же ретранслятор
+// (TELEGRAM_HOOK_BASE=<адрес ретранслятора>/hook) — он перешлёт на /tgHook.
+const HOOK_BASE = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, "");
 const API_TIMEOUT_MS = 10000;
 
 class TelegramUnreachable extends Error {}
@@ -329,6 +333,8 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return { decoded, body };
   }
 
+  const hookUrl = (tenantId) => (HOOK_BASE ? `${HOOK_BASE}/${tenantId}` : `${publicUrl}/tgHook/${tenantId}`);
+
   // ------------------------------------------------------------ кабинет
 
   /** Владелец вводит токен своего бота: проверяем, шифруем, ставим webhook. */
@@ -360,7 +366,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const prev = (await ref.get()).data() || {};
     const hookSecret = crypto.randomBytes(24).toString("hex");
     await api(token, "setWebhook", {
-      url: `${publicUrl}/tgHook/${tenantId}`,
+      url: hookUrl(tenantId),
       secret_token: hookSecret,
       allowed_updates: ["message", "callback_query"],
       drop_pending_updates: true,
@@ -371,6 +377,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       botId: me.id,
       username: me.username || "",
       hookSecret,
+      hookUrl: hookUrl(tenantId),
       ownerChats: sameBot ? prev.ownerChats || [] : [],
       staffChat: sameBot ? prev.staffChat || null : null,
       notify: prev.notify || { delivery: true, shifts: true, alerts: true, summary: true },
@@ -771,6 +778,13 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     }
     const bot = { tenantId, token, cfg, unsubs: [], startedAt: admin.firestore.Timestamp.now() };
     bots.set(tenantId, bot);
+    // Адрес вебхука сменился (включили или убрали ретранслятор) — переставляем
+    // его у Telegram сами, владельцу подключать бота заново не нужно.
+    if (cfg.hookSecret && cfg.hookUrl !== hookUrl(tenantId)) {
+      api(token, "setWebhook", { url: hookUrl(tenantId), secret_token: cfg.hookSecret, allowed_updates: ["message", "callback_query"] })
+        .then(() => botsCol().doc(tenantId).update({ hookUrl: hookUrl(tenantId) }))
+        .catch((e) => console.error(`telegram webhook (${tenantId}):`, e.message));
+    }
     const t = tenantRef(tenantId);
     const owners = () => bot.cfg.ownerChats || [];
     const on = (flag) => !bot.cfg.notify || bot.cfg.notify[flag] !== false;
