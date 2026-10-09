@@ -157,7 +157,7 @@ test("кнопка оплаты — только когда банк подтв�
   // Нет реквизитов продавца — оплаты нет.
   await assert.rejects(start(), (e) => e.status === 409 && /реквизиты продавца/.test(e.message));
   store.set("tenants/t1/meta/venueProfile", { ...store.get("tenants/t1/meta/venueProfile"),
-    sellerName: "ООО «Лето»", sellerInn: "7701234567", sellerOgrn: "1027700000000", sellerAddress: "Москва, ул. Летняя, 1" });
+    sellerName: "ООО «Лето»", sellerInn: "7707083893", sellerOgrn: "1027700132195", sellerAddress: "Москва, ул. Летняя, 1" });
   const ok = {};
   await pay.handleStart({ body: { tenantId: "t1", sessionId: "s1" } }, ok);
   assert.equal(ok.body.url, "https://pay.example/o-1");
@@ -173,7 +173,7 @@ test("кнопка оплаты — только когда банк подтв�
 });
 
 test("реквизиты продавца: ИНН 10/12 цифр, ОГРН 13/15, имя и адрес", () => {
-  const v = { sellerName: "ИП Иванов И. И.", sellerInn: "770123456789", sellerOgrn: "304770000000012", sellerAddress: "Москва, ул. 1" };
+  const v = { sellerName: "ИП Иванов И. И.", sellerInn: "500100732259", sellerOgrn: "304500116000157", sellerAddress: "Москва, ул. 1" };
   assert.equal(gp.sellerReady(v), true);
   assert.equal(gp.sellerReady({ ...v, sellerInn: "12345" }), false);
   assert.equal(gp.sellerReady({ ...v, sellerOgrn: "123" }), false);

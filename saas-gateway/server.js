@@ -22,6 +22,7 @@ const net = require("net");
 const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
+const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram } = require("./telegram");
 
@@ -6508,6 +6509,8 @@ const ROUTES = {
   "/guestPayNotify": guestPay.handleNotify,
   "/guestPayRobokassa": handleAnyRobokassaResult,
   "/onlinePayCheck": guestPay.handleCheck,
+  // Реквизиты продавца: контрольные цифры и сверка с ЕГРЮЛ/ЕГРИП ФНС.
+  "/checkSeller": requisites.createHandler({ verifyAuth, parseJsonBody, requireTenantRole, sendJson, HttpError }),
   // Заказ доставки/с собой из приложения гостя и его отмена гостем.
   "/guestDeliveryOrder": guestDelivery.handleCreate,
   "/guestDeliveryCancel": guestDelivery.handleCancel,

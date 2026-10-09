@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../build_info.dart';
 import '../../models/venue_models.dart';
+import '../../services/gateway_api.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/ru_requisites.dart';
 
 /// Профиль заведения: часы, адрес, правила, FAQ и «счастливые часы».
 ///
@@ -42,6 +44,12 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   bool _guestSbpPay = false;
   bool _deliveryEnabled = false;
 
+  /// Итог сверки реквизитов с ЕГРЮЛ/ЕГРИП ФНС (через шлюз в РФ).
+  bool _sellerChecking = false;
+  String? _sellerCheckText;
+  bool _sellerCheckBad = false;
+  String _sellerCheckName = '';
+
   static const _days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
   @override
@@ -77,7 +85,52 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
+  String get _innDigits => _sellerInn.text.replaceAll(RegExp(r'\D'), '');
+  String get _ogrnDigits => _sellerOgrn.text.replaceAll(RegExp(r'\D'), '');
+
+  /// Сверка с ЕГРЮЛ/ЕГРИП: такой ИНН есть, ОГРН совпадает, деятельность
+  /// не прекращена. Возвращает false, только если реестр точно против;
+  /// ФНС не ответила — не мешаем (контрольные цифры уже проверены).
+  Future<bool> _checkSeller() async {
+    setState(() {
+      _sellerChecking = true;
+      _sellerCheckText = null;
+    });
+    var ok = true;
+    try {
+      final r = await GatewayApi.post('checkSeller', {'inn': _innDigits, 'ogrn': _ogrnDigits});
+      final status = r['status'];
+      ok = status != 'problem';
+      _sellerCheckBad = !ok;
+      _sellerCheckName = status == 'ok' ? (r['name'] ?? '').toString() : '';
+      _sellerCheckText = '${status == 'ok' ? '✓ ' : status == 'problem' ? '✗ ' : ''}${r['message'] ?? ''}';
+    } catch (e) {
+      _sellerCheckBad = false;
+      _sellerCheckName = '';
+      _sellerCheckText = 'Не удалось сверить с ФНС: $e. Контрольные цифры верные.';
+    }
+    if (mounted) setState(() => _sellerChecking = false);
+    return ok;
+  }
+
   Future<void> _save() async {
+    // Реквизиты видит гость — выдуманные не сохраняем. Пустые — можно:
+    // тогда доставка и онлайн-оплата у гостей просто выключены.
+    final hasRequisites = _innDigits.isNotEmpty || _ogrnDigits.isNotEmpty;
+    if (hasRequisites && !requisitesValid(_innDigits, _ogrnDigits)) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Проверьте ИНН и ОГРН в «Реквизитах продавца» — с ошибкой их сохранить нельзя')));
+      return;
+    }
+    final requisitesChanged = _innDigits != _profile.sellerInn || _ogrnDigits != _profile.sellerOgrn;
+    if (kSaasMode && hasRequisites && requisitesChanged && !await _checkSeller()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_sellerCheckText ?? 'Реквизиты не нашлись в реестре ФНС')));
+      }
+      return;
+    }
+    if (!mounted) return;
     final updated = _profile.copyWith(
       name: _name.text.trim(),
       address: _address.text.trim(),
@@ -298,20 +351,61 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               controller: _sellerInn,
               keyboardType: TextInputType.number,
               maxLength: 12,
-              decoration: const InputDecoration(labelText: 'ИНН', helperText: '10 цифр у организации, 12 у ИП', counterText: ''),
+              onChanged: (_) => setState(() => _sellerCheckText = null),
+              decoration: InputDecoration(
+                labelText: 'ИНН',
+                helperText: '10 цифр у организации, 12 у ИП',
+                errorText: _innDigits.length >= 10 ? innProblem(_innDigits) : null,
+                errorMaxLines: 2,
+                counterText: '',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _sellerOgrn,
               keyboardType: TextInputType.number,
               maxLength: 15,
-              decoration: const InputDecoration(labelText: 'ОГРН или ОГРНИП', helperText: '13 цифр у организации, 15 у ИП', counterText: ''),
+              onChanged: (_) => setState(() => _sellerCheckText = null),
+              decoration: InputDecoration(
+                labelText: 'ОГРН или ОГРНИП',
+                helperText: '13 цифр у организации, 15 у ИП',
+                errorText: _ogrnDigits.length >= 13 ? ogrnProblem(_ogrnDigits, inn: _innDigits) : null,
+                errorMaxLines: 2,
+                counterText: '',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _sellerAddress,
               decoration: const InputDecoration(labelText: 'Адрес продавца', hintText: 'Юридический адрес или адрес регистрации ИП'),
             ),
+            if (kSaasMode) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _sellerChecking || !requisitesValid(_innDigits, _ogrnDigits) ? null : _checkSeller,
+                  icon: _sellerChecking
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.verified_outlined, size: 18),
+                  label: const Text('Проверить в реестре ФНС'),
+                ),
+              ),
+              if (_sellerCheckText != null) ...[
+                const SizedBox(height: 8),
+                Text(_sellerCheckText!,
+                    style: TextStyle(
+                        color: _sellerCheckBad ? AppColors.danger : AppColors.textMuted, fontSize: 13, height: 1.4)),
+                if (_sellerCheckName.isNotEmpty && _sellerCheckName != _sellerName.text.trim())
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => setState(() => _sellerName.text = _sellerCheckName),
+                      child: Text('Подставить «$_sellerCheckName» в «Продавец»'),
+                    ),
+                  ),
+              ],
+            ],
 
             // Только сборка одного заведения на своём Firebase: на
             // платформе Cloud Functions нет, владельцу этот выбор не нужен.

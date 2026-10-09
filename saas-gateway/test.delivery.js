@@ -10,7 +10,7 @@ let n = 0;
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-const SELLER = { sellerName: "ООО «Лето»", sellerInn: "7701234567", sellerOgrn: "1027700000000", sellerAddress: "Москва, ул. Летняя, 1" };
+const SELLER = { sellerName: "ООО «Лето»", sellerInn: "7707083893", sellerOgrn: "1027700132195", sellerAddress: "Москва, ул. Летняя, 1" };
 
 function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false } = {}) {
   const { db, store } = fakeDb();
