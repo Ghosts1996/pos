@@ -158,6 +158,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                   helperMaxLines: 2,
                 ),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: uses,
                 keyboardType: TextInputType.number,
@@ -166,6 +167,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                   helperText: '0 — без ограничения',
                 ),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: days,
                 keyboardType: TextInputType.number,
@@ -174,6 +176,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                   helperText: '0 — без срока',
                 ),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: comment,
                 decoration: const InputDecoration(

@@ -250,11 +250,13 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(controller: title, decoration: const InputDecoration(labelText: 'Заголовок')),
+                const SizedBox(height: 12),
                 TextField(
                   controller: body,
                   maxLines: 3,
                   decoration: const InputDecoration(labelText: 'Текст'),
                 ),
+                const SizedBox(height: 12),
                 TextField(controller: image, decoration: const InputDecoration(labelText: 'Ссылка на фото')),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -270,6 +272,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                     if (labelIsDefault) label.text = defaultLabel(action);
                   }),
                 ),
+                const SizedBox(height: 12),
                 if (action != 'none')
                   TextField(
                     controller: label,

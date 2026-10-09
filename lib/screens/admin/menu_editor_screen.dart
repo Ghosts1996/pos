@@ -341,11 +341,13 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 TextField(
                     controller: nameCtrl,
                     decoration: const InputDecoration(labelText: 'Название')),
+                const SizedBox(height: 12),
                 TextField(
                   controller: priceCtrl,
                   decoration: const InputDecoration(labelText: 'Цена, ₽'),
                   keyboardType: TextInputType.number,
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: descCtrl,
                   maxLines: 3,
@@ -356,6 +358,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     hintText: 'Что входит в блюдо — видит гость и ИИ-помощник',
                   ),
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: bonusCtrl,
                   keyboardType: TextInputType.number,
@@ -387,6 +390,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   ].map((o) => DropdownMenuItem(value: o.id, child: Text(o.label))).toList(),
                   onChanged: (v) => setDialogState(() => fiscalSubject = v ?? 'commodity'),
                 ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: vat,
                   isExpanded: true,
@@ -751,6 +755,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   controller: nameCtrl,
                   decoration: const InputDecoration(labelText: 'Название', hintText: 'Кокосовое молоко'),
                 ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: priceCtrl,
                   keyboardType: TextInputType.number,

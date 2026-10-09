@@ -288,22 +288,26 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               'потребителей». Без них заказ доставки и онлайн-оплата у гостей недоступны.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: _sellerName,
               decoration: const InputDecoration(labelText: 'Продавец', hintText: 'ООО «Лето» или ИП Иванов Иван Иванович'),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: _sellerInn,
               keyboardType: TextInputType.number,
               maxLength: 12,
               decoration: const InputDecoration(labelText: 'ИНН', helperText: '10 цифр у организации, 12 у ИП', counterText: ''),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: _sellerOgrn,
               keyboardType: TextInputType.number,
               maxLength: 15,
               decoration: const InputDecoration(labelText: 'ОГРН или ОГРНИП', helperText: '13 цифр у организации, 15 у ИП', counterText: ''),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: _sellerAddress,
               decoration: const InputDecoration(labelText: 'Адрес продавца', hintText: 'Юридический адрес или адрес регистрации ИП'),
@@ -451,6 +455,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(controller: q, decoration: const InputDecoration(labelText: 'Вопрос')),
+            const SizedBox(height: 12),
             TextField(
               controller: a,
               maxLines: 2,
@@ -490,6 +495,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(controller: title, decoration: const InputDecoration(labelText: 'Название')),
+                const SizedBox(height: 12),
                 TextField(
                   controller: percent,
                   keyboardType: TextInputType.number,

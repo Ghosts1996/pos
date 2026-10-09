@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/tenant_models.dart';
+import '../../theme/boxed_input_border.dart';
 
 /// Палитра приложения гостя — только цвета заведения (раздел «Брендинг»
 /// в личном кабинете). Цветов ZalPOS здесь нет: пока брендинг не
@@ -307,15 +308,15 @@ class KolibriTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: KolibriColors.surfaceElevated,
-        border: OutlineInputBorder(
+        border: BoxedInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: KolibriColors.border),
         ),
-        enabledBorder: OutlineInputBorder(
+        enabledBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: KolibriColors.border),
         ),
-        focusedBorder: OutlineInputBorder(
+        focusedBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: KolibriColors.primary, width: 1.4),
         ),

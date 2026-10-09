@@ -221,11 +221,13 @@ class _NewOrderDialogState extends State<_NewOrderDialog> {
             textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Имя гостя или номер заказа (необязательно)'),
           ),
+          const SizedBox(height: 12),
           TextField(
             controller: _phone,
             keyboardType: TextInputType.phone,
             decoration: InputDecoration(labelText: widget.delivery ? 'Телефон' : 'Телефон (необязательно)'),
           ),
+          const SizedBox(height: 12),
           if (widget.delivery)
             TextField(
               controller: _address,
