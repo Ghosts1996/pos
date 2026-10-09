@@ -9,7 +9,10 @@ import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
+import '../../build_info.dart';
 import '../../models/fiscal_receipt.dart';
+import '../../models/online_pay.dart';
+import '../../services/gateway_api.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
 import '../../theme/app_colors.dart';
@@ -40,7 +43,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _fsrarIdCtrl = TextEditingController();
   bool _egaisEnabled = false;
   List<EgaisIncomingDoc>? _egaisDocs;
-  String _kassaType = 'mock'; // mock | atol_local | atol_cloud | orange_data | cloud_kassir
+  String _kassaType = 'none'; // none | atol_local | atol_cloud | orange_data
   final _kassaBaseUrlCtrl = TextEditingController();
   final _kassaGroupCodeCtrl = TextEditingController();
   final _kassaLoginCtrl = TextEditingController();
@@ -72,6 +75,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   String? _czTestResult;
   bool _terminalTesting = false;
   String? _terminalTestResult;
+  // Онлайн-оплата гостей (счёт за столом и доставка) — через шлюз.
+  String _onlineProvider = '';
+  final _onlineLoginCtrl = TextEditingController();
+  final _onlinePasswordCtrl = TextEditingController();
+  final _onlinePassword2Ctrl = TextEditingController();
+  bool _onlineTest = false;
+  String _onlineHash = 'md5';
+  bool _onlineChecking = false;
+  String? _onlineCheckResult;
 
   @override
   void initState() {
@@ -93,7 +105,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _utmHostCtrl.text = data['utmHost'] ?? '';
     _fsrarIdCtrl.text = data['egaisFsrarId'] ?? '';
     _egaisEnabled = data['egaisEnabled'] as bool? ?? (data['utmHost'] ?? '').toString().trim().isNotEmpty;
-    _kassaType = data['kassaType'] ?? 'mock';
+    final kassaType = (data['kassaType'] as String?) ?? 'none';
+    // Старые «тестовый режим» и CloudKassir ничего не фискализировали.
+    _kassaType = const ['atol_local', 'atol_cloud', 'orange_data'].contains(kassaType) ? kassaType : 'none';
     _kassaBaseUrlCtrl.text = data['kassaBaseUrl'] ?? '';
     _kassaGroupCodeCtrl.text = data['kassaGroupCode'] ?? '';
     _kassaLoginCtrl.text = data['kassaLogin'] ?? '';
@@ -117,6 +131,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
     _terminalLoginCtrl.text = data['terminalLogin'] ?? '';
     _terminalPasswordCtrl.text = data['terminalPassword'] ?? '';
+    _onlineProvider = (data['onlinePayProvider'] as String?) ?? '';
+    _onlineLoginCtrl.text = data['onlinePayLogin'] as String? ?? '';
+    _onlinePasswordCtrl.text = data['onlinePayPassword'] as String? ?? '';
+    _onlinePassword2Ctrl.text = data['onlinePayPassword2'] as String? ?? '';
+    _onlineTest = data['onlinePayTest'] as bool? ?? false;
+    _onlineHash = data['onlinePayHash'] as String? ?? 'md5';
+    // Раньше оплата гостей шла через «терминал» Т-Банка QR СБП — переносим.
+    if (_onlineProvider.isEmpty && data['terminalProvider'] == 'tinkoff_sbp') {
+      _onlineProvider = 'tinkoff';
+      _onlineLoginCtrl.text = data['terminalLogin'] as String? ?? '';
+      _onlinePasswordCtrl.text = data['terminalPassword'] as String? ?? '';
+    }
     _applyActivePrinter();
     setState(() => _loading = false);
   }
@@ -183,7 +209,19 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'terminalProvider': _terminalProvider.id,
       'terminalLogin': _terminalLoginCtrl.text.trim(),
       'terminalPassword': _terminalPasswordCtrl.text.trim(),
+      'onlinePayProvider': _onlineProvider,
+      'onlinePayLogin': _onlineLoginCtrl.text.trim(),
+      'onlinePayPassword': _onlinePasswordCtrl.text.trim(),
+      'onlinePayPassword2': _onlinePassword2Ctrl.text.trim(),
+      'onlinePayTest': _onlineTest,
+      'onlinePayHash': _onlineHash,
     }, SetOptions(merge: true));
+    // Гостю — только какой банк подключён (без ключей): по нему приложение
+    // показывает кнопку оплаты. Реквизиты неполные — кнопки нет.
+    await AppScope.col('meta').doc('venueProfile').set(
+      {'onlinePay': _onlineReady ? _onlineProvider : ''},
+      SetOptions(merge: true),
+    );
     _applyActivePrinter();
     _applyActiveKassa();
     _applyActiveEgais();
@@ -192,6 +230,121 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сохранено')));
     }
+  }
+
+  bool get _onlineReady {
+    final p = OnlinePayProvider.byId(_onlineProvider);
+    if (p == null) return false;
+    if (_onlineLoginCtrl.text.trim().isEmpty || _onlinePasswordCtrl.text.trim().isEmpty) return false;
+    return p.password2Label == null || _onlinePassword2Ctrl.text.trim().isNotEmpty;
+  }
+
+  /// Проверка реквизитов банком — без списания денег (см. guest-pay.js checkCreds).
+  Future<void> _checkOnlinePay() async {
+    setState(() {
+      _onlineChecking = true;
+      _onlineCheckResult = null;
+    });
+    try {
+      await _save();
+      final r = await GatewayApi.post('onlinePayCheck');
+      final ok = r['ok'] == true;
+      final enabled = r['enabled'] == true;
+      _onlineCheckResult = '${ok ? '✓' : '✗'} ${r['message'] ?? ''}'
+          '${ok && !enabled ? '\nВключите «Гость оплачивает онлайн» в Профиле заведения — тогда гости увидят кнопку оплаты.' : ''}';
+    } catch (e) {
+      _onlineCheckResult = '✗ $e';
+    }
+    if (mounted) setState(() => _onlineChecking = false);
+  }
+
+  Widget _onlinePaySection() {
+    final p = OnlinePayProvider.byId(_onlineProvider);
+    const base = kSaasGatewayUrl;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Онлайн-оплата гостей', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        const Text(
+          'Гость платит из приложения сам: счёт за столом и заказ доставки или с собой. '
+          'Деньги приходят на ваш счёт в банке, касса видит «Оплачено онлайн» и подставляет '
+          'сумму при закрытии чека. Включается в Профиле заведения.',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          initialValue: p == null ? '' : _onlineProvider,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Банк'),
+          items: [
+            const DropdownMenuItem(value: '', child: Text('Не подключён')),
+            for (final x in OnlinePayProvider.all) DropdownMenuItem(value: x.id, child: Text(x.label)),
+          ],
+          onChanged: (v) => setState(() {
+            _onlineProvider = v ?? '';
+            _onlineCheckResult = null;
+          }),
+        ),
+        if (p != null) ...[
+          const SizedBox(height: 8),
+          Text(p.hint, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          TextField(controller: _onlineLoginCtrl, decoration: InputDecoration(labelText: p.loginLabel)),
+          TextField(
+            controller: _onlinePasswordCtrl,
+            obscureText: true,
+            decoration: InputDecoration(labelText: p.passwordLabel),
+          ),
+          if (p.password2Label != null)
+            TextField(
+              controller: _onlinePassword2Ctrl,
+              obscureText: true,
+              decoration: InputDecoration(labelText: p.password2Label),
+            ),
+          if (p.id == 'robokassa') ...[
+            DropdownButtonFormField<String>(
+              initialValue: const ['md5', 'sha1', 'sha256', 'sha384', 'sha512'].contains(_onlineHash) ? _onlineHash : 'md5',
+              decoration: const InputDecoration(labelText: 'Алгоритм расчёта хеша (как в магазине)'),
+              items: const [
+                DropdownMenuItem(value: 'md5', child: Text('MD5 (по умолчанию)')),
+                DropdownMenuItem(value: 'sha1', child: Text('SHA1')),
+                DropdownMenuItem(value: 'sha256', child: Text('SHA256')),
+                DropdownMenuItem(value: 'sha384', child: Text('SHA384')),
+                DropdownMenuItem(value: 'sha512', child: Text('SHA512')),
+              ],
+              onChanged: (v) => setState(() => _onlineHash = v ?? 'md5'),
+            ),
+            const SizedBox(height: 8),
+            const SelectableText(
+              'Адреса для «Технических настроек» магазина Робокассы:\n'
+              'Result URL: $base/guestPayRobokassa (метод POST или GET)\n'
+              'Success URL и Fail URL: $base/guestPayDone (метод GET)',
+              style: TextStyle(fontSize: 13),
+            ),
+          ],
+          if (p.hasTestMode)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Тестовый режим'),
+              subtitle: Text(p.id == 'robokassa'
+                  ? 'Деньги не списываются; нужны тестовые пароли магазина'
+                  : 'Тестовый контур банка; нужны тестовые логин и пароль'),
+              value: _onlineTest,
+              onChanged: (v) => setState(() => _onlineTest = v),
+            ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _onlineChecking ? null : _checkOnlinePay,
+            icon: const Icon(Icons.verified_outlined),
+            label: Text(_onlineChecking ? 'Проверяем…' : 'Сохранить и проверить подключение'),
+          ),
+          if (_onlineCheckResult != null) ...[
+            const SizedBox(height: 8),
+            Text(_onlineCheckResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+        ],
+      ],
+    );
   }
 
   void _applyActiveKassa() {
@@ -382,35 +535,19 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   ({String? first, String? second}) _terminalFields(TerminalProvider p) {
     switch (p) {
       case TerminalProvider.manual:
-      case TerminalProvider.mock:
         return (first: null, second: null);
       case TerminalProvider.tinkoffSbp:
         return (first: 'TerminalKey', second: 'Пароль терминала');
       case TerminalProvider.sberUpos:
         return (first: r'Папка UPOS с sb_pilot.exe (пусто — C:\sc552)', second: null);
-      case TerminalProvider.sber:
-        return (first: 'Логин', second: 'Пароль');
-      case TerminalProvider.vtb:
-        return (first: 'Merchant ID', second: 'Секретный ключ');
-      case TerminalProvider.alfa:
-        return (first: 'Логин', second: 'Пароль');
-      case TerminalProvider.tochka:
-        return (first: 'Merchant ID', second: 'API-токен');
-      case TerminalProvider.mpos:
-        return (first: 'API-ключ', second: null);
-      case TerminalProvider.ingenico:
-      case TerminalProvider.verifone:
-        return (first: 'Сопряжение (MAC/серийный номер)', second: null);
     }
   }
 
   /// Пробный платёж на 1 ₽ — для Т-Банка это реальный запрос Init+GetQr к
-  /// боевому API (тестовых сумм там не бывает, зато рубль не жалко), для
-  /// остальных провайдеров без реализации просто покажет, что дальше
-  /// нужна их документация. Ручной терминал и заглушку тестировать
-  /// незачем — они по определению «доступны».
+  /// боевому API (тестовых сумм там не бывает, зато рубль не жалко).
+  /// Ручной терминал ничего не запрашивает у банка — проверять нечего.
   Future<void> _testTerminal() async {
-    if (_terminalProvider == TerminalProvider.manual || _terminalProvider == TerminalProvider.mock) {
+    if (_terminalProvider == TerminalProvider.manual) {
       setState(() => _terminalTestResult = 'Этот режим ничего не запрашивает у банка — '
           'проверять нечего, он «доступен» всегда.');
       return;
@@ -497,6 +634,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   @override
   void dispose() {
+    _onlineLoginCtrl.dispose();
+    _onlinePasswordCtrl.dispose();
+    _onlinePassword2Ctrl.dispose();
     _kitchenIpCtrl.dispose();
     _barIpCtrl.dispose();
     _networkIpCtrl.dispose();
@@ -776,12 +916,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             const Text('Онлайн-касса (54-ФЗ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             const Text(
-              'Без подключённого провайдера чек фискализируется имитационно '
-              '(в налоговую ничего не уходит) — этого достаточно, чтобы '
-              'проверить весь сценарий, но не заменяет настоящую кассу. Ниже — '
-              'два реально работающих протокола: подключаются сразу, как '
-              'только заключён договор с провайдером и с ОФД и получены '
-              'реквизиты — дописывать код не нужно.',
+              'По 54-ФЗ чек нужен при каждой оплате. Подключите регистратор АТОЛ в '
+              'заведении или облачную кассу — нужны договор с ОФД и регистрация '
+              'ККТ в кабинете налоговой. Пока касса не подключена, чеки из '
+              'приложения не уходят: пробивайте их на своей ККТ.',
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 8),
@@ -792,8 +930,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const RadioListTile<String>(
-                    title: Text('Тестовый режим (имитация)'),
-                    value: 'mock',
+                    title: Text('Касса не подключена'),
+                    subtitle: Text('Чек пробиваете на своей ККТ отдельно'),
+                    value: 'none',
                   ),
                   const RadioListTile<String>(
                     title: Text('Регистратор АТОЛ в заведении — работает без интернета'),
@@ -997,12 +1136,6 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                         ],
                       ),
                     ),
-                  const RadioListTile<String>(
-                    title: Text('CloudKassir'),
-                    subtitle: Text(
-                        'Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
-                    value: 'cloud_kassir',
-                  ),
                 ],
               ),
             ),
@@ -1015,14 +1148,12 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             const Text('Терминал оплаты', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             const Text(
-              'Ручной терминал работает уже сейчас с ЛЮБЫМ банком и ЛЮБЫМ '
-              'физическим терминалом (Ingenico, Verifone, mPOS, фирменный '
-              'терминал банка) — приложение просто спрашивает у сотрудника, '
-              'прошла ли оплата на самом терминале. Т-Банк по QR СБП вообще '
-              'обходится без терминала: гость платит сам со своего телефона. '
-              'Остальные банки ниже — это заготовки настроек: сама интеграция '
-              'ждёт технической документации по вашему договору эквайринга '
-              '(у каждого банка свой протокол, угадывать его нельзя).',
+              'Как касса принимает карты у стойки. «Ручной терминал» работает с '
+              'любым банком и любым терминалом (Ingenico, Verifone, PAX, mPOS): '
+              'сумму набирают на терминале, касса спрашивает, прошла ли оплата. '
+              'Т-Банк — QR СБП прямо на экране кассы, без терминала. Сбер UPOS — '
+              'сумма уходит на терминал сама (Windows-касса с кабелем). '
+              'Оплата гостями из приложения настраивается ниже, отдельно.',
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 8),
@@ -1032,7 +1163,6 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: TerminalProvider.values
-                    .where((p) => p != TerminalProvider.mock)
                     .map(
                       (p) => RadioListTile<TerminalProvider>(
                         title: Text(p.label),
@@ -1071,6 +1201,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               const SizedBox(height: 12),
               Text(_terminalTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
             ],
+            const Divider(height: 40),
+            _onlinePaySection(),
             const SizedBox(height: 32),
             FilledButton(
                 onPressed: _save,

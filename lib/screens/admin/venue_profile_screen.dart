@@ -257,13 +257,14 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               contentPadding: EdgeInsets.zero,
               value: _guestSbpPay,
               onChanged: (v) => setState(() => _guestSbpPay = v),
-              title: const Text('Гость оплачивает счёт по СБП со стола'),
-              subtitle: const Text(
-                'В приложении гостя появится «Оплатить по СБП»: гость платит из своего банка, '
-                'официанту приходит «Стол оплатил», касса подставляет сумму при закрытии. '
-                'Нужен Т-Банк — «QR СБП» в Настройки → Интеграции. Комиссия СБП обычно '
-                'ниже, чем по картам.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              title: const Text('Гость оплачивает онлайн из приложения'),
+              subtitle: Text(
+                'Счёт за столом и заказ доставки или с собой: гость платит из своего банка, '
+                'персоналу приходит «Оплачено онлайн», касса подставляет сумму при закрытии. '
+                'Банк подключается в Настройки → Интеграции → «Онлайн-оплата гостей»: '
+                'Т-Банк, ЮKassa, Робокасса, Сбербанк или Альфа-Банк. Комиссия СБП обычно ниже, чем по картам.'
+                '${_guestSbpPay && VenueService.instance.cached.onlinePay.isEmpty ? '\n⚠ Банк ещё не подключён — гости не увидят кнопку оплаты.' : ''}',
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             ),
 

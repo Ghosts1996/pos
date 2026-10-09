@@ -25,27 +25,23 @@ import 'atol_local_kassa.dart';
 ///      юрлицо или ИП, просто стоит в дата-центре провайдера.
 ///
 /// В обоих случаях нужны договор с ОФД и регистрация ККТ в кабинете
-/// налоговой. Пока реквизиты не вписаны в Настройки → Интеграции, работает
-/// [MockKassaService].
+/// налоговой. Пока реквизиты не вписаны в Настройки → Интеграции, касса не
+/// подключена ([NoKassaService]) и чеки из приложения не уходят.
 abstract class KassaService {
   bool get isAvailable;
   Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt);
 }
 
-class MockKassaService implements KassaService {
+/// Касса не подключена: заведение пробивает чеки на своей ККТ отдельно.
+/// Ничего не имитирует — на экране оплаты кассир видит, что фискальный чек
+/// из приложения не уйдёт, а не «успех» с выдуманным номером документа.
+class NoKassaService implements KassaService {
   @override
-  bool get isAvailable => true;
+  bool get isAvailable => false;
 
   @override
-  Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async {
-    await Future.delayed(const Duration(milliseconds: 800));
-    final n = DateTime.now().millisecondsSinceEpoch % 100000;
-    return FiscalReceiptResult.success(
-      fiscalDocumentNumber: 'MOCK-FD-$n',
-      fiscalSign: 'MOCK-FPD-$n',
-      fnNumber: 'MOCK-FN-0000000000',
-    );
-  }
+  Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async => const FiscalReceiptResult.failure(
+      'Касса не подключена — Настройки → Интеграции → «Онлайн-касса (54-ФЗ)»');
 }
 
 /// Система налогообложения заведения (тег ФФД 1055) — общая для всех
@@ -640,30 +636,6 @@ class OrangeDataKassaService implements KassaService {
   }
 }
 
-/// Честная заготовка для CloudKassir — на момент написания в открытом
-/// доступе нет полной технической документации по API фискализации
-/// (developers.cloudkassir.ru отдаёт только общее описание), поэтому
-/// точный протокол не реализован: рисковать точностью в фискальном
-/// документе без подтверждённой схемы неправильно. Как только появится
-/// договор с CloudKassir и техническая документация — реализация сюда
-/// добавляется по образцу [AtolCloudKassaService]/[OrangeDataKassaService].
-class CloudKassirKassaService implements KassaService {
-  final String apiKey;
-  CloudKassirKassaService({required this.apiKey});
-
-  @override
-  bool get isAvailable => false;
-
-  @override
-  Future<FiscalReceiptResult> sendReceipt(FiscalReceipt receipt) async {
-    return const FiscalReceiptResult.failure(
-      'CloudKassir: интеграция ждёт технической документации по API '
-      'фискализации — обратитесь в поддержку CloudKassir за протоколом '
-      'после заключения договора.',
-    );
-  }
-}
-
 /// Сбой связи (нет сети, DNS, таймаут), а не отказ кассы — такой чек можно
 /// безопасно отправить позже.
 bool isNetworkError(Object e) =>
@@ -680,7 +652,7 @@ class KassaException implements Exception {
 /// выбран и оплачен реальный провайдер — меняется только это значение
 /// (или инициализация в `main.dart`/экране настроек), экран оплаты трогать
 /// не придётся.
-KassaService kassaService = MockKassaService();
+KassaService kassaService = NoKassaService();
 
 /// Ставка НДС заведения по умолчанию (Настройки → Интеграции → касса) —
 /// для позиций меню, у которых своя ставка не задана.
@@ -696,8 +668,8 @@ Future<void> loadSavedKassaSettings() async {
     if (data == null) return;
     kassaService = buildKassaService(data);
   } catch (_) {
-    // Нет сети/документа при первом запуске — остаётся MockKassaService
-    // по умолчанию до захода в Настройки → Интеграции.
+    // Нет сети/документа при первом запуске — касса не подключена до
+    // захода в Настройки → Интеграции.
   }
 }
 
@@ -706,7 +678,7 @@ Future<void> loadSavedKassaSettings() async {
 /// том, какие поля к какому провайдеру относятся.
 KassaService buildKassaService(Map<String, dynamic> data) {
   kassaDefaultVat = FiscalVatRateX.fromId(data['kassaVat'] as String?);
-  final type = data['kassaType'] as String? ?? 'mock';
+  final type = data['kassaType'] as String? ?? 'none';
   String s(String key) => data[key] as String? ?? '';
   final sno = FiscalTaxSystemX.fromId(data['kassaSno'] as String?);
   switch (type) {
@@ -743,9 +715,7 @@ KassaService buildKassaService(Map<String, dynamic> data) {
         cashierName: s('kassaCashier'),
         cashierInn: s('kassaCashierInn'),
       );
-    case 'cloud_kassir':
-      return CloudKassirKassaService(apiKey: s('kassaLogin'));
     default:
-      return MockKassaService();
+      return NoKassaService();
   }
 }

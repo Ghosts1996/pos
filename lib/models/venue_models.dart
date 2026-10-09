@@ -66,13 +66,20 @@ class VenueProfile {
   /// сумма делится поровну между теми, кто был на смене в этот момент.
   final bool tipsTeamEnabled;
 
-  /// Гость оплачивает счёт по СБП прямо со стола (через Т-Банк из
-  /// «Интеграций»; пароль терминала остаётся на сервере).
+  /// Гость оплачивает онлайн из приложения — счёт за столом и заказ
+  /// доставки (через банк из «Интеграций»; реквизиты остаются на сервере).
   final bool guestSbpPay;
+
+  /// Какой банк подключён для онлайн-оплаты гостей (OnlinePayProvider.id),
+  /// пусто — не подключён. Пишет экран «Интеграции», в toMap() не входит.
+  final String onlinePay;
 
   /// Модуль «С собой и доставка»: кнопка в зале кассы. Выключение прячет её
   /// на всех кассах сразу, без перезапуска.
   final bool deliveryEnabled;
+
+  /// Гость может заплатить онлайн: включено в профиле и банк подключён.
+  bool get onlinePayReady => guestSbpPay && onlinePay.isNotEmpty;
 
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя
@@ -94,6 +101,7 @@ class VenueProfile {
     this.tipsEnabled = true,
     this.tipsTeamEnabled = true,
     this.guestSbpPay = false,
+    this.onlinePay = '',
     this.deliveryEnabled = false,
   });
 
@@ -124,6 +132,7 @@ class VenueProfile {
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
       guestSbpPay: data['guestSbpPay'] == true,
+      onlinePay: asText(data['onlinePay']),
       deliveryEnabled: data['deliveryEnabled'] == true,
     );
   }
@@ -192,6 +201,7 @@ class VenueProfile {
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
+        onlinePay: onlinePay,
         deliveryEnabled: deliveryEnabled ?? this.deliveryEnabled,
       );
 }

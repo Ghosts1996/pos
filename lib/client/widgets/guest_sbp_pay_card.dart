@@ -1,24 +1,34 @@
 import 'dart:async';
-import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../build_info.dart';
-import '../../services/app_scope.dart';
+import '../../models/online_pay.dart';
+import '../../services/gateway_api.dart';
 import '../../utils/money.dart';
 import '../theme/kolibri_theme.dart';
 
-/// «Оплатить по СБП» со стола. Сумму считает сервер по счёту (вместе с
-/// чаевыми «к счёту»), гость подтверждает перевод в своём банке, а
-/// официант получает «Стол оплатил». Пароль терминала Т-Банка на телефон
-/// гостя не попадает — платёж заводит шлюз (saas-gateway/guest-pay.js).
+/// Онлайн-оплата из приложения: счёт за столом или заказ доставки. Сумму
+/// считает сервер по счёту (вместе с чаевыми «к счёту»), гость платит в
+/// своём банке, персонал получает «Оплачено онлайн». Реквизиты банка на
+/// телефон гостя не попадают — платёж заводит шлюз (saas-gateway/guest-pay.js).
 class GuestSbpPayCard extends StatefulWidget {
   final String sessionId;
   final double paidAlready;
-  const GuestSbpPayCard({super.key, required this.sessionId, this.paidAlready = 0});
+
+  /// Подключённый банк (OnlinePayProvider.id) — от него подпись кнопки.
+  final String provider;
+
+  /// Заказ доставки/с собой: другие подсказки, чем у счёта за столом.
+  final bool takeaway;
+
+  const GuestSbpPayCard({
+    super.key,
+    required this.sessionId,
+    this.paidAlready = 0,
+    this.provider = 'tinkoff',
+    this.takeaway = false,
+  });
 
   @override
   State<GuestSbpPayCard> createState() => _GuestSbpPayCardState();
@@ -39,27 +49,16 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
     super.dispose();
   }
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
-    if (kSaasGatewayUrl.isEmpty || token == null) throw StateError('Оплата сейчас недоступна');
-    final resp = await http
-        .post(
-          Uri.parse('$kSaasGatewayUrl/$path'),
-          headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
-          body: jsonEncode({'tenantId': AppScope.tenantId, ...body}),
-        )
-        .timeout(const Duration(seconds: 20));
-    final json = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
-    if (resp.statusCode != 200) throw StateError((json['error'] ?? 'Сервис оплаты недоступен').toString());
-    return json;
-  }
+  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) => GatewayApi.post(path, body);
+
+  bool get _sbp => OnlinePayProvider.byId(widget.provider)?.sbpOnly ?? true;
 
   Future<void> _start() async {
     setState(() => _busy = true);
     try {
       final r = await _post('guestPayStart', {'sessionId': widget.sessionId});
       _paymentId = r['paymentId'] as String?;
-      _link = r['payload'] as String?;
+      _link = (r['url'] ?? r['payload']) as String?;
       _amount = (r['amount'] as num?)?.toDouble() ?? 0;
       _status = 'pending';
       _startedAt = DateTime.now();
@@ -69,7 +68,7 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
+            .showSnackBar(SnackBar(content: Text(e.toString())));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -109,13 +108,15 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
       body = const Row(children: [
         Icon(Icons.check_circle, color: Colors.green),
         SizedBox(width: 10),
-        Expanded(child: Text('Оплата прошла — спасибо! Счёт отмечен как оплаченный.')),
+        Expanded(child: Text('Оплата прошла — спасибо! Чек придёт от заведения.')),
       ]);
     } else if (_status == 'pending' || _status == 'failed') {
       body = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('К оплате ${rub(_amount)}. Подтвердите перевод в приложении банка — оплату мы увидим сами.',
+          Text(
+              'К оплате ${rub(_amount)}. ${_sbp ? 'Подтвердите перевод в приложении банка' : 'Оплатите на странице банка — СБП или картой'}'
+              ' — оплату мы увидим сами.',
               style: TextStyle(color: KolibriColors.textMuted)),
           const SizedBox(height: 10),
           if (_status == 'failed')
@@ -124,7 +125,7 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
             FilledButton.icon(
               onPressed: _openBank,
               icon: const Icon(Icons.account_balance),
-              label: const Text('Открыть приложение банка'),
+              label: Text(_sbp ? 'Открыть приложение банка' : 'Открыть страницу оплаты'),
             ),
         ],
       );
@@ -132,8 +133,11 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
       body = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Оплатите счёт сами через СБП — без ожидания официанта и терминала. '
-              'Чаевые, добавленные к счёту, войдут в сумму.',
+          Text(
+              widget.takeaway
+                  ? 'Оплатите заказ сейчас — ${_sbp ? 'через СБП' : 'СБП или картой'}. Чек придёт от заведения.'
+                  : 'Оплатите счёт сами ${_sbp ? 'через СБП' : 'онлайн — СБП или картой'}, без ожидания официанта и терминала. '
+                      'Чаевые, добавленные к счёту, войдут в сумму.',
               style: TextStyle(color: KolibriColors.textMuted)),
           const SizedBox(height: 10),
           FilledButton.icon(
@@ -141,7 +145,7 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
             icon: _busy
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.qr_code_2),
-            label: const Text('Оплатить по СБП'),
+            label: Text(OnlinePayProvider.payLabel(widget.provider)),
           ),
         ],
       );
@@ -160,7 +164,7 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
           if (widget.paidAlready > 0)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: Text('Уже оплачено по СБП: ${rub(widget.paidAlready)}',
+              child: Text('Уже оплачено онлайн: ${rub(widget.paidAlready)}',
                   style: TextStyle(color: KolibriColors.gold)),
             ),
           body,
