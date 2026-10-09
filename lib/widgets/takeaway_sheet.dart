@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/delivery_status.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
 import '../screens/employee/table_detail_screen.dart';
@@ -143,6 +144,7 @@ class TakeawaySheet extends StatelessWidget {
                       final delivery = s.orderType == 'delivery';
                       final mins = DateTime.now().difference(s.startTime).inMinutes;
                       final sub = [
+                        DeliveryFlow.label(s.orderType, s.deliveryStatus),
                         if (s.customerPhone.isNotEmpty) s.customerPhone,
                         if (s.deliveryAddress.isNotEmpty) s.deliveryAddress,
                         '$mins мин',
