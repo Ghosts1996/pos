@@ -6562,6 +6562,7 @@ const guestPay = createGuestPay({
   readBody,
   sendJson,
   HttpError,
+  requireTenantRole,
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
 });
 
@@ -6586,10 +6587,12 @@ const ROUTES = {
   "/telegramStatus": telegram.handleStatus,
   "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,
-  // Гость платит счёт по СБП со стола (Т-Банк) — см. guest-pay.js.
+  // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
   "/guestPayNotify": guestPay.handleNotify,
+  "/guestPayRobokassa": guestPay.handleRobokassaResult,
+  "/onlinePayCheck": guestPay.handleCheck,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
@@ -6707,6 +6710,9 @@ const server = http.createServer((req, res) => {
   // «Технических настройках» магазина).
   if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleRobokassaResult, req, res);
   if (req.method === "GET" && (urlPath === "/robokassaSuccess" || urlPath === "/robokassaFail")) return runHandler(handleRobokassaReturn, req, res);
+  // Онлайн-оплата гостя: Result URL Робокассы заведения и страница возврата из банка.
+  if (req.method === "GET" && urlPath === "/guestPayRobokassa") return runHandler(guestPay.handleRobokassaResult, req, res);
+  if (req.method === "GET" && urlPath === "/guestPayDone") return runHandler(guestPay.handleDone, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
@@ -6726,7 +6732,10 @@ scheduleBuildsSweep();
 scheduleAppRollout();
 scheduleMenuPopularity();
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
-if (process.env.PORT !== "8099") telegram.start();
+if (process.env.PORT !== "8099") {
+  telegram.start();
+  guestPay.startSweeper();
+}
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {

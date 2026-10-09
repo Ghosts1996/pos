@@ -4,8 +4,8 @@ import 'dart:io';
 import 'app_scope.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
+import '../utils/bank_http.dart';
 import '../utils/money.dart';
 
 /// Результат одной операции оплаты через терминал.
@@ -97,25 +97,6 @@ class ManualTerminalService implements PaymentTerminalService {
   }
 }
 
-/// Заглушка для разработки: имитирует терминал с фейковой задержкой и
-/// всегда успехом. В отличие от [ManualTerminalService] ничего не
-/// спрашивает — удобно только для обкатки экрана оплаты на эмуляторе, без
-/// реального терминала под рукой. Для настоящей смены не годится: она не
-/// проверяет, дошли ли деньги, а просто говорит "да".
-class MockPaymentTerminalService implements PaymentTerminalService {
-  @override
-  bool get isAvailable => true;
-
-  @override
-  Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async {
-    await Future.delayed(const Duration(seconds: 2));
-    return TerminalPaymentResult.success(
-      operationId: 'MOCK-${DateTime.now().millisecondsSinceEpoch}',
-      maskedCardNumber: '•• 4242',
-    );
-  }
-}
-
 /// Оплата через QR СБП по публичному REST API Т-Банка
 /// (https://oplata.tinkoff.ru/landing/develop/documentation, "Интернет-
 /// эквайринг v2"). Никакого физического терминала не нужно: гость
@@ -155,13 +136,15 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
 
   Future<Map<String, dynamic>> _post(String method, Map<String, String> params) async {
     final body = {'TerminalKey': terminalKey, ...params};
-    final resp = await http
+    final client = bankHttpClient();
+    final resp = await client
         .post(
           Uri.parse('$_baseUrl/$method'),
           headers: {'Content-Type': 'application/json; charset=utf-8'},
           body: jsonEncode({...body, 'Token': _token(body)}),
         )
-        .timeout(const Duration(seconds: 15));
+        .timeout(const Duration(seconds: 15))
+        .whenComplete(client.close);
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     if (data['Success'] != true) {
       throw TerminalException(
@@ -338,20 +321,6 @@ class TerminalException implements Exception {
   String toString() => message;
 }
 
-class _NotImplementedTerminalService implements PaymentTerminalService {
-  final String bankName;
-  const _NotImplementedTerminalService(this.bankName);
-
-  @override
-  bool get isAvailable => false;
-
-  @override
-  Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async =>
-      TerminalPaymentResult.failure(
-          '$bankName: интеграция ждёт технической документации по договору эквайринга. '
-          'Пока используйте «Ручной терминал» — Настройки → Интеграции.');
-}
-
 /// Терминал Сбера (Verifone/Ingenico/PAX с ПО UPOS), подключённый к
 /// Windows-кассе кабелем: сумма уходит на терминал сама, кассиру не нужно
 /// её набирать. Работает через `sb_pilot.exe` из комплекта UPOS, который
@@ -416,63 +385,12 @@ class SberUposTerminalService implements PaymentTerminalService {
   }
 }
 
-class SberAcquiringTerminalService extends _NotImplementedTerminalService {
-  final String login;
-  final String password;
-  const SberAcquiringTerminalService({required this.login, required this.password})
-      : super('Сбербанк Эквайринг');
-}
-
-class VtbAcquiringTerminalService extends _NotImplementedTerminalService {
-  final String merchantId;
-  final String secretKey;
-  const VtbAcquiringTerminalService({required this.merchantId, required this.secretKey})
-      : super('ВТБ Эквайринг');
-}
-
-class AlfaAcquiringTerminalService extends _NotImplementedTerminalService {
-  final String username;
-  final String password;
-  const AlfaAcquiringTerminalService({required this.username, required this.password})
-      : super('Альфа-Банк Эквайринг');
-}
-
-class TochkaAcquiringTerminalService extends _NotImplementedTerminalService {
-  final String merchantId;
-  final String apiToken;
-  const TochkaAcquiringTerminalService({required this.merchantId, required this.apiToken})
-      : super('Точка Банк Эквайринг');
-}
-
-class MposTerminalService extends _NotImplementedTerminalService {
-  final String apiKey;
-  const MposTerminalService({required this.apiKey}) : super('mPOS-терминал');
-}
-
-class IngenicoTerminalService extends _NotImplementedTerminalService {
-  final String pairing; // MAC/серийный номер сопряжения
-  const IngenicoTerminalService({required this.pairing}) : super('Ingenico');
-}
-
-class VerifoneTerminalService extends _NotImplementedTerminalService {
-  final String pairing;
-  const VerifoneTerminalService({required this.pairing}) : super('Verifone');
-}
-
 /// Провайдеры терминала оплаты — список для выпадающего меню в
 /// Настройки → Интеграции. id хранится в Firestore, name — подпись в UI.
 enum TerminalProvider {
   manual('manual', 'Ручной терминал (любой банк)'),
-  tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП (без терминала)'),
-  sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)'),
-  sber('sber', 'Сбербанк Эквайринг'),
-  vtb('vtb', 'ВТБ Эквайринг'),
-  alfa('alfa', 'Альфа-Банк Эквайринг'),
-  tochka('tochka', 'Точка Банк Эквайринг'),
-  mpos('mpos', 'mPOS-терминал'),
-  ingenico('ingenico', 'Ingenico'),
-  verifone('verifone', 'Verifone'),
-  mock('mock', 'Тестовая заглушка (для разработки)');
+  tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП на экране кассы'),
+  sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)');
 
   final String id;
   final String label;
@@ -497,31 +415,11 @@ PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
   switch (provider) {
     case TerminalProvider.manual:
       return ManualTerminalService();
-    case TerminalProvider.mock:
-      return MockPaymentTerminalService();
     case TerminalProvider.tinkoffSbp:
       return TinkoffSbpQrTerminalService(
           terminalKey: s('terminalLogin'), password: s('terminalPassword'));
     case TerminalProvider.sberUpos:
       return SberUposTerminalService(folder: s('terminalLogin'));
-    case TerminalProvider.sber:
-      return SberAcquiringTerminalService(login: s('terminalLogin'), password: s('terminalPassword'));
-    case TerminalProvider.vtb:
-      return VtbAcquiringTerminalService(merchantId: s('terminalLogin'), secretKey: s('terminalPassword'));
-    case TerminalProvider.alfa:
-      return AlfaAcquiringTerminalService(username: s('terminalLogin'), password: s('terminalPassword'));
-    case TerminalProvider.tochka:
-      return TochkaAcquiringTerminalService(merchantId: s('terminalLogin'), apiToken: s('terminalPassword'));
-    case TerminalProvider.mpos:
-      // Единственное поле у mPOS в настройках — «API-ключ», и оно, как и
-      // у Ingenico/Verifone ниже, сохраняется в terminalLogin: у этих
-      // трёх провайдеров в форме показывается только одно поле, и это
-      // первое (см. _terminalFields в integrations_settings_screen.dart).
-      return MposTerminalService(apiKey: s('terminalLogin'));
-    case TerminalProvider.ingenico:
-      return IngenicoTerminalService(pairing: s('terminalLogin'));
-    case TerminalProvider.verifone:
-      return VerifoneTerminalService(pairing: s('terminalLogin'));
   }
 }
 

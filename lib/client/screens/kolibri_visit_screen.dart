@@ -353,10 +353,18 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
             ),
           ),
 
-        if (VenueService.instance.cached.guestSbpPay && s.orderItems.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          GuestSbpPayCard(sessionId: s.id, paidAlready: s.guestPaidTotal),
-        ],
+        // Кнопка оплаты — только если заведение включило оплату и подключило
+        // банк; следит за профилем вживую, без перезапуска приложения.
+        if (s.orderItems.isNotEmpty)
+          ValueListenableBuilder<VenueProfile>(
+            valueListenable: VenueService.instance.notifier,
+            builder: (context, venue, _) => venue.onlinePayReady
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: GuestSbpPayCard(sessionId: s.id, paidAlready: s.guestPaidTotal, provider: venue.onlinePay),
+                  )
+                : const SizedBox.shrink(),
+          ),
 
         // ---- Чаевые ----
         // Рядом со счётом, а не только в «Ещё»: о чаевых думают именно
