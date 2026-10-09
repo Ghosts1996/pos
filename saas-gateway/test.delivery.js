@@ -150,8 +150,11 @@ test("онлайн-оплата — только если банк подклю�
 });
 
 test("не гость заведения — нельзя; больше двух заказов в работе — нельзя", async () => {
-  const { api } = setup();
+  const { api, store } = setup();
   await assert.rejects(call(api.handleCreate, order(), { uid: "stranger" }), (e) => e.status === 403);
+  store.set("tenants/t1", { ...store.get("tenants/t1"), guestAppOff: true });
+  await assert.rejects(call(api.handleCreate, order()), (e) => e.status === 403, "приложение гостя не в тарифе");
+  store.set("tenants/t1", { ...store.get("tenants/t1"), guestAppOff: false });
   await call(api.handleCreate, order());
   await call(api.handleCreate, order());
   await assert.rejects(call(api.handleCreate, order()), (e) => e.status === 429);
