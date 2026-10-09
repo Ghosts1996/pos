@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'firestore_service.dart';
+import '../models/delivery_status.dart';
 import '../models/client_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
@@ -813,7 +814,15 @@ class GuestLinkService {
         }
       }
 
-      tx.update(sessionRef, {'orderItems': current.map((e) => e.toMap()).toList()});
+      tx.update(sessionRef, {
+        'orderItems': current.map((e) => e.toMap()).toList(),
+        // Заказ с собой/доставки из приложения: принят персоналом.
+        if (data['tableId'] == TableModel.takeawayId &&
+            DeliveryFlow.normalize((data['orderType'] ?? '').toString(), data['deliveryStatus'] as String?) == 'new') ...{
+          'deliveryStatus': 'accepted',
+          'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
+        },
+      });
       tx.update(orderRef, {
         'status': 'preparing',
         'handledAt': Timestamp.fromDate(DateTime.now()),

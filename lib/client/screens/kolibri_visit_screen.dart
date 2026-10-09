@@ -17,6 +17,7 @@ import 'kolibri_qr_scan_screen.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
+import 'kolibri_order_screen.dart';
 
 /// «Мой стол»: живой счёт гостя.
 ///
@@ -76,6 +77,8 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   Widget _notAtTable() => ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
         children: [
+          // Заказы доставки и с собой — сверху: их статус гость ждёт.
+          const MyDeliveryOrders(),
           Text('Мой стол', style: KolibriFonts.display(34)),
           const SizedBox(height: 8),
           Text(
@@ -131,6 +134,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
       children: [
+        const MyDeliveryOrders(),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [

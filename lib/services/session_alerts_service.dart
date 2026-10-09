@@ -452,6 +452,16 @@ class SessionAlertsService {
       for (final change in snap.docChanges) {
         if (change.type != DocumentChangeType.added) continue;
         final o = GuestOrder.fromDoc(change.doc);
+        // Заказ доставки/с собой из приложения — всем на смене: кто первым
+        // свободен, тот и звонит гостю.
+        if (o.orderType.isNotEmpty) {
+          unawaited(_notify.show(
+            id: NotificationService.idFor('order_${o.id}'),
+            title: '${o.orderType == 'delivery' ? 'Доставка' : 'Заказ с собой'} из приложения — позвоните гостю',
+            body: '${o.guestName.isEmpty ? '' : '${o.guestName}: '}${o.items.map((i) => '${i.displayName} ×${i.qty}').join(', ')}',
+          ));
+          continue;
+        }
         if (!_mine) continue; // на смене другой сотрудник — это его заказ
         if (!o.isFor(_myPosition)) continue;
 

@@ -21,7 +21,8 @@ const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
-const { createGuestPay } = require("./guest-pay");
+const { createGuestPay, onlinePaySettings } = require("./guest-pay");
+const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram } = require("./telegram");
 
 /**
@@ -6161,6 +6162,21 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
     scrubbed += snap.size;
   }
 
+  // Заказы доставки и с собой из приложения: имя, телефон и адрес гостя.
+  for (const tid of tenantIds) {
+    const snap = await firestore.collection("tenants").doc(tid).collection("sessions")
+      .where("clientUid", "==", clientUid).get();
+    const own = snap.docs.filter((d) => d.data().source === "app");
+    for (let i = 0; i < own.length; i += 400) {
+      const batch = firestore.batch();
+      own.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
+        customerName: "", customerPhone: "", deliveryAddress: "", deliveryComment: "", guestContact: "",
+      }));
+      await batch.commit();
+    }
+    scrubbed += own.length;
+  }
+
   // Ключ восстановления входа (guestRecovery) — иначе приложение вернуло бы
   // удалённый аккаунт при следующем запуске.
   await firestore.collection("guestRecovery").doc(clientUid).delete().catch(() => {});
@@ -6566,6 +6582,74 @@ const guestPay = createGuestPay({
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
 });
 
+/** Контакт гостя (имя, телефон, адрес) — в базу в РФ его же токеном, до заказа. */
+async function recordContactInRussia(req, payload) {
+  const auth = String(req.headers["authorization"] || "");
+  let resp = null;
+  for (const url of PII_GATEWAY_URLS) {
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+      break;
+    } catch (_) { /* следующий адрес */ }
+  }
+  if (!resp) throw new HttpError(503, "Сервер заказов недоступен — попробуйте через минуту");
+  if (!resp.ok) throw new HttpError(503, "Не удалось сохранить контакт — попробуйте через минуту");
+}
+
+// Заказ доставки и с собой из приложения гостя — см. guest-delivery.js.
+const guestDelivery = createGuestDelivery({
+  db,
+  admin,
+  verifyAuth,
+  parseJsonBody,
+  sendJson,
+  HttpError,
+  recordContact: recordContactInRussia,
+  onlinePayReady: async (tenantId) => {
+    const t = db().collection("tenants").doc(tenantId);
+    const [integ, venue] = await Promise.all([
+      t.collection("settings").doc("integrations").get(),
+      t.collection("meta").doc("venueProfile").get(),
+    ]);
+    return (venue.data() || {}).guestSbpPay === true && !!onlinePaySettings(integ.data());
+  },
+});
+
+/**
+ * Имя, телефон и адрес из заказов доставки нужны, пока заказ везут и
+ * разбираются с ним. Через 30 дней после закрытия — обезличиваем
+ * (ч. 7 ст. 5 закона № 152-ФЗ): чек и суммы остаются для отчётов.
+ */
+const DELIVERY_PII_DAYS = 30;
+async function runDeliveryPiiRetention() {
+  const border = Date.now() - DELIVERY_PII_DAYS * 24 * 3600 * 1000;
+  const tenants = await db().collection("tenants").get();
+  for (const t of tenants.docs) {
+    try {
+      const snap = await t.ref.collection("sessions").where("source", "==", "app").get();
+      const old = snap.docs.filter((d) => {
+        const s = d.data();
+        const closed = s.closedAt?.toMillis?.() || s.cancelledAt?.toMillis?.() || 0;
+        return s.status !== "active" && closed && closed < border && (s.customerPhone || s.deliveryAddress || s.customerName);
+      });
+      for (let i = 0; i < old.length; i += 400) {
+        const batch = db().batch();
+        old.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
+          customerName: "", customerPhone: "", deliveryAddress: "", deliveryComment: "", guestContact: "", piiErasedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }));
+        await batch.commit();
+      }
+    } catch (e) {
+      console.error(`saas-gateway: обезличивание доставки ${t.id}:`, e.message || e);
+    }
+  }
+}
+
 // Telegram-боты заведений: доставка, смены, отчёты, сигналы — см. telegram.js.
 const telegram = createTelegram({
   db,
@@ -6593,6 +6677,9 @@ const ROUTES = {
   "/guestPayNotify": guestPay.handleNotify,
   "/guestPayRobokassa": guestPay.handleRobokassaResult,
   "/onlinePayCheck": guestPay.handleCheck,
+  // Заказ доставки/с собой из приложения гостя и его отмена гостем.
+  "/guestDeliveryOrder": guestDelivery.handleCreate,
+  "/guestDeliveryCancel": guestDelivery.handleCancel,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
@@ -6731,6 +6818,7 @@ scheduleAiSecretsMigration();
 scheduleBuildsSweep();
 scheduleAppRollout();
 scheduleMenuPopularity();
+scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetention, 40 * 60 * 1000);
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
 if (process.env.PORT !== "8099") {
   telegram.start();

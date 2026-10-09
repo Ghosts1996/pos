@@ -256,15 +256,32 @@ function alertText(venueName, a) {
 }
 
 /** Карточка заказа с собой/доставки — без имени, телефона и адреса гостя. */
-function deliveryCardText(s, tz) {
+/**
+ * Текст карточки. Ни имени, ни телефона, ни адреса гостя (152-ФЗ) — их
+ * видит касса; комментарий гостя тоже не пересылаем: в нём бывают контакты.
+ * pendingItems — позиции заказа из приложения, ещё не подтверждённого.
+ */
+function deliveryCardText(s, tz, pendingItems = []) {
   const type = s.orderType === "delivery" ? "delivery" : "takeaway";
-  const items = s.orderItems || [];
+  const confirmed = s.orderItems || [];
+  const items = confirmed.length ? confirmed : pendingItems;
   const qty = items.reduce((a, i) => a + (Number(i.qty) || 0), 0);
+  const total = confirmed.length
+    ? sessionBill(s)
+    : Math.round(items.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0) * 100) / 100;
+  const app = s.source === "app";
   const lines = [
-    `${type === "delivery" ? "🛵 Доставка" : "🥡 С собой"} №${orderNo(s.id)}`,
+    `${type === "delivery" ? "🛵 Доставка" : "🥡 С собой"} №${orderNo(s.id)}${app ? " · 📱 из приложения" : ""}`,
     `Статус: ${flow.label(type, s.deliveryStatus)}`,
-    `Позиций: ${qty} · ${rub(sessionBill(s))}`,
+    `Позиций: ${qty} · ${rub(total)}`,
   ];
+  const paid = Number(s.guestPaidTotal) || 0;
+  if (paid > 0) lines.push(`💳 Оплачено онлайн: ${rub(paid)}`);
+  else if (s.payMethod === "online") lines.push("Оплата: онлайн после подтверждения");
+  else if (s.payMethod === "on_receipt") lines.push("Оплата: при получении");
+  if (app && flow.normalize(type, s.deliveryStatus) === "new") {
+    lines.push("☎️ Позвоните гостю с кассы и подтвердите заказ — телефон там");
+  }
   if (items.length) {
     lines.push(items.slice(0, 15).map((i) => `• ${i.name}${i.mods && i.mods.length ? ` (${i.mods.join(", ")})` : ""} ×${i.qty}`).join("\n"));
     if (items.length > 15) lines.push(`…и ещё ${items.length - 15}`);
@@ -278,7 +295,9 @@ function deliveryCardText(s, tz) {
 function deliveryKeyboard(s, addressUrl) {
   const type = s.orderType === "delivery" ? "delivery" : "takeaway";
   const rows = [];
-  const next = flow.next(type, s.deliveryStatus);
+  // Заказ из приложения подтверждают на кассе после звонка гостю.
+  const awaitingCall = s.source === "app" && flow.normalize(type, s.deliveryStatus) === "new";
+  const next = awaitingCall ? null : flow.next(type, s.deliveryStatus);
   if (next) rows.push([{ text: `▶️ ${flow.actionLabel(type, s.deliveryStatus)}`, callback_data: `s:${s.id}:${next}` }]);
   if (type === "delivery") {
     const row = [];
@@ -577,13 +596,19 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       let result = "";
       await db().runTransaction(async (tx) => {
         const s = (await tx.get(sesRef)).data();
-        if (!s || s.status !== "active" || s.tableId !== TAKEAWAY_TABLE) { result = "Заказ уже закрыт"; return; }
+        const inWork = s && (s.status === "active" || s.deliveryOpen === true);
+        if (!s || !inWork || s.tableId !== TAKEAWAY_TABLE) { result = "Заказ уже закрыт"; return; }
         const type = s.orderType === "delivery" ? "delivery" : "takeaway";
+        if (s.source === "app" && flow.normalize(type, s.deliveryStatus) === "new") {
+          result = "Подтвердите на кассе после звонка гостю";
+          return;
+        }
         if (!flow.canMove(type, s.deliveryStatus, arg)) {
           result = `Статус уже «${flow.label(type, s.deliveryStatus)}»`;
           return;
         }
         const patch = { deliveryStatus: arg, deliveryStatusAt: admin.firestore.Timestamp.now() };
+        if (arg === "done") patch.deliveryOpen = false;
         if (arg === "courier" && !s.courierName) patch.courierName = who;
         tx.update(sesRef, patch);
         result = flow.label(type, arg);
@@ -610,7 +635,7 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
         }
         await db().runTransaction(async (tx) => {
           const s = (await tx.get(sesRef)).data();
-          if (!s || s.status !== "active") return;
+          if (!s || !(s.status === "active" || s.deliveryOpen === true)) return;
           const patch = { courierName: name };
           // Готовый к передаче заказ сразу уходит «у курьера».
           if (s.orderType === "delivery" && flow.canMove("delivery", s.deliveryStatus, "courier") && s.deliveryStatus === "cooking") {
@@ -739,9 +764,14 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     const cardRef = botsCol().doc(bot.tenantId).collection("cards").doc(s.id);
     const card = (await cardRef.get()).data();
     const venue = await venueOf(bot.tenantId);
-    const text = deliveryCardText(s, venue.timezone);
+    let pending = [];
+    if (s.source === "app" && !(s.orderItems || []).length) {
+      const g = await tenantRef(bot.tenantId).collection("guestOrders").where("sessionId", "==", s.id).get();
+      pending = g.docs.map((d) => d.data()).filter((o) => o.status === "new").flatMap((o) => o.items || []);
+    }
+    const text = deliveryCardText(s, venue.timezone, pending);
     const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(bot.tenantId, s.id) : null);
-    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${(s.orderItems || []).length}|${sessionBill(s)}`;
+    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
       const m = await api(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
         console.error(`telegram card (${bot.tenantId}):`, e.message);
@@ -756,12 +786,20 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     await cardRef.update({ sig });
   }
 
-  async function closeCard(bot, sessionId) {
+  /** Заказ вышел из работы: выдан, доставлен, отменён или закрыт на кассе. */
+  async function closeCard(bot, sessionId, s = null) {
     const cardRef = botsCol().doc(bot.tenantId).collection("cards").doc(sessionId);
     const card = (await cardRef.get()).data();
     if (!card) return;
+    const type = s && s.orderType === "delivery" ? "delivery" : "takeaway";
+    const st = s ? flow.normalize(type, s.deliveryStatus) : "";
+    const text = st === "cancelled"
+      ? `❌ №${orderNo(sessionId)} отменён${s.cancelReason ? `: ${String(s.cancelReason).slice(0, 120)}` : ""}`
+      : st === "done"
+        ? `✅ №${orderNo(sessionId)} ${type === "delivery" ? "доставлен" : "выдан"}`
+        : `✅ №${orderNo(sessionId)} закрыт на кассе`;
     await api(bot.token, "editMessageReplyMarkup", { chat_id: card.chatId, message_id: card.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
-    await api(bot.token, "sendMessage", { chat_id: card.chatId, text: `✅ №${orderNo(sessionId)} закрыт на кассе`, reply_to_message_id: card.messageId }).catch(() => {});
+    await api(bot.token, "sendMessage", { chat_id: card.chatId, text, reply_to_message_id: card.messageId }).catch(() => {});
     await cardRef.delete();
   }
 
@@ -789,15 +827,35 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     const owners = () => bot.cfg.ownerChats || [];
     const on = (flag) => !bot.cfg.notify || bot.cfg.notify[flag] !== false;
 
-    // Заказы с собой и доставки: новые — карточкой, изменения — правкой.
-    bot.unsubs.push(t.collection("sessions").where("tableId", "==", TAKEAWAY_TABLE).where("status", "==", "active")
-      .onSnapshot((snap) => {
-        snap.docChanges().forEach((ch) => {
-          const s = { id: ch.doc.id, ...ch.doc.data() };
-          const job = ch.type === "removed" ? closeCard(bot, s.id) : refreshCard(bot, s);
-          job.catch((e) => console.error(`telegram card (${tenantId}):`, e.message));
-        });
-      }, (e) => console.error(`telegram sessions (${tenantId}):`, e.message)));
+    // Заказы с собой и доставки в работе: открытые чеки и уже оплаченные,
+    // но ещё не выданные (deliveryOpen). Новые — карточкой, изменения —
+    // правкой, выдан/отменён/закрыт — итогом в ответ на карточку.
+    const live = { active: new Map(), open: new Map() };
+    const tracked = new Set();
+    const reconcile = async (id) => {
+      const s = live.active.get(id) || live.open.get(id);
+      const type = s && s.orderType === "delivery" ? "delivery" : "takeaway";
+      const inWork = !!s && !flow.isFinal(type, s.deliveryStatus) && (s.status === "active" || s.deliveryOpen === true);
+      if (inWork) {
+        tracked.add(id);
+        return refreshCard(bot, s);
+      }
+      if (!tracked.has(id) && s) return closeCard(bot, id, s);
+      if (!tracked.has(id)) return;
+      tracked.delete(id);
+      const fresh = s || { id, ...((await t.collection("sessions").doc(id).get()).data() || {}) };
+      return closeCard(bot, id, fresh);
+    };
+    const watch = (which, query) => bot.unsubs.push(query.onSnapshot((snap) => {
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === "removed") live[which].delete(ch.doc.id);
+        else live[which].set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+        reconcile(ch.doc.id).catch((e) => console.error(`telegram card (${tenantId}):`, e.message));
+      });
+    }, (e) => console.error(`telegram sessions (${tenantId}):`, e.message)));
+    const takeaway = t.collection("sessions").where("tableId", "==", TAKEAWAY_TABLE);
+    watch("active", takeaway.where("status", "==", "active"));
+    watch("open", takeaway.where("deliveryOpen", "==", true));
 
     // Журнал кассы: сигналы владельцу — с курсора, без повторов после рестарта.
     const cursor = cfg.auditCursor || bot.startedAt;
