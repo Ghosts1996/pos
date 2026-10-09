@@ -122,6 +122,27 @@ class AuditLogService {
         details: {'item': itemName, 'reason': reason},
       );
 
+  /// Отмены позиций за период: (сколько штук, на какую сумму). null —
+  /// журнал недоступен (его читает только администратор).
+  Future<(int, double)?> voidsBetween(DateTime from, DateTime to) async {
+    try {
+      final snap = await AppScope.col('auditLog')
+          .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+          .where('createdAt', isLessThan: Timestamp.fromDate(to))
+          .get();
+      var count = 0;
+      var sum = 0.0;
+      for (final d in snap.docs) {
+        if (d.data()['action'] != 'order_item_voided') continue;
+        count++;
+        sum += (d.data()['amount'] as num?)?.toDouble() ?? 0;
+      }
+      return (count, sum);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Лента журнала за период — для экрана админа и для ИИ-контролёра.
   Stream<QuerySnapshot<Map<String, dynamic>>> stream({int limit = 200}) => AppScope.col('auditLog')
       .orderBy('createdAt', descending: true)
