@@ -230,8 +230,15 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const nowTs = ts.now();
     const label = orderType === "delivery" ? "Доставка" : "С собой";
     const tableRef = t.collection("tables").doc(TAKEAWAY_TABLE);
+    // Порядковый номер заказа: один счётчик на заведение — с кассой
+    // (FirestoreService.openSession), чтобы №12 не повторился.
+    const counterRef = t.collection("settings").doc("orderCounter");
+    let orderNo = 0;
     await db().runTransaction(async (tx) => {
       const table = (await tx.get(tableRef)).data();
+      const counter = (await tx.get(counterRef)).data();
+      orderNo = (Math.trunc(Number(counter?.last)) || 0) + 1;
+      tx.set(counterRef, { last: orderNo }, { merge: true });
       const active = Array.isArray(table?.activeSessionIds) ? table.activeSessionIds.map(String) : [];
       tx.set(sessionRef, {
         tableId: TAKEAWAY_TABLE,
@@ -240,6 +247,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         employeeId: "",
         guestTag: "",
         orderType,
+        orderNo,
         customerName: name,
         customerPhone: phone,
         ...(address ? { deliveryAddress: address } : {}),
@@ -297,7 +305,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     });
     sendJson(res, 200, {
       sessionId,
-      orderNo: sessionId.slice(-4).toUpperCase(),
+      orderNo: String(orderNo),
       total,
       skipped: priced.banned,
     });

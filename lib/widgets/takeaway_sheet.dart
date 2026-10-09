@@ -86,6 +86,7 @@ class TakeawaySheet extends StatelessWidget {
         customerPhone: data.phone,
         deliveryAddress: data.address,
         sessionId: sessionId,
+        numbered: true,
       );
       if (context.mounted) await _open(context, id);
     } catch (e) {
