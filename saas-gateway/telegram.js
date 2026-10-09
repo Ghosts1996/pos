@@ -35,6 +35,15 @@ const fs = require("fs");
 const { sessionBill } = require("./guest-pay");
 const flow = require("./delivery-flow");
 
+// Адрес Bot API. С серверов в РФ api.telegram.org бывает недоступен —
+// тогда сюда ставится свой ретранслятор (TELEGRAM_API_BASE в
+// /etc/saas-gateway.env), например Cloudflare Worker, пересылающий запросы
+// на api.telegram.org как есть.
+const API_BASE = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/+$/, "");
+const API_TIMEOUT_MS = 10000;
+
+class TelegramUnreachable extends Error {}
+
 const DAY_START_HOUR = 6; // рабочие сутки 06:00–06:00: ночная смена — один день
 const SUMMARY_HOUR = 10;
 const BIG_DISCOUNT_PERCENT = 20;
@@ -288,11 +297,18 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const bots = new Map();
 
   async function api(token, method, params = {}) {
-    const resp = await doFetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
+    let resp;
+    try {
+      resp = await doFetch(`${API_BASE}/bot${token}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+        // Недоступный Telegram не должен подвешивать шлюз и очередь сообщений.
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+    } catch (e) {
+      throw new TelegramUnreachable(`Telegram недоступен: ${e.message || e}`);
+    }
     const data = await resp.json().catch(() => ({}));
     if (!data.ok) throw new Error(`Telegram ${method}: ${data.description || resp.status}`);
     return data.result;
@@ -324,7 +340,10 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     let me;
     try {
       me = await api(token, "getMe");
-    } catch (_) {
+    } catch (e) {
+      if (e instanceof TelegramUnreachable) {
+        throw new HttpError(503, "Сервер сейчас не может достучаться до Telegram — попробуйте позже или напишите в поддержку");
+      }
       throw new HttpError(400, "Telegram не принял токен — проверьте, что скопировали его целиком и бот не удалён");
     }
     const taken = await botsCol().where("botId", "==", me.id).limit(2).get();
