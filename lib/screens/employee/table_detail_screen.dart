@@ -642,6 +642,12 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               if (session.status != 'active') {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!mounted) return;
+                  // Заказ с собой закрыт — назад к залу: соседние заказы
+                  // принадлежат другим гостям.
+                  if (t.isTakeaway) {
+                    Navigator.of(context).maybePop();
+                    return;
+                  }
                   final others =
                       t.activeSessionIds.where((id) => id != _sessionId).toList();
                   setState(() => _sessionId = others.isEmpty ? null : others.first);
@@ -740,7 +746,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           onTap: () => _refill(session, unlimited),
         ),
       if (!canRefill) split,
-      if (!unlimited)
+      if (!unlimited && !t.isTakeaway)
         _TableAction(
           icon: Icons.more_time_rounded,
           label: 'Время',
@@ -766,7 +772,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         onTap: () => _moveTable(session, t),
       ),
       if (canRefill) split,
-      if (hasOtherChecks || canAddMore)
+      if (!t.isTakeaway && (hasOtherChecks || canAddMore))
         _TableAction(
           icon: Icons.receipt_long_outlined,
           label: hasOtherChecks ? 'Чеки' : 'Ещё чек',
@@ -787,7 +793,10 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             child: ListView(
               padding: EdgeInsets.fromLTRB(side, 12, side, 24),
               children: [
-                _SessionStatusCard(session: session, showRefills: canRefill, unlimited: unlimited),
+                if (t.isTakeaway)
+                  _TakeawayCard(session: session)
+                else
+                  _SessionStatusCard(session: session, showRefills: canRefill, unlimited: unlimited),
                 const SizedBox(height: 12),
                 _ActionGrid(actions: actions),
                 const SizedBox(height: 24),
@@ -1426,6 +1435,57 @@ class _TimeAdjustSheet extends StatelessWidget {
             row('Убавить', Icons.remove_circle_outline, false),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Шапка заказа с собой или доставки: кто, телефон, адрес, сколько ждёт.
+class _TakeawayCard extends StatelessWidget {
+  final SessionModel session;
+  const _TakeawayCard({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final delivery = session.orderType == 'delivery';
+    final waited = DateTime.now().difference(session.startTime).inMinutes;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(delivery ? Icons.delivery_dining_rounded : Icons.shopping_bag_outlined,
+              size: 30, color: AppColors.primary),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(session.tableName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                if (session.customerPhone.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(session.customerPhone),
+                  ),
+                if (session.deliveryAddress.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(session.deliveryAddress),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text('Заказ принят ${waited < 1 ? 'только что' : '$waited мин назад'}',
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

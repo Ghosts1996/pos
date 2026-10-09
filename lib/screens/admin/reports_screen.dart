@@ -240,6 +240,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                           ),
                         ],
+                        if (stats.takeawayCount + stats.deliveryCount > 0) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('С собой и доставка'),
+                          Card(
+                            child: Column(
+                              children: [
+                                if (stats.takeawayCount > 0)
+                                  ListTile(
+                                    leading: const Icon(Icons.shopping_bag_outlined),
+                                    title: Text('С собой: ${stats.takeawayCount} '
+                                        '${pluralRu(stats.takeawayCount, 'заказ', 'заказа', 'заказов')}'),
+                                    trailing: Text(rub(stats.takeawayRevenue)),
+                                  ),
+                                if (stats.deliveryCount > 0)
+                                  ListTile(
+                                    leading: const Icon(Icons.delivery_dining_rounded),
+                                    title: Text('Доставка: ${stats.deliveryCount} '
+                                        '${pluralRu(stats.deliveryCount, 'заказ', 'заказа', 'заказов')}'),
+                                    trailing: Text(rub(stats.deliveryRevenue)),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (stats.unpaidClosed > 0) ...[
                           const SizedBox(height: 8),
                           _sectionTitle('Закрыто без оплаты'),
@@ -523,6 +547,12 @@ class _ReportStats {
   final int unpaidClosed;
   final double unpaidAmount;
 
+  /// Заказы с собой и доставка — сколько и на какую сумму.
+  final int takeawayCount;
+  final double takeawayRevenue;
+  final int deliveryCount;
+  final double deliveryRevenue;
+
   _ReportStats({
     required this.visits,
     required this.revenue,
@@ -536,6 +566,10 @@ class _ReportStats {
     required this.refundedAmount,
     required this.unpaidClosed,
     required this.unpaidAmount,
+    this.takeawayCount = 0,
+    this.takeawayRevenue = 0,
+    this.deliveryCount = 0,
+    this.deliveryRevenue = 0,
   });
 
   double get averageCheck => visits == 0 ? 0 : revenue / visits;
@@ -549,6 +583,8 @@ class _ReportStats {
     double refundedAmount = 0;
     int unpaidClosed = 0;
     double unpaidAmount = 0;
+    int takeawayCount = 0, deliveryCount = 0;
+    double takeawayRevenue = 0, deliveryRevenue = 0;
     final byEmployee = <String, _EmployeeStat>{};
     final byItem = <String, _ItemStat>{};
 
@@ -571,6 +607,13 @@ class _ReportStats {
       }
 
       revenue += s.totalWithDiscount;
+      if (s.orderType == 'delivery') {
+        deliveryCount++;
+        deliveryRevenue += s.totalWithDiscount;
+      } else if (s.orderType == 'takeaway') {
+        takeawayCount++;
+        takeawayRevenue += s.totalWithDiscount;
+      }
       refills += s.refillCount;
       discountGiven += (s.orderTotal - s.totalWithDiscount);
       if (s.discountCardId != null && s.discountCardId!.isNotEmpty) cardsUsed++;
@@ -606,6 +649,10 @@ class _ReportStats {
       refundedAmount: refundedAmount,
       unpaidClosed: unpaidClosed,
       unpaidAmount: unpaidAmount,
+      takeawayCount: takeawayCount,
+      takeawayRevenue: takeawayRevenue,
+      deliveryCount: deliveryCount,
+      deliveryRevenue: deliveryRevenue,
     );
   }
 }

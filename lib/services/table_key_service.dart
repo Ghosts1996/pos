@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/table_model.dart';
 import 'app_scope.dart';
 
 /// Секреты столов для QR-наклеек (только SaaS).
@@ -47,7 +48,7 @@ class TableKeyService {
     final tables = await AppScope.col('tables').get();
     final have = (await _keys.get()).docs.map((d) => d.id).toSet();
     var issued = 0;
-    for (final t in tables.docs.where((d) => !have.contains(d.id))) {
+    for (final t in tables.docs.where((d) => !have.contains(d.id) && d.id != TableModel.takeawayId)) {
       if (await _createIfMissing(t.id)) issued++;
     }
     if (issued > 0) await _markIssued();

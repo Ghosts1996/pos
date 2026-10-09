@@ -35,6 +35,9 @@ async function piiPost(body) {
 
 // ---------- СОСТОЯНИЕ ----------
 
+/// Служебный стол кассы для заказов с собой и доставки — гостю его не показываем.
+const TAKEAWAY_ID = 'takeaway';
+
 const state = {
   db: null,
   /// tenants/{id} — от него doc()/collection() строят все пути заведения.
@@ -1771,7 +1774,7 @@ async function loadSlots(day, win) {
         where('startTime', '>=', Timestamp.fromDate(from)),
         where('startTime', '<', Timestamp.fromDate(to)))),
     ]);
-    tables = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    tables = tSnap.docs.filter((d) => d.id !== TAKEAWAY_ID).map((d) => ({ id: d.id, ...d.data() }));
     slots = sSnap.docs.map((d) => d.data()).filter((v) => v.active !== false);
   } catch (_) {
     lastHall = { tables: [], slots: [] };
@@ -1890,7 +1893,7 @@ async function freeTablesFor(start, end, guests) {
       where('startTime', '>=', Timestamp.fromDate(from)),
       where('startTime', '<', Timestamp.fromDate(to)))),
   ]);
-  const tables = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const tables = tSnap.docs.filter((d) => d.id !== TAKEAWAY_ID).map((d) => ({ id: d.id, ...d.data() }));
   const slots = sSnap.docs.map((d) => d.data()).filter((v) => v.active !== false);
   const booked = bookedTableIds(slots, start, end);
 
@@ -3082,6 +3085,7 @@ async function estimateWait(guests) {
     const snap = await getDocs(collection(state.root, 'tables'));
     const waits = [];
     snap.docs.forEach((d) => {
+      if (d.id === TAKEAWAY_ID) return;
       const v = d.data();
       if ((Number(v.seats) || 4) < guests) return;
       const end = toDate(v.busyUntil);
@@ -3656,7 +3660,7 @@ function screenHall(pickMode) {
   let tables = [];
   sub(onSnapshot(collection(state.root, 'tables'), (snap) => {
     tablesLoaded = true;
-    tables = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    tables = snap.docs.filter((d) => d.id !== TAKEAWAY_ID).map((d) => ({ id: d.id, ...d.data() }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru', { numeric: true }));
     draw(tables);
   }, () => {
