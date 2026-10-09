@@ -108,6 +108,9 @@ const IC = {
   out: '<path d="M7 17 17 7M9 7h8v8"/>',
   next: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
+  phone: '<path d="M6.5 3.5h3l1.5 4-2 1.3a10 10 0 0 0 5.2 5.2l1.3-2 4 1.5v3a2 2 0 0 1-2 2A16 16 0 0 1 4.5 5.5a2 2 0 0 1 2-2Z"/>',
+  bag: '<path d="M5.5 8h13l-1 12.5h-11Z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>',
+  truck: '<path d="M3 6.5h11v9H3Z"/><path d="M14 9.5h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
   star: '<path d="m12 3.8 2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8Z"/>',
 };
 
@@ -560,7 +563,10 @@ function route() {
 
   // «Ещё» — подраздел профиля, отдельной вкладки у него нет: пусть в
   // нижнем меню остаётся подсвеченным «Профиль», а не гаснет всё сразу.
-  const activeTab = tab === 'extras' ? 'profile' : (tab === '' ? 'home' : tab);
+  const activeTab = tab === 'extras' ? 'profile'
+    : tab === 'checkout' ? 'menu'
+      : tab.startsWith('order/') ? 'table'
+        : (tab === '' ? 'home' : tab);
   document.querySelectorAll('.tabbar a').forEach((a) => {
     a.classList.toggle('on', a.dataset.tab === activeTab);
   });
@@ -569,6 +575,10 @@ function route() {
   if (bind) return bindToTable(decodeURIComponent(bind[1]), bind[2] ? decodeURIComponent(bind[2]) : '');
   const hall = hash.match(/^#\/hall(\/pick)?$/);
   if (hall) return screenHall(!!hall[1]);
+  // Доставка и с собой: оформление и экран заказа.
+  if (hash === '#/checkout') return screenCheckout();
+  const ord = hash.match(/^#\/order\/([A-Za-z0-9_-]{1,64})$/);
+  if (ord) return screenOrder(ord[1]);
 
   switch (tab) {
     case 'scan': return screenScan();
@@ -701,6 +711,9 @@ function screenMenu() {
     // буквы одного размера на белом, по алфавиту, с ценой, без изображений.
     const tobaccoItems = atTable ? items.filter(tobacco) : [];
     const hidden = atTable ? 0 : items.length - regular.length;
+    // Не за столом — заказ с доставкой или с собой: алкоголь и табак так
+    // не продаются (законы № 171-ФЗ и № 15-ФЗ), кнопок у них нет.
+    const canTakeAway = (i) => deliveryOn() && !remoteSaleBanned(i, catName(i.categoryId));
 
     // Категории в порядке справочника; позиции без категории — «Прочее».
     const sections = [];
@@ -732,7 +745,8 @@ function screenMenu() {
           <div class="mname">${esc(i.name)}</div>
           ${i.description ? `<div class="small muted mdesc">${esc(i.description)}</div>` : ''}
           ${hasMods(i) ? '<div class="small muted">Можно выбрать добавки</div>' : ''}
-          <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable ? qtyControls(i) : ''}</div>
+          <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable || canTakeAway(i) ? qtyControls(i)
+    : deliveryOn() ? '<span class="small muted">Только в заведении</span>' : ''}</div>
         </div>
       </div>`;
     // Перечень табака (ст. 19 закона № 15-ФЗ): как строка бумажного меню —
@@ -800,7 +814,7 @@ function screenMenu() {
     box.innerHTML = `
       <input id="menuSearch" class="msearch" type="search" placeholder="Поиск по меню" value="${esc(search)}">
       ${body}
-      ${atTable ? cartBlock(items) : `
+      ${atTable ? cartBlock(items) : deliveryOn() ? cartBlock(items, true) : `
         <p class="small muted">Чтобы заказать из приложения, откройте свой
         стол — отсканируйте QR-код на столе камерой телефона.</p>`}
     `;
@@ -827,6 +841,8 @@ function screenMenu() {
     });
     const send = $('sendOrder');
     if (send) send.onclick = () => placeOrder(items, draw, tobacco);
+    const go = $('goCheckout');
+    if (go) go.onclick = () => { location.hash = '#/checkout'; };
   };
 
   sub(onSnapshot(query(collection(state.root, 'menuCategories'), orderBy('order')), (s) => {
@@ -842,9 +858,11 @@ function screenMenu() {
   }, () => {}));
 }
 
-function cartBlock(items = []) {
+function cartBlock(items = [], delivery = false) {
   const ids = Object.keys(state.cart);
-  if (!ids.length) return '';
+  if (!ids.length) {
+    return delivery ? `<p class="small muted">Соберите заказ — его можно забрать самому или заказать доставку.</p>` : '';
+  }
   // Итог видно из любой категории: гость ходит по плиткам и не должен
   // вспоминать, что уже выбрал.
   const count = ids.reduce((n, id) => n + state.cart[id], 0);
@@ -857,9 +875,11 @@ function cartBlock(items = []) {
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">Ваш заказ: ${count} ${plural(count, 'позиция', 'позиции', 'позиций')} · ${money(total)}</div>
       <div class="small muted" style="margin-bottom:12px">
-        ${orderHint()}
+        ${delivery ? 'Доставка или самовывоз: заведение позвонит и подтвердит заказ.' : orderHint()}
       </div>
-      <button class="btn-primary" id="sendOrder">Отправить заказ</button>
+      ${delivery
+    ? `<button class="btn-primary" id="goCheckout">${ic('bag')}Доставка или с собой</button>`
+    : '<button class="btn-primary" id="sendOrder">Отправить заказ</button>'}
     </div>`;
 }
 
@@ -1223,6 +1243,7 @@ function tableEmpty() {
     .split('\n').map((l) => l.trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
 
   screenEl().innerHTML = `
+    <div id="myOrders"></div>
     <h1>Мой стол</h1>
     <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт${isHookah() ? `,
     таймер сеанса` : ''} и кнопки вызова ${staffWord('acc')}.</p>
@@ -1238,6 +1259,7 @@ function tableEmpty() {
         <div class="row" style="font-weight:600;margin-bottom:12px">${ic('info', 'gold')}Правила заведения</div>
         ${rules.map((r) => `<div class="rule"><i></i><div class="small muted">${esc(r)}</div></div>`).join('')}
       </div>` : ''}`;
+  renderMyOrders('myOrders');
 }
 
 function drawTable(s) {
@@ -1251,7 +1273,7 @@ function drawTable(s) {
   // у стола «без ограничений» конец через десять лет.
   const showTimer = hookah && plannedEnd && plannedEnd - new Date() < 365 * 24 * 3600 * 1000;
   const tipsOn = (state.venue || {}).tipsEnabled !== false;
-  const sbpOn = (state.venue || {}).guestSbpPay === true;
+  const sbpOn = onlinePayReady();
   const guestPaid = Number(s.guestPaidTotal) || 0;
 
   screenEl().innerHTML = `
@@ -1296,7 +1318,7 @@ function drawTable(s) {
           <span>−${money(total * discount / 100)}</span></div>` : ''}
         <div class="bill-total"><span>Итого</span><span>${money(total * (1 - discount / 100))}</span></div>
         ${guestPaid > 0 ? `<div class="bill-line" style="color:var(--gold)">
-          <span class="grow">Оплачено по СБП</span><span>−${money(guestPaid)}</span></div>` : ''}
+          <span class="grow">Оплачено онлайн</span><span>−${money(guestPaid)}</span></div>` : ''}
         ${bonus >= 1 ? `<div class="small" style="color:var(--gold);margin-top:10px">
           Доступно бонусов: ${money(bonus)} — скажите ${staffWord('dat')}, чтобы списать при оплате</div>` : ''}
       ` : `<p class="muted small" style="margin:0">Пока пусто — нажмите «Сделать заказ»</p>`}
@@ -1381,29 +1403,36 @@ function watchResume() {
 // ---------- ОПЛАТА ПО СБП СО СТОЛА ----------
 // Сумму считает сервер по счёту; гость только подтверждает в своём банке.
 
-function paintSbp(s) {
-  const box = $('sbpPanel');
+/// Онлайн-оплата из приложения — счёт за столом или заказ доставки
+/// (takeaway). Банк заведения — в venueProfile.onlinePay; реквизиты на
+/// сервере, платёж заводит шлюз (guest-pay.js).
+function paintSbp(s, boxId = 'sbpPanel', takeaway = false) {
+  const box = $(boxId);
   if (!box) return;
+  const sbpOnly = SBP_ONLY.includes((state.venue || {}).onlinePay);
   const p = state.sbp && state.sbp.sid === s.id ? state.sbp : null;
   if (p && p.status === 'paid') {
-    box.innerHTML = `<p style="margin:0">${ic('check')} Оплата прошла — спасибо! ${cap(staffWord('nom'))} уже знает.</p>`;
+    box.innerHTML = `<p style="margin:0">${ic('check')} Оплата прошла — спасибо! ${takeaway ? 'Чек — от заведения.' : `${cap(staffWord('nom'))} уже знает.`}</p>`;
     return;
   }
   if (p && p.link) {
     box.innerHTML = `
-      <p class="small muted" style="margin:0 0 10px">К оплате ${money(p.amount)}. Выберите свой банк и подтвердите перевод —
-        мы сами увидим оплату.</p>
-      <a class="btn btn-primary" href="${esc(p.link)}" target="_blank" rel="noopener">Открыть приложение банка</a>
+      <p class="small muted" style="margin:0 0 10px">К оплате ${money(p.amount)}. ${sbpOnly
+    ? 'Выберите свой банк и подтвердите перевод'
+    : 'Оплатите на странице банка — СБП или картой'} — мы сами увидим оплату.</p>
+      <a class="btn btn-primary" href="${esc(p.link)}" target="_blank" rel="noopener">${sbpOnly ? 'Открыть приложение банка' : 'Открыть страницу оплаты'}</a>
       <p class="small muted" style="margin:10px 0 0">${p.status === 'failed' ? 'Платёж не прошёл — попробуйте ещё раз.' : 'Ждём подтверждения банка…'}</p>
       ${p.status === 'failed' ? '<button class="btn-ghost" id="sbpPay" style="margin-top:10px">Оплатить заново</button>' : ''}`;
   } else {
     box.innerHTML = `
-      <p class="small muted" style="margin:0 0 10px">Оплатите счёт сами через СБП — без ожидания официанта и терминала.
-        Чаевые, добавленные к счёту, войдут в сумму.</p>
-      <button class="btn-primary" id="sbpPay">Оплатить по СБП</button>`;
+      <p class="small muted" style="margin:0 0 10px">${takeaway
+    ? `Оплатите заказ сейчас — ${sbpOnly ? 'через СБП' : 'СБП или картой'}. Чек — от заведения.`
+    : `Оплатите счёт сами ${sbpOnly ? 'через СБП' : 'онлайн — СБП или картой'}, без ожидания официанта и терминала.
+        Чаевые, добавленные к счёту, войдут в сумму.`}</p>
+      <button class="btn-primary" id="sbpPay">${sbpOnly ? 'Оплатить по СБП' : 'Оплатить онлайн'}</button>`;
   }
   const btn = $('sbpPay');
-  if (btn) btn.onclick = () => startSbp(s, btn);
+  if (btn) btn.onclick = () => startSbp(s, btn, boxId, takeaway);
 }
 
 async function gatewayPost(path, body) {
@@ -1418,13 +1447,14 @@ async function gatewayPost(path, body) {
   return json;
 }
 
-async function startSbp(s, btn) {
+async function startSbp(s, btn, boxId = 'sbpPanel', takeaway = false) {
   btn.disabled = true;
   try {
     const r = await gatewayPost('/guestPayStart', { sessionId: s.id });
-    state.sbp = { sid: s.id, paymentId: r.paymentId, link: r.payload, amount: r.amount, status: 'pending' };
-    paintSbp(s);
-    if (r.payload) window.open(r.payload, '_blank', 'noopener');
+    const link = r.url || r.payload;
+    state.sbp = { sid: s.id, paymentId: r.paymentId, link, amount: r.amount, status: 'pending', boxId, takeaway };
+    paintSbp(s, boxId, takeaway);
+    if (link) window.open(link, '_blank', 'noopener');
     pollSbp(s);
   } catch (e) {
     toast(e.message || 'Не удалось начать оплату');
@@ -1446,7 +1476,7 @@ function pollSbp(s) {
       const r = await gatewayPost('/guestPayStatus', { paymentId: p.paymentId });
       if (r.status !== p.status) {
         p.status = r.status;
-        paintSbp(s);
+        paintSbp(s, p.boxId, p.takeaway);
         if (r.status === 'paid') toast('Оплата прошла');
       }
     } catch (_) { /* сеть моргнула — следующий опрос */ }
@@ -1455,13 +1485,376 @@ function pollSbp(s) {
   setTimeout(tick, 3000);
 }
 
+// ---------- ДОСТАВКА И С СОБОЙ ----------
+// Как в приложении на Android (kolibri_checkout_screen.dart): заказ уходит
+// на шлюз (/guestDeliveryOrder), тот сверяет цены с меню, сначала пишет
+// контакт в базу в РФ и передаёт заказ кассе. Заведение звонит гостю и
+// подтверждает — только тогда готовят и, если гость выбрал «онлайн»,
+// открывается оплата. За отклонённый заказ деньги не списываются.
+
+/// Банки, у которых гость платит только по СБП; у остальных — страница
+/// оплаты банка, где можно и по СБП, и картой (как sbpOnly в online_pay.dart).
+const SBP_ONLY = ['tinkoff', 'yookassa'];
+
+const deliveryOn = () => (state.venue || {}).deliveryEnabled === true;
+/// Владелец включил оплату из приложения и подключил банк в «Интеграциях».
+const onlinePayReady = () => (state.venue || {}).guestSbpPay === true && !!(state.venue || {}).onlinePay;
+
+// Дистанционно нельзя продавать табак и кальяны (ст. 19 закона № 15-ФЗ) и
+// алкоголь, включая пиво (ст. 16 закона № 171-ФЗ). Те же правила — на
+// шлюзе (guest-delivery.js): он и решает, здесь — чтобы гость видел заранее.
+const REMOTE_TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар|чаш[аи]|забивк/i;
+const ALCOHOL_RE = /(^|[^а-яё])(пив[оа]|пивн|вин[оа]($|[^а-яё])|винн|игрист|шампанск|просекко|виски|коньяк|водк|ром($|[^а-яё])|джин($|[^а-яё])|текил|ликёр|ликер|настойк|наливк|сидр|абсент|бренди|вермут|мартини|портвейн|херес|саке|бурбон|кальвадос|граппа|самбук|аперол|медовух|алко)/i;
+function remoteSaleBanned(item, catName = '') {
+  const name = String(item.name || '');
+  if (item.tobacco === true || REMOTE_TOBACCO_RE.test(name) || REMOTE_TOBACCO_RE.test(catName)) return true;
+  if (item.fiscalSubject === 'excise' || item.alcohol === true) return true;
+  if (/безалк/i.test(name)) return false;
+  return ALCOHOL_RE.test(name) || ALCOHOL_RE.test(catName);
+}
+
+/// Короткий номер заказа — тот же, что видит персонал на кассе и в Telegram.
+const orderNo = (id) => String(id).slice(-4).toUpperCase();
+
+/// Шаги заказа — как DeliveryFlow (lib/models/delivery_status.dart).
+const deliveryPath = (type) => (type === 'delivery'
+  ? ['new', 'accepted', 'cooking', 'courier', 'done']
+  : ['new', 'accepted', 'cooking', 'ready', 'done']);
+function deliveryStatusOf(s) {
+  const st = s.deliveryStatus;
+  return st === 'cancelled' || deliveryPath(s.orderType).includes(st) ? st : 'new';
+}
+function deliveryLabel(type, st) {
+  return {
+    new: 'Ждёт подтверждения',
+    accepted: 'Принят',
+    cooking: 'Готовится',
+    courier: 'У курьера',
+    ready: 'Готов к выдаче',
+    done: type === 'delivery' ? 'Доставлен' : 'Выдан',
+    cancelled: 'Отменён',
+  }[st] || '';
+}
+
+// Адрес и имя прошлого заказа — только в этом браузере, никуда не уходят.
+const contactKey = () => 'deliveryContact:' + state.tenantId;
+function loadContact() {
+  try { return JSON.parse(localStorage.getItem(contactKey()) || '{}') || {}; } catch (_) { return {}; }
+}
+function saveContact(c) {
+  try { localStorage.setItem(contactKey(), JSON.stringify(c)); } catch (_) {}
+}
+
+async function screenCheckout() {
+  if (!deliveryOn()) {
+    screenEl().innerHTML = `
+      <h1>Доставка</h1>
+      <p class="muted">Заведение сейчас не принимает заказы с доставкой и с собой из приложения.</p>
+      <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>`;
+    return;
+  }
+  if (!Object.keys(state.cart).length) { location.hash = '#/menu'; return; }
+  screenEl().innerHTML = `<h1>Оформление заказа</h1><div class="spinner"></div>`;
+
+  let items = [];
+  let cats = [];
+  try {
+    const [mi, mc] = await Promise.all([
+      getDocs(collection(state.root, 'menuItems')),
+      getDocs(collection(state.root, 'menuCategories')),
+    ]);
+    items = mi.docs.map((d) => ({ id: d.id, ...d.data() })).filter((i) => i.available !== false);
+    cats = mc.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (_) {
+    screenEl().innerHTML = `<h1>Оформление заказа</h1>
+      <p class="muted">Не удалось загрузить меню — проверьте интернет и попробуйте ещё раз.</p>
+      <a class="btn btn-ghost" href="#/menu">${ic('back')}В меню</a>`;
+    return;
+  }
+  // Пока грузили, гость мог уйти на другой экран.
+  if (location.hash !== '#/checkout') return;
+
+  const catName = (id) => (cats.find((c) => c.id === id) || {}).name || '';
+  const lines = Object.entries(state.cart).map(([key, qty]) => {
+    const { id, mods } = parseLine(key);
+    const it = items.find((i) => i.id === id);
+    if (!it) return null;
+    return {
+      key, qty, mods, name: it.name, menuItemId: it.id,
+      price: priceWith(it, mods),
+      banned: remoteSaleBanned(it, catName(it.categoryId)),
+    };
+  }).filter(Boolean);
+  const allowed = lines.filter((l) => !l.banned);
+  const skipped = lines.filter((l) => l.banned);
+  const total = allowed.reduce((a, l) => a + l.price * l.qty, 0);
+
+  const v = state.venue || {};
+  const p = state.profile || {};
+  const saved = loadContact();
+  const online = onlinePayReady();
+  const sbpOnly = SBP_ONLY.includes(v.onlinePay);
+  let delivery = saved.type !== 'takeaway';
+  let payOnline = false;
+
+  screenEl().innerHTML = `
+    <div class="backbar"><button data-back aria-label="В меню">${ic('back')}</button><h1 style="margin:0">Оформление заказа</h1></div>
+
+    <div class="chips" style="margin-top:14px">
+      <button class="chip" data-type="delivery">Доставка</button>
+      <button class="chip" data-type="takeaway">Заберу сам</button>
+    </div>
+    <p class="small muted" id="pickupHint" style="margin:0 0 12px">${v.address ? 'Забрать: ' + esc(v.address) : ''}</p>
+
+    <div class="card">
+      <label class="field"><span>Как к вам обращаться</span>
+        <input id="dName" autocomplete="name" maxlength="60" value="${esc(saved.name || p.name || '')}"></label>
+      <label class="field"><span>Телефон</span>
+        <input id="dPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 9XX XXX-XX-XX"
+          value="${esc(saved.phone || (p.phone ? prettyPhone(p.phone) : ''))}"></label>
+      <p class="small muted" id="dPhoneHint" style="margin:-4px 0 12px">Заведение позвонит, чтобы подтвердить заказ.</p>
+
+      <div id="addrBox">
+        <label class="field"><span>Улица и дом</span>
+          <input id="dStreet" autocomplete="street-address" maxlength="120" value="${esc(saved.street || '')}"></label>
+        <div class="btn-row">
+          <label class="field"><span>Кв./офис</span><input id="dFlat" maxlength="12" value="${esc(saved.flat || '')}"></label>
+          <label class="field"><span>Подъезд</span><input id="dEntrance" inputmode="numeric" maxlength="6" value="${esc(saved.entrance || '')}"></label>
+        </div>
+        <div class="btn-row">
+          <label class="field"><span>Этаж</span><input id="dFloor" inputmode="numeric" maxlength="4" value="${esc(saved.floor || '')}"></label>
+          <label class="field"><span>Домофон</span><input id="dIntercom" maxlength="12" value="${esc(saved.intercom || '')}"></label>
+        </div>
+      </div>
+
+      <label class="field"><span id="dCommentLabel">Комментарий</span>
+        <textarea id="dComment" rows="2" maxlength="300" placeholder="Например: без лука, позвонить за 10 минут"></textarea></label>
+    </div>
+
+    <h2>Оплата</h2>
+    <div class="chips">
+      <button class="chip" data-pay="receipt" id="payReceipt">При получении</button>
+      ${online ? `<button class="chip" data-pay="online">${sbpOnly ? 'Онлайн по СБП' : 'Онлайн — СБП или картой'}</button>` : ''}
+    </div>
+    <p class="small muted" id="payHint" style="margin:0 0 12px"></p>
+
+    <div class="card">
+      ${allowed.map((l) => `
+        <div class="bill-line">
+          <span class="grow">${esc(l.name)}${l.mods.length ? ` <span class="muted small">(${esc(l.mods.join(', '))})</span>` : ''} ×${l.qty}</span>
+          <span class="muted">${money(l.price * l.qty)}</span>
+        </div>`).join('')}
+      <div class="bill-total"><span>Итого</span><span>${money(total)}</span></div>
+    </div>
+    ${skipped.length ? `<div class="card warn small">
+      Не продаются с собой и с доставкой: ${esc(skipped.map((l) => l.name).join(', '))}.
+      Табак, кальяны и алкоголь — только в заведении (законы № 15-ФЗ и № 171-ФЗ).</div>` : ''}
+
+    <button class="btn-primary" id="dSend" ${allowed.length ? '' : 'disabled'}>Оформить заказ · ${money(total)}</button>
+    <p class="small muted center" style="margin:12px 0 0">Имя, телефон и адрес нужны заведению, чтобы подтвердить
+      и передать заказ, и хранятся на сервере в России. Через 30 дней после выполнения заказа они обезличиваются.</p>
+    ${privacyNotice()}`;
+
+  const paint = () => {
+    screenEl().querySelectorAll('[data-type]').forEach((b) => b.classList.toggle('on', (b.dataset.type === 'delivery') === delivery));
+    screenEl().querySelectorAll('[data-pay]').forEach((b) => b.classList.toggle('on', (b.dataset.pay === 'online') === payOnline));
+    $('addrBox').style.display = delivery ? '' : 'none';
+    $('pickupHint').style.display = !delivery && v.address ? '' : 'none';
+    $('dCommentLabel').textContent = delivery ? 'Комментарий курьеру и кухне' : 'Комментарий к заказу';
+    $('payHint').textContent = payOnline
+      ? 'Кнопка оплаты появится после того, как заведение подтвердит заказ.'
+      : delivery ? 'Наличными или картой курьеру.' : 'На кассе заведения.';
+  };
+  paint();
+  screenEl().querySelectorAll('[data-type]').forEach((b) => {
+    b.onclick = () => { delivery = b.dataset.type === 'delivery'; paint(); };
+  });
+  screenEl().querySelectorAll('[data-pay]').forEach((b) => {
+    b.onclick = () => { payOnline = b.dataset.pay === 'online'; paint(); };
+  });
+  screenEl().querySelector('[data-back]').onclick = () => { location.hash = '#/menu'; };
+
+  const send = $('dSend');
+  send.onclick = async () => {
+    const val = (id) => $(id).value.trim();
+    const name = val('dName');
+    const phoneRaw = val('dPhone');
+    const problem = phoneProblem(phoneRaw);
+    $('dPhoneHint').textContent = problem || 'Заведение позвонит, чтобы подтвердить заказ.';
+    $('dPhoneHint').style.color = problem ? 'var(--danger)' : '';
+    if (name.length < 2) { $('dName').focus(); return toast('Как к вам обращаться? Укажите имя'); }
+    if (problem) { $('dPhone').focus(); return toast(problem); }
+    if (delivery && val('dStreet').length < 5) { $('dStreet').focus(); return toast('Укажите улицу и дом'); }
+    const address = {
+      street: val('dStreet'), flat: val('dFlat'), entrance: val('dEntrance'),
+      floor: val('dFloor'), intercom: val('dIntercom'),
+    };
+    send.disabled = true;
+    try {
+      const r = await gatewayPost('/guestDeliveryOrder', {
+        orderType: delivery ? 'delivery' : 'takeaway',
+        name,
+        phone: normalizePhone(phoneRaw),
+        ...(delivery ? { address } : {}),
+        comment: val('dComment'),
+        payMethod: payOnline && online ? 'online' : 'on_receipt',
+        items: allowed.map((l) => ({ menuItemId: l.menuItemId, qty: l.qty, ...(l.mods.length ? { mods: l.mods } : {}) })),
+      });
+      saveContact({ type: delivery ? 'delivery' : 'takeaway', name, phone: phoneRaw, ...address });
+      // В корзине остаются только позиции, которые с собой не продаются, —
+      // их можно заказать, когда гость придёт в заведение.
+      allowed.forEach((l) => { delete state.cart[l.key]; });
+      state.cartOrder = (state.cartOrder || []).filter((k) => state.cart[k]);
+      toast(`Заказ №${r.orderNo || orderNo(r.sessionId)} оформлен — ждите звонка`);
+      location.hash = '#/order/' + r.sessionId;
+    } catch (e) {
+      toast(e.message || 'Не удалось оформить заказ');
+      send.disabled = false;
+    }
+  };
+}
+
+/// Заказ глазами гостя: шаги, состав, оплата после подтверждения, отмена,
+/// пока заказ не подтвердили.
+function screenOrder(id) {
+  screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><div class="spinner"></div>`;
+  let s = null;
+  let pending = [];
+
+  const draw = () => {
+    if (!s) return;
+    const type = s.orderType === 'delivery' ? 'delivery' : 'takeaway';
+    const st = deliveryStatusOf(s);
+    const path = deliveryPath(type);
+    const cur = path.indexOf(st);
+    const cancelled = st === 'cancelled';
+    const paid = Number(s.guestPaidTotal) || 0;
+    const v = state.venue || {};
+    const lines = (s.orderItems || []).length ? s.orderItems
+      : pending.filter((o) => o.status !== 'rejected').flatMap((o) => o.items || []);
+    const sum = (s.orderItems || []).length && Number(s.totalWithDiscount) > 0
+      ? Number(s.totalWithDiscount)
+      : lines.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+    const hint = {
+      new: `Заказ получен. Заведение позвонит вам, чтобы подтвердить состав${type === 'delivery' ? ' и адрес' : ''} — держите телефон рядом.`,
+      accepted: 'Заказ подтверждён и скоро начнут готовить.',
+      cooking: 'Готовим ваш заказ.',
+      courier: `Курьер ${s.courierName ? esc(s.courierName) + ' ' : ''}в пути.`,
+      ready: `Заказ готов — можно забирать${v.address ? ': ' + esc(v.address) : ''}.`,
+      done: type === 'delivery' ? 'Заказ доставлен. Приятного аппетита!' : 'Заказ выдан. Приятного аппетита!',
+      cancelled: `Заказ отменён${s.cancelReason ? ': ' + esc(s.cancelReason) : ''}.`,
+    }[st];
+    const fullyPaid = paid > 0 && sum > 0 && paid + 0.01 >= sum;
+    let payBlock = '';
+    if (!cancelled && st !== 'done') {
+      if (s.payMethod === 'online') {
+        payBlock = st === 'new'
+          ? '<p class="small muted" style="margin:0">Оплата онлайн станет доступна сразу после подтверждения заказа.</p>'
+          : fullyPaid ? `<p style="margin:0">${ic('check')} Оплачено онлайн: ${money(paid)}. Чек — от заведения.</p>`
+            : onlinePayReady() ? '<div id="payPanel"></div>'
+              : '<p class="small muted" style="margin:0">Онлайн-оплата сейчас недоступна — оплатите при получении.</p>';
+      } else {
+        payBlock = `<p class="small muted" style="margin:0">${type === 'delivery'
+          ? 'Оплата при получении — наличными или картой курьеру.'
+          : 'Оплата при получении — на кассе заведения.'}</p>`;
+      }
+    }
+
+    screenEl().innerHTML = `
+      <div class="overline">Заказ №${esc(orderNo(s.id))}</div>
+      <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
+      <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : ''}">${hint}</p>
+      ${cancelled ? '' : `<div class="card dsteps">${path.map((x, i) => {
+        const done = i < cur || st === 'done';
+        const active = i === cur && st !== 'done';
+        return `<div class="dstep${done ? ' done' : ''}${active ? ' active' : ''}"><i>${done ? ic('check') : ''}</i><span>${deliveryLabel(type, x)}</span></div>`;
+      }).join('')}</div>`}
+      <div class="card">
+        ${lines.map((i) => `<div class="bill-line">
+          <span class="grow">${esc(i.name)}${(i.mods || []).length ? ` <span class="muted small">(${esc(i.mods.join(', '))})</span>` : ''} ×${Number(i.qty) || 0}</span>
+          <span class="muted">${money((Number(i.price) || 0) * (Number(i.qty) || 0))}</span></div>`).join('')}
+        <div class="bill-total"><span>Итого</span><span>${money(sum)}</span></div>
+        ${paid > 0 ? `<div class="bill-line" style="color:var(--gold)"><span class="grow">Оплачено онлайн</span><span>${money(paid)}</span></div>` : ''}
+      </div>
+      ${payBlock ? `<h2>Оплата</h2><div class="card">${payBlock}</div>` : ''}
+      ${st === 'new' && paid <= 0 ? '<button class="btn-ghost" id="oCancel">Отменить заказ</button>' : ''}
+      ${v.phone ? `<div style="height:10px"></div>
+        <a class="btn btn-ghost" href="tel:${esc(String(v.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}Позвонить в заведение</a>
+        <p class="small muted center" style="margin:6px 0 0">${esc(v.phone)}</p>` : ''}
+      <div style="height:10px"></div>
+      <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>`;
+
+    if ($('payPanel')) paintSbp(s, 'payPanel', true);
+    const cancel = $('oCancel');
+    if (cancel) {
+      cancel.onclick = async () => {
+        if (!confirm('Отменить заказ? Заведение его ещё не подтвердило.')) return;
+        cancel.disabled = true;
+        try {
+          await gatewayPost('/guestDeliveryCancel', { sessionId: s.id });
+          toast('Заказ отменён');
+        } catch (e) {
+          toast(e.message || 'Не удалось отменить');
+          cancel.disabled = false;
+        }
+      };
+    }
+  };
+
+  sub(onSnapshot(doc(state.root, 'sessions', id), (d) => {
+    if (!d.exists()) {
+      screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><p class="muted">Заказ не найден.</p>
+        <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>`;
+      return;
+    }
+    s = { id: d.id, ...d.data() };
+    draw();
+  }, () => {
+    screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><p class="muted">Этот заказ недоступен.</p>`;
+  }));
+  // До подтверждения позиции лежат в заявке, а не в чеке.
+  sub(onSnapshot(query(collection(state.root, 'guestOrders'),
+    where('clientUid', '==', state.uid), where('sessionId', '==', id)), (q) => {
+    pending = q.docs.map((d) => d.data());
+    draw();
+  }, () => {}));
+}
+
+/// Свои заказы с доставкой и с собой за последние сутки — карточками над
+/// «Моим столом»: в работе и только что завершённые.
+function renderMyOrders(boxId) {
+  if (!state.uid) return;
+  sub(onSnapshot(query(collection(state.root, 'sessions'),
+    where('clientUid', '==', state.uid), where('source', '==', 'app')), (snap) => {
+    const box = $(boxId);
+    if (!box) return;
+    const recent = Date.now() - 3 * 3600 * 1000;
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .filter((o) => {
+        const st = deliveryStatusOf(o);
+        const at = toDate(o.startTime);
+        return (st !== 'done' && st !== 'cancelled' && at && at.getTime() > Date.now() - 2 * 86400 * 1000)
+          || (at && at.getTime() > recent);
+      })
+      .sort((a, b) => (toDate(b.startTime) || 0) - (toDate(a.startTime) || 0))
+      .slice(0, 3);
+    box.innerHTML = list.length ? `<h2 style="margin-top:0">Мои заказы</h2>` + list.map((o) => `
+      <a class="card order-link" href="#/order/${esc(o.id)}">
+        <span class="ic-wrap">${ic(o.orderType === 'delivery' ? 'truck' : 'bag', 'gold')}</span>
+        <span class="grow"><b>${o.orderType === 'delivery' ? 'Доставка' : 'С собой'} №${esc(orderNo(o.id))}</b>
+          <span class="small muted" style="display:block">${deliveryLabel(o.orderType, deliveryStatusOf(o))}</span></span>
+        ${ic('chevron')}
+      </a>`).join('') : '';
+  }, () => {}));
+}
+
 const CALL_LABELS = {
   coal: 'Поменять угли',
   refill: 'Перезабивка',
   waiter: 'Позвать кальянщика',
   bill: 'Счёт, пожалуйста',
   callWaiter: 'Позвать официанта',
-  paid: 'Оплачено по СБП',
+  paid: 'Оплачено онлайн',
 };
 
 async function callStaff(type, s, btn) {
