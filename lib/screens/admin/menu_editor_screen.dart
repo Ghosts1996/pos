@@ -451,7 +451,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        'При продаже спишется: граммовка × кол-во',
+                        'При продаже спишется: граммовка × количество',
                         style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                       ),
                     ),
@@ -504,7 +504,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: Text(
-                        'При продаже каждый компонент спишется отдельно × кол-во',
+                        'При продаже каждый компонент спишется отдельно × количество',
                         style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                       ),
                     ),
