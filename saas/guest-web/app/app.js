@@ -196,9 +196,15 @@ function isHookah() {
   const v = (state.venue || {}).hookahEnabled;
   return typeof v === 'boolean' ? v : venueType() === 'hookah';
 }
+/// Кто поможет гостю — для пояснений («попросите сотрудника открыть стол»):
+/// роль там не важна, а «кальянщик» в кафе только путает. Роль называет
+/// roleWord — на кнопках вызова и в подсказке, кому уйдёт заказ.
+function staffWord(form) {
+  return ['сотрудник', 'сотрудника', 'сотруднику'][{ nom: 0, acc: 1, dat: 2 }[form] || 0];
+}
 /// Кто обслуживает стол: form — 'nom' («кальянщик подтвердит»), 'acc'
 /// («позовите кальянщика») или 'dat' («скажите кальянщику»).
-function staffWord(form) {
+function roleWord(form) {
   const t = venueType();
   const w = t === 'hookah' && isHookah() ? ['кальянщик', 'кальянщика', 'кальянщику']
     : t === 'bar' ? ['бармен', 'бармена', 'бармену']
@@ -1398,15 +1404,14 @@ function tableEmpty() {
   screenEl().innerHTML = `
     <div id="myOrders"></div>
     <h1>Мой стол</h1>
-    <p class="muted">Отсканируйте QR-код на своём столе — откроются счёт${isHookah() ? `,
-    таймер сеанса` : ''} и кнопки вызова ${staffWord('acc')}.</p>
+    <p class="muted">Отсканируйте QR-код на своём столе — откроется ваш счёт и кнопки вызова персонала.</p>
     <a class="btn btn-primary" href="#/scan">${ic('scan')}Сканировать QR стола</a>
     <div style="height:10px"></div>
     <a class="btn btn-ghost" href="#/hall">${ic('plan')}Карта зала</a>
     <div style="height:14px"></div>
     <p class="small muted">Стол открывается только по коду с самого стола —
     так вы наверняка попадёте на свой счёт, а не на соседний. Если код не
-    сканируется, позовите ${staffWord('acc')}: он откроет стол сам.</p>
+    сканируется, попросите ${staffWord('acc')} — он откроет стол сам.</p>
     ${rules.length ? `
       <div class="card" style="margin-top:22px">
         <div class="row" style="font-weight:600;margin-bottom:12px">${ic('info', 'gold')}Правила заведения</div>
@@ -2078,7 +2083,7 @@ async function callStaff(type, s, btn) {
   const original = btn.innerHTML;
   btn.innerHTML = 'Передано';
   // Счёт и официанта получает официант, остальное — кальянщик.
-  const toWhom = type === 'bill' || type === 'callWaiter' ? 'официанту' : staffWord('dat');
+  const toWhom = type === 'bill' || type === 'callWaiter' ? 'официанту' : roleWord('dat');
   toast(`${label} — передали ${toWhom}`);
   // Через минуту разрешаем позвать снова: кальянщик мог не услышать.
   setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 60000);

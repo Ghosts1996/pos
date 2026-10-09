@@ -1,5 +1,4 @@
 import 'dart:async';
-import '../../services/venue_service.dart';
 import 'package:app_links/app_links.dart';
 import '../../models/table_model.dart';
 import '../../services/guest_link_service.dart';
@@ -74,7 +73,7 @@ class KolibriDeepLinks {
       }
       if (result.isEmpty) {
         onFailed?.call('За этим столом сейчас нет открытого счёта — '
-            'попросите ${VenueService.instance.terms.staffAcc} открыть стол');
+            'попросите сотрудника открыть стол');
         return;
       }
       if (result.needsChoice) {
