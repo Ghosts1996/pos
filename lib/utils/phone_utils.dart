@@ -4,13 +4,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_lock.dart';
 
-/// Приводит любой российский номер к единому формату без «+»: 79995061580.
+/// Приводит любой российский номер к единому формату без «+»: 79001234567.
 ///
 /// Поддерживаемые форматы ввода:
-///   +7 999 506-15-80   →  79995061580
-///    7(999)506-15-80   →  79995061580
-///    8 999 506 15 80   →  79995061580
-///      9995061580      →  79995061580
+///   +7 900 123-45-67   →  79001234567
+///    7(900)123-45-67   →  79001234567
+///    8 900 123 45 67   →  79001234567
+///      9001234567      →  79001234567
 String normalizePhone(String raw) {
   // Оставляем только цифры
   final digits = raw.replaceAll(RegExp(r'[^\d]'), '');
@@ -33,7 +33,32 @@ String normalizePhone(String raw) {
 bool isValidRuPhone(String normalized) =>
     normalized.length == 11 && normalized.startsWith('7');
 
-/// Человекочитаемый вид номера: +7 (999) 506-15-80.
+/// Что не так с номером — подсказка гостю простыми словами; null — номер
+/// в порядке. Образец в подсказке — маска, а не чей-то настоящий номер.
+String? phoneProblem(String raw) {
+  final digits = raw.replaceAll(RegExp(r'\D'), '');
+  if (digits.isEmpty) return 'Введите номер телефона';
+  if (isValidRuPhone(normalizePhone(raw))) return null;
+  // Без кода страны: «+7», «7» или «8» перед номером не считаем.
+  final hasCode = raw.trim().startsWith('+7') ||
+      ((digits.startsWith('7') || digits.startsWith('8')) && (digits.length > 10 || digits.startsWith('9', 1)));
+  final national = hasCode ? digits.substring(1) : digits;
+  const sample = 'например, +7 9XX XXX-XX-XX';
+  if (national.length < 10) {
+    final miss = 10 - national.length;
+    return 'Не хватает $miss ${_digitsWord(miss)}: после +7 нужно 10 цифр ($sample)';
+  }
+  if (national.length > 10) return 'Лишние цифры: после +7 нужно ровно 10 цифр ($sample)';
+  return 'Нужен российский номер: +7 и 10 цифр ($sample)';
+}
+
+String _digitsWord(int n) {
+  final m10 = n % 10, m100 = n % 100;
+  if (m10 == 1 && m100 != 11) return 'цифры';
+  return 'цифр';
+}
+
+/// Человекочитаемый вид номера: +7 (900) 123-45-67.
 ///
 /// В базе телефон хранится нормализованным (11 цифр без знаков) — так его
 /// удобно сравнивать и искать, но показывать сотруднику сплошную строку

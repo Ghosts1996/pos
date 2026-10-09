@@ -34,22 +34,32 @@ const gs = '\u001D';
 void main() {
   group('Нормализация телефона', () {
     test('все привычные форматы дают один и тот же номер', () {
-      const expected = '79995061580';
-      expect(normalizePhone('+7 999 506-15-80'), expected);
-      expect(normalizePhone('7(999)506-15-80'), expected);
-      expect(normalizePhone('8 999 506 15 80'), expected);
-      expect(normalizePhone('9995061580'), expected);
-      expect(normalizePhone('+79995061580'), expected);
+      const expected = '79001234567';
+      expect(normalizePhone('+7 900 123-45-67'), expected);
+      expect(normalizePhone('7(900)123-45-67'), expected);
+      expect(normalizePhone('8 900 123 45 67'), expected);
+      expect(normalizePhone('9001234567'), expected);
+      expect(normalizePhone('+79001234567'), expected);
     });
 
     test('нераспознанный номер не выдаёт себя за российский', () {
       expect(isValidRuPhone(normalizePhone('12345')), isFalse);
       expect(isValidRuPhone(normalizePhone('+44 20 7946 0958')), isFalse);
-      expect(isValidRuPhone(normalizePhone('8 999 506 15 80')), isTrue);
+      expect(isValidRuPhone(normalizePhone('8 900 123 45 67')), isTrue);
     });
 
     test('пустая строка не превращается в мусорный номер', () {
       expect(normalizePhone('   '), '');
+    });
+
+    test('подсказка говорит, что не так, и не показывает чужой номер', () {
+      expect(phoneProblem('+7 900 123-45-67'), isNull);
+      expect(phoneProblem('9001234567'), isNull);
+      expect(phoneProblem(''), 'Введите номер телефона');
+      expect(phoneProblem('999999998'), startsWith('Не хватает 1 цифры'));
+      expect(phoneProblem('+7 900 12'), startsWith('Не хватает 5 цифр'));
+      expect(phoneProblem('8 900 123 45 678'), startsWith('Лишние цифры'));
+      expect(phoneProblem('999999998'), contains('+7 9XX XXX-XX-XX'));
     });
   });
 
@@ -515,8 +525,8 @@ void main() {
       expect(email.email, 'guest@example.com');
       expect(email.phone, isNull);
 
-      final phone = splitReceiptContact('+79995061580');
-      expect(phone.phone, '+79995061580');
+      final phone = splitReceiptContact('+79001234567');
+      expect(phone.phone, '+79001234567');
       expect(phone.email, isNull);
 
       final empty = splitReceiptContact('  ');
