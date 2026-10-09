@@ -325,6 +325,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     var fiscalSubject = item?.fiscalSubject ?? 'commodity';
     var tobacco = item?.tobacco ?? false;
     final groups = List<ModifierGroup>.from(item?.modifierGroups ?? const []);
+    final bonusCtrl = TextEditingController(
+        text: item != null && item.staffBonus > 0 ? item.staffBonus.toStringAsFixed(0) : '');
 
     final result = await showDialog<_ItemDialogResult>(
       context: context,
@@ -352,6 +354,14 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Состав / описание',
                     hintText: 'Что входит в блюдо — видит гость и ИИ-помощник',
+                  ),
+                ),
+                TextField(
+                  controller: bonusCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Бонус сотруднику за штуку, ₽ (необязательно)',
+                    helperText: 'Попадёт в зарплату тому, кто продал',
                   ),
                 ),
                 SwitchListTile(
@@ -577,6 +587,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     description: descCtrl.text.trim(),
                     tobacco: tobacco,
                     modifierGroups: List.from(groups),
+                    staffBonus: (double.tryParse(bonusCtrl.text.replaceAll(',', '.')) ?? 0).clamp(0, 100000).toDouble(),
                   )),
               child: const Text('Сохранить'),
             ),
@@ -600,6 +611,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         description: result.description,
         tobacco: result.tobacco,
         modifierGroups: result.modifierGroups,
+        staffBonus: result.staffBonus,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -614,6 +626,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         description: result.description,
         tobacco: result.tobacco,
         modifierGroups: result.modifierGroups,
+        staffBonus: result.staffBonus,
       ));
     }
   }
@@ -946,6 +959,7 @@ class _ItemDialogResult {
   final String description;
   final bool tobacco;
   final List<ModifierGroup> modifierGroups;
+  final double staffBonus;
 
   _ItemDialogResult({
     required this.name,
@@ -959,6 +973,7 @@ class _ItemDialogResult {
     this.description = '',
     this.tobacco = false,
     this.modifierGroups = const [],
+    this.staffBonus = 0,
   });
 }
 
