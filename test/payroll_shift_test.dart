@@ -83,6 +83,30 @@ void main() {
       expect(r.overtimeHours, 1); // 8 + 5 = 13 ч при норме 12
     });
 
+    test('ночная смена 14:00–06:00 через полночь: один оклад, переработка по своей смене', () {
+      final r = PayrollCalculator.calculate(
+        employee: _emp(overtime: true, threshold: 12, overtimeHourRate: 400),
+        closedShifts: [_shift(DateTime(2026, 10, 9, 14), 16)],
+      );
+      expect(r.shiftsPaid, 1);
+      expect(r.shiftPay, 3000);
+      expect(r.overtimeHours, closeTo(4, 1e-9));
+      expect(r.overtimePay, closeTo(1600, 1e-6));
+    });
+
+    test('закрыл в 02:00, снова открыл в 03:30 через полночь — одна смена', () {
+      final r = PayrollCalculator.calculate(
+        employee: _emp(overtime: true, threshold: 12, overtimeHourRate: 400),
+        closedShifts: [
+          _shift(DateTime(2026, 10, 9, 14), 12, id: 'a'), // 14:00–02:00
+          _shift(DateTime(2026, 10, 10, 3, 30), 2.5, id: 'b'), // 03:30–06:00
+        ],
+      );
+      expect(r.shiftsPaid, 1);
+      expect(r.normalHours + r.overtimeHours, closeTo(14.5, 1e-9));
+      expect(r.overtimeHours, closeTo(2.5, 1e-9));
+    });
+
     test('перерыв 3 часа и больше — это уже две смены', () {
       final r = PayrollCalculator.calculate(
         employee: _emp(),

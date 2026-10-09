@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/fiscal_receipt.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../models/menu_models.dart';
+import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scanner_service.dart';
 import '../../services/chestny_znak_service.dart';
@@ -26,7 +30,10 @@ class MenuSelectionScreen extends StatefulWidget {
 
   /// Кто добавляет позиции — по нему кальянщику и бармену идёт процент.
   final String employeeId;
-  const MenuSelectionScreen({super.key, required this.session, this.employeeId = ''});
+
+  /// Имя для журнала кассы, если позицию убирают отсюда.
+  final String employeeName;
+  const MenuSelectionScreen({super.key, required this.session, this.employeeId = '', this.employeeName = ''});
 
   @override
   State<MenuSelectionScreen> createState() => _MenuSelectionScreenState();
@@ -153,6 +160,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
       builder: (_) => _CategoryItemsScreen(
         session: widget.session,
         employeeId: widget.employeeId,
+        employeeName: widget.employeeName,
         category: category,
         items: items,
         onAdd: _add,
@@ -355,10 +363,12 @@ class _CategoryItemsScreen extends StatelessWidget {
   final List<MenuItem> items;
   final ValueChanged<MenuItem> onAdd;
   final String employeeId;
+  final String employeeName;
 
   const _CategoryItemsScreen({
     required this.session,
     required this.employeeId,
+    this.employeeName = '',
     required this.category,
     required this.items,
     required this.onAdd,
@@ -405,13 +415,22 @@ class _CategoryItemsScreen extends StatelessWidget {
                         content: Text('Позицию уже готовят — отменить можно в счёте, с причиной')));
                     return;
                   }
-                  await fs
-                    .changeOrderItemQty(session.id, line.lineId, -1, employeeId: employeeId)
-                    .catchError((Object e) {
+                  try {
+                    await fs.changeOrderItemQty(session.id, line.lineId, -1, employeeId: employeeId);
+                    // Любое удаление — в журнал кассы: владелец видит, что и кто убрал.
+                    unawaited(AuditLogService.instance.orderItemRemoved(
+                      employeeName: employeeName,
+                      sessionId: session.id,
+                      tableName: session.tableName,
+                      itemName: line.displayName,
+                      qty: 1,
+                      sum: line.price,
+                    ));
+                  } catch (e) {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
                     }
-                  });
+                  }
                 },
               );
             },
@@ -481,10 +500,25 @@ class _MenuItemCard extends StatelessWidget {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.remove_circle_outline),
-                          onPressed: onRemoveOne,
+                        // Убрать — только долгим нажатием, как в счёте.
+                        Tooltip(
+                          message: 'Удерживайте, чтобы убрать',
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: () => ScaffoldMessenger.of(context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(const SnackBar(
+                                  content: Text('Чтобы убрать позицию, удерживайте «−»'),
+                                  duration: Duration(seconds: 2))),
+                            onLongPress: () {
+                              HapticFeedback.mediumImpact();
+                              onRemoveOne();
+                            },
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(Icons.remove_circle_outline),
+                            ),
+                          ),
                         ),
                         Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold)),
                         IconButton(
