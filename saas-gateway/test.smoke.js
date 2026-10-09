@@ -225,6 +225,21 @@ async function main() {
     check("guest-pay: подпись уведомления Т-Банка", gp.tokenValid(n, "p") && !gp.tokenValid(n, "q"));
   }
 
+  {
+    let r = await request("POST", "/telegramLinkCode", { body: { tenantId: "t1" } });
+    check("POST /telegramLinkCode: без токена -> 401", r.status === 401);
+    const tg = require("./telegram.js");
+    const day = tg.lastBusinessDay(new Date("2026-10-09T07:30:00Z"), "Europe/Moscow");
+    check("telegram: рабочие сутки 06:00–06:00 по местному времени",
+      day.key === "2026-10-08" && day.start.toISOString() === "2026-10-08T03:00:00.000Z");
+    const text = tg.buildSummary({ venueName: "Тест", label: "08.10", sessions: [
+      { orderItems: [{ name: "Чай", price: 300, qty: 2 }], paymentCash: 600 },
+      { closedWithoutPayment: true, orderItems: [{ name: "Чай", price: 300, qty: 1 }] },
+    ], audit: [] });
+    check("telegram: итоги — выручка и закрытые без оплаты", text.includes("Выручка: 600 ₽") && text.includes("закрыто без оплаты: 1"));
+    check("telegram: мелкая скидка не сигналит", tg.alertText("Тест", { action: "discount_applied", details: { percent: 5 } }) === null);
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);

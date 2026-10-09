@@ -3854,6 +3854,17 @@ function watchDashboardData(tenantId) {
         <div id="f-hookah-mode-msg" class="small" style="margin-top:8px"></div>
       </div>
 
+      ${canManage ? `
+        <h2>Telegram</h2>
+        <div class="card">
+          <p class="small muted">Итоги смены каждое утро в 10:00 — выручка, средний чек, оплаты, топ продаж.
+          А удаление позиций, закрытие стола без оплаты, возвраты и большие скидки — сразу, с именем сотрудника.</p>
+          <div id="f-tg-status" class="small" style="margin:8px 0">Проверяем…</div>
+          <button class="btn btn-ghost" id="f-tg-link">Подключить Telegram</button>
+          <button class="btn btn-ghost" id="f-tg-unlink" style="margin-top:8px;display:none">Отключить</button>
+        </div>
+      ` : ''}
+
       ${role === 'owner' ? `
         <h2>Резервная копия</h2>
         <div class="card">
@@ -3867,7 +3878,7 @@ function watchDashboardData(tenantId) {
 
       <h2>Системные требования</h2>
       <div class="card">
-        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет нужен постоянно — Wi-Fi или мобильный</div>
+        <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет — Wi-Fi или мобильный. Пропадёт связь — касса продолжит принимать заказы и оплаты и досинхронизирует их сама</div>
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📱 Android 8.0 и новее, экран от 8 дюймов рекомендован</div>
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">🖨️ Принтер чеков — опционально, Bluetooth/USB, настраивается в самом приложении кассы</div>
         <div class="small" style="padding:7px 0">☁️ Все данные хранятся в облаке — ничего не теряется при поломке или замене планшета</div>
@@ -4097,6 +4108,42 @@ function watchDashboardData(tenantId) {
     // Название для кабинета и панели платформы; в приложениях — своё, из
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
+    if ($('f-tg-status')) {
+      const tgStatus = $('f-tg-status');
+      const paintTg = (d) => {
+        if (!d.botEnabled) {
+          tgStatus.textContent = 'Бот платформы ещё не включён — скоро появится.';
+          $('f-tg-link').disabled = true;
+          return;
+        }
+        tgStatus.textContent = d.chats.length ? `Подключено: ${d.chats.join(', ')}` : 'Не подключено';
+        $('f-tg-unlink').style.display = d.chats.length ? '' : 'none';
+      };
+      callSaasGateway('telegramStatus', { tenantId }).then((r) => paintTg(r.data)).catch(() => {
+        tgStatus.textContent = 'Не удалось узнать статус — попробуйте позже.';
+      });
+      $('f-tg-link').onclick = async () => {
+        // Окно открываем сразу по клику: после await браузер его заблокирует.
+        const win = window.open('', '_blank');
+        try {
+          const r = await callSaasGateway('telegramLinkCode', { tenantId });
+          if (win) win.location = r.data.link; else location.href = r.data.link;
+          tgStatus.textContent = 'Нажмите «Старт» в Telegram — и заведение подключится.';
+        } catch (e) {
+          if (win) win.close();
+          tgStatus.textContent = e.message;
+        }
+      };
+      $('f-tg-unlink').onclick = async () => {
+        if (!confirm('Отключить уведомления в Telegram?')) return;
+        try {
+          await callSaasGateway('telegramUnlink', { tenantId });
+          paintTg({ botEnabled: true, chats: [] });
+        } catch (e) {
+          tgStatus.textContent = e.message;
+        }
+      };
+    }
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
     if ($('f-backup-chain')) $('f-backup-chain').onclick = () => {
       const chain = state.tenants.find((t) => t.chainId === tenant.chainId) || {};
