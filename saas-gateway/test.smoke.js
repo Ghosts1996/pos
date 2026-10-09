@@ -228,6 +228,8 @@ async function main() {
   {
     let r = await request("POST", "/telegramLinkCode", { body: { tenantId: "t1" } });
     check("POST /telegramLinkCode: без токена -> 401", r.status === 401);
+    r = await request("POST", "/telegramAccess", { body: { tenantId: "t1", allowed: [{ id: 123456 }] } });
+    check("POST /telegramAccess: без токена -> 401", r.status === 401);
     const tg = require("./telegram.js");
     const day = tg.lastBusinessDay(new Date("2026-10-09T07:30:00Z"), "Europe/Moscow");
     check("telegram: рабочие сутки 06:00–06:00 по местному времени",
