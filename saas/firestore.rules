@@ -990,6 +990,12 @@ service cloud.firestore {
     match /tenants/{tenantId}/inventoryMovements/{doc} {
       allow read, write: if isStaff(tenantId);
     }
+    // Оплата счёта гостем по СБП со стола. Пишет только шлюз (Admin SDK).
+    match /tenants/{tenantId}/guestPayments/{doc} {
+      allow read: if isStaff(tenantId) ||
+        (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
+      allow write: if false;
+    }
     match /tenants/{tenantId}/inventoryCounts/{doc} {
       allow read, write: if isStaff(tenantId);
     }

@@ -340,6 +340,9 @@ class SessionModel {
   final double paymentCard; // сколько оплачено картой (ручной ввод/сайт, без физического терминала)
   final double paymentTerminal; // сколько оплачено через платёжный терминал (эквайринг)
   final double paymentComp; // сколько списано за счёт заведения
+
+  /// Гость уже оплатил со стола по СБП (пишет шлюз после подтверждения банка).
+  final double guestPaidTotal;
   final String guestContact; // телефон/email гостя, необязательно
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   final bool receiptPrinted;
@@ -380,6 +383,7 @@ class SessionModel {
     this.paymentCard = 0,
     this.paymentTerminal = 0,
     this.paymentComp = 0,
+    this.guestPaidTotal = 0,
     this.guestContact = '',
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
@@ -420,6 +424,7 @@ class SessionModel {
       paymentCard: (data['paymentCard'] ?? 0).toDouble(),
       paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
+      guestPaidTotal: (data['guestPaidTotal'] as num?)?.toDouble() ?? 0,
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
