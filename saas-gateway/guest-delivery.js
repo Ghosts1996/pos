@@ -129,6 +129,8 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     if (!tenant || ["deleted", "disabled", "blocked", "suspended"].includes(tenant.status)) {
       throw new HttpError(404, "Заведение сейчас не принимает заказы");
     }
+    // Приложение гостя не входит в тариф заведения — как guestAppOn в правилах базы.
+    if (tenant.guestAppOff === true) throw new HttpError(403, "Заказ из приложения в этом заведении недоступен");
     const own = await tenantRef(tenantId).collection("clients").doc(uid).get();
     let client = own.exists ? own.data() : null;
     if (!client && tenant.chainId) {
