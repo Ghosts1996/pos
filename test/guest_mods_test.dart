@@ -33,4 +33,11 @@ void main() {
     expect(out.single.mods, ['Обычное']);
     expect(out.single.price, 250);
   });
+
+  test('вариант комбо помнит блюдо меню', () {
+    const o = ModifierOption(name: 'Борщ', menuItemId: 'borsch');
+    final back = ModifierOption.fromMap(o.toMap());
+    expect(back.menuItemId, 'borsch');
+    expect(back.hasInventoryLink, isFalse);
+  });
 }
