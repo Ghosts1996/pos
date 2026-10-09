@@ -155,9 +155,8 @@ class AppUpdateService {
     } else {
       return;
     }
-    // Гостевая сборка «сеть целиком» в конвейере не собирается — её
-    // нельзя обновлять сборкой отдельной точки.
-    if (app == 'guest' && kSaasPresetChainSlug.isNotEmpty) return;
+    // Приложение гостя сети обновляется сборкой сети: шлюз отдаёт свежую
+    // сборку любой её точки с тем же кодом сети (chainSlug в запросе).
     _instance = AppUpdateService(
         app: app, platform: platform, currentBuild: build, gatewayUrl: kSaasGatewayUrl, autoDownload: true)
       .._begin();
@@ -237,7 +236,13 @@ class AppUpdateService {
               'Content-Type': 'application/json',
               if (token != null) 'Authorization': 'Bearer $token',
             },
-            body: jsonEncode({'tenantId': tenantId, 'app': app, 'platform': platform, 'current': currentBuild}),
+            body: jsonEncode({
+              'tenantId': tenantId,
+              'app': app,
+              'platform': platform,
+              'current': currentBuild,
+              if (app == 'guest' && kSaasPresetChainSlug.isNotEmpty) 'chainSlug': kSaasPresetChainSlug,
+            }),
           )
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
