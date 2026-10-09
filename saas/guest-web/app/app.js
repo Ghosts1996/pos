@@ -1712,7 +1712,9 @@ function remoteSaleBanned(item, catName = '') {
 }
 
 /// Короткий номер заказа — тот же, что видит персонал на кассе и в Telegram.
-const orderNo = (id) => String(id).slice(-4).toUpperCase();
+/// Номер заказа: порядковый (orderNo — шлюз и касса ведут общий счётчик),
+/// у старых заказов — последние 4 знака id. Как orderNumberLabel в кассе.
+const orderNo = (id, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) : String(id).slice(-4).toUpperCase());
 
 /// Шаги заказа — как DeliveryFlow (lib/models/delivery_status.dart).
 const deliveryPath = (type) => (type === 'delivery'
@@ -1922,7 +1924,7 @@ async function screenCheckout() {
 /// Заказ глазами гостя: шаги, состав, оплата после подтверждения, отмена,
 /// пока заказ не подтвердили.
 function screenOrder(id) {
-  screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><div class="spinner"></div>`;
+  screenEl().innerHTML = `<h1>Заказ</h1><div class="spinner"></div>`;
   let s = null;
   let pending = [];
 
@@ -1966,7 +1968,7 @@ function screenOrder(id) {
     }
 
     screenEl().innerHTML = `
-      <div class="overline">Заказ №${esc(orderNo(s.id))}</div>
+      <div class="overline">Заказ №${esc(orderNo(s.id, s.orderNo))}</div>
       <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
       <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : ''}">${hint}</p>
       ${cancelled ? '' : `<div class="card dsteps">${path.map((x, i) => {
@@ -2009,14 +2011,14 @@ function screenOrder(id) {
 
   sub(onSnapshot(doc(state.root, 'sessions', id), (d) => {
     if (!d.exists()) {
-      screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><p class="muted">Заказ не найден.</p>
+      screenEl().innerHTML = `<h1>Заказ</h1><p class="muted">Заказ не найден.</p>
         <a class="btn btn-ghost" href="#/menu">${ic('menu')}В меню</a>`;
       return;
     }
     s = { id: d.id, ...d.data() };
     draw();
   }, () => {
-    screenEl().innerHTML = `<h1>Заказ №${esc(orderNo(id))}</h1><p class="muted">Этот заказ недоступен.</p>`;
+    screenEl().innerHTML = `<h1>Заказ</h1><p class="muted">Этот заказ недоступен.</p>`;
   }));
   // До подтверждения позиции лежат в заявке, а не в чеке.
   sub(onSnapshot(query(collection(state.root, 'guestOrders'),
@@ -2047,7 +2049,7 @@ function renderMyOrders(boxId) {
     box.innerHTML = list.length ? `<h2 style="margin-top:0">Мои заказы</h2>` + list.map((o) => `
       <a class="card order-link" href="#/order/${esc(o.id)}">
         <span class="ic-wrap">${ic(o.orderType === 'delivery' ? 'truck' : 'bag', 'gold')}</span>
-        <span class="grow"><b>${o.orderType === 'delivery' ? 'Доставка' : 'С собой'} №${esc(orderNo(o.id))}</b>
+        <span class="grow"><b>${o.orderType === 'delivery' ? 'Доставка' : 'С собой'} №${esc(orderNo(o.id, o.orderNo))}</b>
           <span class="small muted" style="display:block">${deliveryLabel(o.orderType, deliveryStatusOf(o))}</span></span>
         ${ic('chevron')}
       </a>`).join('') : '';

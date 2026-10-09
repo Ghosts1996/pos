@@ -40,6 +40,3 @@ class DeliveryOrderService {
   Future<void> cancel(String sessionId) => GatewayApi.post('guestDeliveryCancel', {'sessionId': sessionId});
 }
 
-/// Короткий номер заказа — тот же, что видит персонал (касса и Telegram).
-String orderNumber(String sessionId) =>
-    sessionId.length <= 4 ? sessionId.toUpperCase() : sessionId.substring(sessionId.length - 4).toUpperCase();

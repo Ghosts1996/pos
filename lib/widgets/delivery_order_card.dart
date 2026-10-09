@@ -124,7 +124,7 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  [delivery ? 'Доставка' : 'С собой', if (name.isNotEmpty) name].join(' · '),
+                  ['${delivery ? 'Доставка' : 'С собой'} №${s.orderLabel}', if (name.isNotEmpty) name].join(' · '),
                   style: TextStyle(fontSize: widget.compact ? 16 : 18, fontWeight: FontWeight.w700),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

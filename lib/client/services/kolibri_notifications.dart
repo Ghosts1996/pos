@@ -354,7 +354,7 @@ class KolibriNotifications {
         unawaited(_notify.show(
           id: NotificationService.idFor('delivery_${o.id}_$st'),
           title: title,
-          body: '${delivery ? 'Доставка' : 'С собой'} №${orderNumber(o.id)}',
+          body: '${delivery ? 'Доставка' : 'С собой'} №${o.orderLabel}',
         ));
       }
     }, onError: (_) {});

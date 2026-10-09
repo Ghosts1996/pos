@@ -357,6 +357,11 @@ class SessionModel {
   /// Имя гостя для звонка (заказ из приложения или записанный кассиром).
   final String customerName;
 
+  /// Порядковый номер заказа с собой или доставки в заведении: №1, №2, …
+  /// Ставит шлюз (заказ из приложения) или касса при создании. 0 — старый
+  /// заказ или созданный без связи: тогда номер — хвост id.
+  final int orderNo;
+
   /// Пожелания гостя: подъезд, «позвоните за 10 минут», без лука.
   final String deliveryComment;
 
@@ -379,6 +384,9 @@ class SessionModel {
   final bool deliveryOpen;
 
   bool get isTakeaway => orderType == 'takeaway' || orderType == 'delivery';
+
+  /// Номер заказа для гостя, кассы и Telegram — «12», у старых «LAMO».
+  String get orderLabel => orderNumberLabel(id, orderNo);
 
   /// Заказ оформил гость в приложении.
   bool get fromApp => source == 'app';
@@ -429,6 +437,7 @@ class SessionModel {
     this.deliveryStatus = '',
     this.courierName = '',
     this.customerName = '',
+    this.orderNo = 0,
     this.deliveryComment = '',
     this.source = '',
     this.clientUid = '',
@@ -482,6 +491,7 @@ class SessionModel {
       deliveryStatus: asText(data['deliveryStatus']),
       courierName: asText(data['courierName']),
       customerName: asText(data['customerName']),
+      orderNo: asNum(data['orderNo'])?.toInt() ?? 0,
       deliveryComment: asText(data['deliveryComment']),
       source: asText(data['source']),
       clientUid: asText(data['clientUid']),
@@ -513,6 +523,7 @@ class SessionModel {
       if (orderType.isNotEmpty) 'deliveryStatus': deliveryStatus.isEmpty ? 'new' : deliveryStatus,
       if (courierName.isNotEmpty) 'courierName': courierName,
       if (customerName.isNotEmpty) 'customerName': customerName,
+      if (orderNo > 0) 'orderNo': orderNo,
       if (deliveryComment.isNotEmpty) 'deliveryComment': deliveryComment,
       if (source.isNotEmpty) 'source': source,
       if (clientUid.isNotEmpty) 'clientUid': clientUid,
@@ -555,4 +566,10 @@ class SessionModel {
   double get paymentTotal => paymentCash + paymentCard + paymentTerminal + paymentComp;
 
   Duration get remaining => plannedEnd.difference(DateTime.now());
+}
+/// Номер заказа: порядковый, а если его нет (старый заказ) — последние 4
+/// знака id. Тот же расчёт — saas-gateway (orderLabel) и веб-версия гостя.
+String orderNumberLabel(String id, int orderNo) {
+  if (orderNo > 0) return '$orderNo';
+  return id.length <= 4 ? id.toUpperCase() : id.substring(id.length - 4).toUpperCase();
 }

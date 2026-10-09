@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
 import '../utils/shift_crew.dart';
@@ -538,15 +539,20 @@ class FirestoreService {
     String deliveryAddress = '',
     String customerName = '',
     String? sessionId,
+    bool numbered = false,
   }) async {
     final tableRef = AppScope.col('tables').doc(table.id);
     final sessionRef = AppScope.col('sessions').doc(sessionId);
+    // Счётчик заказов с собой и доставки — общий с заказами из приложения
+    // (saas-gateway/guest-delivery.js), поэтому номера не повторяются.
+    final counterRef = AppScope.col('settings').doc('orderCounter');
     final now = DateTime.now();
 
     // Новый чек и стол: [write] получает свежие данные стола и пишет через
     // [set]/[update] — транзакцией со связью или пакетом в память без неё.
     void build(Map<String, dynamic>? data, void Function(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>) set,
-        void Function(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>) update) {
+        void Function(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>) update,
+        [int orderNo = 0]) {
       final ids = ((data?['activeSessionIds'] ?? []) as List)
           .map((e) => e.toString())
           .toList();
@@ -569,6 +575,7 @@ class FirestoreService {
         customerPhone: customerPhone,
         deliveryAddress: deliveryAddress,
         customerName: customerName,
+        orderNo: orderNo,
       );
       set(sessionRef, session.toMap());
 
@@ -590,7 +597,14 @@ class FirestoreService {
     if (!offline) {
       try {
         await _db.runTransaction((tx) async {
-          build((await tx.get(tableRef)).data(), tx.set, tx.update);
+          final tableData = (await tx.get(tableRef)).data();
+          var orderNo = 0;
+          if (numbered) {
+            final last = asNum((await tx.get(counterRef)).data()?['last'])?.toInt() ?? 0;
+            orderNo = last + 1;
+            tx.set(counterRef, {'last': orderNo}, SetOptions(merge: true));
+          }
+          build(tableData, tx.set, tx.update, orderNo);
         });
       } on FirebaseException catch (e) {
         if (e.code != 'unavailable') rethrow;
