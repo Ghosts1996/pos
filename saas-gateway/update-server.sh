@@ -44,6 +44,35 @@ cp -r "$REPO/saas/guest-web/"* /opt/saas-guest-web/
 chown -R www-data:www-data /opt/saas-guest-web
 echo "ok"
 
+# Общий секрет saas-gateway и pii-gateway: по нему сервер берёт имена и
+# телефоны из справочника в РФ сам (Telegram, заказ из приложения).
+# Создаётся один раз и дописывается в оба файла настроек; остальные строки
+# не трогаем, значение в лог не выводим.
+say "Секрет между сервисами"
+token=""
+for f in /etc/pii-gateway.env /etc/saas-gateway.env; do
+  [[ -f "$f" ]] || continue
+  v="$(awk -F= '$1 == "PII_INTERNAL_TOKEN" { sub(/^[^=]*=/, ""); last = $0 } END { print last }' "$f")"
+  [[ -n "$v" ]] && token="$v"
+done
+if [[ -z "$token" ]]; then
+  token="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  echo "создан"
+fi
+for f in /etc/pii-gateway.env /etc/saas-gateway.env; do
+  [[ -f "$f" ]] || continue
+  cur="$(awk -F= '$1 == "PII_INTERNAL_TOKEN" { sub(/^[^=]*=/, ""); last = $0 } END { print last }' "$f")"
+  if [[ "$cur" != "$token" ]]; then
+    sed -i '/^PII_INTERNAL_TOKEN=/d' "$f"
+    # Последняя строка без перевода строки склеилась бы с нашей.
+    [[ -s "$f" && -n "$(tail -c1 "$f")" ]] && echo >> "$f"
+    printf 'PII_INTERNAL_TOKEN=%s\n' "$token" >> "$f"
+    echo "записан в $f"
+  fi
+done
+unset token v cur
+echo "ok"
+
 say "saas-gateway"
 command -v rsync >/dev/null || apt-get install -y rsync >/dev/null
 rsync -a --exclude node_modules "$REPO/saas-gateway/" /opt/saas-gateway/
