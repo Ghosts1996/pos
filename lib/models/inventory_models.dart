@@ -339,6 +339,12 @@ class InventoryCountEntry {
   /// Фактически посчитанное количество; null — ещё не введено.
   final double? countedQty;
 
+  /// Остаток по системе в момент, когда позицию посчитали. Касса во время
+  /// инвентаризации продолжает продавать: всё, что списалось после
+  /// подсчёта, учитывается при завершении ([inventoryCountFinalQty]), и
+  /// заведению не нужно закрываться на пересчёт.
+  final double? systemAtCount;
+
   InventoryCountEntry({
     required this.itemId,
     required this.name,
@@ -346,10 +352,16 @@ class InventoryCountEntry {
     required this.unit,
     required this.expectedQty,
     this.countedQty,
+    this.systemAtCount,
   });
 
   bool get isCounted => countedQty != null;
-  double? get diff => countedQty == null ? null : countedQty! - expectedQty;
+
+  /// С чем сравнивать подсчёт: система в момент подсчёта (или на старте).
+  double get systemQty => systemAtCount ?? expectedQty;
+
+  /// Недостача (−) или излишек (+): посчитано против системы в ту же минуту.
+  double? get diff => countedQty == null ? null : countedQty! - systemQty;
 
   factory InventoryCountEntry.fromMap(Map<String, dynamic> data) => InventoryCountEntry(
         itemId: data['itemId'] ?? '',
@@ -358,6 +370,7 @@ class InventoryCountEntry {
         unit: InventoryUnitX.fromName(data['unit'] as String?),
         expectedQty: (data['expectedQty'] as num?)?.toDouble() ?? 0,
         countedQty: (data['countedQty'] as num?)?.toDouble(),
+        systemAtCount: (data['systemAtCount'] as num?)?.toDouble(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -367,17 +380,27 @@ class InventoryCountEntry {
         'unit': unit.name,
         'expectedQty': expectedQty,
         'countedQty': countedQty,
+        if (systemAtCount != null) 'systemAtCount': systemAtCount,
       };
 
-  InventoryCountEntry copyWith({double? countedQty, bool clear = false}) => InventoryCountEntry(
+  InventoryCountEntry copyWith({double? countedQty, double? systemAtCount, bool clear = false}) =>
+      InventoryCountEntry(
         itemId: itemId,
         name: name,
         category: category,
         unit: unit,
         expectedQty: expectedQty,
         countedQty: clear ? null : (countedQty ?? this.countedQty),
+        systemAtCount: clear ? null : (systemAtCount ?? this.systemAtCount),
       );
 }
+
+/// Остаток после инвентаризации без остановки продаж: посчитанное плюс всё,
+/// что изменилось по системе после подсчёта (продажи, приходы).
+/// Пример: посчитали 10 л при системных 12, потом продали 1 л (система 11)
+/// — итог 9 л, недостача 2 л.
+double inventoryCountFinalQty({required double counted, double? systemAtCount, required double currentQty}) =>
+    systemAtCount == null ? counted : counted + (currentQty - systemAtCount);
 
 /// Сессия инвентаризации (пересчёта остатков). В один момент времени
 /// активна максимум одна — как и со сменой кассы, это отражает реальный
