@@ -12,6 +12,7 @@ import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
 import '../../widgets/modifier_picker_sheet.dart';
+import '../../widgets/void_item_dialog.dart';
 
 /// Выбор позиций меню для добавления в открытый счёт.
 ///
@@ -394,18 +395,24 @@ class _CategoryItemsScreen extends StatelessWidget {
                 onAdd: () => onAdd(item),
                 // Убираем штуку из последней добавленной строки этой позиции
                 // (у позиции с модификаторами строк может быть несколько).
-                onRemoveOne: () => fs
-                    .changeOrderItemQty(
-                        session.id,
-                        orderItems.lastWhere((o) => o.menuItemId == item.id,
-                            orElse: () => OrderItem(menuItemId: item.id, name: '', price: 0, qty: 0)).lineId,
-                        -1,
-                        employeeId: employeeId)
-                    .catchError((Object e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+                // То, что уже готовят, отсюда не убрать — только из счёта,
+                // с причиной (журнал отмен).
+                onRemoveOne: () async {
+                  final line = orderItems.lastWhere((o) => o.menuItemId == item.id,
+                      orElse: () => OrderItem(menuItemId: item.id, name: '', price: 0, qty: 0));
+                  if (voidNeedsApproval(line)) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Позицию уже готовят — отменить можно в счёте, с причиной')));
+                    return;
                   }
-                }),
+                  await fs
+                    .changeOrderItemQty(session.id, line.lineId, -1, employeeId: employeeId)
+                    .catchError((Object e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+                    }
+                  });
+                },
               );
             },
           );

@@ -164,6 +164,7 @@ class _AuditTabState extends State<_AuditTab> {
 
   static const _labels = {
     'order_item_removed': 'Удалена позиция',
+    'order_item_voided': 'Отменена позиция',
     'closed_without_payment': 'Закрыт без оплаты',
     'discount_applied': 'Применена скидка',
     'refund': 'Возврат',
@@ -231,6 +232,12 @@ class _AuditTabState extends State<_AuditTab> {
                   final ts = d['createdAt'];
                   final date = ts is Timestamp ? ts.toDate() : DateTime.now();
                   final amount = (d['amount'] ?? 0).toDouble();
+                  final details = d['details'] is Map ? Map<String, dynamic>.from(d['details'] as Map) : const {};
+                  // Отмена: что, почему и кто разрешил.
+                  final voidInfo = d['action'] == 'order_item_voided'
+                      ? '\n${details['item'] ?? ''} — ${details['reason'] ?? ''}'
+                          '${details['approvedBy'] != null && details['approvedBy'] != d['employeeName'] ? ' (разрешил ${details['approvedBy']})' : ''}'
+                      : '';
                   return ListTile(
                     dense: true,
                     leading: const Icon(Icons.receipt_long, color: AppColors.textMuted),
@@ -240,7 +247,8 @@ class _AuditTabState extends State<_AuditTab> {
                     ),
                     subtitle: Text(
                       '${d['employeeName'] ?? ''} · ${_fmt(date)}'
-                      '${d['tableName'] != null && d['tableName'].toString().isNotEmpty ? ' · ${d['tableName']}' : ''}',
+                      '${d['tableName'] != null && d['tableName'].toString().isNotEmpty ? ' · ${d['tableName']}' : ''}'
+                      '$voidInfo',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
                     ),
                     trailing: amount == 0
