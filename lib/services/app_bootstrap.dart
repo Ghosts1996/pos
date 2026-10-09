@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'fiscal_queue.dart';
 import 'net_status.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/client_models.dart';
@@ -31,6 +32,7 @@ import '../utils/startup_log.dart';
 void startBackgroundServices() {
   StartupLog.step('фон: настройки оборудования, ИИ, push');
   NetStatus.start();
+  FiscalQueue.start();
   unawaited(loadSavedPrinterSettings());
   unawaited(loadSavedKassaSettings());
   unawaited(loadSavedTerminalSettings());

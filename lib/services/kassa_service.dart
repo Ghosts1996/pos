@@ -8,14 +8,16 @@ import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart';
 import '../models/fiscal_receipt.dart';
+import 'atol_local_kassa.dart';
 
 /// Фискализация чека по 54-ФЗ. Экран оплаты знает только этот интерфейс,
 /// провайдер выбирается в одном месте ([kassaService]), как и терминал в
 /// `payment_terminal_service.dart`.
 ///
 /// Подключить кассу к планшету можно двумя путями:
-///   А) физическая ККТ в заведении (АТОЛ, Штрих-М, Эвотор) — нужен нативный
-///      SDK производителя через platform channel;
+///   А) физическая ККТ в заведении — АТОЛ через его «Веб-сервер ККТ» в
+///      локальной сети ([AtolLocalKassaService]): чеки пробиваются и без
+///      интернета, ФН копит их и сам отдаёт в ОФД, когда связь вернётся;
 ///   Б) облачная касса — ККТ у провайдера, чек уходит по HTTPS. Так
 ///      работают [AtolCloudKassaService] (протокол «АТОЛ Онлайн», на нём же
 ///      часть реселлеров с другим `baseUrl`) и [OrangeDataKassaService]
@@ -394,6 +396,7 @@ class AtolCloudKassaService implements KassaService {
       uuid = receivedUuid;
     } catch (e) {
       if (e is KassaException) return FiscalReceiptResult.failure(e.message);
+      if (isNetworkError(e)) return FiscalReceiptResult.unreachable('Нет связи с кассой: $e');
       return FiscalReceiptResult.failure('Ошибка связи с кассой: $e');
     }
 
@@ -606,6 +609,7 @@ class OrangeDataKassaService implements KassaService {
           'OrangeData: не удалось установить защищённое соединение — проверьте клиентский '
           'сертификат, его ключ и пароль, корневой сертификат OrangeData ($e)');
     } catch (e) {
+      if (isNetworkError(e)) return FiscalReceiptResult.unreachable('Нет связи с OrangeData: $e');
       return FiscalReceiptResult.failure('Ошибка связи с кассой OrangeData: $e');
     } finally {
       client?.close(force: true);
@@ -659,6 +663,11 @@ class CloudKassirKassaService implements KassaService {
     );
   }
 }
+
+/// Сбой связи (нет сети, DNS, таймаут), а не отказ кассы — такой чек можно
+/// безопасно отправить позже.
+bool isNetworkError(Object e) =>
+    e is SocketException || e is TimeoutException || e is http.ClientException;
 
 class KassaException implements Exception {
   final String message;
@@ -725,6 +734,14 @@ KassaService buildKassaService(Map<String, dynamic> data) {
         signKeyPem: s('kassaOrangeSignKeyPem'),
         caCertPem: s('kassaOrangeCaPem'),
         taxationSystem: sno,
+      );
+    case 'atol_local':
+      return AtolLocalKassaService(
+        address: s('kassaBaseUrl'),
+        taxSystem: sno,
+        ffd12: s('kassaApiVersion') != 'v4',
+        cashierName: s('kassaCashier'),
+        cashierInn: s('kassaCashierInn'),
       );
     case 'cloud_kassir':
       return CloudKassirKassaService(apiKey: s('kassaLogin'));

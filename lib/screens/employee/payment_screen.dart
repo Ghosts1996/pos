@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
+import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../utils/sale_kind.dart';
@@ -673,14 +674,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       final draft = FiscalReceipt(receiptId: widget.session.id, items: items, payments: const []);
       final balanced = balancePayments(payments, draft.total);
-      final result = await kassaService.sendReceipt(FiscalReceipt(
+      final result = await FiscalQueue.send(FiscalReceipt(
         receiptId: widget.session.id,
         items: items,
         payments: balanced.isEmpty ? [FiscalPayment('cash', draft.total)] : balanced,
         buyerContact: _contactCtrl.text.trim(),
       ));
 
-      if (!result.success) {
+      if (result.queued) {
+        _showKassaWarning('Касса сейчас недоступна — чек сохранён и пробьётся сам, когда связь вернётся');
+      } else if (!result.success) {
         _showKassaWarning('Касса отклонила чек: ${result.errorMessage}');
       } else {
         if (result.pending) {
