@@ -6,6 +6,7 @@ import '../../models/table_model.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/printer_service.dart';
+import '../../widgets/void_item_dialog.dart';
 import '../../widgets/order_note_sheet.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/timer_display.dart';
@@ -485,9 +486,15 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
-  Future<void> _changeQty(String sessionId, String lineId, int delta) async {
+  Future<void> _changeQty(SessionModel session, OrderItem line, int delta) async {
+    // Убрать то, что уже готовят, — отмена: причина и PIN администратора.
+    if (delta < 0 && voidNeedsApproval(line)) {
+      final ok = await confirmVoid(context,
+          employee: widget.employee, line: line, sessionId: session.id, tableName: session.tableName);
+      if (!ok) return;
+    }
     try {
-      await _fs.changeOrderItemQty(sessionId, lineId, delta, employeeId: widget.employee.id);
+      await _fs.changeOrderItemQty(session.id, line.lineId, delta, employeeId: widget.employee.id);
     } catch (e) {
       _showError('Не удалось изменить заказ: ${humanError(e, lower: true)}');
     }
@@ -820,8 +827,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             if (i.menuItemId.isNotEmpty)
               _QtyStepper(
                 qty: i.qty,
-                onMinus: () => _changeQty(session.id, i.lineId, -1),
-                onPlus: () => _changeQty(session.id, i.lineId, 1),
+                onMinus: () => _changeQty(session, i, -1),
+                onPlus: () => _changeQty(session, i, 1),
               ),
             SizedBox(
               width: 76,
