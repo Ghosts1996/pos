@@ -668,6 +668,32 @@ class FirestoreService {
     });
   }
 
+  /// «Подать позже» для строки ([hold] = true) или вернуть её в работу.
+  Future<void> setOrderItemHold(String sessionId, String lineId, bool hold) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return;
+      final items = _openCheckItems(data);
+      final idx = items.indexWhere((i) => i.lineId == lineId);
+      if (idx < 0) return;
+      items[idx] = items[idx].withHold(hold);
+      tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+    });
+  }
+
+  /// «Подать»: все отложенные строки счёта уходят на кухню и бар.
+  Future<void> fireHeldItems(String sessionId) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final data = (await tx.get(ref)).data();
+      if (data == null) return;
+      final items = _openCheckItems(data);
+      if (!items.any((i) => i.hold)) return;
+      tx.update(ref, {'orderItems': items.map((e) => e.withHold(false).toMap()).toList()});
+    });
+  }
+
   /// Полностью убрать позицию из заказа независимо от количества.
   Future<void> removeOrderItem(String sessionId, String lineId) async {
     final ref = AppScope.col('sessions').doc(sessionId);
