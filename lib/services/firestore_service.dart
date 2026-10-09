@@ -1716,7 +1716,8 @@ class FirestoreService {
   }
 
   Future<void> updateMenuItem(MenuItem item) {
-    return AppScope.col('menuItems').doc(item.id).update(item.toMap());
+    // Ручная правка снимает отметку автостоп-листа: решение за админом.
+    return AppScope.col('menuItems').doc(item.id).update({...item.toMap(), 'autoStoppedBy': FieldValue.delete()});
   }
 
   /// Сохраняет фото конкретного блюда/позиции меню.
@@ -1996,10 +1997,12 @@ class FirestoreService {
   }) async {
     final itemRef = AppScope.col('inventoryItems').doc(itemId);
     final moveRef = AppScope.col('inventoryMovements').doc();
+    var after = 0.0;
     await _db.runTransaction((tx) async {
       final snap = await tx.get(itemRef);
       final current = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
       final result = current + delta;
+      after = result;
       tx.update(itemRef, {
         'quantity': result,
         'updatedAt': Timestamp.fromDate(DateTime.now()),
@@ -2020,6 +2023,42 @@ class FirestoreService {
         ).toMap(),
       );
     });
+    try {
+      await syncStopList(itemId, after, unit);
+    } catch (_) {
+      // Стоп-лист — удобство; движение склада уже записано.
+    }
+  }
+
+  /// Автостоп-лист: продукта на складе меньше, чем на одну порцию, —
+  /// блюдо пропадает из меню кассы и гостя (available = false, помечено
+  /// autoStoppedBy). Пришёл приход — снятые так блюда возвращаются. Блюда,
+  /// выключенные вручную, не трогаем.
+  Future<void> syncStopList(String inventoryItemId, double stock, InventoryUnit unit) async {
+    final menu = await AppScope.col('menuItems').get();
+    final batch = _db.batch();
+    var changed = false;
+    for (final doc in menu.docs) {
+      final item = MenuItem.fromDoc(doc);
+      double? need;
+      if (item.isComposite) {
+        for (final c in item.components) {
+          if (c.inventoryItemId == inventoryItemId && c.weight > 0) need = c.weightUnit.convertTo(c.weight, unit);
+        }
+      } else if (item.inventoryItemId == inventoryItemId && item.weight > 0) {
+        need = item.weightUnit.convertTo(item.weight, unit);
+      }
+      if (need == null) continue;
+      final stoppedBy = (doc.data()['autoStoppedBy'] ?? '').toString();
+      if (stock < need && item.available) {
+        batch.update(doc.reference, {'available': false, 'autoStoppedBy': inventoryItemId});
+        changed = true;
+      } else if (stock >= need && !item.available && stoppedBy == inventoryItemId) {
+        batch.update(doc.reference, {'available': true, 'autoStoppedBy': FieldValue.delete()});
+        changed = true;
+      }
+    }
+    if (changed) await batch.commit();
   }
 
   /// Разовая достройка [TableModel.busyUntil] для столов, занятых до
