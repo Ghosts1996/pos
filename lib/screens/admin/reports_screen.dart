@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../models/inventory_models.dart';
+import '../../models/menu_models.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/adaptive.dart';
@@ -24,6 +26,8 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
+  Map<String, MenuItem> _menu = const {};
+  Map<String, InventoryItem> _stock = const {};
   final _fs = FirestoreService();
   _Period _period = _Period.today;
   DateTimeRange? _customRange;
@@ -33,6 +37,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
   void initState() {
     super.initState();
     _load();
+    // Себестоимость в отчёте — по текущим техкартам и ценам закупки.
+    Future.wait([_fs.menuItemsStream().first, _fs.inventoryItemsStream().first]).then((r) {
+      if (!mounted) return;
+      setState(() {
+        _menu = {for (final m in r[0] as List<MenuItem>) m.id: m};
+        _stock = {for (final i in r[1] as List<InventoryItem>) i.id: i};
+      });
+    }).catchError((_) {});
   }
 
   DateTimeRange _rangeFor(_Period p) {
@@ -194,11 +206,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             )),
                         const SizedBox(height: 8),
                         _sectionTitle('Популярные позиции меню'),
+                        if (_grossProfit(stats) case final gp?)
+                          Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.trending_up),
+                              title: const Text('Валовая прибыль по позициям с себестоимостью'),
+                              subtitle: Text('выручка ${rub(gp.$1)} − себестоимость ${rub(gp.$2)}'),
+                              trailing: Text(rub(gp.$1 - gp.$2),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.success)),
+                            ),
+                          ),
                         ...stats.topItems.map((i) => Card(
                               child: ListTile(
                                 leading: const Icon(Icons.local_cafe_outlined),
                                 title: Text(i.name),
-                                subtitle: Text('${i.qty} шт.'),
+                                subtitle: Text('${i.qty} шт.${_itemCostLine(i)}'),
                                 trailing: Text(
                                   rub(i.revenue),
                                   style: const TextStyle(fontWeight: FontWeight.bold),
@@ -359,6 +381,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 }
 
+extension on _ReportsScreenState {
+  double? _unitCost(_ItemStat i) => _menu[i.menuItemId]?.costPrice(_stock);
+
+  /// « · себест. 1 340 ₽ · маржа 68%» — если у позиции есть техкарта с ценами.
+  String _itemCostLine(_ItemStat i) {
+    final unit = _unitCost(i);
+    if (unit == null || i.revenue <= 0) return '';
+    final cost = unit * i.qty;
+    return ' · себест. ${rub(cost)} · маржа ${((i.revenue - cost) / i.revenue * 100).toStringAsFixed(0)}%';
+  }
+
+  /// (выручка, себестоимость) по позициям, где себестоимость известна.
+  (double, double)? _grossProfit(_ReportStats stats) {
+    var revenue = 0.0, cost = 0.0;
+    for (final i in stats.allItems) {
+      final unit = _unitCost(i);
+      if (unit == null) continue;
+      revenue += i.revenue;
+      cost += unit * i.qty;
+    }
+    return revenue > 0 ? (revenue, cost) : null;
+  }
+}
+
 class _EmployeeStat {
   double revenue = 0;
   int visits = 0;
@@ -366,9 +412,10 @@ class _EmployeeStat {
 
 class _ItemStat {
   final String name;
+  final String menuItemId;
   int qty = 0;
   double revenue = 0;
-  _ItemStat(this.name);
+  _ItemStat(this.name, [this.menuItemId = '']);
 }
 
 class _ReportStats {
@@ -377,6 +424,7 @@ class _ReportStats {
   final int refills;
   final Map<String, _EmployeeStat> byEmployee;
   final List<_ItemStat> topItems;
+  final List<_ItemStat> allItems;
   final int cardsUsed;
   final double totalDiscountGiven;
   final int refunds;
@@ -393,6 +441,7 @@ class _ReportStats {
     required this.refills,
     required this.byEmployee,
     required this.topItems,
+    this.allItems = const [],
     required this.cardsUsed,
     required this.totalDiscountGiven,
     required this.refunds,
@@ -445,7 +494,7 @@ class _ReportStats {
 
       for (final item in s.orderItems) {
         final key = item.menuItemId.isNotEmpty ? item.menuItemId : item.name;
-        final itemStat = byItem.putIfAbsent(key, () => _ItemStat(item.name));
+        final itemStat = byItem.putIfAbsent(key, () => _ItemStat(item.name, item.menuItemId));
         itemStat.qty += item.qty;
         itemStat.revenue += item.total;
       }
@@ -462,6 +511,7 @@ class _ReportStats {
       refills: refills,
       byEmployee: employeesSorted,
       topItems: itemsSorted.take(15).toList(),
+      allItems: itemsSorted,
       cardsUsed: cardsUsed,
       totalDiscountGiven: discountGiven,
       refunds: refunds,

@@ -267,6 +267,32 @@ class MenuItem {
     return '';
   }
 
+  /// Себестоимость порции по техкарте (без модификаторов), ₽: граммовка ×
+  /// цена закупки продуктов склада [stock]. null — не всё посчитать: нет
+  /// привязки к складу или цены закупки у какого-то продукта.
+  double? costPrice(Map<String, InventoryItem> stock) {
+    if (isComposite) {
+      var sum = 0.0;
+      for (final c in components) {
+        final inv = stock[c.inventoryItemId];
+        if (inv == null || inv.costPrice <= 0) return null;
+        sum += inv.costOf(c.weight, c.weightUnit);
+      }
+      return sum;
+    }
+    if (!hasInventoryLink) return null;
+    final inv = stock[inventoryItemId];
+    if (inv == null || inv.costPrice <= 0) return null;
+    return inv.costOf(weight, weightUnit);
+  }
+
+  /// Фудкост, % от цены: себестоимость / цена. null — не посчитать.
+  double? foodCostPercent(Map<String, InventoryItem> stock) {
+    final c = costPrice(stock);
+    if (c == null || price <= 0) return null;
+    return c / price * 100;
+  }
+
   /// Входит в пятёрку самых популярных — бейдж «Хит» у гостя.
   bool get isHit => popularRank > 0 && popularRank <= 5;
 
