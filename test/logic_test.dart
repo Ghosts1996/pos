@@ -560,20 +560,10 @@ void main() {
       expect(result.errorMessage, contains('сертификат'));
     });
 
-    test('CloudKassir — честная заготовка: недоступна, объясняет почему', () async {
-      final service = CloudKassirKassaService(apiKey: '');
-      expect(service.isAvailable, isFalse);
-      final result = await service.sendReceipt(const FiscalReceipt(
-        receiptId: 'r2',
-        items: [FiscalReceiptItem(name: 'Кальян', price: 1000, quantity: 1)],
-        payments: [FiscalPayment('cash', 1000)],
-      ));
-      expect(result.success, isFalse);
-      expect(result.errorMessage, contains('CloudKassir'));
-    });
-
     test('buildKassaService выбирает провайдера по kassaType', () {
-      expect(buildKassaService({'kassaType': 'mock'}), isA<MockKassaService>());
+      expect(buildKassaService({'kassaType': 'none'}), isA<NoKassaService>());
+      // Старый «тестовый режим» больше ничего не имитирует.
+      expect(buildKassaService({'kassaType': 'mock'}), isA<NoKassaService>());
       expect(
         buildKassaService({'kassaType': 'atol_cloud', 'kassaInn': '123'}),
         isA<AtolCloudKassaService>(),
@@ -587,8 +577,9 @@ void main() {
         }),
         isA<OrangeDataKassaService>(),
       );
-      expect(buildKassaService({'kassaType': 'cloud_kassir'}), isA<CloudKassirKassaService>());
-      expect(buildKassaService({}), isA<MockKassaService>());
+      expect(buildKassaService({'kassaType': 'cloud_kassir'}), isA<NoKassaService>());
+      expect(buildKassaService({}), isA<NoKassaService>());
+      expect(buildKassaService({}).isAvailable, isFalse);
     });
   });
 
