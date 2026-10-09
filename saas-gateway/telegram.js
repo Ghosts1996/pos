@@ -363,18 +363,31 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   /** tenantId → { token, cfg, unsubs, startedAt } */
   const bots = new Map();
 
+  // Запросы, которые безопасно повторить: второй раз ничего не задвоят.
+  // sendMessage не повторяем — первое сообщение могло дойти, а ответ нет.
+  const IDEMPOTENT = new Set(["getMe", "setWebhook", "deleteWebhook", "getWebhookInfo", "getChat"]);
+
   async function api(token, method, params = {}) {
     let resp;
-    try {
-      resp = await doFetch(`${API_BASE}/bot${token}/${method}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-        // Недоступный Telegram не должен подвешивать шлюз и очередь сообщений.
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
-      });
-    } catch (e) {
-      throw new TelegramUnreachable(`Telegram недоступен: ${e.message || e}`);
+    const attempts = IDEMPOTENT.has(method) ? 3 : 1;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        resp = await doFetch(`${API_BASE}/bot${token}/${method}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(params),
+          // Недоступный Telegram не должен подвешивать шлюз и очередь сообщений.
+          signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        });
+        break;
+      } catch (e) {
+        // Причина — в журнал (без токена): «таймаут», «соединение сброшено»,
+        // «нет DNS» — по ней видно, где рвётся связь сервера с Telegram.
+        const cause = (e && e.cause && (e.cause.code || e.cause.message)) || (e && (e.name || e.message)) || String(e);
+        console.error(`telegram ${method}: нет связи (попытка ${attempt}/${attempts}, ${API_BASE === "https://api.telegram.org" ? "напрямую" : "через ретранслятор"}): ${cause}`);
+        if (attempt >= attempts) throw new TelegramUnreachable(`Telegram недоступен: ${cause}`);
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
     }
     const data = await resp.json().catch(() => ({}));
     if (!data.ok) throw new Error(`Telegram ${method}: ${data.description || resp.status}`);
