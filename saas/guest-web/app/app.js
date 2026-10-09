@@ -1494,11 +1494,13 @@ function pollSbp(s) {
 
 /// Банки, у которых гость платит только по СБП; у остальных — страница
 /// оплаты банка, где можно и по СБП, и картой (как sbpOnly в online_pay.dart).
-const SBP_ONLY = ['tinkoff', 'yookassa'];
+const SBP_ONLY = ['tinkoff'];
+/// Банки, которые сейчас поддерживает шлюз (guest-pay.js, PROVIDERS).
+const PAY_PROVIDERS = ['tinkoff', 'robokassa', 'sber', 'alfa'];
 
 const deliveryOn = () => (state.venue || {}).deliveryEnabled === true;
 /// Владелец включил оплату из приложения и подключил банк в «Интеграциях».
-const onlinePayReady = () => (state.venue || {}).guestSbpPay === true && !!(state.venue || {}).onlinePay;
+const onlinePayReady = () => (state.venue || {}).guestSbpPay === true && PAY_PROVIDERS.includes((state.venue || {}).onlinePay);
 
 // Дистанционно нельзя продавать табак и кальяны (ст. 19 закона № 15-ФЗ) и
 // алкоголь, включая пиво (ст. 16 закона № 171-ФЗ). Те же правила — на

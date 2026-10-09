@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/venue_terms.dart';
 import '../utils/parse.dart';
 import '../build_info.dart';
+import 'online_pay.dart';
 
 export '../utils/venue_terms.dart';
 
@@ -79,7 +80,7 @@ class VenueProfile {
   final bool deliveryEnabled;
 
   /// Гость может заплатить онлайн: включено в профиле и банк подключён.
-  bool get onlinePayReady => guestSbpPay && onlinePay.isNotEmpty;
+  bool get onlinePayReady => guestSbpPay && OnlinePayProvider.byId(onlinePay) != null;
 
   const VenueProfile({
     // Пусто, пока владелец не заполнил профиль: подставлять чужое имя

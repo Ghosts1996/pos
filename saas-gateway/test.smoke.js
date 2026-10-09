@@ -94,10 +94,17 @@ async function main() {
     check("POST /grantBonusPeriod без токена -> 401", r.status === 401);
   }
   {
-    // Проверка paymentId отваливается ДО обращения к ЮKassa/Firestore —
-    // тот же приём, что и у остальных тестов этого файла.
-    const r = await request("POST", "/billingWebhook", { body: { object: {} } });
-    check("POST /billingWebhook без object.id -> 400", r.status === 400);
+    // ЮKassa больше не принимается — её адреса уведомлений нет.
+    const r = await request("POST", "/billingWebhook", { body: { object: { id: "x" } } });
+    check("POST /billingWebhook (ЮKassa убрана) -> 404", r.status === 404);
+  }
+  {
+    // Result URL Робокассы без InvId и подписи — отказ до обращения к базе:
+    // и для подписок, и для гостей (Shp_t), с любого из двух адресов.
+    let r = await request("GET", "/robokassaResult?OutSum=10");
+    check("GET /robokassaResult без InvId -> 400", r.status === 400);
+    r = await request("GET", "/guestPayRobokassa?OutSum=10&InvId=1&Shp_t=bad%20id");
+    check("GET /guestPayRobokassa с плохим Shp_t -> 400", r.status === 400);
   }
   {
     const r = await request("POST", "/completeBuildJob", {
