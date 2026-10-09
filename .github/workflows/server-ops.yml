@@ -29,6 +29,9 @@ jobs:
           # Новый ключ GitHub для сборок (если задан) — уходит на сервер через
           # stdin, в журнал не печатается.
           SAAS_GITHUB_PAT: ${{ secrets.SAAS_GITHUB_PAT }}
+          # Адрес ретранслятора Telegram (Cloudflare Worker) — с секретом в
+          # пути, поэтому тоже только через stdin.
+          TELEGRAM_RELAY_URL: ${{ secrets.TELEGRAM_RELAY_URL }}
         run: |
           if [ -z "$HOST" ] || [ -z "$SSHPASS" ]; then
             echo "::error::Нет секретов SERVER_IP / SERVER_PASSWORD"; exit 1
@@ -36,4 +39,4 @@ jobs:
           sudo apt-get install -y sshpass >/dev/null
           sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password \
             -o PubkeyAuthentication=no -o ServerAliveInterval=30 \
-            "${USER_NAME:-root}@$HOST" 'bash -s' < <(printf 'NEW_GITHUB_PAT=%q\n' "${SAAS_GITHUB_PAT:-}"; cat .github/server-ops/task.sh)
+            "${USER_NAME:-root}@$HOST" 'bash -s' < <(printf 'NEW_GITHUB_PAT=%q\nTELEGRAM_RELAY_URL=%q\n' "${SAAS_GITHUB_PAT:-}" "${TELEGRAM_RELAY_URL:-}"; cat .github/server-ops/task.sh)
