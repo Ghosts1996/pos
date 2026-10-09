@@ -1660,7 +1660,24 @@ function sellerReady() {
   return String(v.sellerName || '').trim().length >= 3
     && /^(\d{10}|\d{12})$/.test(String(v.sellerInn || ''))
     && /^(\d{13}|\d{15})$/.test(String(v.sellerOgrn || ''))
+    && requisitesValid(String(v.sellerInn), String(v.sellerOgrn))
     && String(v.sellerAddress || '').trim().length >= 5;
+}
+
+/// Контрольные цифры ИНН и ОГРН и их тип (организация 10+13, ИП 12+15) —
+/// как saas-gateway/requisites.js и lib/utils/ru_requisites.dart.
+function requisitesValid(inn, ogrn) {
+  const sum = (d, w) => (w.reduce((a, k, i) => a + Number(d[i]) * k, 0) % 11) % 10;
+  const mod = (d, m) => [...d].reduce((r, c) => (r * 10 + Number(c)) % m, 0);
+  const innOk = inn.length === 10
+    ? sum(inn, [2, 4, 10, 3, 5, 9, 4, 6, 8]) === Number(inn[9])
+    : inn.length === 12
+      && sum(inn, [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === Number(inn[10])
+      && sum(inn, [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === Number(inn[11]);
+  const ogrnOk = ogrn.length === 13
+    ? /^[15]/.test(ogrn) && mod(ogrn.slice(0, 12), 11) % 10 === Number(ogrn[12])
+    : ogrn.length === 15 && ogrn[0] === '3' && mod(ogrn.slice(0, 14), 13) % 10 === Number(ogrn[14]);
+  return innOk && ogrnOk && (inn.length === 10) === (ogrn.length === 13);
 }
 function sellerLine() {
   if (!sellerReady()) return '';
