@@ -339,9 +339,9 @@ async function handleRecordPayer(req, res, body) {
  * (повтор после обрыва связи), — чужую бронь по id не перезаписать.
  */
 async function handleRecordContact(req, res, body) {
-  const { tenantId, kind, id, name, phone } = body;
+  const { tenantId, kind, id, name, phone, address } = body;
   const idOk = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
-  if (!idOk(tenantId) || !idOk(id) || !["reservation", "waitlist"].includes(kind)) {
+  if (!idOk(tenantId) || !idOk(id) || !["reservation", "waitlist", "delivery"].includes(kind)) {
     return sendJson(res, 400, { error: "некорректные tenantId/kind/id" });
   }
   const auth = await verifySaasUser(req, res);
@@ -354,12 +354,12 @@ async function handleRecordContact(req, res, body) {
   }
   try {
     await getPool().query(
-      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, created_by, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())
+      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, address, created_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
        ON CONFLICT (tenant_id, kind, record_id)
-       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = now()
+       DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, address = EXCLUDED.address, updated_at = now()
        WHERE contact_records.created_by = EXCLUDED.created_by`,
-      [tenantId, kind, id, str(name, 200), str(phone, 40), auth.decoded.uid]
+      [tenantId, kind, id, str(name, 200), str(phone, 40), str(address, 300), auth.decoded.uid]
     );
   } catch (_) {
     return sendJson(res, 500, { error: "не удалось сохранить в первичной базе" });
