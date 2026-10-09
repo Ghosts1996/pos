@@ -49,11 +49,13 @@ class AuditLogService {
     required String itemName,
     required int qty,
     required double sum,
+    String tableName = '',
   }) =>
       log(
         action: 'order_item_removed',
         employeeName: employeeName,
         sessionId: sessionId,
+        tableName: tableName,
         amount: sum,
         details: {'item': itemName, 'qty': qty},
       );

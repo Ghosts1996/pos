@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/delivery_status.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
 import '../../models/session_model.dart';
+import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/printer_service.dart';
 import '../../widgets/void_item_dialog.dart';
@@ -572,15 +574,28 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     }
   }
 
+  /// [delta] < 0 приходит только по долгому нажатию «−» (см. _QtyStepper):
+  /// случайное касание позицию не уберёт. Любое удаление — в журнал кассы;
+  /// то, что уже готовят, — отмена с причиной и PIN администратора.
   Future<void> _changeQty(SessionModel session, OrderItem line, int delta) async {
-    // Убрать то, что уже готовят, — отмена: причина и PIN администратора.
-    if (delta < 0 && voidNeedsApproval(line)) {
+    final approved = delta < 0 && voidNeedsApproval(line);
+    if (approved) {
       final ok = await confirmVoid(context,
           employee: widget.employee, line: line, sessionId: session.id, tableName: session.tableName);
       if (!ok) return;
     }
     try {
       await _fs.changeOrderItemQty(session.id, line.lineId, delta, employeeId: widget.employee.id);
+      if (delta < 0 && !approved) {
+        unawaited(AuditLogService.instance.orderItemRemoved(
+          employeeName: (_me ?? widget.employee).name,
+          sessionId: session.id,
+          tableName: session.tableName,
+          itemName: line.displayName,
+          qty: -delta,
+          sum: line.price * -delta,
+        ));
+      }
     } catch (e) {
       _showError('Не удалось изменить заказ: ${humanError(e, lower: true)}');
     }
@@ -825,7 +840,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
   Future<void> _openMenu(SessionModel session) async {
     await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(session: session, employeeId: widget.employee.id)));
+        .push(MaterialPageRoute(builder: (_) => MenuSelectionScreen(
+            session: session, employeeId: widget.employee.id, employeeName: (_me ?? widget.employee).name)));
     // «Отправлять сразу»: вернулись из меню — новое уходит на кухню и бар.
     if (!mounted || !printKitchenTickets || !printKitchenAuto) return;
     final fresh = await _fs.sessionStream(session.id).first.catchError((_) => null);
@@ -1184,6 +1200,27 @@ class _QtyStepper extends StatelessWidget {
             icon: Icon(icon),
           ),
         );
+    // «−» — только долгим нажатием: защита от случайного касания и от
+    // незаметного удаления позиций. Короткое касание — подсказка.
+    final minus = SizedBox(
+      width: 36,
+      height: 36,
+      child: Tooltip(
+        message: 'Удерживайте, чтобы убрать',
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+                content: Text('Чтобы убрать позицию, удерживайте «−»'), duration: Duration(seconds: 2))),
+          onLongPress: () {
+            HapticFeedback.mediumImpact();
+            onMinus();
+          },
+          child: const Icon(Icons.remove, size: 18),
+        ),
+      ),
+    );
     return Container(
       margin: const EdgeInsets.only(left: 8),
       decoration: BoxDecoration(
@@ -1193,7 +1230,7 @@ class _QtyStepper extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          btn(Icons.remove, onMinus, 'Меньше'),
+          minus,
           SizedBox(
             width: 24,
             child: Text('$qty',
