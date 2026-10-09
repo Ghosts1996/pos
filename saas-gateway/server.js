@@ -6565,23 +6565,26 @@ const guestPay = createGuestPay({
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
 });
 
-// Telegram-бот владельцев: итоги смены и сигналы — см. telegram.js.
+// Telegram-боты заведений: доставка, смены, отчёты, сигналы — см. telegram.js.
 const telegram = createTelegram({
   db,
   admin,
   verifyAuth,
   parseJsonBody,
+  readBody,
   sendJson,
   HttpError,
   requireTenantRole,
-  token: (process.env.TELEGRAM_BOT_TOKEN || "").trim(),
+  publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
 });
 
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
+  "/telegramSetup": telegram.handleSetup,
   "/telegramLinkCode": telegram.handleLinkCode,
   "/telegramStatus": telegram.handleStatus,
+  "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,
   // Гость платит счёт по СБП со стола (Т-Банк) — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
@@ -6694,6 +6697,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
+  // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
+  if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
+  // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
+  if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
+    return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);
+  }
   // Робокасса может слать Result/Success/Fail и методом GET (выбирается в
   // «Технических настройках» магазина).
   if (req.method === "GET" && urlPath === "/robokassaResult") return runHandler(handleRobokassaResult, req, res);
