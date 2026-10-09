@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import '../models/table_model.dart';
 import '../models/reservation_model.dart';
 import '../models/venue_models.dart';
 import 'reservation_service.dart';
@@ -93,7 +94,7 @@ class WaitlistService {
   Future<int> estimateWait({required int guestsCount, int position = 1}) async {
     final tables = await AppScope.col('tables').get();
     final suitable = tables.docs
-        .where((d) => ((d.data()['seats'] as num?)?.toInt() ?? 4) >= guestsCount)
+        .where((d) => d.id != TableModel.takeawayId && ((d.data()['seats'] as num?)?.toInt() ?? 4) >= guestsCount)
         .toList();
     if (suitable.isEmpty) return 60;
 

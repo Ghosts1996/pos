@@ -61,7 +61,51 @@ class FirestoreService {
       _k(),
       () => AppScope.col('tables')
           .snapshots()
-          .map((snap) => snap.docs.map((d) => TableModel.fromDoc(d)).toList()));
+          .map((snap) => snap.docs
+              .where((d) => d.id != TableModel.takeawayId)
+              .map((d) => TableModel.fromDoc(d))
+              .toList()));
+
+  /// Служебный стол заказов с собой и доставки — создаётся при первом заказе.
+  Future<TableModel> ensureTakeawayTable() async {
+    final ref = AppScope.col('tables').doc(TableModel.takeawayId);
+    DocumentSnapshot<Map<String, dynamic>>? snap;
+    try {
+      snap = await ref.get(NetStatus.online.value ? null : const GetOptions(source: Source.cache));
+    } catch (_) {
+      snap = null; // нет ни связи, ни копии в памяти — создадим заново
+    }
+    if (snap != null && snap.exists) return TableModel.fromDoc(snap);
+    final table = TableModel(
+      id: TableModel.takeawayId,
+      name: 'С собой и доставка',
+      x: 0,
+      y: 0,
+      seats: 0,
+      maxOpenSessions: 200,
+    );
+    // merge и без списка чеков: если стол уже есть на сервере, а в памяти
+    // устройства его нет, открытые заказы не затрутся.
+    final write = ref.set({
+      'name': table.name,
+      'x': 0,
+      'y': 0,
+      'seats': 0,
+      'maxOpenSessions': table.maxOpenSessions,
+    }, SetOptions(merge: true));
+    if (NetStatus.online.value) {
+      await write;
+    } else {
+      unawaited(write.catchError((Object _) {}));
+    }
+    return table;
+  }
+
+  Stream<List<SessionModel>> takeawaySessionsStream() => AppScope.col('sessions')
+      .where('tableId', isEqualTo: TableModel.takeawayId)
+      .where('status', isEqualTo: 'active')
+      .snapshots()
+      .map((s) => s.docs.map(SessionModel.fromDoc).toList()..sort((a, b) => a.startTime.compareTo(b.startTime)));
 
   Future<void> addTable(TableModel table) async {
     await AppScope.col('tables').doc(table.id).set(table.toMap());
@@ -347,6 +391,10 @@ class FirestoreService {
     String employeeId = '',
     int durationMinutes = AppConstants.defaultSessionMinutes,
     String guestTag = '',
+    String? tableName,
+    String orderType = '',
+    String customerPhone = '',
+    String deliveryAddress = '',
   }) async {
     final tableRef = AppScope.col('tables').doc(table.id);
     final sessionRef = AppScope.col('sessions').doc();
@@ -368,12 +416,15 @@ class FirestoreService {
       final session = SessionModel(
         id: sessionRef.id,
         tableId: table.id,
-        tableName: table.name,
+        tableName: tableName ?? table.name,
         employeeName: employeeName,
         employeeId: employeeId,
         startTime: now,
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
         guestTag: guestTag,
+        orderType: orderType,
+        customerPhone: customerPhone,
+        deliveryAddress: deliveryAddress,
       );
       set(sessionRef, session.toMap());
 

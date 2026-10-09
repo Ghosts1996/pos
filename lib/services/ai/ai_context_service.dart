@@ -99,7 +99,8 @@ class AiContextService {
   /// сумм и таймеров других столов.
   Future<String> tablesForGuest() async {
     final snap = await AppScope.col('tables').get();
-    final tables = snap.docs.map(TableModel.fromDoc).toList()..sort((a, b) => a.name.compareTo(b.name));
+    final tables = snap.docs.map(TableModel.fromDoc).where((t) => !t.isTakeaway).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
     if (tables.isEmpty) return 'Столы не заведены.';
     return tables.map((t) {
       final busy = t.activeSessionIds.isNotEmpty || t.status == 'occupied';
@@ -110,7 +111,7 @@ class AiContextService {
 
   Future<String> hallSnapshot() async {
     final tablesSnap = await AppScope.col('tables').get();
-    final tables = tablesSnap.docs.map(TableModel.fromDoc).toList();
+    final tables = tablesSnap.docs.map(TableModel.fromDoc).where((t) => !t.isTakeaway).toList();
 
     final sessionsSnap =
         await AppScope.col('sessions').where('status', isEqualTo: 'active').get();

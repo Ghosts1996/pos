@@ -62,6 +62,11 @@ class TableModel {
     this.openChecks = const [],
   });
 
+  /// Служебный «стол» для заказов с собой и доставки: на карте зала его
+  /// нет, но меню, бегунки, оплата и чек работают как у обычного стола.
+  static const takeawayId = 'takeaway';
+  bool get isTakeaway => id == takeawayId;
+
   factory TableModel.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
 
