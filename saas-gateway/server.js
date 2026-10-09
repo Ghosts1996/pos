@@ -2600,16 +2600,18 @@ async function runCalculateUsage() {
     .get();
   for (const tenantDoc of tenants.docs) {
     const ref = tenantDoc.ref;
-    const [employees, devices, tables, clients] = await Promise.all([
+    const [employees, devices, tables, clients, takeaway] = await Promise.all([
       ref.collection("employees").count().get(),
       ref.collection("devices").count().get(),
       ref.collection("tables").count().get(),
       ref.collection("clients").count().get(),
+      // Служебный стол «С собой и доставка» в лимит тарифа не входит.
+      ref.collection("tables").doc("takeaway").get(),
     ]);
     await ref.collection("usage").doc("current").set({
       employees: employees.data().count,
       devices: devices.data().count,
-      tables: tables.data().count,
+      tables: Math.max(0, tables.data().count - (takeaway.exists ? 1 : 0)),
       guests: clients.data().count,
       calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });

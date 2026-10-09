@@ -343,6 +343,13 @@ class SessionModel {
 
   /// Гость уже оплатил со стола по СБП (пишет шлюз после подтверждения банка).
   final double guestPaidTotal;
+
+  /// '' — заказ за столом, 'takeaway' — с собой, 'delivery' — доставка.
+  final String orderType;
+  final String customerPhone;
+  final String deliveryAddress;
+
+  bool get isTakeaway => orderType == 'takeaway' || orderType == 'delivery';
   final String guestContact; // телефон/email гостя, необязательно
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   final bool receiptPrinted;
@@ -384,6 +391,9 @@ class SessionModel {
     this.paymentTerminal = 0,
     this.paymentComp = 0,
     this.guestPaidTotal = 0,
+    this.orderType = '',
+    this.customerPhone = '',
+    this.deliveryAddress = '',
     this.guestContact = '',
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
@@ -425,6 +435,9 @@ class SessionModel {
       paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
       guestPaidTotal: (data['guestPaidTotal'] as num?)?.toDouble() ?? 0,
+      orderType: asText(data['orderType']),
+      customerPhone: asText(data['customerPhone']),
+      deliveryAddress: asText(data['deliveryAddress']),
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       receiptPrinted: data['receiptPrinted'] ?? false,
@@ -444,6 +457,9 @@ class SessionModel {
       'employeeName': employeeName,
       'employeeId': employeeId,
       'guestTag': guestTag,
+      if (orderType.isNotEmpty) 'orderType': orderType,
+      if (customerPhone.isNotEmpty) 'customerPhone': customerPhone,
+      if (deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
       'startTime': Timestamp.fromDate(startTime),
       'plannedEnd': Timestamp.fromDate(plannedEnd),
       'refillCount': refillCount,

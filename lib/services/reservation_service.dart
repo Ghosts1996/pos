@@ -97,7 +97,7 @@ class ReservationService {
           .get(),
     ]);
 
-    final tables = results[0].docs.map(TableModel.fromDoc).toList();
+    final tables = results[0].docs.map(TableModel.fromDoc).where((t) => !t.isTakeaway).toList();
 
     // Брони без назначенного стола тоже остаются в снимке: стол им ещё не
     // выбран, но зал они занимают, и в сводке для гостя их надо посчитать.

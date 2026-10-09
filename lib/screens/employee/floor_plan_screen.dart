@@ -24,6 +24,7 @@ import '../../widgets/hall_plan_view.dart';
 import '../../widgets/offline_banner.dart';
 import '../../widgets/table_checks_sheet.dart';
 import '../../widgets/table_tile.dart';
+import '../../widgets/takeaway_sheet.dart';
 import 'table_detail_screen.dart';
 
 /// Какие столы показывать.
@@ -167,6 +168,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
           ],
         ),
         actions: [
+          TakeawayButton(employee: widget.employee),
           LayoutBuilder(builder: (context, _) {
             final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
             return IconButton(
