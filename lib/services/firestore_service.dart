@@ -469,7 +469,7 @@ class FirestoreService {
   }
 
   /// Ключ строки заказа для [splitOffItems].
-  static String splitKey(OrderItem i) => '${i.menuItemId}|${i.name}|${i.price}';
+  static String splitKey(OrderItem i) => '${i.lineId}|${i.name}|${i.price}';
 
   /// Перезабивка — сброс таймера на новые 1.5ч (или заданную длительность).
   /// [tableId] нужен, чтобы обновить денормализованную занятость стола —
@@ -522,7 +522,13 @@ class FirestoreService {
   ///
   /// [employeeId] — кто добавляет (сотрудник, вошедший по PIN): по нему
   /// кальянщику и бармену идёт процент с их позиций (PayrollSales).
-  Future<void> addOrderItem(String sessionId, MenuItem menuItem, {int qty = 1, String employeeId = ''}) async {
+  ///
+  /// [mods] — выбранные модификаторы: строка с другими модификаторами —
+  /// отдельная строка, цена — с доплатами (MenuItem.priceWith).
+  Future<void> addOrderItem(String sessionId, MenuItem menuItem,
+      {int qty = 1, String employeeId = '', List<String> mods = const []}) async {
+    final chosen = [for (final o in menuItem.optionsNamed(mods)) o.name];
+    final lineId = OrderItem.lineIdOf(menuItem.id, chosen);
     final ref = AppScope.col('sessions').doc(sessionId);
     // Кальян/табак — по флагу позиции, её названию или категории («Кальяны»):
     // на такие позиции не действуют скидки и бонусы (PromoPolicy).
@@ -545,14 +551,15 @@ class FirestoreService {
       final data = (await tx.get(ref)).data();
       if (data == null) return;
       final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.menuItemId == menuItem.id);
+      final idx = items.indexWhere((i) => i.lineId == lineId);
       if (idx >= 0) {
         items[idx] = items[idx].plus(qty, employeeId: employeeId);
       } else {
         items.add(OrderItem(
           menuItemId: menuItem.id,
           name: menuItem.name,
-          price: menuItem.price,
+          price: menuItem.priceWith(chosen),
+          mods: chosen,
           qty: qty,
           noPromo: noPromo,
           kind: kind,
@@ -579,13 +586,14 @@ class FirestoreService {
 
   /// Изменить количество позиции в заказе на delta (может быть отрицательным).
   /// Если количество опускается до 0 или ниже — позиция удаляется из счёта.
-  Future<void> changeOrderItemQty(String sessionId, String menuItemId, int delta, {String employeeId = ''}) async {
+  /// [lineId] — ключ строки (OrderItem.lineId).
+  Future<void> changeOrderItemQty(String sessionId, String lineId, int delta, {String employeeId = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
       if (data == null) return;
       final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.menuItemId == menuItemId);
+      final idx = items.indexWhere((i) => i.lineId == lineId);
       if (idx < 0) return;
       final newQty = items[idx].qty + delta;
       if (newQty <= 0) {
@@ -600,7 +608,7 @@ class FirestoreService {
   }
 
   /// Экран «Кухня и бар»: отметить строки чека готовыми целиком.
-  Future<void> markItemsReady(String sessionId, Set<String> menuItemIds) async {
+  Future<void> markItemsReady(String sessionId, Set<String> lineIds) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
@@ -608,7 +616,7 @@ class FirestoreService {
       final items = _openCheckItems(data);
       var changed = false;
       for (var k = 0; k < items.length; k++) {
-        if (menuItemIds.contains(items[k].menuItemId) && items[k].pending > 0) {
+        if (lineIds.contains(items[k].lineId) && items[k].pending > 0) {
           items[k] = items[k].markReady();
           changed = true;
         }
@@ -617,7 +625,7 @@ class FirestoreService {
     });
   }
 
-  /// Бегунок напечатан: [sentQty] — сколько штук каждой позиции (id меню →
+  /// Бегунок напечатан: [sentQty] — сколько штук каждой строки (lineId →
   /// количество) было в строке на момент печати. Добавленное за это время
   /// останется неотправленным и уйдёт следующим бегунком.
   Future<void> markItemsSent(String sessionId, Map<String, int> sentQty) async {
@@ -629,7 +637,7 @@ class FirestoreService {
       final items = _openCheckItems(data);
       var changed = false;
       for (var k = 0; k < items.length; k++) {
-        final count = sentQty[items[k].menuItemId];
+        final count = sentQty[items[k].lineId];
         if (count == null || count <= items[k].sent) continue;
         items[k] = items[k].markSent(count);
         changed = true;
@@ -647,13 +655,13 @@ class FirestoreService {
           .map((snap) => snap.docs.map((d) => SessionModel.fromDoc(d)).toList()));
 
   /// Пожелание к строке заказа («без льда», «покрепче»). Пусто — убрать.
-  Future<void> setOrderItemNote(String sessionId, String menuItemId, String note) async {
+  Future<void> setOrderItemNote(String sessionId, String lineId, String note) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
       if (data == null) return;
       final items = _openCheckItems(data);
-      final idx = items.indexWhere((i) => i.menuItemId == menuItemId);
+      final idx = items.indexWhere((i) => i.lineId == lineId);
       if (idx < 0) return;
       items[idx] = items[idx].withNote(note);
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
@@ -661,12 +669,12 @@ class FirestoreService {
   }
 
   /// Полностью убрать позицию из заказа независимо от количества.
-  Future<void> removeOrderItem(String sessionId, String menuItemId) async {
+  Future<void> removeOrderItem(String sessionId, String lineId) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
       if (data == null) return;
-      final items = _openCheckItems(data)..removeWhere((i) => i.menuItemId == menuItemId);
+      final items = _openCheckItems(data)..removeWhere((i) => i.lineId == lineId);
       tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
     });
   }
@@ -886,7 +894,30 @@ class FirestoreService {
     // Для каждой строки заказа — списываем склад если настроена привязка
     for (final orderItem in orderItems) {
       final menuItem = menuMap[orderItem.menuItemId];
-      if (menuItem == null || !menuItem.hasAnyInventoryLink) continue;
+      if (menuItem == null) continue;
+
+      // Модификаторы со складом: сироп 20 мл, доп. сыр 30 г.
+      for (final option in menuItem.optionsNamed(orderItem.mods)) {
+        if (!option.hasInventoryLink) continue;
+        try {
+          final invDoc = await AppScope.col('inventoryItems').doc(option.inventoryItemId).get();
+          if (!invDoc.exists) continue;
+          final invItem = InventoryItem.fromDoc(invDoc);
+          await adjustInventoryQuantity(
+            itemId: option.inventoryItemId,
+            itemName: invItem.name,
+            unit: invItem.unit,
+            delta: -(option.weightUnit.convertTo(option.weight, invItem.unit) * orderItem.qty),
+            type: 'writeoff',
+            employeeName: employeeName,
+            reason: 'Продажа: ${orderItem.name} ×${orderItem.qty} (${option.name})',
+          );
+        } catch (_) {
+          // Не блокируем оплату из-за ошибок списания модификатора
+        }
+      }
+
+      if (!menuItem.hasAnyInventoryLink) continue;
 
       if (menuItem.isComposite) {
         // Составная позиция: списываем каждый компонент отдельно

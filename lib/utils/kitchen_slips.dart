@@ -4,6 +4,9 @@ import 'sale_kind.dart';
 /// Строка бегунка: сколько штук приготовить и пожелание к ним.
 class KitchenSlipLine {
   final String menuItemId;
+
+  /// Ключ строки счёта (позиция + модификаторы) — по нему отмечается отправка.
+  final String lineId;
   final String name;
 
   /// Сколько штук печатаем — только то, что ещё не уходило.
@@ -20,12 +23,13 @@ class KitchenSlipLine {
 
   const KitchenSlipLine({
     required this.menuItemId,
+    String? lineId,
     required this.name,
     required this.qty,
     required this.lineQty,
     this.note = '',
     this.more = false,
-  });
+  }) : lineId = lineId ?? menuItemId;
 }
 
 /// Бегунок одного цеха — отдельный листок: кухне свой, бару свой.
@@ -69,7 +73,8 @@ List<KitchenSlip> kitchenSlipsFor(SessionModel s, {DateTime? at}) {
         if (i.menuItemId.isNotEmpty && i.unsent > 0 && i.effectiveKind == station)
           KitchenSlipLine(
             menuItemId: i.menuItemId,
-            name: i.name,
+            lineId: i.lineId,
+            name: i.displayName,
             qty: i.unsent,
             lineQty: i.qty,
             note: i.note,
@@ -89,8 +94,8 @@ List<KitchenSlip> kitchenSlipsFor(SessionModel s, {DateTime? at}) {
   return out;
 }
 
-/// Что отметить отправленным после печати: id позиции → штук в строке.
+/// Что отметить отправленным после печати: ключ строки → штук в строке.
 Map<String, int> kitchenSlipsSentQty(List<KitchenSlip> slips) => {
       for (final slip in slips)
-        for (final l in slip.lines) l.menuItemId: l.lineQty,
+        for (final l in slip.lines) l.lineId: l.lineQty,
     };

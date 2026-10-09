@@ -511,7 +511,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final name = venueName.isEmpty ? 'Кальянная' : venueName;
       final closedAt = DateTime.now();
       final method = paidVia.isEmpty ? 'Наличные' : paidVia;
-      ReceiptLine line(OrderItem i) => ReceiptLine('${i.name} x${i.qty}', right: i.total.toStringAsFixed(0));
+      ReceiptLine line(OrderItem i) => ReceiptLine('${i.displayName} x${i.qty}', right: i.total.toStringAsFixed(0));
       // Пожелание — строкой под позицией («  без льда»).
       List<ReceiptLine> lines(List<OrderItem> list) => [
             for (final i in list) ...[line(i), if (i.note.isNotEmpty) ReceiptLine('  ${i.note}')],
@@ -615,13 +615,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       final items = <FiscalReceiptItem>[];
       for (final line in widget.session.orderItems) {
-        final codes = List<AttachedMarkingCode>.from(codesByMenuItem[line.menuItemId] ?? const []);
+        // Коды позиции берутся из общего запаса: у одной позиции может быть
+        // несколько строк (разные модификаторы), один код — в один чек.
+        final pool = codesByMenuItem[line.menuItemId];
+        final codes = pool == null ? const <AttachedMarkingCode>[] : pool.take(line.qty).toList();
+        pool?.removeRange(0, codes.length);
+        final fiscalName = line.displayName.length > 128 ? line.displayName.substring(0, 128) : line.displayName;
         // Столько единиц позиции промаркировано отсканированными кодами —
         // на них заводим отдельные строки chek'а с markingCode.
         final markedCount = codes.length.clamp(0, line.qty);
         for (var i = 0; i < markedCount; i++) {
           items.add(FiscalReceiptItem(
-            name: line.name,
+            name: fiscalName,
             price: priceOf(line),
             quantity: 1,
             vat: vatOf(line),
@@ -640,7 +645,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         final rest = line.qty - markedCount;
         if (rest > 0) {
           items.add(FiscalReceiptItem(
-            name: line.name,
+            name: fiscalName,
             price: priceOf(line),
             quantity: rest.toDouble(),
             vat: vatOf(line),

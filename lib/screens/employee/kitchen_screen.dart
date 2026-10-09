@@ -165,7 +165,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
   Widget _ticket(KitchenTicket t) {
     final s = t.session;
-    final allIds = t.lines.map((i) => i.menuItemId).toSet();
+    final allIds = t.lines.map((i) => i.lineId).toSet();
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -214,7 +214,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                 for (final i in t.lines)
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
-                    onTap: () => _ready(s, {i.menuItemId}),
+                    onTap: () => _ready(s, {i.lineId}),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: Row(
@@ -230,6 +230,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(i.name, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600)),
+                                if (i.mods.isNotEmpty)
+                                  Text(i.mods.join(' · '),
+                                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                                 if (i.note.isNotEmpty)
                                   Text(i.note,
                                       style: const TextStyle(
