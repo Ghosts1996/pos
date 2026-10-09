@@ -2032,7 +2032,7 @@ async function sendBooking() {
     // Без номера бронь не принимаем — подсвечиваем поле и ведём к нему.
     const field = $('bPhone');
     if (field) { field.focus(); field.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-    return toast(phone ? 'Проверьте номер телефона' : 'Укажите номер телефона — без него бронь не принимаем');
+    return toast(phone ? (phoneProblem(phone) || 'Проверьте номер телефона') : 'Укажите номер телефона — без него бронь не принимаем');
   }
   if (!bookingDraft.time) return toast('Выберите время из списка свободного');
 
@@ -2207,9 +2207,9 @@ function watchMyBookings() {
     }, () => {}));
 }
 
-/// Приводит любой российский номер к единому виду без «+»: 79995061580.
+/// Приводит любой российский номер к единому виду без «+»: 79001234567.
 /// Правила те же, что в приложении (lib/utils/phone_utils.dart):
-///   +7 999 506-15-80 · 7(999)506-15-80 · 8 999 506 15 80 · 9995061580
+///   +7 900 123-45-67 · 7(900)123-45-67 · 8 900 123 45 67 · 9001234567
 function normalizePhone(raw) {
   const d = String(raw || '').replace(/\D/g, '');
   if (!d) return String(raw || '').trim();
@@ -2221,6 +2221,25 @@ function normalizePhone(raw) {
 /// Похоже ли на российский номер: 11 цифр, начиная с 7.
 function isValidRuPhone(normalized) {
   return normalized.length === 11 && normalized[0] === '7';
+}
+
+/// Что не так с номером — подсказка простыми словами; null — номер в
+/// порядке. Как phoneProblem в lib/utils/phone_utils.dart.
+function phoneProblem(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (!d) return 'Введите номер телефона';
+  if (isValidRuPhone(normalizePhone(raw))) return null;
+  const hasCode = String(raw).trim().startsWith('+7') ||
+    ((d[0] === '7' || d[0] === '8') && (d.length > 10 || d[1] === '9'));
+  const national = hasCode ? d.slice(1) : d;
+  const sample = 'например, +7 9XX XXX-XX-XX';
+  if (national.length < 10) {
+    const miss = 10 - national.length;
+    const word = miss % 10 === 1 && miss % 100 !== 11 ? 'цифры' : 'цифр';
+    return `Не хватает ${miss} ${word}: после +7 нужно 10 цифр (${sample})`;
+  }
+  if (national.length > 10) return `Лишние цифры: после +7 нужно ровно 10 цифр (${sample})`;
+  return `Нужен российский номер: +7 и 10 цифр (${sample})`;
 }
 function prettyPhone(d) {
   if (!d || d.length !== 11) return d || '';
@@ -2519,8 +2538,9 @@ async function saveProfile() {
   try {
     // Номер новый — сначала проверяем, не занят ли он другим гостем.
     if (!locked && phone) {
-      if (!isValidRuPhone(phone)) {
-        toast('Введите корректный номер (например, 79995061580)');
+      const problem = phoneProblem(raw);
+      if (problem) {
+        toast(problem);
         return;
       }
       if (await phoneTakenByOther(phone)) {

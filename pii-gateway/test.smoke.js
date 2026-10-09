@@ -66,14 +66,14 @@ async function run() {
   }
   {
     const res = await request("POST", "/", {
-      body: JSON.stringify({ uid: "abc123", phone: "79995061580" }),
+      body: JSON.stringify({ uid: "abc123", phone: "79001234567" }),
     });
     assert.strictEqual(res.statusCode, 401);
   }
   {
     const res = await request("POST", "/", {
       headers: { Authorization: "Bearer not-a-real-token" },
-      body: JSON.stringify({ uid: "abc123", phone: "79995061580" }),
+      body: JSON.stringify({ uid: "abc123", phone: "79001234567" }),
     });
     assert.strictEqual(res.statusCode, 401);
   }
@@ -82,7 +82,7 @@ async function run() {
     // tenantId со слэшами увёл бы запись с правами админа в чужой документ.
     const res = await request("POST", "/", {
       headers: { Authorization: "Bearer not-a-real-token" },
-      body: JSON.stringify({ tenantId: "t1/clients/victim", uid: "abc123", phone: "79995061580" }),
+      body: JSON.stringify({ tenantId: "t1/clients/victim", uid: "abc123", phone: "79001234567" }),
     });
     assert.strictEqual(res.statusCode, 400);
     assert.match(JSON.parse(res.body).error, /tenantId/);
@@ -93,7 +93,7 @@ async function run() {
     delete process.env.SAAS_FIREBASE_SERVICE_ACCOUNT_B64;
     const res = await request("POST", "/", {
       headers: { Authorization: "Bearer not-a-real-token" },
-      body: JSON.stringify({ tenantId: "t1", uid: "abc123", phone: "79995061580" }),
+      body: JSON.stringify({ tenantId: "t1", uid: "abc123", phone: "79001234567" }),
     });
     assert.strictEqual(res.statusCode, 503);
     assert.match(JSON.parse(res.body).error, /SAAS_FIREBASE_SERVICE_ACCOUNT_B64/);
