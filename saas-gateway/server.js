@@ -21,7 +21,7 @@ const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
 const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
-const { createGuestPay, onlinePaySettings } = require("./guest-pay");
+const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram } = require("./telegram");
 
@@ -6431,7 +6431,11 @@ const guestDelivery = createGuestDelivery({
       t.collection("settings").doc("integrations").get(),
       t.collection("meta").doc("venueProfile").get(),
     ]);
-    return (venue.data() || {}).guestSbpPay === true && !!onlinePaySettings(integ.data());
+    const v = venue.data() || {};
+    const i = integ.data() || {};
+    const c = onlinePaySettings(i);
+    // Как venueSettings в guest-pay.js: включено, банк подтвердил реквизиты, указан продавец.
+    return v.guestSbpPay === true && !!c && i.onlinePayVerified === credsPrint(c) && sellerReady(v);
   },
 });
 
