@@ -146,6 +146,29 @@ class FiscalReceiptItem {
     this.markingPermit,
   });
 
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'price': price,
+        'quantity': quantity,
+        'vat': vat.id,
+        'paymentObject': paymentObject.id,
+        if (markingCode != null) 'markingCode': markingCode,
+        if (markingPermit != null) 'permitId': markingPermit!.reqId,
+        if (markingPermit != null) 'permitTs': markingPermit!.reqTimestamp,
+      };
+
+  factory FiscalReceiptItem.fromJson(Map<String, dynamic> j) => FiscalReceiptItem(
+        name: j['name'] as String? ?? '',
+        price: (j['price'] as num?)?.toDouble() ?? 0,
+        quantity: (j['quantity'] as num?)?.toDouble() ?? 1,
+        vat: FiscalVatRateX.fromId(j['vat'] as String?),
+        paymentObject: FiscalPaymentObjectX.fromId(j['paymentObject'] as String?),
+        markingCode: j['markingCode'] as String?,
+        markingPermit: j['permitId'] == null
+            ? null
+            : MarkingPermit(reqId: j['permitId'] as String, reqTimestamp: j['permitTs'] as String? ?? ''),
+      );
+
   /// С копейками: price * quantity в double даёт хвосты вроде 999.98999…
   double get sum => (price * quantity * 100).roundToDouble() / 100;
 }
@@ -180,6 +203,28 @@ class FiscalReceipt {
   });
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
+
+  /// Для очереди неотправленных чеков ([FiscalQueue]) — чек хранится на
+  /// устройстве, пока нет связи с кассой.
+  Map<String, dynamic> toJson() => {
+        'receiptId': receiptId,
+        'items': items.map((i) => i.toJson()).toList(),
+        'payments': payments.map((p) => {'type': p.type, 'amount': p.amount}).toList(),
+        'buyerContact': buyerContact,
+      };
+
+  factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
+        receiptId: j['receiptId'] as String? ?? '',
+        items: [
+          for (final i in (j['items'] as List? ?? const []))
+            FiscalReceiptItem.fromJson(Map<String, dynamic>.from(i as Map)),
+        ],
+        payments: [
+          for (final p in (j['payments'] as List? ?? const []))
+            FiscalPayment((p as Map)['type'] as String? ?? 'cash', (p['amount'] as num?)?.toDouble() ?? 0),
+        ],
+        buyerContact: j['buyerContact'] as String? ?? '',
+      );
 }
 
 /// Подгоняет платежи под итог чека: касса отклоняет чек, если сумма
@@ -241,6 +286,35 @@ class FiscalReceiptResult {
   /// асинхронно — см. опрос статуса в [AtolCloudKassaService].
   final bool pending;
 
+  /// true — до кассы не достучались (нет интернета, касса выключена). Чек
+  /// не пробит и не отклонён — его можно отправить позже ([FiscalQueue]).
+  final bool unreachable;
+
+  /// true — чек поставлен в очередь и уйдёт в кассу сам, когда она станет
+  /// доступна.
+  final bool queued;
+
+  const FiscalReceiptResult.queued()
+      : success = true,
+        queued = true,
+        unreachable = false,
+        pending = true,
+        errorMessage = null,
+        fiscalDocumentNumber = null,
+        fiscalSign = null,
+        fnNumber = null,
+        receiptUrl = null;
+
+  const FiscalReceiptResult.unreachable(this.errorMessage)
+      : success = false,
+        unreachable = true,
+        queued = false,
+        fiscalDocumentNumber = null,
+        fiscalSign = null,
+        fnNumber = null,
+        receiptUrl = null,
+        pending = false;
+
   const FiscalReceiptResult.success({
     this.fiscalDocumentNumber,
     this.fiscalSign,
@@ -248,10 +322,14 @@ class FiscalReceiptResult {
     this.receiptUrl,
     this.pending = false,
   })  : success = true,
+        unreachable = false,
+        queued = false,
         errorMessage = null;
 
   const FiscalReceiptResult.failure(this.errorMessage)
       : success = false,
+        unreachable = false,
+        queued = false,
         fiscalDocumentNumber = null,
         fiscalSign = null,
         fnNumber = null,

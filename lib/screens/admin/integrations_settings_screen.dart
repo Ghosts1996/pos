@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import '../../services/printer_service.dart';
 import '../../services/egais_service.dart';
+import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
 import '../../services/payment_terminal_service.dart';
@@ -39,7 +40,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _fsrarIdCtrl = TextEditingController();
   bool _egaisEnabled = false;
   List<EgaisIncomingDoc>? _egaisDocs;
-  String _kassaType = 'mock'; // mock | atol_cloud | orange_data | cloud_kassir
+  String _kassaType = 'mock'; // mock | atol_local | atol_cloud | orange_data | cloud_kassir
   final _kassaBaseUrlCtrl = TextEditingController();
   final _kassaGroupCodeCtrl = TextEditingController();
   final _kassaLoginCtrl = TextEditingController();
@@ -47,6 +48,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaInnCtrl = TextEditingController();
   final _kassaEmailCtrl = TextEditingController();
   final _kassaPaymentAddressCtrl = TextEditingController();
+  final _kassaCashierCtrl = TextEditingController();
+  final _kassaCashierInnCtrl = TextEditingController();
   String _kassaSno = 'osn';
   String _kassaVat = 'none';
   String _kassaApiVersion = 'v5';
@@ -98,6 +101,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaInnCtrl.text = data['kassaInn'] ?? '';
     _kassaEmailCtrl.text = data['kassaEmail'] ?? '';
     _kassaPaymentAddressCtrl.text = data['kassaPaymentAddress'] ?? '';
+    _kassaCashierCtrl.text = data['kassaCashier'] ?? '';
+    _kassaCashierInnCtrl.text = data['kassaCashierInn'] ?? '';
     _kassaSno = data['kassaSno'] ?? 'osn';
     _kassaVat = FiscalVatRateX.fromId(data['kassaVat'] as String?).id;
     _kassaApiVersion = data['kassaApiVersion'] == 'v4' ? 'v4' : 'v5';
@@ -162,6 +167,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaInn': _kassaInnCtrl.text.trim(),
       'kassaEmail': _kassaEmailCtrl.text.trim(),
       'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
+      'kassaCashier': _kassaCashierCtrl.text.trim(),
+      'kassaCashierInn': _kassaCashierInnCtrl.text.trim(),
       'kassaSno': _kassaSno,
       'kassaVat': _kassaVat,
       'kassaApiVersion': _kassaApiVersion,
@@ -197,6 +204,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaInn': _kassaInnCtrl.text.trim(),
       'kassaEmail': _kassaEmailCtrl.text.trim(),
       'kassaPaymentAddress': _kassaPaymentAddressCtrl.text.trim(),
+      'kassaCashier': _kassaCashierCtrl.text.trim(),
+      'kassaCashierInn': _kassaCashierInnCtrl.text.trim(),
       'kassaSno': _kassaSno,
       'kassaVat': _kassaVat,
       'kassaApiVersion': _kassaApiVersion,
@@ -227,8 +236,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   void _applyActiveChestnyZnak() {
     final token = _czTokenCtrl.text.trim();
-    activeChestnyZnakApi =
-        token.isNotEmpty ? ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod') : null;
+    activeChestnyZnakApi = token.isNotEmpty ? ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod') : null;
   }
 
   Future<void> _pickBluetoothDevice() async {
@@ -334,6 +342,18 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _testResult = null;
     });
     _applyActiveKassa();
+    final local = kassaService;
+    if (local is AtolLocalKassaService) {
+      // Регистратору не шлём тестовый чек — он был бы настоящим
+      // фискальным документом. Спрашиваем только состояние.
+      final status = await local.checkStatus();
+      if (!mounted) return;
+      setState(() {
+        _testing = false;
+        _testResult = status;
+      });
+      return;
+    }
     if (!kassaService.isAvailable) {
       setState(() {
         _testing = false;
@@ -351,9 +371,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (!mounted) return;
     setState(() {
       _testing = false;
-      _testResult = result.success
-          ? 'Чек принят, ФД: ${result.fiscalDocumentNumber ?? '—'}'
-          : 'Ошибка: ${result.errorMessage}';
+      _testResult =
+          result.success ? 'Чек принят, ФД: ${result.fiscalDocumentNumber ?? '—'}' : 'Ошибка: ${result.errorMessage}';
     });
   }
 
@@ -410,9 +429,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (!mounted) return;
     setState(() {
       _terminalTesting = false;
-      _terminalTestResult = result.success
-          ? 'Готово: ${result.operationId ?? 'оплата подтверждена'}'
-          : 'Ошибка: ${result.errorMessage}';
+      _terminalTestResult =
+          result.success ? 'Готово: ${result.operationId ?? 'оплата подтверждена'}' : 'Ошибка: ${result.errorMessage}';
     });
   }
 
@@ -490,6 +508,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaInnCtrl.dispose();
     _kassaEmailCtrl.dispose();
     _kassaPaymentAddressCtrl.dispose();
+    _kassaCashierCtrl.dispose();
+    _kassaCashierInnCtrl.dispose();
     _kassaOrangeKeyNameCtrl.dispose();
     _kassaOrangeCertPemCtrl.dispose();
     _kassaOrangeKeyPemCtrl.dispose();
@@ -772,8 +792,55 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                     value: 'mock',
                   ),
                   const RadioListTile<String>(
+                    title: Text('Регистратор АТОЛ в заведении — работает без интернета'),
+                    subtitle: Text('Через «Веб-сервер ККТ» из драйвера АТОЛ 10 в вашей локальной сети. '
+                        'Чек печатается сразу, в ОФД уходит, когда появится связь'),
+                    value: 'atol_local',
+                  ),
+                  if (_kassaType == 'atol_local') ...[
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _kassaBaseUrlCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Адрес веб-сервера АТОЛ',
+                              hintText: '192.168.1.50',
+                              helperText: 'IP компьютера или смарт-кассы с драйвером АТОЛ; порт по умолчанию 16732',
+                            ),
+                          ),
+                          DropdownButtonFormField<String>(
+                            initialValue: _kassaApiVersion,
+                            decoration: const InputDecoration(labelText: 'Формат документов'),
+                            items: const [
+                              DropdownMenuItem(
+                                  value: 'v5', child: Text('ФФД 1.2 (рекомендуется, нужен для маркировки)')),
+                              DropdownMenuItem(value: 'v4', child: Text('ФФД 1.05')),
+                            ],
+                            onChanged: (v) => setState(() => _kassaApiVersion = v ?? 'v5'),
+                          ),
+                          TextField(
+                            controller: _kassaCashierCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Кассир в чеке (необязательно)',
+                              helperText: 'Пусто — кассир из настроек регистратора',
+                            ),
+                          ),
+                          TextField(
+                            controller: _kassaCashierInnCtrl,
+                            decoration: const InputDecoration(labelText: 'ИНН кассира (необязательно)'),
+                            keyboardType: TextInputType.number,
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const RadioListTile<String>(
                     title: Text('Облачная касса — протокол «АТОЛ Онлайн»'),
-                    subtitle: Text('Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
+                    subtitle: Text(
+                        'Тем же протоколом говорят и некоторые реселлеры (Ferma/OFD.ru и т.п.) — просто со своим адресом API'),
                     value: 'atol_cloud',
                   ),
                   if (_kassaType == 'atol_cloud') ...[
@@ -806,7 +873,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                             initialValue: _kassaApiVersion,
                             decoration: const InputDecoration(labelText: 'Протокол'),
                             items: const [
-                              DropdownMenuItem(value: 'v5', child: Text('v5 — ФФД 1.2 (рекомендуется, нужен для маркировки)')),
+                              DropdownMenuItem(
+                                  value: 'v5', child: Text('v5 — ФФД 1.2 (рекомендуется, нужен для маркировки)')),
                               DropdownMenuItem(value: 'v4', child: Text('v4 — ФФД 1.05 (старые кассы)')),
                             ],
                             onChanged: (v) => setState(() => _kassaApiVersion = v ?? 'v5'),
@@ -820,7 +888,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                           ),
                           TextField(
                             controller: _kassaPaymentAddressCtrl,
-                            decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
+                            decoration:
+                                const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
                           ),
                           const SizedBox(height: 8),
                         ],
@@ -886,15 +955,16 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                       ),
                     ),
                   ],
-                  if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data')
+                  if (_kassaType == 'atol_cloud' || _kassaType == 'orange_data' || _kassaType == 'atol_local')
                     Padding(
                       padding: const EdgeInsets.only(left: 16),
                       child: Column(
                         children: [
-                          TextField(
-                            controller: _kassaInnCtrl,
-                            decoration: const InputDecoration(labelText: 'ИНН организации'),
-                          ),
+                          if (_kassaType != 'atol_local')
+                            TextField(
+                              controller: _kassaInnCtrl,
+                              decoration: const InputDecoration(labelText: 'ИНН организации'),
+                            ),
                           DropdownButtonFormField<String>(
                             initialValue: _kassaSno,
                             decoration: const InputDecoration(labelText: 'Система налогообложения'),
@@ -925,7 +995,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                     ),
                   const RadioListTile<String>(
                     title: Text('CloudKassir'),
-                    subtitle: Text('Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
+                    subtitle: Text(
+                        'Заготовка: в открытом доступе нет полного протокола фискализации — уточняется у CloudKassir после договора'),
                     value: 'cloud_kassir',
                   ),
                 ],
@@ -934,7 +1005,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             OutlinedButton.icon(
               onPressed: _testing ? null : _testKassa,
               icon: const Icon(Icons.receipt_long),
-              label: const Text('Тестовый чек'),
+              label: Text(_kassaType == 'atol_local' ? 'Проверить связь с регистратором' : 'Тестовый чек'),
             ),
             const Divider(height: 40),
             const Text('Терминал оплаты', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -956,12 +1027,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               onChanged: (v) => setState(() => _terminalProvider = v!),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: TerminalProvider.values.where((p) => p != TerminalProvider.mock).map(
+                children: TerminalProvider.values
+                    .where((p) => p != TerminalProvider.mock)
+                    .map(
                       (p) => RadioListTile<TerminalProvider>(
                         title: Text(p.label),
                         value: p,
                       ),
-                    ).toList(),
+                    )
+                    .toList(),
               ),
             ),
             if (_terminalFields(_terminalProvider).first != null)
@@ -987,19 +1061,19 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             OutlinedButton.icon(
               onPressed: _terminalTesting ? null : _testTerminal,
               icon: const Icon(Icons.point_of_sale),
-              label: Text(_terminalProvider == TerminalProvider.tinkoffSbp
-                  ? 'Тест: показать QR на 1 ₽'
-                  : 'Проверить'),
+              label: Text(_terminalProvider == TerminalProvider.tinkoffSbp ? 'Тест: показать QR на 1 ₽' : 'Проверить'),
             ),
             if (_terminalTestResult != null) ...[
               const SizedBox(height: 12),
               Text(_terminalTestResult!, style: const TextStyle(fontWeight: FontWeight.w600)),
             ],
             const SizedBox(height: 32),
-            FilledButton(onPressed: _save, child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text('Сохранить'),
-            )),
+            FilledButton(
+                onPressed: _save,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Сохранить'),
+                )),
           ],
         ),
       ),
