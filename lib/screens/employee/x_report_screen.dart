@@ -665,44 +665,20 @@ class _XReportScreenState extends State<XReportScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Итоги отчёта скопированы')));
   }
 
-  /// Полный отчёт текстом (с позициями) — если принтера нет, его можно
-  /// вставить в мессенджер.
-  String _fullText(_XReportData data, int refundsCount, _Cash? cash) {
-    final buf = StringBuffer();
-    for (final i in data.items) {
-      buf.writeln('${i.name} — ${i.qty} шт. × ${rub(i.price)} = ${rub(i.revenue)}');
-    }
-    if (data.items.isNotEmpty) buf.writeln();
-    buf.write(xReportTotalsText(
-      period: _periodTitle(cash),
-      waiter: _employeeFilter == 'Все официанты' ? null : _employeeFilter,
-      orderTotal: data.orderTotal,
-      revenue: data.revenue,
-      card: data.paymentCard,
-      cash: data.paymentCash,
-      terminal: data.paymentTerminal,
-      comp: data.paymentComp,
-      collections: cash?.summary.collections ?? 0,
-      cashInDrawer: cash == null || cash.rangeOnly ? null : cash.summary.expected,
-    ));
-    if (refundsCount > 0) buf.writeln('\nВозвратов: $refundsCount');
-    return buf.toString();
-  }
 
   /// «Распечатать» — на чековом принтере заведения (Bluetooth или Wi‑Fi,
-  /// Настройки → Интеграции). Нет принтера — отчёт копируется целиком,
-  /// чтобы его можно было отправить в чат.
+  /// Настройки → Интеграции). Нет принтера — только подсказка: скопировать
+  /// отчёт можно соседней кнопкой.
   Future<void> _printReport(_XReportData data, int refundsCount, _Cash? cash) async {
     final printer = activeReceiptPrinter;
     if (printer == null) {
-      Clipboard.setData(ClipboardData(text: _fullText(data, refundsCount, cash)));
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
           scrollable: true,
           title: const Text('Принтер не подключён'),
           content: const Text('Чековый принтер подключается в разделе «Интеграции» (Bluetooth или Wi‑Fi). '
-              'Пока отчёт скопирован целиком — его можно вставить в мессенджер.'),
+              'Пока отчёт можно отправить в мессенджер кнопкой «Скопировать».'),
           actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
         ),
       );
@@ -749,10 +725,9 @@ class _XReportScreenState extends State<XReportScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Отчёт отправлен на принтер')));
       }
     } catch (e) {
-      Clipboard.setData(ClipboardData(text: _fullText(data, refundsCount, cash)));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Не удалось напечатать: ${humanError(e, lower: true)}. Отчёт скопирован.'),
+          content: Text('Не удалось напечатать: ${humanError(e, lower: true)}. Проверьте, что принтер включён.'),
         ));
       }
     }
