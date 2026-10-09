@@ -1,8 +1,20 @@
 #!/bin/bash
-# Задача 6: проверить, что порт 8088 освобождён после удаления прокси подписок.
-set -u
-grep -rn "8088" /etc/nginx/ 2>/dev/null || echo "в настройках nginx 8088 нет"
-ss -tln | grep -q ':8088 ' && { nginx -t >/dev/null 2>&1 && systemctl restart nginx; sleep 2; }
-ss -tln | grep ':8088 ' || echo "порт 8088 закрыт"
-printf 'nginx: '; systemctl is-active nginx
-curl -s -o /dev/null -w "сайт: %{http_code}\n" -m 10 https://zalpos.ru/
+# Задача 7 (только чтение): состояние автообновления приложений.
+# Ключ читается из файла внутри node и никуда не печатается.
+cd /opt/saas-gateway && node -e '
+const fs=require("fs");const admin=require("firebase-admin");
+const line=fs.readFileSync("/etc/saas-gateway.env","utf8").split("\n").find(l=>l.startsWith("FIREBASE_SERVICE_ACCOUNT_B64="));
+const sa=JSON.parse(Buffer.from(line.split("=").slice(1).join("=").trim().replace(/^["\x27]|["\x27]$/g,""),"base64").toString());
+admin.initializeApp({credential:admin.credential.cert(sa)});
+const db=admin.firestore();
+const ts=v=>v&&v.toDate?v.toDate().toISOString():v;
+(async()=>{
+ const r=(await db.doc("platformStatus/appRollout").get()).data()||{};
+ console.log("appRollout:",JSON.stringify({...r,requestedAt:ts(r.requestedAt),startAfter:ts(r.startAfter),finishedAt:ts(r.finishedAt)}));
+ const jobs=await db.collection("buildJobs").orderBy("createdAt","desc").limit(8).get();
+ jobs.forEach(d=>{const j=d.data();console.log("job",ts(j.createdAt),j.tenantId,j.app||"",j.status,j.rolloutSha||"",String(j.errorMessage||"").slice(0,150));});
+ const t=await db.collection("tenants").get();
+ t.forEach(d=>{const x=d.data();if(x.appBuild)console.log("tenant",d.id,x.name||"",x.status||"",x.demo?"demo":"",JSON.stringify(x.appBuild));});
+ process.exit(0);
+})().catch(e=>{console.log("ошибка",e.message);process.exit(0)});'
+journalctl -u saas-gateway --since "-6h" --no-pager | grep -iE "rollout|build|error" | tail -20
