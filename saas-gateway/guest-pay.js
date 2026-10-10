@@ -572,6 +572,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         });
       }
       const where = ses?.orderType ? " — пробейте чек: заказ оплачен заранее" : "";
+      const bank = p.provider === "demo" ? "демо, деньги не списаны" : PROVIDERS[p.provider] || "банк";
       notice = {
         tableId: p.tableId || "",
         tableName: p.tableName || "",
@@ -579,7 +580,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         clientUid: p.clientUid || "",
         guestName: "",
         type: "paid",
-        comment: `Оплачено онлайн (${PROVIDERS[p.provider] || "банк"}): ${p.amount} ₽${ses?.status === "active" ? where : " — счёт уже был закрыт, проверьте"}`,
+        comment: `Оплачено онлайн (${bank}): ${p.amount} ₽${ses?.status === "active" ? where : " — счёт уже был закрыт, проверьте"}`,
         status: "new",
         createdAt: now,
       };
@@ -624,7 +625,10 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         ? "Заказ отменён — оплачивать его не нужно"
         : "Оплатить можно после подтверждения заказа — заведение вам позвонит");
     }
-    const { enabled, creds, verified, seller } = await venueSettings(tenantId);
+    // Демо-заведение: банка нет — оплата «проходит» сразу и без денег,
+    // чтобы в демо было видно весь путь: гость платит, касса видит оплату.
+    const demo = (await t.get()).data()?.demo === true;
+    const { enabled, creds, verified, seller } = demo ? { enabled: true, creds: { provider: "demo" }, verified: true, seller: true } : await venueSettings(tenantId);
     if (!enabled || !creds) throw new HttpError(409, "Онлайн-оплата в этом заведении не включена");
     if (!verified) throw new HttpError(409, "Заведение ещё не проверило подключение банка — оплатите на месте");
     if (!seller) throw new HttpError(409, "Заведение не указало реквизиты продавца — оплатите на месте");
@@ -649,6 +653,29 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     if (prev) return sendJson(res, 200, { paymentId: prev.id, payload: prev.url, url: prev.url, amount: due, provider: creds.provider });
 
     const orderId = `g${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
+    if (demo) {
+      const paymentId = `p_${orderId}`;
+      const url = `${publicUrl}/guestPayDemo?a=${encodeURIComponent(String(due))}`;
+      await t.collection("guestPayments").doc(paymentId).set({
+        sessionId,
+        tableId: session.tableId || "",
+        tableName: session.tableName || "",
+        orderType: session.orderType || "",
+        clientUid: decoded.uid,
+        amount: due,
+        bill,
+        tips: round2(tips),
+        orderId,
+        provider: "demo",
+        providerId: "",
+        url,
+        test: true,
+        status: "pending",
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+      await markPaid(tenantId, paymentId);
+      return sendJson(res, 200, { paymentId, payload: url, url, amount: due, provider: "demo" });
+    }
     const what = session.orderType === "delivery" ? "Доставка" : session.orderType === "takeaway" ? "Заказ с собой" : "Счёт";
     const description = `${what}${session.tableName && !session.orderType ? `: ${session.tableName}` : ""}`;
     const made = await createPayment(creds, { tenantId, amount: due, orderId, description });
@@ -752,6 +779,16 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Оплата</title><style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;text-align:center}main{max-width:420px}h1{font-size:22px}p{color:#aaa;line-height:1.5}</style></head>
 <body><main><h1>Готово</h1><p>Вернитесь в приложение заведения — статус оплаты обновится сам через несколько секунд.</p><p>Если оплата не прошла, там же можно оплатить заново.</p></main></body></html>`);
+  }
+
+  /** Страница «оплаты» в демо-заведении: денег нет, платёж уже отмечен. */
+  async function handleDemoPage(req, res) {
+    const a = Number(new URL(req.url, "http://x").searchParams.get("a")) || 0;
+    const sum = a > 0 ? `${a.toLocaleString("ru-RU")} ₽` : "";
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Демо-оплата</title><style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;text-align:center}main{max-width:420px}h1{font-size:22px}p{color:#aaa;line-height:1.5}b{color:#eee}</style></head>
+<body><main><h1>Оплачено ${sum}</h1><p>Это демо-заведение: деньги не списываются, банк не участвует. В настоящем заведении здесь откроется страница его банка — карта, СБП или T-Pay.</p><p><b>Вернитесь в приложение</b> — статус заказа уже «Оплачено», а касса получила уведомление.</p></main></body></html>`);
   }
 
   /**
@@ -1051,7 +1088,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   }
 
   return {
-    handleStart, handleStatus, handleNotify, handleRobokassaResult, handleDone, handleCheck,
+    handleStart, handleStatus, handleNotify, handleRobokassaResult, handleDone, handleDemoPage, handleCheck,
     handleKassaStart, handleKassaStatus, handleKassaCancel,
     markPaid, sweep, startSweeper, createPayment, bankStatus, cancelPayment, checkCreds,
   };

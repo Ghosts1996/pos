@@ -308,6 +308,51 @@ async function main() {
     check("telegram: мелкая скидка не сигналит", tg.alertText("Тест", { action: "discount_applied", details: { percent: 5 } }) === null);
   }
 
+  {
+    // Демо-точка: всё помещается в один пакет записи Firestore (≤ 500),
+    // каждая функция видна сразу, имена — в справочник в РФ.
+    const { sellerReady } = require("./guest-pay");
+    let seq = 0;
+    const ref = (path) => ({ id: path.split("/").pop(), path, collection: (n) => ({ doc: (id) => ref(`${path}/${n}/${id || `auto${++seq}`}`) }) });
+    const writes = [];
+    const vault = [];
+    server.seedDemoData(ref("tenants/demo1"), { set: (r, data) => writes.push({ path: r.path, data }) }, Date.UTC(2026, 9, 10, 15), { vault });
+    const docs = (c) => writes.filter((w) => w.path.split("/")[2] === c).map((w) => w.data);
+    const byPath = (p) => (writes.find((w) => w.path === `tenants/demo1/${p}`) || {}).data;
+    check(`демо: записей ${writes.length} — в одном пакете (≤ 500)`, writes.length <= 480);
+    const venue = byPath("meta/venueProfile");
+    check("демо: доставка, оплата онлайн и продавец — гость может заказать и оплатить", venue.deliveryEnabled === true && venue.guestSbpPay === true && sellerReady(venue));
+    check("демо: работает круглосуточно — заказ в любое время", venue.workingHours["1"] === "00:00-24:00");
+    const sessions = docs("sessions");
+    const takeaway = sessions.filter((x) => x.tableId === "takeaway");
+    const statuses = new Set(takeaway.filter((x) => x.status === "active").map((x) => x.deliveryStatus));
+    check("демо: заказы с собой и доставка на каждом шаге", ["new", "accepted", "cooking", "courier", "ready"].every((x) => statuses.has(x)));
+    check("демо: оплаченный онлайн заказ и заказ агрегатора",
+      takeaway.some((x) => x.guestPaidTotal > 0) && takeaway.some((x) => x.paymentAggregator > 0 && x.aggregatorCommission > 0));
+    check("демо: служебный стол доставки знает свои заказы",
+      byPath("tables/takeaway").activeSessionIds.length === takeaway.filter((x) => x.status === "active").length);
+    const nos = takeaway.map((x) => x.orderNo).sort((a, b) => a - b);
+    check("демо: номера заказов по порядку, счётчик продолжает", nos.every((n, i) => n === i + 1) && byPath("settings/orderCounter").last === nos.length);
+    const items = sessions.filter((x) => x.status === "active").flatMap((x) => x.orderItems);
+    check("демо: экран кухни — позиции ждут повара", items.some((i) => i.since && !i.ready && !i.hold));
+    check("демо: подача по курсам — второй курс ждёт", items.some((i) => i.hold === true && !i.since));
+    const menu = docs("menuItems");
+    const capp = menu.find((m) => m.name === "Капучино");
+    const oat = items.find((i) => i.name === "Капучино" && (i.mods || []).includes("Овсяное"));
+    check("демо: модификаторы в меню и в чеке — с доплатой", capp.modifierGroups.length === 2 && oat && oat.price === 350);
+    const lunch = menu.find((m) => m.name === "Бизнес-ланч");
+    check("демо: бизнес-ланч — варианты ссылаются на блюда меню",
+      lunch.modifierGroups.length === 3 && lunch.modifierGroups.every((g) => g.options.every((o) => /^auto/.test(o.menuItemId))));
+    check("демо: себестоимость у склада", docs("inventoryItems").every((x) => x.costPrice > 0));
+    check("демо: неделя истории — закрытые смены и личные смены", docs("shifts").filter((x) => x.status === "closed").length === 6 && docs("staffShifts").length >= 18);
+    check("демо: касса — внесение, выплата, инкассация", new Set(docs("cashOps").map((x) => x.type)).size === 3);
+    check("демо: сертификат DEMO500 и агрегаторы в интеграциях", !!byPath("giftCards/DEMO500") && byPath("settings/integrations").aggregators.yandex_eda.enabled === true);
+    const kinds = new Set(vault.map((v) => v.k));
+    check("демо: имена и телефоны — в справочник в РФ", ["staff", "guest", "reservation", "waitlist", "delivery"].every((k) => kinds.has(k)));
+    check("демо: в доставке Firestore без имён и адресов",
+      takeaway.every((x) => !("customerName" in x) && !("customerPhone" in x) && !("deliveryAddress" in x)));
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);

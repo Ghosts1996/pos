@@ -92,7 +92,7 @@ const TENANT_SUBCOLLECTIONS = [
   "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
   "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
-  "waiterCalls", "waitlist", "guestPayments", "kassaPayments",
+  "waiterCalls", "waitlist", "guestPayments", "kassaPayments", "contactReceipts",
 ];
 
 // Демо-заведения создаются анонимно и живут 3 дня с момента запуска демо
@@ -3331,21 +3331,28 @@ function demoTableFraction(t) {
 
 // Склад: [ключ, название, категория, единица, остаток, минимум]. Три позиции
 // ниже минимума — чтобы в демо было видно предупреждения о закупке.
+// [ключ, название, категория, единица, остаток, минимум, цена закупки ₽
+// за кг/л/шт] — по цене закупки касса считает себестоимость и фудкост.
 const DEMO_STOCK = [
-  ["tobacco", "Табак (ассорти)", "Табак", "g", 180, 250],
-  ["coal", "Уголь кокосовый", "Табак", "pcs", 240, 100],
-  ["milk", "Молоко 3,2%", "Бар", "l", 8, 5],
-  ["coffee", "Кофе в зёрнах", "Бар", "kg", 2.4, 1],
-  ["puer", "Чай пуэр", "Бар", "g", 450, 200],
-  ["syrup", "Сироп «Лаванда»", "Бар", "ml", 150, 300],
-  ["lemon", "Лимоны", "Бар", "kg", 3, 1],
-  ["cola", "Кола 0,33", "Бар", "pcs", 9, 24],
-  ["water", "Вода 0,5", "Бар", "pcs", 48, 24],
-  ["beef", "Говядина (фарш)", "Кухня", "kg", 4, 2],
-  ["mozzarella", "Моцарелла", "Кухня", "kg", 2.5, 1],
-  ["fries", "Картофель фри (заморозка)", "Кухня", "kg", 7, 3],
-  ["cheesecake", "Чизкейк (порции)", "Кухня", "pcs", 11, 4],
+  ["tobacco", "Табак (ассорти)", "Табак", "g", 180, 250, 3500],
+  ["coal", "Уголь кокосовый", "Табак", "pcs", 240, 100, 12],
+  ["milk", "Молоко 3,2%", "Бар", "l", 8, 5, 95],
+  ["coffee", "Кофе в зёрнах", "Бар", "kg", 2.4, 1, 1900],
+  ["puer", "Чай пуэр", "Бар", "g", 450, 200, 4000],
+  ["syrup", "Сироп «Лаванда»", "Бар", "ml", 150, 300, 900],
+  ["lemon", "Лимоны", "Бар", "kg", 3, 1, 250],
+  ["cola", "Кола 0,33", "Бар", "pcs", 9, 24, 70],
+  ["water", "Вода 0,5", "Бар", "pcs", 48, 24, 30],
+  ["beef", "Говядина (фарш)", "Кухня", "kg", 4, 2, 750],
+  ["mozzarella", "Моцарелла", "Кухня", "kg", 2.5, 1, 900],
+  ["fries", "Картофель фри (заморозка)", "Кухня", "kg", 7, 3, 260],
+  ["cheesecake", "Чизкейк (порции)", "Кухня", "pcs", 11, 4, 120],
 ];
+
+// Модификаторы: группа → варианты с доплатой. min > 0 — выбор обязателен,
+// max — сколько вариантов можно выбрать.
+const DEMO_MOD_MILK = { name: "Молоко", min: 0, max: 1, options: [["Овсяное", 60], ["Миндальное", 70], ["Безлактозное", 40]] };
+const DEMO_MOD_SYRUP = { name: "Сироп", min: 0, max: 2, options: [["Ваниль", 40], ["Карамель", 40], ["Лаванда", 50]] };
 
 // Меню. img — живое фото из saas/console/demo-menu (свободные лицензии,
 // авторы в CREDITS.txt): лежит на том же хостинге, что и консоль, и не
@@ -3392,6 +3399,15 @@ const DEMO_MENU = [
     ],
   },
   {
+    // Комбо: варианты — блюда меню (combo), со склада списывается их техкарта.
+    category: "Бизнес-ланч",
+    img: "borscht",
+    items: [
+      { name: "Бизнес-ланч", price: 490, img: "borscht", description: "Суп, горячее и напиток на выбор. По будням с 12:00 до 16:00",
+        combo: [["Первое", ["Борщ со сметаной", "Рамен с курицей"]], ["Второе", ["Паста карбонара", "Клаб-сэндвич"]], ["Напиток", ["Морс клюквенный", "Американо"]]] },
+    ],
+  },
+  {
     category: "Супы",
     img: "ramen",
     items: [
@@ -3404,7 +3420,8 @@ const DEMO_MENU = [
     category: "Горячее",
     img: "steak",
     items: [
-      { name: "Стейк рибай", price: 1690, weight: [300, "g"], img: "steak", description: "Мраморная говядина, прожарка на выбор" },
+      { name: "Стейк рибай", price: 1690, weight: [300, "g"], img: "steak", description: "Мраморная говядина, прожарка на выбор",
+        mods: [{ name: "Прожарка", min: 1, max: 1, options: [["Medium rare", 0], ["Medium", 0], ["Medium well", 0], ["Well done", 0]] }] },
       { name: "Куриные крылья BBQ", price: 520, weight: [350, "g"], img: "wings", description: "Крылья в соусе барбекю и соус блю-чиз" },
       { name: "Паста карбонара", price: 560, weight: [300, "g"], img: "carbonara",
         description: "Спагетти, бекон, желток и пармезан" },
@@ -3426,7 +3443,8 @@ const DEMO_MENU = [
     img: "burger",
     items: [
       { name: "Бургер с говядиной", price: 590, weight: [350, "g"], img: "burger", rank: 4,
-        description: "Котлета из говядины, чеддер, томаты и соус барбекю", use: [["beef", 150, "g"]] },
+        description: "Котлета из говядины, чеддер, томаты и соус барбекю", use: [["beef", 150, "g"]],
+        mods: [{ name: "Добавки", min: 0, max: 3, options: [["Бекон", 90], ["Халапеньо", 40], ["Двойная котлета", 190]] }] },
       { name: "Клаб-сэндвич", price: 480, weight: [300, "g"], img: "club", description: "Курица, бекон, яйцо, томаты и картофель фри" },
       { name: "Хот-дог", price: 350, weight: [250, "g"], img: "hotdog", description: "Баварская колбаска, горчица и маринованный лук" },
       { name: "Тако с курицей", price: 420, weight: [220, "g"], img: "taco", description: "Две лепёшки, курица, сальса и гуакамоле" },
@@ -3437,7 +3455,8 @@ const DEMO_MENU = [
     img: "fries",
     items: [
       { name: "Картофель фри", price: 250, weight: [150, "g"], img: "fries",
-        description: "Хрустящий, с соусом на выбор", use: [["fries", 150, "g"]] },
+        description: "Хрустящий, с соусом на выбор", use: [["fries", 150, "g"]],
+        mods: [{ name: "Соус", min: 1, max: 1, options: [["Кетчуп", 0], ["Сырный", 30], ["Барбекю", 30]] }] },
       { name: "Сырные палочки", price: 340, weight: [180, "g"], img: "cheese-sticks",
         description: "Моцарелла в панировке и соус ранч", use: [["mozzarella", 150, "g"]] },
       { name: "Гёдза с креветкой", price: 460, weight: [180, "g"], img: "gyoza", description: "Шесть штук, соевый соус и кунжут" },
@@ -3448,9 +3467,9 @@ const DEMO_MENU = [
     category: "Десерты",
     img: "cheesecake",
     items: [
-      { name: "Чизкейк Нью-Йорк", price: 390, weight: [150, "g"], img: "cheesecake", rank: 3,
+      { name: "Чизкейк Нью-Йорк", price: 390, weight: [150, "g"], img: "cheesecake", rank: 3, bonus: 30,
         description: "Классический сливочный чизкейк", use: [["cheesecake", 1, "pcs"]] },
-      { name: "Шоколадный фондан", price: 420, weight: [120, "g"], img: "fondant",
+      { name: "Шоколадный фондан", price: 420, weight: [120, "g"], img: "fondant", bonus: 30,
         description: "Тёплый, с жидкой серединкой и шариком мороженого" },
       { name: "Мороженое", price: 290, weight: [150, "g"], img: "ice-cream",
         description: "Три шарика: ваниль, шоколад и клубника" },
@@ -3478,13 +3497,15 @@ const DEMO_MENU = [
     img: "cappuccino",
     items: [
       { name: "Капучино", price: 290, weight: [300, "ml"], img: "cappuccino", rank: 1,
-        description: "Двойной эспрессо и плотная молочная пена", use: [["coffee", 18, "g"], ["milk", 180, "ml"]] },
+        description: "Двойной эспрессо и плотная молочная пена", use: [["coffee", 18, "g"], ["milk", 180, "ml"]],
+        mods: [DEMO_MOD_MILK, DEMO_MOD_SYRUP] },
       { name: "Латте", price: 320, weight: [400, "ml"], img: "latte",
-        description: "Эспрессо и много нежного молока", use: [["coffee", 18, "g"], ["milk", 280, "ml"]] },
+        description: "Эспрессо и много нежного молока", use: [["coffee", 18, "g"], ["milk", 280, "ml"]],
+        mods: [DEMO_MOD_MILK, DEMO_MOD_SYRUP] },
       { name: "Раф", price: 360, weight: [350, "ml"], img: "raf",
-        description: "Эспрессо, сливки и ванильный сахар", use: [["coffee", 18, "g"]] },
+        description: "Эспрессо, сливки и ванильный сахар", use: [["coffee", 18, "g"]], mods: [DEMO_MOD_SYRUP] },
       { name: "Американо", price: 220, weight: [250, "ml"], img: "americano",
-        description: "Эспрессо с горячей водой", use: [["coffee", 18, "g"]] },
+        description: "Эспрессо с горячей водой", use: [["coffee", 18, "g"]], mods: [DEMO_MOD_SYRUP] },
     ],
   },
   {
@@ -3499,7 +3520,7 @@ const DEMO_MENU = [
         description: "Клубника, базилик и лимонный сок" },
       { name: "Мохито безалкогольный", price: 390, weight: [500, "ml"], img: "mojito",
         description: "Лайм, мята, тростниковый сахар и содовая" },
-      { name: "Арбузный лимонад", price: 420, weight: [500, "ml"], img: "watermelon", description: "Свежий арбуз, лайм и мята" },
+      { name: "Арбузный лимонад", price: 420, weight: [500, "ml"], img: "watermelon", bonus: 20, description: "Свежий арбуз, лайм и мята" },
     ],
   },
   {
@@ -3596,25 +3617,67 @@ const DEMO_CLOSED_RECEIPTS = [
 // Столы, занятые прямо сейчас. Время подобрано так, чтобы в зале были все
 // состояния: Стол 6 — «скоро освободится», Диван 8 — «время вышло», на
 // баре два отдельных чека, в VIP-кабинете — скидка по карте. refills — перезабивки
-// (минут назад).
+// (минут назад). Позиция: [название, кол-во, { mods, wait, hold }] — mods —
+// модификаторы, wait — ждёт на кухне/баре столько минут (экран кухни), hold —
+// следующий курс, повар его ещё не видит (подача по курсам). Остальное уже
+// вынесли.
 const DEMO_ACTIVE_SESSIONS = [
   { table: "Стол 1", tag: "Аня", start: 25, duration: 90, staff: "hookah", client: "demo-guest-1",
-    items: [["Кальян на молоке", 1], ["Манго-маракуйя", 2]], refills: [10] },
+    items: [["Кальян на молоке", 1], ["Манго-маракуйя", 2, { wait: 3 }]], refills: [10] },
   { table: "Стол 6", tag: "Компания у окна", start: 80, duration: 90, staff: "hookah",
     items: [["Классический кальян", 2], ["Пицца Маргарита", 1], ["Пуэр", 2]], refills: [55, 30] },
   { table: "Диван 8", tag: "День рождения", start: 100, duration: 90, staff: "waiter",
-    items: [["Кальян на грейпфруте", 2], ["Фруктовая тарелка", 1], ["Чизкейк Нью-Йорк", 3], ["Классический лимонад", 4]], refills: [70, 40] },
+    items: [["Кальян на грейпфруте", 2], ["Фруктовая тарелка", 1], ["Чизкейк Нью-Йорк", 3, { wait: 6 }], ["Классический лимонад", 4, { wait: 4 }]], refills: [70, 40] },
   { table: "Кабинет 1", tag: "Банкет", start: 40, duration: 180, staff: "waiter", card: "0001",
-    items: [["Классический кальян", 3], ["Стейк рибай", 2], ["Роллы Филадельфия", 2], ["Цезарь с курицей", 2], ["Капучино", 4]] },
+    items: [["Классический кальян", 3], ["Роллы Филадельфия", 2, { wait: 12 }], ["Цезарь с курицей", 2],
+      ["Стейк рибай", 2, { mods: ["Medium rare"], hold: true }], ["Капучино", 4, { mods: ["Овсяное"], hold: true }]] },
   { table: "Стол 12", tag: "Олег", start: 15, duration: 90, staff: "waiter",
-    items: [["Раф", 2], ["Сырные палочки", 1]] },
+    items: [["Раф", 2, { mods: ["Карамель"] }], ["Сырные палочки", 1, { wait: 9 }]] },
   { table: "Стол 17", tag: "Компания", start: 35, duration: 120, staff: "hookah",
-    items: [["Кальян на молоке", 2], ["Ягодный чай", 2], ["Фруктовая тарелка", 1]], refills: [10] },
+    items: [["Кальян на молоке", 2, { wait: 5 }], ["Ягодный чай", 2], ["Фруктовая тарелка", 1]], refills: [10] },
   { table: "Лаунж 4", tag: "Студенты", start: 50, duration: 120, staff: "waiter",
-    items: [["Кальян на ананасе", 1], ["Куриные крылья BBQ", 2], ["Картофель фри", 2], ["Банановый милкшейк", 3]], refills: [20] },
+    items: [["Кальян на ананасе", 1], ["Куриные крылья BBQ", 2, { wait: 14 }], ["Картофель фри", 2, { mods: ["Сырный"], wait: 14 }],
+      ["Бургер с говядиной", 1, { mods: ["Бекон", "Халапеньо"], wait: 8 }], ["Банановый милкшейк", 3]], refills: [20] },
   { table: "Бар", tag: "Кирилл", start: 30, duration: 60, staff: "bar", items: [["Кола", 1], ["Попкорн", 1]] },
-  { table: "Бар", tag: "Двое справа", start: 5, duration: 60, staff: "bar", items: [["Мохито безалкогольный", 2]] },
+  { table: "Бар", tag: "Двое справа", start: 5, duration: 60, staff: "bar", items: [["Мохито безалкогольный", 2, { wait: 2 }]] },
 ];
+
+// Заказы с собой и доставка — каждый шаг пути: новый заказ из приложения
+// (ждёт звонка), принят, готовится, у курьера, готов к выдаче; оплата
+// онлайн, при получении и через агрегатор. Контакты — в справочник в РФ.
+// start — минут назад; items — как у столов.
+const DEMO_DELIVERY = [
+  { type: "delivery", status: "new", source: "app", client: "demo-guest-2", pay: "online", start: 4,
+    name: "Игорь", phone: "+7 900 000-00-02", address: "ул. Тверская, 12, кв. 45, подъезд 2, этаж 5",
+    comment: "Позвоните за 10 минут, домофон не работает",
+    guestItems: [["Пицца Маргарита", 1], ["Цезарь с курицей", 1], ["Морс клюквенный", 2]] },
+  { type: "takeaway", status: "accepted", source: "app", client: "demo-guest-3", pay: "online", paid: true, start: 9,
+    name: "Мария", phone: "+7 900 000-00-03",
+    items: [["Капучино", 2, { mods: ["Овсяное"], wait: 2 }], ["Круассан с лососем", 1, { wait: 2 }]] },
+  { type: "delivery", status: "cooking", source: "phone", pay: "on_receipt", start: 22,
+    name: "Павел", phone: "+7 900 000-00-11", address: "Пресненская наб., 8, офис 1203",
+    items: [["Бургер с говядиной", 2, { mods: ["Бекон"], wait: 15 }], ["Картофель фри", 2, { mods: ["Кетчуп"], wait: 15 }], ["Кола", 2]] },
+  { type: "delivery", status: "courier", source: "app", client: "demo-guest-4", pay: "online", paid: true, start: 48,
+    name: "Сергей", phone: "+7 900 000-00-04", address: "Ленинский пр-т, 30, кв. 12",
+    courier: { name: "Николай", phone: "+7 900 000-00-20" },
+    items: [["Рамен с курицей", 2], ["Гёдза с креветкой", 1], ["Облепиховый чай", 1]] },
+  { type: "takeaway", status: "ready", source: "phone", pay: "on_receipt", start: 28,
+    name: "Елена", phone: "+7 900 000-00-12", items: [["Латте", 1, { mods: ["Ваниль"] }], ["Чизкейк Нью-Йорк", 2]] },
+  { type: "takeaway", status: "cooking", tag: "Яндекс Еда · №4821", start: 16,
+    items: [["Том ям с креветками", 1, { wait: 10 }], ["Роллы Филадельфия", 1, { wait: 10 }]] },
+];
+
+// Закрытые сегодня заказы агрегаторов: оплачены на их стороне, деньги
+// придут позже за вычетом комиссии — отчёт показывает, сколько к выплате.
+// [агрегатор, номер, закрыт (мин назад), позиции].
+const DEMO_AGGREGATOR_RECEIPTS = [
+  ["yandex_eda", "4790", 210, [["Бургер с говядиной", 2], ["Картофель фри", 2], ["Кола", 2]]],
+  ["kuper", "К-1182", 140, [["Пицца Маргарита", 2], ["Морс клюквенный", 2]]],
+];
+// Служебный стол заказов с собой и доставки — как TableModel.takeawayId в
+// кассе и TAKEAWAY_TABLE в guest-delivery.js.
+const TAKEAWAY_TABLE_ID = "takeaway";
+const DEMO_AGGREGATORS = { yandex_eda: { name: "Яндекс Еда", commission: 25 }, kuper: { name: "Купер", commission: 20 } };
 
 // Гости с профилем в приложении — по одному на каждый уровень бонусной
 // программы (Бронза … Алмаз). Телефонов нет: в настоящей работе они лежат
@@ -3627,7 +3690,12 @@ const DEMO_CLIENTS = [
   { uid: "demo-guest-5", name: "Ольга", totalSpent: 112000, visits: 61, bonusBalance: 9800, lastVisitDays: 2, sinceDays: 420 },
 ];
 
-function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1" } = {}) {
+/**
+ * Данные демо-точки. Пишет в batch; имена и телефоны (все вымышленные)
+ * складывает в vault — их потом записывают в справочник в РФ, как у
+ * настоящего заведения (handleCreateDemoTenant).
+ */
+function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1", vault = [] } = {}) {
   const col = (name) => tenantRef.collection(name);
   // Точка сети: гости и бонусы общие на сеть (chains/{chainId}/clients).
   const loyaltyCol = (name) => (loyaltyRef || tenantRef).collection(name);
@@ -3636,26 +3704,41 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
 
   // Склад
   const stockIds = {};
-  DEMO_STOCK.forEach(([key, name, category, unit, quantity, minQuantity]) => {
+  DEMO_STOCK.forEach(([key, name, category, unit, quantity, minQuantity, costPrice]) => {
     const ref = col("inventoryItems").doc();
-    stockIds[key] = ref.id;
+    stockIds[key] = { id: ref.id, name, unit, quantity };
     batch.set(ref, {
-      name, category, unit, quantity, minQuantity,
+      name, category, unit, quantity, minQuantity, costPrice,
       active: true, note: "", updatedAt: ts(30), isMarked: false, gtin: "",
     });
   });
 
-  // Меню
+  // Меню. Сначала id всех позиций — на них ссылаются варианты комбо.
   const menuByName = {};
   const categoryIds = {};
-  DEMO_MENU.forEach((cat, ci) => {
+  const menuRefs = DEMO_MENU.map((cat) => {
     const catRef = col("menuCategories").doc();
     categoryIds[cat.category] = catRef.id;
-    batch.set(catRef, { name: cat.category, order: ci, imageUrl: image(cat.img) });
-    cat.items.forEach((item) => {
+    return { catRef, refs: cat.items.map((item) => {
       const ref = col("menuItems").doc();
       const tobacco = cat.tobacco === true;
-      menuByName[item.name] = { id: ref.id, price: item.price, tobacco, kind: tobacco ? "hookah" : DEMO_BAR_CATEGORIES.has(cat.category) ? "bar" : "kitchen" };
+      const groups = (item.mods || []).map((g) => ({ name: g.name, min: g.min, max: g.max, options: g.options.map(([name, price]) => ({ name, price })) }));
+      menuByName[item.name] = {
+        id: ref.id, price: item.price, tobacco, groups,
+        kind: tobacco ? "hookah" : DEMO_BAR_CATEGORIES.has(cat.category) ? "bar" : "kitchen",
+      };
+      return ref;
+    }) };
+  });
+  DEMO_MENU.forEach((cat, ci) => {
+    const { catRef, refs } = menuRefs[ci];
+    batch.set(catRef, { name: cat.category, order: ci, imageUrl: image(cat.img) });
+    cat.items.forEach((item, ii) => {
+      const ref = refs[ii];
+      const tobacco = cat.tobacco === true;
+      const combo = (item.combo || []).map(([name, dishes]) => ({
+        name, min: 1, max: 1, options: dishes.map((d) => ({ name: d, price: 0, menuItemId: menuByName[d].id })),
+      }));
       batch.set(ref, {
         categoryId: catRef.id,
         name: item.name,
@@ -3672,8 +3755,10 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
         weightUnit: item.weight ? item.weight[1] : "g",
         inventoryItemId: "",
         components: (item.use || []).map(([key, weight, weightUnit]) => ({
-          inventoryItemId: stockIds[key], weight, weightUnit,
+          inventoryItemId: stockIds[key].id, weight, weightUnit,
         })),
+        modifierGroups: [...menuByName[item.name].groups, ...combo],
+        staffBonus: item.bonus || 0,
       });
     });
   });
@@ -3683,13 +3768,23 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   // процент), by — кто добавил позицию: кальяны — кальянщик, напитки —
   // бармен, остальное — тот, кто вёл стол ([waiterId]; у заказов гостя и
   // предзаказов брони его нет — их ещё никто не принял).
-  const orderItemsOf = (items, waiterId) => items.map(([name, qty]) => {
+  // servedAgo — когда позиции ушли на кухню (минут назад): без него строка
+  // — как в заказе гостя или предзаказе, ещё не отправленная. Позиции с
+  // wait ждут на кухне, с hold — следующий курс; остальные уже готовы.
+  const orderItemsOf = (items, waiterId, servedAgo = null) => items.map(([name, qty, o = {}]) => {
     const m = menuByName[name];
     const by = !waiterId ? null : m.kind === "hookah" ? staff.hookah.id : m.kind === "bar" ? staff.bar.id : waiterId;
+    const mods = o.mods || [];
+    const extra = m.groups.flatMap((g) => g.options).filter((x) => mods.includes(x.name)).reduce((a, x) => a + x.price, 0);
+    const sent = servedAgo === null ? {} : o.hold ? { hold: true }
+      : o.wait != null ? { since: nowMs - o.wait * 60000, sent: qty }
+        : { since: nowMs - servedAgo * 60000, sent: qty, ready: qty };
     return {
-      menuItemId: m.id, name, price: m.price, qty, kind: m.kind,
+      menuItemId: m.id, name, price: m.price + extra, qty, kind: m.kind,
       ...(m.tobacco ? { noPromo: true } : {}),
       ...(by ? { by: { [by]: qty } } : {}),
+      ...(mods.length ? { mods } : {}),
+      ...sent,
     };
   });
 
@@ -3698,6 +3793,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   staffList.forEach(({ key, pinCode, ...e }) => {
     const ref = col("employees").doc();
     staff[key] = { id: ref.id, name: e.name, position: e.position };
+    vault.push({ k: "staff", id: ref.id, fields: { name: e.name } });
     batch.set(ref, {
       hourlyRateEnabled: false, hourlyRate: 0, shiftRateEnabled: false, shiftRate: 0,
       overtimeEnabled: false, salesPercentEnabled: false, salesPercentRate: 0, tipsLink: "",
@@ -3722,13 +3818,15 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   // Профиль заведения: без часов работы гостевая бронь была бы недоступна
   // (каждый день «закрыто»), а без имени ИИ-помощник не знал бы, как
   // называется заведение.
+  // Демо открыто круглосуточно — заказ, бронь и доставку можно попробовать
+  // в любое время.
   const demoHours = {};
-  for (let d = 1; d <= 7; d++) demoHours[String(d)] = "12:00-02:00";
+  for (let d = 1; d <= 7; d++) demoHours[String(d)] = "00:00-24:00";
   batch.set(col("meta").doc("venueProfile"), {
     name: venueName,
     address,
     phone: "+7 900 000-00-00",
-    about: "Лаундж-бар: основной зал, летняя терраса и второй этаж с VIP-кабинетами. Тестовое заведение платформы — все данные вымышленные.",
+    about: "Лаундж-бар: основной зал, летняя терраса и второй этаж с VIP-кабинетами. Доставка и самовывоз из приложения, оплата онлайн. Тестовое заведение платформы — все данные вымышленные, деньги не списываются.",
     workingHours: demoHours,
     faq: [
       { q: "Можно ли прийти с детьми?", a: "Да, до 18:00." },
@@ -3739,11 +3837,25 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     venueType: "hookah",
     tipsEnabled: true,
     tipsTeamEnabled: true,
-    // Как новое заведение: телефоны, которые гости вводят в демо, — только
-    // в справочник в РФ, без копии в Firebase и без согласия на
-    // трансграничную передачу. Имена в демо-записях выше — запасные.
+    // Доставка, самовывоз и оплата онлайн из приложения гостя. Банка у демо
+    // нет — оплата проходит без денег (guest-pay.js). Продавец вымышленный:
+    // нули в ИНН и ОГРН не принадлежат никому, но проходят проверку цифр.
+    deliveryEnabled: true,
+    guestSbpPay: true,
+    onlinePay: "tinkoff_form",
+    sellerName: "Демо-заведение (вымышленный продавец)",
+    sellerInn: "0000000000",
+    sellerOgrn: "1000000000000",
+    sellerAddress: address,
+    // Как у всех заведений: имена и телефоны — только в справочнике в РФ.
     ...(newTenantPiiMode() === "rf" ? { piiMode: "rf" } : {}),
   });
+  // Агрегаторы доставки: при оплате чека — способ «Агрегатор», в отчёте —
+  // сколько он должен перевести за вычетом комиссии.
+  batch.set(col("settings").doc("integrations"), {
+    aggregators: Object.fromEntries(Object.entries(DEMO_AGGREGATORS).map(([id, a]) => [id,
+      { enabled: true, commission: a.commission, aggregatorIssuesReceipt: true }])),
+  }, { merge: true });
 
   // Смена кассы и личные смены сотрудников
   const shiftRef = col("shifts").doc();
@@ -3802,7 +3914,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       refillHistory: (s.refills || []).map((m) => ({ time: ts(m) })),
       discountCardId: card ? card.id : null,
       discountPercent: card ? card.percent : 0,
-      orderItems: orderItemsOf(s.items, staff[s.staff].id),
+      orderItems: orderItemsOf(s.items, staff[s.staff].id, Math.max(1, s.start - 3)),
       status: "active",
       closedAt: null,
     });
@@ -3862,6 +3974,75 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     }
   });
 
+  // Заказы агрегаторов, закрытые сегодня, — у них первые номера дня.
+  const sumOf = (orderItems) => orderItems.reduce((acc, i) => acc + i.price * i.qty, 0);
+  let orderNo = 0;
+  DEMO_AGGREGATOR_RECEIPTS.forEach(([aggId, extNo, end, items]) => {
+    const a = DEMO_AGGREGATORS[aggId];
+    const orderItems = orderItemsOf(items, staff.waiter.id);
+    batch.set(col("sessions").doc(), {
+      ...sessionBase,
+      tableId: TAKEAWAY_TABLE_ID, tableName: "С собой",
+      employeeName: staff.waiter.name, employeeId: staff.waiter.id,
+      guestTag: `${a.name} · №${extNo}`,
+      orderType: "takeaway", orderNo: ++orderNo, deliveryStatus: "done", deliveryStatusAt: ts(end), deliveryOpen: false,
+      startTime: ts(end + 25), plannedEnd: ts(end - 155),
+      orderItems, status: "closed", closedAt: ts(end), receiptPrinted: true,
+      paymentAggregator: sumOf(orderItems), aggregator: aggId, aggregatorName: a.name, aggregatorCommission: a.commission,
+    });
+  });
+
+  // Заказы с собой и доставка в работе — служебный стол «С собой и доставка».
+  const takeawayIds = [];
+  DEMO_DELIVERY.forEach((o, i) => {
+    const ref = col("sessions").doc();
+    const app = o.source === "app";
+    const waiting = app && o.status === "new";
+    const orderItems = waiting ? [] : orderItemsOf(o.items, staff.waiter.id, Math.max(1, o.start - 2));
+    const total = sumOf(waiting ? orderItemsOf(o.guestItems) : orderItems);
+    const payId = `p_demo_${i + 1}`;
+    batch.set(ref, {
+      ...sessionBase,
+      tableId: TAKEAWAY_TABLE_ID, tableName: o.type === "delivery" ? "Доставка" : "С собой",
+      employeeName: app ? "Приложение гостя" : staff.waiter.name, employeeId: app ? "" : staff.waiter.id,
+      guestTag: o.tag || "",
+      orderType: o.type, orderNo: ++orderNo, deliveryStatus: o.status, deliveryStatusAt: ts(Math.max(1, o.start - 6)), deliveryOpen: true,
+      ...(app ? { source: "app", clientUid: o.client, appTotal: total } : {}),
+      ...(o.pay ? { payMethod: o.pay } : {}),
+      ...(o.courier ? { courierSet: true } : {}),
+      ...(o.paid ? { guestPaidTotal: total, guestPaymentIds: [payId] } : {}),
+      startTime: ts(o.start), plannedEnd: ts(o.start - 180),
+      orderItems, status: "active", closedAt: null,
+    });
+    takeawayIds.push(ref.id);
+    if (o.name) {
+      const extra = { guestContact: o.phone, ...(o.comment ? { comment: o.comment } : {}),
+        ...(o.courier ? { courierName: o.courier.name, courierPhone: o.courier.phone } : {}) };
+      vault.push({ k: "delivery", id: ref.id, fields: { name: o.name, phone: o.phone, ...(o.address ? { address: o.address } : {}), extra } });
+    }
+    if (waiting) {
+      // Заказ из приложения ждёт звонка: позиции встанут в чек, когда его примут.
+      batch.set(col("guestOrders").doc(), {
+        sessionId: ref.id, tableId: TAKEAWAY_TABLE_ID, tableName: o.type === "delivery" ? "Доставка" : "С собой",
+        clientUid: o.client, guestName: "", items: orderItemsOf(o.guestItems), comment: o.comment || "",
+        targetPosition: "", orderType: o.type, status: "new", createdAt: ts(o.start),
+      });
+    }
+    if (o.paid) {
+      batch.set(col("guestPayments").doc(payId), {
+        sessionId: ref.id, tableId: TAKEAWAY_TABLE_ID, tableName: o.type === "delivery" ? "Доставка" : "С собой",
+        orderType: o.type, clientUid: o.client || "", amount: total, bill: total, tips: 0, orderId: payId,
+        provider: "demo", providerId: "", url: "", test: true, status: "paid",
+        createdAt: ts(o.start - 1), paidAt: ts(o.start - 1), sessionWasOpen: true,
+      });
+    }
+  });
+  batch.set(col("tables").doc(TAKEAWAY_TABLE_ID), {
+    name: "С собой и доставка", x: 0, y: 0, seats: 0, maxOpenSessions: 200,
+    activeSessionIds: takeawayIds, status: "occupied",
+  });
+  batch.set(col("settings").doc("orderCounter"), { last: orderNo });
+
   Object.values(tables).forEach(({ ref, config: t, checks }) => {
     const { x, y } = demoTableFraction(t);
     const busyUntil = checks.reduce((max, c) => (!max || c.plannedEnd.toMillis() > max.toMillis() ? c.plannedEnd : max), null);
@@ -3882,8 +4063,9 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   });
 
   // Гости с бонусами
-  if (seedClients) DEMO_CLIENTS.forEach((c) => {
+  if (seedClients) DEMO_CLIENTS.forEach((c, i) => {
     const atTable = clientAtTable[c.uid];
+    vault.push({ k: "guest", id: c.uid, fields: { name: c.name, phone: `+7 900 000-01-0${i + 1}` } });
     batch.set(loyaltyCol("clients").doc(c.uid), {
       name: c.name, phone: "", bonusBalance: c.bonusBalance, totalSpent: c.totalSpent, visits: c.visits,
       discountCardId: "", discountPercent: 0, lastVisitId: "", ratedVisitId: "",
@@ -3933,9 +4115,11 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       status: "confirmed", source: "pos", comment: "" },
     { guestName: "Ольга", clientUid: "demo-guest-5", guestsCount: 3, table: "", startTime: tomorrowAt(21),
       status: "new", source: "kolibri", comment: "Если можно — у окна" },
-  ].forEach((r) => {
+  ].forEach((r, i) => {
     const confirmed = r.status === "confirmed";
-    batch.set(col("reservations").doc(), {
+    const ref = col("reservations").doc();
+    vault.push({ k: "reservation", id: ref.id, fields: { name: r.guestName, phone: `+7 900 000-02-0${i + 1}` } });
+    batch.set(ref, {
       clientUid: r.clientUid || "",
       guestName: r.guestName,
       phone: "",
@@ -3961,8 +4145,10 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   [
     { guestName: "Дмитрий", guestsCount: 3, promisedMinutes: 20, created: 12, source: "pos", comment: "Хотят в основной зал" },
     { guestName: "Светлана", guestsCount: 2, promisedMinutes: 15, created: 4, source: "kolibri", comment: "" },
-  ].forEach((w) => {
-    batch.set(col("waitlist").doc(), {
+  ].forEach((w, i) => {
+    const ref = col("waitlist").doc();
+    vault.push({ k: "waitlist", id: ref.id, fields: { name: w.guestName, phone: `+7 900 000-03-0${i + 1}` } });
+    batch.set(ref, {
       guestName: w.guestName, phone: "", clientUid: "", guestsCount: w.guestsCount, comment: w.comment,
       status: "waiting", promisedMinutes: w.promisedMinutes, createdAt: ts(w.created), invitedAt: null, source: w.source,
     });
@@ -3987,6 +4173,10 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       img: "burger", action: "menu", actionLabel: "Открыть меню", menuItemId: "" },
     { title: "Новинка — облепиховый чай", text: "Облепиха, апельсин, мёд и розмарин — согреет в любую погоду.",
       img: "sea-buckthorn", action: "menu", actionLabel: "Попробовать", menuItemId: menuByName["Облепиховый чай"].id },
+    { title: "Доставка и с собой", text: "Соберите корзину в меню, выберите доставку или самовывоз и оплатите онлайн — статус заказа виден прямо здесь.",
+      img: "pizza", action: "menu", actionLabel: "Заказать", menuItemId: "" },
+    { title: "500 бонусов в подарок", text: "Введите код DEMO500 в профиле — бонусы сразу на счёте.",
+      img: "cheesecake", action: "none", actionLabel: "", menuItemId: "" },
   ].forEach((s, order) => {
     batch.set(col("stories").doc(), {
       title: s.title, text: s.text, imageUrl: image(s.img), action: s.action, actionLabel: s.actionLabel,
@@ -4001,6 +4191,101 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     discountPercent: 20,
     categoryIds: ["Горячее", "Пицца и хачапури", "Бургеры и сэндвичи", "Закуски", "Десерты"].map((c) => categoryIds[c]),
     active: true,
+  });
+
+  // Касса: размен на смену, выплата поставщику, инкассация — X-отчёт
+  // показывает, сколько наличных должно остаться.
+  [
+    ["deposit", 3000, DEMO_SHIFT_OPENED_MINUTES_AGO - 2, "Размен на смену"],
+    ["payout", 2400, 200, "Поставщику угля"],
+    ["collection", 8000, 90, "Инкассация в сейф"],
+  ].forEach(([type, amount, ago, comment]) => {
+    batch.set(col("cashOps").doc(), {
+      type, amount, comment, shiftId: shiftRef.id, sessionId: "", cancelled: false,
+      employeeId: staff.admin.id, employeeName: staff.admin.name, createdAt: ts(ago),
+    });
+  });
+
+  // Отмена позиции, которую уже готовили: причина и кто разрешил — в журнале.
+  batch.set(col("auditLog").doc(), {
+    action: "order_item_voided", employeeName: staff.waiter.name, sessionId: activeSessionIds["Диван 8"], tableName: "Диван 8",
+    amount: menuByName["Классический лимонад"].price,
+    details: { item: "Классический лимонад", qty: 1, reason: "Гость передумал", approvedBy: staff.admin.name },
+    createdAt: ts(35),
+  });
+
+  // Подарочный сертификат: гость вводит код в приложении и получает бонусы.
+  batch.set(col("giftCards").doc("DEMO500"), {
+    bonusAmount: 500, maxUses: 0, usedCount: 3, active: true, createdAt: ts(3 * 1440), expiresAt: ts(-30 * 1440),
+    comment: "Подарок за установку приложения", issuedBy: staff.admin.name,
+  });
+
+  // Склад: поставки и списание.
+  [
+    ["tobacco", "receipt", 500, "Поставка: табак", 600],
+    ["coal", "receipt", 200, "Поставка угля", 400],
+    ["milk", "writeoff", -1, "Списание: истёк срок годности", 260],
+  ].forEach(([key, type, delta, reason, ago]) => {
+    const it = stockIds[key];
+    batch.set(col("inventoryMovements").doc(), {
+      itemId: it.id, itemName: it.name, unit: it.unit, type, delta, resultingQty: it.quantity, reason,
+      employeeId: staff.admin.id, employeeName: staff.admin.name, createdAt: ts(ago),
+    });
+  });
+
+  // Кто на смене — гость выбирает, кому оставить чаевые.
+  batch.set(col("meta").doc("tipsTeam"), {
+    members: Object.fromEntries(["hookah", "waiter"].map((k) => [staff[k].id,
+      { name: staff[k].name, position: staff[k].position, since: ts(DEMO_SHIFT_OPENED_MINUTES_AGO - 5) }])),
+  });
+
+  // Неделя истории: закрытые смены кассы, чеки и личные смены — отчёты за
+  // неделю, график выручки, зарплата и Z-отчёты не пустые.
+  for (let d = 1; d <= 6; d++) {
+    const open = d * 1440 + DEMO_SHIFT_OPENED_MINUTES_AGO;
+    const close = open - 720;
+    const count = 6 + (d % 3) * 2;
+    const step = Math.floor(640 / count);
+    let cash = 0;
+    for (let i = 0; i < count; i++) {
+      const [tableName, , , staffKey, pay, items] = DEMO_CLOSED_RECEIPTS[(i + d) % DEMO_CLOSED_RECEIPTS.length];
+      const start = open - 20 - i * step;
+      const orderItems = orderItemsOf(items, staff[staffKey].id);
+      const total = sumOf(orderItems);
+      const c = pay === "cash" ? total : pay === "mixed" ? Math.round(total / 200) * 100 : 0;
+      cash += c;
+      batch.set(col("sessions").doc(), {
+        ...sessionBase,
+        tableId: tables[tableName].ref.id, tableName,
+        employeeName: staff[staffKey].name, employeeId: staff[staffKey].id, guestTag: "",
+        startTime: ts(start), plannedEnd: ts(start - 90), orderItems,
+        status: "closed", closedAt: ts(start - 55), paymentCash: c, paymentCard: total - c, receiptPrinted: true,
+      });
+    }
+    batch.set(col("shifts").doc(), {
+      openedAt: ts(open), closedAt: ts(close), openedBy: staff.admin.name, openedById: staff.admin.id, closedBy: staff.admin.name,
+      status: "closed", openingCash: 5000, closingExpectedCash: 5000 + cash, closingCountedCash: 5000 + cash,
+      closingCollected: cash, closingLeftCash: 5000,
+    });
+    ["hookah", "waiter", "bar"].forEach((key) => {
+      batch.set(col("staffShifts").doc(), {
+        employeeId: staff[key].id, employeeName: staff[key].name,
+        startedAt: ts(open - 5), endedAt: ts(close + 10), status: "closed", manual: false,
+      });
+    });
+  }
+
+  // Подсказка в кассе: что попробовать в демо.
+  batch.set(col("staffNotes").doc(), {
+    title: "Что посмотреть в демо",
+    text: "«С собой и доставка» — заказы на каждом шаге: новый из приложения (позвоните и примите), готовится, у курьера, "
+      + "оплачен онлайн, Яндекс Еда. Экран кухни — блюда ждут повара, в банкете второй курс ждёт подачи. "
+      + "В меню — модификаторы (молоко, прожарка, соус) и бизнес-ланч. X-отчёт — наличные, инкассация, агрегаторы. "
+      + "Отчёты и зарплата — за неделю. В приложении гостя — доставка, оплата онлайн и сертификат DEMO500.",
+    priority: "info",
+    source: "manual",
+    createdAt: ts(1),
+    read: false,
   });
 
   batch.set(col("staffNotes").doc(), {
@@ -4104,6 +4389,7 @@ async function handleCreateDemoTenant(req, res) {
     });
     batch.set(tenantRef.collection("branding").doc("config"), branding);
     batch.set(tenantRef.collection("settings").doc("deviceInvite"), { code: inviteCode, rotatedAt: now });
+    const vault = [];
     seedDemoData(tenantRef, batch, nowMs, {
       staffList: point.staffList,
       // Гости и бонусы общие на сеть — записываем один раз, с первой точкой.
@@ -4111,8 +4397,19 @@ async function handleCreateDemoTenant(req, res) {
       seedClients: created.length === 0,
       venueName: point.name,
       address: point.address,
+      vault,
     });
     await batch.commit();
+    // Имена и телефоны демо (вымышленные) — в справочник в РФ, как у
+    // настоящего заведения. Не записались — демо всё равно работает: в
+    // документах остались подписи.
+    if (pii.enabled()) {
+      for (let i = 0; i < vault.length; i += 200) {
+        await pii.put(tenantRef.id, vault.slice(i, i + 200)).catch((e) => {
+          console.error(`saas-gateway: справочник демо ${tenantRef.id}:`, e.message || e);
+        });
+      }
+    }
     created.push({ tenantId: tenantRef.id, inviteCode });
   }
 
@@ -6613,12 +6910,16 @@ const guestDelivery = createGuestDelivery({
   pii,
   onlinePayReady: async (tenantId) => {
     const t = db().collection("tenants").doc(tenantId);
-    const [integ, venue] = await Promise.all([
+    const [integ, venue, tenant] = await Promise.all([
       t.collection("settings").doc("integrations").get(),
       t.collection("meta").doc("venueProfile").get(),
+      t.get(),
     ]);
     const v = venue.data() || {};
     const i = integ.data() || {};
+    // Демо платит без банка (guest-pay.js, handleStart) — нужны только включённая
+    // оплата и продавец.
+    if (tenant.data()?.demo === true) return v.guestSbpPay === true && sellerReady(v);
     const c = onlinePaySettings(i);
     // Как venueSettings в guest-pay.js: включено, банк подтвердил реквизиты, указан продавец.
     return v.guestSbpPay === true && !!c && i.onlinePayVerified === credsPrint(c) && sellerReady(v);
@@ -6837,6 +7138,7 @@ const server = http.createServer((req, res) => {
   // Онлайн-оплата гостя: Result URL Робокассы заведения и страница возврата из банка.
   if (req.method === "GET" && urlPath === "/guestPayRobokassa") return runHandler(handleAnyRobokassaResult, req, res);
   if (req.method === "GET" && urlPath === "/guestPayDone") return runHandler(handleAnyRobokassaReturn, req, res);
+  if (req.method === "GET" && urlPath === "/guestPayDemo") return runHandler(guestPay.handleDemoPage, req, res);
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
@@ -6870,4 +7172,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone });
+Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData });

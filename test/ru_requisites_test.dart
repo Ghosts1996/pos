@@ -19,4 +19,8 @@ void main() {
     expect(innProblem(''), isNull);
     expect(innProblem('123'), contains('10 цифр'));
   });
+
+  test('вымышленный продавец демо (нули) проходит проверку — как в saas-gateway', () {
+    expect(requisitesValid('0000000000', '1000000000000'), isTrue);
+  });
 }

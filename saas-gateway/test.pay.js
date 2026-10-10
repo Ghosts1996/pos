@@ -172,6 +172,31 @@ test("кнопка оплаты — только когда банк подтв�
   assert.equal(store2.get("tenants/t1/meta/venueProfile").onlinePay, "");
 });
 
+test("демо-заведение: оплата проходит сразу, без банка и без денег", async () => {
+  const { pay, calls, store } = makePay(() => { throw new Error("в демо к банку не ходим"); });
+  store.set("tenants/d1", { status: "active", demo: true });
+  store.set("tenants/d1/meta/venueProfile", { guestSbpPay: true, onlinePay: "tinkoff_form" });
+  store.set("tenants/d1/sessionClaims/s1", { uid: "guest1" });
+  store.set("tenants/d1/sessions/s1", { status: "active", orderType: "delivery", deliveryStatus: "accepted", orderItems: [{ name: "Пицца", price: 590, qty: 1 }] });
+  const res = {};
+  await pay.handleStart({ body: { tenantId: "d1", sessionId: "s1" } }, res);
+  assert.equal(calls.length, 0);
+  assert.equal(res.body.provider, "demo");
+  assert.match(res.body.url, /\/guestPayDemo\?a=590$/);
+  const p = store.get(`tenants/d1/guestPayments/${res.body.paymentId}`);
+  assert.equal(p.status, "paid");
+  assert.equal(store.get("tenants/d1/sessions/s1").guestPaidTotal, 590);
+  const call = [...store.entries()].find(([k, v]) => k.startsWith("tenants/d1/waiterCalls/") && v.type === "paid");
+  assert.ok(call && /демо, деньги не списаны/.test(call[1].comment));
+  const st = {};
+  await pay.handleStatus({ body: { tenantId: "d1", paymentId: res.body.paymentId } }, st);
+  assert.equal(st.body.status, "paid");
+  const page = { writeHead(code) { this.code = code; }, end(t) { this.text = t; } };
+  await pay.handleDemoPage({ url: "/guestPayDemo?a=590" }, page);
+  assert.equal(page.code, 200);
+  assert.match(page.text, /деньги не списываются/);
+});
+
 test("реквизиты продавца: ИНН 10/12 цифр, ОГРН 13/15, имя и адрес", () => {
   const v = { sellerName: "ИП Иванов И. И.", sellerInn: "500100732259", sellerOgrn: "304500116000157", sellerAddress: "Москва, ул. 1" };
   assert.equal(gp.sellerReady(v), true);
