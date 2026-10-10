@@ -127,27 +127,30 @@ async function run() {
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
   {
     // Согласие гостя: без согласия на обработку и без токена — отказ до
-    // базы. Нужна ли отметка о трансграничной передаче, решает режим
-    // заведения (piiMode) — это проверяется уже после входа.
+    // базы. Трансграничной передачи нет: отметка о ней не нужна, без неё
+    // запрос доходит до проверки входа.
     const post = (b, headers) => request("POST", "/", { headers, body: JSON.stringify({ kind: "guest_consent", ...b }) });
-    const noEdition = await post({ tenantId: "t1", pd: true, crossBorder: true });
+    const noEdition = await post({ tenantId: "t1", pd: true });
     assert.strictEqual(noEdition.statusCode, 400);
-    const noPd = await post({ tenantId: "t1", edition: "2026-10-10", crossBorder: true });
+    const noPd = await post({ tenantId: "t1", edition: "2026-10-10" });
     assert.strictEqual(noPd.statusCode, 400);
     assert.match(JSON.parse(noPd.body).error, /обработку/);
     const noXborder = await post({ tenantId: "t1", edition: "2026-10-10", pd: true });
     assert.strictEqual(noXborder.statusCode, 401);
-    const truthy = await post({ tenantId: "t1", edition: "2026-10-09", pd: "yes", crossBorder: 1 });
+    // Старая версия приложения ещё присылает отметку — это не ошибка.
+    const oldApp = await post({ tenantId: "t1", edition: "2026-10-10", pd: true, crossBorder: true });
+    assert.strictEqual(oldApp.statusCode, 401);
+    const truthy = await post({ tenantId: "t1", edition: "2026-10-09", pd: "yes" });
     assert.strictEqual(truthy.statusCode, 400);
-    const badTenant = await post({ tenantId: "t1/clients/x", edition: "2026-10-09", pd: true, crossBorder: true });
+    const badTenant = await post({ tenantId: "t1/clients/x", edition: "2026-10-09", pd: true });
     assert.strictEqual(badTenant.statusCode, 400);
-    const noToken = await post({ tenantId: "t1", edition: "2026-10-09", pd: true, crossBorder: true });
+    const noToken = await post({ tenantId: "t1", edition: "2026-10-09", pd: true });
     assert.strictEqual(noToken.statusCode, 401);
   }
   {
     // Справочник (vault.js): без заведения — 400, без токена и с чужим
     // внутренним секретом (в тесте он не задан) — 401, до базы не доходит.
-    for (const kind of ["pii_sync", "pii_lookup", "pii_put", "pii_erase", "pii_search", "pii_phone", "pii_seed"]) {
+    for (const kind of ["pii_sync", "pii_lookup", "pii_put", "pii_erase", "pii_search", "pii_phone", "pii_seed", "pii_purge"]) {
       const noTenant = await request("POST", "/", { body: JSON.stringify({ kind }) });
       assert.strictEqual(noTenant.statusCode, 400, kind);
       const noToken = await request("POST", "/", { body: JSON.stringify({ kind, tenantId: "t1" }) });

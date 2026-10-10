@@ -19,10 +19,9 @@ const { createVault, VaultError, phoneOk, phoneDigits } = require("./vault");
  *   SAAS_FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта платформы saas-3bdc8;
  *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh).
  *
- * Справочник заведения (сотрудники, гости, контакты) и его режим — в
- * vault.js. Режим заведения — meta/venueProfile.piiMode: 'mirror' (пока
- * все кассы не обновились: копия имён и телефонов идёт и в Firestore) или
- * 'rf' (в Firestore только идентификаторы).
+ * Справочник заведения (сотрудники, гости, контакты) — в vault.js. Все
+ * заведения платформы хранят имена и телефоны только здесь: в Firestore —
+ * одни идентификаторы, трансграничной передачи нет (см. piiMode).
  */
 
 let pool;
@@ -64,17 +63,14 @@ function getSaasApp() {
 }
 
 /**
- * Режим заведения: 'rf' — имена и телефоны в Firestore больше не копируем.
- * Не прочитали — считаем 'mirror': лишняя копия лучше пустых имён на кассе.
+ * Режим хранения: 'rf' — имена и телефоны в Firestore не копируем. Так у
+ * всех заведений платформы, независимо от отметки meta/venueProfile.piiMode
+ * (по ней saas-gateway только ведёт перенос старых записей, pii-migrate.js).
+ * 'mirror' — лишь у сборки одного заведения (tenantId пуст): там свой
+ * проект Firebase и свои документы.
  */
-async function piiMode(db, tenantId) {
-  if (!tenantId) return "mirror";
-  try {
-    const snap = await db.doc(`tenants/${tenantId}/meta/venueProfile`).get();
-    return snap.exists && snap.data().piiMode === "rf" ? "rf" : "mirror";
-  } catch (_) {
-    return "mirror";
-  }
+function piiMode(tenantId) {
+  return tenantId ? "rf" : "mirror";
 }
 
 function sendJson(res, statusCode, obj) {
@@ -247,9 +243,9 @@ async function handleRegisterGuestProfile(req, res, body) {
     const path = chainId
       ? `chains/${chainId}/clients/${uid}`
       : tenant ? `tenants/${tenant}/clients/${uid}` : `clients/${uid}`;
-    // После переключения заведения на справочник в РФ имя и телефон в
-    // Firestore не копируем; профиль (бонусы, визиты) заводим пустым.
-    const rfOnly = (await piiMode(db, tenant)) === "rf";
+    // Заведение платформы: имя и телефон в Firestore не копируем; профиль
+    // (бонусы, визиты) заводим пустым.
+    const rfOnly = piiMode(tenant) === "rf";
     const patch = {};
     if (!rfOnly && name !== undefined) patch.name = name;
     if (!rfOnly && phone !== undefined && !phoneRefused) patch.phone = phone;
@@ -438,11 +434,12 @@ async function handleRecordContact(req, res, body) {
 }
 
 /**
- * Согласие гостя перед первой отправкой имени или телефона: на обработку,
- * а пока заведение не переведено на хранение в РФ (piiMode !== 'rf') — и на
- * трансграничную передачу. Без нужных отметок гость дальше не проходит
- * (приложение не даёт нажать кнопку), здесь — проверка на случай старой
- * или подделанной версии. Пишем в РФ; в Firestore — только номер редакции,
+ * Согласие гостя на обработку персональных данных перед первой отправкой
+ * имени или телефона. Без отметки гость дальше не проходит (приложение не
+ * даёт нажать кнопку), здесь — проверка на случай старой или подделанной
+ * версии. Трансграничной передачи нет — второго согласия не спрашиваем;
+ * старые версии приложения ещё присылают crossBorder, его просто
+ * записываем как есть. Пишем в РФ; в Firestore — только номер редакции,
  * чтобы приложение на другом устройстве не спрашивало заново.
  */
 async function handleGuestConsent(req, res, body) {
@@ -481,11 +478,6 @@ async function handleGuestConsent(req, res, body) {
     } catch (_) {
       return sendJson(res, 502, { error: "не удалось прочитать заведение" });
     }
-  }
-  // Заведение в режиме РФ данные за рубеж не передаёт — второе согласие
-  // не нужно. В остальных — без него не записываем.
-  if (!crossBorder && (await piiMode(db, tenant)) !== "rf") {
-    return sendJson(res, 400, { error: "нужно согласие на трансграничную передачу" });
   }
   const storeKey = chainId ? `chain:${chainId}` : tenant;
   try {

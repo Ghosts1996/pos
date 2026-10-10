@@ -609,11 +609,12 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     let phone = String(ses.customerPhone || "");
     let name = String(ses.guestTag || "");
     if (await rfMode(t)) {
-      // Контакт гостя — только в справочнике в РФ.
+      // Контакт гостя — в справочнике в РФ; в документе он может остаться
+      // только у старого заказа, ещё не перенесённого (pii-migrate.js).
       const rec = (await pii.lookup(t, [{ k: "delivery", id: s }]).catch(() => new Map())).get(`delivery:${s}`) || {};
-      address = String(rec.address || "");
-      phone = String(rec.phone || "");
-      name = String(rec.name || "");
+      address = String(rec.address || address);
+      phone = String(rec.phone || phone);
+      name = String(rec.name || name);
     }
     page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s, ses.orderNo))}</h2>
 <p><b>Адрес:</b><br>${esc(address) || "не указан"}</p>

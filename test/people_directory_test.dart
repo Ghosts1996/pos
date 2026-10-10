@@ -316,6 +316,18 @@ void main() {
     });
   });
 
+  test('демо: справочник работает как у всех — введённое имя не теряется', () async {
+    AppScope.reset();
+    AppScope.enterTenant('demo1', demo: true);
+    await people.start(staff: true);
+    people.setMode('rf');
+    expect(people.active, isTrue);
+    await people.put('reservation', 'r-demo', name: 'Гость демо', phone: '79001234567');
+    expect(Pd.name('reservation', 'r-demo'), 'Гость демо');
+    await settle();
+    expect(vault.calls.map((c) => c['kind']), contains('pii_put'));
+  });
+
   test('без заведения справочник выключен и ничего не меняет', () async {
     AppScope.reset();
     await people.start(staff: true);

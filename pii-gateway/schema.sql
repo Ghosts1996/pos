@@ -107,6 +107,8 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE ON guest_profiles, contact_records, staff_profiles, owner_registrations, payer_requisites, guest_consents TO pii_gateway;
     -- «Удалить мои данные» у гостя (kind guest_delete).
     GRANT DELETE ON guest_profiles, contact_records, staff_profiles TO pii_gateway;
+    -- Демо-заведение сбросилось — стираем всё о нём (kind pii_purge).
+    GRANT DELETE ON guest_consents TO pii_gateway;
   END IF;
 END
 $$;

@@ -20,10 +20,11 @@ import 'app_scope.dart';
 /// Чего в копии нет — догружается пачкой, а экраны перерисовываются сами
 /// ([PeopleRefresh]).
 ///
-/// Режим заведения (meta/venueProfile.piiMode):
-///  • 'mirror' — пока кассы обновляются: имена по-прежнему пишутся и в
-///    Firestore, и там же читаются; справочник — запасной источник;
-///  • 'rf' — в Firestore имён нет, источник — справочник.
+/// Режим:
+///  • 'rf' — в Firestore имён нет, источник — справочник. Так у всех
+///    заведений платформы (сборки с адресом справочника, kPiiGatewayUrl);
+///  • 'mirror' — имена пишутся и читаются в Firestore, справочник —
+///    запасной источник. Только без справочника (сборка одного заведения).
 ///
 /// Модели берут значения через [Pd]: `Pd.staffName(employeeId, legacy)`,
 /// где legacy — то, что лежит в документе Firestore (старые записи и режим
@@ -88,12 +89,17 @@ class People extends ChangeNotifier {
   /// на устройстве (фоновая служба только читает файл кассы).
   Future<void> start({required bool staff, bool persist = true}) async {
     final tenant = AppScope.tenantId;
-    if (tenant == null || AppScope.isDemo) return;
+    // Демо — тоже: имена, которые там вводят, хранятся в РФ, как у всех, а
+    // при сбросе демо стираются (saas-gateway, purgeDemoTenant).
+    if (tenant == null) return;
     if (_tenant == tenant && _staff == staff) return;
     stop();
     _tenant = tenant;
     _staff = staff;
     _persist = persist;
+    // Все заведения платформы хранят имена только в РФ — режим rf сразу,
+    // не дожидаясь профиля заведения (VenueService.piiModeOf).
+    if (kPiiGatewayUrl.isNotEmpty) _rf = true;
     await _load(tenant);
     if (staff && persist) {
       unawaited(syncNow());
