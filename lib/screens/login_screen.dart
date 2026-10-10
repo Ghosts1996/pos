@@ -406,10 +406,26 @@ class _LoginScreenState extends State<LoginScreen> {
           if (AppScope.demoCode.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'Код демо для приложения гостя: ${AppScope.demoCode}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
+              child: GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: AppScope.demoCode));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Код скопирован'), duration: Duration(seconds: 2)),
+                  );
+                },
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Код демо для приложения гостя: ${AppScope.demoCode}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.copy, size: 13, color: BrandPalette.brass),
+                  ],
+                ),
               ),
             ),
           // Демо живёт 3 дня, потом сбрасывается в исходный вид (DemoGate).
