@@ -1370,7 +1370,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       st.ready = openStore(st).catch((e) => {
         console.error(`telegram copy (${tid}): ${e.message}; отчёты читают базу напрямую`);
         st.failed = true;
-      });
+      }).then(() => { st.isReady = true; });
     }
     st.refs++;
     return () => {
@@ -1485,12 +1485,19 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     return p;
   }
 
-  /** Копия точки, если она есть и исправна. */
+  /**
+   * Копия точки, если она есть и исправна. Firestore не отвечает и копия
+   * ещё не поднялась — не ждём дольше 15 секунд: читаем базу напрямую.
+   */
   async function storeOf(tid) {
     const st = stores.get(tid);
     if (!st) return null;
-    await st.ready;
-    return st.failed || st.closed ? null : st;
+    if (!st.isReady) {
+      let timer;
+      await Promise.race([st.ready, new Promise((r) => { timer = setTimeout(r, 15000); })]);
+      clearTimeout(timer);
+    }
+    return st.isReady && !st.failed && !st.closed ? st : null;
   }
 
   /** Чеки из копии; недостающие прошедшие сутки — один раз из Firestore. */
@@ -1521,8 +1528,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   async function reconcileStores() {
     for (const st of stores.values()) {
       try {
-        await st.ready;
-        if (st.failed || st.closed) continue;
+        // Копия ещё не поднялась — утренняя сверка подождёт следующего круга.
+        if (!st.isReady || st.failed || st.closed) continue;
         await watchToday(st);
         const h = localParts(new Date(), st.venue.timezone).h;
         if (st.liveFailed || st.reconciled === st.today || h < DAY_START_HOUR + 1) continue;
