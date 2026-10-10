@@ -3739,6 +3739,10 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     venueType: "hookah",
     tipsEnabled: true,
     tipsTeamEnabled: true,
+    // Как новое заведение: телефоны, которые гости вводят в демо, — только
+    // в справочник в РФ, без копии в Firebase и без согласия на
+    // трансграничную передачу. Имена в демо-записях выше — запасные.
+    ...(newTenantPiiMode() === "rf" ? { piiMode: "rf" } : {}),
   });
 
   // Смена кассы и личные смены сотрудников
