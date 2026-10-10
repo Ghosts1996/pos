@@ -4770,7 +4770,7 @@ function scheduleCapabilitiesCron() {
  * первой: две точки на «Сети» дешевле двух заведений на «Бизнесе».
  */
 const PLAN_BASE = {
-  maxDevices: 0, maxTables: 0, maxStorageMb: 0, trialDays: 14, archived: false,
+  maxDevices: 0, maxTables: 0, maxStorageMb: 0, trialDays: 7, archived: false,
   isChainPlan: false, customAdditionalPrice: false, prioritySupport: false,
   priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0,
   customBranding: true, customDomain: true,

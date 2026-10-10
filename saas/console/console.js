@@ -1170,7 +1170,7 @@ function planCardHtml(p, { period = 'monthly', selected = false, recommended = f
     note = `${rub(total)} за ${usePeriod === 'yearly' ? 'год' : '6 месяцев'}${discount ? `, выгода ${discount} %` : ''}`;
   }
   const additional = isChain ? planAdditionalPrice(p, usePeriod) / months : 0;
-  const trialDays = Number(p.trialDays) || 14;
+  const trialDays = Number(p.trialDays) || 7;
   return `
     <div class="plan-card${recommended ? ' recommended' : ''}${selected ? ' selected' : ''}" data-plan-card="${esc(p.id)}">
       ${recommended ? '<div class="plan-ribbon">Рекомендуем</div>' : ''}
@@ -1506,7 +1506,7 @@ function applyTheme(theme, { save = false } = {}) {
 function renderLandingFacts(plans, recommendedId, chainPlans) {
   const menu = $('landing-hero-menu');
   const cheapest = plans[0];
-  const trials = plans.map((p) => Number(p.trialDays) || 14);
+  const trials = plans.map((p) => Number(p.trialDays) || 7);
   if (menu && cheapest) {
     const minTrial = Math.min(...trials);
     menu.innerHTML = `
@@ -2069,7 +2069,7 @@ function screenLanding() {
     // из настоящих тарифов: на сайте не должно быть обещаний, которых в
     // тарифах нет.
     renderLandingFacts(plans, recommendedId, chainPlans);
-    const trial = [...new Set(plans.map((p) => Number(p.trialDays) || 14))];
+    const trial = [...new Set(plans.map((p) => Number(p.trialDays) || 7))];
     const subEl = $('landing-pricing-sub');
     if (subEl && !subEl.dataset.chain) {
       subEl.textContent = trial.length === 1
@@ -5624,7 +5624,7 @@ function screenSuperAdmin() {
           «Бизнес» 2 390 ₽ (до 10 сотрудников, приложение гостя и ИИ), «Про» 2 990 ₽ (сотрудники без ограничений,
           приоритетная поддержка). Сеть: «Сеть» 2 590 ₽ за первую точку + 990 ₽ за каждую следующую (до 10 сотрудников
           на точке), «Сеть Про» 3 990 ₽ + 1 290 ₽ (без ограничений, приоритетная поддержка). Рабочие места везде без
-          ограничений. Год — выгода 20%, полгода — около 10%. Пробный период 14 дней. Тарифы вне сетки уходят в архив:
+          ограничений. Год — выгода 20%, полгода — около 10%. Пробный период 7 дней. Тарифы вне сетки уходят в архив:
           с сайта пропадают, кто на них — остаётся на прежних условиях. Тем, кто уже платит, подорожание начнёт
           действовать через 30 дней (так в оферте) — разошлите им объявление.</p>
           <button class="btn btn-ghost" id="f-apply-plan-catalog" style="width:auto">Посмотреть изменения и применить</button>
