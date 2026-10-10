@@ -1871,7 +1871,9 @@ function robokassaConfig() {
   const password1 = String(process.env.ROBOKASSA_PASSWORD1 || "");
   const password2 = String(process.env.ROBOKASSA_PASSWORD2 || "");
   if (!login || !password1 || !password2) {
-    throw new Error("ROBOKASSA_LOGIN/ROBOKASSA_PASSWORD1/ROBOKASSA_PASSWORD2 не настроены на сервере");
+    // Владельцу — понятный ответ без имён настроек, нам — в журнал.
+    console.error("Робокасса: ROBOKASSA_LOGIN/ROBOKASSA_PASSWORD1/ROBOKASSA_PASSWORD2 не настроены на сервере");
+    throw new HttpError(503, "Оплата картой временно недоступна — оплатите по счёту с расчётного счёта или напишите в поддержку");
   }
   const algo = String(process.env.ROBOKASSA_HASH || "md5").trim().toLowerCase();
   if (!ROBOKASSA_HASHES.includes(algo)) throw new Error(`ROBOKASSA_HASH: неизвестный алгоритм ${algo}`);
