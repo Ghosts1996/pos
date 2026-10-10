@@ -26,6 +26,7 @@ import '../../widgets/bonus_redeem_panel.dart';
 import '../../services/tips_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/checkout_checks.dart';
+import '../../utils/terminal_charge.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
 /// разбить сумму на наличные / карту / терминал / агрегатор доставки / за
@@ -150,10 +151,31 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// Через какие банки прошли оплаты кнопкой «Терминал» в этом чеке.
   final Set<String> _terminalBanks = {};
 
+  /// Сколько уже списано кнопкой терминала на этом экране — деньги гостя,
+  /// они должны остаться в «Оплате с терминала», что бы кассир ни нажимал.
+  double _terminalCharged = 0;
+
+  /// Безнал, который уже получен: СБП гостя со стола и оплаты терминалом.
+  double get _terminalReceived =>
+      terminalReceived(due: _due, guestPaid: _guestPaid, charged: _terminalCharged);
+
+  /// С терминала списали, а чек ещё не закрыт — уходить с экрана опасно.
+  bool get _terminalPending => !_paidDone && _terminalCharged > 0.004;
+
+  /// В поле терминала меньше, чем уже получено безналом, — чек не сойдётся
+  /// с выпиской банка.
+  bool get _terminalShort {
+    if (_closeWithoutPayment) return false;
+    final must = _terminalReceived < _due ? _terminalReceived : _due;
+    return _terminal.parse() < must - 0.004;
+  }
+
   /// Банк для чека: что вернул терминал, а если сумму вписали руками и
-  /// в заведении один терминал — его банк.
+  /// в заведении один терминал — его банк. Оплата гостя со стола пришла не
+  /// через терминал, а через банк онлайн-оплаты, — так и пишем.
   String get _terminalBankLabel {
-    if (_terminalBanks.isNotEmpty) return _terminalBanks.join(', ');
+    final labels = [if (_guestPaid > 0.004) 'Онлайн-оплата', ..._terminalBanks];
+    if (labels.isNotEmpty) return labels.join(', ');
     final t = paymentTerminalService;
     if (t is ManualTerminalService && t.banks.length == 1) {
       return TerminalBank.label(t.banks.first, other: t.otherName);
@@ -262,12 +284,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
   double _guestPaid = 0;
   StreamSubscription<SessionModel?>? _sessionSub;
 
-  /// Раскладка по умолчанию: оплаченное гостем по СБП — терминалом, остальное
-  /// наличными.
+  /// Раскладка по умолчанию: полученное безналом (СБП гостя со стола,
+  /// оплаты терминалом) — терминалом, остальное наличными.
   void _defaultSplit(double due) {
-    final sbp = _guestPaid > due ? due : _guestPaid;
-    _terminal.controller.text = sbp > 0.004 ? _fmt(sbp) : '0';
-    _cash.controller.text = _fmt(due - sbp);
+    final got = _terminalReceived;
+    _terminal.controller.text = got > 0.004 ? _fmt(got) : '0';
+    _cash.controller.text = _fmt(due > got ? due - got : 0);
     _card.controller.text = '0';
     _comp.controller.text = '0';
     _agg.controller.text = '0';
@@ -310,6 +332,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
+  /// С терминала уже списали, а чек не закрыт: уйти можно, но кассир
+  /// должен понимать, что деньги гостя уже у заведения.
+  Future<void> _confirmLeave() async {
+    if (_terminalPending) {
+      final leave = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Оплата на терминале уже прошла'),
+          content: Text('С гостя списано ${_fmt(_terminalCharged)} ${AppConstants.currencySymbol}, а чек ещё не закрыт. '
+              'Закройте его кнопкой «Оплатить». Если гость передумал — отмените операцию на терминале '
+              '(возврат), иначе деньги не попадут ни в чек, ни в отчёт.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Всё равно выйти')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Остаться')),
+          ],
+        ),
+      );
+      if (leave != true || !mounted) return;
+    }
+    await _leaveWithoutPaying();
+  }
+
   /// Уход с экрана без оплаты: сначала вернуть списанное, потом закрыть.
   Future<void> _leaveWithoutPaying() async {
     if (_busy) return;
@@ -325,11 +369,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   void _revealAmount(_PaymentMethod method) {
     setState(() {
       _revealed.add(method);
+      // Полученный безнал не обнуляем: деньги уже у заведения.
+      final got = method == _terminal ? 0.0 : _terminalReceived;
       for (final other in _methods) {
-        if (other != method) other.controller.text = '0';
+        if (other != method) other.controller.text = other == _terminal && got > 0.004 ? _fmt(got) : '0';
       }
-      if (_due > 0.004) {
-        method.controller.text = _fmt(_due);
+      if (_due - got > 0.004) {
+        method.controller.text = _fmt(_due - got);
       }
     });
   }
@@ -371,7 +417,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
   double get _cashNet => _cash.parse() - _change;
 
   bool get _canPay =>
-      _aggProblem == null && (_closeWithoutPayment || ((_diff.abs() < 0.01 || _change > 0) && _tipsCovered));
+      _aggProblem == null &&
+      !_terminalShort &&
+      (_closeWithoutPayment || ((_diff.abs() < 0.01 || _change > 0) && _tipsCovered));
 
   /// Две подсказки быстрой суммы — округление вверх до сотни и до
   /// ближайшей "круглой" суммы. Удобно для приёма наличных и расчёта сдачи.
@@ -396,16 +444,41 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// сотруднику останется только нажать «Оплатить» ниже, как обычно.
   Future<void> _payViaTerminal() async {
     if (_terminalBusy || _busy) return;
-    final amount = _diff > 0.004 ? _diff : _due;
-    if (amount <= 0) return;
+    final cashTyped = _revealed.contains(_cash);
+    final terminalTyped = _revealed.contains(_terminal);
+    final received = _terminalReceived;
+    final amount = terminalCharge(
+      due: _due,
+      received: received,
+      terminalField: _terminal.parse(),
+      terminalTyped: terminalTyped,
+      others: _card.parse() + _comp.parse() + _aggAmount + (cashTyped ? _cash.parse() : 0),
+    );
+    if (amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Проводить нечего: вся сумма уже в других способах оплаты. '
+              'Нажмите на поле «Оплата с терминала», чтобы перенести сумму туда')));
+      return;
+    }
     setState(() => _terminalBusy = true);
     try {
       final result = await paymentTerminalService.pay(amount, context: context);
       if (!mounted) return;
       if (result.success) {
         setState(() {
+          _terminalCharged += amount;
+          // Кассир сам вписал сумму в поле — она и прошла; иначе добавляем
+          // проведённое к уже полученному безналу.
+          final field = _terminal.parse();
+          final paidByField = terminalTyped && field - received > 0.004;
+          if (!paidByField) _terminal.controller.text = _fmt((field > received ? field : received) + amount);
           _revealed.add(_terminal);
-          _terminal.controller.text = _fmt(_terminal.parse() + amount);
+          // Наличные, подставленные кассой, — только подсказка: остаток
+          // после терминала, а не вся сумма (иначе касса показала бы «сдачу»).
+          if (!cashTyped) {
+            final rest = _due - _terminal.parse() - _card.parse() - _comp.parse() - _aggAmount;
+            _cash.controller.text = _fmt(rest > 0.004 ? rest : 0);
+          }
           if ((result.bank ?? '').isNotEmpty) _terminalBanks.add(result.bank!);
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -808,10 +881,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // выход перехватываем: сначала возвращаем деньги гостю, потом
       // закрываем экран. Работает и для системной кнопки «назад», и для
       // жеста, и для стрелки в AppBar.
-      canPop: !_hasPendingRedemptions,
+      canPop: !_hasPendingRedemptions && !_terminalPending,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        unawaited(_leaveWithoutPaying());
+        unawaited(_confirmLeave());
       },
       child: _buildScaffold(context),
     );
@@ -870,10 +943,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       _bonusPaid += applied;
                       _clientUid = profile.uid;
                       // Пересобираем поле "наличными": гость доплачивает
-                      // уже уменьшенную сумму.
-                      _cash.controller.text = _fmt(_due);
+                      // уже уменьшенную сумму. Полученный безнал остаётся
+                      // в «Оплате с терминала».
+                      final got = _terminalReceived;
+                      _cash.controller.text = _fmt(_due > got ? _due - got : 0);
                       for (final m in _methods) {
-                        if (m != _cash) m.controller.text = '0';
+                        if (m != _cash) m.controller.text = m == _terminal && got > 0.004 ? _fmt(got) : '0';
                       }
                     });
                   },
@@ -936,6 +1011,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
+              if (_terminalShort)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    'Безналом уже получено ${_fmt(_terminalReceived)} ${AppConstants.currencySymbol} — '
+                    'в «Оплате с терминала» не может быть меньше',
+                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                  ),
+                ),
               if (_aggProblem != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
@@ -952,6 +1036,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
               // бонусы/сертификат: чек закрывается за счёт заведения, а не
               // деньгами гостя, и они не должны сгореть.
               _toggleRow('Закрыть без оплаты', _closeWithoutPayment, (v) async {
+                if (v && _terminalPending) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('С терминала уже списано ${_fmt(_terminalCharged)} ${AppConstants.currencySymbol} — '
+                          'закройте чек оплатой или верните деньги на терминале и откройте оплату заново')));
+                  return;
+                }
                 if (v && _hasPendingRedemptions) await _rollbackRedemptions();
                 if (mounted) setState(() => _closeWithoutPayment = v);
               }),
