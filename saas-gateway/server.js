@@ -7002,6 +7002,7 @@ const ROUTES = {
   "/telegramStatus": telegram.handleStatus,
   "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,
+  "/telegramJoinChain": telegram.handleJoinChain,
   // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
