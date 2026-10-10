@@ -472,6 +472,8 @@ class ReservationService {
     // Имя и телефон гостя — сначала в базу в РФ, затем в Firestore (152-ФЗ).
     await PiiGatewayService().recordContact(
         kind: 'reservation', id: ref.id, name: reservation.guestName, phone: reservation.phone);
+    // Записанное на сервере — сразу и в копию на устройстве.
+    People.instance.remember('reservation', ref.id, name: reservation.guestName, phone: reservation.phone);
     await ref.set(reservation.toMap());
     await _writeSlot(
       reservationId: ref.id,

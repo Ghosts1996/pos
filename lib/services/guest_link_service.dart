@@ -60,6 +60,10 @@ class GuestLinkService {
     final doc = await _clients.doc(uid).get();
     if (doc.exists) return ClientProfile.fromDoc(doc);
     final normPhone = phone.isNotEmpty ? normalizePhone(phone) : '';
+    if (name.isNotEmpty || normPhone.isNotEmpty) {
+      await People.instance
+          .put('guest', uid, name: name.isEmpty ? null : name, phone: normPhone.isEmpty ? null : normPhone);
+    }
     final profile = ClientProfile(uid: uid, name: name, phone: normPhone, createdAt: DateTime.now());
     await _clients.doc(uid).set(profile.toMap());
     return profile;
@@ -73,7 +77,20 @@ class GuestLinkService {
         patch = Map<String, dynamic>.from(patch);
         final normalized = normalizePhone(raw);
         patch['phone'] = normalized;
-        await _syncPhoneIndex(uid, normalized);
+        if (Pd.mirror) await _syncPhoneIndex(uid, normalized);
+      }
+    }
+    // Имя и телефон — в справочник (на сервер в РФ — из очереди, касса
+    // работает и без сети). В режиме rf в Firestore их не пишем.
+    final name = patch['name'] is String ? patch['name'] as String : null;
+    final phone = patch['phone'] is String ? patch['phone'] as String : null;
+    if (name != null || phone != null) {
+      await People.instance.put('guest', uid, name: name, phone: phone);
+      if (!Pd.mirror) {
+        patch = Map<String, dynamic>.from(patch)
+          ..remove('name')
+          ..remove('phone');
+        if (patch.isEmpty) return;
       }
     }
     await _clients.doc(uid).set(patch, SetOptions(merge: true));
@@ -131,6 +148,13 @@ class GuestLinkService {
   Future<bool> isPhoneTakenByOther(String phone, String uid) async {
     final normalized = normalizePhone(phone);
     if (normalized.isEmpty) return false;
+    // Режим rf: телефонов в Firestore нет — спрашиваем справочник в РФ.
+    if (!Pd.mirror) {
+      final people = People.instance;
+      if (!people.isStaff) return people.phoneTakenByOther(normalized);
+      final owner = await people.guestUidByPhone(normalized);
+      return owner.isNotEmpty && owner != uid;
+    }
     final doc = await _phoneIndex.doc(normalized).get();
     if (!doc.exists) return false;
     final owner = (doc.data()?['uid'] as String?) ?? '';
@@ -173,6 +197,13 @@ class GuestLinkService {
   /// дают одинаковый результат.
   Future<ClientProfile?> findByPhone(String phone) async {
     final normalized = normalizePhone(phone);
+    if (!Pd.mirror) {
+      // Режим rf: номер знает только справочник в РФ.
+      final uid = await People.instance.guestUidByPhone(normalized);
+      if (uid.isEmpty) return null;
+      final doc = await _clients.doc(uid).get();
+      return doc.exists ? ClientProfile.fromDoc(doc) : null;
+    }
     final snap = await _clients.where('phone', isEqualTo: normalized).limit(1).get();
     if (snap.docs.isEmpty) return null;
     return ClientProfile.fromDoc(snap.docs.first);
@@ -225,6 +256,7 @@ class GuestLinkService {
     }
     final newRef = _clients.doc(newUid);
     final oldRef = _clients.doc(old.uid);
+    var mergedName = '';
 
     await _db.runTransaction((tx) async {
       final newSnap = await tx.get(newRef);
@@ -236,11 +268,12 @@ class GuestLinkService {
       final newBonus = (newData['bonusBalance'] ?? 0).toDouble();
       final newSpent = (newData['totalSpent'] ?? 0).toDouble();
       final newVisits = (newData['visits'] as num?)?.toInt() ?? 0;
-      final newName = (newData['name'] as String?) ?? '';
+      final newName = Pd.guestName(newUid, (newData['name'] as String?) ?? '');
+      mergedName = newName.isNotEmpty ? newName : old.name;
 
       tx.set(newRef, {
-        'phone': normalized,
-        'name': newName.isNotEmpty ? newName : old.name,
+        if (Pd.mirror) 'phone': normalized,
+        if (Pd.mirror) 'name': mergedName,
         'bonusBalance': old.bonusBalance + newBonus,
         'totalSpent': old.totalSpent + newSpent,
         'visits': old.visits + newVisits,
@@ -281,9 +314,14 @@ class GuestLinkService {
       await batch.commit();
     }
 
+    // Имя и телефон — выжившему профилю в справочнике, у удалённого стираем.
+    await People.instance.put('guest', newUid,
+        name: mergedName.isEmpty ? null : mergedName, phone: normalized.isEmpty ? null : normalized);
+    await People.instance.erase('guest', old.uid);
+
     // Указатель «номер → uid» переводим на выживший профиль, иначе номер
     // остался бы закреплён за удалённым.
-    if (normalized.isNotEmpty) {
+    if (normalized.isNotEmpty && Pd.mirror) {
       try {
         await _phoneIndex.doc(normalized).set({'uid': newUid});
       } catch (_) {}
@@ -375,6 +413,8 @@ class GuestLinkService {
     }
 
     await _clients.doc(uid).delete();
+    // Имя и телефон гостя — и из справочника в РФ.
+    await People.instance.erase('guest', uid);
   }
 
   /// Найти гостя по открытому чеку — нужно кассиру при оплате

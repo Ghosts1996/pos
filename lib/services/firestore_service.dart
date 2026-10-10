@@ -2065,13 +2065,32 @@ class FirestoreService {
         (snap) => snap.docs.map((d) => DiscountCard.fromDoc(d)).toList());
   }
 
-  Future<void> addDiscountCard(DiscountCard card) {
-    return AppScope.col('discountCards').add(card.toMap());
+  // Имя гостя и заметка — сначала в справочник (на этой кассе сразу,
+  // на сервер в РФ — из очереди), затем документ: в режиме mirror toMap()
+  // берёт их уже из справочника, и очищенная заметка не вернётся.
+  Future<void> addDiscountCard(DiscountCard card) async {
+    final ref = AppScope.col('discountCards').doc();
+    await _putCardPd(ref.id, card);
+    final saved = DiscountCard(
+      id: ref.id,
+      cardNumber: card.cardNumber,
+      guestName: card.enteredGuestName,
+      discountPercent: card.discountPercent,
+      notes: card.enteredNotes,
+      active: card.active,
+    );
+    await ref.set(saved.toMap());
   }
 
-  Future<void> updateDiscountCard(DiscountCard card) {
-    return AppScope.col('discountCards').doc(card.id).update(card.toMap());
+  Future<void> updateDiscountCard(DiscountCard card) async {
+    await _putCardPd(card.id, card);
+    await AppScope.col('discountCards').doc(card.id).update(card.toMap());
   }
+
+  // Карту сохраняют только из редактора — в нём все поля, и пустое значит
+  // «стёрли».
+  Future<void> _putCardPd(String id, DiscountCard card) =>
+      People.instance.put('card', id, name: card.enteredGuestName, extra: {'notes': card.enteredNotes});
 
   Future<void> setDiscountCardActive(String id, bool active) {
     return AppScope.col('discountCards').doc(id).update({'active': active});
@@ -2126,19 +2145,26 @@ class FirestoreService {
 
   /// Новый сотрудник. Его первые условия оплаты сразу пишутся в историю —
   /// с этого момента они и действуют.
-  Future<void> addEmployee(Employee e, {Employee? editor}) => AppScope.col('employees').add({
-        ...e.toMap(),
-        if (e.payTerms.configured)
-          'payHistory': [
-            PayChange(at: DateTime.now(), terms: e.payTerms, byId: editor?.id ?? '', byName: editor?.name ?? '').toMap(),
-          ],
-      });
+  Future<void> addEmployee(Employee e, {Employee? editor}) async {
+    final ref = AppScope.col('employees').doc();
+    // Имя — в справочник (на сервер в РФ уходит из очереди).
+    await People.instance.put('staff', ref.id, name: e.enteredName);
+    await ref.set({
+      ...e.toMap(),
+      if (e.payTerms.configured)
+        'payHistory': [
+          PayChange(at: DateTime.now(), terms: e.payTerms, byId: editor?.id ?? '', byName: editor?.name ?? '').toMap(),
+        ],
+    });
+  }
 
   /// Сохранить карточку. Если поменялась оплата — дописываем запись в
   /// историю: новые ставки действуют с этого момента, прошлые смены
   /// считаются по старым. Правка — в журнал действий.
   Future<void> updateEmployee(Employee e, {Employee? editor}) async {
     final ref = AppScope.col('employees').doc(e.id);
+    // Новое имя — сначала в справочник: toMap() и чаевые берут его оттуда.
+    if (e.enteredName.isNotEmpty) await People.instance.put('staff', e.id, name: e.enteredName);
     String? changed;
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);

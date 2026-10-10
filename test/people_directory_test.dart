@@ -1,5 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/services/app_scope.dart';
+import 'package:hookah_pos/models/discount_card.dart';
+import 'package:hookah_pos/models/employee.dart';
+import 'package:hookah_pos/models/reservation_model.dart';
 import 'package:hookah_pos/services/people_directory.dart';
 
 /// Подделка сервера в РФ: хранит записи и считает запросы.
@@ -249,6 +252,68 @@ void main() {
     expect((await people.searchGuests('мари')).map((g) => g.uid), ['g7']);
     expect((await people.searchGuests('554433')).map((g) => g.uid), ['g7']);
     expect(await people.guestUidByPhone('8 900 555-44-33'), 'g7');
+  });
+
+  test('remember: записанное на сервере другим запросом — только в копию, без отправки', () async {
+    await people.start(staff: true);
+    people.setMode('rf');
+    people.remember('reservation', 'r5', name: 'Ольга', phone: '8 900 123-45-67');
+    expect(Pd.name('reservation', 'r5'), 'Ольга');
+    expect(Pd.phone('reservation', 'r5'), '79001234567');
+    await settle();
+    expect(people.outboxLength, 0);
+    expect(vault.calls.where((c) => c['kind'] == 'pii_put' || c['kind'] == 'pii_lookup'), isEmpty);
+  });
+
+  group('режим rf: в документ Firestore — ссылки, а не имена', () {
+    setUp(() async {
+      await people.start(staff: true);
+      people.setMode('rf');
+      await people.put('staff', 'e1', name: 'Анна');
+      await people.put('reservation', 'r1', name: 'Пётр', phone: '79005556677');
+    });
+
+    ReservationModel res({String guestName = '', String phone = '', String handledBy = 'staff:e1'}) =>
+        ReservationModel(
+          id: 'r1',
+          guestName: guestName,
+          phone: phone,
+          startTime: DateTime(2026, 10, 10, 19),
+          createdAt: DateTime(2026, 10, 10, 12),
+          handledBy: handledBy,
+        );
+
+    test('«кто принял» остаётся ссылкой, имени гостя в документе нет', () {
+      final r = res();
+      expect(r.handledBy, 'Анна');
+      expect(r.guestName, 'Пётр');
+      final m = r.toMap();
+      expect(m['handledBy'], 'staff:e1');
+      expect(m.containsKey('guestName'), isFalse);
+      expect(m.containsKey('phone'), isFalse);
+      // Имя вместо ссылки (старый вызов) — тоже превращается в ссылку.
+      expect(res(handledBy: 'Анна').toMap()['handledBy'], 'staff:e1');
+    });
+
+    test('копия брони не превращает ссылку в имя и не теряет введённое', () {
+      final copy = res(guestName: 'Пётр Иванов').copyWith(tableId: 't1');
+      expect(copy.toMap()['handledBy'], 'staff:e1');
+      final edited = res().copyWith(guestName: 'Павел');
+      expect(edited.copyWith(tableId: 't2').toMap().containsKey('guestName'), isFalse);
+    });
+
+    test('сотрудник: правка имени не теряется при copyWith', () {
+      final e = Employee(id: 'e1', name: 'Анна Петрова', pinCode: '', role: 'employee');
+      expect(e.copyWith(role: 'admin').enteredName, 'Анна Петрова');
+      expect(e.toMap().containsKey('name'), isFalse);
+    });
+
+    test('карта: введённые имя и заметка доступны для записи в справочник', () {
+      final c = DiscountCard(id: 'c1', cardNumber: '001', guestName: 'Вера', discountPercent: 5, notes: '');
+      expect(c.enteredGuestName, 'Вера');
+      expect(c.enteredNotes, '');
+      expect(c.toMap().keys, isNot(contains('guestName')));
+    });
   });
 
   test('без заведения справочник выключен и ничего не меняет', () async {

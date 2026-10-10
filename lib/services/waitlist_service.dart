@@ -8,6 +8,7 @@ import 'push_service.dart';
 import '../utils/table_label.dart';
 import 'pii_gateway_service.dart';
 import '../utils/shared_stream.dart';
+import 'people_directory.dart';
 
 /// Лист ожидания: что делать, когда мест нет.
 ///
@@ -66,6 +67,8 @@ class WaitlistService {
     // Имя и телефон — сначала в базу в РФ, затем в Firestore (152-ФЗ).
     await PiiGatewayService().recordContact(
         kind: 'waitlist', id: ref.id, name: guestName, phone: phone);
+    // Записанное на сервере — сразу и в копию на устройстве.
+    People.instance.remember('waitlist', ref.id, name: guestName, phone: phone);
     await ref.set(WaitlistEntry(
       id: '',
       guestName: guestName.isEmpty ? 'Гость' : guestName,
