@@ -455,7 +455,12 @@ service cloud.firestore {
       allow create: if isSelf(deviceId) &&
         request.resource.data.inviteCode ==
           get(/databases/$(database)/documents/tenants/$(tenantId)/settings/deviceInvite).data.code;
-      allow update, delete: if hasRole(tenantId, ['owner', 'admin']);
+      // Сама касса отмечает только свою сборку и готовность к режиму rf
+      // (StaffDeviceService.reportVersion) — больше ничего в своём документе.
+      allow update: if hasRole(tenantId, ['owner', 'admin']) ||
+        (isSelf(deviceId) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appBuild', 'piiReady', 'seenAt']));
+      allow delete: if hasRole(tenantId, ['owner', 'admin']);
     }
 
     // ---- Сотрудники (PIN-вход на кассе) ----
