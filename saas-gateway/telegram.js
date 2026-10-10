@@ -27,11 +27,20 @@
  *    меняется в кассе сразу (Firestore), а нажатие на кассе обновляет
  *    карточку;
  *  - чат владельца: меню отчётов (выручка, средний чек, доли цехов,
- *    посадка, смена, доставка), начало и конец смен, сигналы об отменах,
- *    закрытии без оплаты, возвратах и больших скидках, итоги в 10:00.
+ *    посадка, смена, доставка, касса; «Ещё»: вчера, неделя, топ продаж,
+ *    склад на исходе, брони, отмены и скидки, отзывы), начало и конец
+ *    смен, сигналы об отменах, закрытии без оплаты, возвратах и больших
+ *    скидках, итоги в 10:00, напоминание о незакрытой смене кассы.
  *
- * Данные: telegramBots/{tenantId} (настройки), …/cards/{sessionId}
- * (карточки доставки), telegramLinks/{code} (коды привязки, 30 минут).
+ * Сеть заведений: один бот на всю сеть. Подключают его в любой точке —
+ * он видит все точки (tenants.chainId). Владелец кнопкой «📍» выбирает
+ * точку или «Все точки» (сводка по сети); сигналы, смены и заказы
+ * приходят от всех точек с подписью точки. Рабочая группа — своя у
+ * точки (staffChats) или общая — группа точки, где подключён бот.
+ *
+ * Данные: telegramBots/{tenantId} (настройки; у сети — tenantId точки,
+ * где подключён бот, и chainId), …/cards/{sessionId} (карточки
+ * доставки), telegramLinks/{code} (коды привязки, 30 минут).
  */
 const crypto = require("crypto");
 const fs = require("fs");
@@ -62,6 +71,14 @@ const TAKEAWAY_TABLE = "takeaway";
 const MAX_ALLOWED = 30;
 const POSITIONS = { waiter: "официант", hookah_master: "кальянщик", bartender: "бармен", universal: "универсал" };
 
+// Смена кассы открыта дольше — её, скорее всего, забыли закрыть: продажи
+// новых дней копятся в старой смене. Личная смена сотрудника — так же.
+const STALE_CASH_SHIFT_MS = 20 * 3600 * 1000;
+const STALE_STAFF_SHIFT_MS = 16 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+// Лимит сообщения Telegram — 4096 символов.
+const TEXT_LIMIT = 3900;
+
 const MENU = {
   revenue: "💰 Выручка сегодня",
   avg: "🧾 Средний чек",
@@ -69,16 +86,40 @@ const MENU = {
   seating: "🪑 Посадка",
   shift: "👥 Текущая смена",
   delivery: "🛵 Доставка",
+  cash: "💵 Касса сейчас",
+  more: "📊 Ещё отчёты",
 };
-const MENU_KEYBOARD = {
-  keyboard: [
+// «Ещё отчёты» — кнопками под сообщением (callback r:<ключ>).
+const MORE = [
+  ["yesterday", "📅 Вчера"], ["week", "📆 Неделя"],
+  ["top", "🏆 Топ продаж"], ["stock", "📦 Склад на исходе"],
+  ["bookings", "📖 Брони сегодня"], ["voids", "⚠️ Отмены и скидки"],
+  ["reviews", "⭐ Отзывы"],
+];
+const POINT_MARK = "📍";
+
+/** Клавиатура отчётов; pointLabel — у сети, кнопка выбора точки сверху. */
+function menuKeyboard(pointLabel = "") {
+  const keyboard = [];
+  if (pointLabel) keyboard.push([{ text: `${POINT_MARK} ${pointLabel}` }]);
+  keyboard.push(
     [{ text: MENU.revenue }, { text: MENU.avg }],
     [{ text: MENU.kinds }, { text: MENU.seating }],
     [{ text: MENU.shift }, { text: MENU.delivery }],
-  ],
-  resize_keyboard: true,
-  is_persistent: true,
-};
+    [{ text: MENU.cash }, { text: MENU.more }],
+  );
+  return { keyboard, resize_keyboard: true, is_persistent: true };
+}
+
+function moreKeyboard() {
+  const rows = [];
+  for (let i = 0; i < MORE.length; i += 2) rows.push(MORE.slice(i, i + 2).map(([k, t]) => ({ text: t, callback_data: `r:${k}` })));
+  return { inline_keyboard: rows };
+}
+
+const clip = (text) => (text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}\n…(не поместилось — выберите отдельную точку)` : text);
+const UNITS = { g: "г", kg: "кг", ml: "мл", l: "л", pcs: "шт" };
+const qtyText = (v, unit) => `${(Number(v) || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ${UNITS[unit] || unit || ""}`.trim();
 
 const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
 const toDate = (v) => (v && typeof v.toDate === "function" ? v.toDate() : v instanceof Date ? v : null);
@@ -228,7 +269,7 @@ const orderNo = (sessionId, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) 
 function salesStats(sessions, excludeTobacco = true) {
   const st = { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, aggregator: 0, unpaid: 0, unpaidSum: 0,
     refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map(),
-    terminalBanks: new Map() };
+    itemQty: new Map(), terminalBanks: new Map() };
   for (const s of sessions) {
     // Отменённый заказ с собой/доставки тоже получает closedAt, но денег
     // не принёс — как и в кабинете (там только status == "closed").
@@ -259,13 +300,84 @@ function salesStats(sessions, excludeTobacco = true) {
       st.kinds[kind] += sum;
       const name = i.name || "—";
       st.items.set(name, (st.items.get(name) || 0) + sum);
+      st.itemQty.set(name, (st.itemQty.get(name) || 0) + (Number(i.qty) || 0));
     }
     st.discount += Math.max(0, full - bill);
   }
   return st;
 }
 
-function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true }) {
+/** Что не так за сутки: удалённые позиции, закрытие без оплаты, возвраты. */
+function summaryWarnings(st, audit) {
+  const voids = (audit || []).filter((a) => a.action === "order_item_voided" || a.action === "order_item_removed");
+  const voidSum = voids.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const warn = [];
+  if (voids.length) warn.push(`удалено позиций: ${voids.length} на ${rub(voidSum)}`);
+  if (st.unpaid) warn.push(`закрыто без оплаты: ${st.unpaid} на ${rub(st.unpaidSum)}`);
+  if (st.refunds) warn.push(`возвратов: ${st.refunds} на ${rub(st.refundSum)}`);
+  return warn;
+}
+
+function payLines(st) {
+  return [
+    st.cash ? `наличные ${rub(st.cash)}` : "",
+    st.card ? `карта ${rub(st.card)}` : "",
+    st.terminal ? `терминал/СБП ${rub(st.terminal)}` : "",
+    st.aggregator ? `агрегаторы ${rub(st.aggregator)}` : "",
+    st.comp ? `за счёт заведения ${rub(st.comp)}` : "",
+  ].filter(Boolean);
+}
+
+/** Топ позиций по выручке: [[название, сумма, штук]]. */
+function topItems(stats, n = 5) {
+  const sum = new Map();
+  const qty = new Map();
+  for (const st of stats) {
+    for (const [k, v] of st.items) sum.set(k, (sum.get(k) || 0) + v);
+    for (const [k, v] of st.itemQty || []) qty.set(k, (qty.get(k) || 0) + v);
+  }
+  return [...sum.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => [k, v, qty.get(k) || 0]);
+}
+
+/**
+ * Итоги сети за сутки: сумма по всем точкам и строка на каждую точку.
+ * points: [{ name, sessions, audit, excludeTobacco, notes }].
+ */
+function buildChainSummary({ chainName, label, points }) {
+  const per = points.map((p) => ({ ...p, st: salesStats(p.sessions || [], p.excludeTobacco !== false) }));
+  const total = per.reduce((a, p) => {
+    for (const k of ["revenue", "checks", "cash", "card", "terminal", "aggregator", "comp", "discount"]) a[k] += p.st[k];
+    return a;
+  }, { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, aggregator: 0, comp: 0, discount: 0 });
+  const lines = [
+    `📊 Сеть «${chainName || "Сеть"}» — итоги ${label}`,
+    "",
+    `Выручка: ${rub(total.revenue)}`,
+    `Чеков: ${total.checks}${total.checks ? ` · средний чек ${rub(total.revenue / total.checks)}` : ""}`,
+  ];
+  const pays = payLines(total);
+  if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);
+  if (total.discount >= 1) lines.push(`Скидки: ${rub(total.discount)}`);
+  lines.push("");
+  for (const p of per) {
+    lines.push(p.st.checks
+      ? `${POINT_MARK} ${p.name}: ${rub(p.st.revenue)} · ${p.st.checks} чек. · средний ${rub(p.st.revenue / p.st.checks)}`
+      : `${POINT_MARK} ${p.name}: продаж не было`);
+  }
+  const top = topItems(per.map((p) => p.st));
+  if (top.length) {
+    lines.push("", "Топ продаж сети:");
+    top.forEach(([n, v], idx) => lines.push(`${idx + 1}. ${n} — ${rub(v)}`));
+  }
+  const warn = [];
+  for (const p of per) {
+    for (const w of [...summaryWarnings(p.st, p.audit), ...(p.notes || [])]) warn.push(`• ${p.name}: ${w}`);
+  }
+  if (warn.length) lines.push("", "⚠️ Обратите внимание:", ...warn);
+  return lines.join("\n");
+}
+
+function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true, notes = [] }) {
   const st = salesStats(sessions, excludeTobacco);
   const lines = [
     `📊 ${venueName} — итоги ${label}`,
@@ -273,13 +385,7 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     `Выручка: ${rub(st.revenue)}`,
     `Чеков: ${st.checks}${st.checks ? ` · средний чек ${rub(st.revenue / st.checks)}` : ""}`,
   ];
-  const pays = [
-    st.cash ? `наличные ${rub(st.cash)}` : "",
-    st.card ? `карта ${rub(st.card)}` : "",
-    st.terminal ? `терминал/СБП ${rub(st.terminal)}` : "",
-    st.aggregator ? `агрегаторы ${rub(st.aggregator)}` : "",
-    st.comp ? `за счёт заведения ${rub(st.comp)}` : "",
-  ].filter(Boolean);
+  const pays = payLines(st);
   if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);
   const banks = [...st.terminalBanks.entries()];
   if (banks.some(([b]) => b !== "банк не указан")) {
@@ -292,12 +398,7 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     lines.push("", "Топ продаж:");
     top.forEach(([n, v], idx) => lines.push(`${idx + 1}. ${n} — ${rub(v)}`));
   }
-  const voids = audit.filter((a) => a.action === "order_item_voided" || a.action === "order_item_removed");
-  const voidSum = voids.reduce((a, x) => a + (Number(x.amount) || 0), 0);
-  const warn = [];
-  if (voids.length) warn.push(`удалено позиций: ${voids.length} на ${rub(voidSum)}`);
-  if (st.unpaid) warn.push(`закрыто без оплаты: ${st.unpaid} на ${rub(st.unpaidSum)}`);
-  if (st.refunds) warn.push(`возвратов: ${st.refunds} на ${rub(st.refundSum)}`);
+  const warn = [...summaryWarnings(st, audit), ...notes];
   if (warn.length) lines.push("", `⚠️ Обратите внимание: ${warn.join("; ")}`);
   if (!st.checks && !warn.length) lines.push("", "Продаж не было.");
   return lines.join("\n");
@@ -338,7 +439,7 @@ function alertText(venueName, a) {
  * видит касса; комментарий гостя тоже не пересылаем: в нём бывают контакты.
  * pendingItems — позиции заказа из приложения, ещё не подтверждённого.
  */
-function deliveryCardText(s, tz, pendingItems = []) {
+function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
   const type = s.orderType === "delivery" ? "delivery" : "takeaway";
   const confirmed = s.orderItems || [];
   const items = confirmed.length ? confirmed : pendingItems;
@@ -348,6 +449,7 @@ function deliveryCardText(s, tz, pendingItems = []) {
     : Math.round(items.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0) * 100) / 100;
   const app = s.source === "app";
   const lines = [
+    ...(pointName ? [`${POINT_MARK} ${pointName}`] : []),
     `${type === "delivery" ? "🛵 Доставка" : "🥡 С собой"} №${orderNo(s.id, s.orderNo)}${app ? " · 📱 из приложения" : ""}`,
     `Статус: ${flow.label(type, s.deliveryStatus)}`,
     `Позиций: ${qty} · ${rub(total)}`,
@@ -385,6 +487,23 @@ function deliveryKeyboard(s, addressUrl) {
   return { inline_keyboard: rows };
 }
 
+
+/** Подпись дня недели и даты для отчёта «Неделя». */
+const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+function dayLabel(start, tz) {
+  const p = localParts(new Date(start.getTime() + 3600000), tz);
+  const wd = WEEKDAYS[new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay()];
+  return `${wd} ${String(p.d).padStart(2, "0")}.${String(p.m).padStart(2, "0")}`;
+}
+
+/** «⚠️ Смена кассы открыта с 02.10 12:57…» — забыли закрыть; null — всё в порядке. */
+function staleCashText(openedAt, tz, now = new Date()) {
+  if (!openedAt || now.getTime() - openedAt.getTime() < STALE_CASH_SHIFT_MS) return null;
+  const p = localParts(openedAt, tz);
+  const when = `${String(p.d).padStart(2, "0")}.${String(p.m).padStart(2, "0")} ${hhmm(openedAt, tz)}`;
+  return `смена кассы не закрыта с ${when} — закройте её на кассе (Z-отчёт), иначе продажи новых дней копятся в старой смене`;
+}
+
 // ---------------------------------------------------------------- модуль
 
 function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl, pii }) {
@@ -393,12 +512,12 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const tenantRef = (t) => db().collection("tenants").doc(t);
   const linkRef = (code) => db().collection("telegramLinks").doc(code);
 
-  /** tenantId → { token, cfg, unsubs, startedAt } */
+  /** tenantId точки, где подключён бот → { tenantId, token, cfg, points, … } */
   const bots = new Map();
 
   // Запросы, которые безопасно повторить: второй раз ничего не задвоят.
   // sendMessage не повторяем — первое сообщение могло дойти, а ответ нет.
-  const IDEMPOTENT = new Set(["getMe", "setWebhook", "deleteWebhook", "getWebhookInfo", "getChat"]);
+  const IDEMPOTENT = new Set(["getMe", "setWebhook", "deleteWebhook", "getWebhookInfo", "getChat", "setMyCommands"]);
 
   async function api(token, method, params = {}) {
     let resp;
@@ -427,11 +546,67 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return data.result;
   }
 
-  const say = (bot, chatId, text, extra = {}) => api(bot.token, "sendMessage", { chat_id: chatId, text, disable_web_page_preview: true, ...extra })
+  const say = (bot, chatId, text, extra = {}) => api(bot.token, "sendMessage", { chat_id: chatId, text: clip(text), disable_web_page_preview: true, ...extra })
     .catch((e) => console.error(`telegram send (${bot.tenantId}):`, e.message));
 
   function checkTenantId(tenantId) {
     if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  }
+
+  // ------------------------------------------------------------ точки сети
+
+  const venueTitle = (venue) => String(venue.name || "").trim().slice(0, 60);
+
+  /** Точки сети без удалённых — по имени. */
+  async function chainPoints(chainId) {
+    const snap = await db().collection("tenants").where("chainId", "==", chainId).get();
+    return snap.docs
+      .filter((d) => (d.data() || {}).status !== "deleted")
+      .map((d) => ({ id: d.id, name: venueTitle(d.data() || {}) || "Точка" }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  }
+
+  /**
+   * Чей бот у точки сети без своего бота. Раньше у каждой точки сети был
+   * свой бот — такие точки остаются за своим ботом, а остальные берёт бот
+   * с наименьшим id точки: один, чтобы карточки и сигналы не дублировались.
+   */
+  async function chainBotHolders(points, skip = "") {
+    const out = [];
+    for (const id of points.map((p) => p.id).sort()) {
+      if (id !== skip && (await botsCol().doc(id).get()).exists) out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * Точки бота: у сети — её точки (кроме тех, где подключён свой бот), у
+   * одиночного заведения — оно само. homeId — где подключён бот.
+   */
+  async function loadPoints(homeId) {
+    const home = (await tenantRef(homeId).get()).data() || {};
+    const chainId = String(home.chainId || "");
+    const self = { id: homeId, name: venueTitle(home) || "Заведение" };
+    if (!chainId) return { chainId: "", chainName: "", points: [self] };
+    const all = await chainPoints(chainId);
+    const holders = await chainBotHolders(all, homeId);
+    const main = !holders.length || homeId < holders[0];
+    const points = main ? all.filter((p) => !holders.includes(p.id)) : all.filter((p) => p.id === homeId);
+    if (!points.some((p) => p.id === homeId)) points.unshift(self);
+    const chain = (await db().collection("chains").doc(chainId).get()).data() || {};
+    return { chainId, chainName: String(chain.name || "").trim() || "Сеть", points };
+  }
+
+  /** Бот заведения: свой документ или, у точки сети, бот всей сети. → { id, data } */
+  async function botDocFor(tenantId) {
+    const own = await botsCol().doc(tenantId).get();
+    if (own.exists) return { id: tenantId, data: own.data() };
+    const t = (await tenantRef(tenantId).get()).data() || {};
+    if (t.chainId) {
+      const [id] = await chainBotHolders(await chainPoints(String(t.chainId)), tenantId);
+      if (id) return { id, data: (await botsCol().doc(id).get()).data() };
+    }
+    return { id: tenantId, data: null };
   }
 
   async function guard(req) {
@@ -439,17 +614,39 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const body = await parseJsonBody(req);
     checkTenantId(body.tenantId);
     await requireTenantRole(body.tenantId, decoded.uid, ["owner", "admin"]);
-    return { decoded, body };
+    const found = await botDocFor(body.tenantId);
+    // Бот сети подключён в другой точке — управлять им можно с правами и там:
+    // администратор одной точки не откроет себе отчёты всей сети.
+    if (found.id !== body.tenantId) {
+      try {
+        await requireTenantRole(found.id, decoded.uid, ["owner", "admin"]);
+      } catch (_) {
+        throw new HttpError(403, "Бот сети подключён в другой точке — управлять им может владелец или администратор сети");
+      }
+    }
+    return { decoded, body, botId: found.id, cfg: found.data };
+  }
+
+  /** Рабочая группа точки: своя, иначе группа точки, где подключён бот. */
+  function staffChatOf(cfg, tenantId, homeId) {
+    const own = ((cfg && cfg.staffChats) || {})[tenantId];
+    if (own && own.id) return { chat: own, shared: false };
+    const main = cfg && cfg.staffChat;
+    if (main && main.id) return { chat: main, shared: tenantId !== homeId };
+    return { chat: null, shared: false };
   }
 
   const hookUrl = (tenantId) => (HOOK_BASE ? `${HOOK_BASE}/${tenantId}` : `${publicUrl}/tgHook/${tenantId}`);
 
   // ------------------------------------------------------------ кабинет
 
-  /** Владелец вводит токен своего бота: проверяем, шифруем, ставим webhook. */
+
+  /**
+   * Владелец вводит токен своего бота: проверяем, шифруем, ставим webhook.
+   * У сети бот один: из любой точки настраивается бот всей сети.
+   */
   async function handleSetup(req, res) {
-    const { body } = await guard(req);
-    const { tenantId } = body;
+    const { body, botId } = await guard(req);
     const token = String(body.token || "").trim();
     if (!/^\d{5,15}:[A-Za-z0-9_-]{30,50}$/.test(token)) throw new HttpError(400, "Это не похоже на токен бота — скопируйте его из @BotFather целиком");
     let me;
@@ -462,7 +659,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       throw new HttpError(400, "Telegram не принял токен — проверьте, что скопировали его целиком и бот не удалён");
     }
     const taken = await botsCol().where("botId", "==", me.id).limit(2).get();
-    if (taken.docs.some((d) => d.id !== tenantId)) {
+    if (taken.docs.some((d) => d.id !== botId)) {
       throw new HttpError(409, "Этот бот уже подключён к другому заведению — создайте для этого заведения отдельного бота");
     }
     let key;
@@ -471,11 +668,12 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     } catch (_) {
       throw new HttpError(503, "Подключение ботов на сервере ещё настраивается — попробуйте через несколько минут");
     }
-    const ref = botsCol().doc(tenantId);
+    const ref = botsCol().doc(botId);
     const prev = (await ref.get()).data() || {};
+    const home = (await tenantRef(botId).get()).data() || {};
     const hookSecret = crypto.randomBytes(24).toString("hex");
     await api(token, "setWebhook", {
-      url: hookUrl(tenantId),
+      url: hookUrl(botId),
       secret_token: hookSecret,
       allowed_updates: ["message", "callback_query"],
       drop_pending_updates: true,
@@ -486,13 +684,17 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       botId: me.id,
       username: me.username || "",
       hookSecret,
-      hookUrl: hookUrl(tenantId),
+      hookUrl: hookUrl(botId),
+      chainId: home.chainId ? String(home.chainId) : null,
       ownerChats: sameBot ? prev.ownerChats || [] : [],
       // Список людей — заведения, а не бота: при смене бота не теряется.
       allowed: allowedList(prev),
       staffChat: sameBot ? prev.staffChat || null : null,
+      staffChats: sameBot ? prev.staffChats || {} : {},
+      views: sameBot ? prev.views || {} : {},
       notify: prev.notify || { delivery: true, shifts: true, alerts: true, summary: true },
       auditCursor: prev.auditCursor || admin.firestore.Timestamp.now(),
+      auditCursors: prev.auditCursors || {},
       lastSummaryDay: prev.lastSummaryDay || "",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -503,31 +705,41 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const chatLabel = (cfg, c) => (allowedList(cfg).find((a) => a.id === c.id) || {}).name || c.name || "Чат";
 
   async function handleStatus(req, res) {
-    const { body } = await guard(req);
-    const d = (await botsCol().doc(body.tenantId).get()).data();
-    if (!d) return sendJson(res, 200, { configured: false });
+    const { body, botId, cfg: d } = await guard(req);
+    const info = await loadPoints(botId).catch(() => null);
+    const chain = info && info.points.length > 1 ? {
+      name: info.chainName,
+      points: info.points.map((p) => p.name),
+      home: (info.points.find((p) => p.id === botId) || {}).name || "",
+    } : null;
+    if (!d) return sendJson(res, 200, { configured: false, chain });
+    const group = staffChatOf(d, body.tenantId, botId);
     sendJson(res, 200, {
       configured: true,
       username: d.username || "",
       owners: (d.ownerChats || []).filter((c) => roleOf(d, c.id) === "owner").map((c) => chatLabel(d, c)),
       allowed: allowedList(d),
-      staffChat: d.staffChat ? d.staffChat.title || "Группа" : "",
+      staffChat: group.chat ? group.chat.title || "Группа" : "",
+      staffChatShared: group.shared,
       notify: d.notify || {},
+      chain,
     });
   }
 
-  /** Код привязки: kind 'owner' — личный чат, 'staff' — рабочая группа. */
+  /**
+   * Код привязки: kind 'owner' — личный чат, 'staff' — рабочая группа той
+   * точки, из кабинета которой его попросили.
+   */
   async function handleLinkCode(req, res) {
-    const { body } = await guard(req);
+    const { body, botId, cfg: d } = await guard(req);
     const kind = body.kind === "staff" ? "staff" : "owner";
-    const d = (await botsCol().doc(body.tenantId).get()).data();
     if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
     if (!allowedList(d).some((a) => a.role === "owner")) {
       throw new HttpError(409, "Сначала впишите свой Telegram ID в «Кто управляет ботом» — его пришлёт бот в ответ на /id");
     }
     const code = crypto.randomBytes(9).toString("hex");
     await linkRef(code).set({
-      tenantId: body.tenantId, kind,
+      tenantId: body.tenantId, bot: botId, kind,
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 60 * 1000),
     });
     const link = kind === "staff"
@@ -538,32 +750,30 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
 
   /** Кто управляет ботом. Убрали человека — его личный чат больше ничего не получает. */
   async function handleAccess(req, res) {
-    const { body } = await guard(req);
-    const ref = botsCol().doc(body.tenantId);
-    const d = (await ref.get()).data();
+    const { body, botId, cfg: d } = await guard(req);
     if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
     const allowed = parseAllowed(body.allowed, HttpError);
     const owners = new Set(allowed.filter((a) => a.role === "owner").map((a) => a.id));
     const chats = (d.ownerChats || []).filter((c) => owners.has(c.id));
-    await ref.update({ allowed, ownerChats: chats });
+    await botsCol().doc(botId).update({ allowed, ownerChats: chats });
     sendJson(res, 200, { allowed, owners: chats.map((c) => chatLabel({ allowed }, c)) });
   }
 
   async function handleNotify(req, res) {
-    const { body } = await guard(req);
+    const { body, botId, cfg: d } = await guard(req);
+    if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
     const n = body.notify || {};
     const notify = {
       delivery: n.delivery !== false, shifts: n.shifts !== false, alerts: n.alerts !== false, summary: n.summary !== false,
     };
-    await botsCol().doc(body.tenantId).update({ notify });
+    await botsCol().doc(botId).update({ notify });
     sendJson(res, 200, { notify });
   }
 
   async function handleUnlink(req, res) {
-    const { body } = await guard(req);
-    const ref = botsCol().doc(body.tenantId);
-    const d = (await ref.get()).data();
+    const { botId, cfg: d } = await guard(req);
     if (d) {
+      const ref = botsCol().doc(botId);
       try {
         await api(decrypt(secretKey(), d.tokenEnc), "deleteWebhook", { drop_pending_updates: true });
       } catch (_) { /* бот мог быть удалён в BotFather — всё равно отключаем */ }
@@ -705,9 +915,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (!team.length) return page(200, "<p>Сейчас на смене никого не отмечено.</p>");
     const rows = [];
     for (const m of team) {
-      rows.push(`<li>${await person(m.raw, m.id)}${m.since ? `, с ${esc(hhmm(m.since, venue.timezone))}` : ""}</li>`);
+      rows.push(`<li>${await person(m.raw, m.id)}${m.since ? `, ${esc(sinceLabel(m.since, venue.timezone))}` : ""}</li>`);
     }
-    return page(200, `<h2 style="margin:0 0 12px">На смене сейчас</h2><ul>${rows.join("")}</ul>`);
+    return page(200, `<h2 style="margin:0 0 12px">${esc(venueTitle(venue))}${venueTitle(venue) ? " — " : ""}на смене сейчас</h2><ul>${rows.join("")}</ul>`);
   }
 
   function addressUrl(tenantId, sessionId) {
@@ -736,6 +946,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     res.writeHead(200);
     res.end();
     try {
+      await bot.ready;
       if (update.callback_query) await onCallback(bot, update.callback_query);
       else if (update.message) await onMessage(bot, update.message);
     } catch (e) {
@@ -748,11 +959,45 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   const isOwnerChat = (bot, chatId) => ownerChats(bot.cfg).some((c) => c.id === chatId);
   const noAccess = (userId) => `Ваш Telegram ID: ${userId}. Управлять ботом могут только те, кого владелец `
     + "добавил в кабинете ZalPOS → Настройки → Telegram-бот → «Кто управляет ботом». Перешлите ему это число.";
-  const isStaffChat = (bot, chatId) => !!bot.cfg.staffChat && bot.cfg.staffChat.id === chatId;
+  const isStaffChat = (bot, chatId) => (!!bot.cfg.staffChat && bot.cfg.staffChat.id === chatId)
+    || Object.values(bot.cfg.staffChats || {}).some((c) => c && c.id === chatId);
+
+  // ---- точка, которую смотрит владелец
+
+  const multi = (bot) => (bot.points || []).length > 1;
+  const pointName = (bot, tid) => ((bot.points || []).find((p) => p.id === tid) || {}).name || "Точка";
+  /** Что показывать в этом чате: точку сети или "all". У одиночного — само заведение. */
+  function viewOf(bot, chatId) {
+    if (!multi(bot)) return bot.tenantId;
+    const v = (bot.cfg.views || {})[String(chatId)] || "all";
+    return v === "all" || bot.points.some((p) => p.id === v) ? v : "all";
+  }
+  const viewLabel = (bot, view) => (view === "all" ? "Все точки" : pointName(bot, view));
+  const keyboardFor = (bot, chatId) => menuKeyboard(multi(bot) ? viewLabel(bot, viewOf(bot, chatId)) : "");
+
+  async function setView(bot, chatId, view) {
+    bot.cfg.views = { ...(bot.cfg.views || {}), [String(chatId)]: view };
+    await botsCol().doc(bot.tenantId).update({ [`views.${chatId}`]: view }).catch(() => {});
+  }
+
+  function choosePoint(bot, chatId) {
+    if (!multi(bot)) return say(bot, chatId, "У заведения одна точка — отчёты сразу по ней.", { reply_markup: keyboardFor(bot, chatId) });
+    const cur = viewOf(bot, chatId);
+    const rows = [[{ text: `${cur === "all" ? "✅ " : ""}🏢 Все точки — сводка по сети`, callback_data: "p:all" }]];
+    for (const p of bot.points) rows.push([{ text: `${cur === p.id ? "✅ " : ""}${p.name}`.slice(0, 64), callback_data: `p:${p.id}` }]);
+    return say(bot, chatId, "Какую точку показывать?", { reply_markup: { inline_keyboard: rows } });
+  }
+
+  function helpText(bot) {
+    const lines = ["Отчёты — кнопками ниже. «📊 Ещё отчёты»: вчера, неделя, топ продаж, склад, брони, отмены, отзывы."];
+    if (multi(bot)) lines.push(`Сеть «${bot.chainName}»: кнопка «${POINT_MARK}» сверху — выбрать точку или «Все точки» (сводка по сети).`);
+    lines.push(`Сами приходят: итоги прошлой смены в ${SUMMARY_HOUR}:00, начало и конец смен, отмены позиций, закрытие без оплаты, возвраты, скидки от ${BIG_DISCOUNT_PERCENT}%.`);
+    lines.push("/menu — отчёты, /id — ваш Telegram ID, /stop — отключить уведомления.");
+    return lines.join("\n");
+  }
 
   /** Личный чат владельца или управляющего из списка — получать отчёты и сигналы. */
-  async function linkOwnerChat(bot, chat, venue = null) {
-    const v = venue || (await tenantRef(bot.tenantId).get()).data() || {};
+  async function linkOwnerChat(bot, chat) {
     // Имя из Telegram не храним (Firestore — за рубежом): в кабинете чат
     // виден по подписи из «Кто управляет ботом».
     const name = "";
@@ -763,10 +1008,11 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const owners = (cur.ownerChats || []).filter((c) => c.id !== chat.id).concat([{ id: chat.id, name }]).slice(-MAX_ALLOWED);
       tx.update(r, { ownerChats: owners });
     });
-    return say(bot, chat.id, `Готово: «${v.name || "заведение"}» подключено.\n\n`
-      + `Каждое утро в ${SUMMARY_HOUR}:00 — итоги прошлой смены. Начало и конец смен, отмены позиций, `
-      + `закрытие без оплаты, возвраты и скидки от ${BIG_DISCOUNT_PERCENT}% — сразу. Отчёты — кнопками ниже.`,
-    { reply_markup: MENU_KEYBOARD });
+    bot.cfg.ownerChats = (bot.cfg.ownerChats || []).filter((c) => c.id !== chat.id).concat([{ id: chat.id, name }]);
+    const n = bot.points.length;
+    const word = n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? "точки" : n % 10 === 1 && n % 100 !== 11 ? "точка" : "точек";
+    const what = multi(bot) ? `сеть «${bot.chainName}» (${n} ${word})` : `«${pointName(bot, bot.tenantId)}»`;
+    return say(bot, chat.id, `Готово: ${what} подключено.\n\n${helpText(bot)}`, { reply_markup: keyboardFor(bot, chat.id) });
   }
 
   async function onMessage(bot, msg) {
@@ -790,22 +1036,26 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (cmd === "/start" && arg) {
       const ref = linkRef(arg.replace(/[^a-f0-9]/g, "").slice(0, 32) || "-");
       const link = (await ref.get()).data();
-      if (!link || link.tenantId !== bot.tenantId || link.expiresAt.toMillis() < Date.now()) {
+      if (!link || (link.bot || link.tenantId) !== bot.tenantId || link.expiresAt.toMillis() < Date.now()) {
         return say(bot, chat.id, "Ссылка устарела. Нажмите кнопку подключения в кабинете ещё раз.");
       }
-      const venue = (await tenantRef(bot.tenantId).get()).data() || {};
+      // Группа — той точки, из кабинета которой её подключают.
+      const point = bot.points.some((p) => p.id === link.tenantId) ? link.tenantId : bot.tenantId;
       if (link.kind === "staff") {
         if (!group) return say(bot, chat.id, "Эту ссылку нужно открыть, добавляя бота в рабочую группу сотрудников.");
         if (role !== "owner") return say(bot, chat.id, `Подключить группу может только владелец или управляющий из списка. ${noAccess(userId)}`);
-        await botsCol().doc(bot.tenantId).update({ staffChat: { id: chat.id, title: chat.title || "Группа" } });
+        const staff = { id: chat.id, title: chat.title || "Группа" };
+        await botsCol().doc(bot.tenantId).update(point === bot.tenantId ? { staffChat: staff } : { [`staffChats.${point}`]: staff });
         await ref.delete();
-        return say(bot, chat.id, `Группа подключена к «${venue.name || "заведению"}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.`);
+        const others = multi(bot) && point === bot.tenantId
+          ? "\nСюда же придут заказы точек сети, у которых нет своей группы." : "";
+        return say(bot, chat.id, `Группа подключена к «${pointName(bot, point)}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.${others}`);
       }
       if (group) return say(bot, chat.id, "Эта ссылка — для личного чата владельца, а не для группы.");
       // Ссылку могли переслать: подключается только ID из списка владельцев.
       if (role !== "owner" || chat.id !== userId) return say(bot, chat.id, noAccess(userId));
       await ref.delete();
-      return linkOwnerChat(bot, chat, venue);
+      return linkOwnerChat(bot, chat);
     }
 
     if (cmd === "/stop" && !group && isOwnerChat(bot, chat.id)) {
@@ -825,27 +1075,61 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     // ID в списке владельцев — подключаем личный чат сразу, без ссылки из
     // кабинета: достаточно открыть бота и нажать «Запустить».
     if (!isOwnerChat(bot, chat.id)) return linkOwnerChat(bot, chat);
-    const report = REPORTS[Object.keys(MENU).find((k) => MENU[k] === text)];
-    if (report) return say(bot, chat.id, await report(bot), { reply_markup: MENU_KEYBOARD });
-    if (cmd === "/start" || cmd === "/menu") return say(bot, chat.id, "Выберите отчёт:", { reply_markup: MENU_KEYBOARD });
+    if (text.startsWith(POINT_MARK) || cmd === "/point") return choosePoint(bot, chat.id);
+    const key = Object.keys(MENU).find((k) => MENU[k] === text);
+    if (key === "more") return say(bot, chat.id, "Ещё отчёты:", { reply_markup: moreKeyboard() });
+    if (key) return say(bot, chat.id, await report(bot, key, viewOf(bot, chat.id)), { reply_markup: keyboardFor(bot, chat.id) });
+    if (cmd === "/help") return say(bot, chat.id, helpText(bot), { reply_markup: keyboardFor(bot, chat.id) });
+    return say(bot, chat.id, "Выберите отчёт:", { reply_markup: keyboardFor(bot, chat.id) });
+  }
+
+  /** Точка, к которой относится заказ из карточки: записана в карточке, иначе ищем. */
+  async function tenantOfSession(bot, sessionId) {
+    const card = (await botsCol().doc(bot.tenantId).collection("cards").doc(sessionId).get()).data();
+    if (card && card.tenantId && bot.points.some((p) => p.id === card.tenantId)) return card.tenantId;
+    for (const p of bot.points) {
+      if ((await tenantRef(p.id).collection("sessions").doc(sessionId).get()).exists) return p.id;
+    }
+    return bot.tenantId;
   }
 
   async function onCallback(bot, q) {
     const chatId = q.message && q.message.chat && q.message.chat.id;
     const answer = (text, alert = false) => api(bot.token, "answerCallbackQuery", { callback_query_id: q.id, text: text || "", show_alert: alert }).catch(() => {});
+    const userId = q.from && q.from.id;
+    const [kind, sessionId, arg] = String(q.data || "").split(":");
+
+    // Выбор точки и «Ещё отчёты» — только владельцу в его личном чате.
+    if (kind === "p" || kind === "r") {
+      if (!chatId || !isOwnerChat(bot, chatId) || roleOf(bot.cfg, userId) !== "owner") return answer("Нет доступа");
+      if (kind === "p") {
+        const view = sessionId === "all" ? "all" : bot.points.some((p) => p.id === sessionId) ? sessionId : null;
+        if (!view || !multi(bot)) return answer();
+        await setView(bot, chatId, view);
+        await answer(`Точка: ${viewLabel(bot, view)}`);
+        await api(bot.token, "editMessageText", { chat_id: chatId, message_id: q.message.message_id, text: `${POINT_MARK} Выбрано: ${viewLabel(bot, view)}` }).catch(() => {});
+        return say(bot, chatId, view === "all"
+          ? `Отчёты — по всей сети «${bot.chainName}». Выберите отчёт:`
+          : `Отчёты — по точке «${pointName(bot, view)}». Выберите отчёт:`, { reply_markup: keyboardFor(bot, chatId) });
+      }
+      const key = (MORE.find(([k]) => k === sessionId) || [])[0];
+      if (!key) return answer();
+      await answer();
+      return say(bot, chatId, await report(bot, key, viewOf(bot, chatId)), { reply_markup: keyboardFor(bot, chatId) });
+    }
+
     if (!chatId || (!isStaffChat(bot, chatId) && !isOwnerChat(bot, chatId))) return answer("Нет доступа");
     // Нажимать кнопки могут только люди из списка — даже в рабочей группе.
-    const userId = q.from && q.from.id;
     if (!userId || !roleOf(bot.cfg, userId)) {
       return answer(`Нет доступа. Ваш Telegram ID: ${userId || "?"} — попросите владельца добавить его в кабинете.`, true);
     }
-    const [kind, sessionId, arg] = String(q.data || "").split(":");
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId || "")) return answer();
-    const sesRef = tenantRef(bot.tenantId).collection("sessions").doc(sessionId);
+    const tid = await tenantOfSession(bot, sessionId);
+    const sesRef = tenantRef(tid).collection("sessions").doc(sessionId);
     const who = [q.from && q.from.first_name, q.from && q.from.last_name].filter(Boolean).join(" ") || "Сотрудник";
 
     // Режим РФ: имя курьера — в справочник, в чеке только отметка.
-    const rf = await rfMode(bot.tenantId);
+    const rf = await rfMode(tid);
     let courierToSave = "";
 
     if (kind === "s") {
@@ -873,14 +1157,14 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         tx.update(sesRef, patch);
         result = flow.label(type, arg);
       });
-      if (courierToSave) await saveCourier(bot.tenantId, sessionId, courierToSave);
+      if (courierToSave) await saveCourier(tid, sessionId, courierToSave);
       // Карточку обновит слушатель чеков — тот же путь, что и для нажатий на кассе.
       return answer(result);
     }
 
     if (kind === "c") {
-      const team = (await onShiftStaff(bot.tenantId)).filter((m) => m.id);
-      const tz = (await venueOf(bot.tenantId).catch(() => ({}))).timezone;
+      const team = (await onShiftStaff(tid)).filter((m) => m.id);
+      const tz = (await venueOf(tid).catch(() => ({}))).timezone;
       // Без имён: должность и время начала смены отличают людей друг от друга.
       const rows = team.slice(0, 8).map((m) => [{ text: `${m.role}${m.since ? ` · с ${hhmm(m.since, tz)}` : ""}`, callback_data: `k:${sessionId}:${m.id}`.slice(0, 64) }]);
       rows.push([{ text: "🙋 Я везу", callback_data: `k:${sessionId}:me` }]);
@@ -893,8 +1177,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       if (kind === "k") {
         let name = who;
         if (arg !== "me") {
-          const m = (await onShiftStaff(bot.tenantId)).find((x) => x.id === arg);
-          if (m) name = await nameOfWho(bot.tenantId, m.raw, m.id);
+          const m = (await onShiftStaff(tid)).find((x) => x.id === arg);
+          if (m) name = await nameOfWho(tid, m.raw, m.id);
         }
         let assigned = false;
         await db().runTransaction(async (tx) => {
@@ -908,10 +1192,10 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           }
           tx.update(sesRef, patch);
         });
-        if (rf && assigned) await saveCourier(bot.tenantId, sessionId, name);
+        if (rf && assigned) await saveCourier(tid, sessionId, name);
       }
       const s = (await sesRef.get()).data();
-      if (s) await refreshCard(bot, { id: sessionId, ...s }, true);
+      if (s) await refreshCard(bot, tid, { id: sessionId, ...s }, true);
       return answer(kind === "k" ? "Курьер назначен" : "");
     }
     return answer();
@@ -923,7 +1207,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       .catch((e) => console.error(`telegram courier (${tenantId}): ${e.message}`));
   }
 
-  // ------------------------------------------------------------ отчёты
+  // ------------------------------------------------------------ данные для отчётов
 
   async function venueOf(tenantId) {
     return (await tenantRef(tenantId).get()).data() || {};
@@ -952,7 +1236,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (!st.openShiftId) return null;
     const sh = (await tenantRef(tenantId).collection("shifts").doc(String(st.openShiftId)).get()).data();
     const openedAt = sh && (sh.status || "open") === "open" ? toDate(sh.openedAt) : null;
-    return openedAt ? { id: String(st.openShiftId), openedAt } : null;
+    return openedAt ? { id: String(st.openShiftId), openedAt, data: sh } : null;
   }
 
   /** «с 15:43» или «с 09.10 22:00», если смену открыли в другой день. */
@@ -962,8 +1246,6 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const day = a.d === b.d && a.m === b.m && a.y === b.y ? "" : `${String(a.d).padStart(2, "0")}.${String(a.m).padStart(2, "0")} `;
     return `с ${day}${hhmm(date, tz)}`;
   }
-
-  const venueTitle = (venue) => String(venue.name || "").trim().slice(0, 60);
 
   async function activeSessions(tenantId) {
     const snap = await tenantRef(tenantId).collection("sessions").where("status", "==", "active").get();
@@ -982,51 +1264,107 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     return out.sort((a, b) => (a.since || 0) - (b.since || 0));
   }
 
-  const REPORTS = {
-    async revenue(bot) {
-      const venue = await venueOf(bot.tenantId);
-      const ex = await loyaltyExclude(bot.tenantId);
-      const st = salesStats(await closedSince(bot.tenantId, businessDayStart(new Date(), venue.timezone)), ex);
-      const open = await activeSessions(bot.tenantId);
-      const openSum = open.reduce((a, s) => a + sessionBill(s), 0);
+  /** Сегодняшние рабочие сутки точки: заведение, часовой пояс, начало. */
+  async function dayOf(tid) {
+    const venue = await venueOf(tid);
+    const now = new Date();
+    return { venue, tz: venue.timezone, now, start: businessDayStart(now, venue.timezone), ex: await loyaltyExclude(tid) };
+  }
+
+  /** Деньги точки за сегодня и смену кассы — для «Выручки» и сводки сети. */
+  async function moneyOf(tid) {
+    const d = await dayOf(tid);
+    const st = salesStats(await closedSince(tid, d.start), d.ex);
+    const open = await activeSessions(tid);
+    const shift = await openCashShift(tid);
+    const shiftSt = shift ? salesStats(await closedSince(tid, shift.openedAt), d.ex) : null;
+    return { ...d, st, open, openSum: open.reduce((a, s) => a + sessionBill(s), 0), shift, shiftSt, stale: shift ? staleCashText(shift.openedAt, d.tz, d.now) : null };
+  }
+
+  async function auditSince(tid, start, end = null) {
+    let q = tenantRef(tid).collection("auditLog").where("createdAt", ">=", start);
+    if (end) q = q.where("createdAt", "<", end);
+    return (await q.get()).docs.map((x) => x.data());
+  }
+
+  /** Неделя: 7 рабочих суток по сегодня включительно и прошлые 7 — для сравнения. */
+  async function weekOf(tid) {
+    const d = await dayOf(tid);
+    const from = new Date(d.start.getTime() - 6 * DAY_MS);
+    const sessions = await closedSince(tid, new Date(from.getTime() - 7 * DAY_MS));
+    const buckets = Array.from({ length: 7 }, () => []);
+    const prev = [];
+    for (const s of sessions) {
+      const at = toDate(s.closedAt);
+      if (!at) continue;
+      const idx = Math.floor((at.getTime() - from.getTime()) / DAY_MS);
+      if (idx < 0) prev.push(s);
+      else buckets[Math.min(6, idx)].push(s);
+    }
+    return {
+      tz: d.tz,
+      days: buckets.map((list, i) => ({ start: new Date(from.getTime() + i * DAY_MS), st: salesStats(list, d.ex) })),
+      prev: salesStats(prev, d.ex),
+    };
+  }
+
+  function weekText(days, prevRevenue, tz) {
+    const lines = ["📆 Неделя по дням (рабочие сутки с 6:00):"];
+    let revenue = 0;
+    let checks = 0;
+    days.forEach((x, i) => {
+      revenue += x.revenue;
+      checks += x.checks;
+      lines.push(`${dayLabel(x.start, tz)}${i === days.length - 1 ? " (сегодня)" : ""} — ${rub(x.revenue)} · ${x.checks} чек.`);
+    });
+    lines.push("", `Итого: ${rub(revenue)} · ${checks} чек.${checks ? ` · средний ${rub(revenue / checks)}` : ""}`);
+    if (prevRevenue > 0) {
+      const diff = Math.round(((revenue - prevRevenue) / prevRevenue) * 100);
+      lines.push(`К прошлым 7 дням (${rub(prevRevenue)}): ${diff > 0 ? "+" : ""}${diff}%`);
+    }
+    return lines.join("\n");
+  }
+
+  // ------------------------------------------------------------ отчёты по точке
+
+  const ONE = {
+    async revenue(bot, tid) {
+      const m = await moneyOf(tid);
+      const st = m.st;
       // Смена кассы — те же цифры, что «Текущая смена» в X-отчёте: ночная
       // смена, начатая вчера, видна целиком.
-      const shift = await openCashShift(bot.tenantId);
-      let shiftLine = "Касса закрыта — смена не открыта";
-      if (shift) {
-        const sh = salesStats(await closedSince(bot.tenantId, shift.openedAt), ex);
-        shiftLine = `Смена кассы ${sinceLabel(shift.openedAt, venue.timezone)}: ${rub(sh.revenue)} · чеков ${sh.checks}`
-          + ` (нал. ${rub(sh.cash)}, карта ${rub(sh.card)}, терминал/СБП ${rub(sh.terminal)})`;
-      }
+      const shiftLine = m.shift
+        ? `Смена кассы ${sinceLabel(m.shift.openedAt, m.tz)}: ${rub(m.shiftSt.revenue)} · чеков ${m.shiftSt.checks}`
+          + ` (нал. ${rub(m.shiftSt.cash)}, карта ${rub(m.shiftSt.card)}, терминал/СБП ${rub(m.shiftSt.terminal)})`
+        : "Касса закрыта — смена не открыта";
       return [
-        venueTitle(venue) ? `🏠 ${venueTitle(venue)}` : "",
+        venueTitle(m.venue) ? `🏠 ${venueTitle(m.venue)}` : "",
         `💰 Выручка сегодня (с ${DAY_START_HOUR}:00): ${rub(st.revenue)}`,
-        `Чеков закрыто: ${st.checks}`,
+        `Чеков закрыто: ${st.checks}${st.checks ? ` · средний ${rub(st.revenue / st.checks)}` : ""}`,
         `Наличные ${rub(st.cash)} · карта ${rub(st.card)} · терминал/СБП ${rub(st.terminal)}`,
-        st.aggregator ? `Агрегаторы: ${rub(st.aggregator)}` : "",
+        st.aggregator ? `Агрегаторы: ${rub(st.aggregator)} (переведут позже)` : "",
         st.comp ? `За счёт заведения: ${rub(st.comp)}` : "",
+        st.takeaway || st.delivery ? `С собой: ${st.takeaway} · доставка: ${st.delivery}` : "",
         shiftLine,
-        `Открыто сейчас: ${open.length} чек. на ${rub(openSum)}`,
+        `Открыто сейчас: ${m.open.length} чек. на ${rub(m.openSum)}`,
+        m.stale ? `\n⚠️ ${m.stale[0].toUpperCase()}${m.stale.slice(1)}.` : "",
       ].filter(Boolean).join("\n");
     },
-    async avg(bot) {
-      const venue = await venueOf(bot.tenantId);
-      const ex = await loyaltyExclude(bot.tenantId);
-      const now = new Date();
-      const start = businessDayStart(now, venue.timezone);
-      const today = salesStats(await closedSince(bot.tenantId, start), ex);
+    async avg(bot, tid) {
+      const d = await dayOf(tid);
+      const today = salesStats(await closedSince(tid, d.start), d.ex);
       // Вчера к этому же часу — честное сравнение незаконченного дня.
-      const yStart = new Date(start.getTime() - 24 * 3600 * 1000);
-      const yesterday = salesStats(await closedSince(bot.tenantId, yStart, new Date(now.getTime() - 24 * 3600 * 1000)), ex);
+      const yStart = new Date(d.start.getTime() - DAY_MS);
+      const yesterday = salesStats(await closedSince(tid, yStart, new Date(d.now.getTime() - DAY_MS)), d.ex);
       const a = today.checks ? today.revenue / today.checks : 0;
       const b = yesterday.checks ? yesterday.revenue / yesterday.checks : 0;
       const diff = b ? Math.round(((a - b) / b) * 100) : null;
       return `🧾 Средний чек сегодня: ${rub(a)} (${today.checks} чек.)\n`
         + `Вчера к этому часу: ${rub(b)} (${yesterday.checks} чек.)${diff === null ? "" : `\nИзменение: ${diff > 0 ? "+" : ""}${diff}%`}`;
     },
-    async kinds(bot) {
-      const venue = await venueOf(bot.tenantId);
-      const st = salesStats(await closedSince(bot.tenantId, businessDayStart(new Date(), venue.timezone)), await loyaltyExclude(bot.tenantId));
+    async kinds(bot, tid) {
+      const d = await dayOf(tid);
+      const st = salesStats(await closedSince(tid, d.start), d.ex);
       const total = st.kinds.kitchen + st.kinds.bar + st.kinds.hookah;
       const pct = (v) => (total ? Math.round((v / total) * 100) : 0);
       return [
@@ -1036,61 +1374,342 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         st.kinds.hookah ? `Кальяны: ${rub(st.kinds.hookah)} · ${pct(st.kinds.hookah)}%` : "",
       ].filter(Boolean).join("\n");
     },
-    async seating(bot) {
-      const tables = await tenantRef(bot.tenantId).collection("tables").get();
+    async seating(bot, tid) {
+      const tables = await tenantRef(tid).collection("tables").get();
       const hall = tables.docs.filter((d) => d.id !== TAKEAWAY_TABLE);
       const busy = hall.filter((d) => (d.data().activeSessionIds || []).length > 0).length;
-      const open = await activeSessions(bot.tenantId);
+      const open = await activeSessions(tid);
       const take = open.filter((s) => s.tableId === TAKEAWAY_TABLE).length;
       const pct = hall.length ? Math.round((busy / hall.length) * 100) : 0;
+      const b = await bookingsOf(tid);
+      const next = b.upcoming[0];
       return `🪑 Посадка: занято ${busy} из ${hall.length} столов (${pct}%)\nОткрытых чеков в зале: ${open.length - take}`
-        + (take ? `\nС собой и доставка в работе: ${take}` : "");
+        + (take ? `\nС собой и доставка в работе: ${take}` : "")
+        + (b.list.length ? `\nБроней сегодня: ${b.list.length}${next ? ` · ближайшая в ${hhmm(next.at, b.tz)}` : ""}` : "");
     },
-    async shift(bot) {
-      const venue = await venueOf(bot.tenantId);
-      const team = await onShiftStaff(bot.tenantId);
-      const st = (await tenantRef(bot.tenantId).collection("meta").doc("shiftState").get()).data() || {};
-      const cash = await openCashShift(bot.tenantId);
-      const lines = [cash ? `👥 Касса открыта ${sinceLabel(cash.openedAt, venue.timezone)}` : st.openShiftId ? "👥 Касса открыта" : "👥 Касса закрыта"];
+    async shift(bot, tid) {
+      const venue = await venueOf(tid);
+      const now = new Date();
+      const team = await onShiftStaff(tid);
+      const cash = await openCashShift(tid);
+      const lines = [cash ? `👥 Касса открыта ${sinceLabel(cash.openedAt, venue.timezone)}` : "👥 Касса закрыта — смена не открыта"];
+      const stale = cash ? staleCashText(cash.openedAt, venue.timezone, now) : null;
+      if (stale) lines.push(`⚠️ ${stale[0].toUpperCase()}${stale.slice(1)}.`);
       if (!team.length) lines.push("На смене никого не отмечено.");
       for (const m of team) {
-        lines.push(`• ${m.role}${m.since ? `, с ${hhmm(m.since, venue.timezone)}` : ""}`);
+        const old = m.since && now.getTime() - m.since.getTime() > STALE_STAFF_SHIFT_MS;
+        lines.push(`• ${m.role}${m.since ? `, ${sinceLabel(m.since, venue.timezone, now)}` : ""}${old ? " ⚠️ не закрыта" : ""}`);
       }
-      if (team.length) lines.push("", `Кто именно: ${whoUrl(bot.tenantId, "team", "now")}`);
+      if (team.some((m) => m.since && now.getTime() - m.since.getTime() > STALE_STAFF_SHIFT_MS)) {
+        lines.push("⚠️ — личная смена идёт больше 16 часов: похоже, её забыли закрыть на кассе (зарплата посчитается неверно).");
+      }
+      if (team.length) lines.push("", `Кто именно: ${whoUrl(tid, "team", "now")}`);
       return lines.join("\n");
     },
-    async delivery(bot) {
-      const open = (await activeSessions(bot.tenantId)).filter((s) => s.tableId === TAKEAWAY_TABLE);
+    async delivery(bot, tid) {
+      const open = (await activeSessions(tid)).filter((s) => s.tableId === TAKEAWAY_TABLE);
       if (!open.length) return "🛵 Заказов с собой и доставки в работе нет.";
+      open.sort((a, b) => (Number(a.orderNo) || 0) - (Number(b.orderNo) || 0));
       return ["🛵 В работе:"].concat(open.map((s) => {
         const type = s.orderType === "delivery" ? "delivery" : "takeaway";
-        return `• №${orderNo(s.id, s.orderNo)} ${type === "delivery" ? "доставка" : "с собой"} — ${flow.label(type, s.deliveryStatus)}, ${rub(sessionBill(s))}`;
+        const paid = (Number(s.guestPaidTotal) || 0) > 0 ? " · оплачен онлайн" : "";
+        const app = s.source === "app" ? " · 📱" : "";
+        return `• №${orderNo(s.id, s.orderNo)} ${type === "delivery" ? "доставка" : "с собой"} — ${flow.label(type, s.deliveryStatus)}, ${rub(sessionBill(s))}${paid}${app}`;
       })).join("\n");
+    },
+    async cash(bot, tid) {
+      const venue = await venueOf(tid);
+      const shift = await openCashShift(tid);
+      if (!shift) return "💵 Касса закрыта — смена не открыта.";
+      const sessions = (await closedSince(tid, shift.openedAt)).filter((s) => s.status !== "cancelled");
+      let sales = 0;
+      let tips = 0;
+      for (const s of sessions) {
+        if (s.closedWithoutPayment) continue;
+        if (s.refunded && !s.refundCashOut) continue;
+        sales += Number(s.paymentCash) || 0;
+        tips += Number(s.tipsCash) || 0;
+      }
+      const ops = (await tenantRef(tid).collection("cashOps").where("shiftId", "==", shift.id).get()).docs.map((d) => d.data()).filter((o) => !o.cancelled);
+      const sumOf = (type) => ops.filter((o) => o.type === type).reduce((a, o) => a + (Number(o.amount) || 0), 0);
+      const opening = Number(shift.data.openingCash) || 0;
+      const dep = sumOf("deposit");
+      const col = sumOf("collection");
+      const pay = sumOf("payout");
+      const ref = sumOf("refund");
+      const expected = opening + sales + tips + dep - col - pay - ref;
+      const st = salesStats(sessions, await loyaltyExclude(tid));
+      const stale = staleCashText(shift.openedAt, venue.timezone);
+      return [
+        `💵 Касса, смена ${sinceLabel(shift.openedAt, venue.timezone)}`,
+        `На начало смены: ${rub(opening)}`,
+        `+ наличные продажи: ${rub(sales)}`,
+        tips ? `+ чаевые наличными: ${rub(tips)}` : "",
+        dep ? `+ внесения: ${rub(dep)}` : "",
+        col ? `− инкассация: ${rub(col)}` : "",
+        pay ? `− выплаты: ${rub(pay)}` : "",
+        ref ? `− возвраты наличными: ${rub(ref)}` : "",
+        `= должно быть в кассе: ${rub(expected)}`,
+        "",
+        `Безнал за смену: карта ${rub(st.card)} · терминал/СБП ${rub(st.terminal)}${st.aggregator ? ` · агрегаторы ${rub(st.aggregator)}` : ""}`,
+        stale ? `\n⚠️ ${stale[0].toUpperCase()}${stale.slice(1)}.` : "",
+      ].filter((x) => x !== "").join("\n");
+    },
+    async yesterday(bot, tid) {
+      const venue = await venueOf(tid);
+      const lb = lastBusinessDay(new Date(), venue.timezone);
+      const [sessions, audit] = await Promise.all([closedSince(tid, lb.start, lb.end), auditSince(tid, lb.start, lb.end)]);
+      return buildSummary({ venueName: venueTitle(venue) || "Заведение", label: lb.label, sessions, audit, excludeTobacco: await loyaltyExclude(tid) });
+    },
+    async week(bot, tid) {
+      const w = await weekOf(tid);
+      return weekText(w.days.map((x) => ({ start: x.start, revenue: x.st.revenue, checks: x.st.checks })), w.prev.revenue, w.tz);
+    },
+    async top(bot, tid) {
+      const d = await dayOf(tid);
+      const top = topItems([salesStats(await closedSince(tid, d.start), d.ex)], 10);
+      if (!top.length) return "🏆 Сегодня продаж ещё не было.";
+      return ["🏆 Топ продаж сегодня:"].concat(top.map(([n, v, q], i) => `${i + 1}. ${n} — ${q} шт · ${rub(v)}`)).join("\n");
+    },
+    async stock(bot, tid) {
+      const items = (await tenantRef(tid).collection("inventoryItems").get()).docs.map((d) => d.data())
+        .filter((x) => x.active !== false && (Number(x.minQuantity) || 0) > 0 && (Number(x.quantity) || 0) <= Number(x.minQuantity));
+      if (!items.length) return "📦 Склад: всё в норме, ничего не заканчивается.";
+      items.sort((a, b) => (Number(a.quantity) / Number(a.minQuantity)) - (Number(b.quantity) / Number(b.minQuantity)));
+      return [`📦 Заканчивается (${items.length}):`].concat(items.slice(0, 25).map((x) =>
+        `• ${String(x.name || "—").slice(0, 60)}: ${qtyText(x.quantity, x.unit)} (минимум ${qtyText(x.minQuantity, x.unit)})`)).join("\n");
+    },
+    async bookings(bot, tid) {
+      const b = await bookingsOf(tid);
+      if (!b.list.length) return "📖 Броней на сегодня нет.";
+      const guests = b.list.reduce((a, r) => a + (Number(r.guestsCount) || 0), 0);
+      const waiting = b.list.filter((r) => r.status === "new").length;
+      const STATUS = { new: "ждёт подтверждения", confirmed: "подтверждена", seated: "гости пришли" };
+      // Без имён и телефонов гостей — время, стол, сколько человек.
+      const lines = [`📖 Брони сегодня: ${b.list.length} · гостей ${guests}`];
+      if (waiting) lines.push(`⏳ Ждут подтверждения: ${waiting} — подтвердите на кассе`);
+      if (b.upcoming.length) {
+        lines.push("", "Ближайшие:");
+        for (const r of b.upcoming.slice(0, 12)) {
+          lines.push(`• ${hhmm(r.at, b.tz)} · ${r.tableName || "стол не выбран"} · ${Number(r.guestsCount) || "?"} гост. · ${STATUS[r.status] || r.status || ""}`);
+        }
+      }
+      return lines.join("\n");
+    },
+    async voids(bot, tid) {
+      const d = await dayOf(tid);
+      const audit = await auditSince(tid, d.start);
+      const st = salesStats(await closedSince(tid, d.start), d.ex);
+      const by = (action) => audit.filter((a) => a.action === action);
+      const sum = (list) => list.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+      const voided = by("order_item_voided");
+      const removed = by("order_item_removed");
+      const unpaid = by("closed_without_payment");
+      const refunds = by("refund");
+      const discounts = by("discount_applied").filter((a) => (Number((a.details || {}).percent) || 0) >= BIG_DISCOUNT_PERCENT);
+      const reasons = new Map();
+      for (const a of voided) {
+        const r = String((a.details || {}).reason || "без причины").slice(0, 40);
+        reasons.set(r, (reasons.get(r) || 0) + 1);
+      }
+      const lines = ["⚠️ Отмены и скидки сегодня:"];
+      lines.push(`Отменено позиций, которые уже готовили: ${voided.length}${voided.length ? ` на ${rub(sum(voided))}` : ""}`);
+      if (reasons.size) lines.push(`Причины: ${[...reasons.entries()].map(([r, n]) => `${r} ×${n}`).join(", ")}`);
+      lines.push(`Удалено до отправки на кухню: ${removed.length}${removed.length ? ` на ${rub(sum(removed))}` : ""}`);
+      lines.push(`Закрыто без оплаты: ${unpaid.length}${unpaid.length ? ` на ${rub(sum(unpaid))}` : ""}`);
+      lines.push(`Возвратов: ${refunds.length}${refunds.length ? ` на ${rub(sum(refunds))}` : ""}`);
+      lines.push(`Скидок от ${BIG_DISCOUNT_PERCENT}%: ${discounts.length}`);
+      if (st.discount >= 1) lines.push(`Все скидки в чеках: ${rub(st.discount)}`);
+      if (voided.length || unpaid.length || refunds.length) lines.push("", "Кто именно — в кабинете: «Активность и журнал».");
+      return lines.join("\n");
+    },
+    async reviews(bot, tid) {
+      const since = new Date(Date.now() - 7 * DAY_MS);
+      const list = (await tenantRef(tid).collection("reviews").where("createdAt", ">=", since).get()).docs.map((d) => d.data());
+      const rated = list.filter((r) => (Number(r.rating) || 0) > 0);
+      if (!rated.length) return "⭐ Отзывов за 7 дней нет.";
+      const avg = rated.reduce((a, r) => a + Number(r.rating), 0) / rated.length;
+      const count = (n) => rated.filter((r) => Math.round(Number(r.rating)) === n).length;
+      const low = rated.filter((r) => Number(r.rating) <= 3).length;
+      return [
+        `⭐ Отзывы за 7 дней: ${rated.length} · средняя оценка ${avg.toFixed(1).replace(".", ",")}`,
+        `5★ ${count(5)} · 4★ ${count(4)} · 3★ ${count(3)} · 2★ ${count(2)} · 1★ ${count(1)}`,
+        low ? `Оценок 3 и ниже: ${low} — тексты отзывов в кабинете («Отзывы»).` : "Низких оценок нет 👍",
+      ].join("\n");
     },
   };
 
+  /** Брони точки на сегодняшние рабочие сутки, без отменённых. */
+  async function bookingsOf(tid) {
+    const d = await dayOf(tid);
+    const end = new Date(d.start.getTime() + DAY_MS);
+    const snap = await tenantRef(tid).collection("reservations").where("startTime", ">=", d.start).where("startTime", "<", end).get();
+    const list = snap.docs.map((x) => ({ ...x.data(), at: toDate(x.data().startTime) }))
+      .filter((r) => r.at && !["cancelled", "noShow", "no_show"].includes(r.status))
+      .sort((a, b) => a.at - b.at);
+    const soon = d.now.getTime() - 30 * 60000;
+    return { tz: d.tz, list, upcoming: list.filter((r) => r.at.getTime() >= soon && r.status !== "seated") };
+  }
+
+  // ------------------------------------------------------------ отчёты по всей сети
+
+  const section = (bot, tid, text) => `${POINT_MARK} ${pointName(bot, tid)}\n${text}`;
+  async function perPoint(bot, key) {
+    const parts = [];
+    for (const p of bot.points) parts.push(section(bot, p.id, await ONE[key](bot, p.id)));
+    return `🏢 Сеть «${bot.chainName}» — все точки\n\n${parts.join("\n\n")}`;
+  }
+
+  const ALL = {
+    async revenue(bot) {
+      const per = [];
+      for (const p of bot.points) per.push({ p, m: await moneyOf(p.id) });
+      const t = per.reduce((a, { m }) => {
+        for (const k of ["revenue", "checks", "cash", "card", "terminal", "aggregator", "comp"]) a[k] += m.st[k];
+        a.open += m.open.length;
+        a.openSum += m.openSum;
+        return a;
+      }, { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, aggregator: 0, comp: 0, open: 0, openSum: 0 });
+      const lines = [
+        `🏢 Сеть «${bot.chainName}» — все точки`,
+        `💰 Выручка сегодня (с ${DAY_START_HOUR}:00): ${rub(t.revenue)}`,
+        `Чеков закрыто: ${t.checks}${t.checks ? ` · средний ${rub(t.revenue / t.checks)}` : ""}`,
+        `Наличные ${rub(t.cash)} · карта ${rub(t.card)} · терминал/СБП ${rub(t.terminal)}`,
+        t.aggregator ? `Агрегаторы: ${rub(t.aggregator)} (переведут позже)` : "",
+        t.comp ? `За счёт заведения: ${rub(t.comp)}` : "",
+        `Открыто сейчас: ${t.open} чек. на ${rub(t.openSum)}`,
+        "",
+      ];
+      const warn = [];
+      for (const { p, m } of per) {
+        const shift = m.shift ? `касса ${sinceLabel(m.shift.openedAt, m.tz)}` : "касса закрыта";
+        lines.push(`${POINT_MARK} ${p.name}: ${rub(m.st.revenue)} · ${m.st.checks} чек. · открыто ${m.open.length} · ${shift}`);
+        if (m.stale) warn.push(`• ${p.name}: ${m.stale}`);
+      }
+      if (warn.length) lines.push("", "⚠️ Обратите внимание:", ...warn);
+      return lines.filter((x, i) => x !== "" || i > 0).join("\n");
+    },
+    async avg(bot) {
+      let rev = 0;
+      let chk = 0;
+      const rows = [];
+      for (const p of bot.points) {
+        const d = await dayOf(p.id);
+        const st = salesStats(await closedSince(p.id, d.start), d.ex);
+        rev += st.revenue;
+        chk += st.checks;
+        rows.push(`${POINT_MARK} ${p.name}: ${rub(st.checks ? st.revenue / st.checks : 0)} (${st.checks} чек.)`);
+      }
+      return [`🏢 Сеть «${bot.chainName}»`, `🧾 Средний чек сегодня: ${rub(chk ? rev / chk : 0)} (${chk} чек.)`, "", ...rows].join("\n");
+    },
+    async kinds(bot) {
+      const total = { kitchen: 0, bar: 0, hookah: 0 };
+      const rows = [];
+      for (const p of bot.points) {
+        const d = await dayOf(p.id);
+        const st = salesStats(await closedSince(p.id, d.start), d.ex);
+        for (const k of Object.keys(total)) total[k] += st.kinds[k];
+        rows.push(`${POINT_MARK} ${p.name}: кухня ${rub(st.kinds.kitchen)} · бар ${rub(st.kinds.bar)}${st.kinds.hookah ? ` · кальяны ${rub(st.kinds.hookah)}` : ""}`);
+      }
+      const sum = total.kitchen + total.bar + total.hookah;
+      const pct = (v) => (sum ? Math.round((v / sum) * 100) : 0);
+      return [
+        `🏢 Сеть «${bot.chainName}» — доли выручки сегодня:`,
+        `Кухня: ${rub(total.kitchen)} · ${pct(total.kitchen)}%`,
+        `Бар: ${rub(total.bar)} · ${pct(total.bar)}%`,
+        total.hookah ? `Кальяны: ${rub(total.hookah)} · ${pct(total.hookah)}%` : "",
+        "",
+        ...rows,
+      ].filter((x, i, a) => x !== "" || (i > 0 && a[i - 1] !== "")).join("\n");
+    },
+    seating: (bot) => perPoint(bot, "seating"),
+    shift: (bot) => perPoint(bot, "shift"),
+    delivery: (bot) => perPoint(bot, "delivery"),
+    cash: (bot) => perPoint(bot, "cash"),
+    async yesterday(bot) {
+      const home = await venueOf(bot.tenantId);
+      const lb = lastBusinessDay(new Date(), home.timezone);
+      return buildChainSummary({ chainName: bot.chainName, label: lb.label, points: await chainDay(bot, lb) });
+    },
+    async week(bot) {
+      const days = Array.from({ length: 7 }, () => ({ start: null, revenue: 0, checks: 0 }));
+      let prev = 0;
+      let tz;
+      const rows = [];
+      for (const p of bot.points) {
+        const w = await weekOf(p.id);
+        tz = tz || w.tz;
+        w.days.forEach((x, i) => {
+          days[i].start = days[i].start || x.start;
+          days[i].revenue += x.st.revenue;
+          days[i].checks += x.st.checks;
+        });
+        prev += w.prev.revenue;
+        const rev = w.days.reduce((a, x) => a + x.st.revenue, 0);
+        rows.push(`${POINT_MARK} ${p.name}: ${rub(rev)}`);
+      }
+      return `🏢 Сеть «${bot.chainName}»\n${weekText(days, prev, tz)}\n\nПо точкам за 7 дней:\n${rows.join("\n")}`;
+    },
+    async top(bot) {
+      const stats = [];
+      for (const p of bot.points) {
+        const d = await dayOf(p.id);
+        stats.push(salesStats(await closedSince(p.id, d.start), d.ex));
+      }
+      const top = topItems(stats, 10);
+      if (!top.length) return `🏢 Сеть «${bot.chainName}»: сегодня продаж ещё не было.`;
+      return [`🏢 Сеть «${bot.chainName}» — топ продаж сегодня:`].concat(top.map(([n, v, q], i) => `${i + 1}. ${n} — ${q} шт · ${rub(v)}`)).join("\n");
+    },
+    stock: (bot) => perPoint(bot, "stock"),
+    bookings: (bot) => perPoint(bot, "bookings"),
+    voids: (bot) => perPoint(bot, "voids"),
+    reviews: (bot) => perPoint(bot, "reviews"),
+  };
+
+  /** Данные закончившихся суток по каждой точке — для итогов сети. */
+  async function chainDay(bot, lb) {
+    const out = [];
+    for (const p of bot.points) {
+      const venue = await venueOf(p.id);
+      if (venue.status === "deleted" || venue.status === "disabled") continue;
+      const [sessions, audit, shift] = await Promise.all([closedSince(p.id, lb.start, lb.end), auditSince(p.id, lb.start, lb.end), openCashShift(p.id)]);
+      const stale = shift ? staleCashText(shift.openedAt, venue.timezone) : null;
+      out.push({ name: p.name, sessions, audit, excludeTobacco: await loyaltyExclude(p.id), notes: stale ? [stale] : [] });
+    }
+    return out;
+  }
+
+  /** Текст отчёта: по точке или по всей сети ("all"). */
+  async function report(bot, key, view) {
+    if (view === "all" && multi(bot)) return ALL[key](bot);
+    const tid = view === "all" ? bot.tenantId : view;
+    const text = await ONE[key](bot, tid);
+    // У сети подписываем точку (в «Выручке» она уже есть — «🏠 …»).
+    return multi(bot) && !text.startsWith("🏠") ? section(bot, tid, text) : text;
+  }
+
   // ------------------------------------------------------------ карточки доставки
 
-  async function refreshCard(bot, s, force = false) {
-    const staff = bot.cfg.staffChat;
+  async function refreshCard(bot, tid, s, force = false) {
+    const staff = staffChatOf(bot.cfg, tid, bot.tenantId).chat;
     if (!staff || (bot.cfg.notify && bot.cfg.notify.delivery === false)) return;
     const cardRef = botsCol().doc(bot.tenantId).collection("cards").doc(s.id);
     const card = (await cardRef.get()).data();
-    const venue = await venueOf(bot.tenantId);
+    const venue = await venueOf(tid);
     let pending = [];
     if (s.source === "app" && !(s.orderItems || []).length) {
-      const g = await tenantRef(bot.tenantId).collection("guestOrders").where("sessionId", "==", s.id).get();
+      const g = await tenantRef(tid).collection("guestOrders").where("sessionId", "==", s.id).get();
       pending = g.docs.map((d) => d.data()).filter((o) => o.status === "new").flatMap((o) => o.items || []);
     }
-    const text = deliveryCardText(s, venue.timezone, pending);
-    const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(bot.tenantId, s.id) : null);
+    const text = deliveryCardText(s, venue.timezone, pending, multi(bot) ? pointName(bot, tid) : "");
+    const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(tid, s.id) : null);
     const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
       const m = await api(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
-        console.error(`telegram card (${bot.tenantId}):`, e.message);
+        console.error(`telegram card (${tid}):`, e.message);
         return null;
       });
-      if (m) await cardRef.set({ chatId: staff.id, messageId: m.message_id, sig });
+      if (m) await cardRef.set({ chatId: staff.id, messageId: m.message_id, sig, tenantId: tid });
       return;
     }
     if (!force && card.sig === sig) return;
@@ -1118,27 +1737,13 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 
   // ------------------------------------------------------------ слушатели
 
-  function attach(tenantId, cfg) {
-    detach(tenantId);
-    let token;
-    try {
-      token = decrypt(secretKey(), cfg.tokenEnc);
-    } catch (e) {
-      console.error(`telegram: не расшифровать токен ${tenantId} — подключите бота заново`);
-      return;
-    }
-    const bot = { tenantId, token, cfg, unsubs: [], startedAt: admin.firestore.Timestamp.now() };
-    bots.set(tenantId, bot);
-    // Адрес вебхука сменился (включили или убрали ретранслятор) — переставляем
-    // его у Telegram сами, владельцу подключать бота заново не нужно.
-    if (cfg.hookSecret && cfg.hookUrl !== hookUrl(tenantId)) {
-      api(token, "setWebhook", { url: hookUrl(tenantId), secret_token: cfg.hookSecret, allowed_updates: ["message", "callback_query"] })
-        .then(() => botsCol().doc(tenantId).update({ hookUrl: hookUrl(tenantId) }))
-        .catch((e) => console.error(`telegram webhook (${tenantId}):`, e.message));
-    }
-    const t = tenantRef(tenantId);
+  /** Слушатели одной точки: заказы с собой и доставки, журнал кассы, смены. */
+  function attachPoint(bot, tid) {
+    const unsubs = [];
+    const t = tenantRef(tid);
     const owners = () => ownerChats(bot.cfg);
     const on = (flag) => !bot.cfg.notify || bot.cfg.notify[flag] !== false;
+    const label = () => (multi(bot) ? pointName(bot, tid) : "");
 
     // Заказы с собой и доставки в работе: открытые чеки и уже оплаченные,
     // но ещё не выданные (deliveryOpen). Новые — карточкой, изменения —
@@ -1151,7 +1756,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const inWork = !!s && !flow.isFinal(type, s.deliveryStatus) && (s.status === "active" || s.deliveryOpen === true);
       if (inWork) {
         tracked.add(id);
-        return refreshCard(bot, s);
+        return refreshCard(bot, tid, s);
       }
       if (!tracked.has(id) && s) return closeCard(bot, id, s);
       if (!tracked.has(id)) return;
@@ -1159,22 +1764,22 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const fresh = s || { id, ...((await t.collection("sessions").doc(id).get()).data() || {}) };
       return closeCard(bot, id, fresh);
     };
-    const watch = (which, query) => bot.unsubs.push(query.onSnapshot((snap) => {
+    const watch = (which, query) => unsubs.push(query.onSnapshot((snap) => {
       snap.docChanges().forEach((ch) => {
         if (ch.type === "removed") live[which].delete(ch.doc.id);
         else live[which].set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
-        reconcile(ch.doc.id).catch((e) => console.error(`telegram card (${tenantId}):`, e.message));
+        reconcile(ch.doc.id).catch((e) => console.error(`telegram card (${tid}):`, e.message));
       });
-    }, (e) => console.error(`telegram sessions (${tenantId}):`, e.message)));
+    }, (e) => console.error(`telegram sessions (${tid}):`, e.message)));
     const takeaway = t.collection("sessions").where("tableId", "==", TAKEAWAY_TABLE);
     watch("active", takeaway.where("status", "==", "active"));
     watch("open", takeaway.where("deliveryOpen", "==", true));
 
     // Журнал кассы: сигналы владельцу — с курсора, без повторов после рестарта.
-    const cursor = cfg.auditCursor || bot.startedAt;
-    bot.unsubs.push(t.collection("auditLog").where("createdAt", ">", cursor).orderBy("createdAt")
+    const cursor = (bot.cfg.auditCursors || {})[tid] || (tid === bot.tenantId ? bot.cfg.auditCursor : null) || bot.startedAt;
+    unsubs.push(t.collection("auditLog").where("createdAt", ">", cursor).orderBy("createdAt")
       .onSnapshot(async (snap) => {
-        const venue = await venueOf(tenantId).catch(() => ({}));
+        const venue = await venueOf(tid).catch(() => ({}));
         let last = null;
         for (const ch of snap.docChanges()) {
           if (ch.type !== "added") continue;
@@ -1186,49 +1791,114 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           const d = a.details || {};
           text = alertText(venue.name || "Заведение", {
             ...a,
-            whoRole: await roleOfWho(tenantId, a.employeeName),
-            approvedRole: d.approvedBy ? await roleOfWho(tenantId, d.approvedBy) : "",
+            whoRole: await roleOfWho(tid, a.employeeName),
+            approvedRole: d.approvedBy ? await roleOfWho(tid, d.approvedBy) : "",
           });
-          const extra = a.employeeName || d.approvedBy ? whoButton(tenantId, "a", ch.doc.id) : {};
+          const extra = a.employeeName || d.approvedBy ? whoButton(tid, "a", ch.doc.id) : {};
           for (const c of owners()) await say(bot, c.id, text, extra);
         }
-        if (last) botsCol().doc(tenantId).update({ auditCursor: last }).catch(() => {});
-      }, (e) => console.error(`telegram audit (${tenantId}):`, e.message)));
+        if (last) {
+          const patch = tid === bot.tenantId ? { auditCursor: last, [`auditCursors.${tid}`]: last } : { [`auditCursors.${tid}`]: last };
+          botsCol().doc(bot.tenantId).update(patch).catch(() => {});
+        }
+      }, (e) => console.error(`telegram audit (${tid}):`, e.message)));
 
     // Смены сотрудников: начало и конец — владельцу, с ролью и временем.
     const dayAgo = admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600 * 1000);
-    bot.unsubs.push(t.collection("staffShifts").where("startedAt", ">=", dayAgo)
+    unsubs.push(t.collection("staffShifts").where("startedAt", ">=", dayAgo)
       .onSnapshot(async (snap) => {
         if (!on("shifts")) return;
-        const venue = await venueOf(tenantId).catch(() => ({}));
+        const venue = await venueOf(tid).catch(() => ({}));
         for (const ch of snap.docChanges()) {
           const s = ch.doc.data();
           const started = toDate(s.startedAt);
           const ended = toDate(s.endedAt);
           const since = bot.startedAt.toMillis();
-          let text = null;
-          if (ch.type === "added" && s.status === "open" && started && started.getTime() > since) text = "🟢 Начал смену";
-          if (ch.type === "modified" && s.status !== "open" && ended && ended.getTime() > since) text = "🔴 Закончил смену";
-          if (!text) continue;
-          const role = await roleOfWho(tenantId, s.employeeName, s.employeeId) || "сотрудник";
-          const at = hhmm(text.startsWith("🟢") ? started : ended, venue.timezone);
+          let what = null;
+          if (ch.type === "added" && s.status === "open" && started && started.getTime() > since) what = "start";
+          if (ch.type === "modified" && s.status !== "open" && ended && ended.getTime() > since) what = "end";
+          if (!what) continue;
+          const role = await roleOfWho(tid, s.employeeName, s.employeeId) || "сотрудник";
+          const at = hhmm(what === "start" ? started : ended, venue.timezone);
+          const icon = what === "start" ? "🟢" : "🔴";
+          const verb = what === "start" ? "Начал смену" : "Закончил смену";
           // Имени нет — кто именно, по кнопке на сервере в РФ.
-          for (const c of owners()) await say(bot, c.id, `${text}: ${role} в ${at}`, whoButton(tenantId, "sh", ch.doc.id));
+          const text = label() ? `${icon} ${label()} — ${verb.toLowerCase()}: ${role} в ${at}` : `${icon} ${verb}: ${role} в ${at}`;
+          for (const c of owners()) await say(bot, c.id, text, whoButton(tid, "sh", ch.doc.id));
         }
-      }, (e) => console.error(`telegram shifts (${tenantId}):`, e.message)));
+      }, (e) => console.error(`telegram shifts (${tid}):`, e.message)));
+    return unsubs;
+  }
+
+  /** Подтянуть точки сети и слушать новые; ушедшие — отключить. */
+  async function syncPoints(bot) {
+    const info = await loadPoints(bot.tenantId);
+    if (bots.get(bot.tenantId) !== bot) return; // бота уже переподключили
+    bot.chainId = info.chainId;
+    bot.chainName = info.chainName;
+    bot.points = info.points;
+    bot.pointsAt = Date.now();
+    const want = new Set(info.points.map((p) => p.id));
+    for (const [tid, unsubs] of bot.pointUnsubs) {
+      if (want.has(tid)) continue;
+      unsubs.forEach((u) => { try { u(); } catch (_) { /* уже отписан */ } });
+      bot.pointUnsubs.delete(tid);
+    }
+    for (const p of info.points) if (!bot.pointUnsubs.has(p.id)) bot.pointUnsubs.set(p.id, attachPoint(bot, p.id));
+    // По chainId кабинет любой точки сети находит этого бота.
+    if ((bot.cfg.chainId || null) !== (info.chainId || null)) {
+      botsCol().doc(bot.tenantId).update({ chainId: info.chainId || null }).catch(() => {});
+    }
+  }
+
+  function attach(tenantId, cfg) {
+    detach(tenantId);
+    let token;
+    try {
+      token = decrypt(secretKey(), cfg.tokenEnc);
+    } catch (e) {
+      console.error(`telegram: не расшифровать токен ${tenantId} — подключите бота заново`);
+      return;
+    }
+    const bot = {
+      tenantId, token, cfg, startedAt: admin.firestore.Timestamp.now(),
+      chainId: "", chainName: "", points: [{ id: tenantId, name: "Заведение" }], pointsAt: 0, pointUnsubs: new Map(),
+    };
+    bots.set(tenantId, bot);
+    // Адрес вебхука сменился (включили или убрали ретранслятор) — переставляем
+    // его у Telegram сами, владельцу подключать бота заново не нужно.
+    if (cfg.hookSecret && cfg.hookUrl !== hookUrl(tenantId)) {
+      api(token, "setWebhook", { url: hookUrl(tenantId), secret_token: cfg.hookSecret, allowed_updates: ["message", "callback_query"] })
+        .then(() => botsCol().doc(tenantId).update({ hookUrl: hookUrl(tenantId) }))
+        .catch((e) => console.error(`telegram webhook (${tenantId}):`, e.message));
+    }
+    bot.ready = syncPoints(bot)
+      .catch((e) => console.error(`telegram points (${tenantId}):`, e.message))
+      .then(() => {
+        const commands = [
+          { command: "menu", description: "Отчёты" },
+          ...(multi(bot) ? [{ command: "point", description: "Выбрать точку сети" }] : []),
+          { command: "id", description: "Мой Telegram ID" },
+          { command: "help", description: "Что умеет бот" },
+          { command: "stop", description: "Отключить уведомления" },
+        ];
+        return api(token, "setMyCommands", { commands }).catch(() => {});
+      });
   }
 
   function detach(tenantId) {
     const bot = bots.get(tenantId);
     if (!bot) return;
-    bot.unsubs.forEach((u) => { try { u(); } catch (_) { /* уже отписан */ } });
+    for (const unsubs of bot.pointUnsubs.values()) unsubs.forEach((u) => { try { u(); } catch (_) { /* уже отписан */ } });
     bots.delete(tenantId);
   }
 
-  /** Утренние итоги — раз в рабочие сутки после SUMMARY_HOUR. */
+  /** Утренние итоги — раз в рабочие сутки после SUMMARY_HOUR; заодно — новые точки сети. */
   async function tick() {
     for (const bot of bots.values()) {
       try {
+        await bot.ready;
+        if (Date.now() - bot.pointsAt > 10 * 60 * 1000) await syncPoints(bot);
         if (bot.cfg.notify && bot.cfg.notify.summary === false) continue;
         const owners = ownerChats(bot.cfg);
         if (!owners.length) continue;
@@ -1237,20 +1907,27 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         const now = new Date();
         const lb = lastBusinessDay(now, venue.timezone);
         if (localParts(now, venue.timezone).h < SUMMARY_HOUR || bot.cfg.lastSummaryDay === lb.key) continue;
-        const [sessions, audit] = await Promise.all([
-          closedSince(bot.tenantId, lb.start, lb.end),
-          tenantRef(bot.tenantId).collection("auditLog").where("createdAt", ">=", lb.start).where("createdAt", "<", lb.end).get()
-            .then((s) => s.docs.map((d) => d.data())),
-        ]);
-        const text = buildSummary({ venueName: venue.name || "Заведение", label: lb.label, sessions, audit, excludeTobacco: await loyaltyExclude(bot.tenantId) });
+        let text;
+        if (multi(bot)) {
+          text = buildChainSummary({ chainName: bot.chainName, label: lb.label, points: await chainDay(bot, lb) });
+        } else {
+          const [sessions, audit, shift] = await Promise.all([
+            closedSince(bot.tenantId, lb.start, lb.end), auditSince(bot.tenantId, lb.start, lb.end), openCashShift(bot.tenantId),
+          ]);
+          const stale = shift ? staleCashText(shift.openedAt, venue.timezone, now) : null;
+          text = buildSummary({ venueName: venue.name || "Заведение", label: lb.label, sessions, audit,
+            excludeTobacco: await loyaltyExclude(bot.tenantId), notes: stale ? [stale] : [] });
+        }
         await botsCol().doc(bot.tenantId).update({ lastSummaryDay: lb.key });
         bot.cfg.lastSummaryDay = lb.key;
-        for (const c of owners) await say(bot, c.id, text, { reply_markup: MENU_KEYBOARD });
+        for (const c of owners) await say(bot, c.id, text, { reply_markup: keyboardFor(bot, c.id) });
       } catch (e) {
         console.error(`telegram summary (${bot.tenantId}):`, e.message || e);
       }
     }
   }
+
+  const groupsKey = (cfg) => JSON.stringify([(cfg.staffChat || {}).id || null, Object.entries(cfg.staffChats || {}).map(([k, v]) => [k, (v || {}).id]).sort()]);
 
   function start() {
     // Настройки всех ботов — живьём: подключили, сменили токен, отключили.
@@ -1260,10 +1937,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         if (ch.type === "removed") return detach(id);
         const cfg = ch.doc.data();
         const cur = bots.get(id);
-        const staffSame = cur && (cur.cfg.staffChat || {}).id === (cfg.staffChat || {}).id;
-        // Тот же бот и та же группа — только обновляем чаты, флаги, курсор.
+        // Тот же бот и те же группы — только обновляем чаты, флаги, курсоры.
         // Новая группа — переподключаемся: заказы в работе придут в неё.
-        if (cur && cur.cfg.tokenEnc === cfg.tokenEnc && staffSame) cur.cfg = cfg;
+        if (cur && cur.cfg.tokenEnc === cfg.tokenEnc && groupsKey(cur.cfg) === groupsKey(cfg)) cur.cfg = cfg;
         else attach(id, cfg);
       });
     }, (e) => console.error("telegram bots:", e.message));
@@ -1276,6 +1952,6 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 }
 
 module.exports = {
-  createTelegram, buildSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
-  deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed,
+  createTelegram, buildSummary, buildChainSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
+  deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
 };

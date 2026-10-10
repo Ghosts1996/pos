@@ -17,7 +17,18 @@ function docRef(p) {
     id: p.split("/").pop(), path: p,
     async get() { const d = store.get(p); return { exists: !!d, id: p.split("/").pop(), ref: docRef(p), data: () => (d ? { ...d } : undefined) }; },
     async set(d) { store.set(p, { ...d }); fire(); },
-    async update(d) { if (!store.has(p)) throw new Error("no doc " + p); store.set(p, { ...store.get(p), ...d }); fire(); },
+    async update(d) {
+      if (!store.has(p)) throw new Error("no doc " + p);
+      // «views.501» — вложенное поле, как в Firestore.
+      const next = { ...store.get(p) };
+      for (const [k, v] of Object.entries(d)) {
+        const parts = k.split(".");
+        let o = next;
+        for (const part of parts.slice(0, -1)) { o[part] = { ...(o[part] || {}) }; o = o[part]; }
+        o[parts[parts.length - 1]] = v;
+      }
+      store.set(p, next); fire();
+    },
     async delete() { store.delete(p); fire(); },
     collection: (c) => colRef(`${p}/${c}`),
   };
@@ -75,7 +86,11 @@ const fetchImpl = async (url, opts) => {
   const [, token, method] = url.match(/bot([^/]+)\/(\w+)$/);
   const body = JSON.parse(opts.body);
   sent.push({ token, method, body });
-  if (method === "getMe") return { json: async () => ({ ok: true, result: { id: token.startsWith("111") ? 111 : 222, username: token.startsWith("111") ? "venue_a_bot" : "venue_b_bot" } }) };
+  if (method === "getMe") {
+    const k = token.slice(0, 3);
+    const [id, username] = { 111: [111, "venue_a_bot"], 222: [222, "venue_b_bot"] }[k] || [Number(k), `bot${k}_bot`];
+    return { json: async () => ({ ok: true, result: { id, username } }) };
+  }
   return { json: async () => ({ ok: true, result: { message_id: ++msgId } }) };
 };
 
@@ -84,12 +99,13 @@ const mkReq = (body, headers = {}, url = "/") => { const r = Readable.from([Buff
 const mkRes = () => { const r = { code: 0, body: null, writeHead(c) { r.code = c; }, end(b) { r.body = b; } }; return r; };
 const tg = tgmod.createTelegram({
   db, admin,
-  verifyAuth: async () => ({ uid: "owner1" }),
+  // admin2 — администратор только точки C2 сети.
+  verifyAuth: async (req) => ({ uid: req.headers.authorization === "Bearer admin2" ? "admin2" : "owner1" }),
   parseJsonBody: async (req) => { let s = ""; for await (const c of req) s += c; return JSON.parse(s); },
   readBody: async (req) => { let s = ""; for await (const c of req) s += c; return s; },
   sendJson: (res, code, obj) => { res.code = code; res.body = obj; },
   HttpError,
-  requireTenantRole: async (t, uid) => { if (uid !== "owner1") throw new HttpError(403, "no"); },
+  requireTenantRole: async (t, uid) => { if (uid !== "owner1" && !(uid === "admin2" && t === "C2")) throw new HttpError(403, "no"); },
   publicUrl: "https://pii.zalpos.ru/saas",
   fetchImpl,
 });
@@ -312,6 +328,270 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   res = mkRes();
   await tg.handleAddress({ url: `/deliveryAddress?t=B&s=s1abcd&e=${exp}&k=${k}` }, res);
   assert.equal(res.code, 403, "подпись заведения А не открывает адрес в Б");
+
+  // ================= Сеть: один бот на все точки, переключение точек
+  const H = 3600000;
+  const TZ = "Europe/Moscow";
+  store.set("chains/ch1", { name: "Ромашка" });
+  store.set("tenants/C1", { name: "Центр", chainId: "ch1", timezone: TZ });
+  store.set("tenants/C2", { name: "Арбат", chainId: "ch1", timezone: TZ });
+  store.set("tenants/C1/tables/t1", { name: "Стол 1", activeSessionIds: [] });
+  store.set("tenants/C2/tables/t1", { name: "Стол 1", activeSessionIds: ["z"] });
+  store.set("tenants/C2/tables/t2", { name: "Стол 2", activeSessionIds: [] });
+  res = mkRes();
+  await tg.handleSetup(mkReq({ tenantId: "C1", token: "333333:" + "c".repeat(35) }), res);
+  assert.equal(res.code, 200);
+  await tick(); await tick();
+  // Кабинет второй точки видит бота сети, второго бота не заводит
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "C2" }), res);
+  assert.equal(res.body.configured, true);
+  assert.deepEqual(res.body.chain, { name: "Ромашка", points: ["Арбат", "Центр"], home: "Центр" });
+  await assert.rejects(tg.handleStatus(mkReq({ tenantId: "C2" }, { authorization: "Bearer admin2" }), mkRes()), /другой точке/,
+    "администратор одной точки не управляет ботом всей сети");
+  await tg.handleAccess(mkReq({ tenantId: "C2", allowed: [{ id: 701, name: "Влад", role: "owner" }, { id: 702, name: "Повар", role: "staff" }] }), mkRes());
+  await tick();
+  assert.equal(store.get("telegramBots/C1").allowed.length, 2);
+  assert.ok(!store.has("telegramBots/C2"), "у точки сети нет второго бота");
+  const hookC = (update) => tg.handleHook(mkReq(update, { "x-telegram-bot-api-secret-token": store.get("telegramBots/C1").hookSecret }), mkRes(), "C1");
+  const toOwner = () => sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 701);
+  const ask = async (text) => {
+    sent.length = 0;
+    await hookC({ message: { chat: { id: 701, type: "private" }, from: { id: 701 }, text } });
+    return toOwner().pop().body;
+  };
+  let body = await ask("/start");
+  assert.match(body.text, /сеть «Ромашка» \(2 точки\)/);
+  assert.equal(body.reply_markup.keyboard[0][0].text, "📍 Все точки", "сверху — выбор точки, по умолчанию вся сеть");
+
+  // «Все точки»: выручка сети и по точкам; забытая смена кассы — предупреждение
+  const nowC = Date.now();
+  store.set("tenants/C1/sessions/p1", { status: "closed", tableId: "t1", closedAt: new TS(nowC - 60000), orderItems: [{ name: "Чай", price: 500, qty: 2 }], paymentCash: 1000 });
+  store.set("tenants/C2/sessions/p2", { status: "closed", tableId: "t1", closedAt: new TS(nowC - 60000),
+    orderItems: [{ name: "Чай", price: 500, qty: 3, kind: "bar" }, { name: "Суп", price: 1000, qty: 1 }], paymentCard: 2500 });
+  store.set("tenants/C1/meta/shiftState", { openShiftId: "old" });
+  store.set("tenants/C1/shifts/old", { status: "open", openedAt: new TS(nowC - 30 * H) });
+  body = await ask("💰 Выручка сегодня");
+  assert.match(body.text, /Сеть «Ромашка» — все точки/);
+  assert.match(body.text, /Выручка сегодня \(с 6:00\): 3\s500 ₽/);
+  assert.match(body.text, /📍 Арбат: 2\s500 ₽ · 1 чек\. · открыто 0 · касса закрыта/);
+  assert.match(body.text, /📍 Центр: 1\s000 ₽ · 1 чек\./);
+  assert.match(body.text, /• Центр: смена кассы не закрыта с \d\d\.\d\d \d\d:\d\d/);
+  body = await ask("🏆 нет такой");
+  assert.match(body.text, /Выберите отчёт/);
+  body = await ask("🧾 Средний чек");
+  assert.match(body.text, /Средний чек сегодня: 1\s750 ₽ \(2 чек\.\)/);
+  body = await ask("🍽 Кухня · Бар · Кальяны");
+  assert.match(body.text, /Кухня: 2\s000 ₽ · 57%/);
+  assert.match(body.text, /Бар: 1\s500 ₽ · 43%/);
+  body = await ask("🪑 Посадка");
+  assert.match(body.text, /📍 Арбат\n🪑 Посадка: занято 1 из 2/);
+  assert.match(body.text, /📍 Центр\n🪑 Посадка: занято 0 из 1/);
+
+  // Выбор точки: кнопка «📍», только владельцу
+  body = await ask("📍 Все точки");
+  assert.deepEqual(body.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["p:all", "p:C2", "p:C1"]);
+  assert.match(body.reply_markup.inline_keyboard[0][0].text, /^✅/);
+  sent.length = 0;
+  await hookC({ callback_query: { id: "p0", from: { id: 702 }, data: "p:C2", message: { chat: { id: 701 }, message_id: 300 } } });
+  assert.equal((store.get("telegramBots/C1").views || {})["701"], undefined, "сотрудник точку владельцу не переключит");
+  await hookC({ callback_query: { id: "p1", from: { id: 701 }, data: "p:C2", message: { chat: { id: 701 }, message_id: 300 } } });
+  await tick();
+  assert.equal(store.get("telegramBots/C1").views["701"], "C2", "выбор точки запомнен");
+  assert.equal(toOwner().pop().body.reply_markup.keyboard[0][0].text, "📍 Арбат");
+  body = await ask("💰 Выручка сегодня");
+  assert.match(body.text, /🏠 Арбат/);
+  assert.match(body.text, /Выручка сегодня \(с 6:00\): 2\s500 ₽/);
+  assert.ok(!/3\s500/.test(body.text), "только выбранная точка");
+  assert.match(body.text, /Касса закрыта/);
+  body = await ask("/point");
+  assert.match(body.reply_markup.inline_keyboard[1][0].text, /^✅ Арбат/);
+
+  // «Ещё отчёты» по выбранной точке
+  body = await ask("📊 Ещё отчёты");
+  const moreKeys = body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.deepEqual(moreKeys, ["r:yesterday", "r:week", "r:top", "r:stock", "r:bookings", "r:voids", "r:reviews"]);
+  const more = async (key) => {
+    sent.length = 0;
+    await hookC({ callback_query: { id: `r-${key}`, from: { id: 701 }, data: `r:${key}`, message: { chat: { id: 701 }, message_id: 301 } } });
+    return toOwner().pop().body.text;
+  };
+  let text = await more("top");
+  assert.match(text, /^📍 Арбат\n🏆 Топ продаж сегодня:\n1\. Чай — 3 шт · 1\s500 ₽\n2\. Суп — 1 шт · 1\s000 ₽$/);
+  store.set("tenants/C2/inventoryItems/i1", { name: "Молоко", quantity: 0.5, minQuantity: 2, unit: "l" });
+  store.set("tenants/C2/inventoryItems/i2", { name: "Сахар", quantity: 5, minQuantity: 1, unit: "kg" });
+  store.set("tenants/C2/inventoryItems/i3", { name: "Старое", quantity: 0, minQuantity: 1, unit: "pcs", active: false });
+  text = await more("stock");
+  assert.match(text, /Заканчивается \(1\):\n• Молоко: 0,5 л \(минимум 2 л\)/);
+  const soon = new TS(Date.now() + 60000);
+  store.set("tenants/C2/reservations/b1", { startTime: soon, status: "confirmed", guestsCount: 4, tableName: "Стол 2", guestName: "Пётр", phone: "+79005556677" });
+  store.set("tenants/C2/reservations/b2", { startTime: soon, status: "new", guestsCount: 2 });
+  store.set("tenants/C2/reservations/b3", { startTime: soon, status: "noShow", guestsCount: 3 });
+  store.set("tenants/C2/reservations/b4", { startTime: soon, status: "cancelled", guestsCount: 5 });
+  text = await more("bookings");
+  assert.match(text, /Брони сегодня: 2 · гостей 6/);
+  assert.match(text, /Ждут подтверждения: 1/);
+  assert.match(text, /Стол 2 · 4 гост\. · подтверждена/);
+  assert.ok(!/Пётр|7900555/.test(text), "в бронях нет имён и телефонов");
+  body = await ask("🪑 Посадка");
+  assert.match(body.text, /Броней сегодня: 2 · ближайшая в \d\d:\d\d/);
+  store.set("tenants/C2/reviews/v1", { rating: 5, text: "Супер", createdAt: new TS(Date.now() - H) });
+  store.set("tenants/C2/reviews/v2", { rating: 2, text: "Плохо, звоните 89001234567", createdAt: new TS(Date.now() - 2 * H) });
+  store.set("tenants/C2/reviews/v3", { rating: 1, text: "Старый", createdAt: new TS(Date.now() - 10 * 24 * H) });
+  text = await more("reviews");
+  assert.match(text, /Отзывы за 7 дней: 2 · средняя оценка 3,5/);
+  assert.match(text, /Оценок 3 и ниже: 1/);
+  assert.ok(!/8900|Плохо/.test(text), "тексты отзывов — только в кабинете");
+
+  // Касса сейчас: сколько должно быть наличных — как X-отчёт
+  store.set("tenants/C2/meta/shiftState", { openShiftId: "s2" });
+  store.set("tenants/C2/shifts/s2", { status: "open", openedAt: new TS(Date.now() - 2 * H), openingCash: 5000 });
+  store.set("tenants/C2/sessions/p3", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 30000), orderItems: [{ name: "Пирог", price: 1200, qty: 1 }], paymentCash: 1200, tipsCash: 100 });
+  store.set("tenants/C2/sessions/p4", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 20000), orderItems: [{ name: "Пирог", price: 1200, qty: 1 }], paymentCash: 1200, refunded: true });
+  store.set("tenants/C2/cashOps/o1", { shiftId: "s2", type: "collection", amount: 1000 });
+  store.set("tenants/C2/cashOps/o2", { shiftId: "s2", type: "payout", amount: 200, cancelled: true });
+  store.set("tenants/C2/cashOps/o3", { shiftId: "old", type: "deposit", amount: 9999 });
+  body = await ask("💵 Касса сейчас");
+  assert.match(body.text, /На начало смены: 5\s000 ₽/);
+  assert.match(body.text, /\+ наличные продажи: 1\s200 ₽/);
+  assert.match(body.text, /\+ чаевые наличными: 100 ₽/);
+  assert.match(body.text, /− инкассация: 1\s000 ₽/);
+  assert.ok(!/выплаты|внесения/.test(body.text), "отменённая выплата и чужая смена не считаются");
+  assert.match(body.text, /= должно быть в кассе: 5\s300 ₽/);
+  assert.match(body.text, /Безнал за смену: карта 2\s500 ₽/);
+
+  // Неделя: по дням и сравнение с прошлой неделей
+  const dayStart = tgmod.businessDayStart(new Date(), TZ).getTime();
+  store.set("tenants/C2/sessions/w0", { status: "closed", tableId: "t2", closedAt: new TS(dayStart - 8 * 24 * H + H), orderItems: [{ name: "Чай", price: 1000, qty: 1 }], paymentCash: 1000 });
+  store.set("tenants/C2/sessions/w1", { status: "closed", tableId: "t2", closedAt: new TS(dayStart - 24 * H + H), orderItems: [{ name: "Чай", price: 300, qty: 1 }], paymentCash: 300 });
+  text = await more("week");
+  assert.match(text, /\(сегодня\) — 3\s700 ₽ · 2 чек\./);
+  assert.match(text, /Итого: 4\s000 ₽ · 3 чек\./);
+  assert.match(text, /К прошлым 7 дням \(1\s000 ₽\): \+300%/);
+  text = await more("yesterday");
+  assert.match(text, /Арбат — итоги/);
+  assert.match(text, /Выручка: 300 ₽/);
+
+  // Сигналы и смены точки — владельцу сети, с названием точки
+  sent.length = 0;
+  store.set("tenants/C2/employees/e7", { name: "Ольга", position: "bartender" });
+  store.set("tenants/C2/employees/e8", { name: "Игорь", position: "universal" });
+  await new Promise((r) => setTimeout(r, 5));
+  store.set("tenants/C2/auditLog/v1", { action: "order_item_voided", tableName: "Стол 1", amount: 300, employeeName: "Ольга",
+    details: { item: "Суп", qty: 1, reason: "гость передумал" }, createdAt: new TS(Date.now()) });
+  store.set("tenants/C2/staffShifts/w1", { employeeId: "e7", employeeName: "Ольга", status: "open", startedAt: new TS(Date.now() + 1000) });
+  store.set("tenants/C2/staffShifts/w0", { employeeId: "e8", employeeName: "Игорь", status: "open", startedAt: new TS(Date.now() - 18 * H) });
+  fire(); await tick(); await tick();
+  assert.ok(toOwner().some((m) => /^⚠️ Арбат\. Стол 1: отменена позиция «Суп» ×1 на 300 ₽\. Причина: гость передумал — бармен$/.test(m.body.text)), "сигнал точки сети");
+  assert.ok(toOwner().some((m) => /^🟢 Арбат — начал смену: бармен в \d\d:\d\d$/.test(m.body.text)), "смена точки сети");
+  assert.ok(toOwner().every((m) => !/Игорь|Ольга/.test(m.body.text)), "старая смена — без сигнала, имён нет");
+  assert.ok(store.get("telegramBots/C1").auditCursors.C2, "курсор журнала — свой у точки");
+  text = await more("voids");
+  assert.match(text, /Отменено позиций, которые уже готовили: 1 на 300 ₽/);
+  assert.match(text, /Причины: гость передумал ×1/);
+  body = await ask("👥 Текущая смена");
+  assert.match(body.text, /Касса открыта с \d\d:\d\d/);
+  assert.match(body.text, /• универсал, с [\d. :]+ ⚠️ не закрыта/);
+  assert.match(body.text, /• бармен, с \d\d:\d\d\n/);
+  assert.match(body.text, /больше 16 часов/);
+  assert.ok(!/Игорь|Ольга/.test(body.text));
+
+  // Обратно на «Все точки»: разделы по точкам
+  await hookC({ callback_query: { id: "p2", from: { id: 701 }, data: "p:all", message: { chat: { id: 701 }, message_id: 302 } } });
+  await tick();
+  body = await ask("💵 Касса сейчас");
+  assert.match(body.text, /🏢 Сеть «Ромашка» — все точки/);
+  assert.match(body.text, /📍 Арбат\n💵 Касса, смена с/);
+  assert.match(body.text, /📍 Центр\n💵 Касса, смена с \d\d\.\d\d/);
+  assert.match(body.text, /⚠️ Смена кассы не закрыта/);
+  text = await more("top");
+  assert.match(text, /Сеть «Ромашка» — топ продаж сегодня:\n1\. Чай — 5 шт · 2\s500 ₽\n2\. Пирог — 1 шт · 1\s200 ₽/);
+  text = await more("week");
+  assert.match(text, /Итого: 5\s000 ₽ · 4 чек\./);
+  assert.match(text, /📍 Арбат: 4\s000 ₽\n📍 Центр: 1\s000 ₽/);
+  text = await more("yesterday");
+  assert.match(text, /Сеть «Ромашка» — итоги/);
+  assert.match(text, /📍 Арбат: 300 ₽ · 1 чек\./);
+  assert.match(text, /📍 Центр: продаж не было/);
+  assert.match(text, /• Центр: смена кассы не закрыта/);
+
+  // Группы: общая группа сети и своя группа точки
+  res = mkRes();
+  await tg.handleLinkCode(mkReq({ tenantId: "C1", kind: "staff" }), res);
+  sent.length = 0;
+  await hookC({ message: { chat: { id: -951, type: "supergroup", title: "Кухня Центр" }, from: { id: 701 }, text: `/start ${res.body.link.split("startgroup=")[1]}` } });
+  assert.ok(sent.some((m) => m.body.chat_id === -951 && /Центр.*\n*.*точек сети, у которых нет своей группы/s.test(m.body.text)));
+  await tick(); await tick(); await tick();
+  assert.equal(store.get("telegramBots/C1").staffChat.id, -951);
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "C2" }), res);
+  assert.equal(res.body.staffChat, "Кухня Центр");
+  assert.equal(res.body.staffChatShared, true, "у Арбата своей группы нет — общая");
+  sent.length = 0;
+  store.set("tenants/C2/sessions/d1", { tableId: "takeaway", status: "active", orderType: "delivery", deliveryStatus: "new",
+    orderItems: [{ name: "Суп", price: 300, qty: 1 }], startTime: new Date() });
+  fire(); await tick(); await tick();
+  const cardD1 = sent.find((m) => m.method === "sendMessage" && m.body.chat_id === -951);
+  assert.ok(cardD1 && /^📍 Арбат\n🛵 Доставка №/.test(cardD1.body.text), "заказ точки без группы — в общую, с названием точки");
+  assert.equal(store.get("telegramBots/C1/cards/d1").tenantId, "C2");
+  res = mkRes();
+  await tg.handleLinkCode(mkReq({ tenantId: "C2", kind: "staff" }), res);
+  await hookC({ message: { chat: { id: -952, type: "supergroup", title: "Кухня Арбат" }, from: { id: 701 }, text: `/start ${res.body.link.split("startgroup=")[1]}` } });
+  await tick(); await tick(); await tick();
+  assert.equal(store.get("telegramBots/C1").staffChats.C2.id, -952);
+  assert.equal(store.get("telegramBots/C1").staffChat.id, -951, "общая группа на месте");
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "C2" }), res);
+  assert.equal(res.body.staffChat, "Кухня Арбат");
+  assert.equal(res.body.staffChatShared, false);
+  sent.length = 0;
+  store.set("tenants/C2/sessions/d2", { tableId: "takeaway", status: "active", orderType: "takeaway", deliveryStatus: "new",
+    orderItems: [{ name: "Чай", price: 200, qty: 1 }], startTime: new Date() });
+  store.set("tenants/C1/sessions/d3", { tableId: "takeaway", status: "active", orderType: "takeaway", deliveryStatus: "new",
+    orderItems: [{ name: "Чай", price: 200, qty: 1 }], startTime: new Date() });
+  fire(); await tick(); await tick();
+  const cardsTo = (chat) => sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === chat).map((m) => m.body.text);
+  assert.ok(cardsTo(-952).some((t) => /^📍 Арбат\n🥡 С собой/.test(t)), "заказ Арбата — в группу Арбата");
+  assert.ok(cardsTo(-951).some((t) => /^📍 Центр\n🥡 С собой/.test(t)), "заказ Центра — в группу Центра");
+  assert.ok(!cardsTo(-951).some((t) => /Арбат/.test(t)), "в группу Центра заказы Арбата больше не идут");
+  // Повар нажимает кнопку в группе Арбата — статус меняется в Арбате
+  await hookC({ callback_query: { id: "d2a", from: { id: 702 }, data: "s:d2:accepted", message: { chat: { id: -952 }, message_id: 1 } } });
+  assert.equal(store.get("tenants/C2/sessions/d2").deliveryStatus, "accepted");
+  assert.equal(store.get("tenants/C1/sessions/d3").deliveryStatus, "new");
+
+  // Сеть, где раньше у точек были свои боты: точка со своим ботом остаётся
+  // за ним, точка без бота — за ботом с наименьшим id. Дублей нет.
+  store.set("tenants/L1", { name: "Лес 1", timezone: TZ });
+  store.set("tenants/L2", { name: "Лес 2", timezone: TZ });
+  await tg.handleSetup(mkReq({ tenantId: "L1", token: "444444:" + "d".repeat(35) }), mkRes());
+  await tg.handleSetup(mkReq({ tenantId: "L2", token: "555555:" + "e".repeat(35) }), mkRes());
+  store.set("chains/ch2", { name: "Лес" });
+  for (const t of ["L1", "L2"]) store.set(`tenants/${t}`, { ...store.get(`tenants/${t}`), chainId: "ch2" });
+  store.set("tenants/L3", { name: "Лес 3", chainId: "ch2", timezone: TZ });
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L1" }), res);
+  assert.deepEqual(res.body.chain, { name: "Лес", points: ["Лес 1", "Лес 3"], home: "Лес 1" });
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L2" }), res);
+  assert.equal(res.body.chain, null, "у точки со своим ботом — свой бот, как раньше");
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L3" }), res);
+  assert.equal(res.body.chain.home, "Лес 1");
+
+  // Итоги сети в 10:00 — чистая функция
+  const cs = tgmod.buildChainSummary({ chainName: "Ромашка", label: "за 09.10", points: [
+    { name: "Арбат", sessions: [{ status: "closed", orderItems: [{ name: "Чай", price: 100, qty: 2 }], paymentCash: 200 }], audit: [] },
+    { name: "Центр", sessions: [], audit: [{ action: "order_item_voided", amount: 50 }], notes: ["смена кассы не закрыта с 02.10 12:57"] },
+  ] });
+  assert.match(cs, /^📊 Сеть «Ромашка» — итоги за 09\.10/);
+  assert.match(cs, /Выручка: 200 ₽\nЧеков: 1 · средний чек 200 ₽\nОплаты: наличные 200 ₽/);
+  assert.match(cs, /📍 Арбат: 200 ₽ · 1 чек\. · средний 200 ₽\n📍 Центр: продаж не было/);
+  assert.match(cs, /• Центр: удалено позиций: 1 на 50 ₽\n• Центр: смена кассы не закрыта с 02\.10 12:57/);
+  assert.equal(tgmod.staleCashText(new Date(Date.now() - 2 * H), TZ), null);
+  assert.match(tgmod.staleCashText(new Date(Date.now() - 30 * H), TZ), /^смена кассы не закрыта с \d\d\.\d\d \d\d:\d\d/);
+  assert.equal(tgmod.menuKeyboard().keyboard[0][0].text, "💰 Выручка сегодня", "у одиночного заведения — без кнопки точки");
+  assert.equal(tgmod.menuKeyboard("Арбат").keyboard[0][0].text, "📍 Арбат");
+
   console.log("SIM OK");
   process.exit(0);
 })().catch((e) => { console.error("SIM FAIL", e); process.exit(1); });

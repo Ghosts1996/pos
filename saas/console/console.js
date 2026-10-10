@@ -105,12 +105,15 @@ const tgStatusCache = new Map();
 function telegramBoxHtml(st) {
   if (!st) return '<div class="small muted">Проверяем…</div>';
   if (st.error) return `<div class="small" style="color:var(--danger)">${esc(st.error)}</div>`;
+  const chain = st.chain;
   if (!st.configured) {
     return `
       <p class="small muted">Свой бот заведения: заказы с собой и доставки — в рабочую группу с кнопками статусов,
-      владельцу — выручка, средний чек, посадка и смена по кнопкам, начало и конец смен, отмены позиций,
-      закрытие без оплаты и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.
-      Управлять ботом смогут только те, чей Telegram ID вы впишете после подключения.</p>
+      владельцу — выручка, касса, средний чек, посадка, смена, брони, склад, неделя и топ продаж по кнопкам,
+      начало и конец смен, отмены позиций, закрытие без оплаты и итоги каждое утро. Имена, телефоны и адреса
+      гостей в Telegram не уходят. Управлять ботом смогут только те, чей Telegram ID вы впишете после подключения.</p>
+      ${chain ? `<p class="small" style="margin:0 0 8px">Сеть «${esc(chain.name)}»: бот один на все точки (${chain.points.length}) —
+      подключите его здесь, и он сразу покажет каждую точку и сводку по сети.</p>` : ''}
       <ol class="small muted" style="padding-left:18px;margin:8px 0">
         <li>В Telegram откройте <b>@BotFather</b> → <b>/newbot</b>, придумайте имя и адрес бота.</li>
         <li>Скопируйте токен (вида <code>123456:ABC…</code>) и вставьте сюда.</li>
@@ -128,6 +131,10 @@ function telegramBoxHtml(st) {
   const ROLE = { owner: 'владелец или управляющий', staff: 'сотрудник — только кнопки заказов' };
   return `
     <div class="small">Бот: <b>@${esc(st.username)}</b> · токен хранится зашифрованным</div>
+    ${chain ? `<div class="small" style="margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
+      Бот сети «${esc(chain.name)}» — показывает все точки: ${esc(chain.points.join(', '))}.
+      В Telegram кнопка «📍» сверху переключает точку или «Все точки» (сводка по сети).
+      <span class="muted">Подключён в точке «${esc(chain.home)}»; список доступа и уведомления — общие для всей сети.</span></div>` : ''}
 
     <div style="font-weight:600;margin:14px 0 4px">Кто управляет ботом</div>
     <p class="small muted" style="margin:0 0 8px">Отчёты, уведомления, подключение чатов и кнопки заказов — только для этих
@@ -156,14 +163,17 @@ function telegramBoxHtml(st) {
 
     <div class="small" style="margin-top:14px">Владелец: ${st.owners.length ? esc(st.owners.join(', ')) : '<span class="muted">не подключён</span>'}</div>
     <button class="btn btn-ghost" id="f-tg-owner" style="margin-top:6px" ${hasOwner ? '' : 'disabled'}>Подключить мой Telegram</button>
-    <div class="small" style="margin-top:10px">Рабочая группа: ${st.staffChat ? esc(st.staffChat) : '<span class="muted">не подключена</span>'}</div>
-    <button class="btn btn-ghost" id="f-tg-staff" style="margin-top:6px" ${hasOwner ? '' : 'disabled'}>${st.staffChat ? 'Сменить группу' : 'Подключить группу сотрудников'}</button>
+    <div class="small" style="margin-top:10px">${chain ? 'Рабочая группа этой точки' : 'Рабочая группа'}: ${st.staffChat
+      ? `${esc(st.staffChat)}${st.staffChatShared ? ` <span class="muted">— общая: группа точки «${esc(chain ? chain.home : '')}»</span>` : ''}`
+      : '<span class="muted">не подключена</span>'}</div>
+    <button class="btn btn-ghost" id="f-tg-staff" style="margin-top:6px" ${hasOwner ? '' : 'disabled'}>${st.staffChatShared
+      ? 'Подключить группу этой точки' : st.staffChat ? 'Сменить группу' : chain ? 'Подключить группу этой точки' : 'Подключить группу сотрудников'}</button>
     ${hasOwner ? '' : '<div class="small muted" style="margin-top:6px">Кнопки подключения заработают, когда в списке будет хотя бы один владелец или управляющий.</div>'}
     <div class="small muted" style="margin:10px 0 4px">Что присылать</div>
     ${cb('delivery', 'Заказы с собой и доставки — в группу, с кнопками')}
     ${cb('shifts', 'Начало и конец смен — владельцу')}
     ${cb('alerts', 'Отмены, закрытие без оплаты, возвраты, скидки от 20% — владельцу')}
-    ${cb('summary', 'Итоги смены в 10:00 — владельцу')}
+    ${cb('summary', chain ? 'Итоги дня в 10:00 — по сети и каждой точке, владельцу' : 'Итоги смены в 10:00 — владельцу')}
     <button class="btn btn-ghost" id="f-tg-unlink" style="margin-top:8px;color:var(--danger)">Отключить бота</button>
     <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
 }
@@ -184,6 +194,12 @@ function bindTelegramBox(tenantId, redraw) {
     return;
   }
   const msg = (t, bad) => { const el = $('f-tg-msg'); if (el) { el.textContent = t; el.style.color = bad ? 'var(--danger)' : ''; } };
+  // У сети бот и его настройки общие: другие точки перечитают статус, а не
+  // отправят на сервер устаревший список доступа.
+  const dropOtherPoints = () => {
+    if (!(tgStatusCache.get(tenantId) || {}).chain) return;
+    for (const k of [...tgStatusCache.keys()]) if (k !== tenantId) tgStatusCache.delete(k);
+  };
   const openLink = async (kind, hint) => {
     // Окно — сразу по клику: после await браузер его заблокирует.
     const win = window.open('', '_blank');
@@ -203,7 +219,7 @@ function bindTelegramBox(tenantId, redraw) {
     try {
       await callSaasGateway('telegramSetup', { tenantId, token });
       $('f-tg-token').value = '';
-      tgStatusCache.delete(tenantId);
+      tgStatusCache.clear();
       redraw();
     } catch (e) {
       msg(e.message, true);
@@ -216,6 +232,7 @@ function bindTelegramBox(tenantId, redraw) {
   const saveAccess = async (allowed, done) => {
     try {
       const r = await callSaasGateway('telegramAccess', { tenantId, allowed });
+      dropOtherPoints();
       const st = tgStatusCache.get(tenantId);
       if (st) {
         st.allowed = r.data.allowed;
@@ -249,6 +266,7 @@ function bindTelegramBox(tenantId, redraw) {
       document.querySelectorAll('.f-tg-notify').forEach((x) => { notify[x.dataset.key] = x.checked; });
       try {
         await callSaasGateway('telegramNotify', { tenantId, notify });
+        dropOtherPoints();
         const st = tgStatusCache.get(tenantId);
         if (st) st.notify = notify;
       } catch (e) {
@@ -258,10 +276,14 @@ function bindTelegramBox(tenantId, redraw) {
     };
   });
   if ($('f-tg-unlink')) $('f-tg-unlink').onclick = async () => {
-    if (!confirm('Отключить бота заведения? Уведомления и кнопки в Telegram перестанут работать.')) return;
+    const st = tgStatusCache.get(tenantId) || {};
+    if (!confirm(st.chain
+      ? `Отключить бота всей сети «${st.chain.name}»? Уведомления и кнопки перестанут работать во всех точках.`
+      : 'Отключить бота заведения? Уведомления и кнопки в Telegram перестанут работать.')) return;
     try {
       await callSaasGateway('telegramUnlink', { tenantId });
-      tgStatusCache.delete(tenantId);
+      // У сети бот общий — статус других точек тоже устарел.
+      tgStatusCache.clear();
       redraw();
     } catch (e) {
       msg(e.message, true);
