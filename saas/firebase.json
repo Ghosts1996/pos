@@ -11,6 +11,9 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      { "source": "/blog/alternativa-iiko-dlya-nebolshogo-kafe{,/**}", "destination": "/blog/alternativa-iiko/", "type": 301 }
+    ],
     "headers": [
       {
         "source": "**/*.@(html|js|css)",

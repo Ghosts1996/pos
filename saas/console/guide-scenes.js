@@ -323,7 +323,7 @@ const wBtn = (label, { tap = '', ghost = false, style = '' } = {}) =>
 // Регистрация: email и согласия на сайте.
 function webSignup() {
   return webPage(`<div class="gx-web-hero"><div class="gx-web-brand big">Zal<em>POS</em></div>
-    <h3>Касса, зал и гости — в одном приложении</h3><div class="gx-mu">14 дней бесплатно, без карты</div></div>
+    <h3>Касса, зал и гости — в одном приложении</h3><div class="gx-mu">7 дней бесплатно, без карты</div></div>
     <div class="gx-web-card gx-web-narrow">
       ${wField('Email', { type: 'mail', ph: 'you@example.com' })}
       ${wCheck('Принимаю условия оферты', 'c1')}${wCheck('Согласен на обработку персональных данных', 'c2')}
@@ -347,7 +347,7 @@ function webOnboarding() {
 // Обзор кабинета: первые шаги.
 function webOverview({ tap = {} } = {}) {
   const step = (t, done) => `<div class="gx-web-row"><span class="${cls('gx-web-tick', done && 'on')}">${ic('check', 12, 3)}</span><span style="flex:1">${t}</span><span class="gx-web-link">Открыть</span></div>`;
-  return web('Обзор', `<h3>Добрый вечер, Ольга</h3><div class="gx-mu">Кафе «Лето» · пробный период, осталось 14 дней</div>
+  return web('Обзор', `<h3>Добрый вечер, Ольга</h3><div class="gx-mu">Кафе «Лето» · пробный период, осталось 7 дней</div>
     <div class="gx-web-card"><h5>Настройка заведения</h5>
       ${step('Настроить фирменные цвета и лого', true)}${step('Пригласить первого сотрудника')}${step('Собрать и установить APK на планшет')}</div>`, { tap });
 }
@@ -1002,7 +1002,7 @@ export const SCENES = {
       { screen: webSignup(), cap: 'На zalpos.ru впишите email, отметьте согласия и нажмите «Попробовать бесплатно».', acts: [{ type: 'mail', text: 'olga@kafe-leto.ru' }, { tap: 'c1', mark: 'c1', fast: true }, { tap: 'c2', mark: 'c2', fast: true }, { tap: 'go' }] },
       { screen: webCheckMail(), cap: 'Пароль не нужен: на почту придёт ссылка, она сразу откроет кабинет.', acts: [{ wait: 2200 }] },
       { screen: webOnboarding(), cap: 'Название заведения — код для ссылок появится сам. Выберите тип и «Создать заведение».', acts: [{ type: 'vname', text: 'Кафе «Лето»' }, { mark: 'slug' }, { tap: 'kind', mark: 'kind' }, { tap: 'create' }] },
-      { screen: webOverview(), cap: 'Готово: 14 дней бесплатно. На «Обзоре» список «Настройка заведения» подскажет, что дальше.', acts: [{ wait: 2200 }] },
+      { screen: webOverview(), cap: 'Готово: 7 дней бесплатно. На «Обзоре» список «Настройка заведения» подскажет, что дальше.', acts: [{ wait: 2200 }] },
     ],
   },
 
