@@ -78,7 +78,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
   void _load() {
     final range = _rangeFor(_period);
     setState(() {
-      _future = _fs.closedSessionsInRange(range.start, range.end);
+      // Отменённые заказы с собой/доставки денег не принесли — в отчёт не идут.
+      _future = _fs.closedSessionsInRange(range.start, range.end)
+          .then((list) => list.where((s) => s.status != 'cancelled').toList());
     });
   }
 

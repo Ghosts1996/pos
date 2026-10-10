@@ -308,6 +308,9 @@ class _XReportScreenState extends State<XReportScreen> {
                   if (_employeeFilter != 'Все официанты') {
                     sessions = sessions.where((s) => s.employeeName == _employeeFilter).toList();
                   }
+                  // Отменённый заказ с собой/доставки закрыт, но денег не
+                  // принёс — в выручку не идёт (как в кабинете и в Telegram).
+                  sessions = sessions.where((s) => s.status != 'cancelled').toList();
                   final paid = sessions.where((s) => !s.refunded).toList();
                   final refunded = sessions.where((s) => s.refunded).toList();
                   final data = _XReportData.fromSessions(paid);

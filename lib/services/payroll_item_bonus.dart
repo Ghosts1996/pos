@@ -14,7 +14,7 @@ class ItemBonus {
 Map<String, ItemBonus> itemBonuses(Iterable<SessionModel> sessions, Map<String, MenuItem> menu) {
   final out = <String, ItemBonus>{};
   for (final s in sessions) {
-    if (s.refunded || s.closedWithoutPayment) continue;
+    if (s.status == 'cancelled' || s.refunded || s.closedWithoutPayment) continue;
     for (final line in s.orderItems) {
       final m = menu[line.menuItemId];
       if (m == null || m.staffBonus <= 0) continue;

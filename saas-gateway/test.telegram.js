@@ -193,6 +193,32 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🪑 Посадка" } });
   const rep = sent.find((m) => m.method === "sendMessage" && m.body.chat_id === 501);
   assert.match(rep.body.text, /занято 1 из 2/);
+
+  // Выручка: те же цифры, что X-отчёт кассы. Чек пробит только что, а часы
+  // кассы спешат на 2 минуты — он всё равно в отчёте. Отменённая доставка
+  // выручкой не считается.
+  const nowMs = Date.now();
+  store.set("tenants/A/meta/shiftState", { openShiftId: "sh1" });
+  store.set("tenants/A/shifts/sh1", { status: "open", openedAt: new TS(nowMs - 3600000) });
+  store.set("tenants/A/sessions/paid1", { status: "closed", tableId: "t2", closedAt: new TS(nowMs + 120000),
+    orderItems: [{ name: "чаша", price: 500, qty: 8 }], paymentCard: 1500, paymentCash: 2500 });
+  store.set("tenants/A/sessions/cxl1", { status: "cancelled", tableId: "takeaway", orderType: "delivery", deliveryStatus: "cancelled",
+    closedAt: new TS(nowMs - 60000), orderItems: [{ name: "Пицца", price: 700, qty: 1 }] });
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "💰 Выручка сегодня" } });
+  const revText = sent.find((m) => m.body.chat_id === 501).body.text;
+  assert.match(revText, /Кафе А/, "видно, какое заведение");
+  assert.match(revText, /Выручка сегодня \(с 6:00\): 4\s000 ₽/);
+  assert.match(revText, /Чеков закрыто: 1/);
+  assert.match(revText, /Наличные 2\s500 ₽ · карта 1\s500 ₽/);
+  assert.match(revText, /Смена кассы с \d\d:\d\d: 4\s000 ₽ · чеков 1/);
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🧾 Средний чек" } });
+  assert.match(sent.find((m) => m.body.chat_id === 501).body.text, /Средний чек сегодня: 4\s000 ₽ \(1 чек\.\)/);
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🍽 Кухня · Бар · Кальяны" } });
+  assert.match(sent.find((m) => m.body.chat_id === 501).body.text, /Кухня: 4\s000 ₽ · 100%/);
+  for (const k of ["meta/shiftState", "shifts/sh1", "sessions/paid1", "sessions/cxl1"]) store.delete(`tenants/A/${k}`);
   // Посторонний в личке бота А отчёт не получит, а сотрудник из списка — тоже
   sent.length = 0;
   await hookA({ message: { chat: { id: 999, type: "private" }, from: { id: 999 }, text: "💰 Выручка сегодня" } });
