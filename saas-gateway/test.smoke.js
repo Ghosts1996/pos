@@ -270,6 +270,8 @@ async function main() {
         && !("deliveryAddress" in docs["tenants/t1/sessions/s1"]) && docs["tenants/t1/sessions/s1"].paymentCash === 900
         && docs["tenants/t1/meta/venueProfile"].phone === "74950000000" && !("name" in docs["chains/c1/clients/u2"]));
     }
+    check("журнал в Firestore: от номера гостя — только хвост",
+      server.maskPhone("+7 (900) 111-22-33") === "…2233" && server.maskPhone("") === null && server.maskPhone(undefined) === null);
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     {

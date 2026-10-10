@@ -119,8 +119,13 @@ class GuestLinkService {
     }
 
     await _piiGateway.registerGuestProfile(uid: uid, name: name, phone: normalizedPhone);
+    // Записанное на сервере — сразу и в копию на устройстве: в режиме rf
+    // профиль Firestore имени и номера уже не покажет.
+    People.instance.remember('guest', uid, name: name, phone: normalizedPhone);
 
-    if (normalizedPhone != null && normalizedPhone.isNotEmpty) {
+    // Режим rf: номер в Firestore не кладём даже ключом указателя — занят
+    // ли он, отвечает справочник в РФ (isPhoneTakenByOther).
+    if (normalizedPhone != null && normalizedPhone.isNotEmpty && Pd.mirror) {
       await _syncPhoneIndex(uid, normalizedPhone, prevOverride: prevPhone ?? '');
     }
 

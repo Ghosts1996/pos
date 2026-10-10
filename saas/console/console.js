@@ -42,6 +42,27 @@ async function recordOwnerInRussia(email) {
   }
 }
 
+/** Справочник заведения в РФ (pii-gateway, vault.js) токеном владельца или
+ *  администратора. В заведении, переведённом на хранение в РФ
+ *  (venueProfile.piiMode = 'rf'), имён сотрудников в Firestore нет — только
+ *  id; сами имена лежат здесь. */
+async function piiCall(body) {
+  const idToken = await state.auth.currentUser?.getIdToken();
+  let res;
+  try {
+    res = await fetch(PII_GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {
+    throw new Error('Сервер данных в РФ недоступен — проверьте интернет и попробуйте ещё раз');
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `Сервер данных в РФ ответил ${res.status}`);
+  return json;
+}
+
 /** После первого входа — привязать запись в РФ к аккаунту (не критично). */
 async function linkOwnerInRussia(user) {
   try {
@@ -3312,6 +3333,37 @@ function watchDashboardData(tenantId) {
   let buildJobs = null;
   let generalSettings = null;
   let venueProfile = null;
+  // Режим rf: имена сотрудников из справочника в РФ (id → имя).
+  const staffNames = new Map();
+  let staffNamesAsked = '';
+  const rfMode = () => (venueProfile || {}).piiMode === 'rf';
+  /** Имя сотрудника: из документа (режим mirror) или из справочника. */
+  const empName = (e) => String((e && e.name) || '') || staffNames.get(e && e.id) || '';
+  /** Поле «кто сделал»: в режиме rf там ссылка staff:<id>. */
+  const whoName = (raw) => {
+    const v = String(raw || '');
+    if (!v.startsWith('staff:')) return v;
+    return staffNames.get(v.slice(6)) || 'сотрудник';
+  };
+  /** Подтянуть имена сотрудников из справочника (один запрос на состав). */
+  const loadStaffNames = async () => {
+    if (!rfMode() || !employees) return;
+    const ids = employees.map((e) => e.id).filter((id) => !staffNames.has(id));
+    for (const sh of recentClosedShifts || []) {
+      const v = String(sh.closedBy || '');
+      if (v.startsWith('staff:') && !staffNames.has(v.slice(6))) ids.push(v.slice(6));
+    }
+    const key = [...new Set(ids)].sort().join(',');
+    if (!key || key === staffNamesAsked) return;
+    staffNamesAsked = key;
+    try {
+      const res = await piiCall({ tenantId, kind: 'pii_lookup', refs: key.split(',').map((id) => ({ k: 'staff', id })) });
+      for (const r of res.staff || []) staffNames.set(String(r.id), String(r.name || ''));
+      draw();
+    } catch (_) {
+      staffNamesAsked = ''; // спросим при следующем обновлении
+    }
+  };
   // ИИ: публичные настройки, ключи и несохранённые правки формы. draw()
   // перерисовывает экран целиком, поэтому правки держим в aiDraft.
   let aiPub = null;
@@ -3467,7 +3519,7 @@ function watchDashboardData(tenantId) {
       const when = sh.closedAt ? fmtDateTime(sh.closedAt) : '';
       attentionItems.push({
         tab: null,
-        text: `Недостача ${shortage.toLocaleString('ru-RU')} ₽ при закрытии смены${when ? ` ${when}` : ''}${sh.closedBy ? ` — закрыл(а) ${sh.closedBy}` : ''}. Подробности — в X-отчёте кассы, «Прошлые смены»`,
+        text: `Недостача ${shortage.toLocaleString('ru-RU')} ₽ при закрытии смены${when ? ` ${when}` : ''}${sh.closedBy ? ` — закрыл(а) ${whoName(sh.closedBy)}` : ''}. Подробности — в X-отчёте кассы, «Прошлые смены»`,
       });
     }
 
@@ -3982,12 +4034,12 @@ function watchDashboardData(tenantId) {
         PIN из 4 цифр, у «Администратора» — из 6.</p>
         ${employees === null ? '<div class="small muted">Загрузка…</div>' : (employees.length === 0
           ? '<div class="small muted">Пока нет ни одного сотрудника с PIN-входом</div>'
-          : employees.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((e) => {
+          : employees.slice().sort((a, b) => empName(a).localeCompare(empName(b))).map((e) => {
             const pinLen = e.role === 'admin' ? 6 : 4;
             return `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
             <div class="grow" style="min-width:0">
-              <div class="ellipsis">${esc(e.name || '')}</div>
+              <div class="ellipsis">${esc(empName(e) || (rfMode() ? '…' : ''))}</div>
               <div class="small muted">
                 ${e.role === 'admin' ? 'Администратор' : 'Сотрудник'} · PIN
                 <span title="PIN хранится зашифрованным — посмотреть его нельзя, только задать новый">${'•'.repeat(pinLen)}</span>
@@ -3996,7 +4048,7 @@ function watchDashboardData(tenantId) {
             </div>
             ${canManage ? `
               <button class="btn-link f-emp-edit" data-id="${esc(e.id)}" style="width:auto">Изменить</button>
-              <button class="btn-link f-emp-delete" data-id="${esc(e.id)}" data-name="${esc(e.name || '')}" style="width:auto;color:var(--danger)">Удалить</button>
+              <button class="btn-link f-emp-delete" data-id="${esc(e.id)}" data-name="${esc(empName(e))}" style="width:auto;color:var(--danger)">Удалить</button>
             ` : ''}
           </div>
         `;
@@ -4849,7 +4901,7 @@ function watchDashboardData(tenantId) {
         if (!emp) return;
         editingEmployeeId = emp.id;
         // Заполняем текущие поля — draw() перенесёт значения в новую разметку.
-        if ($('f-emp-name')) $('f-emp-name').value = emp.name || '';
+        if ($('f-emp-name')) $('f-emp-name').value = empName(emp);
         if ($('f-emp-role')) $('f-emp-role').value = emp.role || 'employee';
         // PIN хранится хэшем: пустое поле при правке — оставить прежний.
         if ($('f-emp-pin')) $('f-emp-pin').value = '';
@@ -4905,15 +4957,27 @@ function watchDashboardData(tenantId) {
             errEl.textContent = 'Этот PIN-код уже занят другим сотрудником';
             return;
           }
+          // Режим rf: имя — только в справочник в РФ и до записи в Firestore
+          // (не записалось — сотрудника не сохраняем); в документе — id.
+          const rf = rfMode();
           if (editingEmployeeId) {
-            const upd = { name, role, position };
+            if (rf) {
+              await piiCall({ tenantId, kind: 'pii_put', items: [{ k: 'staff', id: editingEmployeeId, fields: { name } }] });
+              staffNames.set(editingEmployeeId, name);
+            }
+            const upd = { name: rf ? deleteField() : name, role, position };
             if (pinHash) Object.assign(upd, { pinHash, pinCode: deleteField() });
             await updateDoc(doc(state.db, 'tenants', tenantId, 'employees', editingEmployeeId), upd);
             toast('Сотрудник обновлён');
           } else {
+            const ref = doc(collection(state.db, 'tenants', tenantId, 'employees'));
+            if (rf) {
+              await piiCall({ tenantId, kind: 'pii_put', items: [{ k: 'staff', id: ref.id, fields: { name } }] });
+              staffNames.set(ref.id, name);
+            }
             // Остальные поля — дефолты Employee() из lib/models/employee.dart.
-            await addDoc(collection(state.db, 'tenants', tenantId, 'employees'), {
-              name, role, pinHash, position,
+            await setDoc(ref, {
+              ...(rf ? {} : { name }), role, pinHash, position,
               hourlyRateEnabled: false, hourlyRate: 0,
               overtimeEnabled: false, overtimeThresholdHours: 8, overtimeMultiplier: 1.5,
               salesPercentEnabled: false, salesPercentRate: 0,
@@ -5071,6 +5135,7 @@ function watchDashboardData(tenantId) {
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), (d) => {
     venueProfile = d.exists() ? d.data() : null;
+    loadStaffNames();
     draw();
   }, () => {}));
   sub(onSnapshot(query(collection(state.db, 'broadcasts'), where('active', '==', true), orderBy('createdAt', 'desc'), limit(5)), (snap) => {
@@ -5102,6 +5167,7 @@ function watchDashboardData(tenantId) {
   sub(onSnapshot(collection(state.db, 'tenants', tenantId, 'employees'), (snap) => {
     employees = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     draw();
+    loadStaffNames();
   }, () => {
     employees = [];
     draw();
@@ -5167,7 +5233,7 @@ function watchDashboardData(tenantId) {
         orderBy('closedAt', 'desc'),
         limit(20),
       ),
-      (snap) => { recentClosedShifts = snap.docs.map((d) => d.data()); draw(); },
+      (snap) => { recentClosedShifts = snap.docs.map((d) => d.data()); draw(); loadStaffNames(); },
       () => { recentClosedShifts = []; draw(); },
     ));
   }

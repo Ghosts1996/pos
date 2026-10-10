@@ -28,6 +28,9 @@ function fakeFirestore(docs) {
   return () => ({
     doc: (p) => ({
       get: async () => ({ exists: p in docs, data: () => docs[p] }),
+      set: async (v, opts) => {
+        docs[p] = opts && opts.merge ? { ...(docs[p] || {}), ...v } : { ...v };
+      },
     }),
   });
 }
@@ -67,6 +70,8 @@ const test = (name, fn) => tests.push([name, fn]);
     "tenantMembers/t2_staff2": { status: "active", role: "admin" },
     "tenants/t1/meta/tipsTeam": { members: { e1: { position: "waiter" } } },
     "tenants/t1/sessions/s-kassa": { clientUid: "g1" },
+    "tenants/t1/clients/g-mark": { name: "" },
+    "chains/c1/clients/g-chain": { name: "" },
   };
   const vault = createVault({
     query: (sql, params) => pool.query(sql, params),
@@ -227,6 +232,28 @@ const test = (name, fn) => tests.push([name, fn]);
     await internal({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r-srv", fields: { name: "Сервер" } });
     r = await as("g5")({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "reservation", id: "r-srv" }] });
     assert.equal(r.json.contacts.length, 0);
+  });
+
+  test("номер гостя в РФ — отметка phoneOnFile в профиле Firestore (без самого номера)", async () => {
+    let r = await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "guest", id: "g-mark", fields: { phone: "8 900 111-22-33" } }] });
+    assert.equal(r.status, 200);
+    assert.deepEqual(docs["tenants/t1/clients/g-mark"], { name: "", phoneOnFile: true });
+    // Имя без номера отметку не трогает.
+    await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "guest", id: "g-mark", fields: { name: "Ира" } }] });
+    assert.equal(docs["tenants/t1/clients/g-mark"].phoneOnFile, true);
+    await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "guest", id: "g-mark", fields: { phone: "12" } }] });
+    assert.equal(docs["tenants/t1/clients/g-mark"].phoneOnFile, false);
+    await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "guest", id: "g-mark", fields: { phone: "79001234567" } }] });
+    r = await staff({ tenantId: "t1", kind: "pii_erase", k: "guest", id: "g-mark" });
+    assert.equal(r.status, 200);
+    assert.equal(docs["tenants/t1/clients/g-mark"].phoneOnFile, false);
+    // Профиля в Firestore нет — не заводим.
+    await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "guest", id: "g-nofs", fields: { phone: "79001234567" } }] });
+    assert.ok(!("tenants/t1/clients/g-nofs" in docs));
+    // Сеть: профиль общий — отметка там же.
+    r = await as("staff2")({ tenantId: "t2", kind: "pii_put", items: [{ k: "guest", id: "g-chain", fields: { phone: "79001234567" } }] });
+    assert.equal(r.status, 200);
+    assert.equal(docs["chains/c1/clients/g-chain"].phoneOnFile, true);
   });
 
   test("ограничения: лишние поля, плохие id, слишком много записей", async () => {

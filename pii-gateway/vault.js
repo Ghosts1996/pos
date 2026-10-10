@@ -71,6 +71,24 @@ function phoneDigits(v) {
   return d;
 }
 
+/** Похоже на номер: 10–15 цифр — как phoneOk в правилах Firestore. */
+function phoneOk(v) {
+  const n = String(v == null ? "" : v).replace(/\D/g, "").length;
+  return n >= 10 && n <= 15;
+}
+
+/**
+ * Профиль гостя в Firestore: номер записан в РФ. В режиме rf самого номера
+ * в профиле нет, а правила базы пускают за стол только гостя с номером —
+ * они смотрят на эту отметку. Ставит только сервер: гостю её писать нельзя.
+ * Профиль не создаём — только отмечаем существующий.
+ */
+async function markPhoneOnFile(db, path, onFile) {
+  const ref = db.doc(path);
+  if (!(await ref.get()).exists) return;
+  await ref.set({ phoneOnFile: !!onFile }, { merge: true });
+}
+
 /** Допустимые доп. поля контакта. null — удалить ключ. */
 function cleanExtra(kind, raw, guest) {
   if (raw === undefined || raw === null) return null;
@@ -319,6 +337,16 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
 
   // ------------------------------------------------------------ запись
 
+  /** Отметка «номер в РФ» в профиле Firestore; осечка записи не отменяет. */
+  async function markGuestPhone(a, uid, onFile) {
+    const path = a.chainId ? `chains/${a.chainId}/clients/${uid}` : `tenants/${a.tenantId}/clients/${uid}`;
+    try {
+      await markPhoneOnFile(firestore(), path, onFile);
+    } catch (e) {
+      console.error(`phoneOnFile: ${(e && e.message) || e}`);
+    }
+  }
+
   async function putOne(a, item) {
     const k = item && item.k;
     const id = item && item.id;
@@ -349,6 +377,7 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
            name = COALESCE($3, guest_profiles.name), phone = COALESCE($4, guest_profiles.phone), updated_at = now()`,
         [a.storeKey, id, name, phone]
       );
+      if (phone !== null) await markGuestPhone(a, id, phoneOk(phone));
       return;
     }
     if (!CONTACT_KINDS.includes(k)) throw new VaultError(400, "неизвестный вид записи");
@@ -387,6 +416,7 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
       await query(`UPDATE staff_profiles SET name = '', phone = '', updated_at = now() WHERE tenant_id = $1 AND employee_id = $2`, [a.tenantId, id]);
     } else if (k === "guest") {
       await query(`UPDATE guest_profiles SET name = '', phone = '', updated_at = now() WHERE tenant_id = $1 AND uid = $2`, [a.storeKey, id]);
+      await markGuestPhone(a, id, false);
     } else if (CONTACT_KINDS.includes(k)) {
       await query(
         `UPDATE contact_records SET name = '', phone = '', address = '', extra = '{}'::jsonb, updated_at = now()
@@ -425,4 +455,4 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
   return { handle, ops: Object.keys(OPS) };
 }
 
-module.exports = { createVault, phoneDigits, CONTACT_KINDS, EXTRA_KEYS, VaultError };
+module.exports = { createVault, phoneDigits, phoneOk, markPhoneOnFile, CONTACT_KINDS, EXTRA_KEYS, VaultError };
