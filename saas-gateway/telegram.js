@@ -230,6 +230,9 @@ function salesStats(sessions, excludeTobacco = true) {
     refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map(),
     terminalBanks: new Map() };
   for (const s of sessions) {
+    // Отменённый заказ с собой/доставки тоже получает closedAt, но денег
+    // не принёс — как и в кабинете (там только status == "closed").
+    if (s.status === "cancelled") continue;
     const bill = sessionBill(s, excludeTobacco);
     if (s.refunded) { st.refunds++; st.refundSum += bill; continue; }
     if (s.closedWithoutPayment) { st.unpaid++; st.unpaidSum += bill; continue; }
@@ -930,11 +933,36 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     return typeof l.excludeTobaccoFromPromo === "boolean" ? l.excludeTobaccoFromPromo : true;
   }
 
-  async function closedSince(tenantId, start, end = new Date()) {
-    const snap = await tenantRef(tenantId).collection("sessions")
-      .where("closedAt", ">=", start).where("closedAt", "<", end).get();
+  /**
+   * Закрытые чеки с start; end не задан — без верхней границы. Время
+   * закрытия ставят часы кассы: если они спешат хоть на минуту, условие
+   * «раньше, чем сейчас на сервере» прятало только что пробитый чек.
+   */
+  async function closedSince(tenantId, start, end = null) {
+    let q = tenantRef(tenantId).collection("sessions").where("closedAt", ">=", start);
+    if (end) q = q.where("closedAt", "<", end);
+    const snap = await q.get();
     return snap.docs.map((d) => d.data());
   }
+
+  /** Открытая кассовая смена — та же, что «Текущая смена» в X-отчёте. */
+  async function openCashShift(tenantId) {
+    const st = (await tenantRef(tenantId).collection("meta").doc("shiftState").get()).data() || {};
+    if (!st.openShiftId) return null;
+    const sh = (await tenantRef(tenantId).collection("shifts").doc(String(st.openShiftId)).get()).data();
+    const openedAt = sh && (sh.status || "open") === "open" ? toDate(sh.openedAt) : null;
+    return openedAt ? { id: String(st.openShiftId), openedAt } : null;
+  }
+
+  /** «с 15:43» или «с 09.10 22:00», если смену открыли в другой день. */
+  function sinceLabel(date, tz, now = new Date()) {
+    const a = localParts(date, tz);
+    const b = localParts(now, tz);
+    const day = a.d === b.d && a.m === b.m && a.y === b.y ? "" : `${String(a.d).padStart(2, "0")}.${String(a.m).padStart(2, "0")} `;
+    return `с ${day}${hhmm(date, tz)}`;
+  }
+
+  const venueTitle = (venue) => String(venue.name || "").trim().slice(0, 60);
 
   async function activeSessions(tenantId) {
     const snap = await tenantRef(tenantId).collection("sessions").where("status", "==", "active").get();
@@ -956,14 +984,27 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   const REPORTS = {
     async revenue(bot) {
       const venue = await venueOf(bot.tenantId);
-      const st = salesStats(await closedSince(bot.tenantId, businessDayStart(new Date(), venue.timezone)), await loyaltyExclude(bot.tenantId));
+      const ex = await loyaltyExclude(bot.tenantId);
+      const st = salesStats(await closedSince(bot.tenantId, businessDayStart(new Date(), venue.timezone)), ex);
       const open = await activeSessions(bot.tenantId);
       const openSum = open.reduce((a, s) => a + sessionBill(s), 0);
+      // Смена кассы — те же цифры, что «Текущая смена» в X-отчёте: ночная
+      // смена, начатая вчера, видна целиком.
+      const shift = await openCashShift(bot.tenantId);
+      let shiftLine = "Касса закрыта — смена не открыта";
+      if (shift) {
+        const sh = salesStats(await closedSince(bot.tenantId, shift.openedAt), ex);
+        shiftLine = `Смена кассы ${sinceLabel(shift.openedAt, venue.timezone)}: ${rub(sh.revenue)} · чеков ${sh.checks}`
+          + ` (нал. ${rub(sh.cash)}, карта ${rub(sh.card)}, терминал/СБП ${rub(sh.terminal)})`;
+      }
       return [
+        venueTitle(venue) ? `🏠 ${venueTitle(venue)}` : "",
         `💰 Выручка сегодня (с ${DAY_START_HOUR}:00): ${rub(st.revenue)}`,
         `Чеков закрыто: ${st.checks}`,
         `Наличные ${rub(st.cash)} · карта ${rub(st.card)} · терминал/СБП ${rub(st.terminal)}`,
+        st.aggregator ? `Агрегаторы: ${rub(st.aggregator)}` : "",
         st.comp ? `За счёт заведения: ${rub(st.comp)}` : "",
+        shiftLine,
         `Открыто сейчас: ${open.length} чек. на ${rub(openSum)}`,
       ].filter(Boolean).join("\n");
     },
@@ -972,7 +1013,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const ex = await loyaltyExclude(bot.tenantId);
       const now = new Date();
       const start = businessDayStart(now, venue.timezone);
-      const today = salesStats(await closedSince(bot.tenantId, start, now), ex);
+      const today = salesStats(await closedSince(bot.tenantId, start), ex);
       // Вчера к этому же часу — честное сравнение незаконченного дня.
       const yStart = new Date(start.getTime() - 24 * 3600 * 1000);
       const yesterday = salesStats(await closedSince(bot.tenantId, yStart, new Date(now.getTime() - 24 * 3600 * 1000)), ex);
@@ -1008,7 +1049,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const venue = await venueOf(bot.tenantId);
       const team = await onShiftStaff(bot.tenantId);
       const st = (await tenantRef(bot.tenantId).collection("meta").doc("shiftState").get()).data() || {};
-      const lines = [st.openShiftId ? "👥 Касса открыта" : "👥 Касса закрыта"];
+      const cash = await openCashShift(bot.tenantId);
+      const lines = [cash ? `👥 Касса открыта ${sinceLabel(cash.openedAt, venue.timezone)}` : st.openShiftId ? "👥 Касса открыта" : "👥 Касса закрыта"];
       if (!team.length) lines.push("На смене никого не отмечено.");
       for (const m of team) {
         lines.push(`• ${m.role}${m.since ? `, с ${hhmm(m.since, venue.timezone)}` : ""}`);
