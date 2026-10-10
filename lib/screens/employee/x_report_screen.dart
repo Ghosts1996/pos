@@ -339,6 +339,11 @@ class _XReportScreenState extends State<XReportScreen> {
                           _totalRow('Оплачено картой', data.paymentCard),
                           _totalRow('Оплачено наличными', data.paymentCash),
                           _totalRow('Оплачено терминалом', data.paymentTerminal),
+                          // Агрегаторы доставки: деньги придут от них позже,
+                          // не в кассу и не эквайрингом.
+                          if (data.byAggregator.length > 1)
+                            _totalRow('Через агрегаторы', data.paymentAggregator),
+                          for (final e in data.byAggregator.entries) _totalRow('Агрегатор · ${e.key}', e.value),
                           _totalRow('За счёт заведения', data.paymentComp),
                           if (cash != null) ...[
                             _totalRow('Инкассация', cash.summary.collections),
@@ -674,6 +679,7 @@ class _XReportScreenState extends State<XReportScreen> {
       card: data.paymentCard,
       cash: data.paymentCash,
       terminal: data.paymentTerminal,
+      aggregators: data.byAggregator,
       comp: data.paymentComp,
       collections: cash?.summary.collections ?? 0,
       cashInDrawer: cash == null || cash.rangeOnly ? null : cash.summary.expected,
@@ -712,6 +718,7 @@ class _XReportScreenState extends State<XReportScreen> {
       ReportLine('Картой', right: rub(data.paymentCard)),
       ReportLine('Наличными', right: rub(data.paymentCash)),
       ReportLine('Терминалом', right: rub(data.paymentTerminal)),
+      for (final e in data.byAggregator.entries) ReportLine('Агрегатор · ${e.key}', right: rub(e.value)),
       ReportLine('За счёт заведения', right: rub(data.paymentComp)),
       if (cash != null) ...[
         ReportLine('Инкассация', right: rub(cash.summary.collections)),
@@ -790,6 +797,7 @@ String xReportTotalsText({
   required double card,
   required double cash,
   required double terminal,
+  Map<String, double> aggregators = const {},
   required double comp,
   required double collections,
   double? cashInDrawer,
@@ -803,6 +811,10 @@ String xReportTotalsText({
   b.writeln('Оплачено картой: ${rub(card)}');
   b.writeln('Оплачено наличными: ${rub(cash)}');
   b.writeln('Оплачено терминалом: ${rub(terminal)}');
+  // Агрегатор доставки — каждый своей строкой: деньги придут от него позже.
+  for (final e in aggregators.entries) {
+    b.writeln('Агрегатор · ${e.key}: ${rub(e.value)}');
+  }
   b.writeln('За счёт заведения: ${rub(comp)}');
   b.writeln('Инкассация: ${rub(collections)}');
   if (cashInDrawer != null) b.writeln('Наличные в кассе: ${rub(cashInDrawer)}');
@@ -825,6 +837,10 @@ class _XReportData {
   final double paymentCard;
   final double paymentTerminal;
   final double paymentComp;
+
+  /// Оплачено через агрегаторы доставки — всего и по каждому.
+  final double paymentAggregator;
+  final Map<String, double> byAggregator;
   final double tipsCash;
   final double tipsCard;
 
@@ -840,6 +856,8 @@ class _XReportData {
     required this.paymentCard,
     required this.paymentTerminal,
     required this.paymentComp,
+    required this.paymentAggregator,
+    required this.byAggregator,
     required this.tipsCash,
     required this.tipsCard,
     required this.unpaidAmount,
@@ -854,6 +872,8 @@ class _XReportData {
     double card = 0;
     double terminal = 0;
     double comp = 0;
+    double aggregator = 0;
+    final byAggregator = <String, double>{};
     double tipsCash = 0;
     double tipsCard = 0;
     double unpaidAmount = 0;
@@ -872,6 +892,11 @@ class _XReportData {
       card += s.paymentCard;
       terminal += s.paymentTerminal;
       comp += s.paymentComp;
+      if (s.paymentAggregator > 0) {
+        aggregator += s.paymentAggregator;
+        final name = s.aggregatorName.isEmpty ? 'агрегатор' : s.aggregatorName;
+        byAggregator[name] = (byAggregator[name] ?? 0) + s.paymentAggregator;
+      }
       tipsCash += s.tipsCash;
       tipsCard += s.tipsCard;
       for (final item in s.orderItems) {
@@ -889,6 +914,8 @@ class _XReportData {
       paymentCard: card,
       paymentTerminal: terminal,
       paymentComp: comp,
+      paymentAggregator: aggregator,
+      byAggregator: byAggregator,
       tipsCash: tipsCash,
       tipsCard: tipsCard,
       unpaidAmount: unpaidAmount,

@@ -12,6 +12,7 @@ import '../../services/scanner_service.dart';
 import '../../build_info.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../models/online_pay.dart';
+import '../../models/aggregator.dart';
 import '../../services/gateway_api.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
@@ -88,6 +89,12 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   bool _onlineChecking = false;
   String? _onlineCheckResult;
   bool _onlineVerified = false;
+  // Агрегаторы доставки — отдельный способ оплаты на кассе.
+  List<AggregatorSettings> _aggs = AggregatorSettings.listFrom(null);
+  final Map<String, TextEditingController> _aggCommissionCtrl = {
+    for (final a in Aggregator.all) a.id: TextEditingController(),
+  };
+  final _aggNameCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -149,6 +156,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _onlinePasswordCtrl.text = data['terminalPassword'] as String? ?? '';
     }
     _onlineSaved = _onlineSignature;
+    _aggs = AggregatorSettings.listFrom(data);
+    for (final a in _aggs) {
+      _aggCommissionCtrl[a.id]!.text = a.commission == 0 ? '' : _percentText(a.commission);
+      if (a.id == 'custom') _aggNameCtrl.text = a.customName;
+    }
     try {
       final profile = await AppScope.col('meta').doc('venueProfile').get();
       _onlineVerified = _onlineProvider.isNotEmpty && profile.data()?['onlinePay'] == _onlineProvider;
@@ -183,6 +195,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     printKitchenAuto = _kitchenAuto;
     kitchenPrinterIp = _kitchenIpCtrl.text.trim();
     barPrinterIp = _barIpCtrl.text.trim();
+    final aggregators = {for (final a in _aggsEdited) a.id: a.toMap()};
     await _doc.set({
       'printSplitHookah': _splitHookah,
       'printKitchenTickets': _kitchenTickets,
@@ -226,7 +239,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'onlinePayUrl': _onlineUrlCtrl.text.trim(),
       'onlinePayTest': _onlineTest,
       'onlinePayHash': _onlineHash,
+      'aggregators': aggregators,
     }, SetOptions(merge: true));
+    // Окно оплаты на этом устройстве видит изменения сразу.
+    applyAggregatorSettings({'aggregators': aggregators});
     // Гостю — только какой банк подключён (без ключей): по нему приложение
     // показывает кнопку оплаты. Ставит его шлюз, когда банк подтвердил
     // реквизиты (onlinePayCheck). Реквизиты поменяли или убрали — кнопку
@@ -391,6 +407,105 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           if (_onlineCheckResult != null) _Result(_onlineCheckResult!),
         ],
       ],
+    );
+  }
+
+  static String _percentText(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString().replaceAll('.', ',');
+
+  /// Комиссия из поля: пусто — 0; null — введено не число от 0 до 100.
+  static double? _parsePercent(String text) {
+    final t = text.trim().replaceAll(',', '.').replaceAll('%', '').trim();
+    if (t.isEmpty) return 0;
+    final v = double.tryParse(t);
+    return v == null || v < 0 || v > 100 ? null : v;
+  }
+
+  /// Агрегаторы с тем, что сейчас введено в поля.
+  List<AggregatorSettings> get _aggsEdited => [
+        for (final a in _aggs)
+          a.copyWith(
+            commission: _parsePercent(_aggCommissionCtrl[a.id]!.text) ?? a.commission,
+            customName: a.id == 'custom' ? _aggNameCtrl.text.trim() : null,
+          ),
+      ];
+
+  void _setAgg(AggregatorSettings a) =>
+      setState(() => _aggs = [for (final x in _aggs) x.id == a.id ? a : x]);
+
+  Widget _aggregatorSection() {
+    final on = _aggsEdited.where((a) => a.enabled).toList();
+    return _Section(
+      icon: Icons.delivery_dining_outlined,
+      title: 'Агрегаторы доставки',
+      status: on.isEmpty ? 'Не подключены' : on.map((a) => a.label).join(', '),
+      active: on.isNotEmpty,
+      children: [
+        const _Hint('Заказ из Яндекс Еды, Купера или Мегамаркета гость уже оплатил в приложении '
+            'агрегатора, а деньги заведению агрегатор переведёт позже — по своему графику и за вычетом '
+            'комиссии. Включите агрегатор — в окне оплаты появится способ «Агрегатор». Такие чеки '
+            'в отчётах идут отдельной строкой и не смешиваются с наличными и эквайрингом.'),
+        for (final a in _aggs) _aggregatorTile(a),
+      ],
+    );
+  }
+
+  Widget _aggregatorTile(AggregatorSettings a) {
+    final commissionCtrl = _aggCommissionCtrl[a.id]!;
+    final bad = _parsePercent(commissionCtrl.text) == null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      decoration: BoxDecoration(
+        color: a.enabled ? AppColors.selection : AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: a.enabled ? AppColors.primary : AppColors.border, width: a.enabled ? 1.5 : 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: a.enabled,
+            onChanged: (v) => _setAgg(a.copyWith(enabled: v)),
+            title: Text(Aggregator.byId(a.id)?.name ?? a.label,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: a.id == 'custom' ? const Text('Delivery Club, Самокат, свой сервис доставки…') : null,
+          ),
+          if (a.enabled) ...[
+            if (a.id == 'custom') ...[
+              TextField(
+                controller: _aggNameCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(labelText: 'Название — как его увидит кассир'),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: commissionCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Комиссия по договору, %',
+                hintText: 'например, 25',
+                helperText: 'Для отчёта: сколько агрегатор должен перевести заведению',
+                helperMaxLines: 2,
+                errorText: bad ? 'Число от 0 до 100' : null,
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: a.aggregatorIssuesReceipt,
+              onChanged: (v) => _setAgg(a.copyWith(aggregatorIssuesReceipt: v)),
+              title: const Text('Чек покупателю пробивает агрегатор'),
+              subtitle: Text(a.aggregatorIssuesReceipt
+                  ? 'Обычно так, когда гость платит в приложении агрегатора. Касса свой фискальный чек '
+                      'не пробьёт — иначе продажа попадёт в налоговую дважды.'
+                  : 'Чек пробивает заведение: касса пробьёт его как оплату безналичными.'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -682,6 +797,10 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   @override
   void dispose() {
+    for (final c in _aggCommissionCtrl.values) {
+      c.dispose();
+    }
+    _aggNameCtrl.dispose();
     _onlineLoginCtrl.dispose();
     _onlinePasswordCtrl.dispose();
     _onlinePassword2Ctrl.dispose();
@@ -733,6 +852,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             _kassaSection(),
             _terminalSection(),
             _onlinePaySection(),
+            _aggregatorSection(),
             _egaisSection(),
             _czSection(),
           ],

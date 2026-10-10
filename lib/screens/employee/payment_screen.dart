@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
+import '../../models/aggregator.dart';
 import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payment_terminal_service.dart';
@@ -26,7 +27,8 @@ import '../../utils/human_error.dart';
 import '../../utils/checkout_checks.dart';
 
 /// Экран оплаты гостя — открывается по кнопке "Закрыть стол". Позволяет
-/// разбить сумму на наличные / карту / терминал / за счёт заведения,
+/// разбить сумму на наличные / карту / терминал / агрегатор доставки / за
+/// счёт заведения,
 /// указать контакт гостя, напечатать чек на принтере и отправить
 /// фискальный чек в онлайн-кассу (Настройки → Интеграции).
 class PaymentScreen extends StatefulWidget {
@@ -65,7 +67,39 @@ class _PaymentScreenState extends State<PaymentScreen> {
   late final _PaymentMethod _card;
   late final _PaymentMethod _terminal;
   late final _PaymentMethod _comp;
+
+  /// Оплачено через агрегатор доставки (Яндекс Еда, Купер, Мегамаркет):
+  /// гость уже заплатил в его приложении, деньги переведёт агрегатор.
+  /// Поле есть, только если агрегатор подключён в «Интеграциях».
+  late final _PaymentMethod _agg;
   late final List<_PaymentMethod> _methods;
+
+  /// Подключённые агрегаторы — как были на момент открытия окна.
+  final List<AggregatorSettings> _aggregators = enabledAggregators;
+
+  /// Через какой агрегатор оплачен заказ. Подключён один — выбран сразу.
+  String _aggId = '';
+
+  AggregatorSettings? get _aggChoice {
+    for (final a in _aggregators) {
+      if (a.id == _aggId) return a;
+    }
+    return null;
+  }
+
+  /// Проведено через агрегатор (без «закрыть без оплаты»).
+  double get _aggAmount => _closeWithoutPayment ? 0 : _agg.parse();
+
+  /// Чек покупателю пробивает сам агрегатор — касса свой не пробивает,
+  /// иначе продажа попала бы в налоговую дважды.
+  bool get _aggIssuesReceipt => _aggAmount > 0.004 && (_aggChoice?.aggregatorIssuesReceipt ?? false);
+
+  /// Почему через агрегатор пока нельзя провести оплату (null — можно).
+  String? get _aggProblem => aggregatorPaymentProblem(
+        amount: _aggAmount,
+        choice: _aggChoice,
+        otherPaid: _revenueCash + _revenueCard + _revenueTerminal + _comp.parse() + _bonusPaid,
+      );
 
   // Поля, в которые уже перенесена сумма первым тапом (после этого поле
   // становится редактируемым — второй тап откроет клавиатуру).
@@ -155,7 +189,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _card = _PaymentMethod('Банковской картой:');
     _terminal = _PaymentMethod('Оплата с терминала:');
     _comp = _PaymentMethod('За счёт заведения:');
-    _methods = [_cash, _card, _terminal, _comp];
+    _agg = _PaymentMethod(_aggregators.length == 1 ? '${_aggregators.first.label}:' : 'Через агрегатор:');
+    if (_aggregators.length == 1) _aggId = _aggregators.first.id;
+    _methods = [_cash, _card, _terminal, if (_aggregators.isNotEmpty) _agg, _comp];
 
     // По умолчанию вся сумма — наличными: сотрудник просто переносит часть
     // на другой способ оплаты, если гость платит смешанно (как на кассе Restik).
@@ -219,13 +255,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _cash.controller.text = _fmt(due - sbp);
     _card.controller.text = '0';
     _comp.controller.text = '0';
+    _agg.controller.text = '0';
   }
 
   @override
   void dispose() {
     _sessionSub?.cancel();
     _tipsSub?.cancel();
-    for (final m in _methods) {
+    // _agg — и когда агрегаторы не подключены (тогда его нет в _methods).
+    for (final m in {..._methods, _agg}) {
       m.dispose();
     }
     _contactCtrl.dispose();
@@ -318,7 +356,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   double get _cashNet => _cash.parse() - _change;
 
   bool get _canPay =>
-      _closeWithoutPayment || ((_diff.abs() < 0.01 || _change > 0) && _tipsCovered);
+      _aggProblem == null && (_closeWithoutPayment || ((_diff.abs() < 0.01 || _change > 0) && _tipsCovered));
 
   /// Две подсказки быстрой суммы — округление вверх до сотни и до
   /// ближайшей "круглой" суммы. Удобно для приёма наличных и расчёта сдачи.
@@ -438,6 +476,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
     try {
       final split = _tipsSplit;
+      // Чек покупателю пробил агрегатор — своей кассой не пробиваем.
+      final fiscal = _printFiscalReceipt && !_aggIssuesReceipt;
+      final agg = _aggAmount > 0.004 ? _aggChoice : null;
       final tipsVia = split.cash >= _tipsTotal - 0.004
           ? 'cash'
           : split.cash < 0.004
@@ -450,6 +491,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         card: _closeWithoutPayment ? 0 : _revenueCard,
         terminal: _closeWithoutPayment ? 0 : _revenueTerminal,
         comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid,
+        aggregator: agg == null ? 0 : _aggAmount,
+        aggregatorId: agg?.id ?? '',
+        aggregatorName: agg?.label ?? '',
+        aggregatorCommission: agg?.commission ?? 0,
         tipsPaidVia: _closeWithoutPayment ? const {} : {for (final t in _tips) t.id: tipsVia},
         tipsCancelled: _closeWithoutPayment ? [for (final t in _tips) t.id] : const [],
         tipsCash: _closeWithoutPayment ? 0 : split.cash,
@@ -457,7 +502,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         guestContact: _contactCtrl.text.trim(),
         closedWithoutPayment: _closeWithoutPayment,
         receiptPrinted: _printReceipt,
-        fiscalReceiptPrinted: _printFiscalReceipt,
+        fiscalReceiptPrinted: fiscal,
         orderItems: widget.session.orderItems,
         employeeName: widget.session.employeeName,
         expectedTotal: widget.session.totalWithDiscount,
@@ -491,7 +536,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
       _paidDone = true; // списанные бонусы/сертификаты ушли в оплату
       if (_printReceipt) await _printOnThermalPrinter();
-      if (_printFiscalReceipt) await _sendToKassa();
+      if (fiscal) await _sendToKassa();
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -529,6 +574,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (_change > 0) 'сдача ${_change.toStringAsFixed(0)}₽',
               if (_card.parse() > 0) 'карта ${_card.parse().toStringAsFixed(0)}₽',
               if (_terminal.parse() > 0) 'терминал ${_terminal.parse().toStringAsFixed(0)}₽',
+              if (_agg.parse() > 0) '${_aggChoice?.label ?? 'агрегатор'} ${_agg.parse().toStringAsFixed(0)}₽',
               if (_comp.parse() > 0) 'заведение ${_comp.parse().toStringAsFixed(0)}₽',
               if (_bonusPaid > 0) 'бонусы ${_bonusPaid.toStringAsFixed(0)}₽',
               if (_tipsTotal > 0) 'в т.ч. чаевые ${_tipsTotal.toStringAsFixed(0)}₽',
@@ -696,6 +742,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
           if (_revenueCash > 0.004) FiscalPayment('cash', _revenueCash),
           if (_revenueCard > 0.004) FiscalPayment('card', _revenueCard),
           if (_revenueTerminal > 0.004) FiscalPayment('card', _revenueTerminal),
+          // Агрегатор, если чек по договору пробивает заведение: гость
+          // заплатил безналично в приложении агрегатора.
+          if (_aggAmount > 0.004) FiscalPayment('card', _aggAmount),
           if (_comp.parse() > 0) FiscalPayment('other', _comp.parse()),
           if (prepaid > 0) FiscalPayment('prepayment', prepaid),
         ],
@@ -818,12 +867,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 const Divider(height: 28),
               ],
               if (!_closeWithoutPayment) _tipsSection(),
-              for (final m in _methods)
+              for (final m in _methods) ...[
                 _amountField(
                   m,
                   enabled: !_closeWithoutPayment,
                   trailing: m == _terminal ? _terminalPayButton() : null,
                 ),
+                if (m == _agg && _aggregators.length > 1 && !_closeWithoutPayment) _aggregatorChips(),
+              ],
               if (_quickAmounts.isNotEmpty && !_closeWithoutPayment)
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
@@ -860,11 +911,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                 ),
               if (!_closeWithoutPayment && !_tipsCovered && _diff.abs() < 0.01)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4, bottom: 4),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
                   child: Text(
-                    'Чаевые нельзя провести «за счёт заведения» — их платит гость',
-                    style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                    _aggAmount > 0.004
+                        ? 'Чаевые нельзя провести через агрегатор или «за счёт заведения» — '
+                            'гость платит их наличными или картой'
+                        : 'Чаевые нельзя провести «за счёт заведения» — их платит гость',
+                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              if (_aggProblem != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    _aggProblem!,
+                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
               // Быстрые суммы и «сдача» — сразу под полями оплаты, к которым
@@ -886,7 +948,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       hint: _splitHookah ? 'Два чека: «Кальяны» и «Кухня и бар»' : 'Всё одним общим чеком'),
                 ),
               _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
-                  (v) => setState(() => _printFiscalReceipt = v)),
+                  (v) => setState(() => _printFiscalReceipt = v),
+                  hint: _aggIssuesReceipt && _printFiscalReceipt
+                      ? 'Касса чек не пробьёт: его пробивает агрегатор (${_aggChoice!.label})'
+                      : null),
               const SizedBox(height: 20),
               SizedBox(
                 height: 52,
@@ -989,6 +1054,25 @@ class _PaymentScreenState extends State<PaymentScreen> {
             const SnackBar(content: Text('Не удалось добавить чаевые — проверьте интернет')));
       }
     }
+  }
+
+  /// Через какой агрегатор пришёл заказ — когда подключено несколько.
+  Widget _aggregatorChips() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          for (final a in _aggregators)
+            ChoiceChip(
+              label: Text(a.label),
+              selected: _aggId == a.id,
+              onSelected: (_) => setState(() => _aggId = a.id),
+            ),
+        ],
+      ),
+    );
   }
 
   /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа

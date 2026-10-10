@@ -213,7 +213,7 @@ const orderNo = (sessionId, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) 
 
 /** Деньги чеков: выручка, чеки, оплаты, доли цехов. */
 function salesStats(sessions, excludeTobacco = true) {
-  const st = { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, unpaid: 0, unpaidSum: 0,
+  const st = { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, aggregator: 0, unpaid: 0, unpaidSum: 0,
     refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map() };
   for (const s of sessions) {
     const bill = sessionBill(s, excludeTobacco);
@@ -225,6 +225,8 @@ function salesStats(sessions, excludeTobacco = true) {
     st.card += Number(s.paymentCard) || 0;
     st.terminal += Number(s.paymentTerminal) || 0;
     st.comp += Number(s.paymentComp) || 0;
+    // Агрегатор доставки (Яндекс Еда и др.): деньги переведёт он, позже.
+    st.aggregator += Number(s.paymentAggregator) || 0;
     if (s.orderType === "takeaway") st.takeaway++;
     if (s.orderType === "delivery") st.delivery++;
     let full = 0;
@@ -253,6 +255,7 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     st.cash ? `наличные ${rub(st.cash)}` : "",
     st.card ? `карта ${rub(st.card)}` : "",
     st.terminal ? `терминал/СБП ${rub(st.terminal)}` : "",
+    st.aggregator ? `агрегаторы ${rub(st.aggregator)}` : "",
     st.comp ? `за счёт заведения ${rub(st.comp)}` : "",
   ].filter(Boolean);
   if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);

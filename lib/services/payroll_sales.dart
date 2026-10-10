@@ -13,7 +13,8 @@ class SaleCredit {
   /// 'bar' — позиции этого вида.
   final String base;
 
-  /// Сумма, реально полученная деньгами (наличные, карта, терминал), —
+  /// Сумма, реально полученная деньгами (наличные, карта, терминал,
+  /// агрегатор доставки), —
   /// без скидок, бонусов и «за счёт заведения».
   final double amount;
 
@@ -54,7 +55,8 @@ class PayrollSalesResult {
 ///  • напитки бара — так же, по проценту с бара.
 ///
 /// Чтобы процент нельзя было «нарисовать»: считаем только деньги,
-/// реально полученные за чек (наличные + карта + терминал), — чек «за счёт
+/// реально полученные за чек (наличные + карта + терминал + агрегатор
+/// доставки), — чек «за счёт
 /// заведения», оплата бонусами, закрытие без оплаты и возвраты процента не
 /// дают; кто добавил позицию, касса пишет сама по PIN, переписать чужую
 /// позицию на себя нельзя.
@@ -80,7 +82,7 @@ class PayrollSales {
     for (final s in sessions) {
       final at = s.closedAt;
       if (at == null || s.status != 'closed' || s.refunded || s.closedWithoutPayment) continue;
-      final money = s.paymentCash + s.paymentCard + s.paymentTerminal;
+      final money = s.paymentCash + s.paymentCard + s.paymentTerminal + s.paymentAggregator;
       final total = s.totalWithDiscount;
       if (money <= 0 || total <= 0) continue;
       final factor = money >= total ? 1.0 : money / total;

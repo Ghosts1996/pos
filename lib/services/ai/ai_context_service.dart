@@ -187,7 +187,7 @@ class AiContextService {
     if (sessions.isEmpty) return 'Закрытых чеков за период нет.';
 
     var revenue = 0.0;
-    var cash = 0.0, card = 0.0, terminal = 0.0, comp = 0.0;
+    var cash = 0.0, card = 0.0, terminal = 0.0, comp = 0.0, aggregator = 0.0;
     final byItem = <String, ({int qty, double sum})>{};
     final byHour = <int, double>{};
     var refills = 0;
@@ -198,6 +198,7 @@ class AiContextService {
       card += s.paymentCard;
       terminal += s.paymentTerminal;
       comp += s.paymentComp;
+      aggregator += s.paymentAggregator;
       refills += s.refillCount;
       final h = (s.closedAt ?? s.startTime).hour;
       byHour[h] = (byHour[h] ?? 0) + s.paymentTotal;
@@ -217,7 +218,8 @@ class AiContextService {
       ..writeln('Средний чек: ${money(revenue / sessions.length)}')
       ..writeln('Перезабивок всего: $refills')
       ..writeln('Оплаты — нал ${money(cash)}, карта ${money(card)}, '
-          'терминал ${money(terminal)}, за счёт заведения ${money(comp)}')
+          'терминал ${money(terminal)}, за счёт заведения ${money(comp)}'
+          '${aggregator > 0 ? ', агрегаторы доставки ${money(aggregator)}' : ''}')
       ..writeln('ТОП-15 позиций по выручке:');
     for (final e in top.take(15)) {
       buf.writeln('- ${e.key}: ${e.value.qty} шт, ${money(e.value.sum)}');
@@ -377,6 +379,7 @@ extension AiVenueDigest on AiContextService {
     if (closed.isEmpty) return 'Закрытых чеков за период нет.';
 
     var revenue = 0.0, cash = 0.0, card = 0.0, terminal = 0.0, comp = 0.0, online = 0.0, tips = 0.0;
+    var aggregator = 0.0, aggregatorPayout = 0.0;
     var discounted = 0, minutes = 0, refills = 0;
     final byItem = <String, ({int qty, double sum})>{};
     final byHour = <int, double>{};
@@ -390,6 +393,8 @@ extension AiVenueDigest on AiContextService {
       card += s.paymentCard;
       terminal += s.paymentTerminal;
       comp += s.paymentComp;
+      aggregator += s.paymentAggregator;
+      aggregatorPayout += s.aggregatorPayout;
       online += s.guestPaidTotal;
       tips += s.tipsCash + s.tipsCard;
       refills += s.refillCount;
@@ -422,6 +427,10 @@ extension AiVenueDigest on AiContextService {
           'онлайн из приложения ${money(online)}, за счёт заведения ${money(comp)}')
       ..writeln('Чаевые: ${money(tips)}; чеков со скидкой: $discounted; возвратов: $refunded')
       ..writeln('По типу: ${byType.entries.map((e) => '${e.key} — ${e.value.n} чеков, ${money(e.value.sum)}').join('; ')}');
+    if (aggregator > 0) {
+      buf.writeln('Агрегаторы доставки (Яндекс Еда и др.): ${money(aggregator)}, '
+          'к выплате от них после комиссии ${money(aggregatorPayout)}');
+    }
     if (cancelledDelivery.isNotEmpty) {
       buf.writeln('Отменённых заказов с собой и доставки: ${cancelledDelivery.length}; причины: '
           '${cancelledDelivery.map((s) => AiContextService.scrubContacts(s.cancelReason)).where((r) => r.isNotEmpty).take(8).join('; ')}');

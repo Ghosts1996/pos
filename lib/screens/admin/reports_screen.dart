@@ -270,6 +270,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                           ),
                         ],
+                        if (stats.byAggregator.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('Агрегаторы доставки'),
+                          _aggregatorCard(stats),
+                        ],
                         if (stats.unpaidClosed > 0) ...[
                           const SizedBox(height: 8),
                           _sectionTitle('Закрыто без оплаты'),
@@ -415,6 +420,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         if (s.paymentCash > 0) 'наличные',
         if (s.paymentCard > 0) 'карта',
         if (s.paymentTerminal > 0) 'терминал',
+        if (s.paymentAggregator > 0) s.aggregatorName.isEmpty ? 'агрегатор' : s.aggregatorName,
         if (s.paymentComp > 0) 'за счёт заведения',
       ].join(' + ');
       for (final i in s.orderItems) {
@@ -497,6 +503,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (stats.cardsUsed > 0) ReportLine('Скидки по картам', right: rub(stats.totalDiscountGiven)),
       if (stats.unpaidClosed > 0) ReportLine('Без оплаты: ${stats.unpaidClosed}', right: rub(stats.unpaidAmount)),
       if (stats.refunds > 0) ReportLine('Возвраты: ${stats.refunds}', right: rub(stats.refundedAmount)),
+      if (stats.byAggregator.isNotEmpty) ...[
+        const ReportLine.separator(),
+        const ReportLine('АГРЕГАТОРЫ', bold: true),
+        for (final e in stats.byAggregator.entries) ...[
+          ReportLine('${e.key}: ${e.value.orders}', right: rub(e.value.sales)),
+          ReportLine('  к выплате', right: rub(e.value.payout)),
+        ],
+      ],
       if (stats.byEmployee.isNotEmpty) ...[
         const ReportLine.separator(),
         const ReportLine('ПО СОТРУДНИКАМ', bold: true),
@@ -529,6 +543,35 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ));
       }
     }
+  }
+
+  /// Агрегаторы доставки: продажи, комиссия и сколько они должны перевести.
+  /// Деньги приходят не в кассу и не эквайрингом, а переводом от агрегатора
+  /// по его графику — сверяйте с его актом.
+  Widget _aggregatorCard(_ReportStats stats) {
+    return Card(
+      child: Column(
+        children: [
+          for (final e in stats.byAggregator.entries)
+            ListTile(
+              leading: const Icon(Icons.delivery_dining_outlined),
+              title: Text('${e.key}: ${e.value.orders} '
+                  '${pluralRu(e.value.orders, 'заказ', 'заказа', 'заказов')}'),
+              subtitle: Text(e.value.sales - e.value.payout > 0.004
+                  ? 'Комиссия ${rub(e.value.sales - e.value.payout)} · к выплате ${rub(e.value.payout)}'
+                  : 'К выплате ${rub(e.value.payout)} (комиссия не указана в «Интеграциях»)'),
+              trailing: Text(rub(e.value.sales), style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              'Входит в выручку. Деньги переводит агрегатор по своему графику — сверяйте с его актом.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// ABC-анализ: A — позиции, дающие 80% выручки, B — следующие 15%, C — 5%.
@@ -574,6 +617,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
       buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed}, ${rub(stats.unpaidAmount)}');
     }
     if (stats.refunds > 0) buf.writeln('Возвраты: ${stats.refunds}, ${rub(stats.refundedAmount)}');
+    if (stats.byAggregator.isNotEmpty) {
+      buf
+        ..writeln()
+        ..writeln('Агрегаторы доставки:');
+      for (final e in stats.byAggregator.entries) {
+        final a = e.value;
+        buf.writeln('• ${e.key} — ${orders(a.orders)}, ${rub(a.sales)}, '
+            'комиссия ${rub(a.sales - a.payout)}, к выплате ${rub(a.payout)}');
+      }
+    }
     if (stats.byEmployee.isNotEmpty) {
       buf
         ..writeln()
@@ -626,6 +679,13 @@ class _EmployeeStat {
   int visits = 0;
 }
 
+/// Продажи через один агрегатор доставки.
+class _AggregatorStat {
+  int orders = 0;
+  double sales = 0;
+  double payout = 0;
+}
+
 class _ItemStat {
   final String name;
   final String menuItemId;
@@ -670,6 +730,9 @@ class _ReportStats {
   final int deliveryCount;
   final double deliveryRevenue;
 
+  /// Оплачено через агрегаторы доставки — по названию агрегатора.
+  final Map<String, _AggregatorStat> byAggregator;
+
   _ReportStats({
     required this.visits,
     required this.revenue,
@@ -687,6 +750,7 @@ class _ReportStats {
     this.takeawayRevenue = 0,
     this.deliveryCount = 0,
     this.deliveryRevenue = 0,
+    this.byAggregator = const {},
   });
 
   double get averageCheck => visits == 0 ? 0 : revenue / visits;
@@ -704,6 +768,7 @@ class _ReportStats {
     double takeawayRevenue = 0, deliveryRevenue = 0;
     final byEmployee = <String, _EmployeeStat>{};
     final byItem = <String, _ItemStat>{};
+    final byAggregator = <String, _AggregatorStat>{};
 
     for (final s in sessions) {
       // Возвращённые чеки в выручку и статистику по товарам/сотрудникам не
@@ -730,6 +795,13 @@ class _ReportStats {
       } else if (s.orderType == 'takeaway') {
         takeawayCount++;
         takeawayRevenue += s.totalWithDiscount;
+      }
+      if (s.paymentAggregator > 0) {
+        final a = byAggregator.putIfAbsent(
+            s.aggregatorName.isEmpty ? 'Агрегатор' : s.aggregatorName, () => _AggregatorStat());
+        a.orders++;
+        a.sales += s.paymentAggregator;
+        a.payout += s.aggregatorPayout;
       }
       refills += s.refillCount;
       discountGiven += (s.orderTotal - s.totalWithDiscount);
@@ -770,6 +842,7 @@ class _ReportStats {
       takeawayRevenue: takeawayRevenue,
       deliveryCount: deliveryCount,
       deliveryRevenue: deliveryRevenue,
+      byAggregator: byAggregator,
     );
   }
 }
