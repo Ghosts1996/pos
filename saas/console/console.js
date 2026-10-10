@@ -4141,6 +4141,9 @@ function watchDashboardData(tenantId) {
           </select>
         </label>
         <div class="small muted">Валюта: ${esc(generalSettings?.currency || 'RUB')} · Язык интерфейса: русский</div>
+        <div class="small" style="margin-top:8px">${(venueProfile || {}).piiMode === 'rf'
+          ? '✓ Имена и телефоны гостей и сотрудников хранятся только в России и за границу не передаются — из-за ZalPOS подавать в Роскомнадзор ничего не нужно.'
+          : 'Персональные данные: заведение переводится на хранение только в России — мы сделаем это сами, от вас ничего не требуется.'}</div>
         ${canManage ? `<button class="btn btn-ghost" id="f-save-settings" style="margin-top:12px">Сохранить</button>` : ''}
         <div id="f-settings-error" class="small" style="color:var(--danger);margin-top:8px"></div>
       </div>
@@ -6115,6 +6118,100 @@ function watchAllTenants() {
     draw();
   };
 
+  // Хранение персональных данных (saas-gateway, pii-migrate.js): состояние
+  // грузим вместе с деталями, а пока идёт перенос или очистка — опрашиваем.
+  const piiState = new Map(); // tenantId → ответ status | { error }
+  const piiPolls = new Set();
+  const loadPiiState = async (tenantId) => {
+    try {
+      piiState.set(tenantId, (await callSaasGateway('piiMigration', { tenantId, action: 'status' })).data);
+    } catch (e) {
+      piiState.set(tenantId, { error: e?.message || String(e) });
+    }
+    draw();
+    const st = piiState.get(tenantId);
+    if (st && st.running && expandedIds.has(tenantId) && !piiPolls.has(tenantId)) {
+      piiPolls.add(tenantId);
+      setTimeout(() => { piiPolls.delete(tenantId); if (expandedIds.has(tenantId)) loadPiiState(tenantId); }, 4000);
+    }
+  };
+
+  const piiStep = async (tenantId, step) => {
+    const st = piiState.get(tenantId) || {};
+    const opts = { tenantId, action: step === 'scrubCheck' ? 'scrub' : step, dryRun: step === 'scrubCheck' };
+    let fresh = false;
+    if (step === 'switch') {
+      const notReady = (st.devices || []).filter((d) => !d.ready);
+      const text = 'Перевести заведение на хранение данных только в РФ? Кассы, приложение и сервер перестанут '
+        + 'писать имена и телефоны в Firestore.';
+      if (notReady.length) {
+        if (!confirm(`${text}\n\nНе обновлены: ${notReady.map((d) => d.name).join(', ')}. Если эти устройства `
+          + 'больше не используются — продолжить. Если используются — сначала обновите их, иначе на них пропадут имена.')) return;
+        if (!(await reauthenticate('переключить заведение с необновлёнными кассами'))) return;
+        opts.force = true;
+        fresh = true;
+      } else if (!confirm(text)) {
+        return;
+      }
+    } else if (step === 'scrub') {
+      if (!confirm('Очистить Firestore? Имена и телефоны, которые уже есть в справочнике в РФ, будут удалены '
+        + 'из базы за рубежом. Сначала сделайте пробный проход. Отменить нельзя (копия остаётся в РФ).')) return;
+      if (!(await reauthenticate('очистить персональные данные в Firestore'))) return;
+      fresh = true;
+    } else if (step === 'rollback') {
+      if (!confirm('Вернуть обычный режим? Имена и телефоны снова начнут копироваться в Firestore — '
+        + 'заведению тогда понадобится уведомление о трансграничной передаче.')) return;
+      if (!(await reauthenticate('вернуть обычный режим хранения данных'))) return;
+      fresh = true;
+    }
+    try {
+      await callSaasGateway('piiMigration', opts, { forceRefresh: fresh });
+      toast(step === 'switch' ? 'Заведение хранит данные только в РФ'
+        : step === 'rollback' ? 'Обычный режим возвращён' : 'Запущено — ход виден в карточке');
+    } catch (e) {
+      toast(`Не удалось: ${e?.message || e}`);
+    }
+    loadPiiState(tenantId);
+  };
+
+  const piiJobLine = (label, job) => {
+    if (!job) return '';
+    if (job.state === 'running') return `<div class="small">${label}: идёт…</div>`;
+    if (job.state === 'failed') return `<div class="small" style="color:var(--danger)">${label}: ошибка — ${esc(job.error || '')}</div>`;
+    const sum = (o) => Object.values(o || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+    const extra = job.removed !== undefined
+      ? ` · убрано из записей: ${sum(job.removed)}, не сверено: ${sum(job.unverified)}${job.guests === 'skipped' ? ' · общие профили сети — после перевода всех точек' : ''}`
+      : job.filled !== undefined ? ` · дописано в РФ: ${job.filled}` : '';
+    return `<div class="small">${label}: ${job.finishedAt ? fmtDateTime(Timestamp.fromMillis(job.finishedAt)) : 'готово'}${extra}</div>`;
+  };
+
+  const renderPiiBlock = (t) => {
+    const st = piiState.get(t.id);
+    if (!st) return '<div class="small muted">Загрузка…</div>';
+    if (st.error) return `<div class="small" style="color:var(--danger)">${esc(st.error)}</div>`;
+    const rf = st.mode === 'rf';
+    const ready = (st.devices || []).filter((d) => d.ready).length;
+    const total = (st.devices || []).length;
+    const notReady = (st.devices || []).filter((d) => !d.ready);
+    const scrubOpen = rf && st.scrubAfter && Date.now() >= st.scrubAfter;
+    const btn = (step, label) => `<button class="btn-link f-pii-step" data-id="${esc(t.id)}" data-step="${step}" style="width:auto"${st.running ? ' disabled' : ''}>${label}</button>`;
+    return `
+      <div class="small" style="font-weight:600">${rf ? '✓ Только в РФ — заведению ничего подавать в РКН из-за ZalPOS не нужно' : 'Обычный режим — имена и телефоны копируются в Firestore'}</div>
+      <div class="small muted">Кассы на новой сборке: ${ready} из ${total}${notReady.length ? ` · не обновлены: ${esc(notReady.map((d) => d.name).join(', '))}` : ''}</div>
+      ${piiJobLine('Перенос в РФ', st.copy)}
+      ${piiJobLine('Пробная очистка', st.scrubCheck)}
+      ${piiJobLine('Очистка Firestore', st.scrub)}
+      ${rf && !scrubOpen && st.scrubAfter ? `<div class="small muted">Очистка доступна с ${fmtDateTime(Timestamp.fromMillis(st.scrubAfter))}</div>` : ''}
+      <div class="row" style="gap:12px;flex-wrap:wrap;margin-top:6px">
+        ${btn('copy', rf ? 'Дописать в РФ ещё раз' : '1. Перенести в РФ')}
+        ${rf ? '' : btn('switch', '2. Переключить')}
+        ${rf ? btn('scrubCheck', 'Пробная очистка') : ''}
+        ${scrubOpen ? btn('scrub', '3. Очистить Firestore') : ''}
+        ${rf ? btn('rollback', 'Вернуть обычный режим') : ''}
+        ${btn('refresh', 'Обновить')}
+      </div>`;
+  };
+
   const toggleTenantDetail = (tenantId) => {
     if (expandedIds.has(tenantId)) {
       expandedIds.delete(tenantId);
@@ -6123,6 +6220,7 @@ function watchAllTenants() {
       expandedIds.add(tenantId);
       draw();
       if (!detailsCache.has(tenantId)) ensureDetailsLoaded(tenantId);
+      loadPiiState(tenantId);
     }
   };
 
@@ -6245,6 +6343,13 @@ function watchAllTenants() {
           (восстановление: saas-gateway/restore-backup.js). Каждый документ — одно чтение из дневной квоты базы (50 000).</div>
           <button class="btn btn-ghost f-tenant-backup" data-id="${esc(t.id)}">Скачать бэкап ${t.chainId ? 'точки' : 'заведения'}</button>
           ${t.chainId ? `<button class="btn btn-ghost f-chain-backup" data-chain="${esc(t.chainId)}" data-id="${esc(t.id)}" style="margin-top:8px">Скачать бэкап всей сети</button>` : ''}
+        </div>
+
+        <div style="margin-top:14px">
+          <div class="small muted" style="margin-bottom:6px">Персональные данные: где хранятся. Порядок: перенести в РФ →
+          переключить (когда все кассы обновлены) → через сутки пробная очистка и очистка Firestore. Каждый шаг читает
+          все записи заведения, как бэкап, — крупные заведения переводите по одному в день.</div>
+          ${renderPiiBlock(t)}
         </div>
 
         <div style="margin-top:14px">
@@ -6404,6 +6509,9 @@ function watchAllTenants() {
     });
     document.querySelectorAll('.f-grant-bonus').forEach((el) => {
       el.onclick = () => grantBonusPeriod(el.dataset.id);
+    });
+    document.querySelectorAll('.f-pii-step').forEach((el) => {
+      el.onclick = () => (el.dataset.step === 'refresh' ? loadPiiState(el.dataset.id) : piiStep(el.dataset.id, el.dataset.step));
     });
     document.querySelectorAll('.f-tenant-backup, .f-chain-backup').forEach((el) => {
       el.onclick = () => {
@@ -7924,6 +8032,7 @@ const SECURITY_EVENT_LABELS = {
   dataRequestDone: 'Запрос о персональных данных выполнен',
   dataRequestRejected: 'Запрос о персональных данных отклонён',
   guestLookup: 'Поиск гостя по телефону',
+  piiMigration: 'Хранение персональных данных в РФ',
   guestAnonymized: 'Гость обезличен',
   guestSelfDeleted: 'Гость удалил свои данные',
 };
@@ -7975,6 +8084,10 @@ function securityEventDetails(e) {
       return `${DATA_REQUEST_KIND_LABELS[m.kind] || m.kind || ''} · ${m.contact || ''}`;
     case 'guestLookup':
       return `${m.phone || ''} · найдено: ${m.found ?? 0}`;
+    case 'piiMigration':
+      return [tenant || e.tenantId || '',
+        ({ copy: 'перенос в РФ', switch: 'переключение', scrub: m.dryRun ? 'пробная очистка' : 'очистка Firestore', rollback: 'откат' })[m.step] || m.step || '',
+        m.force ? 'принудительно' : ''].filter(Boolean).join(' · ');
     case 'guestAnonymized':
       return `${m.phone || ''}${m.guestName ? ` · ${m.guestName}` : ''} · «${m.rootName || m.rootId || ''}»`;
     case 'guestSelfDeleted':

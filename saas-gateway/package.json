@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test.smoke.js && node test.telegram.js && node test.relay.mjs && node test.pay.js && node test.delivery.js && node test.requisites.js"
+    "test": "node test.smoke.js && node test.telegram.js && node test.relay.mjs && node test.pay.js && node test.delivery.js && node test.requisites.js && node test.migrate.js"
   },
   "engines": {
     "node": ">=20"
