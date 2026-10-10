@@ -322,3 +322,27 @@ Cloudflare Workers (бесплатного тарифа хватает): сер�
 
 Отключить: убрать обе строки из `/etc/saas-gateway.env` и перезапустить
 шлюз — вебхуки вернутся на `https://pii.zalpos.ru/saas/tgHook/…`.
+
+## Блог (для поисковиков)
+
+Статьи для владельцев заведений: `https://zalpos.ru/blog/`. Кнопки «Блог» на
+сайте нет намеренно — страницы находят Яндекс и Google по `/sitemap.xml`
+(указан в `console/robots.txt`), RSS `/blog/rss.xml` и уведомлениям IndexNow.
+
+- Посты — `blog/posts/*.md` (в файле может быть несколько). Шапка поста:
+  `date`, `slug`, `title`, `description`, `tags`. Текст — Markdown: `##`,
+  списки, `**жирный**`, `[ссылка](/blog/slug/)`, таблицы, цитаты `> `.
+- `scripts/build-blog.mjs` собирает HTML в `console/blog/` и
+  `console/sitemap.xml` (в git не попадают). В сборку идут только посты с
+  датой не позже сегодняшней по Москве; ссылка на ещё не вышедший пост
+  остаётся текстом и станет ссылкой в день его выхода.
+- Сборка запускается сама при каждом `firebase deploy --only hosting`
+  (`predeploy` в `firebase.json`).
+- Автопубликация: `update-server.sh` ставит cron `/etc/cron.d/zalpos-blog` —
+  каждый день в 7:07 по Москве `scripts/blog-publish.sh` собирает блог и,
+  если вышли новые посты, выкладывает сайт и сообщает поисковикам (ключ
+  IndexNow — файл `console/<ключ>.txt`). Журнал: `/var/log/zalpos-blog.log`.
+- Предпросмотр всех постов: `node scripts/build-blog.mjs --all --out=/tmp/blog`;
+  проверка: `node scripts/test-blog.mjs`.
+- Чтобы поисковики нашли блог быстрее, добавьте сайт в Яндекс Вебмастер и
+  Google Search Console и отправьте там `https://zalpos.ru/sitemap.xml`.

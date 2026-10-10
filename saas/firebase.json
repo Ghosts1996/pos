@@ -5,6 +5,7 @@
   },
   "hosting": {
     "public": "console",
+    "predeploy": ["node \"$PROJECT_DIR/scripts/build-blog.mjs\""],
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -13,6 +14,12 @@
     "headers": [
       {
         "source": "**/*.@(html|js|css)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      },
+      {
+        "source": "**/*.xml",
         "headers": [
           { "key": "Cache-Control", "value": "no-cache" }
         ]
