@@ -1,9 +1,10 @@
 "use strict";
 
+const crypto = require("crypto");
 const http = require("http");
 const { Pool } = require("pg");
 const admin = require("firebase-admin");
-const { createVault, VaultError } = require("./vault");
+const { createVault, VaultError, phoneOk, phoneDigits } = require("./vault");
 
 /**
  * Первичная запись персональных данных в базу в РФ (ч. 5 ст. 18 152-ФЗ):
@@ -199,6 +200,7 @@ async function handleRegisterGuestProfile(req, res, body) {
   }
   const storeKey = chainId ? `chain:${chainId}` : tenant;
 
+  let nextPhone = "";
   const pgClient = await getPool().connect();
   try {
     await pgClient.query("BEGIN");
@@ -207,7 +209,7 @@ async function handleRegisterGuestProfile(req, res, body) {
       [storeKey, uid]
     );
     const nextName = name ?? existing.rows[0]?.name ?? "";
-    const nextPhone = phone ?? existing.rows[0]?.phone ?? "";
+    nextPhone = phone ?? existing.rows[0]?.phone ?? "";
     await pgClient.query(
       `INSERT INTO guest_profiles (tenant_id, uid, name, phone, updated_at)
        VALUES ($1, $2, $3, $4, now())
@@ -235,6 +237,10 @@ async function handleRegisterGuestProfile(req, res, body) {
     if (!rfOnly && name !== undefined) patch.name = name;
     if (!rfOnly && phone !== undefined) patch.phone = phone;
     if (rfOnly && !(await db.doc(path).get()).exists) patch.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    // «Номер записан в РФ»: по этой отметке правила базы пускают гостя за
+    // стол, когда самого номера в профиле нет (режим rf). Гостю её писать
+    // правила не дают — ставит только этот сервер.
+    if (tenant && phone !== undefined) patch.phoneOnFile = phoneOk(nextPhone);
     if (Object.keys(patch).length) await db.doc(path).set(patch, { merge: true });
   } catch (e) {
     // В РФ уже записано, копия догонит при следующем изменении профиля.
@@ -362,6 +368,11 @@ async function handleRecordPayer(req, res, body) {
  * пользователь платформы: и сотрудник на кассе, и гость в приложении.
  * Переписать уже записанный контакт может только тот, кто его создал
  * (повтор после обрыва связи), — чужую бронь по id не перезаписать.
+ *
+ * Если номер похож на настоящий, кладём в Firestore квитанцию
+ * contactReceipts/{kind}_{id} — только uid, без номера. В режиме rf
+ * телефона в документе брони нет, и правила базы вместо него проверяют,
+ * что номер этой брони записан в РФ этим же гостем.
  */
 async function handleRecordContact(req, res, body) {
   const { tenantId, kind, id, name, phone, address } = body;
@@ -371,24 +382,40 @@ async function handleRecordContact(req, res, body) {
   }
   const auth = await verifySaasUser(req, res);
   if (!auth) return;
+  const db = admin.firestore(auth.fbApp);
   try {
-    const t = await admin.firestore(auth.fbApp).doc(`tenants/${tenantId}`).get();
+    const t = await db.doc(`tenants/${tenantId}`).get();
     if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
   } catch (_) {
     return sendJson(res, 502, { error: "не удалось прочитать заведение" });
   }
+  let mine = false;
   try {
-    await getPool().query(
+    const r = await getPool().query(
       `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, address, created_by, updated_by, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $7, now())
        ON CONFLICT (tenant_id, kind, record_id)
        DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, address = EXCLUDED.address,
          updated_by = EXCLUDED.updated_by, updated_at = now()
-       WHERE contact_records.created_by = EXCLUDED.created_by`,
+       WHERE contact_records.created_by = EXCLUDED.created_by
+       RETURNING record_id`,
       [tenantId, kind, id, str(name, 200), str(phone, 40), str(address, 300), auth.decoded.uid]
     );
+    mine = r.rows.length > 0;
   } catch (_) {
     return sendJson(res, 500, { error: "не удалось сохранить в первичной базе" });
+  }
+  if (mine && kind !== "delivery" && phoneOk(phone)) {
+    try {
+      await db.doc(`tenants/${tenantId}/contactReceipts/${kind}_${id}`).set({
+        uid: auth.decoded.uid,
+        at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      // Контакт в РФ записан. Без квитанции бронь без номера (режим rf)
+      // правила не пропустят — клиент покажет ошибку и повторит.
+      return sendJson(res, 200, { ok: true, receiptFailed: String(e.message || e) });
+    }
   }
   return sendJson(res, 200, { ok: true });
 }
@@ -474,21 +501,22 @@ async function handleGuestConsent(req, res, body) {
  * заведённые персоналом, находим по clientUid. Firestore приложение потом
  * обезличивает через saas-gateway (/deleteGuestData).
  */
-async function handleDeleteGuest(req, res, body) {
-  const { tenantId } = body;
-  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) {
-    return sendJson(res, 400, { error: "некорректный tenantId" });
-  }
-  const auth = await verifySaasUser(req, res);
-  if (!auth) return;
-  const uid = auth.decoded.uid;
+/**
+ * Стирает гостя в базе в РФ: профиль (у сети — общий), контакты его броней,
+ * очереди, заказов из приложения и чеков, где ему начисляли кешбэк, во всех
+ * точках заведения или сети. Брони, заведённые персоналом, и чеки находим
+ * по clientUid/loyaltyClientUid в Firestore. Значения затираем, а строки
+ * оставляем: кассы держат копию справочника и узнают об удалении при
+ * следующей синхронизации (pii_sync) — строка без имени и телефона
+ * приходит к ним как «стёрто». Ошибка — { status, error }.
+ */
+async function forgetGuest(fdb, tenantId, uid) {
   let tenantIds;
   let storeKey;
-  const recordIds = { reservation: [], waitlist: [] };
+  const recordIds = { reservation: [], waitlist: [], session: [] };
   try {
-    const fdb = admin.firestore(auth.fbApp);
     const t = await fdb.doc(`tenants/${tenantId}`).get();
-    if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
+    if (!t.exists) return { status: 404, error: "заведение не найдено" };
     const chainId = String(t.data().chainId || "");
     storeKey = chainId ? `chain:${chainId}` : tenantId;
     tenantIds = chainId
@@ -499,17 +527,21 @@ async function handleDeleteGuest(req, res, body) {
         const snap = await fdb.collection(`tenants/${tid}/${col}`).where("clientUid", "==", uid).get();
         recordIds[kind].push(...snap.docs.map((d) => d.id));
       }
+      // Чеки с кешбэком гостю (подпись и контакт для электронного чека) и
+      // его заказы, которые завёл кассир.
+      for (const field of ["loyaltyClientUid", "clientUid"]) {
+        const snap = await fdb.collection(`tenants/${tid}/sessions`).where(field, "==", uid).get();
+        recordIds.session.push(...snap.docs.map((d) => d.id));
+      }
     }
   } catch (_) {
-    return sendJson(res, 502, { error: "не удалось прочитать данные заведения" });
+    return { status: 502, error: "не удалось прочитать данные заведения" };
   }
   const where = `tenant_id = ANY($1) AND (created_by = $2
       OR (kind = 'reservation' AND record_id = ANY($3))
-      OR (kind = 'waitlist' AND record_id = ANY($4)))`;
-  const args = [tenantIds, uid, recordIds.reservation, recordIds.waitlist];
-  // Значения затираем, а строки оставляем: кассы держат копию справочника
-  // и узнают об удалении при следующей синхронизации (pii_sync) — строка
-  // без имени и телефона приходит к ним как «стёрто».
+      OR (kind = 'waitlist' AND record_id = ANY($4))
+      OR (kind IN ('session', 'delivery') AND record_id = ANY($5)))`;
+  const args = [tenantIds, uid, recordIds.reservation, recordIds.waitlist, [...new Set(recordIds.session)]];
   const db = getPool();
   const erase = (table, cond, params, blank) => db.query(`UPDATE ${table} SET ${blank}, updated_at = now() WHERE ${cond}`, params);
   try {
@@ -528,9 +560,66 @@ async function handleDeleteGuest(req, res, body) {
       .catch((e) => console.error(`guest_consent_withdraw ${tenantId}/${uid}: ${e?.code || ""}`));
   } catch (e) {
     console.error(`guest_delete ${tenantId}/${uid}: ${e?.code || ""} ${e?.message || e}`);
-    return sendJson(res, 500, { error: `не удалось удалить данные в первичной базе (${e?.code || "нет связи с базой"})` });
+    return { status: 500, error: `не удалось удалить данные в первичной базе (${e?.code || "нет связи с базой"})` };
   }
+  return null;
+}
+
+/** «Удалить мои данные» — гость своим токеном. */
+async function handleDeleteGuest(req, res, body) {
+  const { tenantId } = body;
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) {
+    return sendJson(res, 400, { error: "некорректный tenantId" });
+  }
+  const auth = await verifySaasUser(req, res);
+  if (!auth) return;
+  const failed = await forgetGuest(admin.firestore(auth.fbApp), tenantId, auth.decoded.uid);
+  if (failed) return sendJson(res, failed.status, { error: failed.error });
   return sendJson(res, 200, { ok: true });
+}
+
+/** Запрос от saas-gateway на этом же сервере (заголовок X-Pii-Internal). */
+function isInternal(req) {
+  const want = process.env.PII_INTERNAL_TOKEN || "";
+  const got = String(req.headers["x-pii-internal"] || "");
+  if (!want || got.length !== want.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+
+/**
+ * Супер-админ обезличивает гостя по запросу (письмо, звонок): saas-gateway
+ * стирает его и здесь — в первичной базе, а не только в Firestore.
+ */
+async function handleForgetGuest(req, res, body) {
+  if (!isInternal(req)) return sendJson(res, 403, { error: "только для сервера платформы" });
+  const { tenantId, uid } = body;
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId) || typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+    return sendJson(res, 400, { error: "некорректные tenantId/uid" });
+  }
+  const fbApp = getSaasApp();
+  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  const failed = await forgetGuest(admin.firestore(fbApp), tenantId, uid);
+  if (failed) return sendJson(res, failed.status, { error: failed.error });
+  return sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Чей номер — во всех заведениях и сетях (супер-админ ищет гостя по
+ * запросу, пришедшему письмом или звонком). Только для saas-gateway.
+ */
+async function handleFindGuestPhone(req, res, body) {
+  if (!isInternal(req)) return sendJson(res, 403, { error: "только для сервера платформы" });
+  const phone = phoneDigits(body.phone);
+  if (phone.length < 10 || phone.length > 15) return sendJson(res, 400, { error: "некорректный номер" });
+  try {
+    const r = await getPool().query(
+      `SELECT tenant_id, uid, name FROM guest_profiles WHERE phone = $1 ORDER BY updated_at DESC LIMIT 50`,
+      [phone]
+    );
+    return sendJson(res, 200, { matches: r.rows.map((x) => ({ store: x.tenant_id, uid: x.uid, name: x.name })) });
+  } catch (_) {
+    return sendJson(res, 500, { error: "ошибка хранилища в РФ" });
+  }
 }
 
 const HANDLERS_EXTRA = {};
@@ -559,6 +648,8 @@ const HANDLERS = {
   owner: handleRegisterOwner,
   owner_link: handleLinkOwner,
   guest_delete: handleDeleteGuest,
+  guest_forget: handleForgetGuest,
+  guest_find_phone: handleFindGuestPhone,
   guest_consent: handleGuestConsent,
   payer: handleRecordPayer,
   ...HANDLERS_EXTRA,

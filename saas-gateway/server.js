@@ -5758,9 +5758,16 @@ function normalizeRuPhone(raw) {
   if (d.length === 10 && d.startsWith("9")) d = `7${d}`;
   return d;
 }
+/** Номер для журналов в Firestore: только последние 4 цифры. */
+function maskPhone(raw) {
+  const d = String(raw || "").replace(/\D/g, "");
+  return d ? `…${d.slice(-4)}` : null;
+}
+
 /** Поиск гостя по телефону во всех заведениях и сетях — для запросов,
  *  пришедших письмом или звонком. Читаем phoneIndex/{телефон} у каждого
- *  корня: запросу по группе коллекций нужен был бы отдельный индекс. */
+ *  корня (запросу по группе коллекций нужен был бы отдельный индекс) и
+ *  справочник в РФ — в заведениях в режиме rf номер есть только там. */
 async function handleFindGuest(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -5776,20 +5783,41 @@ async function handleFindGuest(req, res) {
       .map((d) => ({ scope: "chain", id: d.id, name: d.data().name, slug: d.data().slug, ref: d.ref })),
   ];
   const matches = [];
+  const seen = new Set();
+  const add = async (r, uid, vaultName = "") => {
+    const key = `${r.scope}:${r.id}:${uid}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const client = await r.ref.collection("clients").doc(uid).get();
+    const c = client.exists ? client.data() : {};
+    matches.push({
+      scope: r.scope, id: r.id, name: r.name || null, slug: r.slug || null, clientUid: uid,
+      guestName: c.name || vaultName || null, visits: c.visits || 0, anonymized: c.anonymized === true,
+    });
+  };
   for (let i = 0; i < roots.length; i += 10) {
     await Promise.all(roots.slice(i, i + 10).map(async (r) => {
       const idx = await r.ref.collection("phoneIndex").doc(normalized).get();
       const uid = idx.exists ? idx.data().uid : null;
-      if (!uid) return;
-      const client = await r.ref.collection("clients").doc(uid).get();
-      const c = client.exists ? client.data() : {};
-      matches.push({
-        scope: r.scope, id: r.id, name: r.name || null, slug: r.slug || null, clientUid: uid,
-        guestName: c.name || null, visits: c.visits || 0, anonymized: c.anonymized === true,
-      });
+      if (uid) await add(r, uid);
     }));
   }
-  await writeSecurityEvent(req, decoded, "guestLookup", { metadata: { phone: normalized, found: matches.length } });
+  // Справочник в РФ: у сети профиль общий (store = chain:<id>).
+  if (pii.enabled()) {
+    try {
+      const res2 = await pii.call({ kind: "guest_find_phone", phone: normalized });
+      for (const m of res2.matches || []) {
+        const store = String(m.store || "");
+        const r = store.startsWith("chain:")
+          ? roots.find((x) => x.scope === "chain" && x.id === store.slice(6))
+          : roots.find((x) => x.scope === "tenant" && x.id === store);
+        if (r && /^[A-Za-z0-9_-]{1,128}$/.test(String(m.uid || ""))) await add(r, String(m.uid), String(m.name || ""));
+      }
+    } catch (e) {
+      console.error("saas-gateway: поиск гостя в справочнике в РФ:", e.message || e);
+    }
+  }
+  await writeSecurityEvent(req, decoded, "guestLookup", { metadata: { phone: maskPhone(normalized), found: matches.length } });
   sendJson(res, 200, { phone: normalized, matches });
 }
 
@@ -5817,7 +5845,7 @@ async function handleAnonymizeGuest(req, res) {
   const clientSnap = await root.collection("clients").doc(clientUid).get();
   if (!clientSnap.exists) throw new HttpError(404, "Профиль гостя не найден");
   const c = clientSnap.data();
-  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c });
+  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInVault: true });
 
   if (typeof body.requestId === "string" && body.requestId) {
     await firestore.collection("dataRequests").doc(body.requestId).set({
@@ -5830,9 +5858,11 @@ async function handleAnonymizeGuest(req, res) {
   await writeSecurityEvent(req, decoded, "guestAnonymized", {
     tenantId: scope === "tenant" ? rootId : null,
     targetUid: clientUid,
+    // Журнал лежит в Firestore — имя и номер гостя туда не пишем, только
+    // хвост номера, чтобы сверить с запросом.
     metadata: {
       scope, rootId, rootName: rootDoc.data().name || null,
-      guestName: c.name || null, phone: c.phone || null,
+      phone: maskPhone(c.phone),
       scrubbedRecords: scrubbed, accountDeleted, requestId: body.requestId || null,
     },
   });
@@ -5965,10 +5995,25 @@ async function handleRestoreGuestSession(req, res) {
   sendJson(res, 200, { token });
 }
 
-/** Общая часть обезличивания гостя (супер-админ и сам гость). */
-async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
+/**
+ * Общая часть обезличивания гостя (супер-админ и сам гость). forgetInVault —
+ * стереть и в справочнике в РФ (первичная база): супер-админу — да, а гость
+ * перед этим уже стёр там всё сам (pii-gateway, guest_delete). Справочник —
+ * первым: не вышло — Firestore не трогаем, супер-админ повторит.
+ */
+async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInVault = false }) {
   const firestore = db();
   const clientRef = root.collection("clients").doc(clientUid);
+  const tenantIds = scope === "chain"
+    ? (await firestore.collection("tenants").where("chainId", "==", rootId).get()).docs.map((d) => d.id)
+    : [rootId];
+  if (forgetInVault && pii.enabled() && tenantIds.length) {
+    try {
+      await pii.call({ kind: "guest_forget", tenantId: tenantIds[0], uid: clientUid });
+    } catch (e) {
+      throw new HttpError(503, `Не удалось стереть данные гостя на сервере в РФ (${e.message || e}) — попробуйте ещё раз`);
+    }
+  }
   // Указатели на гостя
   if (c.phone) {
     const idx = root.collection("phoneIndex").doc(String(c.phone));
@@ -5991,9 +6036,6 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c }) {
   });
 
   // Имя и телефон в записях точек (у сети — во всех её точках)
-  const tenantIds = scope === "chain"
-    ? (await firestore.collection("tenants").where("chainId", "==", rootId).get()).docs.map((d) => d.id)
-    : [rootId];
   let scrubbed = 0;
   for (const tid of tenantIds) {
     for (const [col, patch] of [
@@ -6496,23 +6538,46 @@ const guestDelivery = createGuestDelivery({
  * Имя, телефон и адрес из заказов доставки нужны, пока заказ везут и
  * разбираются с ним. Через 30 дней после закрытия — обезличиваем
  * (ч. 7 ст. 5 закона № 152-ФЗ): чек и суммы остаются для отчётов.
+ * Стираем и в Firestore, и в справочнике в РФ (там контакт лежит в любом
+ * режиме, а в режиме rf — только там). piiVaultErasedAt — справочник уже
+ * стёрт; заказы, обезличенные до этой отметки, дочищаются по 500 за проход.
  */
 const DELIVERY_PII_DAYS = 30;
+const DELIVERY_VAULT_ERASE_PER_RUN = 500;
 async function runDeliveryPiiRetention() {
   const border = Date.now() - DELIVERY_PII_DAYS * 24 * 3600 * 1000;
   const tenants = await db().collection("tenants").get();
+  const vault = pii.enabled();
   for (const t of tenants.docs) {
     try {
       const snap = await t.ref.collection("sessions").where("source", "==", "app").get();
+      const hasPd = (s) => !!(s.customerPhone || s.deliveryAddress || s.customerName);
       const old = snap.docs.filter((d) => {
         const s = d.data();
         const closed = s.closedAt?.toMillis?.() || s.cancelledAt?.toMillis?.() || 0;
-        return s.status !== "active" && closed && closed < border && (s.customerPhone || s.deliveryAddress || s.customerName);
+        if (!(s.status !== "active" && closed && closed < border)) return false;
+        return hasPd(s) || (vault && !s.piiVaultErasedAt);
       });
-      for (let i = 0; i < old.length; i += 400) {
+      const vaultErased = new Set();
+      if (vault) {
+        for (const d of old.slice(0, DELIVERY_VAULT_ERASE_PER_RUN)) {
+          try {
+            await pii.erase(t.id, "delivery", d.id);
+            vaultErased.add(d.id);
+          } catch (e) {
+            // Справочник недоступен — Firestore всё равно чистим, справочник
+            // дочистим следующим проходом (отметки piiVaultErasedAt нет).
+            console.error(`saas-gateway: обезличивание доставки в РФ ${t.id}:`, e.message || e);
+            break;
+          }
+        }
+      }
+      const touched = old.filter((d) => hasPd(d.data()) || vaultErased.has(d.id));
+      for (let i = 0; i < touched.length; i += 400) {
         const batch = db().batch();
-        old.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
+        touched.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
           customerName: "", customerPhone: "", deliveryAddress: "", deliveryComment: "", guestContact: "", piiErasedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(vaultErased.has(d.id) ? { piiVaultErasedAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
         }));
         await batch.commit();
       }
@@ -6712,4 +6777,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii });
+Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone });

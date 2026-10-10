@@ -1635,6 +1635,28 @@ describe("Брони и заказы гостя: только своё и тол
     await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/y2"), r({ phone: "+7 (999) 123-45-67" })));
   });
 
+  it("режим РФ: бронь и очередь без номера — только по квитанции сервера этого же гостя", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/contactReceipts/reservation_rf1"), { uid: "guestA" });
+      await setDoc(doc(db, "tenants/tenantA/contactReceipts/reservation_rf2"), { uid: "someoneElse" });
+      await setDoc(doc(db, "tenants/tenantA/contactReceipts/waitlist_wf1"), { uid: "guestA" });
+    });
+    const g = ctxFor("guestA");
+    const r = (over = {}) => ({ clientUid: "guestA", status: "new", tableId: "table1", sessionId: "", preOrder: [], phone: "", ...over });
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/reservations/rf1"), r()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/rf2"), r()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/rf3"), r()));
+    // Квитанция есть, но в документе мусор вместо номера — нет.
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/rf1b"), r({ phone: "12" })));
+    const w = (over = {}) => ({ clientUid: "guestA", status: "waiting", guestsCount: 2, phone: "", ...over });
+    await assertSucceeds(setDoc(doc(g, "tenants/tenantA/waitlist/wf1"), w()));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/waitlist/wf2"), w()));
+    // Квитанции гость не читает и не пишет: их ставит только сервер.
+    await assertFails(setDoc(doc(g, "tenants/tenantA/contactReceipts/reservation_x"), { uid: "guestA" }));
+    await assertFails(getDoc(doc(g, "tenants/tenantA/contactReceipts/reservation_rf1")));
+  });
+
   it("очередь: гость встаёт только с номером, касса записывает любого", async () => {
     const g = ctxFor("guestA");
     const w = (over = {}) => ({ clientUid: "guestA", status: "waiting", guestsCount: 2, ...over });
@@ -1702,6 +1724,22 @@ describe("Секрет стола в QR: чужой чек удалённо не
   it("без номера в профиле за стол не сесть, даже с верным кодом со стола", async () => {
     await assertFails(setDoc(doc(ctxFor("guestN"), "tenants/tenantA/sessionClaims/sess1"), claim("guestN")));
     await assertSucceeds(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/sessionClaims/sess1"), claim("guestA")));
+  });
+
+  it("режим РФ: номера в профиле нет, но сервер отметил «номер записан» — за стол можно", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "tenants/tenantA/clients/guestR"), { name: "", activeSessionId: "", phoneOnFile: true });
+      await setDoc(doc(db, "tenants/tenantA/clients/guestF"), { name: "", activeSessionId: "", phoneOnFile: false });
+    });
+    await assertSucceeds(setDoc(doc(ctxFor("guestR"), "tenants/tenantA/sessionClaims/sess1"), claim("guestR")));
+    await assertFails(setDoc(doc(ctxFor("guestF"), "tenants/tenantA/sessionClaims/sess1"), claim("guestF")));
+  });
+
+  it("отметку «номер записан в РФ» гость сам себе не ставит", async () => {
+    await assertFails(updateDoc(doc(ctxFor("guestN"), "tenants/tenantA/clients/guestN"), { phoneOnFile: true }));
+    await assertFails(setDoc(doc(ctxFor("guestNew"), "tenants/tenantA/clients/guestNew"), { name: "", phoneOnFile: true }));
+    await assertSucceeds(setDoc(doc(ctxFor("guestNew"), "tenants/tenantA/clients/guestNew"), { name: "" }));
   });
 
   it("с секретом со стола гость занимает открытый чек этого стола", async () => {

@@ -32,6 +32,121 @@ async function piiPost(body) {
     body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error('pii ' + resp.status);
+  return resp.json().catch(() => ({}));
+}
+
+// ---------- СПРАВОЧНИК В РФ ----------
+//
+// Заведение, переведённое на хранение в РФ (venueProfile.piiMode = 'rf'),
+// не держит в Firestore ни имён, ни телефонов: там только uid гостя и id
+// сотрудника. Имена берём из справочника на сервере в РФ — гостю он отдаёт
+// только его собственный профиль, его заказы и имена тех, кто сейчас на
+// смене (для чаевых).
+
+/// Заведение хранит персональные данные только в РФ.
+const rfMode = () => ((state.venue || {}).piiMode || '') === 'rf';
+
+/// Имена сотрудников, которых уже спрашивали: id → имя ('' — не нашли).
+const staffNames = new Map();
+let staffAsk = null;
+
+/// Имя сотрудника из справочника. Пока ответа нет — пусто; когда придёт,
+/// вызывается redraw (один раз на пачку).
+function staffNameOf(id, redraw) {
+  if (!id) return '';
+  if (staffNames.has(id)) return staffNames.get(id);
+  if (!state.tenantId || !state.auth || !state.auth.currentUser) return '';
+  if (!staffAsk) {
+    staffAsk = { ids: new Set(), redraws: new Set() };
+    setTimeout(async () => {
+      const ask = staffAsk;
+      staffAsk = null;
+      const ids = [...ask.ids].slice(0, 40);
+      try {
+        const res = await piiPost({ tenantId: state.tenantId, kind: 'pii_lookup', refs: ids.map((x) => ({ k: 'staff', id: x })) });
+        ids.forEach((x) => staffNames.set(x, ''));
+        (res.staff || []).forEach((r) => staffNames.set(String(r.id), String(r.name || '').trim()));
+      } catch (_) {
+        return; // нет связи — спросим при следующей отрисовке
+      }
+      ask.redraws.forEach((f) => { try { f(); } catch (_) {} });
+    }, 120);
+  }
+  staffAsk.ids.add(id);
+  if (redraw) staffAsk.redraws.add(redraw);
+  return '';
+}
+
+/// Свой профиль из справочника: в режиме rf в Firestore имени и номера нет.
+async function loadOwnPd() {
+  if (state.ownPd || state.ownPdLoading || !state.uid) return;
+  const uid = state.uid;
+  state.ownPdLoading = true;
+  try {
+    const res = await piiPost({ tenantId: state.tenantId, kind: 'pii_lookup', refs: [{ k: 'guest', id: uid }] });
+    if (state.uid !== uid) return;
+    const g = (res.guests || [])[0] || {};
+    state.ownPd = { name: String(g.name || ''), phone: String(g.phone || '') };
+  } catch (_) {
+    return; // попробуем при следующем обновлении профиля
+  } finally {
+    state.ownPdLoading = false;
+  }
+  if (!state.profile) return;
+  state.profile = withOwnPd(state.profile);
+  if (location.hash === '#/profile' && state.profileDirty) return;
+  if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
+}
+
+/// Профиль Firestore + имя и номер из справочника. В режиме rf главный —
+/// справочник (в документе могли остаться прежние значения до переноса),
+/// иначе — документ, а справочник подставляет то, чего в нём нет.
+function withOwnPd(p) {
+  const pd = state.ownPd || {};
+  if (rfMode() && state.ownPd) {
+    return { ...p, name: pd.name || p.name || '', phone: pd.phone || p.phone || '' };
+  }
+  return { ...p, name: p.name || pd.name || '', phone: p.phone || pd.phone || '' };
+}
+
+/// Нужно ли спрашивать справочник о своём профиле.
+function needOwnPd(p) {
+  return !!p && (rfMode() || ((!p.name || !p.phone) && p.phoneOnFile === true));
+}
+
+/// Сохранённое на сервере в РФ — сразу в профиль на экране: в режиме rf
+/// Firestore имени и номера не пришлёт.
+function rememberOwnPd(patch) {
+  const v = {};
+  if (typeof patch.name === 'string') v.name = patch.name;
+  if (patch.phone) v.phone = patch.phone;
+  state.ownPd = { name: '', phone: '', ...(state.ownPd || {}), ...v };
+  if (state.profile) state.profile = { ...state.profile, ...v };
+}
+
+/// Курьер заказа: в режиме mirror — из документа заказа, в режиме rf — из
+/// справочника (гостю он отдаёт только его собственные заказы). Пока ответа
+/// нет — пусто, потом redraw.
+const courierCache = new Map(); // `${id}:${статус}` → { name, phone } | null
+function courierOf(s, redraw) {
+  if (s.courierName || s.courierPhone) {
+    return { name: String(s.courierName || ''), phone: String(s.courierPhone || '') };
+  }
+  if (!rfMode() || deliveryStatusOf(s) !== 'courier') return { name: '', phone: '' };
+  // Курьера могли сменить — спрашиваем заново на каждом шаге заказа.
+  const at = toDate(s.deliveryStatusAt);
+  const key = `${s.id}:${s.deliveryStatus || ''}:${at ? at.getTime() : ''}`;
+  if (courierCache.has(key)) return courierCache.get(key) || { name: '', phone: '' };
+  courierCache.set(key, null);
+  piiPost({ tenantId: state.tenantId, kind: 'pii_lookup', refs: [{ k: 'delivery', id: s.id }] })
+    .then((res) => {
+      const rec = (res.contacts || []).find((c) => c.id === s.id) || {};
+      const extra = rec.extra || {};
+      courierCache.set(key, { name: String(extra.courierName || ''), phone: String(extra.courierPhone || '') });
+      redraw();
+    })
+    .catch(() => courierCache.delete(key));
+  return { name: '', phone: '' };
 }
 
 // ---------- СОСТОЯНИЕ ----------
@@ -51,7 +166,11 @@ const state = {
   loyaltyRoot: null,
   auth: null,
   uid: '',
+  /// Профиль из Firestore; имя и номер в режиме rf — из ownPd.
   profile: null,
+  /// Своё имя и номер из справочника в РФ (см. loadOwnPd).
+  ownPd: null,
+  ownPdLoading: false,
   venue: null,
   /// Название из «Брендинга»; пусто — показываем имя заведения.
   brandAppName: '',
@@ -72,7 +191,7 @@ const state = {
   tableWatch: null,
   tableCache: { calls: [], orders: [] },
   /// Чаевые: кто на смене, свои чаевые к чеку и выбор гостя в форме.
-  tips: { sid: null, watching: false, session: null, team: [], mine: [], to: null, preset: 10, custom: '' },
+  tips: { sid: null, watching: false, session: null, team: [], teamDoc: null, mine: [], to: null, preset: 10, custom: '' },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -429,6 +548,9 @@ async function boot() {
 
     state.uid = user.uid;
     state.profile = null;
+    state.ownPd = null;
+    staffNames.clear();
+    courierCache.clear();
     state.cart = {};
 
     // Профиль — первым: без него правила не пускают гостя к данным заведения.
@@ -486,7 +608,8 @@ async function ensureProfile() {
 
 function watchProfile() {
   state.accountSubs.push(onSnapshot(doc(state.loyaltyRoot, 'clients', state.uid), (d) => {
-    state.profile = d.exists() ? { id: d.id, ...d.data() } : null;
+    state.profile = d.exists() ? withOwnPd({ id: d.id, ...d.data() }) : null;
+    if (needOwnPd(d.exists() ? d.data() : null)) loadOwnPd();
     // Пока гость печатает имя или телефон, профиль не перерисовываем:
     // любое обновление профиля (запись ID устройства при первом запуске,
     // начисление бонусов кассой) иначе стирало введённое, и «Сохранить»
@@ -503,6 +626,11 @@ function watchVenue() {
     const prevType = venueType();
     const prevHookah = isHookah();
     state.venue = d.exists() ? d.data() : null;
+    // Заведение хранит данные в РФ — своё имя и номер берём из справочника.
+    if (state.profile && needOwnPd(state.profile)) {
+      if (state.ownPd) state.profile = withOwnPd(state.profile);
+      else loadOwnPd();
+    }
     // Сменили тип заведения или кальяны — перерисовать экраны со словами и
     // кнопками.
     if (had && (prevType !== venueType() || prevHookah !== isHookah())) route();
@@ -700,7 +828,7 @@ const CONSENT_EDITION = '2026-10-10';
 const CONSENT_EDITION_LABEL = 'Редакция от 10 октября 2026 г.';
 
 /** Нужна галочка о трансграничной передаче: заведение ещё не в режиме РФ. */
-const needsCrossBorder = () => ((state.venue || {}).piiMode || '') !== 'rf';
+const needsCrossBorder = () => !rfMode();
 
 // Реквизиты ZalPOS — оператора (platformConfig/legal, открыты для чтения).
 let platformLegal = null;
@@ -1240,7 +1368,8 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
         tableId,
         tableName,
         clientUid: state.uid,
-        guestName: p.name || '',
+        // Режим rf: касса узнает гостя по clientUid из справочника в РФ.
+        guestName: rfMode() ? '' : (p.name || ''),
         items: list,
         comment: '',
         targetPosition: target,
@@ -1980,11 +2109,12 @@ function screenOrder(id) {
     const sum = (s.orderItems || []).length && Number(s.totalWithDiscount) > 0
       ? Number(s.totalWithDiscount)
       : lines.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+    const courier = courierOf(s, draw);
     const hint = {
       new: `Заказ получен. Заведение позвонит вам, чтобы подтвердить состав${type === 'delivery' ? ' и адрес' : ''} — держите телефон рядом.`,
       accepted: 'Заказ подтверждён и скоро начнут готовить.',
       cooking: 'Готовим ваш заказ.',
-      courier: `Курьер ${s.courierName ? esc(s.courierName) + ' ' : ''}в пути.`,
+      courier: `Курьер ${courier.name ? esc(courier.name) + ' ' : ''}в пути.`,
       ready: `Заказ готов — можно забирать${v.address ? ': ' + esc(v.address) : ''}.`,
       done: type === 'delivery' ? 'Заказ доставлен. Приятного аппетита!' : 'Заказ выдан. Приятного аппетита!',
       cancelled: `Заказ отменён${s.cancelReason ? ': ' + esc(s.cancelReason) : ''}.`,
@@ -2009,8 +2139,8 @@ function screenOrder(id) {
       <div class="overline">Заказ №${esc(orderNo(s.id, s.orderNo))}</div>
       <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
       <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : ''}">${hint}</p>
-      ${st === 'courier' && /^\d{11}$/.test(String(s.courierPhone || '')) ? `<a class="btn btn-ghost" href="tel:+${esc(s.courierPhone)}"
-        style="margin:0 0 14px">${ic('phone')}Позвонить курьеру${s.courierName ? ' · ' + esc(s.courierName) : ''}</a>` : ''}
+      ${st === 'courier' && /^\d{11}$/.test(courier.phone) ? `<a class="btn btn-ghost" href="tel:+${esc(courier.phone)}"
+        style="margin:0 0 14px">${ic('phone')}Позвонить курьеру${courier.name ? ' · ' + esc(courier.name) : ''}</a>` : ''}
       ${cancelled ? '' : `<div class="card dsteps">${path.map((x, i) => {
         const done = i < cur || st === 'done';
         const active = i === cur && st !== 'done';
@@ -2114,7 +2244,7 @@ async function callStaff(type, s, btn) {
     tableName: s.tableName || '',
     sessionId: s.id,
     clientUid: state.uid,
-    guestName: (state.profile || {}).name || '',
+    guestName: rfMode() ? '' : ((state.profile || {}).name || ''),
     type,
     comment: '',
     status: 'new',
@@ -2246,7 +2376,7 @@ function tableFinished(s) {
       await addDoc(collection(state.root, 'reviews'), {
         sessionId: s.id,
         clientUid: state.uid,
-        guestName: (state.profile || {}).name || '',
+        guestName: rfMode() ? '' : ((state.profile || {}).name || ''),
         rating,
         text: $('reviewText').value.trim(),
         aiSummary: '',
@@ -2719,13 +2849,16 @@ async function sendBooking() {
       table = { id: free[0].id, name: free[0].name || '' };
     }
 
-    // Имя и телефон — сначала на сервер в РФ, потом документ брони.
+    // Имя и телефон — сначала на сервер в РФ, потом документ брони. В
+    // режиме rf в документ они не попадают: правила базы проверяют
+    // квитанцию сервера о том, что номер записан.
     const ref = doc(collection(state.root, 'reservations'));
     await piiPost({ tenantId: state.tenantId, kind: 'reservation', id: ref.id, name, phone });
+    const rf = rfMode();
     await setDoc(ref, {
       clientUid: state.uid,
-      guestName: name,
-      phone,
+      guestName: rf ? '' : name,
+      phone: rf ? '' : phone,
       guestsCount: guests,
       tableId: table.id,
       tableName: table.name || '',
@@ -2771,15 +2904,19 @@ async function sendBooking() {
           + 'Бронь при этом уже отправлена.');
       } else {
         patch.phone = phone;
-        try {
-          await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid });
-        } catch (_) {}
+        // Режим rf: номер не кладём в Firestore даже ключом указателя.
+        if (!rfMode()) {
+          try {
+            await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid });
+          } catch (_) {}
+        }
       }
     }
     // Профиль гостя (имя/телефон) пишет сервер в РФ и сам зеркалит в
     // Firestore — напрямую в базу за рубежом эти поля не пишем.
     try {
       await piiPost({ tenantId: state.tenantId, uid: state.uid, ...patch });
+      rememberOwnPd(patch);
     } catch (_) {
       // Бронь уже сохранена; профиль обновится при следующем визите.
     }
@@ -3172,6 +3309,12 @@ function bonusReason(reason, plus, type) {
 async function phoneTakenByOther(phone) {
   if (!phone) return false;
   try {
+    // Режим rf: номеров в Firestore нет — отвечает справочник в РФ, и
+    // гостю только «занят ли другим», без чужого uid.
+    if (rfMode()) {
+      const r = await piiPost({ tenantId: state.tenantId, kind: 'pii_phone', phone });
+      return r.taken === true;
+    }
     const idx = await getDoc(doc(state.loyaltyRoot, 'phoneIndex', phone));
     const owner = idx.exists() ? (idx.data().uid || '') : '';
     return !!owner && owner !== state.uid;
@@ -3217,12 +3360,13 @@ async function saveProfile() {
     // Имя и телефон — сначала в базу в РФ, сервер сам копирует их в профиль
     // Firestore. Напрямую в облако эти поля не пишем.
     await piiPost({ tenantId: state.tenantId, uid: state.uid, ...patch });
+    rememberOwnPd(patch);
     // Введённое сохранено — профиль можно перерисовать (номер станет
     // «только для чтения»). Обновление профиля могло прийти, пока шло
     // сохранение, и тогда было пропущено — перерисовываем сами.
     state.profileDirty = false;
     if (location.hash === '#/profile' && patch.phone && (state.profile || {}).phone) route();
-    if (patch.phone) {
+    if (patch.phone && !rfMode()) {
       // Указатель «номер → гость» вторичен: его осечка профилю не мешает.
       try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
     }
@@ -3414,14 +3558,22 @@ function sessionBill(s) {
 }
 
 /// Кто на смене. Отмеченные больше 18 часов назад — забытые смены,
-/// вчерашний сотрудник гостю не нужен.
+/// вчерашний сотрудник гостю не нужен. В режиме rf имён в документе нет —
+/// они приходят из справочника в РФ (staffNameOf), до ответа сотрудника
+/// не показываем.
 function parseTipsTeam(data) {
   const members = (data && data.members) || {};
   const cutoff = Date.now() - 18 * 3600 * 1000;
   return Object.entries(members)
-    .filter(([, m]) => m && String(m.name || '').trim())
+    .filter(([, m]) => m && typeof m === 'object')
     .filter(([, m]) => { const t = toDate(m.since); return !t || t.getTime() >= cutoff; })
-    .map(([id, m]) => ({ id, name: String(m.name).trim(), position: m.position || '', tipsLink: m.tipsLink || '' }))
+    .map(([id, m]) => ({
+      id,
+      name: String(m.name || '').trim() || (rfMode() ? staffNameOf(id, paintTips) : ''),
+      position: m.position || '',
+      tipsLink: m.tipsLink || '',
+    }))
+    .filter((m) => m.name)
     .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }
 
@@ -3432,9 +3584,10 @@ function watchTips(sessionId) {
   t.sid = sessionId;
   t.watching = true;
   sub(onSnapshot(doc(state.root, 'meta', 'tipsTeam'), (d) => {
-    t.team = parseTipsTeam(d.exists() ? d.data() : null);
+    t.teamDoc = d.exists() ? d.data() : null;
+    t.team = parseTipsTeam(t.teamDoc);
     paintTips();
-  }, () => { t.team = []; paintTips(); }));
+  }, () => { t.teamDoc = null; t.team = []; paintTips(); }));
   // Гостю правила дают читать только свои записи — отсюда clientUid.
   sub(onSnapshot(query(collection(state.root, 'tips'),
     where('sessionId', '==', sessionId), where('clientUid', '==', state.uid)), (snap) => {
@@ -3447,8 +3600,11 @@ function watchTips(sessionId) {
 function tipsRecipients() {
   const t = state.tips;
   const s = t.session || {};
+  // Имена из справочника могли прийти после снимка — пересобираем.
+  if (rfMode() && t.teamDoc) t.team = parseTipsTeam(t.teamDoc);
   if (t.team.length) return t.team;
-  const name = String(s.employeeName || '').trim();
+  const name = String(s.employeeName || '').trim()
+    || (rfMode() && s.employeeId ? staffNameOf(s.employeeId, paintTips) : '');
   return name ? [{ id: s.employeeId || '', name, position: '', tipsLink: '' }] : [];
 }
 
@@ -3554,7 +3710,8 @@ function paintMyTips() {
     + list.map((x) => `
       <div class="row small" style="margin-top:4px">
         <span class="grow" style="${x.status === 'paid' ? 'color:var(--success, #22c55e)' : ''}">
-          ${money(x.amount)} — ${esc(x.target === 'team' ? 'Всей смене' : (x.employeeName || 'Смене'))} · ${status(x)}</span>
+          ${money(x.amount)} — ${esc(x.target === 'team' ? 'Всей смене'
+            : (x.employeeName || (rfMode() ? staffNameOf(x.employeeId, paintTips) : '') || 'Смене'))} · ${status(x)}</span>
         ${x.method !== 'link' && x.status === 'pending'
           ? `<button class="btn-link" data-tip-cancel="${esc(x.id)}">Отменить</button>` : ''}
       </div>`).join('');
@@ -3586,9 +3743,10 @@ async function leaveTip(method, to, team, link = '') {
       amount,
       target: to ? 'employee' : 'team',
       employeeId: to ? to.id : '',
-      employeeName: to ? to.name : 'Всей смене',
+      // Режим rf: имён сотрудников в Firestore нет — касса берёт их по id.
+      employeeName: to ? (rfMode() ? '' : to.name) : 'Всей смене',
       position: to ? to.position : '',
-      teamMembers: to ? [] : team.filter((m) => m.id).map((m) => ({ id: m.id, name: m.name })),
+      teamMembers: to ? [] : team.filter((m) => m.id).map((m) => (rfMode() ? { id: m.id } : { id: m.id, name: m.name })),
       sessionId: t.sid,
       tableName: s.tableName || '',
       clientUid: state.uid,
@@ -3825,9 +3983,10 @@ async function joinQueue(guests, btn) {
     // Имя и телефон — сначала на сервер в РФ (152-ФЗ), потом очередь.
     const ref = doc(collection(state.root, 'waitlist'));
     await piiPost({ tenantId: state.tenantId, kind: 'waitlist', id: ref.id, name: (p.name || '').trim(), phone: p.phone || '' });
+    const rf = rfMode();
     await setDoc(ref, {
-      guestName: (p.name || '').trim() || 'Гость',
-      phone: p.phone || '',
+      guestName: rf ? '' : ((p.name || '').trim() || 'Гость'),
+      phone: rf ? '' : (p.phone || ''),
       clientUid: state.uid,
       guestsCount: guests,
       comment: '',

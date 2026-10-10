@@ -126,17 +126,20 @@ service cloud.firestore {
     // ---- Поля профиля гостя, которые ведёт только касса ----
     // Бонусы, траты, визиты, уровень и скидка карты: гость не может ни
     // поменять их, ни создать профиль сразу с ними.
+    // phoneOnFile («номер записан в РФ») ставит только pii-gateway: по ней
+    // guestHasPhone пускает за стол, когда номера в профиле нет (режим rf).
     function guestProfileCleanOnCreate(d) {
       return d.get('bonusBalance', 0) == 0 &&
         d.get('totalSpent', 0) == 0 &&
         d.get('visits', 0) == 0 &&
         d.get('discountPercent', 0) == 0 &&
         d.get('discountCardId', '') in ['', null] &&
-        !('tier' in d);
+        !('tier' in d) &&
+        !('phoneOnFile' in d);
     }
     function guestProfileCleanOnUpdate() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId']);
+        .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId', 'phoneOnFile']);
     }
 
     // Номер похож на настоящий: 10–15 цифр, знаки форматирования не в счёт
@@ -148,13 +151,27 @@ service cloud.firestore {
         p.replace('[^0-9]', '').size() <= 15;
     }
 
-    // В профиле гостя есть номер: свой профиль заведения или общий профиль сети.
+    // В профиле гостя есть номер: свой профиль заведения или общий профиль
+    // сети. В режиме rf номера в Firestore нет — тогда отметка сервера в РФ.
+    function profileHasPhone(d) {
+      return phoneOk(d.get('phone', '')) || d.get('phoneOnFile', false) == true;
+    }
     function guestHasPhone(tenantId) {
       let own = /databases/$(database)/documents/tenants/$(tenantId)/clients/$(request.auth.uid);
       let cId = chainIdOf(tenantId);
       let chainOwn = /databases/$(database)/documents/chains/$(cId)/clients/$(request.auth.uid);
-      return (exists(own) && phoneOk(get(own).data.get('phone', ''))) ||
-        (cId != '' && exists(chainOwn) && phoneOk(get(chainOwn).data.get('phone', '')));
+      return (exists(own) && profileHasPhone(get(own).data)) ||
+        (cId != '' && exists(chainOwn) && profileHasPhone(get(chainOwn).data));
+    }
+
+    // Номер брони или очереди: в самом документе (режим mirror) либо, если
+    // поле пустое, записан в РФ этим же гостем — квитанция pii-gateway
+    // contactReceipts/{kind}_{id} (в ней только uid).
+    function contactPhoneOk(tenantId, kind, id) {
+      let receipt = /databases/$(database)/documents/tenants/$(tenantId)/contactReceipts/$(kind + '_' + id);
+      return phoneOk(request.resource.data.get('phone', '')) ||
+        (request.resource.data.get('phone', '') == '' &&
+         exists(receipt) && get(receipt).data.uid == request.auth.uid);
     }
 
     // ---- users: свой профиль читает/правит сам, супер-админ — любой ----
@@ -661,7 +678,7 @@ service cloud.firestore {
         (isTenantGuest(tenantId) &&
          request.resource.data.clientUid == request.auth.uid &&
          request.resource.data.status == 'new' &&
-         phoneOk(request.resource.data.get('phone', '')) &&
+         contactPhoneOk(tenantId, 'reservation', doc) &&
          request.resource.data.get('sessionId', '') == '' &&
          request.resource.data.get('preOrder', []) is list &&
          request.resource.data.get('preOrder', []).size() <= 50);
@@ -763,7 +780,7 @@ service cloud.firestore {
         (isTenantGuest(tenantId) &&
          request.resource.data.clientUid == request.auth.uid &&
          request.resource.data.status == 'waiting' &&
-         phoneOk(request.resource.data.get('phone', '')));
+         contactPhoneOk(tenantId, 'waitlist', doc));
       allow update: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) &&
          resource.data.clientUid == request.auth.uid &&
