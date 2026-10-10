@@ -442,8 +442,10 @@ class GuestLinkService {
   /// без него правила базы не дают занять чек.
   Future<TableBindResult> bindToTable(String uid, String tableId, {String tableKey = ''}) async {
     final profile = await _clients.doc(uid).get();
+    // Режим rf: номера в документе нет — есть отметка сервера «номер
+    // записан в РФ» (phoneOnFile), по ней же пускают правила базы.
     final phone = (profile.data()?['phone'] as String?) ?? '';
-    if (phone.isEmpty) return const TableBindResult.needsPhone();
+    if (phone.isEmpty && profile.data()?['phoneOnFile'] != true) return const TableBindResult.needsPhone();
 
     final tableDoc = await AppScope.col('tables').doc(tableId).get();
     if (!tableDoc.exists) return const TableBindResult.empty();
@@ -599,7 +601,7 @@ class GuestLinkService {
       }
       final data = snap.data()!;
       final phone = ((data['phone'] as String?) ?? '').trim();
-      if (phone.isEmpty) {
+      if (phone.isEmpty && data['phoneOnFile'] != true) {
         return const AiQuotaResult(
             false, 'Укажите номер телефона в профиле — так доступен ИИ-помощник.');
       }
