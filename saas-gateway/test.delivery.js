@@ -12,7 +12,7 @@ const test = (name, fn) => tests.push([name, fn]);
 
 const SELLER = { sellerName: "ООО «Лето»", sellerInn: "7707083893", sellerOgrn: "1027700132195", sellerAddress: "Москва, ул. Летняя, 1" };
 
-function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false } = {}) {
+function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false, pii = undefined } = {}) {
   const { db, store } = fakeDb();
   const recorded = [];
   const api = gd.createGuestDelivery({
@@ -25,6 +25,7 @@ function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false } = {}) 
       recorded.push(payload);
     },
     onlinePayReady: async () => online,
+    pii,
     now: () => now,
   });
   store.set("tenants/t1", { status: "active", timezone: "Europe/Moscow" });
@@ -118,6 +119,27 @@ test("заказ: цены из меню с добавками, ПДн снач�
   // Первый заказ заведения — №1.
   assert.equal(s.orderNo, 1);
   assert.equal(res.body.orderNo, "1");
+});
+
+test("режим РФ: в Firestore нет имени, телефона, адреса и комментария — они в справочнике", async () => {
+  const puts = [];
+  const pii = { mode: async () => "rf", put: async (tenantId, items, asUid) => { puts.push({ tenantId, items, asUid }); } };
+  const { api, store, recorded } = setup({ pii });
+  const res = await call(api.handleCreate, order());
+  assert.equal(res.status, 200);
+  const sid = res.body.sessionId;
+  assert.equal(recorded.length, 1, "имя, телефон и адрес — в РФ до заказа");
+  assert.deepEqual(puts, [{ tenantId: "t1", asUid: "g1", items: [{ k: "delivery", id: sid, fields: { extra: { comment: "Позвоните за 10 минут", guestContact: "79001234567" } } }] }]);
+  const s = store.get(`tenants/t1/sessions/${sid}`);
+  for (const f of ["customerName", "customerPhone", "deliveryAddress", "deliveryComment", "guestContact"]) {
+    assert.equal(f in s, false, `${f} нет в Firestore`);
+  }
+  const go = [...store.entries()].find(([k]) => k.startsWith("tenants/t1/guestOrders/"))[1];
+  assert.equal(go.guestName, "");
+  assert.ok(!go.tableName.includes("Аня"));
+  // Справочник недоступен — заказа нет.
+  const down = setup({ pii: { mode: async () => "rf", put: async () => { throw new Error("нет связи"); } } });
+  await assert.rejects(call(down.api.handleCreate, order()), (e) => e.status === 503);
 });
 
 test("номера заказов идут подряд от счётчика заведения", async () => {

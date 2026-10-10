@@ -55,6 +55,9 @@ const DAY_START_HOUR = 6; // рабочие сутки 06:00–06:00: ночна
 const SUMMARY_HOUR = 10;
 const BIG_DISCOUNT_PERCENT = 20;
 const ADDRESS_LINK_TTL_MS = 12 * 3600 * 1000;
+// «👤 Кто» — имя сотрудника на странице сервера в РФ: в Telegram (серверы за
+// рубежом) имён сотрудников и гостей не отправляем.
+const WHO_LINK_TTL_MS = 14 * 24 * 3600 * 1000;
 const TAKEAWAY_TABLE = "takeaway";
 const MAX_ALLOWED = 30;
 const POSITIONS = { waiter: "официант", hookah_master: "кальянщик", bartender: "бармен", universal: "универсал" };
@@ -155,6 +158,16 @@ function secretKey() {
 /** Подпись ссылки на адрес доставки: заведение, заказ, срок. */
 function addressSig(key, tenantId, sessionId, exp) {
   return crypto.createHmac("sha256", key).update(`addr|${tenantId}|${sessionId}|${exp}`).digest("hex").slice(0, 32);
+}
+
+function whoSig(key, tenantId, what, id, exp) {
+  return crypto.createHmac("sha256", key).update(`who|${tenantId}|${what}|${id}|${exp}`).digest("hex").slice(0, 32);
+}
+
+/** Должность словами — вместо имени в сообщениях Telegram. */
+function roleLabel(emp) {
+  const e = emp || {};
+  return POSITIONS[e.position] || (e.role === "admin" ? "администратор" : "сотрудник");
 }
 
 function sigOk(given, expected) {
@@ -278,14 +291,18 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
 }
 
 /** Сигнал по записи журнала кассы; null — не сигналить. Имён гостей нет. */
+/**
+ * Сигнал владельцу. Имени сотрудника нет — только должность (whoRole,
+ * approvedRole); кто именно — по кнопке «👤 Кто» на сервере в РФ.
+ */
 function alertText(venueName, a) {
-  const who = a.employeeName ? ` — ${a.employeeName}` : "";
+  const who = a.whoRole ? ` — ${a.whoRole}` : "";
   const where = a.tableName ? `${a.tableName}: ` : "";
   const d = a.details || {};
   switch (a.action) {
     case "order_item_voided":
       return `⚠️ ${venueName}. ${where}отменена позиция «${d.item || "?"}»${d.qty ? ` ×${d.qty}` : ""} на ${rub(a.amount)}`
-        + `${d.reason ? `. Причина: ${d.reason}` : ""}${d.approvedBy ? `. Подтвердил: ${d.approvedBy}` : ""}${who}`;
+        + `${d.reason ? `. Причина: ${d.reason}` : ""}${a.approvedRole ? `. Подтвердил: ${a.approvedRole}` : ""}${who}`;
     case "order_item_removed":
       return `⚠️ ${venueName}. ${where}удалена позиция «${d.item || "?"}»${d.qty ? ` ×${d.qty}` : ""} на ${rub(a.amount)}${who}`;
     case "closed_without_payment":
@@ -333,7 +350,7 @@ function deliveryCardText(s, tz, pendingItems = []) {
     lines.push(items.slice(0, 15).map((i) => `• ${i.name}${i.mods && i.mods.length ? ` (${i.mods.join(", ")})` : ""} ×${i.qty}`).join("\n"));
     if (items.length > 15) lines.push(`…и ещё ${items.length - 15}`);
   }
-  if (s.courierName) lines.push(`Курьер: ${s.courierName}`);
+  if (s.courierName || s.courierSet) lines.push("🚴 Курьер назначен");
   const start = toDate(s.startTime);
   if (start) lines.push(`Принят в ${hhmm(start, tz)}`);
   return lines.join("\n");
@@ -357,7 +374,7 @@ function deliveryKeyboard(s, addressUrl) {
 
 // ---------------------------------------------------------------- модуль
 
-function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl }) {
+function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl, pii }) {
   const doFetch = fetchImpl || fetch;
   const botsCol = () => db().collection("telegramBots");
   const tenantRef = (t) => db().collection("tenants").doc(t);
@@ -469,6 +486,9 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, { username: me.username || "" });
   }
 
+  /** Подпись чата в кабинете — из «Кто управляет ботом», не из Telegram. */
+  const chatLabel = (cfg, c) => (allowedList(cfg).find((a) => a.id === c.id) || {}).name || c.name || "Чат";
+
   async function handleStatus(req, res) {
     const { body } = await guard(req);
     const d = (await botsCol().doc(body.tenantId).get()).data();
@@ -476,7 +496,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, {
       configured: true,
       username: d.username || "",
-      owners: (d.ownerChats || []).filter((c) => roleOf(d, c.id) === "owner").map((c) => c.name || "Чат"),
+      owners: (d.ownerChats || []).filter((c) => roleOf(d, c.id) === "owner").map((c) => chatLabel(d, c)),
       allowed: allowedList(d),
       staffChat: d.staffChat ? d.staffChat.title || "Группа" : "",
       notify: d.notify || {},
@@ -513,7 +533,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const owners = new Set(allowed.filter((a) => a.role === "owner").map((a) => a.id));
     const chats = (d.ownerChats || []).filter((c) => owners.has(c.id));
     await ref.update({ allowed, ownerChats: chats });
-    sendJson(res, 200, { allowed, owners: chats.map((c) => c.name || "Чат") });
+    sendJson(res, 200, { allowed, owners: chats.map((c) => chatLabel({ allowed }, c)) });
   }
 
   async function handleNotify(req, res) {
@@ -541,35 +561,139 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, { ok: true });
   }
 
+  const escHtml = (v) => String(v || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /** Страница на нашем сервере в РФ: адрес доставки, кто из сотрудников. */
+  function htmlPage(res, code, title, html) {
+    res.writeHead(code, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex",
+      "Referrer-Policy": "no-referrer",
+    });
+    res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escHtml(title)}</title><body style="font:18px/1.5 system-ui,sans-serif;margin:24px;max-width:520px">${html}</body>`);
+  }
+
+  /** Заведение переведено на хранение в РФ: имён и контактов в Firestore нет. */
+  const rfMode = async (tenantId) => !!pii && (await pii.mode(tenantId).catch(() => "mirror")) === "rf";
+
   /** Адрес доставки — страница на нашем сервере в РФ по подписанной ссылке. */
   async function handleAddress(req, res) {
     const u = new URL(req.url, "http://x");
     const t = u.searchParams.get("t") || "";
     const s = u.searchParams.get("s") || "";
     const exp = Number(u.searchParams.get("e")) || 0;
-    const page = (code, html) => {
-      res.writeHead(code, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-        "X-Robots-Tag": "noindex",
-        "Referrer-Policy": "no-referrer",
-      });
-      res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Адрес доставки</title><body style="font:18px/1.5 system-ui,sans-serif;margin:24px;max-width:520px">${html}</body>`);
-    };
-    const esc = (v) => String(v || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const page = (code, html) => htmlPage(res, code, "Адрес доставки", html);
+    const esc = escHtml;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !/^[A-Za-z0-9_-]{1,128}$/.test(s) || exp < Date.now()
         || !sigOk(u.searchParams.get("k"), addressSig(secretKey(), t, s, exp))) {
       return page(403, "<p>Ссылка устарела или неверна. Откройте адрес из свежей карточки заказа.</p>");
     }
     const ses = (await tenantRef(t).collection("sessions").doc(s).get()).data();
     if (!ses || ses.orderType !== "delivery") return page(404, "<p>Заказ не найден.</p>");
-    const phone = String(ses.customerPhone || "");
+    let address = String(ses.deliveryAddress || "");
+    let phone = String(ses.customerPhone || "");
+    let name = String(ses.guestTag || "");
+    if (await rfMode(t)) {
+      // Контакт гостя — только в справочнике в РФ.
+      const rec = (await pii.lookup(t, [{ k: "delivery", id: s }]).catch(() => new Map())).get(`delivery:${s}`) || {};
+      address = String(rec.address || "");
+      phone = String(rec.phone || "");
+      name = String(rec.name || "");
+    }
     page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s, ses.orderNo))}</h2>
-<p><b>Адрес:</b><br>${esc(ses.deliveryAddress) || "не указан"}</p>
+<p><b>Адрес:</b><br>${esc(address) || "не указан"}</p>
 ${phone ? `<p><b>Телефон:</b> <a href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">${esc(phone)}</a></p>` : ""}
-${ses.guestTag ? `<p><b>Имя:</b> ${esc(ses.guestTag)}</p>` : ""}
-${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURIComponent(ses.deliveryAddress)}">Открыть на карте</a></p>` : ""}`);
+${name ? `<p><b>Имя:</b> ${esc(name)}</p>` : ""}
+${address ? `<p><a href="https://yandex.ru/maps/?text=${encodeURIComponent(address)}">Открыть на карте</a></p>` : ""}`);
+  }
+
+  // ------------------------------------------------------------ «кто» без имён в Telegram
+
+  function whoUrl(tenantId, what, id) {
+    const exp = Date.now() + WHO_LINK_TTL_MS;
+    const k = whoSig(secretKey(), tenantId, what, id, exp);
+    return `${publicUrl}/staffWho?t=${encodeURIComponent(tenantId)}&w=${what}&id=${encodeURIComponent(id)}&e=${exp}&k=${k}`;
+  }
+  const whoButton = (tenantId, what, id) => ({ reply_markup: { inline_keyboard: [[{ text: "👤 Кто", url: whoUrl(tenantId, what, id) }]] } });
+
+  /** Карточка сотрудника по полю «кто сделал»: ссылка staff:<id> (режим РФ) или имя. */
+  async function employeeOf(tenantId, raw, employeeId = "") {
+    const v = String(raw || "");
+    const id = v.startsWith("staff:") ? v.slice(6) : employeeId;
+    const col = tenantRef(tenantId).collection("employees");
+    if (id) {
+      const d = await col.doc(id).get();
+      return d.exists ? { id, ...d.data() } : null;
+    }
+    if (!v) return null;
+    const snap = await col.where("name", "==", v).limit(1).get();
+    return snap.docs.length ? { id: snap.docs[0].id, ...snap.docs[0].data() } : null;
+  }
+
+  /** Должность — то, что уходит в Telegram вместо имени. */
+  async function roleOfWho(tenantId, raw, employeeId = "") {
+    if (!raw && !employeeId) return "";
+    return roleLabel(await employeeOf(tenantId, raw, employeeId).catch(() => null));
+  }
+
+  /** Имя — только для страницы на сервере в РФ. */
+  async function nameOfWho(tenantId, raw, employeeId = "") {
+    if (pii) {
+      const n = await pii.staffName(tenantId, raw, employeeId).catch(() => "");
+      if (n) return n;
+    }
+    const v = String(raw || "");
+    if (v && !v.startsWith("staff:")) return v;
+    const emp = await employeeOf(tenantId, raw, employeeId).catch(() => null);
+    return (emp && emp.name) || "сотрудник";
+  }
+
+  /** Кто из сотрудников: событие журнала (a), смена (sh) или вся смена сейчас (team). */
+  async function handleWho(req, res) {
+    const u = new URL(req.url, "http://x");
+    const t = u.searchParams.get("t") || "";
+    const what = u.searchParams.get("w") || "";
+    const id = u.searchParams.get("id") || "";
+    const exp = Number(u.searchParams.get("e")) || 0;
+    const page = (code, html) => htmlPage(res, code, "Кто из сотрудников", html);
+    const esc = escHtml;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !["a", "sh", "team"].includes(what) || !/^[A-Za-z0-9_-]{1,128}$/.test(id)
+        || exp < Date.now() || !sigOk(u.searchParams.get("k"), whoSig(secretKey(), t, what, id, exp))) {
+      return page(403, "<p>Ссылка устарела или неверна. Откройте её из свежего сообщения бота.</p>");
+    }
+    const venue = await venueOf(t).catch(() => ({}));
+    const person = async (raw, employeeId = "") => {
+      const name = await nameOfWho(t, raw, employeeId);
+      const role = await roleOfWho(t, raw, employeeId);
+      return `${esc(name)}${role ? ` <span style="color:#666">(${esc(role)})</span>` : ""}`;
+    };
+    if (what === "a") {
+      const a = (await tenantRef(t).collection("auditLog").doc(id).get()).data();
+      if (!a) return page(404, "<p>Событие не найдено.</p>");
+      const d = a.details || {};
+      const text = alertText(venue.name || "Заведение", { ...a, whoRole: "", approvedRole: "" }) || "";
+      return page(200, `<p>${esc(text)}</p>
+<p><b>Кто:</b> ${await person(a.employeeName)}</p>
+${d.approvedBy ? `<p><b>Подтвердил:</b> ${await person(d.approvedBy)}</p>` : ""}`);
+    }
+    if (what === "sh") {
+      const sh = (await tenantRef(t).collection("staffShifts").doc(id).get()).data();
+      if (!sh) return page(404, "<p>Смена не найдена.</p>");
+      const started = toDate(sh.startedAt);
+      const ended = toDate(sh.endedAt);
+      return page(200, `<p><b>Сотрудник:</b> ${await person(sh.employeeName, sh.employeeId)}</p>
+${started ? `<p>Начал смену в ${esc(hhmm(started, venue.timezone))}</p>` : ""}
+${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}`);
+    }
+    const team = await onShiftStaff(t);
+    if (!team.length) return page(200, "<p>Сейчас на смене никого не отмечено.</p>");
+    const rows = [];
+    for (const m of team) {
+      rows.push(`<li>${await person(m.raw, m.id)}${m.since ? `, с ${esc(hhmm(m.since, venue.timezone))}` : ""}</li>`);
+    }
+    return page(200, `<h2 style="margin:0 0 12px">На смене сейчас</h2><ul>${rows.join("")}</ul>`);
   }
 
   function addressUrl(tenantId, sessionId) {
@@ -615,7 +739,9 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
   /** Личный чат владельца или управляющего из списка — получать отчёты и сигналы. */
   async function linkOwnerChat(bot, chat, venue = null) {
     const v = venue || (await tenantRef(bot.tenantId).get()).data() || {};
-    const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ") || "Владелец";
+    // Имя из Telegram не храним (Firestore — за рубежом): в кабинете чат
+    // виден по подписи из «Кто управляет ботом».
+    const name = "";
     await db().runTransaction(async (tx) => {
       const r = botsCol().doc(bot.tenantId);
       const cur = (await tx.get(r)).data() || {};
@@ -704,6 +830,10 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     const sesRef = tenantRef(bot.tenantId).collection("sessions").doc(sessionId);
     const who = [q.from && q.from.first_name, q.from && q.from.last_name].filter(Boolean).join(" ") || "Сотрудник";
 
+    // Режим РФ: имя курьера — в справочник, в чеке только отметка.
+    const rf = await rfMode(bot.tenantId);
+    let courierToSave = "";
+
     if (kind === "s") {
       let result = "";
       await db().runTransaction(async (tx) => {
@@ -721,17 +851,24 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
         }
         const patch = { deliveryStatus: arg, deliveryStatusAt: admin.firestore.Timestamp.now() };
         if (arg === "done") patch.deliveryOpen = false;
-        if (arg === "courier" && !s.courierName) patch.courierName = who;
+        if (arg === "courier" && !(s.courierName || s.courierSet)) {
+          patch.courierSet = true;
+          if (rf) courierToSave = who;
+          else patch.courierName = who;
+        }
         tx.update(sesRef, patch);
         result = flow.label(type, arg);
       });
+      if (courierToSave) await saveCourier(bot.tenantId, sessionId, courierToSave);
       // Карточку обновит слушатель чеков — тот же путь, что и для нажатий на кассе.
       return answer(result);
     }
 
     if (kind === "c") {
-      const team = await onShiftStaff(bot.tenantId);
-      const rows = team.slice(0, 8).map((m) => [{ text: `${m.name}${m.position ? ` · ${POSITIONS[m.position] || m.position}` : ""}`, callback_data: `k:${sessionId}:${m.id}`.slice(0, 64) }]);
+      const team = (await onShiftStaff(bot.tenantId)).filter((m) => m.id);
+      const tz = (await venueOf(bot.tenantId).catch(() => ({}))).timezone;
+      // Без имён: должность и время начала смены отличают людей друг от друга.
+      const rows = team.slice(0, 8).map((m) => [{ text: `${m.role}${m.since ? ` · с ${hhmm(m.since, tz)}` : ""}`, callback_data: `k:${sessionId}:${m.id}`.slice(0, 64) }]);
       rows.push([{ text: "🙋 Я везу", callback_data: `k:${sessionId}:me` }]);
       rows.push([{ text: "← Назад", callback_data: `b:${sessionId}` }]);
       await api(bot.token, "editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: rows } }).catch(() => {});
@@ -743,24 +880,33 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
         let name = who;
         if (arg !== "me") {
           const m = (await onShiftStaff(bot.tenantId)).find((x) => x.id === arg);
-          if (m) name = m.name;
+          if (m) name = await nameOfWho(bot.tenantId, m.raw, m.id);
         }
+        let assigned = false;
         await db().runTransaction(async (tx) => {
           const s = (await tx.get(sesRef)).data();
           if (!s || !(s.status === "active" || s.deliveryOpen === true)) return;
-          const patch = { courierName: name };
+          const patch = rf ? { courierSet: true } : { courierName: name, courierSet: true };
+          assigned = true;
           // Готовый к передаче заказ сразу уходит «у курьера».
           if (s.orderType === "delivery" && flow.canMove("delivery", s.deliveryStatus, "courier") && s.deliveryStatus === "cooking") {
             Object.assign(patch, { deliveryStatus: "courier", deliveryStatusAt: admin.firestore.Timestamp.now() });
           }
           tx.update(sesRef, patch);
         });
+        if (rf && assigned) await saveCourier(bot.tenantId, sessionId, name);
       }
       const s = (await sesRef.get()).data();
       if (s) await refreshCard(bot, { id: sessionId, ...s }, true);
       return answer(kind === "k" ? "Курьер назначен" : "");
     }
     return answer();
+  }
+
+  /** Имя курьера — в справочник в РФ (режим rf). */
+  async function saveCourier(tenantId, sessionId, name) {
+    await pii.put(tenantId, [{ k: "delivery", id: sessionId, fields: { extra: { courierName: name } } }])
+      .catch((e) => console.error(`telegram courier (${tenantId}): ${e.message}`));
   }
 
   // ------------------------------------------------------------ отчёты
@@ -791,7 +937,8 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     for (const d of snap.docs) {
       const s = d.data();
       const emp = s.employeeId ? (await tenantRef(tenantId).collection("employees").doc(s.employeeId).get()).data() || {} : {};
-      out.push({ id: s.employeeId || d.id, name: s.employeeName || emp.name || "Сотрудник", position: emp.position || "", since: toDate(s.startedAt) });
+      // Имени нет: в Telegram — должность и время, имя — на странице в РФ.
+      out.push({ id: s.employeeId || "", raw: s.employeeName || "", position: emp.position || "", role: roleLabel(emp), since: toDate(s.startedAt) });
     }
     return out.sort((a, b) => (a.since || 0) - (b.since || 0));
   }
@@ -854,8 +1001,9 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
       const lines = [st.openShiftId ? "👥 Касса открыта" : "👥 Касса закрыта"];
       if (!team.length) lines.push("На смене никого не отмечено.");
       for (const m of team) {
-        lines.push(`• ${m.name}${m.position ? ` — ${POSITIONS[m.position] || m.position}` : ""}${m.since ? `, с ${hhmm(m.since, venue.timezone)}` : ""}`);
+        lines.push(`• ${m.role}${m.since ? `, с ${hhmm(m.since, venue.timezone)}` : ""}`);
       }
+      if (team.length) lines.push("", `Кто именно: ${whoUrl(bot.tenantId, "team", "now")}`);
       return lines.join("\n");
     },
     async delivery(bot) {
@@ -883,7 +1031,7 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
     }
     const text = deliveryCardText(s, venue.timezone, pending);
     const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(bot.tenantId, s.id) : null);
-    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
+    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
       const m = await api(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
         console.error(`telegram card (${bot.tenantId}):`, e.message);
@@ -979,8 +1127,17 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
           if (ch.type !== "added") continue;
           const a = ch.doc.data();
           last = a.createdAt || last;
-          const text = on("alerts") ? alertText(venue.name || "Заведение", a) : null;
-          if (text) for (const c of owners()) await say(bot, c.id, text);
+          // Сначала — нужен ли сигнал вообще, потом должности (запросы к базе).
+          let text = on("alerts") ? alertText(venue.name || "Заведение", { ...a, whoRole: "", approvedRole: "" }) : null;
+          if (!text) continue;
+          const d = a.details || {};
+          text = alertText(venue.name || "Заведение", {
+            ...a,
+            whoRole: await roleOfWho(tenantId, a.employeeName),
+            approvedRole: d.approvedBy ? await roleOfWho(tenantId, d.approvedBy) : "",
+          });
+          const extra = a.employeeName || d.approvedBy ? whoButton(tenantId, "a", ch.doc.id) : {};
+          for (const c of owners()) await say(bot, c.id, text, extra);
         }
         if (last) botsCol().doc(tenantId).update({ auditCursor: last }).catch(() => {});
       }, (e) => console.error(`telegram audit (${tenantId}):`, e.message)));
@@ -1000,10 +1157,10 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
           if (ch.type === "added" && s.status === "open" && started && started.getTime() > since) text = "🟢 Начал смену";
           if (ch.type === "modified" && s.status !== "open" && ended && ended.getTime() > since) text = "🔴 Закончил смену";
           if (!text) continue;
-          const emp = s.employeeId ? (await t.collection("employees").doc(s.employeeId).get()).data() || {} : {};
-          const role = POSITIONS[emp.position] || (emp.role === "admin" ? "администратор" : "сотрудник");
+          const role = await roleOfWho(tenantId, s.employeeName, s.employeeId) || "сотрудник";
           const at = hhmm(text.startsWith("🟢") ? started : ended, venue.timezone);
-          for (const c of owners()) await say(bot, c.id, `${text}: ${s.employeeName || emp.name || "сотрудник"} (${role}) в ${at}`);
+          // Имени нет — кто именно, по кнопке на сервере в РФ.
+          for (const c of owners()) await say(bot, c.id, `${text}: ${role} в ${at}`, whoButton(tenantId, "sh", ch.doc.id));
         }
       }, (e) => console.error(`telegram shifts (${tenantId}):`, e.message)));
   }
@@ -1061,11 +1218,11 @@ ${ses.deliveryAddress ? `<p><a href="https://yandex.ru/maps/?text=${encodeURICom
   }
 
   return {
-    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleAddress, handleHook, start,
+    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleAddress, handleWho, handleHook, start,
   };
 }
 
 module.exports = {
   createTelegram, buildSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
-  deliveryCardText, deliveryKeyboard, salesStats, addressSig, allowedList, parseAllowed,
+  deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed,
 };

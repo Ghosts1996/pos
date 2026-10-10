@@ -132,6 +132,9 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     if (typeof tenantId !== "string" || !TENANT_RE.test(tenantId)) throw new VaultError(400, "некорректный tenantId");
     const internal = !!internalToken && safeEqual(ctx.internal, internalToken);
     let uid = "";
+    // Сервер пишет запись от имени гостя (заказ из приложения): тогда гость
+    // потом видит её сам — как если бы создал её своим токеном.
+    if (internal && typeof body.asUid === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(body.asUid)) uid = body.asUid;
     if (!internal) {
       if (!ctx.token) throw new VaultError(401, "нет токена авторизации");
       try {
@@ -323,7 +326,7 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     const f = item.fields && typeof item.fields === "object" ? item.fields : {};
     const name = field(f.name, LIMITS.name);
     const phone = f.phone === undefined || f.phone === null ? null : phoneDigits(f.phone) || String(f.phone).trim().slice(0, LIMITS.phone);
-    const by = a.internal ? "server" : a.uid;
+    const by = a.internal ? a.uid || "server" : a.uid;
 
     if (k === "staff") {
       requireStaff(a);

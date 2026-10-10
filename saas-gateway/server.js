@@ -25,6 +25,7 @@ const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("
 const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram } = require("./telegram");
+const { createPiiInternal } = require("./pii-internal");
 
 /**
  * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
@@ -6464,6 +6465,9 @@ async function recordContactInRussia(req, payload) {
   if (!resp.ok) throw new HttpError(503, "Не удалось сохранить контакт — попробуйте через минуту");
 }
 
+// Справочник людей в РФ — запросы от имени сервера (Telegram, заказы гостя).
+const pii = createPiiInternal({ urls: PII_GATEWAY_URLS, db });
+
 // Заказ доставки и с собой из приложения гостя — см. guest-delivery.js.
 const guestDelivery = createGuestDelivery({
   db,
@@ -6473,6 +6477,7 @@ const guestDelivery = createGuestDelivery({
   sendJson,
   HttpError,
   recordContact: recordContactInRussia,
+  pii,
   onlinePayReady: async (tenantId) => {
     const t = db().collection("tenants").doc(tenantId);
     const [integ, venue] = await Promise.all([
@@ -6528,6 +6533,7 @@ const telegram = createTelegram({
   HttpError,
   requireTenantRole,
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+  pii,
 });
 
 // ------------------------------------------------------------- routing
@@ -6662,6 +6668,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
+  if (req.method === "GET" && urlPath === "/staffWho") return runHandler(telegram.handleWho, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
     return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);

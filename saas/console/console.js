@@ -115,14 +115,14 @@ function telegramBoxHtml(st) {
       <b>/id</b> в Telegram.</p>
     ${allowed.length ? `<div style="margin-bottom:8px">${allowed.map((a, i) => `
       <div class="row" style="justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span class="small"><b>${esc(a.name || 'Без имени')}</b> · ID ${esc(String(a.id))}<br><span class="muted">${ROLE[a.role] || ROLE.owner}</span></span>
+        <span class="small"><b>${esc(a.name || 'Без подписи')}</b> · ID ${esc(String(a.id))}<br><span class="muted">${ROLE[a.role] || ROLE.owner}</span></span>
         <button class="btn-link f-tg-del" data-i="${i}" style="color:var(--danger)">Убрать</button>
       </div>`).join('')}</div>` : '<p class="small" style="color:var(--danger);margin:0 0 8px">Список пуст — сначала впишите свой Telegram ID.</p>'}
     <div class="row" style="flex-wrap:wrap;gap:8px;align-items:flex-end">
       <label class="field" style="flex:1 1 140px;margin:0"><span>Telegram ID</span>
         <input id="f-tg-uid" inputmode="numeric" autocomplete="off" maxlength="15" placeholder="123456789"></label>
-      <label class="field" style="flex:1 1 140px;margin:0"><span>Имя</span>
-        <input id="f-tg-uname" maxlength="40" placeholder="Олег"></label>
+      <label class="field" style="flex:1 1 140px;margin:0"><span>Подпись (без ФИО)</span>
+        <input id="f-tg-uname" maxlength="40" placeholder="управляющий, курьер 1"></label>
       <label class="field" style="flex:1 1 180px;margin:0"><span>Права</span>
         <select id="f-tg-urole">
           <option value="owner">Владелец, управляющий</option>

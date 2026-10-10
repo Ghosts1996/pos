@@ -68,20 +68,23 @@ class TakeawaySheet extends StatelessWidget {
       // Телефон и адрес — сначала в базу в РФ (ч. 5 ст. 18 152-ФЗ), потом
       // копия в чек. Без связи с сервером такой заказ не создаём.
       final sessionId = AppScope.col('sessions').doc().id;
-      if (data.phone.isNotEmpty || data.address.isNotEmpty) {
+      // Режим РФ: и одно имя — только туда (в чеке его нет).
+      if (data.phone.isNotEmpty || data.address.isNotEmpty || (!Pd.mirror && data.name.isNotEmpty)) {
         await PiiGatewayService()
             .recordContact(kind: 'delivery', id: sessionId, name: data.name, phone: data.phone, address: data.address);
         People.instance.remember('delivery', sessionId, name: data.name, phone: data.phone, address: data.address);
       }
       final now = TimeOfDay.now();
-      final who = data.name.isNotEmpty
+      // В режиме РФ имени гостя в названии чека нет (оно — в справочнике):
+      // в Firestore остаётся только время.
+      final who = data.name.isNotEmpty && Pd.mirror
           ? data.name
           : '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       final id = await fs.openSession(
         table: table,
         employeeName: employee.name,
         employeeId: employee.id,
-        guestTag: data.name,
+        guestTag: Pd.mirror ? data.name : '',
         tableName: '${delivery ? 'Доставка' : 'С собой'} · $who',
         orderType: delivery ? 'delivery' : 'takeaway',
         customerName: data.name,

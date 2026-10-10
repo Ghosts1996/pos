@@ -147,7 +147,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await hookA({ message: { chat: { id: 501, type: "private", first_name: "Олег" }, from: { id: 501 }, text: `/start ${ownerCode}` } });
   await hookA({ message: { chat: { id: -900, type: "supergroup", title: "Кухня А" }, from: { id: 501 }, text: `/start@venue_a_bot ${staffCode}` } });
   await tick();
-  assert.deepEqual(store.get("telegramBots/A").ownerChats, [{ id: 501, name: "Олег" }]);
+  assert.deepEqual(store.get("telegramBots/A").ownerChats, [{ id: 501, name: "" }], "имя из Telegram не храним");
   assert.equal(store.get("telegramBots/A").staffChat.id, -900);
   // Код А не работает в боте Б
   const hookB = (update) => tg.handleHook(mkReq(update, { "x-telegram-bot-api-secret-token": store.get("telegramBots/B").hookSecret }), mkRes(), "B");
@@ -218,8 +218,40 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   store.set("tenants/A/auditLog/a1", { action: "closed_without_payment", tableName: "Стол 1", amount: 1500, employeeName: "Анна", details: { reason: "ушли" }, createdAt: new TS(Date.now()) });
   store.set("tenants/A/staffShifts/sh1", { employeeId: "e1", employeeName: "Анна", status: "open", startedAt: new TS(Date.now()) });
   fire(); await tick(); await tick();
-  assert.ok(sent.some((m) => m.body.chat_id === 501 && /закрыт без оплаты на 1\s500/.test(m.body.text)), "сигнал о закрытии без оплаты");
-  assert.ok(sent.some((m) => m.body.chat_id === 501 && /Начал смену: Анна \(официант\)/.test(m.body.text)), "начало смены");
+  assert.ok(sent.some((m) => m.body.chat_id === 501 && /закрыт без оплаты на 1\s500.*— официант/.test(m.body.text)), "сигнал о закрытии без оплаты — с должностью");
+  const shiftMsg = sent.find((m) => m.body.chat_id === 501 && /Начал смену: официант в/.test(m.body.text));
+  assert.ok(shiftMsg, "начало смены — должность вместо имени");
+  assert.ok(sent.every((m) => !JSON.stringify(m.body).includes("Анна")), "имени сотрудника в Telegram нет");
+  // «👤 Кто» — имя на странице нашего сервера по подписанной ссылке.
+  const whoLink = shiftMsg.body.reply_markup.inline_keyboard[0][0].url;
+  res = mkRes();
+  await tg.handleWho({ url: whoLink.replace(/^https?:\/\/[^/]+(\/saas)?/, "") }, res);
+  assert.equal(res.code, 200); assert.match(res.body, /Анна/); assert.match(res.body, /официант/);
+  res = mkRes();
+  await tg.handleWho({ url: whoLink.replace(/^https?:\/\/[^/]+(\/saas)?/, "").replace("t=A", "t=B") }, res);
+  assert.equal(res.code, 403, "ссылка заведения А не открывает данные Б");
+  const alertMsg = sent.find((m) => m.body.chat_id === 501 && /без оплаты/.test(m.body.text));
+  res = mkRes();
+  await tg.handleWho({ url: alertMsg.body.reply_markup.inline_keyboard[0][0].url.replace(/^https?:\/\/[^/]+(\/saas)?/, "") }, res);
+  assert.equal(res.code, 200); assert.match(res.body, /Кто:<\/b> Анна/);
+  // Отчёт «Текущая смена» — должности и ссылка, без имён.
+  sent.length = 0;
+  await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "👥 Текущая смена" } });
+  const team = sent.find((m) => m.method === "sendMessage" && m.body.chat_id === 501);
+  assert.ok(/официант/.test(team.body.text) && /staffWho/.test(team.body.text) && !/Анна/.test(team.body.text), "смена без имён");
+  // Курьер из группы: кнопки — должность и время смены, в карточке — без имени.
+  store.set("tenants/A/sessions/s2zzzz", { tableId: "takeaway", status: "active", orderType: "delivery", deliveryStatus: "cooking",
+    orderItems: [{ name: "Суп", price: 300, qty: 1 }], startTime: new Date() });
+  fire(); await tick(); await tick();
+  sent.length = 0;
+  await hookA({ callback_query: { id: "c1", from: { id: 601, first_name: "Повар" }, data: "c:s2zzzz", message: { chat: { id: -900 }, message_id: 105 } } });
+  const kb = sent.find((m) => m.method === "editMessageReplyMarkup");
+  assert.ok(kb && /официант/.test(JSON.stringify(kb.body)) && !/Анна/.test(JSON.stringify(kb.body)), "в кнопках курьера нет имён");
+  await hookA({ callback_query: { id: "c2", from: { id: 601, first_name: "Повар" }, data: "k:s2zzzz:e1", message: { chat: { id: -900 }, message_id: 105 } } });
+  await tick(); await tick();
+  assert.equal(store.get("tenants/A/sessions/s2zzzz").courierSet, true, "отметка «курьер назначен»");
+  assert.ok(sent.some((m) => /Курьер назначен/.test(m.body.text || "")), "карточка: курьер назначен");
+  assert.ok(sent.every((m) => !JSON.stringify(m.body).includes("Анна")), "имени курьера в Telegram нет");
   // Управляющий из списка подключается без ссылки: открыл бота — «Запустить»
   await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: 501, name: "Олег", role: "owner" }, { id: 601, name: "Повар", role: "staff" }, { id: 503, name: "Ира", role: "owner" }] }), mkRes());
   await tick();
