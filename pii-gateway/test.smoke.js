@@ -158,6 +158,19 @@ async function run() {
     const unknown = await request("POST", "/", { body: JSON.stringify({ kind: "pii_drop", tenantId: "t1" }) });
     assert.notStrictEqual(unknown.statusCode, 200);
   }
+  {
+    // Только для saas-gateway: без внутреннего секрета (в тесте он не
+    // задан) — 403, гостевой токен не помогает.
+    for (const body of [{ kind: "guest_forget", tenantId: "t1", uid: "g1" }, { kind: "guest_find_phone", phone: "79001234567" }]) {
+      const none = await request("POST", "/", { body: JSON.stringify(body) });
+      assert.strictEqual(none.statusCode, 403, body.kind);
+      const guessed = await request("POST", "/", {
+        headers: { "X-Pii-Internal": "guess", Authorization: "Bearer tok" },
+        body: JSON.stringify(body),
+      });
+      assert.strictEqual(guessed.statusCode, 403, body.kind);
+    }
+  }
   server.close(() => process.exit(0));
 }
 
