@@ -28,7 +28,9 @@ awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} /^SwapTotal:/ {s=$2} /^SwapFree
   END {printf "память: всего %d МБ, доступно %d МБ; swap %d МБ, занято %d МБ\n", t/1024, a/1024, s/1024, (s-f)/1024}' \
   /proc/meminfo 2>/dev/null || true
 echo "процессоров: $(nproc 2>/dev/null || echo '?')"
-ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -n 6 | awk '{printf "  %s — %d МБ\n", $2, $1/1024}' || true
+# Служба systemd рядом с процессом — по ней видно, чья это программа.
+ps -eo rss=,comm=,unit= --sort=-rss 2>/dev/null | head -n 6 |
+  awk '{printf "  %s — %d МБ%s\n", $2, $1/1024, ($3 != "" && $3 != "-" ? " (служба " $3 ")" : "")}' || true
 # Сторонние программы в Docker (ZalPOS его не использует) — только названия.
 if command -v docker >/dev/null 2>&1; then
   docker ps --format '  контейнер: {{.Names}} ({{.Image}}), {{.Status}}' 2>/dev/null | head -n 10 || true
