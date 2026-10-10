@@ -1,21 +1,24 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 class DiscountCard {
   final String id;
   final String cardNumber;
-  final String guestName;
+  final String _guestName;
+  String get guestName => Pd.name('card', id, _guestName);
   final double discountPercent;
-  final String notes;
+  final String _notes;
+  String get notes => Pd.extra('card', id, 'notes', _notes);
   final bool active;
 
   DiscountCard({
     required this.id,
     required this.cardNumber,
-    required this.guestName,
+    required String guestName,
     required this.discountPercent,
-    this.notes = '',
+    String notes = '',
     this.active = true,
-  });
+  }) : _guestName = guestName, _notes = notes;
 
   factory DiscountCard.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -31,9 +34,9 @@ class DiscountCard {
 
   Map<String, dynamic> toMap() => {
         'cardNumber': cardNumber,
-        'guestName': guestName,
+        if (Pd.mirror) 'guestName': guestName,
         'discountPercent': discountPercent,
-        'notes': notes,
+        if (Pd.mirror) 'notes': notes,
         'active': active,
       };
 }

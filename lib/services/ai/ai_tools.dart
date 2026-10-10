@@ -10,6 +10,7 @@ import '../guest_link_service.dart';
 import '../reservation_service.dart';
 import '../venue_service.dart';
 import 'ai_context_service.dart';
+import '../people_directory.dart';
 
 /// Кому разрешён инструмент.
 enum AiToolScope {
@@ -502,7 +503,7 @@ class AiToolRegistry {
         'tool': tool,
         'args': jsonEncode(args),
         'scope': ctx.scope.name,
-        'employeeName': ctx.employeeName,
+        'employeeName': Pd.who(ctx.employeeName),
         'guestUid': ctx.guestUid,
         'createdAt': Timestamp.fromDate(DateTime.now()),
       });

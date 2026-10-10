@@ -7,6 +7,7 @@ import '../firebase_options.dart';
 import 'app_scope.dart';
 import 'auth_service.dart';
 import 'notification_service.dart';
+import 'people_directory.dart';
 import 'session_alerts_service.dart';
 import 'tenant_config_service.dart';
 
@@ -187,6 +188,8 @@ class _HallWatchHandler extends TaskHandler {
         if (c == null) return; // устройство ещё не присоединено — слушать нечего
         AppScope.enterTenant(c.tenant.id,
             branding: c.branding, slug: c.tenant.slug, chainId: c.tenant.chainId, demo: c.tenant.demo, demoPins: c.tenant.demoPins, demoCode: c.tenant.demoCode);
+        // Имена для уведомлений — из копии справочника, которую ведёт касса.
+        await People.instance.ensureReady();
       }
       await NotificationService.instance.init();
       await SessionAlertsService.instance.start();

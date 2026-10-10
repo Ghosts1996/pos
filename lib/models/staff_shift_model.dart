@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 /// Личная рабочая смена ОДНОГО сотрудника — учёт времени для расчёта
 /// зарплаты. НЕ путать с ShiftModel: та смена одна на всё заведение (касса,
@@ -10,7 +11,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class StaffShiftModel {
   final String id;
   final String employeeId;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => Pd.staffName(employeeId, _employeeName);
   final DateTime startedAt;
   final DateTime? endedAt;
   final String status; // 'open' | 'closed'
@@ -23,29 +25,31 @@ class StaffShiftModel {
   /// Кто правил запись вручную (админ в табеле или сам сотрудник, указав
   /// время ухода) — видно в зарплате рядом с часами.
   final String editedById;
-  final String editedByName;
+  final String _editedByName;
+  String get editedByName => Pd.staffName(editedById, Pd.whoName(_editedByName));
   final DateTime? editedAt;
 
   /// Запись отменена. Смены не удаляются — ошибочную отменяют, и она
   /// остаётся в табеле зачёркнутой, с именем того, кто отменил.
   final bool cancelled;
-  final String cancelledByName;
+  final String _cancelledByName;
+  String get cancelledByName => Pd.whoName(_cancelledByName);
 
   StaffShiftModel({
     required this.id,
     required this.employeeId,
-    required this.employeeName,
+    required String employeeName,
     required this.startedAt,
     this.endedAt,
     this.status = 'open',
     this.manual = false,
     this.countFrom,
     this.editedById = '',
-    this.editedByName = '',
+    String editedByName = '',
     this.editedAt,
     this.cancelled = false,
-    this.cancelledByName = '',
-  });
+    String cancelledByName = '',
+  }) : _cancelledByName = cancelledByName, _employeeName = employeeName, _editedByName = editedByName;
 
   bool get isOpen => status == 'open';
 
@@ -106,7 +110,7 @@ class StaffShiftModel {
   Map<String, dynamic> toMap() {
     return {
       'employeeId': employeeId,
-      'employeeName': employeeName,
+      if (Pd.mirror) 'employeeName': employeeName,
       'startedAt': Timestamp.fromDate(startedAt),
       'endedAt': endedAt != null ? Timestamp.fromDate(endedAt!) : null,
       'status': status,

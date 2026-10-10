@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 /// Модель кассовой смены. Смена — это не календарный день, а период между
 /// открытием и закрытием кассы: официант/админ открывает смену при входе в
@@ -10,14 +11,16 @@ class ShiftModel {
   final String id;
   final DateTime openedAt;
   final DateTime? closedAt;
-  final String openedBy;
+  final String _openedBy;
+  String get openedBy => Pd.staffName(openedById, Pd.whoName(_openedBy));
 
   /// Id сотрудника, открывшего смену. Имя для человека, id — для техники:
   /// по нему устройство понимает, оно ли сейчас «на смене», и показывать
   /// ли уведомления о вызовах гостей именно здесь.
   final String openedById;
 
-  final String? closedBy;
+  final String? _closedBy;
+  String? get closedBy { final v = _closedBy; return v == null ? null : Pd.whoName(v); }
   final String status; // 'open' | 'closed'
 
   // ---- Наличные (см. CashDrawerSummary) ----
@@ -35,16 +38,16 @@ class ShiftModel {
     required this.id,
     required this.openedAt,
     this.closedAt,
-    required this.openedBy,
+    required String openedBy,
     this.openedById = '',
-    this.closedBy,
+    String? closedBy,
     this.status = 'open',
     this.openingCash = 0,
     this.closingExpectedCash,
     this.closingCountedCash,
     this.closingCollected,
     this.closingLeftCash,
-  });
+  }) : _openedBy = openedBy, _closedBy = closedBy;
 
   /// Недостача (<0) или излишек (>0) при пересчёте, если он был.
   double? get closingDiff =>
@@ -76,13 +79,13 @@ class ShiftModel {
     return {
       'openedAt': Timestamp.fromDate(openedAt),
       'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
-      'openedBy': openedBy,
+      'openedBy': Pd.who(openedBy, id: openedById),
       // Без этой строки id открывшего смену никогда не доезжал до базы:
       // читался он исправно, а записывался только openedBy. Из-за этого
       // устройства не могли понять, кто на смене, и уведомления о вызовах
       // гостей приходили на все планшеты сразу.
       'openedById': openedById,
-      'closedBy': closedBy,
+      'closedBy': _closedBy,
       'status': status,
       'openingCash': openingCash,
     };

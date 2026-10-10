@@ -19,7 +19,7 @@ const { createVault, VaultError } = require("./vault");
  *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh).
  *
  * Справочник заведения (сотрудники, гости, контакты) и его режим — в
- * vault.js. Режим заведения — tenants/{id}/meta/pii.mode: 'mirror' (пока
+ * vault.js. Режим заведения — meta/venueProfile.piiMode: 'mirror' (пока
  * все кассы не обновились: копия имён и телефонов идёт и в Firestore) или
  * 'rf' (в Firestore только идентификаторы).
  */
@@ -69,8 +69,8 @@ function getSaasApp() {
 async function piiMode(db, tenantId) {
   if (!tenantId) return "mirror";
   try {
-    const snap = await db.doc(`tenants/${tenantId}/meta/pii`).get();
-    return snap.exists && snap.data().mode === "rf" ? "rf" : "mirror";
+    const snap = await db.doc(`tenants/${tenantId}/meta/venueProfile`).get();
+    return snap.exists && snap.data().piiMode === "rf" ? "rf" : "mirror";
   } catch (_) {
     return "mirror";
   }

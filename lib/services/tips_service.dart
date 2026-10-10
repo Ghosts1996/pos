@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/employee.dart';
 import '../models/tip_model.dart';
 import 'app_scope.dart';
+import 'people_directory.dart';
 import 'push_service.dart';
 import '../utils/money.dart';
 
@@ -35,7 +36,7 @@ class TipsService {
     members.forEach((k, v) {
       if (v is! Map) return;
       final m = TipTeamMember.fromMap(k.toString(), Map<String, dynamic>.from(v));
-      if (m.name.trim().isEmpty) return;
+      if (m.name.trim().isEmpty && !People.instance.rf) return;
       if (m.since != null && m.since!.isBefore(cutoff)) return;
       list.add(m);
     });
@@ -87,7 +88,7 @@ class TipsService {
       'amount': amount,
       'target': to == null ? 'team' : 'employee',
       'employeeId': to?.id ?? '',
-      'employeeName': to?.name ?? 'Всей смене',
+      if (Pd.mirror) 'employeeName': to?.name ?? 'Всей смене',
       'position': to?.position ?? '',
       'teamMembers': to == null ? team.map((m) => m.toShareMap()).toList() : const [],
       'sessionId': sessionId,

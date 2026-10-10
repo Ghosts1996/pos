@@ -33,6 +33,7 @@ import 'utils/adaptive.dart';
 import 'utils/release_error_widget.dart';
 import 'utils/startup_log.dart';
 import 'widgets/app_update_banner.dart';
+import 'widgets/people_refresh.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
 // Используется ТОЛЬКО для хранения фото меню (Storage) — anon key публичный
@@ -245,7 +246,8 @@ class HookahPosApp extends StatelessWidget {
       // Оба экрана накрывают кассу, а не заменяют её: навигатор остаётся
       // на месте — под блокировкой недонабранный чек не теряется, а сброс
       // открывает вход в новое демо с чистого стека.
-      builder: (context, child) => AdaptiveAppFrame(
+      builder: (context, child) => PeopleRefresh(
+        child: AdaptiveAppFrame(
         child: AppUpdateBanner(
           child: ValueListenableBuilder<bool>(
             valueListenable: DemoGate.expired,
@@ -283,6 +285,7 @@ class HookahPosApp extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

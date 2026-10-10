@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/constants.dart';
 import 'pay_terms.dart';
+import '../services/people_directory.dart';
 
 class Employee {
   final String id;
-  final String name;
+  final String _name;
+  String get name => Pd.staffName(id, _name);
   /// PIN в открытом виде — только что введённый в редакторе (в базу не
   /// пишется) или старая запись до перевода на хэш.
   final String pinCode;
@@ -55,7 +57,7 @@ class Employee {
 
   Employee({
     required this.id,
-    required this.name,
+    required String name,
     required this.pinCode,
     this.pinHash = '',
     required this.role,
@@ -75,7 +77,7 @@ class Employee {
     this.barPercentRate = 0,
     this.payHistory = const [],
     this.tipsLink = '',
-  });
+  }) : _name = name;
 
   /// Текущие условия оплаты.
   PayTerms get payTerms => PayTerms(
@@ -143,7 +145,7 @@ class Employee {
   }
 
   Map<String, dynamic> toMap() => {
-        'name': name,
+        if (Pd.mirror) 'name': name,
         if (pinHash.isNotEmpty) 'pinHash': pinHash,
         'role': role,
         'position': position,

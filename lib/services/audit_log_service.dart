@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import 'people_directory.dart';
 
 /// Журнал действий на кассе.
 ///
@@ -29,7 +30,7 @@ class AuditLogService {
       // ответ сервера пришёл бы только после её возвращения — кассир ждал бы.
       unawaited(AppScope.col('auditLog').add({
         'action': action,
-        'employeeName': employeeName,
+        'employeeName': Pd.who(employeeName),
         'sessionId': sessionId,
         'tableName': tableName,
         'amount': amount,
