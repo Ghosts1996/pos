@@ -373,7 +373,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   res = mkRes();
   await tg.handleStatus(mkReq({ tenantId: "C2" }), res);
   assert.equal(res.body.configured, true);
-  assert.deepEqual(res.body.chain, { name: "Ромашка", points: ["Арбат", "Центр"], home: "Центр" });
+  assert.deepEqual(res.body.chain, { name: "Ромашка", points: ["Арбат", "Центр"], home: "Центр", separate: [] });
   await assert.rejects(tg.handleStatus(mkReq({ tenantId: "C2" }, { authorization: "Bearer admin2" }), mkRes()), /другой точке/,
     "администратор одной точки не управляет ботом всей сети");
   await tg.handleAccess(mkReq({ tenantId: "C2", allowed: [{ id: 701, name: "Влад", role: "owner" }, { id: 702, name: "Повар", role: "staff" }] }), mkRes());
@@ -626,13 +626,43 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   store.set("tenants/L3", { name: "Лес 3", chainId: "ch2", timezone: TZ });
   res = mkRes();
   await tg.handleStatus(mkReq({ tenantId: "L1" }), res);
-  assert.deepEqual(res.body.chain, { name: "Лес", points: ["Лес 1", "Лес 3"], home: "Лес 1" });
+  assert.deepEqual(res.body.chain, { name: "Лес", points: ["Лес 1", "Лес 3"], home: "Лес 1", separate: ["Лес 2"] });
   res = mkRes();
   await tg.handleStatus(mkReq({ tenantId: "L2" }), res);
   assert.equal(res.body.chain, null, "у точки со своим ботом — свой бот, как раньше");
   res = mkRes();
   await tg.handleStatus(mkReq({ tenantId: "L3" }), res);
   assert.equal(res.body.chain.home, "Лес 1");
+  // Кабинет точки со своим ботом предлагает перейти на бот сети,
+  // бот сети показывает, какие точки пока со своими ботами.
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L2" }), res);
+  assert.deepEqual(res.body.chainBot, { username: "bot444_bot", home: "Лес 1", name: "Лес" });
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L1" }), res);
+  assert.deepEqual(res.body.chain.separate, ["Лес 2"]);
+  assert.equal(res.body.chainBot, null);
+  await tg.handleAccess(mkReq({ tenantId: "L1", allowed: [{ id: 801, name: "Влад", role: "owner" }] }), mkRes());
+  await tg.handleAccess(mkReq({ tenantId: "L2", allowed: [{ id: 801, name: "Влад", role: "staff" }, { id: 802, name: "Повар", role: "staff" }] }), mkRes());
+  await assert.rejects(tg.handleJoinChain(mkReq({ tenantId: "L1" }), mkRes()), /и есть бот сети/);
+  await assert.rejects(tg.handleJoinChain(mkReq({ tenantId: "L3" }), mkRes()), /уже на боте сети/);
+  res = mkRes();
+  await tg.handleJoinChain(mkReq({ tenantId: "L2" }), res);
+  assert.deepEqual(res.body, { ok: true, username: "bot444_bot" });
+  await tick(); await tick();
+  assert.ok(!store.has("telegramBots/L2"), "бот точки отключён");
+  assert.ok(sent.some((m) => m.token.startsWith("555") && m.method === "deleteWebhook"));
+  assert.deepEqual(store.get("telegramBots/L1").allowed, [{ id: 801, name: "Влад", role: "owner" }, { id: 802, name: "Повар", role: "staff" }],
+    "список доступа объединён, права бота сети не понижены");
+  res = mkRes();
+  await tg.handleStatus(mkReq({ tenantId: "L2" }), res);
+  assert.equal(res.body.username, "bot444_bot");
+  assert.deepEqual(res.body.chain, { name: "Лес", points: ["Лес 1", "Лес 2", "Лес 3"], home: "Лес 1", separate: [] });
+  // Бот сети уже показывает точку — без ожидания пересчёта точек
+  sent.length = 0;
+  await tg.handleHook(mkReq({ message: { chat: { id: 801, type: "private" }, from: { id: 801 }, text: "/start" } },
+    { "x-telegram-bot-api-secret-token": store.get("telegramBots/L1").hookSecret }), mkRes(), "L1");
+  assert.ok(sent.some((m) => m.body.chat_id === 801 && /сеть «Лес» \(3 точки\)/.test(m.body.text)));
 
   // Итоги сети в 10:00 — чистая функция
   const cs = tgmod.buildChainSummary({ chainName: "Ромашка", label: "за 09.10", points: [

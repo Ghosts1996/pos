@@ -134,7 +134,13 @@ function telegramBoxHtml(st) {
     ${chain ? `<div class="small" style="margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
       Бот сети «${esc(chain.name)}» — показывает все точки: ${esc(chain.points.join(', '))}.
       В Telegram кнопка «📍» сверху переключает точку или «Все точки» (сводка по сети).
-      <span class="muted">Подключён в точке «${esc(chain.home)}»; список доступа и уведомления — общие для всей сети.</span></div>` : ''}
+      <span class="muted">Подключён в точке «${esc(chain.home)}»; список доступа и уведомления — общие для всей сети.</span>
+      ${(chain.separate || []).length ? `<br><span class="muted">Пока со своим ботом: ${esc(chain.separate.join(', '))} — перевести на бот сети
+      можно в кабинете этой точки (Настройки → Telegram-бот).</span>` : ''}</div>` : ''}
+    ${st.chainBot ? `<div class="small" style="margin-top:8px;padding:8px 10px;border:1px solid var(--primary);background:var(--accent-soft);border-radius:10px">
+      У сети «${esc(st.chainBot.name)}» есть общий бот <b>@${esc(st.chainBot.username)}</b> (подключён в точке «${esc(st.chainBot.home)}»):
+      все точки в одном боте, переключение кнопкой «📍». Этот бот работает только для этой точки.
+      <div style="margin-top:6px"><button class="btn btn-primary" id="f-tg-join" style="width:auto">Перейти на бот сети</button></div></div>` : ''}
 
     <div style="font-weight:600;margin:14px 0 4px">Кто управляет ботом</div>
     <p class="small muted" style="margin:0 0 8px">Отчёты, уведомления, подключение чатов и кнопки заказов — только для этих
@@ -275,6 +281,22 @@ function bindTelegramBox(tenantId, redraw) {
       }
     };
   });
+  if ($('f-tg-join')) $('f-tg-join').onclick = async () => {
+    const st = tgStatusCache.get(tenantId) || {};
+    const cb = st.chainBot || {};
+    if (!confirm(`Перевести точку на бот сети @${cb.username}? Этот бот (@${st.username}) отключится. `
+      + 'Список «Кто управляет ботом» перенесётся в бот сети. Владельцу и управляющим — открыть бота сети и нажать «Запустить», '
+      + 'рабочую группу точки — подключить заново кнопкой «Подключить группу этой точки».')) return;
+    $('f-tg-join').disabled = true;
+    try {
+      await callSaasGateway('telegramJoinChain', { tenantId });
+      tgStatusCache.clear();
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+      $('f-tg-join').disabled = false;
+    }
+  };
   if ($('f-tg-unlink')) $('f-tg-unlink').onclick = async () => {
     const st = tgStatusCache.get(tenantId) || {};
     if (!confirm(st.chain
