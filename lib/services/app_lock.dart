@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/employee.dart';
+import 'people_directory.dart';
 
 /// PIN после закрытия и сворачивания кассы.
 ///
@@ -55,12 +56,15 @@ class AppLock with WidgetsBindingObserver {
   void signedIn(Employee employee) {
     _employee = employee;
     locked.value = null;
+    // Действия в кассе подписываются этим сотрудником (Pd.who).
+    Pd.setActor(employee.id, employee.name);
   }
 
   /// Открыт экран входа — в кассе никто не работает, блокировать нечего.
   void signedOut() {
     _employee = null;
     locked.value = null;
+    Pd.setActor('', '');
   }
 
   /// Выход из кассы по делу самой кассы (галерея, звонок, установщик):

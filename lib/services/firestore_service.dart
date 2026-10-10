@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import 'people_directory.dart';
 import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
@@ -113,11 +114,20 @@ class FirestoreService {
   Future<void> setDeliveryStatus(String sessionId, String to,
       {String courierName = '', String courierPhone = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
+    // Курьер и его номер — в справочник в РФ (в Firestore — только пока
+    // заведение не переключено, см. People).
+    if (courierName.isNotEmpty || courierPhone.isNotEmpty || to == 'done') {
+      unawaited(People.instance.put('delivery', sessionId, extra: {
+        if (courierName.isNotEmpty) 'courierName': courierName,
+        if (courierPhone.isNotEmpty) 'courierPhone': courierPhone,
+        if (to == 'done') 'courierPhone': null,
+      }));
+    }
     Map<String, dynamic> patch() => {
           'deliveryStatus': to,
           'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
-          if (courierName.isNotEmpty) 'courierName': courierName,
-          if (courierPhone.isNotEmpty) 'courierPhone': courierPhone,
+          if (Pd.mirror && courierName.isNotEmpty) 'courierName': courierName,
+          if (Pd.mirror && courierPhone.isNotEmpty) 'courierPhone': courierPhone,
           // Номер курьера нужен гостю, только пока заказ в пути.
           if (to == 'done') 'courierPhone': FieldValue.delete(),
           // Выдан/доставлен — из списка «в работе» уходит (неоплаченный
@@ -214,7 +224,7 @@ class FirestoreService {
         'deliveryStatusAt': now,
         'deliveryOpen': false,
         'cancelReason': reason,
-        'cancelledBy': employeeName,
+        'cancelledBy': Pd.who(employeeName),
         'cancelledAt': now,
         'courierPhone': FieldValue.delete(),
         if (wasActive) 'status': 'cancelled',
@@ -229,12 +239,13 @@ class FirestoreService {
           'status': 'rejected',
           'rejectReason': reason,
           'handledAt': now,
-          'handledBy': employeeName,
+          'handledBy': Pd.who(employeeName),
         });
       }
       return null;
     });
     if (problem != null) throw StateError(problem);
+    unawaited(People.instance.put('delivery', sessionId, extra: {'courierPhone': null}));
   }
 
   Future<void> addTable(TableModel table) async {
@@ -1017,7 +1028,7 @@ class FirestoreService {
       'paymentCard': card,
       'paymentTerminal': terminal,
       'paymentComp': comp,
-      'guestContact': guestContact,
+      if (Pd.mirror) 'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
       'receiptPrinted': receiptPrinted,
       'fiscalReceiptPrinted': fiscalReceiptPrinted,
@@ -1025,6 +1036,10 @@ class FirestoreService {
       'tipsCard': tipsCard,
       if (loyaltyClientUid.isNotEmpty) 'loyaltyClientUid': loyaltyClientUid,
     };
+    // Телефон или email для электронного чека — в справочник в РФ.
+    if (guestContact.isNotEmpty) {
+      unawaited(People.instance.put('session', sessionId, extra: {'guestContact': guestContact}));
+    }
     final tipNow = Timestamp.fromDate(DateTime.now());
     final tipUpdates = <DocumentReference<Map<String, dynamic>>, Map<String, dynamic>>{
       for (final e in tipsPaidVia.entries)
@@ -1391,7 +1406,7 @@ class FirestoreService {
       if (opId.isNotEmpty) {
         tx.update(AppScope.col('cashOps').doc(opId), {
           'cancelled': true,
-          'cancelledBy': employeeName,
+          'cancelledBy': Pd.who(employeeName),
           'cancelledAt': Timestamp.fromDate(DateTime.now()),
         });
       }
@@ -1575,7 +1590,7 @@ class FirestoreService {
       tx.update(shiftRef, {
         'status': 'closed',
         'closedAt': Timestamp.fromDate(now),
-        'closedBy': employeeName,
+        'closedBy': Pd.who(employeeName),
         if (cash != null) ...{
           'closingExpectedCash': cash.expected,
           'closingCountedCash': cash.counted,
@@ -1628,7 +1643,7 @@ class FirestoreService {
 
   Future<void> cancelPayrollAdjustment(String id, String by) => AppScope.col('payrollAdjustments')
       .doc(id)
-      .update({'cancelled': true, 'cancelledBy': by, 'cancelledAt': Timestamp.fromDate(DateTime.now())});
+      .update({'cancelled': true, 'cancelledBy': Pd.who(by), 'cancelledAt': Timestamp.fromDate(DateTime.now())});
 
   // ---------- НАЛИЧНЫЕ В КАССЕ ----------
 
@@ -1664,7 +1679,7 @@ class FirestoreService {
   Future<void> cancelCashOp(String opId, String employeeName) async {
     await AppScope.col('cashOps').doc(opId).update({
       'cancelled': true,
-      'cancelledBy': employeeName,
+      'cancelledBy': Pd.who(employeeName),
       'cancelledAt': Timestamp.fromDate(DateTime.now()),
     });
   }
@@ -1741,7 +1756,7 @@ class FirestoreService {
 
       tx.set(shiftRef, {
         'employeeId': employee.id,
-        'employeeName': employee.name,
+        if (Pd.mirror) 'employeeName': employee.name,
         'startedAt': FieldValue.serverTimestamp(),
         'endedAt': null,
         'status': 'open',
@@ -1806,7 +1821,7 @@ class FirestoreService {
         'endedAt': manual ? Timestamp.fromDate(endedAt) : FieldValue.serverTimestamp(),
         if (manual) ...{
           'manual': true,
-          'editedBy': editor?.name ?? '',
+          'editedBy': Pd.who(editor?.name ?? '', id: editor?.id ?? ''),
           'editedById': editor?.id ?? '',
           'editedAt': FieldValue.serverTimestamp(),
         },
@@ -1903,7 +1918,7 @@ class FirestoreService {
     await AppScope.col('staffShifts').add({
       ...shift.toMap(),
       'manual': true,
-      'editedBy': editor.name,
+      'editedBy': Pd.who(editor.name, id: editor.id),
       'editedById': editor.id,
       'editedAt': FieldValue.serverTimestamp(),
     });
@@ -1911,7 +1926,7 @@ class FirestoreService {
       action: 'staff_shift_added',
       employeeName: editor.name,
       details: {
-        'employee': shift.employeeName,
+        'employee': Pd.who(shift.employeeName, id: shift.employeeId),
         'startedAt': shift.startedAt.toIso8601String(),
         'endedAt': shift.endedAt?.toIso8601String() ?? '',
       },
@@ -1926,7 +1941,7 @@ class FirestoreService {
       'endedAt': after.endedAt != null ? Timestamp.fromDate(after.endedAt!) : null,
       'status': after.endedAt != null ? 'closed' : 'open',
       'manual': true,
-      'editedBy': editor.name,
+      'editedBy': Pd.who(editor.name, id: editor.id),
       'editedById': editor.id,
       'editedAt': FieldValue.serverTimestamp(),
     });
@@ -1934,7 +1949,7 @@ class FirestoreService {
       action: 'staff_shift_edited',
       employeeName: editor.name,
       details: {
-        'employee': before.employeeName,
+        'employee': Pd.who(before.employeeName, id: before.employeeId),
         'before': '${before.startedAt.toIso8601String()} – ${before.endedAt?.toIso8601String() ?? ''}',
         'after': '${after.startedAt.toIso8601String()} – ${after.endedAt?.toIso8601String() ?? ''}',
       },
@@ -1946,14 +1961,14 @@ class FirestoreService {
   Future<void> cancelStaffShift(StaffShiftModel shift, {required Employee editor}) async {
     await AppScope.col('staffShifts').doc(shift.id).update({
       'cancelled': true,
-      'cancelledBy': editor.name,
+      'cancelledBy': Pd.who(editor.name, id: editor.id),
       'cancelledAt': FieldValue.serverTimestamp(),
     });
     AuditLogService.instance.log(
       action: 'staff_shift_cancelled',
       employeeName: editor.name,
       details: {
-        'employee': shift.employeeName,
+        'employee': Pd.who(shift.employeeName, id: shift.employeeId),
         'startedAt': shift.startedAt.toIso8601String(),
         'endedAt': shift.endedAt?.toIso8601String() ?? '',
       },
@@ -2144,7 +2159,7 @@ class FirestoreService {
       AuditLogService.instance.log(
         action: 'pay_terms_changed',
         employeeName: editor?.name ?? '',
-        details: {'employee': e.name, 'change': changed},
+        details: {'employee': Pd.who(e.name, id: e.id), 'change': changed},
       ).ignore();
     }
   }
@@ -2611,7 +2626,7 @@ class FirestoreService {
     batch.update(ref, {
       'status': 'completed',
       'closedAt': Timestamp.fromDate(now),
-      'closedBy': employeeName,
+      'closedBy': Pd.who(employeeName),
     });
     await batch.commit();
   }
@@ -2622,7 +2637,7 @@ class FirestoreService {
     return AppScope.col('inventoryCounts').doc(countId).update({
       'status': 'cancelled',
       'closedAt': Timestamp.fromDate(DateTime.now()),
-      'closedBy': employeeName,
+      'closedBy': Pd.who(employeeName),
     });
   }
 

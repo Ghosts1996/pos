@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 /// Сотрудник, который сейчас на смене, — как его видит гость в выборе,
 /// кому оставить чаевые. Лежит в meta/tipsTeam (см. TipsService): гостю
 /// нельзя читать ни сотрудников, ни их смены целиком — там PIN и ставки.
 class TipTeamMember {
   final String id;
-  final String name;
+  final String _name;
+  String get name => Pd.staffName(id, _name);
   final String position;
 
   /// Личная ссылка для чаевых (Employee.tipsLink), может быть пустой.
@@ -14,11 +16,11 @@ class TipTeamMember {
 
   const TipTeamMember({
     required this.id,
-    required this.name,
+    required String name,
     this.position = '',
     this.tipsLink = '',
     this.since,
-  });
+  }) : _name = name;
 
   factory TipTeamMember.fromMap(String id, Map<String, dynamic> m) => TipTeamMember(
         id: id,
@@ -29,7 +31,7 @@ class TipTeamMember {
       );
 
   Map<String, dynamic> toMap() => {
-        'name': name,
+        if (Pd.mirror) 'name': name,
         'position': position,
         'tipsLink': tipsLink,
         if (since != null) 'since': Timestamp.fromDate(since!),
@@ -37,7 +39,7 @@ class TipTeamMember {
 
   /// Снимок для записи чаевых «всей смене» — только то, что нужно для
   /// дележа в зарплате.
-  Map<String, dynamic> toShareMap() => {'id': id, 'name': name};
+  Map<String, dynamic> toShareMap() => {'id': id, if (Pd.mirror) 'name': name};
 }
 
 /// Чаевые — документ tips/{id}.
@@ -56,7 +58,10 @@ class TipModel {
   /// 'employee' — конкретному сотруднику; 'team' — всей смене поровну.
   final String target;
   final String employeeId;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => employeeId.isEmpty && target == 'team'
+      ? (_employeeName.isEmpty ? 'Всей смене' : _employeeName)
+      : Pd.staffName(employeeId, _employeeName);
   final String position;
 
   /// Кто был на смене, когда оставили чаевые «всей смене»: [{id, name}].
@@ -84,7 +89,7 @@ class TipModel {
     required this.amount,
     this.target = 'employee',
     this.employeeId = '',
-    this.employeeName = '',
+    String employeeName = '',
     this.position = '',
     this.teamMembers = const [],
     this.sessionId = '',
@@ -97,7 +102,7 @@ class TipModel {
     this.source = 'guest',
     required this.createdAt,
     this.paidAt,
-  });
+  }) : _employeeName = employeeName;
 
   bool get isTeam => target == 'team';
   bool get isLink => method == 'link';

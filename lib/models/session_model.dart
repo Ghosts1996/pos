@@ -4,6 +4,7 @@ import '../utils/promo_policy.dart';
 import '../utils/parse.dart';
 import '../utils/sale_kind.dart';
 import 'delivery_status.dart';
+import '../services/people_directory.dart';
 
 class OrderItem {
   // Id позиции меню, из которой добавлена эта строка заказа.
@@ -314,7 +315,8 @@ class SessionModel {
   final String id;
   final String tableId;
   final String tableName;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => Pd.staffName(employeeId, _employeeName);
 
   /// Id сотрудника, открывшего стол, — по нему, а не по имени, считается
   /// процент с продаж. Пусто у старых чеков — тогда сопоставляем по имени.
@@ -347,19 +349,24 @@ class SessionModel {
 
   /// '' — заказ за столом, 'takeaway' — с собой, 'delivery' — доставка.
   final String orderType;
-  final String customerPhone;
-  final String deliveryAddress;
+  final String _customerPhone;
+  String get customerPhone => Pd.phone('delivery', id, _customerPhone);
+  final String _deliveryAddress;
+  String get deliveryAddress => Pd.address('delivery', id, _deliveryAddress);
 
   /// Статус заказа с собой/доставки — см. DeliveryFlow.
   final String deliveryStatus;
-  final String courierName;
+  final String _courierName;
+  String get courierName => Pd.extra('delivery', id, 'courierName', _courierName);
 
   /// Рабочий номер курьера — гость видит кнопку «Позвонить курьеру», пока
   /// заказ в пути. Стирается, когда заказ доставлен или отменён.
-  final String courierPhone;
+  final String _courierPhone;
+  String get courierPhone => Pd.extra('delivery', id, 'courierPhone', _courierPhone);
 
   /// Имя гостя для звонка (заказ из приложения или записанный кассиром).
-  final String customerName;
+  final String _customerName;
+  String get customerName => Pd.name('delivery', id, _customerName);
 
   /// Порядковый номер заказа с собой или доставки в заведении: №1, №2, …
   /// Ставит шлюз (заказ из приложения) или касса при создании. 0 — старый
@@ -367,7 +374,8 @@ class SessionModel {
   final int orderNo;
 
   /// Пожелания гостя: подъезд, «позвоните за 10 минут», без лука.
-  final String deliveryComment;
+  final String _deliveryComment;
+  String get deliveryComment => Pd.extra('delivery', id, 'comment', _deliveryComment);
 
   /// 'app' — заказ оформил гость в приложении; пусто — касса.
   final String source;
@@ -394,7 +402,9 @@ class SessionModel {
 
   /// Заказ оформил гость в приложении.
   bool get fromApp => source == 'app';
-  final String guestContact; // телефон/email гостя, необязательно
+  /// Телефон или email гостя для электронного чека, необязательно.
+  final String _guestContact;
+  String get guestContact => Pd.extra('session', id, 'guestContact', _guestContact);
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   final bool receiptPrinted;
   final bool fiscalReceiptPrinted;
@@ -418,7 +428,7 @@ class SessionModel {
     required this.id,
     required this.tableId,
     required this.tableName,
-    required this.employeeName,
+    required String employeeName,
     this.employeeId = '',
     this.guestTag = '',
     required this.startTime,
@@ -436,20 +446,20 @@ class SessionModel {
     this.paymentComp = 0,
     this.guestPaidTotal = 0,
     this.orderType = '',
-    this.customerPhone = '',
-    this.deliveryAddress = '',
+    String customerPhone = '',
+    String deliveryAddress = '',
     this.deliveryStatus = '',
-    this.courierName = '',
-    this.courierPhone = '',
-    this.customerName = '',
+    String courierName = '',
+    String courierPhone = '',
+    String customerName = '',
     this.orderNo = 0,
-    this.deliveryComment = '',
+    String deliveryComment = '',
     this.source = '',
     this.clientUid = '',
     this.payMethod = '',
     this.cancelReason = '',
     this.deliveryOpen = false,
-    this.guestContact = '',
+    String guestContact = '',
     this.closedWithoutPayment = false,
     this.receiptPrinted = false,
     this.fiscalReceiptPrinted = false,
@@ -458,7 +468,7 @@ class SessionModel {
     this.refunded = false,
     this.refundedAt,
     this.refundCashOut = false,
-  });
+  }) : _guestContact = guestContact, _employeeName = employeeName, _customerPhone = customerPhone, _deliveryAddress = deliveryAddress, _courierName = courierName, _courierPhone = courierPhone, _customerName = customerName, _deliveryComment = deliveryComment;
 
   factory SessionModel.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -520,18 +530,18 @@ class SessionModel {
     return {
       'tableId': tableId,
       'tableName': tableName,
-      'employeeName': employeeName,
+      if (Pd.mirror) 'employeeName': employeeName,
       'employeeId': employeeId,
       'guestTag': guestTag,
       if (orderType.isNotEmpty) 'orderType': orderType,
-      if (customerPhone.isNotEmpty) 'customerPhone': customerPhone,
-      if (deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
+      if (Pd.mirror && customerPhone.isNotEmpty) 'customerPhone': customerPhone,
+      if (Pd.mirror && deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,
       if (orderType.isNotEmpty) 'deliveryStatus': deliveryStatus.isEmpty ? 'new' : deliveryStatus,
-      if (courierName.isNotEmpty) 'courierName': courierName,
-      if (courierPhone.isNotEmpty) 'courierPhone': courierPhone,
-      if (customerName.isNotEmpty) 'customerName': customerName,
+      if (Pd.mirror && courierName.isNotEmpty) 'courierName': courierName,
+      if (Pd.mirror && courierPhone.isNotEmpty) 'courierPhone': courierPhone,
+      if (Pd.mirror && customerName.isNotEmpty) 'customerName': customerName,
       if (orderNo > 0) 'orderNo': orderNo,
-      if (deliveryComment.isNotEmpty) 'deliveryComment': deliveryComment,
+      if (Pd.mirror && deliveryComment.isNotEmpty) 'deliveryComment': deliveryComment,
       if (source.isNotEmpty) 'source': source,
       if (clientUid.isNotEmpty) 'clientUid': clientUid,
       if (payMethod.isNotEmpty) 'payMethod': payMethod,
@@ -550,7 +560,7 @@ class SessionModel {
       'paymentCard': paymentCard,
       'paymentTerminal': paymentTerminal,
       'paymentComp': paymentComp,
-      'guestContact': guestContact,
+      if (Pd.mirror) 'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
       'receiptPrinted': receiptPrinted,
       'fiscalReceiptPrinted': fiscalReceiptPrinted,

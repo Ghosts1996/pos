@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'session_model.dart';
+import '../services/people_directory.dart';
 
 /// Движение наличных в кассе, кроме продаж: сколько забрали, внесли,
 /// выдали и вернули гостям.
@@ -53,11 +54,13 @@ class CashOp {
   final CashOpType type;
   final double amount;
   final String comment;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => Pd.staffName(employeeId, _employeeName);
   final String employeeId;
   final DateTime createdAt;
   final bool cancelled;
-  final String cancelledBy;
+  final String _cancelledBy;
+  String get cancelledBy => Pd.whoName(_cancelledBy);
 
   /// Для возврата — чек, по которому вернули деньги.
   final String sessionId;
@@ -68,13 +71,13 @@ class CashOp {
     required this.type,
     required this.amount,
     this.comment = '',
-    this.employeeName = '',
+    String employeeName = '',
     this.employeeId = '',
     required this.createdAt,
     this.cancelled = false,
-    this.cancelledBy = '',
+    String cancelledBy = '',
     this.sessionId = '',
-  });
+  }) : _cancelledBy = cancelledBy, _employeeName = employeeName;
 
   /// Со знаком: + для внесения, − для остального.
   double get signedAmount => type.isIncome ? amount : -amount;
@@ -101,7 +104,7 @@ class CashOp {
         'type': type.code,
         'amount': amount,
         'comment': comment,
-        'employeeName': employeeName,
+        if (Pd.mirror) 'employeeName': employeeName,
         'employeeId': employeeId,
         'createdAt': Timestamp.fromDate(createdAt),
         'cancelled': cancelled,

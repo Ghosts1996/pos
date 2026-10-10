@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'egais_models.dart';
+import '../services/people_directory.dart';
 
 /// Единицы измерения остатков склада. Одного набора достаточно, чтобы вести
 /// в общем журнале и граммовку табака, и миллилитры/литры сиропов, ликёров,
@@ -267,7 +268,12 @@ class InventoryMovement {
   final double resultingQty;
 
   final String reason;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => Pd.staffName(employeeId, _employeeName);
+
+  /// Кто провёл движение — по id имя берётся из справочника в РФ; пусто у
+  /// старых записей (там имя лежит в employeeName).
+  final String employeeId;
   final DateTime createdAt;
 
   InventoryMovement({
@@ -279,9 +285,10 @@ class InventoryMovement {
     required this.delta,
     required this.resultingQty,
     this.reason = '',
-    required this.employeeName,
+    required String employeeName,
+    this.employeeId = '',
     required this.createdAt,
-  });
+  }) : _employeeName = employeeName;
 
   String get typeLabel {
     switch (type) {
@@ -308,6 +315,7 @@ class InventoryMovement {
       resultingQty: (data['resultingQty'] as num?)?.toDouble() ?? 0,
       reason: data['reason'] ?? '',
       employeeName: data['employeeName'] ?? '',
+      employeeId: (data['employeeId'] ?? '').toString(),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -320,7 +328,8 @@ class InventoryMovement {
         'delta': delta,
         'resultingQty': resultingQty,
         'reason': reason,
-        'employeeName': employeeName,
+        if (Pd.mirror) 'employeeName': employeeName,
+        if (employeeId.isNotEmpty) 'employeeId': employeeId,
         'createdAt': Timestamp.fromDate(createdAt),
       };
 }
@@ -413,20 +422,22 @@ class InventoryCount {
   /// применены, cancelled — отменена без применения.
   final String status;
   final DateTime startedAt;
-  final String startedBy;
+  final String _startedBy;
+  String get startedBy => Pd.whoName(_startedBy);
   final DateTime? closedAt;
-  final String closedBy;
+  final String _closedBy;
+  String get closedBy => Pd.whoName(_closedBy);
   final List<InventoryCountEntry> entries;
 
   InventoryCount({
     required this.id,
     required this.status,
     required this.startedAt,
-    required this.startedBy,
+    required String startedBy,
     this.closedAt,
-    this.closedBy = '',
+    String closedBy = '',
     this.entries = const [],
-  });
+  }) : _startedBy = startedBy, _closedBy = closedBy;
 
   int get totalCount => entries.length;
   int get countedCount => entries.where((e) => e.isCounted).length;

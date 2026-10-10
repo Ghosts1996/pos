@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 /// Условия оплаты сотрудника: ставка за час или оклад за смену,
 /// переработка и проценты с продаж. Хранятся в карточке сотрудника
@@ -146,9 +147,10 @@ class PayChange {
   final DateTime at;
   final PayTerms terms;
   final String byId;
-  final String byName;
+  final String _byName;
+  String get byName => Pd.staffName(byId, _byName);
 
-  const PayChange({required this.at, required this.terms, this.byId = '', this.byName = ''});
+  const PayChange({required this.at, required this.terms, this.byId = '', String byName = ''}) : _byName = byName;
 
   static final DateTime since = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -166,7 +168,7 @@ class PayChange {
         'at': Timestamp.fromDate(at),
         'terms': terms.toMap(),
         'byId': byId,
-        'byName': byName,
+        if (Pd.mirror) 'byName': byName,
       };
 }
 

@@ -5,13 +5,16 @@ import '../utils/promo_policy.dart';
 import 'session_model.dart';
 import 'table_model.dart';
 import '../utils/parse.dart';
+import '../services/people_directory.dart';
 
 /// Профиль гостя в приложении заведения.
 /// Документ clients/{uid}, где uid — Firebase Auth UID клиентского приложения.
 class ClientProfile {
   final String uid;
-  final String name;
-  final String phone;
+  final String _name;
+  String get name => Pd.guestName(uid, _name);
+  final String _phone;
+  String get phone => Pd.guestPhone(uid, _phone);
 
   /// Бонусный баланс в рублях (1 бонус = 1 ₽ при списании).
   final double bonusBalance;
@@ -53,8 +56,8 @@ class ClientProfile {
 
   ClientProfile({
     required this.uid,
-    this.name = '',
-    this.phone = '',
+    String name = '',
+    String phone = '',
     this.bonusBalance = 0,
     this.totalSpent = 0,
     this.visits = 0,
@@ -70,7 +73,7 @@ class ClientProfile {
     this.aiProfile = '',
     required this.createdAt,
     this.lastVisitAt,
-  });
+  }) : _name = name, _phone = phone;
 
   /// Пороги уровней по сумме всех закрытых чеков — одно место для уровня,
   /// прогресса и ИИ-помощника. Не const: [applyTiers] подменяет их
@@ -180,8 +183,8 @@ class ClientProfile {
   }
 
   Map<String, dynamic> toMap() => {
-        'name': name,
-        'phone': phone,
+        if (Pd.mirror) 'name': name,
+        if (Pd.mirror) 'phone': phone,
         'bonusBalance': bonusBalance,
         'totalSpent': totalSpent,
         'visits': visits,
@@ -408,7 +411,8 @@ class WaiterCall {
   final String tableName;
   final String sessionId;
   final String clientUid;
-  final String guestName;
+  final String _guestName;
+  String get guestName => Pd.guestName(clientUid, _guestName);
   final GuestCallType type;
   final String comment;
 
@@ -416,7 +420,8 @@ class WaiterCall {
   final String status;
   final DateTime createdAt;
   final DateTime? doneAt;
-  final String doneBy;
+  final String _doneBy;
+  String get doneBy => Pd.whoName(_doneBy);
 
   WaiterCall({
     required this.id,
@@ -424,14 +429,14 @@ class WaiterCall {
     this.tableName = '',
     this.sessionId = '',
     this.clientUid = '',
-    this.guestName = '',
+    String guestName = '',
     this.type = GuestCallType.waiter,
     this.comment = '',
     this.status = 'new',
     required this.createdAt,
     this.doneAt,
-    this.doneBy = '',
-  });
+    String doneBy = '',
+  }) : _doneBy = doneBy, _guestName = guestName;
 
   bool get isOpen => status == 'new';
 
@@ -463,7 +468,7 @@ class WaiterCall {
         'tableName': tableName,
         'sessionId': sessionId,
         'clientUid': clientUid,
-        'guestName': guestName,
+        if (Pd.mirror) 'guestName': guestName,
         'type': type.code,
         'comment': comment,
         'status': status,
@@ -482,7 +487,8 @@ class GuestOrder {
   final String tableId;
   final String tableName;
   final String clientUid;
-  final String guestName;
+  final String _guestName;
+  String get guestName => Pd.guestName(clientUid, _guestName);
   final List<OrderItem> items;
   final String comment;
 
@@ -499,7 +505,8 @@ class GuestOrder {
   final String orderType;
   final DateTime createdAt;
   final DateTime? handledAt;
-  final String handledBy;
+  final String _handledBy;
+  String get handledBy => Pd.whoName(_handledBy);
 
   GuestOrder({
     required this.id,
@@ -507,7 +514,7 @@ class GuestOrder {
     required this.tableId,
     this.tableName = '',
     this.clientUid = '',
-    this.guestName = '',
+    String guestName = '',
     this.items = const [],
     this.comment = '',
     this.targetPosition = '',
@@ -516,8 +523,8 @@ class GuestOrder {
     this.orderType = '',
     required this.createdAt,
     this.handledAt,
-    this.handledBy = '',
-  });
+    String handledBy = '',
+  }) : _handledBy = handledBy, _guestName = guestName;
 
   /// Заказ ещё в работе у персонала.
   bool get isOpen => status == 'new' || status == 'preparing';
@@ -575,7 +582,7 @@ class GuestOrder {
         'tableId': tableId,
         'tableName': tableName,
         'clientUid': clientUid,
-        'guestName': guestName,
+        if (Pd.mirror) 'guestName': guestName,
         'items': items.map((e) => e.toMap()).toList(),
         'comment': comment,
         if (targetPosition.isNotEmpty) 'targetPosition': targetPosition,
@@ -593,7 +600,8 @@ class GuestReview {
   final String id;
   final String sessionId;
   final String clientUid;
-  final String guestName;
+  final String _guestName;
+  String get guestName => Pd.guestName(clientUid, _guestName);
   final int rating; // 1..5
   final String text;
 
@@ -605,12 +613,12 @@ class GuestReview {
     required this.id,
     required this.sessionId,
     this.clientUid = '',
-    this.guestName = '',
+    String guestName = '',
     required this.rating,
     this.text = '',
     this.aiSummary = '',
     required this.createdAt,
-  });
+  }) : _guestName = guestName;
 
   factory GuestReview.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -630,7 +638,7 @@ class GuestReview {
   Map<String, dynamic> toMap() => {
         'sessionId': sessionId,
         'clientUid': clientUid,
-        'guestName': guestName,
+        if (Pd.mirror) 'guestName': guestName,
         'rating': rating,
         'text': text,
         'aiSummary': aiSummary,

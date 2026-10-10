@@ -15,6 +15,7 @@ import '../utils/shared_stream.dart';
 import '../utils/constants.dart';
 import '../utils/promo_policy.dart';
 import '../utils/venue_terms.dart';
+import 'people_directory.dart';
 
 /// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -654,7 +655,7 @@ class GuestLinkService {
   Future<void> closeCall(String callId, String employeeName) => _calls.doc(callId).update({
         'status': 'done',
         'doneAt': Timestamp.fromDate(DateTime.now()),
-        'doneBy': employeeName,
+        'doneBy': Pd.who(employeeName),
       });
 
   // ---------- ЗАКАЗ ИЗ-ЗА СТОЛА ----------
@@ -776,7 +777,7 @@ class GuestLinkService {
           'status': 'rejected',
           'rejectReason': 'Счёт уже закрыт',
           'handledAt': Timestamp.fromDate(DateTime.now()),
-          'handledBy': employeeName,
+          'handledBy': Pd.who(employeeName),
         });
         return 'Чек уже закрыт — заказ отклонён.';
       }
@@ -786,7 +787,7 @@ class GuestLinkService {
           'status': 'rejected',
           'rejectReason': 'Этих позиций уже нет в меню',
           'handledAt': Timestamp.fromDate(DateTime.now()),
-          'handledBy': employeeName,
+          'handledBy': Pd.who(employeeName),
         });
         return 'Позиций заказа нет в меню — заказ отклонён.';
       }
@@ -826,7 +827,7 @@ class GuestLinkService {
       tx.update(orderRef, {
         'status': 'preparing',
         'handledAt': Timestamp.fromDate(DateTime.now()),
-        'handledBy': employeeName,
+        'handledBy': Pd.who(employeeName),
       });
       return null;
     });
@@ -837,7 +838,7 @@ class GuestLinkService {
     await _orders.doc(order.id).update({
       'status': 'ready',
       'readyAt': Timestamp.fromDate(DateTime.now()),
-      'handledBy': employeeName,
+      'handledBy': Pd.who(employeeName),
     });
 
     if (order.clientUid.isEmpty) return;
@@ -862,7 +863,7 @@ class GuestLinkService {
         'status': 'rejected',
         'rejectReason': reason,
         'handledAt': Timestamp.fromDate(DateTime.now()),
-        'handledBy': employeeName,
+        'handledBy': Pd.who(employeeName),
       });
 
   // ---------- БОНУСЫ ----------

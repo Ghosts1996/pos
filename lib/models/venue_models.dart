@@ -4,6 +4,7 @@ import '../utils/parse.dart';
 import '../utils/ru_requisites.dart';
 import '../build_info.dart';
 import 'online_pay.dart';
+import '../services/people_directory.dart';
 
 export '../utils/venue_terms.dart';
 
@@ -89,6 +90,11 @@ class VenueProfile {
   /// на всех кассах сразу, без перезапуска.
   final bool deliveryEnabled;
 
+  /// Где имена и телефоны людей: 'rf' — только в справочнике в РФ (People),
+  /// в документах Firestore их нет; иначе — ещё и в Firestore, пока все
+  /// кассы не обновились. Ставит сервер при переносе; в toMap() не входит.
+  final String piiMode;
+
   /// Реквизиты продавца заполнены верно: без них заказ и оплата из
   /// приложения недоступны. Те же правила — в saas-gateway (sellerReady).
   bool get sellerReady =>
@@ -130,6 +136,7 @@ class VenueProfile {
     this.guestSbpPay = false,
     this.onlinePay = '',
     this.deliveryEnabled = false,
+    this.piiMode = '',
     this.sellerName = '',
     this.sellerInn = '',
     this.sellerOgrn = '',
@@ -164,6 +171,7 @@ class VenueProfile {
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
       guestSbpPay: data['guestSbpPay'] == true,
       onlinePay: asText(data['onlinePay']),
+      piiMode: asText(data['piiMode']),
       deliveryEnabled: data['deliveryEnabled'] == true,
       sellerName: asText(data['sellerName']),
       sellerInn: asText(data['sellerInn']),
@@ -245,6 +253,7 @@ class VenueProfile {
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
         onlinePay: onlinePay,
+        piiMode: piiMode,
         deliveryEnabled: deliveryEnabled ?? this.deliveryEnabled,
         sellerName: sellerName ?? this.sellerName,
         sellerInn: sellerInn ?? this.sellerInn,
@@ -348,8 +357,10 @@ class HappyHour {
 /// Коллекция: waitlist.
 class WaitlistEntry {
   final String id;
-  final String guestName;
-  final String phone;
+  final String _guestName;
+  String get guestName => _waitName(id, _guestName);
+  final String _phone;
+  String get phone => Pd.phone('waitlist', id, _phone);
   final String clientUid;
   final int guestsCount;
   final String comment;
@@ -366,8 +377,8 @@ class WaitlistEntry {
 
   const WaitlistEntry({
     required this.id,
-    required this.guestName,
-    this.phone = '',
+    required String guestName,
+    String phone = '',
     this.clientUid = '',
     this.guestsCount = 2,
     this.comment = '',
@@ -376,7 +387,7 @@ class WaitlistEntry {
     required this.createdAt,
     this.invitedAt,
     this.source = 'pos',
-  });
+  }) : _guestName = guestName, _phone = phone;
 
   int get waitingMinutes => DateTime.now().difference(createdAt).inMinutes;
   bool get isOpen => status == 'waiting' || status == 'invited';
@@ -387,7 +398,7 @@ class WaitlistEntry {
     final invited = d['invitedAt'];
     return WaitlistEntry(
       id: doc.id,
-      guestName: asText(d['guestName'], 'Гость'),
+      guestName: asText(d['guestName']),
       phone: asText(d['phone']),
       clientUid: asText(d['clientUid']),
       guestsCount: asNum(d['guestsCount'])?.toInt() ?? 2,
@@ -401,8 +412,8 @@ class WaitlistEntry {
   }
 
   Map<String, dynamic> toMap() => {
-        'guestName': guestName,
-        'phone': phone,
+        if (Pd.mirror) 'guestName': guestName,
+        if (Pd.mirror) 'phone': phone,
         'clientUid': clientUid,
         'guestsCount': guestsCount,
         'comment': comment,
@@ -412,6 +423,12 @@ class WaitlistEntry {
         'invitedAt': invitedAt != null ? Timestamp.fromDate(invitedAt!) : null,
         'source': source,
       };
+}
+
+/// Имя в очереди; не назвался — «Гость».
+String _waitName(String id, String legacy) {
+  final n = Pd.name('waitlist', id, legacy);
+  return n.trim().isEmpty ? 'Гость' : n;
 }
 
 // ---------------------------------------------------------- сертификаты
@@ -439,7 +456,8 @@ class GiftCard {
 
   /// Заметка для администратора: «пост в ТГ 14 сентября».
   final String comment;
-  final String issuedBy;
+  final String _issuedBy;
+  String get issuedBy => Pd.whoName(_issuedBy);
 
   const GiftCard({
     required this.code,
@@ -450,8 +468,8 @@ class GiftCard {
     required this.createdAt,
     this.expiresAt,
     this.comment = '',
-    this.issuedBy = '',
-  });
+    String issuedBy = '',
+  }) : _issuedBy = issuedBy;
 
   bool get hasUsesLeft => maxUses <= 0 || usedCount < maxUses;
 

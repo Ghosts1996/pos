@@ -13,6 +13,7 @@ import 'chestny_znak_api_service.dart';
 import 'push_service.dart';
 import 'gift_card_service.dart';
 import 'venue_service.dart';
+import 'people_directory.dart';
 import 'firestore_service.dart';
 import 'auto_stoplist_service.dart';
 import 'session_alerts_service.dart';
@@ -61,6 +62,9 @@ void startBackgroundServices() {
     if (!ok) unawaited(SessionAlertsService.instance.start());
   }));
   StartupLog.step('фон: заведение, смена, сертификаты');
+  // Справочник людей в РФ: копия на устройстве и синхронизация (сотрудники,
+  // гости, контакты броней и доставки). Без заведения ничего не делает.
+  unawaited(People.instance.start(staff: true));
   VenueService.instance.watch();
 
   // Кто сейчас на смене — для выбора «кому чаевые» у гостя. Чинит смены,

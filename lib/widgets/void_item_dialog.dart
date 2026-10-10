@@ -6,6 +6,7 @@ import '../services/audit_log_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/money.dart';
+import '../services/people_directory.dart';
 
 /// Штуку строки уже готовят: убрать её — это отмена, а не правка заказа.
 /// Новое (не ушедшее бегунком и не готовое) убирается свободно.
@@ -32,7 +33,7 @@ Future<bool> confirmVoid(
     sessionId: sessionId,
     tableName: tableName,
     amount: line.price,
-    details: {'item': line.displayName, 'qty': 1, 'reason': approved.$1, 'approvedBy': approved.$2},
+    details: {'item': line.displayName, 'qty': 1, 'reason': approved.$1, 'approvedBy': Pd.who(approved.$2)},
   );
   return true;
 }

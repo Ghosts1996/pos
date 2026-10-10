@@ -20,7 +20,7 @@ Firestore у документов остаются только идентифи
 операции — `pii_lookup`, `pii_put`, `pii_erase`, `pii_search`, `pii_phone`
 (описание — в начале vault.js).
 
-Пока заведение в режиме `mirror` (`tenants/{id}/meta/pii.mode`), копия имён
+Пока заведение в режиме `mirror` (`tenants/{id}/meta/venueProfile.piiMode`), копия имён
 и телефонов по-прежнему идёт и в Firestore — для касс, которые ещё не
 обновились. Режим `rf` включается переносом (см. .github/server-ops).
 

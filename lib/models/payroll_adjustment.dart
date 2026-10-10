@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/people_directory.dart';
 
 /// Ручная строка зарплаты: премия, штраф, аванс или выплата.
 ///
@@ -14,25 +15,27 @@ class PayrollAdjustment {
 
   final String id;
   final String employeeId;
-  final String employeeName;
+  final String _employeeName;
+  String get employeeName => Pd.staffName(employeeId, _employeeName);
   final String type;
   final double amount;
   final String comment;
   final DateTime at;
-  final String createdBy;
+  final String _createdBy;
+  String get createdBy => Pd.whoName(_createdBy);
   final bool cancelled;
 
   const PayrollAdjustment({
     this.id = '',
     required this.employeeId,
-    this.employeeName = '',
+    String employeeName = '',
     required this.type,
     required this.amount,
     this.comment = '',
     required this.at,
-    this.createdBy = '',
+    String createdBy = '',
     this.cancelled = false,
-  });
+  }) : _createdBy = createdBy, _employeeName = employeeName;
 
   /// Меняет начисленное (а не выданное).
   bool get isAccrual => type == bonus || type == penalty;
@@ -66,7 +69,7 @@ class PayrollAdjustment {
 
   Map<String, dynamic> toMap() => {
         'employeeId': employeeId,
-        'employeeName': employeeName,
+        if (Pd.mirror) 'employeeName': employeeName,
         'type': type,
         'amount': amount,
         'comment': comment,
