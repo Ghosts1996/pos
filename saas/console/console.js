@@ -290,6 +290,14 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
     body: JSON.stringify(data || {}),
   });
   const json = await res.json().catch(() => null);
+  // 401 — токен устарел или отозван (например, сразу после того, как задали
+  // пароль, или пароль сменили на другом устройстве): один раз повторяем со
+  // свежим. Сервер отвечает 401 до любых изменений, так что повтор безопасен.
+  // Пауза — отзыв считается по секундам: токен той же секунды тоже отозван.
+  if (res.status === 401 && idToken && !forceRefresh) {
+    await new Promise((r) => setTimeout(r, 1100));
+    return callSaasGateway(path, data, { forceRefresh: true });
+  }
   if (!res.ok) {
     const err = new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
     err.status = res.status;

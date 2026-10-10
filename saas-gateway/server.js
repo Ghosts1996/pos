@@ -229,6 +229,9 @@ async function verifyAuth(req) {
   try {
     return await getFirebaseApp().auth().verifyIdToken(idToken);
   } catch (e) {
+    // Код причины — в журнал (сам токен не пишем): по нему видно, истёк
+    // ли сеанс, отозван или часы сервера разошлись с Google.
+    console.warn(`verifyIdToken: ${e.code || ""} ${String(e.message || e).slice(0, 160)}`);
     throw new HttpError(401, "Сеанс истёк или недействителен — войдите заново");
   }
 }
