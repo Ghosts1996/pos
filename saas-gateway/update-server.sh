@@ -22,6 +22,13 @@ die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 say "Место на диске"
 free_mb() { df -Pm / | awk 'NR==2 {print $4}'; }
 echo "свободно: $(free_mb) МБ"
+# Оперативная память и кто её занимает — только показываем: по логу
+# обновления видно, хватает ли серверу памяти.
+awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} /^SwapTotal:/ {s=$2} /^SwapFree:/ {f=$2}
+  END {printf "память: всего %d МБ, доступно %d МБ; swap %d МБ, занято %d МБ\n", t/1024, a/1024, s/1024, (s-f)/1024}' \
+  /proc/meminfo 2>/dev/null || true
+echo "процессоров: $(nproc 2>/dev/null || echo '?')"
+ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -n 6 | awk '{printf "  %s — %d МБ\n", $2, $1/1024}' || true
 if (( $(free_mb) < 1024 )); then
   echo "меньше 1 ГБ — чищу кэши apt и npm и журналы старше недели"
   apt-get clean >/dev/null 2>&1 || true
