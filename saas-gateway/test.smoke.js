@@ -246,6 +246,12 @@ async function main() {
       { closedWithoutPayment: true, orderItems: [{ name: "Чай", price: 300, qty: 1 }] },
     ], audit: [] });
     check("telegram: итоги — выручка и закрытые без оплаты", text.includes("Выручка: 600 ₽") && text.includes("закрыто без оплаты: 1"));
+    const aggText = tg.buildSummary({ venueName: "Тест", label: "08.10", sessions: [
+      { orderItems: [{ name: "Пицца", price: 1000, qty: 1 }], paymentAggregator: 1000, aggregatorName: "Яндекс Еда" },
+      { orderItems: [{ name: "Чай", price: 300, qty: 1 }], paymentCard: 300 },
+    ], audit: [] });
+    check("telegram: оплата через агрегатор — отдельной строкой, не картой",
+      aggText.includes("Выручка: 1\u00a0300 ₽") && aggText.includes("агрегаторы 1\u00a0000 ₽") && aggText.includes("карта 300 ₽"));
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     {

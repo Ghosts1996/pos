@@ -175,7 +175,9 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 ],
               ),
               Text(
-                'Карта ${rub(s.paymentCard)} · Наличные ${rub(s.paymentCash)} · Терминал ${rub(s.paymentTerminal)} · За счёт заведения ${rub(s.paymentComp)}',
+                'Карта ${rub(s.paymentCard)} · Наличные ${rub(s.paymentCash)} · Терминал ${rub(s.paymentTerminal)}'
+                '${s.paymentAggregator > 0 ? ' · ${s.aggregatorName.isEmpty ? 'Агрегатор' : s.aggregatorName} ${rub(s.paymentAggregator)}' : ''}'
+                ' · За счёт заведения ${rub(s.paymentComp)}',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),
