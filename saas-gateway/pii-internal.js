@@ -3,11 +3,11 @@
 // Справочник людей в РФ (pii-gateway/vault.js) — запросы от имени сервера.
 //
 // Telegram-бот, заказ из приложения гостя и страницы по подписанным
-// ссылкам читают и пишут имена, телефоны и адреса здесь, а не в Firestore,
-// когда заведение переведено на хранение в РФ (meta/venueProfile.piiMode =
-// 'rf'). Доступ — по секрету PII_INTERNAL_TOKEN, общему для двух сервисов
-// на этом сервере (update-server.sh); без него справочник недоступен, и
-// вызовы отдают пустые значения, а не падают.
+// ссылкам читают и пишут имена, телефоны и адреса здесь, а не в Firestore:
+// все заведения платформы хранят их только в РФ. Доступ — по секрету
+// PII_INTERNAL_TOKEN, общему для двух сервисов на этом сервере
+// (update-server.sh); без него справочник недоступен, и вызовы отдают
+// пустые значения, а не падают.
 
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -44,18 +44,15 @@ function createPiiInternal({ urls, token = process.env.PII_INTERNAL_TOKEN || "",
     throw lastError || new Error("справочник в РФ недоступен");
   }
 
-  /** Режим заведения: 'rf' — имён в Firestore нет, источник — справочник. */
-  const modeCache = new Map(); // tenantId → { at, mode }
-  async function mode(tenantId) {
-    const hit = modeCache.get(tenantId);
-    if (hit && Date.now() - hit.at < 30000) return hit.mode;
-    let m = "mirror";
-    try {
-      const snap = await db().doc(`tenants/${tenantId}/meta/venueProfile`).get();
-      if (snap.exists && snap.data().piiMode === "rf") m = "rf";
-    } catch (_) { /* прежний режим */ }
-    modeCache.set(tenantId, { at: Date.now(), mode: m });
-    return m;
+  /**
+   * Режим хранения: 'rf' — имён в Firestore нет, источник — справочник. Так
+   * у всех заведений, независимо от отметки meta/venueProfile.piiMode (по
+   * ней pii-migrate.js только ведёт перенос старых записей). 'mirror' —
+   * лишь без справочника (нет секрета: разработка и тесты), иначе имена
+   * негде было бы хранить.
+   */
+  async function mode() {
+    return token ? "rf" : "mirror";
   }
 
   /** Записи справочника: refs = [{ k, id }] → Map 'k:id' → { name, phone, address, extra }. */

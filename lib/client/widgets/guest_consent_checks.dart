@@ -6,10 +6,9 @@ import '../services/guest_consent.dart';
 import '../theme/kolibri_theme.dart';
 import 'privacy_notice.dart';
 
-/// Галочки согласий над кнопкой, которая отправляет имя или телефон: на
-/// обработку и, пока заведение не переведено на хранение в РФ, на
-/// трансграничную передачу. Пока нужные не отмечены, экран держит кнопку
-/// неактивной (GuestConsent.ready). Согласия уже даны — ссылка на политику.
+/// Галочка согласия на обработку над кнопкой, которая отправляет имя или
+/// телефон. Пока она не отмечена, экран держит кнопку неактивной
+/// (GuestConsent.ready). Согласие уже дано — ссылка на политику.
 class GuestConsentChecks extends StatelessWidget {
   final GuestConsent consent;
   const GuestConsentChecks({super.key, required this.consent});
@@ -31,7 +30,7 @@ class GuestConsentChecks extends StatelessWidget {
                 parts: [
                   const _Plain('Даю '),
                   _Link('согласие на обработку персональных данных',
-                      () => showGuestConsentText(context, crossBorder: false)),
+                      () => showGuestConsentText(context)),
                   const _Plain(' и принимаю '),
                   _Link(
                       'политику конфиденциальности',
@@ -39,25 +38,9 @@ class GuestConsentChecks extends StatelessWidget {
                           mode: LaunchMode.externalApplication)),
                 ],
               ),
-              if (consent.needsCrossBorder) ...[
-                const SizedBox(height: 4),
-                _ConsentTile(
-                  value: consent.crossBorder,
-                  onChanged: (v) => consent.crossBorder = v,
-                  parts: [
-                    const _Plain('Даю '),
-                    _Link('согласие на трансграничную передачу',
-                        () => showGuestConsentText(context, crossBorder: true)),
-                    const _Plain(' данных (сервис Google Firebase)'),
-                  ],
-                ),
-              ],
               if (!consent.ready) ...[
                 const SizedBox(height: 6),
-                Text(
-                    consent.needsCrossBorder
-                        ? 'Отметьте оба пункта, чтобы продолжить'
-                        : 'Отметьте пункт, чтобы продолжить',
+                Text('Отметьте пункт, чтобы продолжить',
                     style: TextStyle(
                         color: KolibriColors.textMuted, fontSize: 12)),
               ],
@@ -152,14 +135,10 @@ class _ConsentTile extends StatelessWidget {
 }
 
 /// Полный текст согласия — оператор ZalPOS с реквизитами платформы.
-Future<void> showGuestConsentText(BuildContext context,
-    {required bool crossBorder}) {
+Future<void> showGuestConsentText(BuildContext context) {
   final venue = VenueService.instance.cached;
-  final title =
-      crossBorder ? GuestConsent.crossBorderTitle : GuestConsent.pdTitle;
-  final paragraphs = crossBorder
-      ? GuestConsent.crossBorderText(venue)
-      : GuestConsent.pdText(venue);
+  const title = GuestConsent.pdTitle;
+  final paragraphs = GuestConsent.pdText(venue);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -186,8 +165,8 @@ Future<void> showGuestConsentText(BuildContext context,
             ),
           ),
           const SizedBox(height: 16),
-          Text(title,
-              style: const TextStyle(
+          const Text(title,
+              style: TextStyle(
                   fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
           const SizedBox(height: 4),
           Text(GuestConsent.editionLabel,

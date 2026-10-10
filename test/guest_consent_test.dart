@@ -26,22 +26,19 @@ void main() {
       expect(text, contains('По поручению оператора мои данные обрабатывают работники заведения «Лаунж»'));
     });
 
-    test('режим РФ: в тексте — данные не покидают Россию', () {
-      final rf = GuestConsent.pdText(const VenueProfile(name: 'Лаунж', piiMode: 'rf')).join('\n');
-      expect(rf, contains('за её пределы не передаются'));
-      final mirror = GuestConsent.pdText(const VenueProfile(name: 'Лаунж')).join('\n');
-      expect(mirror, isNot(contains('за её пределы не передаются')));
-    });
-
-    test('пока заведение не в режиме РФ, нужна и галочка о трансграничной передаче', () {
+    test('данные не покидают Россию — у любого заведения, без второй галочки', () {
+      for (final v in const [VenueProfile(name: 'Лаунж', piiMode: 'rf'), VenueProfile(name: 'Лаунж')]) {
+        final text = GuestConsent.pdText(v).join('\n');
+        expect(text, contains('за её пределы не передаются'));
+        expect(text, isNot(contains('трансгранич')));
+        expect(text, isNot(contains('Google')));
+      }
       final c = GuestConsent();
-      expect(c.needsCrossBorder, isTrue);
-      // В сборке SaaS (kSaasMode) без неё кнопка неактивна; в сборке одного
+      // В сборке SaaS (kSaasMode) кнопка ждёт одной галочки; в сборке одного
       // заведения согласия свои и считаются данными заранее.
       if (!c.given) {
-        c.pd = true;
         expect(c.ready, isFalse);
-        c.crossBorder = true;
+        c.pd = true;
         expect(c.ready, isTrue);
       }
     });

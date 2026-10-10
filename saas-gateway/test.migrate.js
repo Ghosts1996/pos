@@ -184,13 +184,84 @@ function seed(store) {
     assert.equal(res.unverified.waitlist, 2);
   });
 
-  await test("откат — в обычный режим; два шага разом не идут", async () => {
-    const r = await run("rollback", { by: "admin1" });
-    assert.equal(r.mode, "mirror");
-    assert.equal(doc("meta/venueProfile").piiMode, "mirror");
+  await test("обратно в режим с копией в Firestore — нельзя; два шага разом не идут", async () => {
+    await assert.rejects(run("rollback", { by: "admin1" }), (e) => e.status === 400);
+    assert.equal(doc("meta/venueProfile").piiMode, "rf");
     const first = await mig.run("t1", "copy", {});
     await assert.rejects(mig.run("t1", "copy", {}), (e) => e.status === 409);
     await first.done;
+  });
+
+  await test("сам: перенос и отметка сразу, очистка — через сутки ночью, когда кассы обновлены", async () => {
+    const { db: db2, store: s2 } = fakeDb();
+    seed(s2);
+    s2.set("tenants/t2", { name: "Новое", chainId: null });
+    s2.set("tenants/t2/meta/venueProfile", { piiMode: "rf" });
+    s2.set("tenants/demo1", { name: "Демо", demo: true });
+    s2.set("tenants/demo1/meta/venueProfile", {});
+    const v2 = fakeVault();
+    let t = Date.UTC(2026, 9, 10, 12); // 15:00 по Москве
+    const auto = createPiiMigrate({ db: () => db2, admin, pii: v2, HttpError, now: () => t, log: { error: () => {} } });
+    const d = (p) => s2.get(`tenants/t1/${p}`);
+
+    let r = await auto.autoStep();
+    assert.deepEqual(r, { tenantId: "t1", step: "switch", ok: true });
+    assert.equal(d("meta/venueProfile").piiMode, "rf");
+    assert.equal(d("meta/piiMigration").copy.state, "done");
+    assert.equal(d("meta/piiMigration").auto, true);
+    assert.equal(v2.rows.get("staff:e1").name, "Анна");
+    // Демо не трогаем, новое заведение (сразу rf) — переносить нечего.
+    assert.equal(s2.get("tenants/demo1/meta/venueProfile").piiMode, undefined);
+    assert.equal(s2.has("tenants/t2/meta/piiMigration"), false);
+
+    // До суток — ждём; срок очистки — в ответе.
+    r = await auto.autoStep();
+    assert.equal(r.idle, true);
+    assert.equal(r.wakeAt, t + 24 * 3600 * 1000);
+
+    // Сутки прошли, но старый планшет не обновлён — ждём ещё (до недели).
+    t += 25 * 3600 * 1000;
+    r = await auto.autoStep();
+    assert.equal(r.idle, true);
+    assert.equal(d("employees/e1").name, "Анна");
+    s2.set("tenants/t1/devices/d2", { status: "active", deviceName: "Старый планшет", piiReady: 1 });
+
+    // Кассы обновлены, но днём Firestore не чистим — ждём ночи.
+    r = await auto.autoStep();
+    assert.equal(r.idle, true);
+    assert.equal(new Date(r.wakeAt).getUTCHours(), 23);
+    assert.equal(d("employees/e1").name, "Анна");
+
+    t = Date.UTC(2026, 9, 12, 0); // 03:00 по Москве
+    s2.set("tenants/t1/reservations/r-late", { guestName: "Поздний", phone: "79007770000", clientUid: "" });
+    r = await auto.autoStep();
+    assert.deepEqual(r, { tenantId: "t1", step: "scrub", ok: true });
+    // Запись старой кассы после переключения тоже переехала и очищена.
+    assert.equal(v2.rows.get("reservation:r-late").name, "Поздний");
+    assert.ok(!("guestName" in d("reservations/r-late")));
+    assert.ok(!("name" in d("employees/e1")));
+    assert.equal(d("meta/piiMigration").scrub.guests, "done");
+
+    r = await auto.autoStep();
+    assert.equal(r.idle, true);
+    assert.equal(r.wakeAt, null);
+
+    // Без справочника на сервере — ничего не делаем.
+    const off = createPiiMigrate({ db: () => db2, admin, pii: { enabled: () => false }, HttpError });
+    assert.deepEqual(await off.autoStep(), { idle: true, wakeAt: null });
+  });
+
+  await test("сам: старая касса не обновилась за неделю — очищаем всё равно", async () => {
+    const { db: db3, store: s3 } = fakeDb();
+    seed(s3);
+    let t = Date.UTC(2026, 9, 10, 0);
+    const auto = createPiiMigrate({ db: () => db3, admin, pii: fakeVault(), HttpError, now: () => t, log: { error: () => {} } });
+    assert.equal((await auto.autoStep()).step, "switch");
+    t += 2 * 24 * 3600 * 1000;
+    assert.equal((await auto.autoStep()).idle, true);
+    t += 6 * 24 * 3600 * 1000;
+    assert.equal((await auto.autoStep()).step, "scrub");
+    assert.ok(!("name" in s3.get("tenants/t1/employees/e1")));
   });
 
   await test("без справочника на сервере — понятный отказ", async () => {

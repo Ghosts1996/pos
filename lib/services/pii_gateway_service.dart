@@ -171,13 +171,12 @@ extension PiiGuestDeletion on PiiGatewayService {
   }
 }
 
-/// Согласия гостя (обработка ПД и трансграничная передача) — отметка с
-/// датой, редакцией текста, IP и браузером записывается на сервер в РФ
-/// и служит доказательством согласия (ст. 9 152-ФЗ).
+/// Согласие гостя на обработку ПД — отметка с датой, редакцией текста, IP
+/// и браузером записывается на сервер в РФ и служит доказательством
+/// согласия (ст. 9 152-ФЗ). Трансграничной передачи нет — второго
+/// согласия не спрашиваем.
 extension PiiGuestConsent on PiiGatewayService {
-  /// [crossBorder] — гость отметил и согласие на трансграничную передачу
-  /// (нужно, пока заведение не переведено на хранение только в РФ).
-  Future<void> recordGuestConsent(String edition, {bool crossBorder = true}) async {
+  Future<void> recordGuestConsent(String edition) async {
     if (baseUrl.isEmpty) {
       throw PiiGatewayException('Сервер данных не настроен в этой сборке — согласие не сохранить.');
     }
@@ -196,7 +195,6 @@ extension PiiGuestConsent on PiiGatewayService {
               'kind': 'guest_consent',
               'edition': edition,
               'pd': true,
-              'crossBorder': crossBorder,
             }),
           )
           .timeout(const Duration(seconds: 15));

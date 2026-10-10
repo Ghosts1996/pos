@@ -3,25 +3,29 @@
 const crypto = require("crypto");
 
 /**
- * Перевод заведения на хранение персональных данных только в РФ
- * (meta/venueProfile.piiMode: 'mirror' → 'rf'). Делает супер-админ, по шагам:
+ * Перенос старых записей заведения в справочник в РФ и очистка Firestore
+ * (meta/venueProfile.piiMode: 'mirror' → 'rf'). Все программы платформы
+ * уже пишут имена и телефоны только в РФ, у всех заведений; здесь — то,
+ * что осталось в Firestore с прежних времён. Идёт само (autoStep, раз в
+ * час), супер-админ может ускорить шаг вручную:
  *
  *  status   — режим, ход переноса, кассы заведения и их сборки;
  *  copy     — имена, телефоны и адреса из Firestore — в справочник в РФ
  *             (pii-gateway, pii_seed: только дописывает пустое, записанное
  *             в РФ не трогает). Firestore не меняется, повторять можно;
- *  switch   — режим rf: кассы, веб-гость и сервер перестают писать имена и
- *             телефоны в Firestore. Только после copy и когда все кассы на
- *             сборке, которая это умеет (devices.piiReady);
+ *  switch   — отметка rf: старые записи перенесены. Только после copy;
+ *             вручную — когда все кассы на сборке, которая это умеет
+ *             (devices.piiReady), или с force;
  *  scrub    — не раньше чем через сутки после switch: из Firestore
  *             убирается то, что сверено со справочником, а «кто сделал» по
  *             имени становится ссылкой staff:<id>. Несверенное остаётся
  *             (его можно дописать повторным copy). dryRun — только подсчёт.
  *
+ * Обратного пути (в режим с копией в Firestore) нет: трансграничной
+ * передачи у платформы нет ни у одного заведения.
+ *
  * Каждый шаг читает все записи заведения (как бэкап) — у крупных заведений
  * это заметная часть дневной квоты чтений Firestore.
- *  rollback — обратно в mirror (запасной выход: касса берёт имена из
- *             справочника и в этом режиме, если в документе их нет).
  *
  * copy и scrub идут в фоне; ход и итог — в tenants/{id}/meta/piiMigration.
  */
@@ -30,6 +34,14 @@ const crypto = require("crypto");
 // (StaffDeviceService.piiLevel).
 const READY_LEVEL = 1;
 const SCRUB_AFTER_MS = 24 * 3600 * 1000;
+// Сама очистка ждёт обновления касс (на старой сборке без имён в Firestore
+// пропадут подписи), но не дольше недели: дальше такие кассы считаем
+// заброшенными — новые сборки ставятся сами.
+const AUTO_SCRUB_WAIT_MS = 7 * 24 * 3600 * 1000;
+// Неудачный шаг повторяем не чаще, чем раз в 6 часов.
+const AUTO_RETRY_MS = 6 * 3600 * 1000;
+// Зависший шаг (сервер перезапустился посреди работы) — через час заново.
+const AUTO_STALE_MS = 3600 * 1000;
 
 // Не имя человека, а служебная отметка в поле «кто сделал».
 const SERVICE_WHO = /^(auto|telegram|guest|system|server|гость|система|бот|сервер)$/i;
@@ -641,16 +653,119 @@ function createPiiMigrate({ db, admin, pii, HttpError, now = () => Date.now(), l
       }
       return startJob(ctx, dryRun ? "scrubCheck" : "scrub", by, () => scrub(ctx, { dryRun }));
     }
-    if (action === "rollback") {
-      if (ctx.mode !== "rf") throw new HttpError(409, "Заведение и так в обычном режиме");
-      await tenantRef(tenantId).collection("meta").doc("venueProfile").set({ piiMode: "mirror" }, { merge: true });
-      await metaRef(tenantId).set({ rolledBackAt: ts(now()), rolledBackBy: by }, { merge: true });
-      return { ok: true, mode: "mirror" };
-    }
     throw new HttpError(400, "Неизвестный шаг");
   }
 
-  return { status, run, copy, scrub, SPEC, READY_LEVEL };
+  // ------------------------------------------------------------- сам
+
+  /** Шаг можно (пере)запускать: не было, сорвался давно или завис. */
+  const jobDue = (job, tenantId) => {
+    if (!job || !job.state) return true;
+    if (job.state === "done") return false;
+    if (running.has(tenantId)) return false;
+    const at = msOf(job.finishedAt) || msOf(job.startedAt) || 0;
+    if (job.state === "failed") return now() - at >= AUTO_RETRY_MS;
+    return now() - at >= AUTO_STALE_MS; // running, а у нас не идёт — сервер перезапускался
+  };
+
+  /** Ночь по Москве (02:00–07:00): очистка правит тысячи записей — пока зал закрыт. */
+  const nightInMoscow = () => {
+    const h = (new Date(now()).getUTCHours() + 3) % 24;
+    return h >= 2 && h < 7;
+  };
+
+  /** Общие профили гостей сети уже очищены (scrub одной из точек с guests: done). */
+  async function chainGuestsScrubbed(ctx) {
+    const points = await db().collection("tenants").where("chainId", "==", ctx.chainId).get();
+    for (const p of points.docs) {
+      const m = (await metaRef(p.id).get()).data() || {};
+      if (m.scrub && m.scrub.state === "done" && m.scrub.guests === "done") return true;
+    }
+    return false;
+  }
+
+  /**
+   * Что сейчас сделать с заведением: 'switch' (copy, затем отметка rf),
+   * 'scrub' (copy, затем очистка) или null; wakeAt — когда заглянуть снова,
+   * если сейчас рано. copy перед каждым шагом — дописать то, что старые
+   * кассы успели записать в Firestore с прошлого переноса.
+   */
+  async function nextAutoStep(tenantId) {
+    const ctx = await context(tenantId);
+    const m = ctx.meta;
+    // Перенос идёт или недавно сорвался — ждём.
+    if (m.copy && m.copy.state !== "done" && !jobDue(m.copy, tenantId)) return { ctx, step: null };
+    if (ctx.mode !== "rf") return { ctx, step: "switch" };
+    // Новое заведение (сразу rf) — переносить нечего.
+    const switchedAt = msOf(m.switchedAt);
+    if (!switchedAt) return { ctx, step: null };
+    const scrubAt = switchedAt + SCRUB_AFTER_MS;
+    if (!m.scrub || m.scrub.state !== "done") {
+      if (!jobDue(m.scrub, tenantId)) return { ctx, step: null };
+      if (now() < scrubAt) return { ctx, step: null, wakeAt: scrubAt };
+      const blocking = (await devicesOf(ctx)).filter((d) => !d.ready);
+      if (blocking.length && now() < switchedAt + AUTO_SCRUB_WAIT_MS) {
+        return { ctx, step: null, wakeAt: Math.min(now() + 24 * 3600 * 1000, switchedAt + AUTO_SCRUB_WAIT_MS) };
+      }
+      return { ctx, step: "scrub" };
+    }
+    // Точка сети очищена раньше остальных — общие профили гостей ждали
+    // перевода всех точек.
+    if (m.scrub.guests === "skipped" && ctx.chainId && (await chainAllRf(ctx)) && !(await chainGuestsScrubbed(ctx))) {
+      return { ctx, step: "scrub" };
+    }
+    return { ctx, step: null };
+  }
+
+  /**
+   * Один шаг перевода без участия человека — saas-gateway зовёт раз в час.
+   * Заведения по очереди, за заход — одно, чтобы не съесть дневную квоту
+   * чтений Firestore. Демо и удалённые не трогаем.
+   * → { tenantId, step } — что сделано; { idle: true, wakeAt } — делать
+   * нечего до wakeAt (null — пока не появится новое).
+   */
+  async function autoStep({ by = "auto" } = {}) {
+    if (!pii.enabled()) return { idle: true, wakeAt: null };
+    const tenants = await db().collection("tenants").get();
+    let wakeAt = null;
+    for (const d of tenants.docs) {
+      const t = d.data() || {};
+      if (t.demo === true || t.status === "deleted") continue;
+      let next;
+      try {
+        next = await nextAutoStep(d.id);
+      } catch (e) {
+        log.error(`pii-migrate auto ${d.id}:`, e && e.message ? e.message : e);
+        continue;
+      }
+      if (next.wakeAt) wakeAt = wakeAt ? Math.min(wakeAt, next.wakeAt) : next.wakeAt;
+      if (!next.step) continue;
+      if (next.step === "scrub" && !nightInMoscow()) {
+        const h = new Date(now());
+        const night = Date.UTC(h.getUTCFullYear(), h.getUTCMonth(), h.getUTCDate() + (h.getUTCHours() >= 23 ? 1 : 0), 23, 0);
+        wakeAt = wakeAt ? Math.min(wakeAt, night) : night;
+        continue;
+      }
+      const copyJob = await startJob(next.ctx, "copy", by, () => copy(next.ctx));
+      await copyJob.done;
+      const after = (await metaRef(d.id).get()).data() || {};
+      if (!after.copy || after.copy.state !== "done") return { tenantId: d.id, step: "copy", ok: false };
+      if (next.step === "switch") {
+        await tenantRef(d.id).collection("meta").doc("venueProfile").set({ piiMode: "rf" }, { merge: true });
+        await metaRef(d.id).set({ switchedAt: ts(now()), switchedBy: by, forced: false, auto: true }, { merge: true });
+        return { tenantId: d.id, step: "switch", ok: true };
+      }
+      // Свежий контекст: режим и отметки после copy.
+      const ctx = await context(d.id);
+      const scrubJob = await startJob(ctx, "scrub", by, () => scrub(ctx, { dryRun: false }));
+      await scrubJob.done;
+      const res = ((await metaRef(d.id).get()).data() || {}).scrub || {};
+      return { tenantId: d.id, step: "scrub", ok: res.state === "done" };
+    }
+    return { idle: true, wakeAt };
+  }
+
+  return { status, run, copy, scrub, autoStep, SPEC, READY_LEVEL };
 }
 
 module.exports = { createPiiMigrate, legacyStaffId, SPEC, READY_LEVEL };

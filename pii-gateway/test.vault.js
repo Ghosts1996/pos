@@ -297,6 +297,28 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_lookup", refs })).status, 200);
   });
 
+  test("сброс демо: стирает только сервер, общих гостей сети — вместе с последней точкой", async () => {
+    let r = await internal({ tenantId: "t2", kind: "pii_put", items: [
+      { k: "staff", id: "e-demo", fields: { name: "Демо-сотрудник" } },
+      { k: "reservation", id: "r-demo", fields: { name: "Демо-гость", phone: "79001234567" } },
+      { k: "guest", id: "g-demo", fields: { name: "Гость сети" } },
+    ] });
+    assert.equal(r.status, 200);
+    assert.equal((await as("staff2")({ tenantId: "t2", kind: "pii_purge" })).status, 403);
+    r = await internal({ tenantId: "t2", kind: "pii_purge" });
+    assert.equal(r.status, 200);
+    assert.ok(r.json.removed >= 2);
+    const refs = [{ k: "staff", id: "e-demo" }, { k: "reservation", id: "r-demo" }, { k: "guest", id: "g-demo" }];
+    const left = (await internal({ tenantId: "t2", kind: "pii_lookup", refs })).json;
+    assert.equal(left.staff.length, 0);
+    assert.equal(left.contacts.length, 0);
+    // Другие точки сети ещё работают — общий профиль гостя на месте.
+    assert.equal(left.guests.length, 1);
+    r = await internal({ tenantId: "t3", kind: "pii_purge", chain: true });
+    assert.equal(r.status, 200);
+    assert.equal((await internal({ tenantId: "t3", kind: "pii_lookup", refs })).json.guests.length, 0);
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();

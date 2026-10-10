@@ -37,14 +37,16 @@ async function piiPost(body) {
 
 // ---------- СПРАВОЧНИК В РФ ----------
 //
-// Заведение, переведённое на хранение в РФ (venueProfile.piiMode = 'rf'),
-// не держит в Firestore ни имён, ни телефонов: там только uid гостя и id
-// сотрудника. Имена берём из справочника на сервере в РФ — гостю он отдаёт
-// только его собственный профиль, его заказы и имена тех, кто сейчас на
-// смене (для чаевых).
+// Заведения платформы не держат в Firestore ни имён, ни телефонов: там
+// только uid гостя и id сотрудника. Имена берём из справочника на сервере
+// в РФ — гостю он отдаёт только его собственный профиль, его заказы и
+// имена тех, кто сейчас на смене (для чаевых).
 
-/// Заведение хранит персональные данные только в РФ.
-const rfMode = () => ((state.venue || {}).piiMode || '') === 'rf';
+/// Персональные данные — только в РФ. Так у всех заведений: отметка
+/// venueProfile.piiMode лишь показывает, что старые записи уже перенесены
+/// (saas-gateway/pii-migrate.js), а в документах до переноса могут
+/// остаться прежние имена — их показываем, если справочник молчит.
+const rfMode = () => true;
 
 /// Имена сотрудников, которых уже спрашивали: id → имя ('' — не нашли).
 const staffNames = new Map();
@@ -838,21 +840,16 @@ function privacyNotice() {
     <a class="policy-link" href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">Политика обработки данных</a></p>`;
 }
 
-// ---------- СОГЛАСИЯ ГОСТЯ ----------
+// ---------- СОГЛАСИЕ ГОСТЯ ----------
 // Оператор данных гостей — сервис ZalPOS (оферта, раздел 7); заведение
 // обрабатывает их по его поручению. Перед первой отправкой имени, телефона
-// или адреса — согласие на обработку (ст. 9 152-ФЗ), а пока заведение не
-// переведено на хранение в РФ (venueProfile.piiMode !== 'rf') — и на
-// трансграничную передачу (ст. 12): копии синхронизируются через Google
-// Firebase. С 1 сентября 2025 года согласие оформляется отдельно от других
-// документов. Отметка пишется на сервер в РФ (доказательство), её
-// редакция — в профиль и в localStorage. Тексты — как в приложении
-// (lib/client/services/guest_consent.dart).
+// или адреса — согласие на обработку (ст. 9 152-ФЗ), одна галочка: данные
+// хранятся только в РФ, трансграничной передачи нет. С 1 сентября 2025 года
+// согласие оформляется отдельно от других документов. Отметка пишется на
+// сервер в РФ (доказательство), её редакция — в профиль и в localStorage.
+// Текст — как в приложении (lib/client/services/guest_consent.dart).
 const CONSENT_EDITION = '2026-10-10';
 const CONSENT_EDITION_LABEL = 'Редакция от 10 октября 2026 г.';
-
-/** Нужна галочка о трансграничной передаче: заведение ещё не в режиме РФ. */
-const needsCrossBorder = () => !rfMode();
 
 // Реквизиты ZalPOS — оператора (platformConfig/legal, открыты для чтения).
 let platformLegal = null;
@@ -872,7 +869,7 @@ function consentGiven() {
   try { return localStorage.getItem(consentKey()) === CONSENT_EDITION; } catch (_) { return false; }
 }
 
-/** Галочки над кнопкой отправки; согласия уже даны — ссылка на политику. */
+/** Галочка над кнопкой отправки; согласие уже дано — ничего. */
 function consentHtml() {
   if (consentGiven()) return '';
   loadPlatformLegal();
@@ -880,28 +877,25 @@ function consentHtml() {
     <label class="consent-row"><input type="checkbox" data-consent="pd">
       <span>Даю <a href="#" data-consent-text="pd">согласие на обработку персональных данных</a>
       и принимаю <a href="https://zalpos.ru/#/legal/privacy" target="_blank" rel="noopener">политику конфиденциальности</a></span></label>
-    ${needsCrossBorder() ? `<label class="consent-row"><input type="checkbox" data-consent="xb">
-      <span>Даю <a href="#" data-consent-text="xb">согласие на трансграничную передачу</a>
-      данных (сервис Google Firebase)</span></label>` : ''}
-    <p class="small muted consent-hint">${needsCrossBorder() ? 'Отметьте оба пункта, чтобы продолжить' : 'Отметьте пункт, чтобы продолжить'}</p>
+    <p class="small muted consent-hint">Отметьте пункт, чтобы продолжить</p>
   </div>`;
 }
 
-/** Оживляет галочки над кнопкой [btn]: кнопка неактивна, пока обе не
- *  отмечены. [extraOk] — остальные условия кнопки (корзина не пуста). */
-/** Подсказка, если галочки не отмечены: в режиме РФ она одна. */
-const consentToast = () => (needsCrossBorder() ? 'Отметьте оба согласия' : 'Отметьте согласие на обработку данных');
+/** Подсказка, если галочка не отмечена. */
+const consentToast = () => 'Отметьте согласие на обработку данных';
 
 function consentBoxOf(btn) {
   return btn && btn.parentElement && btn.parentElement.querySelector('[data-consent-box]');
 }
 
-/** Обе галочки у кнопки [btn] отмечены (или согласия уже даны). */
+/** Галочка у кнопки [btn] отмечена (или согласие уже дано). */
 function consentReady(btn) {
   const box = consentBoxOf(btn);
   return consentGiven() || (!!box && [...box.querySelectorAll('[data-consent]')].every((c) => c.checked));
 }
 
+/** Оживляет галочку над кнопкой [btn]: кнопка неактивна, пока она не
+ *  отмечена. [extraOk] — остальные условия кнопки (корзина не пуста). */
 function bindConsent(btn, extraOk = () => true) {
   const box = consentBoxOf(btn);
   const ready = () => consentReady(btn);
@@ -914,7 +908,7 @@ function bindConsent(btn, extraOk = () => true) {
     box.querySelectorAll('[data-consent]').forEach((c) => c.addEventListener('change', sync));
     box.querySelectorAll('[data-consent-text]').forEach((a) => a.addEventListener('click', (e) => {
       e.preventDefault();
-      showConsentText(a.dataset.consentText === 'xb');
+      showConsentText();
     }));
   }
   sync();
@@ -925,7 +919,7 @@ function bindConsent(btn, extraOk = () => true) {
 async function commitConsent() {
   if (consentGiven()) return;
   try {
-    await piiPost({ tenantId: state.tenantId, kind: 'guest_consent', edition: CONSENT_EDITION, pd: true, crossBorder: needsCrossBorder() });
+    await piiPost({ tenantId: state.tenantId, kind: 'guest_consent', edition: CONSENT_EDITION, pd: true });
   } catch (_) {
     throw new Error('Согласие не сохранилось — проверьте интернет и попробуйте снова');
   }
@@ -960,17 +954,9 @@ function consentVenue() {
   return name ? `заведения «${name}»` : 'заведения';
 }
 
-function consentTexts(crossBorder) {
+function consentTexts() {
   const op = consentOperator();
-  return crossBorder ? {
-    title: 'Согласие на трансграничную передачу персональных данных',
-    body: [
-      `Отмечая этот пункт, я даю согласие оператору — ${op} — на трансграничную передачу моих персональных данных компании Google LLC (сервис Firebase): хранение и синхронизация — в центрах обработки данных в Бельгии и Нидерландах, вход в приложение и push-уведомления — на серверах в США.`,
-      'Передаются: имя, номер телефона, день и месяц рождения, адрес доставки, сведения о бронированиях, заказах, посещениях и бонусах, идентификатор устройства. Первично данные записываются на сервер в России.',
-      'Зачем: чтобы приложение работало вместе с кассой заведения — персонал видел бронь и заказ, начислял бонусы, а приложение присылало уведомления. Получатель защищает данные: шифрование при хранении и передаче, сертификаты ISO/IEC 27001, 27017, 27018.',
-      'Передача прекращается, когда заведение переводится на хранение данных только в России. Срок и порядок отзыва — как в согласии на обработку персональных данных.',
-    ],
-  } : {
+  return {
     title: 'Согласие на обработку персональных данных',
     body: [
       `Отмечая этот пункт, я свободно, своей волей и в своём интересе даю согласие оператору — ${op} — на обработку моих персональных данных на условиях ниже.`,
@@ -978,14 +964,14 @@ function consentTexts(crossBorder) {
       'Зачем: бронирование столов и лист ожидания; приём, оплата и доставка заказов; программа лояльности (бонусы, уровни, скидки) в заведениях, работающих на ZalPOS; связь со мной по брони и заказу; уведомления в приложении.',
       'Что с ними делают: сбор, запись, систематизация, накопление, хранение, уточнение, извлечение, использование, передача (предоставление, доступ), блокирование, удаление и уничтожение — с использованием средств автоматизации.',
       `По поручению оператора мои данные обрабатывают работники ${consentVenue()}, в котором я бронирую или делаю заказ, — только в программе ZalPOS и только чтобы меня обслужить.`,
-      needsCrossBorder() ? 'Имя, телефон и адрес сначала записываются на сервер в России.' : 'Имя, телефон и адрес хранятся на сервере в России и за её пределы не передаются.',
+      'Имя, телефон и адрес хранятся на сервере в России и за её пределы не передаются.',
       'Согласие действует до его отзыва, но не дольше 3 лет с последнего посещения. Отозвать согласие и удалить данные можно кнопкой «Удалить мои данные» в профиле, письмом оператору или через заведение; накопленные бонусы при этом аннулируются.',
     ],
   };
 }
 
-/** Согласий ещё нет, а действие отправит данные из профиля (лист
- *  ожидания): спрашиваем отдельным окном. true — согласия записаны. */
+/** Согласия ещё нет, а действие отправит данные из профиля (лист
+ *  ожидания): спрашиваем отдельным окном. true — согласие записано. */
 function askConsent() {
   if (consentGiven()) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -1015,9 +1001,9 @@ function askConsent() {
   });
 }
 
-async function showConsentText(crossBorder) {
+async function showConsentText() {
   await loadPlatformLegal();
-  const t = consentTexts(crossBorder);
+  const t = consentTexts();
   const el = document.createElement('div');
   el.className = 'sheet-backdrop';
   el.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(t.title)}">
