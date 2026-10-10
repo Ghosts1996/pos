@@ -9,6 +9,7 @@ import '../../models/staff_shift_model.dart';
 import '../../models/table_model.dart';
 import '../../utils/promo_policy.dart';
 import '../../utils/table_label.dart';
+import '../people_directory.dart';
 
 /// Сборка компактного текстового контекста для ИИ-агентов.
 ///
@@ -485,7 +486,7 @@ extension AiVenueDigest on AiContextService {
     for (final d in snap.docs) {
       final a = d.data();
       final action = _audit[a['action']] ?? a['action']?.toString() ?? '';
-      final key = '$action — ${staff.of(a['employeeName']?.toString() ?? '')}';
+      final key = '$action — ${staff.of(Pd.whoName(a['employeeName']?.toString() ?? ''))}';
       final v = by[key] ?? (n: 0, sum: 0.0);
       by[key] = (n: v.n + 1, sum: v.sum + ((a['amount'] as num?)?.toDouble() ?? 0));
       final details = a['details'];

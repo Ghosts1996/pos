@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
+import 'people_directory.dart';
 import '../models/venue_models.dart';
 import '../utils/shared_stream.dart';
 
@@ -22,7 +23,10 @@ class VenueService {
   /// всегда позже первой отрисовки).
   final ValueNotifier<VenueProfile> notifier = ValueNotifier(const VenueProfile());
   VenueProfile get _cached => notifier.value;
-  set _cached(VenueProfile p) => notifier.value = p;
+  set _cached(VenueProfile p) {
+    notifier.value = p;
+    People.instance.setMode(p.piiMode);
+  }
   VenueProfile get cached => _cached;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _watchSub;
   String _watchedPath = '';
@@ -57,7 +61,11 @@ class VenueService {
   static final _profileS = SharedStreams<VenueProfile>();
 
   Stream<VenueProfile> stream() => _profileS.get(
-      AppScope.tenantId ?? '-', () => AppScope.doc(_profilePath).snapshots().map((d) => VenueProfile.fromMap(d.data())));
+      AppScope.tenantId ?? '-', () => AppScope.doc(_profilePath).snapshots().map((d) {
+            final p = VenueProfile.fromMap(d.data());
+            People.instance.setMode(p.piiMode);
+            return p;
+          }));
 
   Future<void> save(VenueProfile profile) =>
       AppScope.doc(_profilePath).set(profile.toMap(), SetOptions(merge: true));

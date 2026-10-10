@@ -9,6 +9,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
+import '../../services/people_directory.dart';
 
 /// Три ленты в одном экране:
 ///  • «Сводки ИИ» — что фоновые агенты нашли и предложили;
@@ -215,7 +216,7 @@ class _AiActionsTab extends StatelessWidget {
               title: Text(d['tool']?.toString() ?? '',
                   style: const TextStyle(color: AppColors.textPrimary)),
               subtitle: Text(
-                '${d['scope'] == 'guest' ? 'гость' : d['employeeName'] ?? 'сотрудник'} · '
+                '${d['scope'] == 'guest' ? 'гость' : Pd.whoName('${d['employeeName'] ?? ''}').isEmpty ? 'сотрудник' : Pd.whoName('${d['employeeName']}')} · '
                 '${_fmt(date)}\n${d['args'] ?? ''}',
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
@@ -313,7 +314,7 @@ class _AuditTabState extends State<_AuditTab> {
                   // Отмена: что, почему и кто разрешил.
                   final voidInfo = d['action'] == 'order_item_voided'
                       ? '\n${details['item'] ?? ''} — ${details['reason'] ?? ''}'
-                          '${details['approvedBy'] != null && details['approvedBy'] != d['employeeName'] ? ' (разрешил ${details['approvedBy']})' : ''}'
+                          '${details['approvedBy'] != null && details['approvedBy'] != d['employeeName'] ? ' (разрешил ${Pd.whoName('${details['approvedBy']}')})' : ''}'
                       : '';
                   return ListTile(
                     dense: true,
@@ -323,7 +324,7 @@ class _AuditTabState extends State<_AuditTab> {
                       style: const TextStyle(color: AppColors.textPrimary),
                     ),
                     subtitle: Text(
-                      '${d['employeeName'] ?? ''} · ${_fmt(date)}'
+                      '${Pd.whoName('${d['employeeName'] ?? ''}')} · ${_fmt(date)}'
                       '${d['tableName'] != null && d['tableName'].toString().isNotEmpty ? ' · ${d['tableName']}' : ''}'
                       '$voidInfo',
                       style: const TextStyle(color: AppColors.textMuted, fontSize: 12),

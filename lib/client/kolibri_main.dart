@@ -24,6 +24,8 @@ import 'screens/kolibri_venue_picker_screen.dart';
 import 'services/chain_venue_switch.dart';
 import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
+import '../widgets/people_refresh.dart';
+import '../services/people_directory.dart';
 
 /// Точка входа приложения гостя: тот же Firebase, модели и сервисы, что у
 /// кассы, свой main (`flutter build apk -t lib/client/kolibri_main.dart`).
@@ -91,6 +93,7 @@ void main() async {
           startupError = 'Это приложение не привязано ни к одному заведению — обратитесь к администратору заведения.';
         } else {
           AppScope.enterTenant(resolved.tenantId, chainId: resolved.chainId);
+          unawaited(People.instance.start(staff: false));
           // Приложения гостя нет в тарифе заведения — база гостя не пустит,
           // говорим об этом сразу, а не ошибками на каждом экране.
           guestAppOff = !(await PlanCapabilitiesService.fetch(resolved.tenantId)).guestApp;
@@ -335,6 +338,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
   Future<void> _enterLocation(String tenantId, String chainId) async {
     try {
       AppScope.enterTenant(tenantId, chainId: chainId);
+      unawaited(People.instance.start(staff: false));
       if (!(await PlanCapabilitiesService.fetch(tenantId)).guestApp) {
         if (!mounted) return;
         setState(() => _phase = _ChainBootPhase.off);
@@ -409,7 +413,7 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
       themeMode: ThemeMode.dark,
       home: home,
       builder: (context, child) =>
-          AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink())),
+          PeopleRefresh(child: AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink()))),
     );
   }
 }
@@ -450,7 +454,7 @@ class KolibriApp extends StatelessWidget {
               : _StartupError(details: startupError),
       // Плашка «Вышла новая версия» поверх любого экрана гостя.
       builder: (context, child) =>
-          AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink())),
+          PeopleRefresh(child: AdaptiveAppFrame(child: AppUpdateBanner(child: child ?? const SizedBox.shrink()))),
     );
   }
 }

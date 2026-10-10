@@ -8,6 +8,7 @@ import 'firestore_service.dart';
 import '../models/session_model.dart';
 import '../models/table_model.dart';
 import 'pii_gateway_service.dart';
+import 'people_directory.dart';
 
 /// Работа с бронями. Один и тот же сервис используется и на кассе
 /// (подтверждение/посадка), и в приложении гостя (создание/отмена своей
@@ -486,7 +487,7 @@ class ReservationService {
   Future<void> confirm(String id, String employeeName) => _col.doc(id).update({
         'status': ReservationStatus.confirmed.code,
         'confirmedAt': Timestamp.fromDate(DateTime.now()),
-        'handledBy': employeeName,
+        'handledBy': Pd.who(employeeName),
       });
 
   /// Гость ответил на напоминание за 20 минут.
@@ -500,7 +501,7 @@ class ReservationService {
   Future<void> cancel(String id, {String by = ''}) async {
     await _col.doc(id).update({
       'status': ReservationStatus.cancelled.code,
-      'handledBy': by,
+      'handledBy': Pd.who(by),
     });
     // Стол освобождается сразу — иначе отменённая бронь продолжала бы
     // держать слот в сетке доступности до конца своего интервала.
@@ -510,7 +511,7 @@ class ReservationService {
   Future<void> markNoShow(String id, String employeeName) async {
     await _col.doc(id).update({
       'status': ReservationStatus.noShow.code,
-      'handledBy': employeeName,
+      'handledBy': Pd.who(employeeName),
     });
     await _releaseSlot(id);
   }
@@ -607,7 +608,7 @@ class ReservationService {
       tx.update(resRef, {
         'status': ReservationStatus.seated.code,
         'sessionId': sessionRef.id,
-        'handledBy': employeeName,
+        'handledBy': Pd.who(employeeName),
       });
     });
 

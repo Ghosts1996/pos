@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'session_model.dart';
 import '../utils/parse.dart';
+import '../services/people_directory.dart';
 
 /// Статус брони.
 ///
@@ -72,8 +73,10 @@ class ReservationModel {
   /// заведена сотрудником вручную (например, по телефону).
   final String clientUid;
 
-  final String guestName;
-  final String phone;
+  final String _guestName;
+  String get guestName => Pd.name('reservation', id, _guestName);
+  final String _phone;
+  String get phone => Pd.phone('reservation', id, _phone);
   final int guestsCount;
 
   /// Желаемый/назначенный стол. Пусто — «любой свободный»,
@@ -109,13 +112,14 @@ class ReservationModel {
 
   final DateTime createdAt;
   final DateTime? confirmedAt;
-  final String handledBy;
+  final String _handledBy;
+  String get handledBy => Pd.whoName(_handledBy);
 
   ReservationModel({
     required this.id,
     this.clientUid = '',
-    required this.guestName,
-    required this.phone,
+    required String guestName,
+    required String phone,
     this.guestsCount = 2,
     this.tableId = '',
     this.tableName = '',
@@ -130,8 +134,8 @@ class ReservationModel {
     this.guestConfirmed = false,
     required this.createdAt,
     this.confirmedAt,
-    this.handledBy = '',
-  });
+    String handledBy = '',
+  }) : _handledBy = handledBy, _guestName = guestName, _phone = phone;
 
   DateTime get endTime => startTime.add(Duration(minutes: durationMinutes));
 
@@ -173,8 +177,8 @@ class ReservationModel {
 
   Map<String, dynamic> toMap() => {
         'clientUid': clientUid,
-        'guestName': guestName,
-        'phone': phone,
+        if (Pd.mirror) 'guestName': guestName,
+        if (Pd.mirror) 'phone': phone,
         'guestsCount': guestsCount,
         'tableId': tableId,
         'tableName': tableName,
