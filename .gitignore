@@ -27,3 +27,7 @@ android/local.properties
 keystore.base64
 *.jks
 key.properties
+
+# Блог собирается при выкладке сайта (saas/scripts/build-blog.mjs) — в репозиторий не кладём.
+saas/console/blog/
+saas/console/sitemap.xml

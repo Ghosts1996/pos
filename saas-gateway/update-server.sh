@@ -108,6 +108,17 @@ else
   echo "firebase CLI на сервере нет — сайт обновите вручную: cd $REPO/saas && firebase deploy --only hosting,firestore"
 fi
 
+# Блог выходит по расписанию (даты в saas/blog/posts): раз в день в 7:07 по
+# Москве сервер собирает его на сегодня и, если вышли новые посты,
+# выкладывает сайт и сообщает поисковикам (saas/scripts/blog-publish.sh).
+say "Автопубликация блога"
+cat > /etc/cron.d/zalpos-blog <<CRON
+# Блог zalpos.ru: новые посты по расписанию (создано update-server.sh)
+7 4 * * * root /bin/bash $REPO/saas/scripts/blog-publish.sh >> /var/log/zalpos-blog.log 2>&1
+CRON
+chmod 644 /etc/cron.d/zalpos-blog
+echo "ok, журнал: /var/log/zalpos-blog.log"
+
 if [[ -d /opt/pii-gateway ]]; then
   say "pii-gateway (данные в РФ)"
   rsync -a --exclude node_modules "$REPO/pii-gateway/" /opt/pii-gateway/
