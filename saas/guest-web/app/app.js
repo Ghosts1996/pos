@@ -78,10 +78,17 @@ function staffNameOf(id, redraw) {
 }
 
 /// Свой профиль из справочника: в режиме rf в Firestore имени и номера нет.
-async function loadOwnPd() {
-  if (state.ownPd || state.ownPdLoading || !state.uid) return;
+/// Один запрос на всех: кто вызвал во время загрузки, ждёт тот же ответ.
+function loadOwnPd() {
+  if (state.ownPd || !state.uid) return Promise.resolve();
+  if (!state.ownPdLoading) {
+    state.ownPdLoading = fetchOwnPd().finally(() => { state.ownPdLoading = null; });
+  }
+  return state.ownPdLoading;
+}
+
+async function fetchOwnPd() {
   const uid = state.uid;
-  state.ownPdLoading = true;
   try {
     const res = await piiPost({ tenantId: state.tenantId, kind: 'pii_lookup', refs: [{ k: 'guest', id: uid }] });
     if (state.uid !== uid) return;
@@ -89,14 +96,30 @@ async function loadOwnPd() {
     state.ownPd = { name: String(g.name || ''), phone: String(g.phone || '') };
   } catch (_) {
     return; // попробуем при следующем обновлении профиля
-  } finally {
-    state.ownPdLoading = false;
   }
   if (!state.profile) return;
   state.profile = withOwnPd(state.profile);
   if (location.hash === '#/profile' && state.profileDirty) return;
   if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
+  else if (location.hash === '#/booking') fillBookingContacts();
 }
+
+/// Бронь открыли раньше, чем пришли свои имя и номер из РФ: перерисовать
+/// форму с ними, пока гость ничего не вписал, — иначе его ввод не трогаем.
+function fillBookingContacts() {
+  const typed = ['bName', 'bPhone', 'bComment'].some((id) => ($(id)?.value || '').trim());
+  if ($('bName') && !typed) route();
+}
+
+/// Перед действием, которому нужны свои имя и номер (бронь, очередь, стол):
+/// дождаться справочника, если профиль хранится в РФ. Нет связи — как есть.
+async function ensureOwnPd() {
+  if (state.ownPd || !needOwnPd(state.profile)) return;
+  await loadOwnPd();
+}
+
+/// Есть ли у гостя номер: в документе или отметка «номер записан в РФ».
+const hasPhoneOnFile = (p) => !!(p && (p.phone || p.phoneOnFile === true));
 
 /// Профиль Firestore + имя и номер из справочника. В режиме rf главный —
 /// справочник (в документе могли остаться прежние значения до переноса),
@@ -170,7 +193,8 @@ const state = {
   profile: null,
   /// Своё имя и номер из справочника в РФ (см. loadOwnPd).
   ownPd: null,
-  ownPdLoading: false,
+  /// Идущий запрос к справочнику (см. loadOwnPd) или null.
+  ownPdLoading: null,
   venue: null,
   /// Название из «Брендинга»; пусто — показываем имя заведения.
   brandAppName: '',
@@ -865,6 +889,9 @@ function consentHtml() {
 
 /** Оживляет галочки над кнопкой [btn]: кнопка неактивна, пока обе не
  *  отмечены. [extraOk] — остальные условия кнопки (корзина не пуста). */
+/** Подсказка, если галочки не отмечены: в режиме РФ она одна. */
+const consentToast = () => (needsCrossBorder() ? 'Отметьте оба согласия' : 'Отметьте согласие на обработку данных');
+
 function consentBoxOf(btn) {
   return btn && btn.parentElement && btn.parentElement.querySelector('[data-consent-box]');
 }
@@ -1406,7 +1433,8 @@ async function bindToTable(tableId, tableKey = '') {
     // находит гостя. Профиль читаем напрямую — сразу после перехода по
     // ссылке watchProfile() ещё не получил первый снапшот.
     const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
-    if (!(own.exists() && own.data().phone)) {
+    // Режим rf: номера в документе нет, есть отметка phoneOnFile.
+    if (!(own.exists() && hasPhoneOnFile(own.data()))) {
       screenEl().innerHTML = `
         <h1>Сначала укажите номер</h1>
         <p class="muted small">Чтобы сесть за стол, добавьте номер телефона в профиле —
@@ -2048,7 +2076,7 @@ async function screenCheckout() {
   const send = $('dSend');
   const consent = bindConsent(send, () => allowed.length > 0);
   send.onclick = async () => {
-    if (!consent.ready()) return toast('Отметьте оба согласия');
+    if (!consent.ready()) return toast(consentToast());
     const val = (id) => $(id).value.trim();
     const name = val('dName');
     const phoneRaw = val('dPhone');
@@ -2793,6 +2821,7 @@ const STATUS_LABEL = {
 };
 
 async function sendBooking() {
+  await ensureOwnPd();
   const name = $('bName').value.trim();
   const locked = !!((state.profile || {}).phone);
   const phone = locked
@@ -2823,7 +2852,7 @@ async function sendBooking() {
     return toast('В это время мы закрыты — выберите время из списка');
   }
 
-  if (!consentReady($('bSend'))) return toast('Отметьте оба согласия');
+  if (!consentReady($('bSend'))) return toast(consentToast());
   $('bSend').disabled = true;
   try {
     try {
@@ -3968,6 +3997,7 @@ async function estimateWait(guests) {
 }
 
 async function joinQueue(guests, btn) {
+  await ensureOwnPd();
   const p = state.profile || {};
   // Как с бронью и столом: без номера в очередь не ставим — по нему зовут,
   // когда стол освободится. Правила базы проверяют то же самое.

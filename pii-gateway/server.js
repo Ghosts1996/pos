@@ -201,6 +201,7 @@ async function handleRegisterGuestProfile(req, res, body) {
   const storeKey = chainId ? `chain:${chainId}` : tenant;
 
   let nextPhone = "";
+  let phoneRefused = "";
   const pgClient = await getPool().connect();
   try {
     await pgClient.query("BEGIN");
@@ -208,8 +209,24 @@ async function handleRegisterGuestProfile(req, res, body) {
       "SELECT name, phone FROM guest_profiles WHERE tenant_id = $1 AND uid = $2 FOR UPDATE",
       [storeKey, uid]
     );
+    // Номер привязывает бонусы и историю: гость задаёт его один раз, сменить
+    // может только персонал заведения (pii_put). И чужой номер себе не
+    // записать — иначе касса по нему нашла бы не того гостя. Приложения
+    // проверяют то же самое до отправки; здесь — на случай прямого запроса
+    // или профиля, который ещё не успел загрузиться. Номер тогда просто не
+    // меняем, а имя сохраняем: бронь, идущая следом, не должна сорваться.
+    const prevPhone = existing.rows[0]?.phone || "";
+    if (phone !== undefined && prevPhone && phoneDigits(phone) !== phoneDigits(prevPhone)) {
+      phoneRefused = "phone_locked";
+    } else if (phone && phoneDigits(phone) !== phoneDigits(prevPhone)) {
+      const taken = await pgClient.query(
+        "SELECT 1 FROM guest_profiles WHERE tenant_id = $1 AND phone = $2 AND uid <> $3 LIMIT 1",
+        [storeKey, phoneDigits(phone), uid]
+      );
+      if (taken.rowCount) phoneRefused = "phone_taken";
+    }
     const nextName = name ?? existing.rows[0]?.name ?? "";
-    nextPhone = phone ?? existing.rows[0]?.phone ?? "";
+    nextPhone = phoneRefused ? prevPhone : phone ?? prevPhone;
     await pgClient.query(
       `INSERT INTO guest_profiles (tenant_id, uid, name, phone, updated_at)
        VALUES ($1, $2, $3, $4, now())
@@ -235,7 +252,7 @@ async function handleRegisterGuestProfile(req, res, body) {
     const rfOnly = (await piiMode(db, tenant)) === "rf";
     const patch = {};
     if (!rfOnly && name !== undefined) patch.name = name;
-    if (!rfOnly && phone !== undefined) patch.phone = phone;
+    if (!rfOnly && phone !== undefined && !phoneRefused) patch.phone = phone;
     if (rfOnly && !(await db.doc(path).get()).exists) patch.createdAt = admin.firestore.FieldValue.serverTimestamp();
     // «Номер записан в РФ»: по этой отметке правила базы пускают гостя за
     // стол, когда самого номера в профиле нет (режим rf). Гостю её писать
@@ -244,10 +261,10 @@ async function handleRegisterGuestProfile(req, res, body) {
     if (Object.keys(patch).length) await db.doc(path).set(patch, { merge: true });
   } catch (e) {
     // В РФ уже записано, копия догонит при следующем изменении профиля.
-    return sendJson(res, 200, { ok: true, firestoreMirrorFailed: String(e.message || e) });
+    return sendJson(res, 200, { ok: true, firestoreMirrorFailed: String(e.message || e), ...(phoneRefused ? { phoneRefused } : {}) });
   }
 
-  return sendJson(res, 200, { ok: true });
+  return sendJson(res, 200, { ok: true, ...(phoneRefused ? { phoneRefused } : {}) });
 }
 
 function clientIp(req) {

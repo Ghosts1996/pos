@@ -4,6 +4,7 @@ import '../../services/guest_link_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
+import '../../utils/phone_utils.dart';
 import '../../utils/adaptive.dart';
 
 /// Справочник гостей приложения для администратора: уровень
@@ -109,11 +110,26 @@ class _GuestsScreenState extends State<GuestsScreen> {
         ],
       ),
     );
-    if (newPhone == null || newPhone.isEmpty || newPhone == profile.phone) return;
-    await _link.registerGuestProfile(profile.uid, phone: newPhone);
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Номер обновлён: $newPhone')));
+    if (newPhone == null || newPhone.isEmpty || !mounted) return;
+    void say(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    final problem = phoneProblem(newPhone);
+    if (problem != null) return say(problem);
+    final normalized = normalizePhone(newPhone);
+    if (normalized == normalizePhone(profile.phone)) return;
+    try {
+      if (await _link.isPhoneTakenByOther(normalized, profile.uid)) {
+        if (mounted) {
+          say('Этот номер уже у другого гостя. Если это тот же человек с нового телефона — '
+              'нажмите «Объединить с новым устройством».');
+        }
+        return;
+      }
+      // Номер меняет персонал: справочник в РФ и профиль — от имени кассы.
+      // registerGuestProfile — только для самого гостя (сервер сверяет uid).
+      await _link.updateProfile(profile.uid, {'phone': normalized});
+      if (mounted) say('Номер обновлён: +$normalized');
+    } catch (e) {
+      if (mounted) say('Не удалось сменить номер: ${humanError(e, lower: true)}');
     }
   }
 

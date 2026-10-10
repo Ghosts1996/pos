@@ -262,9 +262,13 @@ class AiToolRegistry {
         var name = args['guest_name']?.toString() ?? '';
         var phone = args['phone']?.toString() ?? '';
         if (ctx.scope == AiToolScope.guest) {
+          // Гость бронирует на себя: имя и номер — из его профиля (в режиме
+          // rf — из справочника в РФ), а не из того, что прислала модель.
+          // Номер — только свой: без него бронь не создастся, как и раньше.
           final p = await AppScope.loyaltyCol('clients').doc(ctx.guestUid).get();
-          name = (p.data()?['name'] as String?) ?? name;
-          phone = (p.data()?['phone'] as String?) ?? phone;
+          final me = p.exists ? ClientProfile.fromDoc(p) : null;
+          if ((me?.name ?? '').isNotEmpty) name = me!.name;
+          phone = me?.phone ?? '';
         }
 
         try {
