@@ -342,6 +342,9 @@ class SessionModel {
   final double paymentCash; // сколько оплачено наличными
   final double paymentCard; // сколько оплачено картой (ручной ввод/сайт, без физического терминала)
   final double paymentTerminal; // сколько оплачено через платёжный терминал (эквайринг)
+  /// Через какой банк прошла оплата терминалом («Сбер», «QR · Т-Банк») —
+  /// деньги от каждого банка приходят своим платежом, сверка по ним.
+  final String terminalBank;
   final double paymentComp; // сколько списано за счёт заведения
 
   /// Оплачено через агрегатор доставки (Яндекс Еда, Купер, Мегамаркет):
@@ -456,6 +459,7 @@ class SessionModel {
     this.paymentCash = 0,
     this.paymentCard = 0,
     this.paymentTerminal = 0,
+    this.terminalBank = '',
     this.paymentComp = 0,
     this.paymentAggregator = 0,
     this.aggregator = '',
@@ -515,6 +519,7 @@ class SessionModel {
       paymentCash: (data['paymentCash'] ?? 0).toDouble(),
       paymentCard: (data['paymentCard'] ?? 0).toDouble(),
       paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
+      terminalBank: asText(data['terminalBank']),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
       paymentAggregator: (data['paymentAggregator'] as num?)?.toDouble() ?? 0,
       aggregator: asText(data['aggregator']),
@@ -580,6 +585,7 @@ class SessionModel {
       'paymentCash': paymentCash,
       'paymentCard': paymentCard,
       'paymentTerminal': paymentTerminal,
+      if (terminalBank.isNotEmpty) 'terminalBank': terminalBank,
       'paymentComp': paymentComp,
       if (paymentAggregator > 0) 'paymentAggregator': paymentAggregator,
       if (aggregator.isNotEmpty) 'aggregator': aggregator,

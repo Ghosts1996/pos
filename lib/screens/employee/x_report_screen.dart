@@ -339,6 +339,9 @@ class _XReportScreenState extends State<XReportScreen> {
                           _totalRow('Оплачено картой', data.paymentCard),
                           _totalRow('Оплачено наличными', data.paymentCash),
                           _totalRow('Оплачено терминалом', data.paymentTerminal),
+                          // По банкам — если терминалов несколько или банк известен:
+                          // так проще сверить поступления от каждого банка.
+                          for (final e in data.byTerminalBank.entries) _totalRow('  · ${e.key}', e.value),
                           // Агрегаторы доставки: деньги придут от них позже,
                           // не в кассу и не эквайрингом.
                           if (data.byAggregator.length > 1)
@@ -679,6 +682,7 @@ class _XReportScreenState extends State<XReportScreen> {
       card: data.paymentCard,
       cash: data.paymentCash,
       terminal: data.paymentTerminal,
+      terminalBanks: data.byTerminalBank,
       aggregators: data.byAggregator,
       comp: data.paymentComp,
       collections: cash?.summary.collections ?? 0,
@@ -718,6 +722,7 @@ class _XReportScreenState extends State<XReportScreen> {
       ReportLine('Картой', right: rub(data.paymentCard)),
       ReportLine('Наличными', right: rub(data.paymentCash)),
       ReportLine('Терминалом', right: rub(data.paymentTerminal)),
+      for (final e in data.byTerminalBank.entries) ReportLine('  ${e.key}', right: rub(e.value)),
       for (final e in data.byAggregator.entries) ReportLine('Агрегатор · ${e.key}', right: rub(e.value)),
       ReportLine('За счёт заведения', right: rub(data.paymentComp)),
       if (cash != null) ...[
@@ -797,6 +802,7 @@ String xReportTotalsText({
   required double card,
   required double cash,
   required double terminal,
+  Map<String, double> terminalBanks = const {},
   Map<String, double> aggregators = const {},
   required double comp,
   required double collections,
@@ -811,6 +817,9 @@ String xReportTotalsText({
   b.writeln('Оплачено картой: ${rub(card)}');
   b.writeln('Оплачено наличными: ${rub(cash)}');
   b.writeln('Оплачено терминалом: ${rub(terminal)}');
+  for (final e in terminalBanks.entries) {
+    b.writeln('  · ${e.key}: ${rub(e.value)}');
+  }
   // Агрегатор доставки — каждый своей строкой: деньги придут от него позже.
   for (final e in aggregators.entries) {
     b.writeln('Агрегатор · ${e.key}: ${rub(e.value)}');
@@ -819,6 +828,20 @@ String xReportTotalsText({
   b.writeln('Инкассация: ${rub(collections)}');
   if (cashInDrawer != null) b.writeln('Наличные в кассе: ${rub(cashInDrawer)}');
   return b.toString().trimRight();
+}
+
+/// Оплата терминалом по банкам — для сверки поступлений от каждого. Пусто,
+/// если банк не записан ни в одном чеке (старые чеки, один терминал без
+/// отметки банка): одна строка «банк не указан» итогу ничего не добавляет.
+Map<String, double> terminalByBank(Iterable<SessionModel> sessions) {
+  const unknown = 'банк не указан';
+  final out = <String, double>{};
+  for (final s in sessions) {
+    if (s.closedWithoutPayment || s.paymentTerminal <= 0) continue;
+    final bank = s.terminalBank.isEmpty ? unknown : s.terminalBank;
+    out[bank] = (out[bank] ?? 0) + s.paymentTerminal;
+  }
+  return out.keys.every((k) => k == unknown) ? const {} : out;
 }
 
 class _XItemStat {
@@ -838,6 +861,10 @@ class _XReportData {
   final double paymentTerminal;
   final double paymentComp;
 
+  /// Оплачено терминалом по банкам. Пусто, если банк ни в одном чеке не
+  /// записан (старые чеки) — тогда разбивка не нужна.
+  final Map<String, double> byTerminalBank;
+
   /// Оплачено через агрегаторы доставки — всего и по каждому.
   final double paymentAggregator;
   final Map<String, double> byAggregator;
@@ -856,6 +883,7 @@ class _XReportData {
     required this.paymentCard,
     required this.paymentTerminal,
     required this.paymentComp,
+    this.byTerminalBank = const {},
     required this.paymentAggregator,
     required this.byAggregator,
     required this.tipsCash,
@@ -914,6 +942,7 @@ class _XReportData {
       paymentCard: card,
       paymentTerminal: terminal,
       paymentComp: comp,
+      byTerminalBank: terminalByBank(sessions),
       paymentAggregator: aggregator,
       byAggregator: byAggregator,
       tipsCash: tipsCash,

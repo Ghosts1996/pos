@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../models/inventory_models.dart';
 import '../../models/menu_models.dart';
 import '../../models/session_model.dart';
+import '../employee/x_report_screen.dart' show terminalByBank;
 import '../../services/firestore_service.dart';
 import '../../services/printer_service.dart';
 import '../../services/venue_service.dart';
@@ -270,6 +271,27 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                           ),
                         ],
+                        if (stats.byTerminalBank.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _sectionTitle('Терминал по банкам'),
+                          Card(
+                            child: Column(
+                              children: [
+                                for (final e in stats.byTerminalBank.entries)
+                                  ListTile(
+                                    leading: const Icon(Icons.credit_card),
+                                    title: Text(e.key),
+                                    trailing: Text(rub(e.value), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  ),
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                  child: Text('Сверяйте с поступлениями от каждого банка.',
+                                      style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (stats.byAggregator.isNotEmpty) ...[
                           const SizedBox(height: 8),
                           _sectionTitle('Агрегаторы доставки'),
@@ -419,7 +441,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       final pay = [
         if (s.paymentCash > 0) 'наличные',
         if (s.paymentCard > 0) 'карта',
-        if (s.paymentTerminal > 0) 'терминал',
+        if (s.paymentTerminal > 0) s.terminalBank.isEmpty ? 'терминал' : 'терминал (${s.terminalBank})',
         if (s.paymentAggregator > 0) s.aggregatorName.isEmpty ? 'агрегатор' : s.aggregatorName,
         if (s.paymentComp > 0) 'за счёт заведения',
       ].join(' + ');
@@ -503,6 +525,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (stats.cardsUsed > 0) ReportLine('Скидки по картам', right: rub(stats.totalDiscountGiven)),
       if (stats.unpaidClosed > 0) ReportLine('Без оплаты: ${stats.unpaidClosed}', right: rub(stats.unpaidAmount)),
       if (stats.refunds > 0) ReportLine('Возвраты: ${stats.refunds}', right: rub(stats.refundedAmount)),
+      if (stats.byTerminalBank.isNotEmpty) ...[
+        const ReportLine.separator(),
+        const ReportLine('ТЕРМИНАЛ ПО БАНКАМ', bold: true),
+        for (final e in stats.byTerminalBank.entries) ReportLine(e.key, right: rub(e.value)),
+      ],
       if (stats.byAggregator.isNotEmpty) ...[
         const ReportLine.separator(),
         const ReportLine('АГРЕГАТОРЫ', bold: true),
@@ -617,6 +644,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
       buf.writeln('Закрыто без оплаты: ${stats.unpaidClosed}, ${rub(stats.unpaidAmount)}');
     }
     if (stats.refunds > 0) buf.writeln('Возвраты: ${stats.refunds}, ${rub(stats.refundedAmount)}');
+    if (stats.byTerminalBank.isNotEmpty) {
+      buf
+        ..writeln()
+        ..writeln('Терминал по банкам:');
+      for (final e in stats.byTerminalBank.entries) {
+        buf.writeln('• ${e.key} — ${rub(e.value)}');
+      }
+    }
     if (stats.byAggregator.isNotEmpty) {
       buf
         ..writeln()
@@ -733,6 +768,9 @@ class _ReportStats {
   /// Оплачено через агрегаторы доставки — по названию агрегатора.
   final Map<String, _AggregatorStat> byAggregator;
 
+  /// Оплата терминалом по банкам — для сверки поступлений (terminalByBank).
+  final Map<String, double> byTerminalBank;
+
   _ReportStats({
     required this.visits,
     required this.revenue,
@@ -751,6 +789,7 @@ class _ReportStats {
     this.deliveryCount = 0,
     this.deliveryRevenue = 0,
     this.byAggregator = const {},
+    this.byTerminalBank = const {},
   });
 
   double get averageCheck => visits == 0 ? 0 : revenue / visits;
@@ -843,6 +882,7 @@ class _ReportStats {
       deliveryCount: deliveryCount,
       deliveryRevenue: deliveryRevenue,
       byAggregator: byAggregator,
+      byTerminalBank: terminalByBank(sessions.where((s) => !s.refunded)),
     );
   }
 }
