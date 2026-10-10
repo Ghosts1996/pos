@@ -9,6 +9,7 @@ import '../services/pii_gateway_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
 import 'delivery_order_card.dart';
+import '../services/people_directory.dart';
 
 /// Кнопка «С собой и доставка» в шапке зала — со счётчиком открытых заказов.
 class TakeawayButton extends StatelessWidget {
@@ -70,6 +71,7 @@ class TakeawaySheet extends StatelessWidget {
       if (data.phone.isNotEmpty || data.address.isNotEmpty) {
         await PiiGatewayService()
             .recordContact(kind: 'delivery', id: sessionId, name: data.name, phone: data.phone, address: data.address);
+        People.instance.remember('delivery', sessionId, name: data.name, phone: data.phone, address: data.address);
       }
       final now = TimeOfDay.now();
       final who = data.name.isNotEmpty
