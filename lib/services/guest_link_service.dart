@@ -352,7 +352,8 @@ class GuestLinkService {
         final data = doc.data();
         final phone = (data['phone'] as String?) ?? '';
         final code = (data['referralCode'] as String?) ?? '';
-        if (phone.isNotEmpty) {
+        // Режим rf: номер в Firestore не кладём даже ключом указателя.
+        if (phone.isNotEmpty && Pd.mirror) {
           await _phoneIndex.doc(normalizePhone(phone)).set({'uid': doc.id});
         }
         if (code.isNotEmpty) {
