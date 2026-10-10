@@ -858,15 +858,17 @@ a:hover { color: var(--primary-2); }
 /* ---- Демо за две минуты ---- */
 /* Слева — три способа скачать (подходящий устройству посетителя первым),
    справа — PIN-коды бумажным чеком с отточием, как во всём сайте. */
-.demo-board { display: grid; grid-template-columns: 1fr; gap: 28px; align-items: start; }
-@media (min-width: 960px) { .demo-board { grid-template-columns: 7fr 5fr; gap: 56px; } }
+/* minmax(0, …): иначе колонку раздувает самое длинное слово, и на телефоне
+   страница уезжала вбок на 30 px. */
+.demo-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (min-width: 960px) { .demo-board { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 56px; } }
 .demo-downloads { display: flex; flex-direction: column; border-top: 1px solid var(--ink); }
 .demo-route { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; padding: 16px 0;
   font-family: var(--serif); font-size: 19px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border-strong); order: -2; }
 .demo-route .li { width: 16px; height: 16px; stroke-width: 1.4; color: var(--primary); flex: none; }
-.demo-dl { position: relative; display: grid; grid-template-columns: 48px 1fr; gap: 6px 16px; align-items: center;
+.demo-dl { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 6px 16px; align-items: center;
   padding: 20px 0; border-bottom: 1px solid var(--border-strong); }
-@media (min-width: 640px) { .demo-dl { grid-template-columns: 52px 1fr auto; } }
+@media (min-width: 640px) { .demo-dl { grid-template-columns: 52px minmax(0, 1fr) auto; } }
 .demo-dl-icon { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
   border: 1px solid var(--border-strong); color: var(--primary); background: var(--surface); }
 .demo-dl-icon .li { width: 22px; height: 22px; stroke-width: 1.3; }
@@ -1364,8 +1366,10 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
   .wrap.landing .pricing-chips { grid-template-columns: 1fr 1fr; gap: 10px 14px; }
   .wrap.landing .pricing-chip { gap: 6px; font-size: 13px; line-height: 1.35; }
   .wrap.landing .pricing-chip .li { width: 13px; height: 13px; margin-top: 2px; }
-  .wrap.landing .demo-pins-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .wrap.landing .demo-pins-cols .bill-lines li { font-size: 12.5px; }
+  .wrap.landing .demo-pins-card { padding: 20px 16px 24px; }
+  .wrap.landing .demo-pins-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  .wrap.landing .demo-pins-cols .bill-lines li { font-size: 12.5px; min-width: 0; }
+  .wrap.landing .demo-pins-cols .bill-lines li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 .m-dots { display: none; }
 @media (max-width: 719px) {
