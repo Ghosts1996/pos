@@ -7,6 +7,7 @@ import '../../models/session_model.dart';
 import '../../models/aggregator.dart';
 import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
+import '../../models/terminal_bank.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
@@ -145,6 +146,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   bool _busy = false;
   bool _terminalBusy = false;
+
+  /// Через какие банки прошли оплаты кнопкой «Терминал» в этом чеке.
+  final Set<String> _terminalBanks = {};
+
+  /// Банк для чека: что вернул терминал, а если сумму вписали руками и
+  /// в заведении один терминал — его банк.
+  String get _terminalBankLabel {
+    if (_terminalBanks.isNotEmpty) return _terminalBanks.join(', ');
+    final t = paymentTerminalService;
+    if (t is ManualTerminalService && t.banks.length == 1) {
+      return TerminalBank.label(t.banks.first, other: t.otherName);
+    }
+    return '';
+  }
 
   /// Сумма, которую ещё нужно взять с гостя: счёт со скидкой минус
   /// списанные бонусы и сертификат.
@@ -376,11 +391,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _cash.controller.text = _fmt(v);
   }
 
-  /// Отправляет недостающую сумму на физический терминал (через
-  /// [paymentTerminalService] — см. описание там про подключение
-  /// реального банковского SDK) и, при успехе, подставляет сумму в поле
-  /// "Оплата с терминала" сама — сотруднику останется только нажать
-  /// "Оплатить" ниже, как обычно.
+  /// Проводит недостающую сумму через терминал ([paymentTerminalService])
+  /// и при успехе подставляет её в поле «Оплата с терминала» сама —
+  /// сотруднику останется только нажать «Оплатить» ниже, как обычно.
   Future<void> _payViaTerminal() async {
     if (_terminalBusy || _busy) return;
     final amount = _diff > 0.004 ? _diff : _due;
@@ -393,6 +406,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         setState(() {
           _revealed.add(_terminal);
           _terminal.controller.text = _fmt(_terminal.parse() + amount);
+          if ((result.bank ?? '').isNotEmpty) _terminalBanks.add(result.bank!);
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${_qrTerminal ? 'Оплата по QR прошла' : 'Оплата на терминале прошла успешно'}'
@@ -490,6 +504,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         cash: _closeWithoutPayment ? 0 : _revenueCash,
         card: _closeWithoutPayment ? 0 : _revenueCard,
         terminal: _closeWithoutPayment ? 0 : _revenueTerminal,
+        terminalBank: _closeWithoutPayment ? '' : _terminalBankLabel,
         comp: _closeWithoutPayment ? 0 : _comp.parse() + _bonusPaid,
         aggregator: agg == null ? 0 : _aggAmount,
         aggregatorId: agg?.id ?? '',
@@ -1075,12 +1090,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  /// Кнопка "Оплатить с терминала" — рядом с полем суммы способа
-  /// "Оплата с терминала". Пока подключён [MockPaymentTerminalService],
-  /// нажатие просто имитирует поход к терминалу с задержкой; после
-  /// подключения реального банковского SDK поведение изменится само,
-  /// без правок этого экрана.
-  /// Вместо терминала — QR на экране (банк онлайн-оплаты или Т-Банк СБП).
+  /// Кнопка «Оплатить с терминала» — рядом с полем суммы способа «Оплата с
+  /// терминала». Что именно произойдёт, решает выбранный в Настройки →
+  /// Интеграции способ (см. [paymentTerminalService]): спросить кассира,
+  /// отправить сумму на терминал по кабелю или показать QR на экране.
   bool get _qrTerminal =>
       paymentTerminalService is GatewayQrTerminalService || paymentTerminalService is TinkoffSbpQrTerminalService;
 

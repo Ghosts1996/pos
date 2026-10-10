@@ -252,6 +252,15 @@ async function main() {
     ], audit: [] });
     check("telegram: оплата через агрегатор — отдельной строкой, не картой",
       aggText.includes("Выручка: 1\u00a0300 ₽") && aggText.includes("агрегаторы 1\u00a0000 ₽") && aggText.includes("карта 300 ₽"));
+    const bankText = tg.buildSummary({ venueName: "Тест", label: "08.10", sessions: [
+      { orderItems: [{ name: "Чай", price: 500, qty: 1 }], paymentTerminal: 500, terminalBank: "Сбер" },
+      { orderItems: [{ name: "Кофе", price: 200, qty: 1 }], paymentTerminal: 200, terminalBank: "Т-Банк" },
+    ], audit: [] });
+    const plainText = tg.buildSummary({ venueName: "Тест", label: "08.10", sessions: [
+      { orderItems: [{ name: "Чай", price: 500, qty: 1 }], paymentTerminal: 500 },
+    ], audit: [] });
+    check("telegram: терминал по банкам — для сверки; без банка строки нет",
+      bankText.includes("Терминал по банкам: Сбер 500 ₽, Т-Банк 200 ₽") && !plainText.includes("Терминал по банкам"));
     {
       const docs = {
         "tenants/t1/clients/u1": { name: "Иван", phone: "79001112233", bonusBalance: 50, birthdayDay: 3, birthdayMonth: 4 },

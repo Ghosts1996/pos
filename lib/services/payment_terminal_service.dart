@@ -5,6 +5,7 @@ import 'app_scope.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import '../models/terminal_bank.dart';
 import '../utils/bank_http.dart';
 import '../utils/money.dart';
 import 'gateway_api.dart';
@@ -16,24 +17,28 @@ class TerminalPaymentResult {
   final String? operationId; // номер операции/слипа от банка, для сверки
   final String? maskedCardNumber; // например "•• 4242" — если банк его отдаёт
 
-  const TerminalPaymentResult.success({this.operationId, this.maskedCardNumber})
+  /// Через какой банк прошла оплата («Сбер», «QR · Т-Банк») — пишется в
+  /// чек: деньги от каждого банка приходят своим платежом, сверка по ним.
+  final String? bank;
+
+  const TerminalPaymentResult.success({this.operationId, this.maskedCardNumber, this.bank})
       : success = true,
         errorMessage = null;
 
   const TerminalPaymentResult.failure(this.errorMessage)
       : success = false,
         operationId = null,
-        maskedCardNumber = null;
+        maskedCardNumber = null,
+        bank = null;
 }
 
 /// Оплата картой — терминалом или QR-кодом СБП. Экран оплаты знает только
 /// этот интерфейс; новый банк — новый класс здесь и пункт в
 /// [TerminalProvider].
 ///
-///   • [ManualTerminalService] — любой физический терминал: кассир вводит
-///     сумму в терминал сам, приложение фиксирует итог. Передача суммы по
-///     кабелю или Bluetooth требует SDK банка, его выдают по договору
-///     эквайринга.
+///   • [ManualTerminalService] — любой терминал любого банка (и «терминал
+///     в телефоне», и табличка с QR СБП): кассир вводит сумму на терминале
+///     сам, касса спрашивает, прошла ли оплата и на каком терминале.
 ///   • [GatewayQrTerminalService] — QR на экране кассы через банк
 ///     онлайн-оплаты заведения (Т-Банк, Сбер, Альфа, ВТБ, МТС,
 ///     Райффайзен, Робокасса, другой банк на шлюзе RBS): платёж заводит
@@ -41,8 +46,9 @@ class TerminalPaymentResult {
 ///   • [TinkoffSbpQrTerminalService] — прежний способ: QR СБП Т-Банка
 ///     прямо с кассы по TerminalKey и паролю.
 ///   • [SberUposTerminalService] — терминал Сбера на Windows-кассе (UPOS).
-///   • Терминалы других банков (Arcus, INPAS) подключаются только SDK
-///     банка по договору — до тех пор работает [ManualTerminalService].
+///   • [CliTerminalService] — терминал на Windows-кассе через программу
+///     банка с командной строкой (ARCUS 2 и другие): сумма уходит сама,
+///     итог — по правилу из настроек или со слов кассира.
 abstract class PaymentTerminalService {
   /// Есть ли вообще подключённый терминал/провайдер (проверка заполненных
   /// настроек — не проверка реального Bluetooth/сетевого соединения).
@@ -57,49 +63,111 @@ abstract class PaymentTerminalService {
 }
 
 /// Терминал сотрудник обслуживает сам, вручную — рабочий вариант для
-/// ЛЮБОГО физического терминала без специальной интеграции (см. докстринг
+/// ЛЮБОГО терминала любого банка без специальной интеграции (см. докстринг
 /// класса выше). Ничего не подделывает и не имитирует: спрашивает
 /// сотрудника, прошла ли оплата на самом терминале, и верит его ответу —
 /// ровно так это устроено в жизни, когда кассовое приложение и терминал
 /// физически не связаны.
+///
+/// [banks] — терминалы каких банков стоят в заведении (TerminalBank.id).
+/// Несколько — касса спрашивает, на каком оплатили: в чеке и отчёте
+/// деньги разложены по банкам.
 class ManualTerminalService implements PaymentTerminalService {
+  final List<String> banks;
+  final String otherName;
+
+  ManualTerminalService({this.banks = const [], this.otherName = ''});
+
+  /// Последний выбранный терминал — подставляется в следующий раз.
+  static String _lastBank = '';
+
+  String _label(String id) => TerminalBank.label(id, other: otherName);
+
   @override
   bool get isAvailable => true;
 
   @override
   Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async {
+    final single = banks.length == 1 ? _label(banks.first) : null;
     if (context == null || !context.mounted) {
       // Без экрана спросить некого — считаем, что кассир уже провёл
       // оплату на терминале до вызова (иначе метод не вызвали бы).
-      return const TerminalPaymentResult.success();
+      return TerminalPaymentResult.success(bank: single);
     }
+    var chosen = banks.contains(_lastBank) ? _lastBank : (banks.isEmpty ? '' : banks.first);
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        title: const Text('Оплата на терминале'),
-        content: Text(
-          'Внесите ${rub(amount)} на терминале эквайринга и '
-          'дождитесь его собственного чека/слипа.\n\n'
-          'Нажмите «Оплата прошла» только после того, как терминал это подтвердил.',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          scrollable: true,
+          title: Text(single == null ? 'Оплата на терминале' : 'Оплата на терминале · $single'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Внесите ${rub(amount)} на терминале и дождитесь его чека/слипа.\n\n'
+                'Нажмите «Оплата прошла» только после того, как терминал это подтвердил.',
+              ),
+              if (banks.length > 1) ...[
+                const SizedBox(height: 16),
+                const Text('На каком терминале?', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final id in banks)
+                      ChoiceChip(
+                        label: Text(_label(id)),
+                        selected: chosen == id,
+                        onSelected: (_) => setLocal(() => chosen = id),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отменить'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Оплата прошла'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отменить'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Оплата прошла'),
-          ),
-        ],
       ),
     );
-    return ok == true
-        ? const TerminalPaymentResult.success()
-        : const TerminalPaymentResult.failure('Отменено сотрудником');
+    if (ok != true) return const TerminalPaymentResult.failure('Отменено сотрудником');
+    if (chosen.isNotEmpty) _lastBank = chosen;
+    return TerminalPaymentResult.success(bank: chosen.isEmpty ? null : _label(chosen));
   }
+}
+
+/// Спросить кассира, что показал терминал, — когда программа банка не дала
+/// однозначного ответа. [details] — что она всё-таки вернула.
+Future<bool> confirmOnTerminal(BuildContext context, double amount, {String title = 'Что показал терминал?', String details = ''}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      scrollable: true,
+      title: Text(title),
+      content: Text(
+        'Посмотрите на экран терминала: оплата ${rub(amount)} одобрена?'
+        '${details.trim().isEmpty ? '' : '\n\nОтвет программы банка:\n${details.trim()}'}',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Не прошла')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Оплата прошла')),
+      ],
+    ),
+  );
+  return ok == true;
 }
 
 /// Оплата через QR СБП по публичному REST API Т-Банка
@@ -198,10 +266,10 @@ class TinkoffSbpQrTerminalService implements PaymentTerminalService {
         // QR ещё действует: без отмены гость мог бы оплатить уже после
         // того, как кассир закрыл окно, — деньги пришли бы мимо чека.
         final paidMeanwhile = await _cancel(paymentId);
-        if (paidMeanwhile) return TerminalPaymentResult.success(operationId: paymentId);
+        if (paidMeanwhile) return TerminalPaymentResult.success(operationId: paymentId, bank: 'QR · Т-Банк');
       }
       return confirmedByGuest
-          ? TerminalPaymentResult.success(operationId: paymentId)
+          ? TerminalPaymentResult.success(operationId: paymentId, bank: 'QR · Т-Банк')
           : const TerminalPaymentResult.failure('Оплата по QR не завершена гостем');
     } on TerminalException catch (e) {
       return TerminalPaymentResult.failure(e.message);
@@ -353,6 +421,7 @@ class SberUposTerminalService implements PaymentTerminalService {
     return TerminalPaymentResult.success(
       operationId: line(3),
       maskedCardNumber: digits.length >= 4 ? '•• ${digits.substring(digits.length - 4)}' : null,
+      bank: 'Сбер',
     );
   }
 
@@ -381,6 +450,160 @@ class SberUposTerminalService implements PaymentTerminalService {
     }
     if (!result.existsSync()) return const TerminalPaymentResult.failure('Терминал не вернул результат операции');
     return parseResult(await result.readAsBytes());
+  }
+}
+
+/// Терминал, подключённый кабелем к Windows-кассе через программу банка с
+/// командной строкой: ARCUS 2 (её ставят многие банки на терминалы
+/// Ingenico/Verifone/PAX) или другую, которую дал банк. Сумма уходит на
+/// терминал сама — кассиру не нужно её набирать.
+///
+/// Как программа сообщает итог, у банков и версий разное, поэтому оплата
+/// считается прошедшей автоматически только по правилу из настроек: в
+/// файле итога есть текст [approve] (например, код «000» или «ОДОБРЕНО»).
+/// Правило не задано, файла нет или ответ не распознан — касса спрашивает
+/// кассира, что показал терминал. Оплата не «теряется» и не проходит
+/// дважды из-за непонятого ответа.
+class CliTerminalService implements PaymentTerminalService {
+  /// Путь к программе банка.
+  final String exe;
+
+  /// Аргументы: {kop} — сумма в копейках, {rub} — в рублях (123.45).
+  final String args;
+
+  /// Файл, куда программа пишет итог (пусто — не читаем).
+  final String resultFile;
+
+  /// Текст или регулярное выражение «одобрено» в файле итога.
+  final String approve;
+
+  /// Чей терминал — подпись в чеке и отчёте.
+  final String bank;
+
+  /// Сколько ждать программу: гость может долго вводить PIN.
+  final Duration timeout;
+
+  CliTerminalService({
+    required String exe,
+    String args = '',
+    String resultFile = '',
+    String approve = '',
+    this.bank = '',
+    this.timeout = const Duration(minutes: 3),
+  })  : exe = exe.trim(),
+        args = args.trim(),
+        resultFile = resultFile.trim(),
+        approve = approve.trim();
+
+  /// Шаблон ARCUS 2 — проверьте тестом на 1 ₽: параметры у банков бывают
+  /// свои, их подскажет инженер банка.
+  static const arcusExe = r'C:\Arcus2\CommandLineTool\bin\CommandLineTool.exe';
+  static const arcusArgs = '/o1 /a{kop} /c643';
+  static const arcusResult = r'C:\Arcus2\rc.out';
+
+  @override
+  bool get isAvailable => Platform.isWindows && exe.isNotEmpty;
+
+  /// Аргументы с подставленной суммой. Кавычки "…" держат пробелы внутри.
+  static List<String> buildArgs(String template, double amount) {
+    final kop = (amount * 100).round();
+    final rubStr = (kop / 100).toStringAsFixed(2);
+    final out = <String>[];
+    for (final m in RegExp(r'"([^"]*)"|(\S+)').allMatches(template)) {
+      final raw = m.group(1) ?? m.group(2) ?? '';
+      out.add(raw.replaceAll('{kop}', '$kop').replaceAll('{rub}', rubStr));
+    }
+    return out;
+  }
+
+  /// Одобрено ли по правилу: true — да, null — не понять (спросить кассира).
+  /// Правило сравнивается со строкой файла целиком (без пробелов по краям):
+  /// иначе «000» нашлось бы и внутри суммы 10 000 ₽ или кода отказа 1000.
+  static bool? judge(String text, String approve) {
+    final rule = approve.trim();
+    if (rule.isEmpty || text.trim().isEmpty) return null;
+    final lines = text.split(RegExp(r'\r?\n')).map((l) => l.trim());
+    RegExp? re;
+    try {
+      re = RegExp('^(?:$rule)\$');
+    } on FormatException {
+      re = null;
+    }
+    for (final line in lines) {
+      if (line == rule || (re != null && re.hasMatch(line))) return true;
+    }
+    return null;
+  }
+
+  /// Текст файла итога: программы банков пишут в cp1251 или UTF-8.
+  static String decode(List<int> bytes) {
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return cp1251(bytes);
+    }
+  }
+
+  /// cp1251 → строка (русские буквы, остальное как в latin1).
+  static String cp1251(List<int> bytes) {
+    final b = StringBuffer();
+    for (final c in bytes) {
+      if (c >= 0xC0) {
+        b.writeCharCode(0x0410 + (c - 0xC0));
+      } else if (c == 0xA8) {
+        b.write('Ё');
+      } else if (c == 0xB8) {
+        b.write('ё');
+      } else if (c == 0xB9) {
+        b.write('№');
+      } else {
+        b.writeCharCode(c);
+      }
+    }
+    return b.toString();
+  }
+
+  @override
+  Future<TerminalPaymentResult> pay(double amount, {BuildContext? context}) async {
+    if (!Platform.isWindows) {
+      return const TerminalPaymentResult.failure('Терминал по кабелю работает только на Windows-кассе');
+    }
+    final program = File(exe);
+    if (exe.isEmpty || !program.existsSync()) {
+      return TerminalPaymentResult.failure('Не найдена программа банка ${exe.isEmpty ? '' : exe} — проверьте путь в Настройки → Интеграции');
+    }
+    final result = resultFile.isEmpty ? null : File(resultFile);
+    try {
+      if (result != null && result.existsSync()) result.deleteSync();
+    } catch (_) {}
+    var details = '';
+    var started = false;
+    try {
+      final run = await Process.run(exe, buildArgs(args, amount), workingDirectory: program.parent.path)
+          .timeout(timeout);
+      started = true;
+      if (run.exitCode != 0) details = 'код завершения ${run.exitCode}';
+    } on TimeoutException {
+      started = true;
+      details = 'программа банка не ответила за ${timeout.inMinutes} мин.';
+    } catch (e) {
+      // Программа не запустилась — на терминал ничего не ушло.
+      return TerminalPaymentResult.failure('Не удалось запустить программу банка: $e');
+    }
+    if (result != null && result.existsSync()) {
+      final text = decode(await result.readAsBytes());
+      if (judge(text, approve) == true) return TerminalPaymentResult.success(bank: bank.isEmpty ? null : bank);
+      details = [details, text.trim()].where((x) => x.isNotEmpty).join('\n');
+    }
+    // Ответ не распознан — решает кассир по экрану терминала.
+    if (started && context != null && context.mounted) {
+      final ok = await confirmOnTerminal(context, amount,
+          details: details.length > 400 ? '${details.substring(0, 400)}…' : details);
+      return ok
+          ? TerminalPaymentResult.success(bank: bank.isEmpty ? null : bank)
+          : const TerminalPaymentResult.failure('Терминал не подтвердил оплату');
+    }
+    return const TerminalPaymentResult.failure('Не удалось понять ответ терминала — проверьте его экран');
   }
 }
 
@@ -439,10 +662,11 @@ class GatewayQrTerminalService implements PaymentTerminalService {
     } else {
       outcome = await _pollSilently(id, ttl);
     }
-    if (outcome == 'paid') return TerminalPaymentResult.success(operationId: id);
+    final bank = 'QR · ${info.bank}';
+    if (outcome == 'paid') return TerminalPaymentResult.success(operationId: id, bank: bank);
     if (outcome == 'failed') return const TerminalPaymentResult.failure('Банк отклонил оплату');
     // Закрыли окно или код истёк: вдруг гость успел заплатить в последний момент.
-    if (await _cancel(id) == 'paid') return TerminalPaymentResult.success(operationId: id);
+    if (await _cancel(id) == 'paid') return TerminalPaymentResult.success(operationId: id, bank: bank);
     return const TerminalPaymentResult.failure('Оплата по QR не завершена');
   }
 
@@ -615,10 +839,11 @@ class _QrDialogState extends State<_QrDialog> {
 /// Провайдеры терминала оплаты — список для выпадающего меню в
 /// Настройки → Интеграции. id хранится в Firestore, name — подпись в UI.
 enum TerminalProvider {
-  manual('manual', 'Ручной терминал (любой банк)'),
+  manual('manual', 'Терминал любого банка'),
   onlineQr('online_qr', 'QR на экране кассы — банк онлайн-оплаты'),
   tinkoffSbp('tinkoff_sbp', 'Т-Банк — QR СБП (TerminalKey на кассе)'),
-  sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)');
+  sberUpos('sber_upos', 'Сбер — терминал на кассе (UPOS, Windows)'),
+  cli('cli', 'Терминал по кабелю — ARCUS 2 и др. (Windows)');
 
   final String id;
   final String label;
@@ -640,9 +865,10 @@ PaymentTerminalService paymentTerminalService = ManualTerminalService();
 PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
   final provider = TerminalProvider.fromId(data['terminalProvider'] as String? ?? 'manual');
   String s(String key) => (data[key] as String?) ?? '';
+  final banks = TerminalBank.parseIds(data['terminalBanks']);
   switch (provider) {
     case TerminalProvider.manual:
-      return ManualTerminalService();
+      return ManualTerminalService(banks: banks, otherName: s('terminalBankOther'));
     case TerminalProvider.onlineQr:
       return GatewayQrTerminalService();
     case TerminalProvider.tinkoffSbp:
@@ -650,6 +876,14 @@ PaymentTerminalService buildTerminalService(Map<String, dynamic> data) {
           terminalKey: s('terminalLogin'), password: s('terminalPassword'));
     case TerminalProvider.sberUpos:
       return SberUposTerminalService(folder: s('terminalLogin'));
+    case TerminalProvider.cli:
+      return CliTerminalService(
+        exe: s('terminalCliExe'),
+        args: s('terminalCliArgs'),
+        resultFile: s('terminalCliResult'),
+        approve: s('terminalCliApprove'),
+        bank: banks.isEmpty ? '' : TerminalBank.label(banks.first, other: s('terminalBankOther')),
+      );
   }
 }
 

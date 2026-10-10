@@ -227,7 +227,8 @@ const orderNo = (sessionId, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) 
 /** Деньги чеков: выручка, чеки, оплаты, доли цехов. */
 function salesStats(sessions, excludeTobacco = true) {
   const st = { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, aggregator: 0, unpaid: 0, unpaidSum: 0,
-    refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map() };
+    refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map(),
+    terminalBanks: new Map() };
   for (const s of sessions) {
     const bill = sessionBill(s, excludeTobacco);
     if (s.refunded) { st.refunds++; st.refundSum += bill; continue; }
@@ -237,6 +238,11 @@ function salesStats(sessions, excludeTobacco = true) {
     st.cash += Number(s.paymentCash) || 0;
     st.card += Number(s.paymentCard) || 0;
     st.terminal += Number(s.paymentTerminal) || 0;
+    // Через какой банк прошёл терминал (sessions.terminalBank) — для сверки.
+    if ((Number(s.paymentTerminal) || 0) > 0) {
+      const bank = String(s.terminalBank || "").trim() || "банк не указан";
+      st.terminalBanks.set(bank, (st.terminalBanks.get(bank) || 0) + Number(s.paymentTerminal));
+    }
     st.comp += Number(s.paymentComp) || 0;
     // Агрегатор доставки (Яндекс Еда и др.): деньги переведёт он, позже.
     st.aggregator += Number(s.paymentAggregator) || 0;
@@ -272,6 +278,10 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     st.comp ? `за счёт заведения ${rub(st.comp)}` : "",
   ].filter(Boolean);
   if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);
+  const banks = [...st.terminalBanks.entries()];
+  if (banks.some(([b]) => b !== "банк не указан")) {
+    lines.push(`Терминал по банкам: ${banks.map(([b, v]) => `${b} ${rub(v)}`).join(", ")}`);
+  }
   if (st.takeaway || st.delivery) lines.push(`С собой: ${st.takeaway} · доставка: ${st.delivery}`);
   if (st.discount >= 1) lines.push(`Скидки: ${rub(st.discount)}`);
   const top = [...st.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);

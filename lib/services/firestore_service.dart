@@ -988,6 +988,7 @@ class FirestoreService {
     required double cash,
     required double card,
     double terminal = 0,
+    String terminalBank = '',
     required double comp,
     double aggregator = 0,
     String aggregatorId = '',
@@ -1033,6 +1034,8 @@ class FirestoreService {
       'paymentCash': cash,
       'paymentCard': card,
       'paymentTerminal': terminal,
+      // Через какой банк прошёл терминал — для сверки поступлений.
+      if (terminal > 0 && terminalBank.isNotEmpty) 'terminalBank': terminalBank,
       'paymentComp': comp,
       // Агрегатор доставки — отдельной строкой: деньги придут от него позже.
       if (aggregator > 0) 'paymentAggregator': aggregator,

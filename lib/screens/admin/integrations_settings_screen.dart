@@ -7,6 +7,7 @@ import '../../services/egais_service.dart';
 import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
+import '../../models/terminal_bank.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
 import '../../build_info.dart';
@@ -69,6 +70,14 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   TerminalProvider _terminalProvider = TerminalProvider.manual;
   final _terminalLoginCtrl = TextEditingController();
   final _terminalPasswordCtrl = TextEditingController();
+  // Терминалы каких банков стоят в заведении (TerminalBank.id).
+  List<String> _terminalBanks = [];
+  final _terminalBankOtherCtrl = TextEditingController();
+  // Терминал по кабелю через программу банка (CliTerminalService).
+  final _cliExeCtrl = TextEditingController();
+  final _cliArgsCtrl = TextEditingController();
+  final _cliResultCtrl = TextEditingController();
+  final _cliApproveCtrl = TextEditingController();
   bool _loading = true;
   bool _testing = false;
   String? _printerResult;
@@ -142,6 +151,12 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
     _terminalLoginCtrl.text = data['terminalLogin'] ?? '';
     _terminalPasswordCtrl.text = data['terminalPassword'] ?? '';
+    _terminalBanks = TerminalBank.parseIds(data['terminalBanks']);
+    _terminalBankOtherCtrl.text = data['terminalBankOther'] as String? ?? '';
+    _cliExeCtrl.text = data['terminalCliExe'] as String? ?? '';
+    _cliArgsCtrl.text = data['terminalCliArgs'] as String? ?? '';
+    _cliResultCtrl.text = data['terminalCliResult'] as String? ?? '';
+    _cliApproveCtrl.text = data['terminalCliApprove'] as String? ?? '';
     _onlineProvider = (data['onlinePayProvider'] as String?) ?? '';
     _onlineLoginCtrl.text = data['onlinePayLogin'] as String? ?? '';
     _onlinePasswordCtrl.text = data['onlinePayPassword'] as String? ?? '';
@@ -229,9 +244,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaOrangeCaPem': _kassaOrangeCaPemCtrl.text.trim(),
       'czCircuit': _czCircuit,
       'czToken': _czTokenCtrl.text.trim(),
-      'terminalProvider': _terminalProvider.id,
-      'terminalLogin': _terminalLoginCtrl.text.trim(),
-      'terminalPassword': _terminalPasswordCtrl.text.trim(),
+      ..._terminalSettings,
       'onlinePayProvider': _onlineProvider,
       'onlinePayLogin': _onlineLoginCtrl.text.trim(),
       'onlinePayPassword': _onlinePasswordCtrl.text.trim(),
@@ -533,12 +546,21 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     });
   }
 
+  /// Настройки терминала — и для сохранения, и для проверки до него.
+  Map<String, dynamic> get _terminalSettings => {
+        'terminalProvider': _terminalProvider.id,
+        'terminalLogin': _terminalLoginCtrl.text.trim(),
+        'terminalPassword': _terminalPasswordCtrl.text.trim(),
+        'terminalBanks': _terminalBanks,
+        'terminalBankOther': _terminalBankOtherCtrl.text.trim(),
+        'terminalCliExe': _cliExeCtrl.text.trim(),
+        'terminalCliArgs': _cliArgsCtrl.text.trim(),
+        'terminalCliResult': _cliResultCtrl.text.trim(),
+        'terminalCliApprove': _cliApproveCtrl.text.trim(),
+      };
+
   void _applyActiveTerminal() {
-    paymentTerminalService = buildTerminalService({
-      'terminalProvider': _terminalProvider.id,
-      'terminalLogin': _terminalLoginCtrl.text.trim(),
-      'terminalPassword': _terminalPasswordCtrl.text.trim(),
-    });
+    paymentTerminalService = buildTerminalService(_terminalSettings);
   }
 
   void _applyActiveEgais() {
@@ -698,6 +720,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     switch (p) {
       case TerminalProvider.manual:
       case TerminalProvider.onlineQr:
+      case TerminalProvider.cli:
         return (first: null, second: null);
       case TerminalProvider.tinkoffSbp:
         return (first: 'TerminalKey', second: 'Пароль терминала');
@@ -711,8 +734,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   /// Ручной терминал ничего не запрашивает у банка — проверять нечего.
   Future<void> _testTerminal() async {
     if (_terminalProvider == TerminalProvider.manual) {
-      setState(() => _terminalTestResult = 'Этот режим ничего не запрашивает у банка — '
-          'проверять нечего, он «доступен» всегда.');
+      final names = [for (final id in _terminalBanks) TerminalBank.label(id, other: _terminalBankOtherCtrl.text)];
+      setState(() => _terminalTestResult = names.length > 1
+          ? '✓ При оплате касса спросит, на каком терминале оплатили (${names.join(', ')}), и запишет банк в чек.'
+          : names.length == 1
+              ? '✓ При оплате касса спросит, прошла ли оплата на терминале ${names.first}, и запишет банк в чек.'
+              : '✓ При оплате касса спросит, прошла ли оплата на терминале. Отметьте банк — он попадёт в чек и отчёт.');
+      return;
+    }
+    if (_terminalProvider == TerminalProvider.onlineQr && !_onlineBankReady) {
+      setState(() => _terminalTestResult = 'Ошибка: банк для QR не подключён. Подключите и проверьте его ниже, '
+          'в разделе «Онлайн-оплата гостей» — после этого QR заработает.');
       return;
     }
     setState(() {
@@ -725,7 +757,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         _terminalTesting = false;
         _terminalTestResult = _terminalProvider == TerminalProvider.sberUpos
             ? 'Терминал через UPOS подключается к Windows-кассе — проверьте с неё'
-            : 'Заполните логин/пароль терминала';
+            : _terminalProvider == TerminalProvider.cli
+                ? (isWindowsApp ? 'Ошибка: укажите путь к программе банка' : 'Терминал по кабелю подключается к Windows-кассе — проверьте с неё')
+                : 'Заполните логин/пароль терминала';
       });
       return;
     }
@@ -828,6 +862,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _czTokenCtrl.dispose();
     _czTestCodeCtrl.dispose();
     _terminalLoginCtrl.dispose();
+    _terminalBankOtherCtrl.dispose();
+    _cliExeCtrl.dispose();
+    _cliArgsCtrl.dispose();
+    _cliResultCtrl.dispose();
+    _cliApproveCtrl.dispose();
     _terminalPasswordCtrl.dispose();
     super.dispose();
   }
@@ -1148,21 +1187,130 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         ],
       );
 
+  /// Банк онлайн-оплаты подключён и подтверждён — без него QR не показать.
+  bool get _onlineBankReady =>
+      OnlinePayProvider.byId(_onlineProvider) != null && _onlineVerified && _onlineSignature == _onlineSaved;
+
   /// Какой банк покажет QR на кассе — тот, что подключён к онлайн-оплате.
   String _onlineBankForQr() {
     final p = OnlinePayProvider.byId(_onlineProvider);
     if (p == null) return 'Через банк из «Онлайн-оплаты гостей» — сначала подключите его ниже';
-    final ok = _onlineVerified && _onlineSignature == _onlineSaved;
-    return 'Через ${_bankName(p)}${ok ? '' : ' — проверьте подключение банка ниже'}';
+    return 'Через ${_bankName(p)}${_onlineBankReady ? '' : ' — проверьте подключение банка ниже'}';
   }
+
+  String get _terminalBanksText =>
+      [for (final id in _terminalBanks) TerminalBank.label(id, other: _terminalBankOtherCtrl.text)].join(', ');
+
+  /// Строка под заголовком раздела: что выбрано и готово ли.
+  ({String text, bool ok}) get _terminalStatus {
+    switch (_terminalProvider) {
+      case TerminalProvider.manual:
+        return (text: _terminalBanks.isEmpty ? 'Терминал любого банка' : 'Терминал: $_terminalBanksText', ok: true);
+      case TerminalProvider.onlineQr:
+        return _onlineBankReady
+            ? (text: 'QR на экране кассы · ${_bankName(OnlinePayProvider.byId(_onlineProvider)!)}', ok: true)
+            : (text: 'QR на экране — сначала подключите банк ниже', ok: false);
+      case TerminalProvider.sberUpos:
+        return (text: 'Сбер · UPOS на Windows-кассе', ok: true);
+      case TerminalProvider.cli:
+        return _cliExeCtrl.text.trim().isEmpty
+            ? (text: 'По кабелю — укажите программу банка', ok: false)
+            : (text: 'По кабелю${_terminalBanks.isEmpty ? '' : ' · $_terminalBanksText'}', ok: true);
+      case TerminalProvider.tinkoffSbp:
+        return (text: _terminalProvider.label, ok: true);
+    }
+  }
+
+  /// Какие терминалы стоят в заведении — несколько можно отметить: касса
+  /// спросит при оплате, на каком оплатили, и разложит выручку по банкам.
+  Widget _bankPicker({required bool multi}) {
+    final ids = [for (final b in TerminalBank.all) b.id, TerminalBank.otherId];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Label(multi ? 'Терминалы каких банков стоят в заведении' : 'Чей терминал'),
+        const SizedBox(height: 4),
+        _Hint(multi
+            ? 'Можно отметить несколько: при оплате касса спросит, на каком терминале оплатили, а в чеке и X-отчёте '
+                'выручка будет разложена по банкам — так проще сверить поступления.'
+            : 'Банк попадёт в чек и X-отчёт.'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final id in ids)
+              FilterChip(
+                label: Text(TerminalBank.label(id)),
+                selected: _terminalBanks.contains(id),
+                onSelected: (on) => setState(() {
+                  if (!multi) _terminalBanks = on ? [id] : [];
+                  if (multi && on) _terminalBanks = [..._terminalBanks, id];
+                  if (multi && !on) _terminalBanks = _terminalBanks.where((x) => x != id).toList();
+                }),
+              ),
+          ],
+        ),
+        if (_terminalBanks.contains(TerminalBank.otherId)) ...[
+          const SizedBox(height: 10),
+          TextField(
+            controller: _terminalBankOtherCtrl,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'Название банка', hintText: 'Например, Хлынов'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Программа банка для терминала по кабелю — шаблон ARCUS 2 подставляется
+  /// одной кнопкой, остальное заполняет инженер банка.
+  List<Widget> _cliFields() => [
+        const _Hint('Терминал, подключённый к Windows-кассе кабелем: касса сама передаёт сумму программе банка '
+            '(ARCUS 2 или другой, которую установил банк). Оплата засчитывается сама, только если в файле '
+            'итога есть строка «одобрено» из поля ниже; иначе касса спросит кассира, что показал терминал — '
+            'двойного списания не будет. Параметры уточните у банка и проверьте тестом на 1 ₽.'),
+        OutlinedButton.icon(
+          onPressed: () => setState(() {
+            _cliExeCtrl.text = CliTerminalService.arcusExe;
+            _cliArgsCtrl.text = CliTerminalService.arcusArgs;
+            _cliResultCtrl.text = CliTerminalService.arcusResult;
+          }),
+          icon: const Icon(Icons.auto_fix_high, size: 18),
+          label: const Text('Подставить шаблон ARCUS 2'),
+        ),
+        TextField(
+          controller: _cliExeCtrl,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(labelText: 'Программа банка (.exe)', hintText: r'C:\Arcus2\CommandLineTool\bin\CommandLineTool.exe'),
+        ),
+        TextField(
+          controller: _cliArgsCtrl,
+          decoration: const InputDecoration(
+              labelText: 'Параметры оплаты', hintText: '/o1 /a{kop} /c643', helperText: '{kop} — сумма в копейках, {rub} — в рублях'),
+        ),
+        TextField(
+          controller: _cliResultCtrl,
+          decoration: const InputDecoration(labelText: 'Файл итога (необязательно)', hintText: r'C:\Arcus2\rc.out'),
+        ),
+        TextField(
+          controller: _cliApproveCtrl,
+          decoration: const InputDecoration(
+              labelText: 'Строка «одобрено» в файле итога (необязательно)',
+              helperText: 'Целиком, например 000. Пусто — касса каждый раз спросит кассира'),
+        ),
+        _bankPicker(multi: false),
+      ];
 
   Widget _terminalSection() {
     final fields = _terminalFields(_terminalProvider);
+    final status = _terminalStatus;
+    final qr = _terminalProvider == TerminalProvider.tinkoffSbp || _terminalProvider == TerminalProvider.onlineQr;
     return _Section(
       icon: Icons.credit_card,
       title: 'Терминал оплаты',
-      status: _terminalProvider.label,
-      active: true,
+      status: status.text,
+      active: status.ok,
       children: [
         const _Hint('Как касса принимает оплату картой и по СБП у стойки. Кнопка «Терминал» в окне '
             'оплаты работает по выбранному здесь способу. Оплата гостями из приложения — в разделе '
@@ -1171,20 +1319,33 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           value: _terminalProvider,
           options: [
             const _Opt(TerminalProvider.manual, 'Терминал любого банка',
-                'Сбер, ВТБ, Альфа, Т-Банк, Газпромбанк, ПСБ и другие: сумму набирают на терминале, '
-                    'касса спрашивает, прошла ли оплата'),
+                'Сбер, ВТБ, Альфа, Т-Банк, Газпромбанк, ПСБ, Райффайзен, Совкомбанк и ещё 20 банков, а также '
+                    'терминал в телефоне и табличка с QR СБП: сумму набирают на терминале, касса спрашивает, '
+                    'прошла ли оплата'),
             _Opt(
                 TerminalProvider.onlineQr,
                 'QR на экране кассы — без терминала',
                 '${_onlineBankForQr()}. Гость платит телефоном: по СБП или на странице банка картой'),
             const _Opt(TerminalProvider.sberUpos, 'Сбер — терминал на кассе',
                 'Сумма уходит на терминал сама: Windows-касса с кабелем, UPOS'),
+            const _Opt(TerminalProvider.cli, 'Терминал по кабелю — ARCUS 2 и другие',
+                'Сумма уходит на терминал сама через программу банка на Windows-кассе'),
             if (_terminalProvider == TerminalProvider.tinkoffSbp)
               const _Opt(TerminalProvider.tinkoffSbp, 'Т-Банк — QR СБП (прежний способ)',
                   'Лучше выбрать «QR на экране кассы» — ключи Т-Банка тогда хранятся только на сервере'),
           ],
-          onChanged: (v) => setState(() => _terminalProvider = v),
+          onChanged: (v) => setState(() {
+            _terminalProvider = v;
+            _terminalTestResult = null;
+            // У терминала по кабелю банк один — оставляем первый из отмеченных.
+            if (v == TerminalProvider.cli && _terminalBanks.length > 1) _terminalBanks = [_terminalBanks.first];
+          }),
         ),
+        if (_terminalProvider == TerminalProvider.manual) _bankPicker(multi: true),
+        if (_terminalProvider == TerminalProvider.cli) ..._cliFields(),
+        if (_terminalProvider == TerminalProvider.onlineQr && !_onlineBankReady)
+          const _Result('Сначала подключите банк ниже, в разделе «Онлайн-оплата гостей», и нажмите «Проверить '
+              'подключение» — после этого касса сможет показывать QR.'),
         if (fields.first != null)
           TextField(controller: _terminalLoginCtrl, decoration: InputDecoration(labelText: fields.first)),
         if (fields.second != null)
@@ -1194,11 +1355,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             obscureText: true,
           ),
         OutlinedButton.icon(
-          onPressed: _terminalTesting ? null : _testTerminal,
+          onPressed: _terminalTesting || (_terminalProvider == TerminalProvider.onlineQr && !_onlineBankReady)
+              ? null
+              : _testTerminal,
           icon: const Icon(Icons.point_of_sale),
-          label: Text(_terminalProvider == TerminalProvider.tinkoffSbp || _terminalProvider == TerminalProvider.onlineQr
+          label: Text(qr
               ? 'Тест: показать QR на 1 ₽'
-              : 'Проверить'),
+              : _terminalProvider == TerminalProvider.manual
+                  ? 'Проверить'
+                  : 'Тест: оплата 1 ₽ на терминале'),
         ),
         if (_terminalTestResult != null) _Result(_terminalTestResult!),
       ],
