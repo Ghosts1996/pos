@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
+import '../build_info.dart';
 import 'people_directory.dart';
 import '../models/venue_models.dart';
 import '../utils/shared_stream.dart';
@@ -25,8 +26,15 @@ class VenueService {
   VenueProfile get _cached => notifier.value;
   set _cached(VenueProfile p) {
     notifier.value = p;
-    People.instance.setMode(p.piiMode);
+    People.instance.setMode(piiModeOf(p));
   }
+
+  /// Режим справочника людей: у всех заведений платформы имена и телефоны
+  /// только в РФ ('rf') — отметка piiMode в профиле лишь показывает, что
+  /// старые записи уже перенесены (saas-gateway/pii-migrate.js). Сборка
+  /// одного заведения и сборка без адреса справочника — как в профиле.
+  static String piiModeOf(VenueProfile p) =>
+      AppScope.isSaasMode && kPiiGatewayUrl.isNotEmpty ? 'rf' : p.piiMode;
   VenueProfile get cached => _cached;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _watchSub;
   String _watchedPath = '';
@@ -63,7 +71,7 @@ class VenueService {
   Stream<VenueProfile> stream() => _profileS.get(
       AppScope.tenantId ?? '-', () => AppScope.doc(_profilePath).snapshots().map((d) {
             final p = VenueProfile.fromMap(d.data());
-            People.instance.setMode(p.piiMode);
+            People.instance.setMode(piiModeOf(p));
             return p;
           }));
 

@@ -507,7 +507,30 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     return { ok: true, count: items.length, filled };
   }
 
+  /**
+   * Стереть всё о заведении: его записи в Firestore удаляются (демо
+   * сбросилось). chain: true — это последняя точка сети, тогда и общие
+   * профили и согласия гостей сети. Только для saas-gateway и до удаления
+   * самого заведения: без него запрос не пройдёт проверку (access).
+   */
+  async function piiPurge(a, body) {
+    if (!a.internal) throw new VaultError(403, "только для сервера платформы");
+    let removed = 0;
+    const del = async (sql, key) => {
+      removed += (await query(sql, [key])).rowCount || 0;
+    };
+    await del("DELETE FROM staff_profiles WHERE tenant_id = $1", a.tenantId);
+    await del("DELETE FROM contact_records WHERE tenant_id = $1", a.tenantId);
+    const guestKeys = [a.tenantId, ...(body.chain === true && a.chainId ? [`chain:${a.chainId}`] : [])];
+    for (const key of guestKeys) {
+      await del("DELETE FROM guest_profiles WHERE tenant_id = $1", key);
+      await del("DELETE FROM guest_consents WHERE tenant_id = $1", key);
+    }
+    return { ok: true, removed };
+  }
+
   const OPS = {
+    pii_purge: piiPurge,
     pii_seed: piiSeed,
     pii_sync: piiSync,
     pii_lookup: piiLookup,

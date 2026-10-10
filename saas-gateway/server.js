@@ -4126,6 +4126,16 @@ async function purgeDemoTenant(tenantId) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
   const chainId = (await tenantRef.get()).data()?.chainId || null;
+  // Имена и телефоны, которые вводили в демо, — в справочнике в РФ:
+  // стираем их там, пока заведение ещё есть (по нему справочник проверяет
+  // запрос). У последней точки демо-сети — и общих гостей сети.
+  if (pii.enabled()) {
+    const points = chainId ? await firestore.collection("tenants").where("chainId", "==", chainId).limit(2).get() : null;
+    const lastPoint = !!chainId && points.docs.every((d) => d.id === tenantId);
+    await pii.call({ tenantId, kind: "pii_purge", ...(lastPoint ? { chain: true } : {}) }).catch((e) => {
+      console.error(`saas-gateway: справочник демо ${tenantId} не стёрт:`, e.message || e);
+    });
+  }
   for (const name of TENANT_SUBCOLLECTIONS) {
     await firestore.recursiveDelete(tenantRef.collection(name));
   }
@@ -6526,21 +6536,49 @@ async function recordContactInRussia(req, payload) {
 // Справочник людей в РФ — запросы от имени сервера (Telegram, заказы гостя).
 const pii = createPiiInternal({ urls: PII_GATEWAY_URLS, db });
 
-/** Режим новых заведений: 'rf', когда справочник в РФ подключён.
- *  NEW_TENANTS_PII_MODE=mirror — запасной выход на случай сбоя справочника. */
+/** Отметка режима у нового заведения: 'rf', когда справочник в РФ подключён
+ *  (на сервере — всегда; без него — только разработка и тесты). Копии имён
+ *  в Firestore («mirror») у заведений платформы больше не бывает. */
 function newTenantPiiMode() {
-  if (process.env.NEW_TENANTS_PII_MODE === "mirror") return "mirror";
   return pii.enabled() ? "rf" : "mirror";
 }
 
-// Перевод действующих заведений на хранение только в РФ — см. pii-migrate.js.
+// Перенос старых записей заведений в РФ — см. pii-migrate.js.
 const piiMigrate = createPiiMigrate({ db, admin, pii, HttpError });
 
 /**
- * Супер-админ: перевод заведения на хранение персональных данных только в
- * РФ. action: status | copy | switch | scrub (dryRun — пробный проход) |
- * rollback. Переключение с непроверенными кассами (force), очистка
- * Firestore и откат — только после ввода пароля.
+ * Перенос старых записей в РФ и очистка Firestore без участия человека: по
+ * шагу в час (autoStep). Делать нечего — следующий проход через сутки или
+ * когда подойдёт срок очистки; после перезапуска сервера — заново.
+ */
+function schedulePiiAutoMigration() {
+  let idleUntil = 0;
+  let busy = false;
+  const tick = async () => {
+    if (busy || Date.now() < idleUntil) return;
+    busy = true;
+    try {
+      const r = await piiMigrate.autoStep();
+      if (r.idle) {
+        idleUntil = Math.min(Date.now() + 24 * 3600 * 1000, r.wakeAt || Infinity);
+      } else {
+        console.log(`saas-gateway: перенос ПДн в РФ — ${r.tenantId}: ${r.step}${r.ok ? "" : " не вышел, повторим позже"}`);
+      }
+    } catch (e) {
+      console.error("saas-gateway: перенос ПДн в РФ:", e.message || e);
+    } finally {
+      busy = false;
+    }
+  };
+  setTimeout(tick, Number(process.env.CRON_FIRST_DELAY_MS) || 10 * 60 * 1000);
+  setInterval(tick, 60 * 60 * 1000);
+}
+
+/**
+ * Супер-админ: перенос старых записей заведения в РФ вручную (обычно идёт
+ * сам). action: status | copy | switch | scrub (dryRun — пробный проход).
+ * Переключение с непроверенными кассами (force) и очистка Firestore —
+ * только после ввода пароля.
  */
 async function handlePiiMigration(req, res) {
   const decoded = await verifyAuth(req);
@@ -6554,7 +6592,7 @@ async function handlePiiMigration(req, res) {
     sendJson(res, 200, await piiMigrate.status(tenantId));
     return;
   }
-  if ((action === "scrub" && !dryRun) || action === "rollback" || (action === "switch" && force)) {
+  if ((action === "scrub" && !dryRun) || (action === "switch" && force)) {
     requireRecentAuth(decoded);
   }
   const result = await piiMigrate.run(tenantId, action, { by: decoded.uid, dryRun, force });
@@ -6809,6 +6847,7 @@ const server = http.createServer((req, res) => {
 scheduleDemoCleanup();
 scheduleBillingCron();
 scheduleUsageCron();
+schedulePiiAutoMigration();
 scheduleCapabilitiesCron();
 schedulePlatformMetricsCron();
 scheduleCertificateCheck();
