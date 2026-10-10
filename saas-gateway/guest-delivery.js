@@ -118,7 +118,7 @@ function priceItems(lines, menu, categoryNames) {
   return { items: out, banned };
 }
 
-function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, recordContact, onlinePayReady, now = () => new Date() }) {
+function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, recordContact, onlinePayReady, pii, now = () => new Date() }) {
   const tenantRef = (t) => db().collection("tenants").doc(t);
 
   function checkTenantId(tenantId) {
@@ -225,6 +225,17 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const sessionId = sessionRef.id;
     // Сначала — в базу в РФ. Не записалось — заказ не создаём.
     await recordContact(req, { tenantId, kind: "delivery", id: sessionId, name, phone, address });
+    // Заведение переведено на хранение в РФ: имени, телефона, адреса и
+    // комментария в Firestore нет — комментарий и контакт для чека тоже в
+    // справочник, от имени гостя (он видит свой заказ).
+    const rf = !!pii && (await pii.mode(tenantId)) === "rf";
+    if (rf) {
+      try {
+        await pii.put(tenantId, [{ k: "delivery", id: sessionId, fields: { extra: { ...(comment ? { comment } : {}), guestContact: phone } } }], decoded.uid);
+      } catch (_) {
+        throw new HttpError(503, "Сервер заказов недоступен — попробуйте через минуту");
+      }
+    }
 
     const ts = admin.firestore.Timestamp;
     const nowTs = ts.now();
@@ -248,10 +259,9 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         guestTag: "",
         orderType,
         orderNo,
-        customerName: name,
-        customerPhone: phone,
-        ...(address ? { deliveryAddress: address } : {}),
-        ...(comment ? { deliveryComment: comment } : {}),
+        ...(rf ? {} : { customerName: name, customerPhone: phone }),
+        ...(!rf && address ? { deliveryAddress: address } : {}),
+        ...(!rf && comment ? { deliveryComment: comment } : {}),
         deliveryStatus: "new",
         source: "app",
         clientUid: decoded.uid,
@@ -270,7 +280,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         paymentCard: 0,
         paymentTerminal: 0,
         paymentComp: 0,
-        guestContact: phone,
+        ...(rf ? {} : { guestContact: phone }),
         closedWithoutPayment: false,
         receiptPrinted: false,
         fiscalReceiptPrinted: false,
@@ -292,9 +302,9 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       tx.set(t.collection("guestOrders").doc(), {
         sessionId,
         tableId: TAKEAWAY_TABLE,
-        tableName: `${label} · ${name}`,
+        tableName: rf ? label : `${label} · ${name}`,
         clientUid: decoded.uid,
-        guestName: name,
+        guestName: rf ? "" : name,
         items: priced.items,
         comment,
         targetPosition: "",

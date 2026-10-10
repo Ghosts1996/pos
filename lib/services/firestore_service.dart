@@ -128,6 +128,8 @@ class FirestoreService {
           'deliveryStatusAt': Timestamp.fromDate(DateTime.now()),
           if (Pd.mirror && courierName.isNotEmpty) 'courierName': courierName,
           if (Pd.mirror && courierPhone.isNotEmpty) 'courierPhone': courierPhone,
+          // Без имени: Telegram-бот и кассы видят, что курьер назначен.
+          if (courierName.isNotEmpty) 'courierSet': true,
           // Номер курьера нужен гостю, только пока заказ в пути.
           if (to == 'done') 'courierPhone': FieldValue.delete(),
           // Выдан/доставлен — из списка «в работе» уходит (неоплаченный

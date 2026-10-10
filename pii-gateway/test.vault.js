@@ -216,6 +216,19 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_phone", phone: "12" })).status, 400);
   });
 
+  test("сервер пишет от имени гостя: гость потом видит и правит свою запись", async () => {
+    let r = await internal({ tenantId: "t1", kind: "pii_put", asUid: "g5", k: "reservation", id: "r-app", fields: { name: "Олег", phone: "79001110000" } });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    r = await as("g5")({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "reservation", id: "r-app" }] });
+    assert.deepEqual(r.json.contacts.map((x) => x.name), ["Олег"]);
+    assert.equal((await as("g5")({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r-app", fields: { name: "Олег П." } })).status, 200);
+    assert.equal((await other({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r-app", fields: { name: "x" } })).status, 403);
+    // Без asUid — запись сервера, гостю не видна.
+    await internal({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r-srv", fields: { name: "Сервер" } });
+    r = await as("g5")({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "reservation", id: "r-srv" }] });
+    assert.equal(r.json.contacts.length, 0);
+  });
+
   test("ограничения: лишние поля, плохие id, слишком много записей", async () => {
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r9", fields: { extra: { comment: "x" } } })).status, 400);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "staff", id: "../x", fields: { name: "x" } })).status, 400);
