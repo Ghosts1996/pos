@@ -8,6 +8,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../utils/adaptive.dart';
 import '../utils/kitchen_slips.dart';
+import '../models/aggregator.dart';
 
 /// Печать информационного (не фискального) чека на 58/80-мм принтере
 /// командами ESC/POS: по Bluetooth (`print_bluetooth_thermal`) или по сети
@@ -546,6 +547,9 @@ void _applyPrintFlags(Map<String, dynamic> data) {
   printKitchenAuto = data['printKitchenAuto'] as bool? ?? false;
   kitchenPrinterIp = (data['kitchenPrinterIp'] as String? ?? '').trim();
   barPrinterIp = (data['barPrinterIp'] as String? ?? '').trim();
+  // Агрегаторы доставки — для окна оплаты: тот же документ настроек, и
+  // так же подхватываются, если админ поменял их на другом устройстве.
+  applyAggregatorSettings(data);
 }
 
 DateTime? _printFlagsAt;

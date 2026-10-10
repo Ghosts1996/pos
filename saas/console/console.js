@@ -5183,7 +5183,7 @@ function watchDashboardData(tenantId) {
           // Возвращённый чек не выручка — так же считает X-отчёт кассы.
           if (s.refunded === true) return sum;
           return sum + (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
-            (Number(s.paymentTerminal) || 0) + (Number(s.paymentComp) || 0);
+            (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
         }, 0);
         draw();
       },
@@ -5207,7 +5207,7 @@ function watchDashboardData(tenantId) {
               if (s.refunded === true) return;
               checks++;
               revenue += (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
-                (Number(s.paymentTerminal) || 0) + (Number(s.paymentComp) || 0);
+                (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
             });
             chainToday[t.id] = { revenue, checks };
             draw();

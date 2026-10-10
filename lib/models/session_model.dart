@@ -344,6 +344,19 @@ class SessionModel {
   final double paymentTerminal; // сколько оплачено через платёжный терминал (эквайринг)
   final double paymentComp; // сколько списано за счёт заведения
 
+  /// Оплачено через агрегатор доставки (Яндекс Еда, Купер, Мегамаркет):
+  /// гость заплатил в приложении агрегатора, заведению деньги придут от
+  /// него позже, за вычетом комиссии. Не эквайринг и не наличные.
+  final double paymentAggregator;
+
+  /// Какой агрегатор (Aggregator.id) и его название на момент оплаты.
+  final String aggregator;
+  final String aggregatorName;
+
+  /// Комиссия агрегатора на момент оплаты, % — для отчёта «к выплате»:
+  /// договор могут поменять, а прошлые месяцы считаются по старой ставке.
+  final double aggregatorCommission;
+
   /// Гость уже оплатил со стола по СБП (пишет шлюз после подтверждения банка).
   final double guestPaidTotal;
 
@@ -444,6 +457,10 @@ class SessionModel {
     this.paymentCard = 0,
     this.paymentTerminal = 0,
     this.paymentComp = 0,
+    this.paymentAggregator = 0,
+    this.aggregator = '',
+    this.aggregatorName = '',
+    this.aggregatorCommission = 0,
     this.guestPaidTotal = 0,
     this.orderType = '',
     String customerPhone = '',
@@ -499,6 +516,10 @@ class SessionModel {
       paymentCard: (data['paymentCard'] ?? 0).toDouble(),
       paymentTerminal: (data['paymentTerminal'] ?? 0).toDouble(),
       paymentComp: (data['paymentComp'] ?? 0).toDouble(),
+      paymentAggregator: (data['paymentAggregator'] as num?)?.toDouble() ?? 0,
+      aggregator: asText(data['aggregator']),
+      aggregatorName: asText(data['aggregatorName']),
+      aggregatorCommission: (data['aggregatorCommission'] as num?)?.toDouble() ?? 0,
       guestPaidTotal: (data['guestPaidTotal'] as num?)?.toDouble() ?? 0,
       orderType: asText(data['orderType']),
       customerPhone: asText(data['customerPhone']),
@@ -560,6 +581,10 @@ class SessionModel {
       'paymentCard': paymentCard,
       'paymentTerminal': paymentTerminal,
       'paymentComp': paymentComp,
+      if (paymentAggregator > 0) 'paymentAggregator': paymentAggregator,
+      if (aggregator.isNotEmpty) 'aggregator': aggregator,
+      if (aggregatorName.isNotEmpty) 'aggregatorName': aggregatorName,
+      if (paymentAggregator > 0) 'aggregatorCommission': aggregatorCommission,
       if (Pd.mirror) 'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
       'receiptPrinted': receiptPrinted,
@@ -579,8 +604,12 @@ class SessionModel {
   double get promoBase => PromoPolicy.promoBase(orderItems);
   double get totalWithDiscount => orderTotal - promoBase * discountPercent / 100;
 
-  /// Сумма, фактически принятая при оплате (нал + карта + терминал + за счёт заведения)
-  double get paymentTotal => paymentCash + paymentCard + paymentTerminal + paymentComp;
+  /// Сумма, фактически принятая при оплате (нал + карта + терминал + агрегатор
+  /// + за счёт заведения).
+  double get paymentTotal => paymentCash + paymentCard + paymentTerminal + paymentAggregator + paymentComp;
+
+  /// Сколько агрегатор переведёт заведению за этот чек (за вычетом комиссии).
+  double get aggregatorPayout => paymentAggregator * (1 - aggregatorCommission.clamp(0, 100) / 100);
 
   Duration get remaining => plannedEnd.difference(DateTime.now());
 }
