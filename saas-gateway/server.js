@@ -26,6 +26,7 @@ const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram } = require("./telegram");
 const { createPiiInternal } = require("./pii-internal");
+const { createPiiMigrate } = require("./pii-migrate");
 
 /**
  * saas-gateway — серверная часть платформы ZalPOS (проект saas-3bdc8).
@@ -674,7 +675,13 @@ async function createTenantRecords({ name, slug, chainId = null, uid, email = nu
     code: randomInviteCode(), rotatedAt: now,
   });
   // Название нужно чеку, ИИ-помощнику и профилю заведения на кассе.
-  batch.set(tenantRef.collection("meta").doc("venueProfile"), { name: name.trim(), venueType }, { merge: true });
+  // Новое заведение сразу хранит имена и телефоны только в РФ (piiMode
+  // 'rf'): старых касс у него нет, переносить нечего, а за границу ничего
+  // не уходит — заведению не нужно ничего подавать в Роскомнадзор из-за
+  // ZalPOS. Обычный режим — если справочник в РФ на сервере не подключён.
+  batch.set(tenantRef.collection("meta").doc("venueProfile"), {
+    name: name.trim(), venueType, ...(newTenantPiiMode() === "rf" ? { piiMode: "rf" } : {}),
+  }, { merge: true });
   // Своя подписка только у одиночного заведения.
   if (!chainId) {
     batch.set(firestore.collection("subscriptions").doc(tenantId), {
@@ -6510,6 +6517,43 @@ async function recordContactInRussia(req, payload) {
 // Справочник людей в РФ — запросы от имени сервера (Telegram, заказы гостя).
 const pii = createPiiInternal({ urls: PII_GATEWAY_URLS, db });
 
+/** Режим новых заведений: 'rf', когда справочник в РФ подключён.
+ *  NEW_TENANTS_PII_MODE=mirror — запасной выход на случай сбоя справочника. */
+function newTenantPiiMode() {
+  if (process.env.NEW_TENANTS_PII_MODE === "mirror") return "mirror";
+  return pii.enabled() ? "rf" : "mirror";
+}
+
+// Перевод действующих заведений на хранение только в РФ — см. pii-migrate.js.
+const piiMigrate = createPiiMigrate({ db, admin, pii, HttpError });
+
+/**
+ * Супер-админ: перевод заведения на хранение персональных данных только в
+ * РФ. action: status | copy | switch | scrub (dryRun — пробный проход) |
+ * rollback. Переключение с непроверенными кассами (force), очистка
+ * Firestore и откат — только после ввода пароля.
+ */
+async function handlePiiMigration(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
+  const action = typeof body.action === "string" ? body.action : "status";
+  const dryRun = body.dryRun === true;
+  const force = body.force === true;
+  if (action === "status") {
+    sendJson(res, 200, await piiMigrate.status(tenantId));
+    return;
+  }
+  if ((action === "scrub" && !dryRun) || action === "rollback" || (action === "switch" && force)) {
+    requireRecentAuth(decoded);
+  }
+  const result = await piiMigrate.run(tenantId, action, { by: decoded.uid, dryRun, force });
+  await writeSecurityEvent(req, decoded, "piiMigration", { tenantId, metadata: { step: action, dryRun, force } });
+  const { done: _done, ...out } = result;
+  sendJson(res, 200, { ok: true, ...out });
+}
+
 // Заказ доставки и с собой из приложения гостя — см. guest-delivery.js.
 const guestDelivery = createGuestDelivery({
   db,
@@ -6682,6 +6726,7 @@ const ROUTES = {
   "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
   "/resolveDataRequest": handleResolveDataRequest,
   "/findGuest": handleFindGuest,
+  "/piiMigration": handlePiiMigration,
   "/anonymizeGuest": handleAnonymizeGuest,
   "/deleteGuestData": handleDeleteGuestData,
   "/registerGuestRecovery": handleRegisterGuestRecovery,

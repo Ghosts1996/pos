@@ -147,7 +147,7 @@ async function run() {
   {
     // Справочник (vault.js): без заведения — 400, без токена и с чужим
     // внутренним секретом (в тесте он не задан) — 401, до базы не доходит.
-    for (const kind of ["pii_sync", "pii_lookup", "pii_put", "pii_erase", "pii_search", "pii_phone"]) {
+    for (const kind of ["pii_sync", "pii_lookup", "pii_put", "pii_erase", "pii_search", "pii_phone", "pii_seed"]) {
       const noTenant = await request("POST", "/", { body: JSON.stringify({ kind }) });
       assert.strictEqual(noTenant.statusCode, 400, kind);
       const noToken = await request("POST", "/", { body: JSON.stringify({ kind, tenantId: "t1" }) });

@@ -14,6 +14,7 @@ import 'push_service.dart';
 import 'gift_card_service.dart';
 import 'venue_service.dart';
 import 'people_directory.dart';
+import 'staff_device_service.dart';
 import 'firestore_service.dart';
 import 'auto_stoplist_service.dart';
 import 'session_alerts_service.dart';
@@ -65,6 +66,9 @@ void startBackgroundServices() {
   // Справочник людей в РФ: копия на устройстве и синхронизация (сотрудники,
   // гости, контакты броней и доставки). Без заведения ничего не делает.
   unawaited(People.instance.start(staff: true));
+  // Какая сборка на этой кассе — по ней сервер решает, можно ли перевести
+  // заведение на хранение данных только в РФ.
+  unawaited(StaffDeviceService().reportVersion());
   VenueService.instance.watch();
 
   // Кто сейчас на смене — для выбора «кому чаевые» у гостя. Чинит смены,

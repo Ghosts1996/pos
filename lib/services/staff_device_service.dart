@@ -54,6 +54,25 @@ class StaffDeviceService {
     });
   }
 
+  /// Уровень поддержки справочника людей в РФ (People): с ним касса
+  /// работает в режиме rf — без имён и телефонов в Firestore.
+  static const piiLevel = 1;
+
+  /// Сообщить заведению, какая сборка стоит на этой кассе. Перевести
+  /// заведение на хранение данных только в РФ можно, когда все его кассы
+  /// это умеют (saas-gateway, pii-migrate.js). Не вышло — не страшно,
+  /// сообщим при следующем запуске.
+  Future<void> reportVersion() async {
+    if (!kSaasMode || _uid.isEmpty || AppScope.tenantId == null || AppScope.isDemo) return;
+    try {
+      await AppScope.col('devices').doc(_uid).update({
+        'appBuild': kBuildNumber,
+        'piiReady': piiLevel,
+        'seenAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
   /// Снять регистрацию (планшет выводится из зала).
   Future<void> unregister(String uid) => AppScope.col(_collection).doc(uid).delete();
 

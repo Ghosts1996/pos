@@ -289,6 +289,18 @@ describe("Полный путь joinAsDevice() как реальный клие�
     );
   });
 
+  it("касса отмечает в своём документе только сборку и готовность к режиму РФ", async () => {
+    const db = ctxFor("device1");
+    await setDoc(doc(db, "tenants/tenantA/devices/device1"), {
+      inviteCode: "DEMO1234", deviceName: "Демо", deviceType: "pos",
+      platform: "android", userId: "device1", status: "active",
+    });
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { appBuild: "412", piiReady: 1, seenAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { status: "disabled" }));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { piiReady: 1, deviceName: "Чужое" }));
+    await assertFails(updateDoc(doc(ctxFor("device2"), "tenants/tenantA/devices/device1"), { piiReady: 1 }));
+  });
+
   it("шаг 2: после шага 1 устройство создаёт tenantMembers тем же uid", async () => {
     const db = ctxFor("device1");
     await setDoc(doc(db, "tenants/tenantA/devices/device1"), {

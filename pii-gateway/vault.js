@@ -20,7 +20,9 @@
  *   pii_erase  — стереть значения (строка остаётся — так касса узнаёт
  *                об удалении при следующей синхронизации);
  *   pii_search — гости по телефону или имени;
- *   pii_phone  — чей это номер (замена phoneIndex в Firestore).
+ *   pii_phone  — чей это номер (замена phoneIndex в Firestore);
+ *   pii_seed   — перенос из Firestore перед переключением заведения:
+ *                только дописывает пустое (saas-gateway, pii-migrate.js).
  *
  * Кто что может: персонал заведения (tenantMembers) — всё в своём
  * заведении; гость — только свой профиль и свои контакты, а из
@@ -429,7 +431,84 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     return { ok: true };
   }
 
+  // ------------------------------------------------------------ перенос
+
+  /**
+   * Одна запись переноса: заполняет только пустые поля, уже записанное в
+   * РФ не трогает (оно новее копии в Firestore). Новая строка получает
+   * created_by = by (uid гостя для его брони и заказа — он потом видит её
+   * сам) или 'migration'. → 1, если что-то дописано.
+   */
+  async function seedOne(a, item) {
+    const k = item && item.k;
+    const id = item && item.id;
+    if (typeof id !== "string" || !ID_RE.test(id)) throw new VaultError(400, "некорректный id");
+    const f = item.fields && typeof item.fields === "object" ? item.fields : {};
+    const name = field(f.name, LIMITS.name) || "";
+    const phone = f.phone === undefined || f.phone === null ? "" : phoneDigits(f.phone) || String(f.phone).trim().slice(0, LIMITS.phone);
+    const by = typeof item.by === "string" && ID_RE.test(item.by) ? item.by : "migration";
+    if (k === "staff") {
+      const r = await query(
+        `INSERT INTO staff_profiles (tenant_id, employee_id, name, phone, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, 'migration', now())
+         ON CONFLICT (tenant_id, employee_id) DO UPDATE SET
+           name = CASE WHEN staff_profiles.name = '' THEN EXCLUDED.name ELSE staff_profiles.name END,
+           phone = CASE WHEN staff_profiles.phone = '' THEN EXCLUDED.phone ELSE staff_profiles.phone END,
+           updated_at = now()
+         WHERE (staff_profiles.name = '' AND EXCLUDED.name <> '') OR (staff_profiles.phone = '' AND EXCLUDED.phone <> '')
+         RETURNING employee_id`,
+        [a.tenantId, id, name, phone]
+      );
+      return r.rows.length;
+    }
+    if (k === "guest") {
+      const r = await query(
+        `INSERT INTO guest_profiles (tenant_id, uid, name, phone, updated_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (tenant_id, uid) DO UPDATE SET
+           name = CASE WHEN guest_profiles.name = '' THEN EXCLUDED.name ELSE guest_profiles.name END,
+           phone = CASE WHEN guest_profiles.phone = '' THEN EXCLUDED.phone ELSE guest_profiles.phone END,
+           updated_at = now()
+         WHERE (guest_profiles.name = '' AND EXCLUDED.name <> '') OR (guest_profiles.phone = '' AND EXCLUDED.phone <> '')
+         RETURNING uid`,
+        [a.storeKey, id, name, phone]
+      );
+      return r.rows.length;
+    }
+    if (!CONTACT_KINDS.includes(k)) throw new VaultError(400, "неизвестный вид записи");
+    const address = field(f.address, LIMITS.address) || "";
+    const extra = cleanExtra(k, f.extra, false) || {};
+    for (const key of Object.keys(extra)) if (extra[key] === null || extra[key] === "") delete extra[key];
+    const r = await query(
+      `INSERT INTO contact_records (tenant_id, kind, record_id, name, phone, address, extra, created_by, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'migration', now())
+       ON CONFLICT (tenant_id, kind, record_id) DO UPDATE SET
+         name = CASE WHEN contact_records.name = '' THEN EXCLUDED.name ELSE contact_records.name END,
+         phone = CASE WHEN contact_records.phone = '' THEN EXCLUDED.phone ELSE contact_records.phone END,
+         address = CASE WHEN contact_records.address = '' THEN EXCLUDED.address ELSE contact_records.address END,
+         extra = EXCLUDED.extra || contact_records.extra,
+         updated_at = now()
+       WHERE (contact_records.name = '' AND EXCLUDED.name <> '')
+          OR (contact_records.phone = '' AND EXCLUDED.phone <> '')
+          OR (contact_records.address = '' AND EXCLUDED.address <> '')
+          OR EXISTS (SELECT 1 FROM jsonb_object_keys(EXCLUDED.extra) AS x(key) WHERE NOT contact_records.extra ? x.key)
+       RETURNING record_id`,
+      [a.tenantId, k, id, name, phone, address, JSON.stringify(extra), by]
+    );
+    return r.rows.length;
+  }
+
+  async function piiSeed(a, body) {
+    if (!a.internal) throw new VaultError(403, "только для сервера платформы");
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (items.length > 500) throw new VaultError(400, "не больше 500 записей за раз");
+    let filled = 0;
+    for (const it of items) filled += await seedOne(a, it);
+    return { ok: true, count: items.length, filled };
+  }
+
   const OPS = {
+    pii_seed: piiSeed,
     pii_sync: piiSync,
     pii_lookup: piiLookup,
     pii_put: piiPut,

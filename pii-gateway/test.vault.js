@@ -256,6 +256,38 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal(docs["chains/c1/clients/g-chain"].phoneOnFile, true);
   });
 
+  test("перенос из Firestore: только сервер и только дописывает пустое", async () => {
+    let r = await staff({ tenantId: "t1", kind: "pii_seed", items: [{ k: "staff", id: "e-seed", fields: { name: "Х" } }] });
+    assert.equal(r.status, 403);
+    // Уже записанное в РФ — главнее копии из Firestore.
+    await staff({ tenantId: "t1", kind: "pii_put", items: [{ k: "staff", id: "e-seed", fields: { name: "Новое имя" } }] });
+    r = await internal({ tenantId: "t1", kind: "pii_seed", items: [
+      { k: "staff", id: "e-seed", fields: { name: "Старое имя", phone: "8 900 000-00-01" } },
+      { k: "guest", id: "g-seed", fields: { name: "Гость", phone: "79000000002" } },
+      { k: "reservation", id: "r-seed", fields: { name: "Бронь", phone: "79000000003" }, by: "g-seed" },
+      { k: "delivery", id: "d-seed", fields: { name: "Заказ", address: "Ленина, 1", extra: { courierName: "Курьер", comment: "" } } },
+    ] });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.filled, 4);
+    const look = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [
+      { k: "staff", id: "e-seed" }, { k: "guest", id: "g-seed" }, { k: "reservation", id: "r-seed" }, { k: "delivery", id: "d-seed" }] });
+    assert.equal(look.json.staff[0].name, "Новое имя");
+    assert.equal(look.json.staff[0].phone, "79000000001");
+    assert.equal(look.json.guests[0].phone, "79000000002");
+    const d = look.json.contacts.find((c) => c.k === "delivery");
+    assert.deepEqual(d.extra, { courierName: "Курьер" });
+    // Повтор ничего не меняет; бронь гость видит как свою.
+    r = await internal({ tenantId: "t1", kind: "pii_seed", items: [{ k: "staff", id: "e-seed", fields: { name: "Старое имя" } }] });
+    assert.equal(r.json.filled, 0);
+    const mine = await as("g-seed")({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "reservation", id: "r-seed" }] });
+    assert.equal(mine.json.contacts.length, 1);
+    // Дописывается только новый ключ extra, имеющийся не трогается.
+    r = await internal({ tenantId: "t1", kind: "pii_seed", items: [{ k: "delivery", id: "d-seed", fields: { extra: { courierName: "Другой", courierPhone: "79000000004" } } }] });
+    assert.equal(r.json.filled, 1);
+    const d2 = (await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "delivery", id: "d-seed" }] })).json.contacts[0];
+    assert.deepEqual(d2.extra, { courierName: "Курьер", courierPhone: "79000000004" });
+  });
+
   test("ограничения: лишние поля, плохие id, слишком много записей", async () => {
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "reservation", id: "r9", fields: { extra: { comment: "x" } } })).status, 400);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "staff", id: "../x", fields: { name: "x" } })).status, 400);

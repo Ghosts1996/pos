@@ -18,9 +18,18 @@ function fakeDb() {
   function applyUpdate(path, data) {
     const cur = { ...(store.get(path) || {}) };
     for (const [k, v] of Object.entries(data)) {
-      if (v && v.__inc !== undefined) cur[k] = (Number(cur[k]) || 0) + v.__inc;
-      else if (v && v.__union) cur[k] = [...new Set([...(cur[k] || []), ...v.__union])];
-      else cur[k] = v;
+      // «a.b.c» — вложенное поле, как в update() Firestore.
+      const parts = k.split(".");
+      let o = cur;
+      for (const p of parts.slice(0, -1)) {
+        o[p] = o[p] && typeof o[p] === "object" ? { ...o[p] } : {};
+        o = o[p];
+      }
+      const last = parts[parts.length - 1];
+      if (v && v.__del) delete o[last];
+      else if (v && v.__inc !== undefined) o[last] = (Number(o[last]) || 0) + v.__inc;
+      else if (v && v.__union) o[last] = [...new Set([...(o[last] || []), ...v.__union])];
+      else o[last] = v;
     }
     store.set(path, cur);
   }
@@ -57,7 +66,7 @@ function fakeDb() {
 const admin = {
   firestore: {
     Timestamp: { now: () => ({ toMillis: () => Date.now() }), fromMillis: (ms) => ({ toMillis: () => ms }) },
-    FieldValue: { increment: (n) => ({ __inc: n }), arrayUnion: (...v) => ({ __union: v }) },
+    FieldValue: { increment: (n) => ({ __inc: n }), arrayUnion: (...v) => ({ __union: v }), delete: () => ({ __del: true }) },
   },
 };
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
