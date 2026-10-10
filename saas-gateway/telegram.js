@@ -78,6 +78,9 @@ const STALE_STAFF_SHIFT_MS = 16 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
 // Лимит сообщения Telegram — 4096 символов.
 const TEXT_LIMIT = 3900;
+// Как часто бот сети перечитывает список точек (новая точка, своя группа).
+// Реже — меньше чтений из суточной квоты Firestore; точки добавляют редко.
+const POINTS_RESYNC_MS = 30 * 60 * 1000;
 
 const MENU = {
   revenue: "💰 Выручка сегодня",
@@ -1898,7 +1901,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     for (const bot of bots.values()) {
       try {
         await bot.ready;
-        if (Date.now() - bot.pointsAt > 10 * 60 * 1000) await syncPoints(bot);
+        if (Date.now() - bot.pointsAt > POINTS_RESYNC_MS) await syncPoints(bot);
         if (bot.cfg.notify && bot.cfg.notify.summary === false) continue;
         const owners = ownerChats(bot.cfg);
         if (!owners.length) continue;
