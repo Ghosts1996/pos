@@ -29,6 +29,10 @@ awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} /^SwapTotal:/ {s=$2} /^SwapFree
   /proc/meminfo 2>/dev/null || true
 echo "процессоров: $(nproc 2>/dev/null || echo '?')"
 ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -n 6 | awk '{printf "  %s — %d МБ\n", $2, $1/1024}' || true
+# Сторонние программы в Docker (ZalPOS его не использует) — только названия.
+if command -v docker >/dev/null 2>&1; then
+  docker ps --format '  контейнер: {{.Names}} ({{.Image}}), {{.Status}}' 2>/dev/null | head -n 10 || true
+fi
 if (( $(free_mb) < 1024 )); then
   echo "меньше 1 ГБ — чищу кэши apt и npm и журналы старше недели"
   apt-get clean >/dev/null 2>&1 || true
