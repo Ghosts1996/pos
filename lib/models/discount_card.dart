@@ -9,6 +9,11 @@ class DiscountCard {
   final double discountPercent;
   final String _notes;
   String get notes => Pd.extra('card', id, 'notes', _notes);
+
+  /// Введённые в редакторе имя и заметка — для записи в справочник
+  /// ([guestName] и [notes] в режиме rf отдают значения до правки).
+  String get enteredGuestName => _guestName;
+  String get enteredNotes => _notes;
   final bool active;
 
   DiscountCard({

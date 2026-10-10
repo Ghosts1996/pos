@@ -474,7 +474,7 @@ class WaiterCall {
         'status': status,
         'createdAt': Timestamp.fromDate(createdAt),
         'doneAt': doneAt != null ? Timestamp.fromDate(doneAt!) : null,
-        'doneBy': doneBy,
+        'doneBy': Pd.who(_doneBy),
       };
 }
 
@@ -590,7 +590,7 @@ class GuestOrder {
         'rejectReason': rejectReason,
         'createdAt': Timestamp.fromDate(createdAt),
         'handledAt': handledAt != null ? Timestamp.fromDate(handledAt!) : null,
-        'handledBy': handledBy,
+        'handledBy': Pd.who(_handledBy),
       };
 }
 

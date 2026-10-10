@@ -74,7 +74,7 @@ class PayrollAdjustment {
         'amount': amount,
         'comment': comment,
         'at': Timestamp.fromDate(at),
-        'createdBy': createdBy,
+        'createdBy': Pd.who(_createdBy),
         'cancelled': false,
       };
 }

@@ -193,7 +193,7 @@ class ReservationModel {
         'guestConfirmed': guestConfirmed,
         'createdAt': Timestamp.fromDate(createdAt),
         'confirmedAt': confirmedAt != null ? Timestamp.fromDate(confirmedAt!) : null,
-        'handledBy': handledBy,
+        'handledBy': Pd.who(_handledBy),
       };
 
   ReservationModel copyWith({
@@ -216,8 +216,10 @@ class ReservationModel {
       ReservationModel(
         id: id,
         clientUid: clientUid,
-        guestName: guestName ?? this.guestName,
-        phone: phone ?? this.phone,
+        // Введённые значения, а не прочитанные из справочника: иначе в
+        // режиме rf правка имени терялась бы при копировании.
+        guestName: guestName ?? _guestName,
+        phone: phone ?? _phone,
         guestsCount: guestsCount ?? this.guestsCount,
         tableId: tableId ?? this.tableId,
         tableName: tableName ?? this.tableName,
@@ -232,6 +234,6 @@ class ReservationModel {
         guestConfirmed: guestConfirmed ?? this.guestConfirmed,
         createdAt: createdAt,
         confirmedAt: confirmedAt ?? this.confirmedAt,
-        handledBy: handledBy ?? this.handledBy,
+        handledBy: handledBy ?? _handledBy,
       );
 }

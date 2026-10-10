@@ -283,6 +283,19 @@ class People extends ChangeNotifier {
     }
   }
 
+  /// Значения, которые уже записаны на сервере в РФ другим запросом
+  /// (первичная запись брони, очереди, доставки), — только в копию на этом
+  /// устройстве, чтобы имя было видно сразу, без повторной отправки.
+  void remember(String k, String id, {String? name, String? phone, String? address}) {
+    if (id.isEmpty || _tenant == null) return;
+    if (name == null && phone == null && address == null) return;
+    final key = '$k:$id';
+    _data[key] = (_data[key] ?? const PdEntry())
+        .merge(name: name, phone: phone == null ? null : normalizedPhone(phone), address: address);
+    _missedAt.remove(key);
+    _changed();
+  }
+
   /// Стирает значения человека (удаление гостя, сотрудника, карты).
   Future<void> erase(String k, String id) async {
     if (id.isEmpty || _tenant == null) return;

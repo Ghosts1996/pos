@@ -516,7 +516,7 @@ class GiftCard {
         'createdAt': Timestamp.fromDate(createdAt),
         'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
         'comment': comment,
-        'issuedBy': issuedBy,
+        'issuedBy': Pd.who(_issuedBy),
       };
 }
 

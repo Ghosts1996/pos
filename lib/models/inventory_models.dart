@@ -462,9 +462,9 @@ class InventoryCount {
   Map<String, dynamic> toMap() => {
         'status': status,
         'startedAt': Timestamp.fromDate(startedAt),
-        'startedBy': startedBy,
+        'startedBy': Pd.who(_startedBy),
         'closedAt': closedAt != null ? Timestamp.fromDate(closedAt!) : null,
-        'closedBy': closedBy,
+        'closedBy': Pd.who(_closedBy),
         'entries': entries.map((e) => e.toMap()).toList(),
       };
 }

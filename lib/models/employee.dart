@@ -7,6 +7,11 @@ class Employee {
   final String id;
   final String _name;
   String get name => Pd.staffName(id, _name);
+
+  /// Имя, с которым объект создан (введено в редакторе или прочитано из
+  /// документа), — для записи в справочник. [name] в режиме rf отдаёт
+  /// значение из справочника, то есть до правки.
+  String get enteredName => _name;
   /// PIN в открытом виде — только что введённый в редакторе (в базу не
   /// пишется) или старая запись до перевода на хэш.
   final String pinCode;
@@ -188,7 +193,7 @@ class Employee {
   }) {
     return Employee(
       id: id,
-      name: name ?? this.name,
+      name: name ?? _name, // введённое, а не из справочника
       pinCode: pinCode ?? this.pinCode,
       pinHash: pinHash ?? this.pinHash,
       role: role ?? this.role,
