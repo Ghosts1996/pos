@@ -6,9 +6,10 @@ import '../services/guest_consent.dart';
 import '../theme/kolibri_theme.dart';
 import 'privacy_notice.dart';
 
-/// Две галочки согласий над кнопкой, которая отправляет имя или телефон.
-/// Пока обе не отмечены, экран держит кнопку неактивной
-/// (GuestConsent.ready). Согласия уже даны — только ссылка на политику.
+/// Галочки согласий над кнопкой, которая отправляет имя или телефон: на
+/// обработку и, пока заведение не переведено на хранение в РФ, на
+/// трансграничную передачу. Пока нужные не отмечены, экран держит кнопку
+/// неактивной (GuestConsent.ready). Согласия уже даны — ссылка на политику.
 class GuestConsentChecks extends StatelessWidget {
   final GuestConsent consent;
   const GuestConsentChecks({super.key, required this.consent});
@@ -32,25 +33,33 @@ class GuestConsentChecks extends StatelessWidget {
                   _Link('согласие на обработку персональных данных',
                       () => showGuestConsentText(context, crossBorder: false)),
                   const _Plain(' и принимаю '),
-                  _Link('политику конфиденциальности',
-                      () => launchUrl(Uri.parse(PrivacyNotice.policyUrl), mode: LaunchMode.externalApplication)),
+                  _Link(
+                      'политику конфиденциальности',
+                      () => launchUrl(Uri.parse(PrivacyNotice.policyUrl),
+                          mode: LaunchMode.externalApplication)),
                 ],
               ),
-              const SizedBox(height: 4),
-              _ConsentTile(
-                value: consent.crossBorder,
-                onChanged: (v) => consent.crossBorder = v,
-                parts: [
-                  const _Plain('Даю '),
-                  _Link('согласие на трансграничную передачу',
-                      () => showGuestConsentText(context, crossBorder: true)),
-                  const _Plain(' данных (сервис Google Firebase)'),
-                ],
-              ),
+              if (consent.needsCrossBorder) ...[
+                const SizedBox(height: 4),
+                _ConsentTile(
+                  value: consent.crossBorder,
+                  onChanged: (v) => consent.crossBorder = v,
+                  parts: [
+                    const _Plain('Даю '),
+                    _Link('согласие на трансграничную передачу',
+                        () => showGuestConsentText(context, crossBorder: true)),
+                    const _Plain(' данных (сервис Google Firebase)'),
+                  ],
+                ),
+              ],
               if (!consent.ready) ...[
                 const SizedBox(height: 6),
-                Text('Отметьте оба пункта, чтобы продолжить',
-                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                Text(
+                    consent.needsCrossBorder
+                        ? 'Отметьте оба пункта, чтобы продолжить'
+                        : 'Отметьте пункт, чтобы продолжить',
+                    style: TextStyle(
+                        color: KolibriColors.textMuted, fontSize: 12)),
               ],
             ],
           ),
@@ -79,11 +88,13 @@ class _ConsentTile extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
   final List<_Part> parts;
-  const _ConsentTile({required this.value, required this.onChanged, required this.parts});
+  const _ConsentTile(
+      {required this.value, required this.onChanged, required this.parts});
 
   @override
   Widget build(BuildContext context) {
-    final base = TextStyle(color: KolibriColors.textPrimary, fontSize: 13.5, height: 1.4);
+    final base = TextStyle(
+        color: KolibriColors.textPrimary, fontSize: 13.5, height: 1.4);
     return Semantics(
       checked: value,
       child: InkWell(
@@ -123,7 +134,8 @@ class _ConsentTile extends StatelessWidget {
                                   style: base.copyWith(
                                       color: KolibriColors.primary,
                                       decoration: TextDecoration.underline,
-                                      decorationColor: KolibriColors.primary.withValues(alpha: 0.5))),
+                                      decorationColor: KolibriColors.primary
+                                          .withValues(alpha: 0.5))),
                             ),
                           ),
                       },
@@ -139,44 +151,60 @@ class _ConsentTile extends StatelessWidget {
   }
 }
 
-/// Полный текст согласия — с реквизитами заведения, которые заполнены в
-/// Профиле заведения на кассе.
-Future<void> showGuestConsentText(BuildContext context, {required bool crossBorder}) {
+/// Полный текст согласия — оператор ZalPOS с реквизитами платформы.
+Future<void> showGuestConsentText(BuildContext context,
+    {required bool crossBorder}) {
   final venue = VenueService.instance.cached;
-  final title = crossBorder ? GuestConsent.crossBorderTitle : GuestConsent.pdTitle;
-  final paragraphs = crossBorder ? GuestConsent.crossBorderText(venue) : GuestConsent.pdText(venue);
+  final title =
+      crossBorder ? GuestConsent.crossBorderTitle : GuestConsent.pdTitle;
+  final paragraphs = crossBorder
+      ? GuestConsent.crossBorderText(venue)
+      : GuestConsent.pdText(venue);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: KolibriColors.surface,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (ctx) => DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.75,
       maxChildSize: 0.95,
       builder: (ctx, scroll) => ListView(
         controller: scroll,
-        padding: EdgeInsets.fromLTRB(20, 16, 20, 24 + MediaQuery.paddingOf(ctx).bottom),
+        padding: EdgeInsets.fromLTRB(
+            20, 16, 20, 24 + MediaQuery.paddingOf(ctx).bottom),
         children: [
           Center(
             child: Container(
               width: 40,
               height: 4,
-              decoration: BoxDecoration(color: KolibriColors.border, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                  color: KolibriColors.border,
+                  borderRadius: BorderRadius.circular(2)),
             ),
           ),
           const SizedBox(height: 16),
-          Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
           const SizedBox(height: 4),
-          Text(GuestConsent.editionLabel, style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+          Text(GuestConsent.editionLabel,
+              style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
           const SizedBox(height: 14),
           for (final p in paragraphs) ...[
-            Text(p, style: TextStyle(color: KolibriColors.textPrimary, fontSize: 14, height: 1.5)),
+            Text(p,
+                style: TextStyle(
+                    color: KolibriColors.textPrimary,
+                    fontSize: 14,
+                    height: 1.5)),
             const SizedBox(height: 12),
           ],
           const SizedBox(height: 8),
-          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Понятно')),
         ],
       ),
     ),
@@ -185,7 +213,8 @@ Future<void> showGuestConsentText(BuildContext context, {required bool crossBord
 
 /// Согласия ещё нет, а действие отправит данные из профиля (лист
 /// ожидания): спрашиваем отдельным окном. true — можно продолжать.
-Future<bool> ensureGuestConsent(BuildContext context, GuestConsent consent, String uid) async {
+Future<bool> ensureGuestConsent(
+    BuildContext context, GuestConsent consent, String uid) async {
   if (consent.given) return true;
   final ok = await showDialog<bool>(
     context: context,
@@ -195,7 +224,9 @@ Future<bool> ensureGuestConsent(BuildContext context, GuestConsent consent, Stri
       title: const Text('Нужно ваше согласие'),
       content: GuestConsentChecks(consent: consent),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена')),
         ListenableBuilder(
           listenable: consent,
           builder: (ctx, _) => FilledButton(
@@ -212,7 +243,8 @@ Future<bool> ensureGuestConsent(BuildContext context, GuestConsent consent, Stri
     return true;
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.toString())));
     }
     return false;
   }

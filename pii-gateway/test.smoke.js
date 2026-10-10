@@ -126,13 +126,17 @@ async function run() {
 
   console.log("pii-gateway: smoke-тесты валидации — все прошли");
   {
-    // Согласие гостя: без обеих отметок и без токена — отказ до базы.
+    // Согласие гостя: без согласия на обработку и без токена — отказ до
+    // базы. Нужна ли отметка о трансграничной передаче, решает режим
+    // заведения (piiMode) — это проверяется уже после входа.
     const post = (b, headers) => request("POST", "/", { headers, body: JSON.stringify({ kind: "guest_consent", ...b }) });
     const noEdition = await post({ tenantId: "t1", pd: true, crossBorder: true });
     assert.strictEqual(noEdition.statusCode, 400);
-    const noXborder = await post({ tenantId: "t1", edition: "2026-10-09", pd: true });
-    assert.strictEqual(noXborder.statusCode, 400);
-    assert.match(JSON.parse(noXborder.body).error, /трансграничн/);
+    const noPd = await post({ tenantId: "t1", edition: "2026-10-10", crossBorder: true });
+    assert.strictEqual(noPd.statusCode, 400);
+    assert.match(JSON.parse(noPd.body).error, /обработку/);
+    const noXborder = await post({ tenantId: "t1", edition: "2026-10-10", pd: true });
+    assert.strictEqual(noXborder.statusCode, 401);
     const truthy = await post({ tenantId: "t1", edition: "2026-10-09", pd: "yes", crossBorder: 1 });
     assert.strictEqual(truthy.statusCode, 400);
     const badTenant = await post({ tenantId: "t1/clients/x", edition: "2026-10-09", pd: true, crossBorder: true });
