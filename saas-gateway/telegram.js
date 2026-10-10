@@ -602,6 +602,12 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return out;
   }
 
+  /** Точки сети и точки со своими ботами; первый из ботов — бот всей сети. */
+  async function chainBots(chainId) {
+    const points = await chainPoints(chainId);
+    return { points, holders: await chainBotHolders(points) };
+  }
+
   /**
    * Точки бота: у сети — её точки (кроме тех, где подключён свой бот), у
    * одиночного заведения — оно само. homeId — где подключён бот.
@@ -736,6 +742,19 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       home: (info.points.find((p) => p.id === botId) || {}).name || "",
     } : null;
     if (!d) return sendJson(res, 200, { configured: false, chain });
+    // В сети остались боты отдельных точек: точке — предложить бот сети,
+    // боту сети — показать, какие точки пока со своими ботами.
+    let chainBot = null;
+    if (info && info.chainId) {
+      const { points, holders } = await chainBots(info.chainId);
+      const nameOf = (id) => (points.find((p) => p.id === id) || {}).name || "Точка";
+      if (holders.length > 1 && holders[0] !== botId) {
+        const main = (await botsCol().doc(holders[0]).get()).data() || {};
+        chainBot = { username: main.username || "", home: nameOf(holders[0]), name: info.chainName };
+      } else if (chain) {
+        chain.separate = holders.filter((id) => id !== botId).map(nameOf);
+      }
+    }
     const group = staffChatOf(d, body.tenantId, botId);
     sendJson(res, 200, {
       configured: true,
@@ -746,6 +765,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       staffChatShared: group.shared,
       notify: d.notify || {},
       chain,
+      chainBot,
     });
   }
 
@@ -793,18 +813,52 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     sendJson(res, 200, { notify });
   }
 
+  async function unlinkBot(botId, d) {
+    const ref = botsCol().doc(botId);
+    try {
+      await api(decrypt(secretKey(), d.tokenEnc), "deleteWebhook", { drop_pending_updates: true });
+    } catch (_) { /* бот мог быть удалён в BotFather — всё равно отключаем */ }
+    const cards = await ref.collection("cards").get();
+    for (const c of cards.docs) await c.ref.delete();
+    await ref.delete();
+  }
+
   async function handleUnlink(req, res) {
     const { botId, cfg: d } = await guard(req);
-    if (d) {
-      const ref = botsCol().doc(botId);
-      try {
-        await api(decrypt(secretKey(), d.tokenEnc), "deleteWebhook", { drop_pending_updates: true });
-      } catch (_) { /* бот мог быть удалён в BotFather — всё равно отключаем */ }
-      const cards = await ref.collection("cards").get();
-      for (const c of cards.docs) await c.ref.delete();
-      await ref.delete();
-    }
+    if (d) await unlinkBot(botId, d);
     sendJson(res, 200, { ok: true });
+  }
+
+  /**
+   * Один бот на сеть: точка со своим (старым) ботом переходит на бот сети.
+   * Список «Кто управляет ботом» объединяется, бот точки отключается, бот
+   * сети сразу показывает точку. Рабочую группу точки подключают заново.
+   */
+  async function handleJoinChain(req, res) {
+    const { decoded, body, botId, cfg: d } = await guard(req);
+    const t = (await tenantRef(body.tenantId).get()).data() || {};
+    if (!d || botId !== body.tenantId || !t.chainId) throw new HttpError(409, "У этой точки нет своего бота — она уже на боте сети");
+    const { holders } = await chainBots(String(t.chainId));
+    const mainId = holders[0];
+    if (!mainId || mainId === botId) throw new HttpError(409, "Этот бот и есть бот сети");
+    try {
+      await requireTenantRole(mainId, decoded.uid, ["owner", "admin"]);
+    } catch (_) {
+      throw new HttpError(403, "Перевести точку на бот сети может владелец или администратор сети");
+    }
+    const mainRef = botsCol().doc(mainId);
+    await db().runTransaction(async (tx) => {
+      const main = (await tx.get(mainRef)).data();
+      if (!main) throw new HttpError(409, "Бот сети не найден — обновите страницу");
+      const merged = allowedList(main);
+      for (const a of allowedList(d)) if (!merged.some((m) => m.id === a.id)) merged.push(a);
+      tx.update(mainRef, { allowed: merged.slice(0, MAX_ALLOWED) });
+    });
+    await unlinkBot(botId, d);
+    // Бот сети подхватывает точку сразу, не дожидаясь пересчёта точек.
+    const main = bots.get(mainId);
+    if (main) await syncPoints(main).catch((e) => console.error(`telegram points (${mainId}):`, e.message));
+    sendJson(res, 200, { ok: true, username: ((await mainRef.get()).data() || {}).username || "" });
   }
 
   const escHtml = (v) => String(v || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2235,7 +2289,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   }
 
   return {
-    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleAddress, handleWho, handleHook, start,
+    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleJoinChain, handleAddress, handleWho, handleHook, start,
   };
 }
 
