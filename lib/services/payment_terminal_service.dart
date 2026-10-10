@@ -576,6 +576,10 @@ class CliTerminalService implements PaymentTerminalService {
     try {
       if (result != null && result.existsSync()) result.deleteSync();
     } catch (_) {}
+    // Файл итога не удалился (занят программой банка) — «одобрено» в нём
+    // может остаться от прошлой оплаты: верим только файлу, записанному
+    // после запуска. Запас — на грубые часы файловой системы.
+    final startedAt = DateTime.now().subtract(const Duration(seconds: 2));
     var details = '';
     var started = false;
     try {
@@ -592,8 +596,11 @@ class CliTerminalService implements PaymentTerminalService {
     }
     if (result != null && result.existsSync()) {
       final text = decode(await result.readAsBytes());
-      if (judge(text, approve) == true) return TerminalPaymentResult.success(bank: bank.isEmpty ? null : bank);
-      details = [details, text.trim()].where((x) => x.isNotEmpty).join('\n');
+      final fresh = !result.lastModifiedSync().isBefore(startedAt);
+      if (fresh && judge(text, approve) == true) return TerminalPaymentResult.success(bank: bank.isEmpty ? null : bank);
+      details = [details, fresh ? text.trim() : 'файл итога не обновился — ответа терминала нет']
+          .where((x) => x.isNotEmpty)
+          .join('\n');
     }
     // Ответ не распознан — решает кассир по экрану терминала.
     if (started && context != null && context.mounted) {
