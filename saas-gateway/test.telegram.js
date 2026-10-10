@@ -3,6 +3,9 @@
 // изоляция заведений, привязка чатов, карточки доставки без ПДн, кнопки
 // статусов, отчёты, сигналы, смены, страница адреса.
 process.env.TELEGRAM_SECRET_KEY = "sim-key";
+// Копия чеков бота — во временной папке, не в проекте.
+const cacheDir = require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "tg-cache-"));
+process.env.TELEGRAM_CACHE_DIR = cacheDir;
 const assert = require("assert");
 const { Readable } = require("stream");
 const tgmod = require("./telegram.js");
@@ -12,6 +15,8 @@ const store = new Map(); // path -> data
 class TS { constructor(ms) { this.ms = ms; } toMillis() { return this.ms; } toDate() { return new Date(this.ms); } }
 const val = (v) => (v instanceof TS ? v.ms : v instanceof Date ? v.getTime() : v);
 const listeners = [];
+let reads = 0;
+let closedReads = 0;
 function docRef(p) {
   return {
     id: p.split("/").pop(), path: p,
@@ -31,6 +36,12 @@ function docRef(p) {
     },
     async delete() { store.delete(p); fire(); },
     collection: (c) => colRef(`${p}/${c}`),
+    onSnapshot(cb) {
+      const l = { doc: p, cb, last: undefined, active: true };
+      listeners.push(l);
+      run(l);
+      return () => { l.active = false; };
+    },
   };
 }
 function colRef(p, filters = []) {
@@ -38,13 +49,15 @@ function colRef(p, filters = []) {
     doc: (id) => docRef(`${p}/${id || Math.random().toString(36).slice(2)}`),
     where: (f, op, v) => colRef(p, [...filters, [f, op, v]]),
     orderBy: () => q, limit: () => q,
-    async get() {
+    async get(fromListener = false) {
       const docs = [...store.entries()].filter(([k]) => k.startsWith(p + "/") && !k.slice(p.length + 1).includes("/"))
         .filter(([, d]) => filters.every(([f, op, v]) => {
           const a = val(d[f]); const b = val(v);
           return op === "==" ? a === b : op === ">=" ? a >= b : op === "<" ? a < b : op === ">" ? a > b : true;
         }))
         .map(([k, d]) => ({ id: k.split("/").pop(), ref: docRef(k), data: () => ({ ...d }) }));
+      // Чтения чеков по closedAt запросом (не подпиской) — для проверки копии.
+      if (!fromListener && p.endsWith("/sessions") && filters.some(([f]) => f === "closedAt")) closedReads += Math.max(1, docs.length);
       return { docs, size: docs.length };
     },
     onSnapshot(cb) {
@@ -57,7 +70,15 @@ function colRef(p, filters = []) {
   return q;
 }
 async function run(l) {
-  const snap = await l.q.get();
+  if (l.doc) {
+    const d = store.get(l.doc);
+    const now = d ? JSON.stringify(d) : null;
+    if (now === l.last) return;
+    l.last = now;
+    reads++;
+    return l.cb({ exists: !!d, id: l.doc.split("/").pop(), data: () => (d ? { ...d } : undefined) });
+  }
+  const snap = await l.q.get(true);
   const now = new Map(snap.docs.map((d) => [d.id, JSON.stringify(d.data())]));
   const changes = [];
   for (const d of snap.docs) {
@@ -66,7 +87,9 @@ async function run(l) {
   }
   for (const id of l.seen.keys()) if (!now.has(id)) changes.push({ type: "removed", doc: { id, data: () => ({}) } });
   l.seen = now;
-  if (changes.length) l.cb({ docChanges: () => changes, docs: snap.docs });
+  reads += changes.length;
+  // Как в Firestore: первый снимок приходит всегда, даже пустой.
+  if (changes.length || !l.started) { l.started = true; l.cb({ docChanges: () => changes, docs: snap.docs }); }
 }
 let firing = false;
 function fire() { if (firing) return; firing = true; setImmediate(() => { firing = false; listeners.filter((l) => l.active).forEach(run); }); }
@@ -97,7 +120,7 @@ const fetchImpl = async (url, opts) => {
 class HttpError extends Error { constructor(s, m) { super(m); this.status = s; } }
 const mkReq = (body, headers = {}, url = "/") => { const r = Readable.from([Buffer.from(JSON.stringify(body))]); r.headers = { authorization: "Bearer x", ...headers }; r.url = url; return r; };
 const mkRes = () => { const r = { code: 0, body: null, writeHead(c) { r.code = c; }, end(b) { r.body = b; } }; return r; };
-const tg = tgmod.createTelegram({
+const deps = {
   db, admin,
   // admin2 — администратор только точки C2 сети.
   verifyAuth: async (req) => ({ uid: req.headers.authorization === "Bearer admin2" ? "admin2" : "owner1" }),
@@ -108,7 +131,8 @@ const tg = tgmod.createTelegram({
   requireTenantRole: async (t, uid) => { if (uid !== "owner1" && !(uid === "admin2" && t === "C2")) throw new HttpError(403, "no"); },
   publicUrl: "https://pii.zalpos.ru/saas",
   fetchImpl,
-});
+};
+const tg = tgmod.createTelegram(deps);
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
 (async () => {
@@ -220,6 +244,8 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
     orderItems: [{ name: "чаша", price: 500, qty: 8 }], paymentCard: 1500, paymentCash: 2500 });
   store.set("tenants/A/sessions/cxl1", { status: "cancelled", tableId: "takeaway", orderType: "delivery", deliveryStatus: "cancelled",
     closedAt: new TS(nowMs - 60000), orderItems: [{ name: "Пицца", price: 700, qty: 1 }] });
+  // Чеки приходят в копию на сервере подпиской.
+  fire(); await tick();
   sent.length = 0;
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "💰 Выручка сегодня" } });
   const revText = sent.find((m) => m.body.chat_id === 501).body.text;
@@ -235,6 +261,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🍽 Кухня · Бар · Кальяны" } });
   assert.match(sent.find((m) => m.body.chat_id === 501).body.text, /Кухня: 4\s000 ₽ · 100%/);
   for (const k of ["meta/shiftState", "shifts/sh1", "sessions/paid1", "sessions/cxl1"]) store.delete(`tenants/A/${k}`);
+  fire(); await tick();
   // Посторонний в личке бота А отчёт не получит, а сотрудник из списка — тоже
   sent.length = 0;
   await hookA({ message: { chat: { id: 999, type: "private" }, from: { id: 999 }, text: "💰 Выручка сегодня" } });
@@ -356,6 +383,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   const hookC = (update) => tg.handleHook(mkReq(update, { "x-telegram-bot-api-secret-token": store.get("telegramBots/C1").hookSecret }), mkRes(), "C1");
   const toOwner = () => sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 701);
   const ask = async (text) => {
+    fire(); await tick();
     sent.length = 0;
     await hookC({ message: { chat: { id: 701, type: "private" }, from: { id: 701 }, text } });
     return toOwner().pop().body;
@@ -412,6 +440,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   const moreKeys = body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
   assert.deepEqual(moreKeys, ["r:yesterday", "r:week", "r:top", "r:stock", "r:bookings", "r:voids", "r:reviews"]);
   const more = async (key) => {
+    fire(); await tick();
     sent.length = 0;
     await hookC({ callback_query: { id: `r-${key}`, from: { id: 701 }, data: `r:${key}`, message: { chat: { id: 701 }, message_id: 301 } } });
     return toOwner().pop().body.text;
@@ -463,11 +492,38 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   // Неделя: по дням и сравнение с прошлой неделей
   const dayStart = tgmod.businessDayStart(new Date(), TZ).getTime();
   store.set("tenants/C2/sessions/w0", { status: "closed", tableId: "t2", closedAt: new TS(dayStart - 8 * 24 * H + H), orderItems: [{ name: "Чай", price: 1000, qty: 1 }], paymentCash: 1000 });
-  store.set("tenants/C2/sessions/w1", { status: "closed", tableId: "t2", closedAt: new TS(dayStart - 24 * H + H), orderItems: [{ name: "Чай", price: 300, qty: 1 }], paymentCash: 300 });
+  store.set("tenants/C2/sessions/w1", { status: "closed", tableId: "t2", closedAt: new TS(dayStart - 24 * H + H), orderItems: [{ name: "Чай", price: 300, qty: 1 }], paymentCash: 300,
+    guestTag: "Иван", customerPhone: "+79001112233", deliveryAddress: "ул. Ленина 1" });
+  let before = closedReads;
   text = await more("week");
+  assert.ok(closedReads > before, "прошедшие сутки — один раз из Firestore");
   assert.match(text, /\(сегодня\) — 3\s700 ₽ · 2 чек\./);
   assert.match(text, /Итого: 4\s000 ₽ · 3 чек\./);
   assert.match(text, /К прошлым 7 дням \(1\s000 ₽\): \+300%/);
+  // Копия на сервере: повторные отчёты чеки из Firestore заново не читают.
+  before = closedReads;
+  assert.match(await more("week"), /Итого: 4\s000 ₽ · 3 чек\./);
+  assert.match((await ask("💰 Выручка сегодня")).text, /Выручка сегодня \(с 6:00\): 3\s700 ₽/);
+  await more("top");
+  await ask("💵 Касса сейчас");
+  assert.equal(closedReads, before, "неделя, выручка, топ и касса — из копии на сервере");
+  // Новый чек приходит в копию подпиской — отчёт видит его сразу.
+  store.set("tenants/C2/sessions/p5", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 10000), orderItems: [{ name: "Чай", price: 100, qty: 1 }], paymentCash: 100 });
+  assert.match((await ask("💰 Выручка сегодня")).text, /Выручка сегодня \(с 6:00\): 3\s800 ₽/);
+  assert.equal(closedReads, before);
+  // Возврат вчерашнего чека — копия обновилась, без перечитывания дня.
+  store.set("tenants/C2/sessions/w1", { ...store.get("tenants/C2/sessions/w1"), refunded: true, refundedAt: new TS(Date.now()) });
+  fire(); await tick();
+  assert.match(await more("yesterday"), /Выручка: 0 ₽/);
+  store.set("tenants/C2/sessions/w1", { ...store.get("tenants/C2/sessions/w1"), refunded: false, refundedAt: null });
+  fire(); await tick(); await tick();
+  assert.match(await more("yesterday"), /Выручка: 300 ₽/, "отмена возврата — тоже");
+  store.delete("tenants/C2/sessions/p5");
+  // Прошедшие сутки — в файле на сервере, без имён, телефонов и адресов.
+  await new Promise((r) => setTimeout(r, 1200));
+  const saved = require("fs").readFileSync(require("path").join(cacheDir, "C2.json"), "utf8");
+  assert.ok(JSON.parse(saved).days.length >= 13 && /"w0"/.test(saved), "прошедшие сутки — в файле");
+  assert.ok(!/Иван|79001112233|Ленина/.test(saved), "в копии нет данных гостей");
   text = await more("yesterday");
   assert.match(text, /Арбат — итоги/);
   assert.match(text, /Выручка: 300 ₽/);
@@ -592,6 +648,18 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.equal(tgmod.menuKeyboard().keyboard[0][0].text, "💰 Выручка сегодня", "у одиночного заведения — без кнопки точки");
   assert.equal(tgmod.menuKeyboard("Арбат").keyboard[0][0].text, "📍 Арбат");
 
+  // Перезапуск сервера: прошедшие сутки берутся из файла, не из Firestore.
+  const tg2 = tgmod.createTelegram(deps);
+  tg2.start();
+  await tick(); await tick(); await tick();
+  before = closedReads;
+  sent.length = 0;
+  await tg2.handleHook(mkReq({ callback_query: { id: "rw", from: { id: 701 }, data: "r:week", message: { chat: { id: 701 }, message_id: 1 } } },
+    { "x-telegram-bot-api-secret-token": store.get("telegramBots/C1").hookSecret }), mkRes(), "C1");
+  const weekAfter = sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 701).pop().body.text;
+  assert.match(weekAfter, /Итого: 5\s000 ₽ · 4 чек\./);
+  assert.equal(closedReads, before, "после перезапуска неделя — из файла на сервере");
+  require("fs").rmSync(cacheDir, { recursive: true, force: true });
   console.log("SIM OK");
   process.exit(0);
 })().catch((e) => { console.error("SIM FAIL", e); process.exit(1); });

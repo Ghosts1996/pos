@@ -40,10 +40,13 @@
  *
  * Данные: telegramBots/{tenantId} (настройки; у сети — tenantId точки,
  * где подключён бот, и chainId), …/cards/{sessionId} (карточки
- * доставки), telegramLinks/{code} (коды привязки, 30 минут).
+ * доставки), telegramLinks/{code} (коды привязки, 30 минут). Отчёты
+ * считаются из копии чеков на сервере (telegram-cache/, KEEP_DAYS суток):
+ * каждый чек читается из Firestore один раз, а не при каждом отчёте.
  */
 const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 const { sessionBill } = require("./guest-pay");
 const flow = require("./delivery-flow");
 
@@ -78,6 +81,22 @@ const STALE_STAFF_SHIFT_MS = 16 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
 // Лимит сообщения Telegram — 4096 символов.
 const TEXT_LIMIT = 3900;
+// Копия чеков на сервере (см. «копия данных точки»): сколько прошедших
+// рабочих суток держать и где. Папка переживает обновления сервера.
+const KEEP_DAYS = 15;
+const CACHE_DIR = process.env.TELEGRAM_CACHE_DIR || path.join(__dirname, "telegram-cache");
+// Поля чека, нужные отчётам. Имён, телефонов и адресов гостей в копии нет.
+const SALE_FIELDS = ["status", "tableId", "orderType", "refunded", "refundCashOut", "closedWithoutPayment", "discountPercent",
+  "paymentCash", "paymentCard", "paymentTerminal", "terminalBank", "paymentComp", "paymentAggregator", "tipsCash"];
+const msOf = (v) => { const d = toDate(v); return d ? d.getTime() : 0; };
+function saleOf(id, d) {
+  const s = { id, closedAt: msOf(d.closedAt), refundedAt: msOf(d.refundedAt) };
+  for (const k of SALE_FIELDS) if (d[k] !== undefined && d[k] !== null) s[k] = d[k];
+  s.orderItems = (Array.isArray(d.orderItems) ? d.orderItems : [])
+    .map((i) => ({ name: i.name, price: i.price, qty: i.qty, kind: i.kind, noPromo: i.noPromo === true }));
+  return s;
+}
+
 // Как часто бот сети перечитывает список точек (новая точка, своя группа).
 // Реже — меньше чтений из суточной квоты Firestore; точки добавляют редко.
 const POINTS_RESYNC_MS = 30 * 60 * 1000;
@@ -125,7 +144,8 @@ const UNITS = { g: "г", kg: "кг", ml: "мл", l: "л", pcs: "шт" };
 const qtyText = (v, unit) => `${(Number(v) || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ${UNITS[unit] || unit || ""}`.trim();
 
 const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
-const toDate = (v) => (v && typeof v.toDate === "function" ? v.toDate() : v instanceof Date ? v : null);
+const toDate = (v) => (v && typeof v.toDate === "function" ? v.toDate() : v instanceof Date ? v
+  : typeof v === "number" && v > 0 ? new Date(v) : null);
 
 // ---------------------------------------------------------------- доступ
 
@@ -1210,13 +1230,268 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       .catch((e) => console.error(`telegram courier (${tenantId}): ${e.message}`));
   }
 
+  // ------------------------------------------------------------ копия данных точки
+  //
+  // Каждое чтение Firestore — из суточной квоты, а отчёты бота раньше
+  // перечитывали все чеки дня (неделя — за 14 дней) при каждом нажатии.
+  // Теперь сервер держит копию у себя, и отчёты считаются из неё:
+  //  - чеки текущих рабочих суток — живой подпиской: чек читается один раз,
+  //    когда его закрыли (и ещё раз — при возврате);
+  //  - прошедшие сутки (до KEEP_DAYS) — в файле на сервере: из Firestore их
+  //    читаем один раз; вчерашние перечитываем утром ещё раз — на случай
+  //    касс, работавших без сети;
+  //  - заведение, лояльность, смена кассы — подписками на документы.
+  // Возврат и его отмена (refundedAt) обновляют копию. Подписка не
+  // поднялась — отчёты читают Firestore напрямую, как раньше.
+
+  /** tenantId → копия точки (пока точку слушает бот). */
+  const stores = new Map();
+
+  function watchDoc(st, ref, apply) {
+    return new Promise((resolve) => {
+      let first = true;
+      const done = () => { if (first) { first = false; resolve(); } };
+      st.unsubs.push(ref.onSnapshot((snap) => {
+        Promise.resolve(apply(snap.exists ? snap.data() || {} : null)).catch(() => {}).then(done);
+      }, (e) => {
+        // Без настроек точки копия не годится — отчёты читают базу напрямую.
+        console.error(`telegram copy (${st.tid}): ${e.message}`);
+        st.failed = true;
+        done();
+      }));
+    });
+  }
+
+  const cacheFile = (tid) => path.join(CACHE_DIR, `${tid}.json`);
+
+  function saveSoon(st) {
+    if (st.saveTimer || st.closed) return;
+    st.saveTimer = setTimeout(() => { st.saveTimer = null; saveStore(st); }, 1000);
+    if (st.saveTimer.unref) st.saveTimer.unref();
+  }
+
+  /** В файл — только прошедшие полные сутки: сегодняшние чеки придут подпиской. */
+  function saveStore(st) {
+    if (!st.today) return;
+    const sales = [...st.sales.values()].filter((x) => x.closedAt < st.today && st.days.has(dayStartOf(st, x.closedAt)));
+    const data = JSON.stringify({ v: 1, tz: st.venue.timezone || "", today: st.today, reconciled: st.reconciled || 0, days: [...st.days], sales });
+    try {
+      fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+      const tmp = `${cacheFile(st.tid)}.tmp`;
+      fs.writeFileSync(tmp, data, { mode: 0o600 });
+      fs.renameSync(tmp, cacheFile(st.tid));
+    } catch (e) {
+      console.error(`telegram copy (${st.tid}): не записать файл — ${e.message}`);
+    }
+  }
+
+  function loadStore(st) {
+    let f;
+    try {
+      f = JSON.parse(fs.readFileSync(cacheFile(st.tid), "utf8"));
+    } catch (_) {
+      return;
+    }
+    // Сменили часовой пояс — границы суток другие, копия не годится.
+    if (!f || f.v !== 1 || (f.tz || "") !== (st.venue.timezone || "")) return;
+    const today = businessDayStart(new Date(), st.venue.timezone).getTime();
+    const oldest = today - KEEP_DAYS * DAY_MS;
+    for (const d of f.days || []) if (d >= oldest && d < today) st.days.add(d);
+    for (const x of f.sales || []) if (x && x.id && x.closedAt >= oldest && x.closedAt < today) st.sales.set(x.id, x);
+    st.reconciled = f.reconciled || 0;
+  }
+
+  /** Начало рабочих суток, в которые закрыт чек (ms). */
+  function dayStartOf(st, ms) {
+    if (ms >= st.today) return st.today + Math.floor((ms - st.today) / DAY_MS) * DAY_MS;
+    return st.today - Math.ceil((st.today - ms) / DAY_MS) * DAY_MS;
+  }
+
+  function acquireStore(tid) {
+    let st = stores.get(tid);
+    if (!st) {
+      st = { tid, refs: 0, venue: {}, ex: true, shift: null, sales: new Map(), days: new Set(), loading: new Map(),
+        today: 0, reconciled: 0, unsubs: [], liveUnsub: null, liveReady: null, liveFailed: false, closed: false };
+      stores.set(tid, st);
+      st.ready = openStore(st).catch((e) => {
+        console.error(`telegram copy (${tid}): ${e.message}; отчёты читают базу напрямую`);
+        st.failed = true;
+      });
+    }
+    st.refs++;
+    return () => {
+      if (--st.refs > 0) return;
+      st.closed = true;
+      stores.delete(tid);
+      if (st.saveTimer) clearTimeout(st.saveTimer);
+      saveStore(st);
+      for (const u of [...st.unsubs, st.liveUnsub, st.shiftUnsub]) { try { if (u) u(); } catch (_) { /* уже отписан */ } }
+    };
+  }
+
+  async function openStore(st) {
+    const t = tenantRef(st.tid);
+    await watchDoc(st, t, (d) => { st.venue = d || {}; });
+    await watchDoc(st, t.collection("settings").doc("loyalty"), (d) => {
+      st.ex = d && typeof d.excludeTobaccoFromPromo === "boolean" ? d.excludeTobaccoFromPromo : true;
+    });
+    // Смена кассы: какая открыта — и сама смена (время открытия, размен).
+    await watchDoc(st, t.collection("meta").doc("shiftState"), (d) => {
+      const id = d && d.openShiftId ? String(d.openShiftId) : null;
+      if (id === st.shiftId) return null;
+      if (st.shiftUnsub) { try { st.shiftUnsub(); } catch (_) { /* уже отписан */ } }
+      st.shiftId = id;
+      st.shiftUnsub = null;
+      st.shift = null;
+      if (!id) return null;
+      return new Promise((resolve) => {
+        st.shiftUnsub = t.collection("shifts").doc(id).onSnapshot((snap) => {
+          const sh = snap.exists ? snap.data() : null;
+          const openedAt = sh && (sh.status || "open") === "open" ? toDate(sh.openedAt) : null;
+          if (st.shiftId === id) st.shift = openedAt ? { id, openedAt, data: sh } : null;
+          resolve();
+        }, (e) => { console.error(`telegram copy (${st.tid}): ${e.message}`); resolve(); });
+      });
+    });
+    loadStore(st);
+    await watchToday(st);
+    // Возвраты (и их отмена) за срок копии — обновляем сохранённые чеки.
+    const cutoff = Date.now() - (KEEP_DAYS + 1) * DAY_MS;
+    let first = true;
+    st.unsubs.push(t.collection("sessions").where("refundedAt", ">=", new Date(cutoff)).onSnapshot(async (snap) => {
+      const stale = [];
+      for (const ch of snap.docChanges()) {
+        if (!st.sales.has(ch.doc.id)) continue;
+        if (ch.type === "removed") stale.push(ch.doc.id);
+        else st.sales.set(ch.doc.id, saleOf(ch.doc.id, ch.doc.data()));
+      }
+      if (first) {
+        // Возврат отменили, пока сервер не работал.
+        first = false;
+        const ids = new Set(snap.docs.map((d) => d.id));
+        for (const x of st.sales.values()) if (x.refunded && x.refundedAt >= cutoff && !ids.has(x.id)) stale.push(x.id);
+      }
+      for (const id of stale) {
+        const d = await t.collection("sessions").doc(id).get().catch(() => null);
+        if (d && d.exists) st.sales.set(id, saleOf(id, d.data()));
+      }
+      saveSoon(st);
+    }, (e) => console.error(`telegram copy refunds (${st.tid}): ${e.message}`)));
+  }
+
+  /**
+   * Подписка на чеки текущих рабочих суток. Сутки сменились — вчерашние
+   * становятся полными (в файл), подписка — с новых суток.
+   */
+  function watchToday(st) {
+    const start = businessDayStart(new Date(), st.venue.timezone).getTime();
+    if (st.today === start && (st.liveUnsub || st.liveFailed)) return st.liveReady;
+    if (st.today && st.today < start) {
+      if (st.liveUnsub && !st.liveFailed) for (let d = st.today; d < start; d += DAY_MS) st.days.add(d);
+      const oldest = start - KEEP_DAYS * DAY_MS;
+      for (const [id, x] of st.sales) if (x.closedAt < oldest) st.sales.delete(id);
+      for (const d of [...st.days]) if (d < oldest) st.days.delete(d);
+    }
+    if (st.liveUnsub) { try { st.liveUnsub(); } catch (_) { /* уже отписан */ } }
+    st.liveUnsub = null;
+    st.liveFailed = false;
+    st.today = start;
+    st.liveReady = new Promise((resolve) => {
+      let first = true;
+      st.liveUnsub = tenantRef(st.tid).collection("sessions").where("closedAt", ">=", new Date(start)).onSnapshot((snap) => {
+        for (const ch of snap.docChanges()) {
+          if (ch.type === "removed") st.sales.delete(ch.doc.id);
+          else st.sales.set(ch.doc.id, saleOf(ch.doc.id, ch.doc.data()));
+        }
+        if (first) { first = false; resolve(); }
+      }, (e) => {
+        console.error(`telegram copy (${st.tid}): подписка на чеки — ${e.message}; отчёты читают базу напрямую`);
+        st.liveFailed = true;
+        st.liveUnsub = null;
+        if (first) { first = false; resolve(); }
+      });
+    });
+    saveSoon(st);
+    return st.liveReady;
+  }
+
+  /** Прошедшие сутки [from, to) (границы — начала суток) — одним запросом, в копию. */
+  async function loadDays(st, from, to, replace = false) {
+    const key = `${from}-${to}`;
+    if (st.loading.has(key)) return st.loading.get(key);
+    const p = (async () => {
+      const snap = await tenantRef(st.tid).collection("sessions")
+        .where("closedAt", ">=", new Date(from)).where("closedAt", "<", new Date(to)).get();
+      if (replace) for (const [id, x] of st.sales) if (x.closedAt >= from && x.closedAt < to) st.sales.delete(id);
+      for (const d of snap.docs) st.sales.set(d.id, saleOf(d.id, d.data()));
+      for (let d = from; d < to; d += DAY_MS) st.days.add(d);
+      saveSoon(st);
+    })().finally(() => st.loading.delete(key));
+    st.loading.set(key, p);
+    return p;
+  }
+
+  /** Копия точки, если она есть и исправна. */
+  async function storeOf(tid) {
+    const st = stores.get(tid);
+    if (!st) return null;
+    await st.ready;
+    return st.failed || st.closed ? null : st;
+  }
+
+  /** Чеки из копии; недостающие прошедшие сутки — один раз из Firestore. */
+  async function salesFromStore(st, from, to) {
+    await watchToday(st);
+    if (st.liveFailed) return null;
+    const oldest = st.today - KEEP_DAYS * DAY_MS;
+    const first = Math.max(dayStartOf(st, Math.max(from, oldest)), oldest);
+    // Недостающие сутки — подряд идущими кусками, по запросу на кусок.
+    let gap = null;
+    for (let d = first; d < st.today && d < to; d += DAY_MS) {
+      if (!st.days.has(d)) { if (gap === null) gap = d; continue; }
+      if (gap !== null) { await loadDays(st, gap, d); gap = null; }
+    }
+    if (gap !== null) await loadDays(st, gap, Math.min(st.today, dayStartOf(st, to - 1) + DAY_MS));
+    const out = [];
+    for (const x of st.sales.values()) if (x.closedAt >= from && x.closedAt < to) out.push(x);
+    // Старше срока копии (забытая смена кассы) — прямо из базы, без копии.
+    if (from < oldest) {
+      const snap = await tenantRef(st.tid).collection("sessions")
+        .where("closedAt", ">=", new Date(from)).where("closedAt", "<", new Date(Math.min(oldest, to))).get();
+      for (const d of snap.docs) out.push(saleOf(d.id, d.data()));
+    }
+    return out;
+  }
+
+  /** Утром — вчерашние сутки ещё раз: касса без сети могла прислать чеки позже. */
+  async function reconcileStores() {
+    for (const st of stores.values()) {
+      try {
+        await st.ready;
+        if (st.failed || st.closed) continue;
+        await watchToday(st);
+        const h = localParts(new Date(), st.venue.timezone).h;
+        if (st.liveFailed || st.reconciled === st.today || h < DAY_START_HOUR + 1) continue;
+        await loadDays(st, st.today - DAY_MS, st.today, true);
+        st.reconciled = st.today;
+        saveSoon(st);
+      } catch (e) {
+        console.error(`telegram copy (${st.tid}): ${e.message}`);
+      }
+    }
+  }
+
   // ------------------------------------------------------------ данные для отчётов
 
   async function venueOf(tenantId) {
+    const st = await storeOf(tenantId);
+    if (st) return st.venue || {};
     return (await tenantRef(tenantId).get()).data() || {};
   }
 
   async function loyaltyExclude(tenantId) {
+    const st = await storeOf(tenantId);
+    if (st) return st.ex;
     const l = (await tenantRef(tenantId).collection("settings").doc("loyalty").get()).data() || {};
     return typeof l.excludeTobaccoFromPromo === "boolean" ? l.excludeTobaccoFromPromo : true;
   }
@@ -1225,8 +1500,14 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
    * Закрытые чеки с start; end не задан — без верхней границы. Время
    * закрытия ставят часы кассы: если они спешат хоть на минуту, условие
    * «раньше, чем сейчас на сервере» прятало только что пробитый чек.
+   * У точек бота — из копии на сервере.
    */
   async function closedSince(tenantId, start, end = null) {
+    const st = await storeOf(tenantId);
+    if (st) {
+      const out = await salesFromStore(st, start.getTime(), end ? end.getTime() : Infinity);
+      if (out) return out;
+    }
     let q = tenantRef(tenantId).collection("sessions").where("closedAt", ">=", start);
     if (end) q = q.where("closedAt", "<", end);
     const snap = await q.get();
@@ -1235,6 +1516,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 
   /** Открытая кассовая смена — та же, что «Текущая смена» в X-отчёте. */
   async function openCashShift(tenantId) {
+    const store = await storeOf(tenantId);
+    if (store) return store.shift;
     const st = (await tenantRef(tenantId).collection("meta").doc("shiftState").get()).data() || {};
     if (!st.openShiftId) return null;
     const sh = (await tenantRef(tenantId).collection("shifts").doc(String(st.openShiftId)).get()).data();
@@ -1742,7 +2025,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 
   /** Слушатели одной точки: заказы с собой и доставки, журнал кассы, смены. */
   function attachPoint(bot, tid) {
-    const unsubs = [];
+    // Копия чеков и настроек точки на сервере — отчёты считаются из неё.
+    const unsubs = [acquireStore(tid)];
     const t = tenantRef(tid);
     const owners = () => ownerChats(bot.cfg);
     const on = (flag) => !bot.cfg.notify || bot.cfg.notify[flag] !== false;
@@ -1898,6 +2182,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 
   /** Утренние итоги — раз в рабочие сутки после SUMMARY_HOUR; заодно — новые точки сети. */
   async function tick() {
+    await reconcileStores();
     for (const bot of bots.values()) {
       try {
         await bot.ready;

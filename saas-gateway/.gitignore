@@ -3,3 +3,5 @@
 backups/
 tenant-builds/
 branding-uploads/
+# Копия чеков для отчётов Telegram-бота (суммы и позиции, без данных гостей).
+telegram-cache/
