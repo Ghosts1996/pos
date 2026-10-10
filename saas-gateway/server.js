@@ -4339,6 +4339,41 @@ async function exportDocTree(ref, docs, limit) {
   }
 }
 
+// Оператор данных гостей — ZalPOS (оферта, раздел 7): владелец получает
+// копию без их имён, телефонов и адресов, иначе заведение стало бы
+// самостоятельным оператором этих данных. Полную копию выгружает только
+// супер-админ (для восстановления).
+const OWNER_EXPORT_STRIP = {
+  clients: ["name", "phone", "birthdayDay", "birthdayMonth", "pushToken"],
+  reservations: ["guestName", "phone"],
+  waitlist: ["guestName", "phone"],
+  sessions: ["customerName", "customerPhone", "deliveryAddress", "deliveryComment", "guestContact"],
+  guestOrders: ["guestName"],
+  waiterCalls: ["guestName"],
+  reviews: ["guestName"],
+  discountCards: ["guestName", "notes"],
+};
+// Указатель «телефон → гость»: телефон — сам id документа.
+const OWNER_EXPORT_SKIP = new Set(["phoneIndex"]);
+
+/** Копия для владельца: без персональных данных гостей. */
+function stripGuestPii(docs) {
+  for (const p of Object.keys(docs)) {
+    const parts = p.split("/");
+    // tenants|chains/{id}/{коллекция}/{документ}[/…]
+    if (parts.length < 4 || (parts[0] !== "tenants" && parts[0] !== "chains")) continue;
+    const col = parts[2];
+    if (OWNER_EXPORT_SKIP.has(col)) {
+      delete docs[p];
+      continue;
+    }
+    const fields = parts.length === 4 ? OWNER_EXPORT_STRIP[col] : null;
+    if (!fields || !docs[p] || typeof docs[p] !== "object") continue;
+    for (const f of fields) delete docs[p][f];
+  }
+  return docs;
+}
+
 /** Корневые документы, которые относятся к заведению или сети по полю. */
 async function exportWhere(collection, field, value, docs) {
   const snap = await db().collection(collection).where(field, "==", value).get();
@@ -4424,6 +4459,7 @@ async function handleExportBackup(req, res) {
   }
 
   const name = String(root.data().name || root.data().slug || id);
+  if (!superAdmin) stripGuestPii(docs);
   if (!superAdmin) {
     await throttleRef.set({ lastAt: admin.firestore.FieldValue.serverTimestamp(), byUid: decoded.uid });
   }
@@ -6669,4 +6705,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor });
+Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii });

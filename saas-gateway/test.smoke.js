@@ -252,6 +252,24 @@ async function main() {
     ], audit: [] });
     check("telegram: оплата через агрегатор — отдельной строкой, не картой",
       aggText.includes("Выручка: 1\u00a0300 ₽") && aggText.includes("агрегаторы 1\u00a0000 ₽") && aggText.includes("карта 300 ₽"));
+    {
+      const docs = {
+        "tenants/t1/clients/u1": { name: "Иван", phone: "79001112233", bonusBalance: 50, birthdayDay: 3, birthdayMonth: 4 },
+        "tenants/t1/clients/u1/visits/v1": { total: 900 },
+        "tenants/t1/phoneIndex/79001112233": { uid: "u1" },
+        "tenants/t1/reservations/r1": { guestName: "Иван", phone: "79001112233", guestsCount: 2 },
+        "tenants/t1/sessions/s1": { customerName: "Иван", customerPhone: "7900", deliveryAddress: "Ленина, 1", paymentCash: 900 },
+        "tenants/t1/meta/venueProfile": { name: "Лаунж", phone: "74950000000" },
+        "chains/c1/clients/u2": { name: "Анна", visits: 3 },
+      };
+      server.stripGuestPii(docs);
+      check("бэкап владельца: без имён, телефонов и адресов гостей, остальное на месте",
+        !("name" in docs["tenants/t1/clients/u1"]) && !("phone" in docs["tenants/t1/clients/u1"]) && docs["tenants/t1/clients/u1"].bonusBalance === 50
+        && !docs["tenants/t1/phoneIndex/79001112233"] && docs["tenants/t1/clients/u1/visits/v1"].total === 900
+        && !("guestName" in docs["tenants/t1/reservations/r1"]) && docs["tenants/t1/reservations/r1"].guestsCount === 2
+        && !("deliveryAddress" in docs["tenants/t1/sessions/s1"]) && docs["tenants/t1/sessions/s1"].paymentCash === 900
+        && docs["tenants/t1/meta/venueProfile"].phone === "74950000000" && !("name" in docs["chains/c1/clients/u2"]));
+    }
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     {

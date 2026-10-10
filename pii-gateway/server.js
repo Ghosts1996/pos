@@ -394,11 +394,12 @@ async function handleRecordContact(req, res, body) {
 }
 
 /**
- * Согласие гостя: две отметки перед первой отправкой имени или телефона —
- * на обработку и на трансграничную передачу. Без обеих гость дальше не
- * проходит (приложение не даёт нажать кнопку), здесь — проверка на случай
- * старой или подделанной версии. Пишем в РФ; в Firestore — только номер
- * редакции, чтобы приложение на другом устройстве не спрашивало заново.
+ * Согласие гостя перед первой отправкой имени или телефона: на обработку,
+ * а пока заведение не переведено на хранение в РФ (piiMode !== 'rf') — и на
+ * трансграничную передачу. Без нужных отметок гость дальше не проходит
+ * (приложение не даёт нажать кнопку), здесь — проверка на случай старой
+ * или подделанной версии. Пишем в РФ; в Firestore — только номер редакции,
+ * чтобы приложение на другом устройстве не спрашивало заново.
  */
 async function handleGuestConsent(req, res, body) {
   const tenant = typeof body.tenantId === "string" ? body.tenantId : "";
@@ -409,9 +410,10 @@ async function handleGuestConsent(req, res, body) {
   if (!/^[A-Za-z0-9._-]{1,40}$/.test(edition)) {
     return sendJson(res, 400, { error: "некорректная редакция согласия" });
   }
-  if (body.pd !== true || body.crossBorder !== true) {
-    return sendJson(res, 400, { error: "нужны согласие на обработку и на трансграничную передачу" });
+  if (body.pd !== true) {
+    return sendJson(res, 400, { error: "нужно согласие на обработку персональных данных" });
   }
+  const crossBorder = body.crossBorder === true;
   const idToken = bearer(req);
   if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
   let fbApp;
@@ -436,15 +438,20 @@ async function handleGuestConsent(req, res, body) {
       return sendJson(res, 502, { error: "не удалось прочитать заведение" });
     }
   }
+  // Заведение в режиме РФ данные за рубеж не передаёт — второе согласие
+  // не нужно. В остальных — без него не записываем.
+  if (!crossBorder && (await piiMode(db, tenant)) !== "rf") {
+    return sendJson(res, 400, { error: "нужно согласие на трансграничную передачу" });
+  }
   const storeKey = chainId ? `chain:${chainId}` : tenant;
   try {
     await getPool().query(
       `INSERT INTO guest_consents (tenant_id, uid, edition, pd_consent_at, xborder_consent_at, ip, user_agent)
-       VALUES ($1, $2, $3, now(), now(), $4, $5)
+       VALUES ($1, $2, $3, now(), CASE WHEN $6 THEN now() END, $4, $5)
        ON CONFLICT (tenant_id, uid, edition) DO UPDATE SET
-         pd_consent_at = now(), xborder_consent_at = now(), withdrawn_at = NULL,
+         pd_consent_at = now(), xborder_consent_at = EXCLUDED.xborder_consent_at, withdrawn_at = NULL,
          ip = EXCLUDED.ip, user_agent = EXCLUDED.user_agent`,
-      [storeKey, decoded.uid, edition, clientIp(req), String(req.headers["user-agent"] || "").slice(0, 300)]
+      [storeKey, decoded.uid, edition, clientIp(req), String(req.headers["user-agent"] || "").slice(0, 300), crossBorder]
     );
   } catch (_) {
     return sendJson(res, 500, { error: "не удалось сохранить согласие в первичной базе" });
