@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/tenant_models.dart';
+import 'gateway_cache_service.dart';
 
 /// Единая точка входа в Firestore для всех сервисов.
 ///
@@ -83,6 +84,7 @@ class AppScope {
     _demo = false;
     _demoPins = DemoPins.standard;
     _demoCode = '';
+    GatewayCacheService.instance.stop();
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому

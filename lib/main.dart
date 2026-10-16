@@ -20,6 +20,7 @@ import 'services/auth_service.dart';
 import 'services/demo_gate.dart';
 import 'services/saas_device_join_service.dart';
 import 'services/plan_capabilities.dart';
+import 'services/gateway_cache_service.dart';
 import 'services/subscription_gate.dart';
 import 'services/tenant_config_service.dart';
 import 'screens/image_preload_screen.dart';
@@ -135,6 +136,9 @@ void main() async {
         if (config != null) {
           AppScope.enterTenant(config.tenant.id,
               branding: config.branding, slug: config.tenant.slug, chainId: config.tenant.chainId, demo: config.tenant.demo, demoPins: config.tenant.demoPins, demoCode: config.tenant.demoCode);
+          // Предзагрузка статических данных (меню, сотрудники, профиль) через
+          // saas-gateway вместо прямых Firestore-подписок — уменьшает чтения.
+          unawaited(GatewayCacheService.instance.init(config.tenant.id));
           // Живой сторож жёсткой блокировки — держит смену
           // tenants/subscriptions под наблюдением всё время работы
           // приложения, а не только на старте (см. subscription_gate.dart:

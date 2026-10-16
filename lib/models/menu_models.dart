@@ -39,6 +39,14 @@ class MenuCategory {
     );
   }
 
+  factory MenuCategory.fromMap(Map<String, dynamic> map) => MenuCategory(
+        id: map['id'] as String? ?? '',
+        name: map['name'] as String? ?? '',
+        order: (map['order'] as num?)?.toInt() ?? 0,
+        imageUrl: map['imageUrl'] as String? ?? '',
+        kind: SaleKind.normalize(map['kind'] as String?),
+      );
+
   Map<String, dynamic> toMap() => {'name': name, 'order': order, 'imageUrl': imageUrl, 'kind': kind};
 
   MenuCategory copyWith({String? name, int? order, String? imageUrl, String? kind}) => MenuCategory(
@@ -320,9 +328,13 @@ class MenuItem {
 
   factory MenuItem.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    return MenuItem.fromMap({'id': doc.id, ...data});
+  }
+
+  factory MenuItem.fromMap(Map<String, dynamic> data) {
     final rawComponents = (data['components'] as List?) ?? [];
     return MenuItem(
-      id: doc.id,
+      id: data['id'] as String? ?? '',
       categoryId: data['categoryId'] ?? '',
       name: data['name'] ?? '',
       price: (data['price'] ?? 0).toDouble(),
