@@ -30,6 +30,12 @@ class PayrollResult {
   final double barPersonal;
   final double barPay;
 
+  /// Бонусы за достижение порогов выручки заведения.
+  final double revenueStepBonus;
+
+  /// Выручка заведения за период — нужна для отображения шагов в отчёте.
+  final double venueRevenue;
+
   /// Чаевые за период (оплаченные вместе со счётом, включая долю от
   /// «чаевых всей смене»). Не зарплата, но выдать их сотруднику нужно.
   final double tips;
@@ -61,6 +67,8 @@ class PayrollResult {
     this.barRevenue = 0,
     this.barPersonal = 0,
     this.barPay = 0,
+    this.revenueStepBonus = 0,
+    this.venueRevenue = 0,
     this.tips = 0,
     this.manualShifts = 0,
     this.manualHours = 0,
@@ -70,7 +78,7 @@ class PayrollResult {
   });
 
   double get totalHours => normalHours + overtimeHours;
-  double get wages => hourlyPay + shiftPay + overtimePay + salesPercentPay;
+  double get wages => hourlyPay + shiftPay + overtimePay + salesPercentPay + revenueStepBonus;
 
   /// Цена часа переработки — для строки «2 ч × 375 ₽» в отчёте.
   double get overtimeHourPrice => overtimeHours > 0 ? overtimePay / overtimeHours : 0;
@@ -118,6 +126,7 @@ class PayrollCalculator {
     double salesRevenue = 0,
     List<SaleCredit> credits = const [],
     double tips = 0,
+    double venueRevenue = 0,
   }) {
     final live = closedShifts.where((s) => !s.cancelled).toList();
     final groups = _group(live, (s) => employee.termsAt(s.effectiveStart).shiftRateEnabled,
@@ -175,6 +184,13 @@ class PayrollCalculator {
       }
     }
 
+    var revenueStepBonus = 0.0;
+    if (venueRevenue > 0) {
+      for (final step in employee.revenueSteps) {
+        revenueStepBonus += step.bonusFor(venueRevenue);
+      }
+    }
+
     final closed = live.where((s) => s.endedAt != null).toList();
     final manual = closed.where((s) => s.manual).toList();
     return PayrollResult(
@@ -196,6 +212,8 @@ class PayrollCalculator {
       barRevenue: barRevenue,
       barPersonal: barPersonal,
       barPay: barPay,
+      revenueStepBonus: revenueStepBonus,
+      venueRevenue: venueRevenue,
       tips: tips,
       manualShifts: manual.length,
       manualHours: manual.fold<double>(0, (a, s) => a + s.paidHours),

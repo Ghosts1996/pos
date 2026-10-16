@@ -95,6 +95,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
           .where((s) => s.endedAt != null && !s.endedAt!.isBefore(_rangeStart) && s.endedAt!.isBefore(_rangeEnd))
           .toList();
       final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
+      final venueRevenue = sessions.fold<double>(
+        0,
+        (sum, s) => s.status == 'closed' && !s.refunded && !s.closedWithoutPayment
+            ? sum + s.paymentCash + s.paymentCard + s.paymentTerminal + s.paymentAggregator
+            : sum,
+      );
       final sales = PayrollSales.attribute(sessions: sessions, employees: employees, shifts: [...around, ...open]);
       final adjustments = await _fs.payrollAdjustmentsInRange(_rangeStart, _rangeEnd);
       final adj = <String, List<PayrollAdjustment>>{};
@@ -122,14 +128,16 @@ class _PayrollScreenState extends State<PayrollScreen> {
           // Зарплата не настроена, но чаевые ему оставили — их всё равно
           // нужно выдать, поэтому карточка нужна.
           if (empTips > 0 || adj.containsKey(emp.id) || itemBonus.containsKey(emp.id)) {
-            results.add(PayrollCalculator.calculate(employee: emp, closedShifts: empShifts, tips: empTips));
+            results.add(PayrollCalculator.calculate(employee: emp, closedShifts: empShifts, tips: empTips,
+                venueRevenue: venueRevenue));
           } else {
             unconfigured.add(emp);
           }
           continue;
         }
         results.add(PayrollCalculator.calculate(
-            employee: emp, closedShifts: empShifts, credits: sales.of(emp.id), tips: empTips));
+            employee: emp, closedShifts: empShifts, credits: sales.of(emp.id), tips: empTips,
+            venueRevenue: venueRevenue));
       }
       final unassignedTips = tipShares.entries
           .where((e) => !usedTipKeys.contains(e.key))
@@ -387,6 +395,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
       rows.add(_row('За продажу позиций',
           ib.qtyByItem.entries.map((e) => '${e.key} × ${e.value}').join(', '), _rub(ib.amount)));
     }
+    if (r.revenueStepBonus > 0.005) {
+      final earned = emp.revenueSteps.where((s) => s.bonusFor(r.venueRevenue) > 0).length;
+      rows.add(_row(
+        'Бонус за выручку',
+        '${earned} ${pluralRu(earned, 'шаг', 'шага', 'шагов')} из ${emp.revenueSteps.length} · выручка ${_rub(r.venueRevenue)}',
+        _rub(r.revenueStepBonus),
+      ));
+    }
     for (final a in _adjOf(emp.id).where((a) => a.isAccrual)) {
       rows.add(_adjRow(a));
     }
@@ -632,6 +648,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     line('Переработка', r.overtimePay);
     line('Процент с продаж', r.salesPercentPay);
     line('За продажу позиций', _itemBonus[emp.id]?.amount ?? 0);
+    line('Бонус за выручку', r.revenueStepBonus);
     for (final a in _adjOf(emp.id).where((a) => a.isAccrual)) {
       b.writeln('${a.label}${a.comment.isEmpty ? '' : ' (${a.comment})'}: ${a.type == PayrollAdjustment.penalty ? '−' : ''}${_rub(a.amount)}');
     }
