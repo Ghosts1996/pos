@@ -1,6 +1,31 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/people_directory.dart';
 
+/// Шаг выручки заведения: если за период заведение заработало не меньше
+/// [threshold], сотрудник получает бонус — фиксированную сумму ([isFixed])
+/// или процент от всей выручки заведения.
+class RevenueStep {
+  final double threshold; // порог выручки заведения, ₽
+  final bool isFixed;     // true — фиксированная сумма ₽, false — % от выручки
+  final double value;     // ₽ или %
+
+  const RevenueStep({required this.threshold, required this.isFixed, required this.value});
+
+  factory RevenueStep.fromMap(Map<String, dynamic> m) => RevenueStep(
+        threshold: (m['threshold'] as num?)?.toDouble() ?? 0,
+        isFixed: m['isFixed'] != false,
+        value: (m['value'] as num?)?.toDouble() ?? 0,
+      );
+
+  Map<String, dynamic> toMap() => {'threshold': threshold, 'isFixed': isFixed, 'value': value};
+
+  /// Бонус при данной выручке заведения за период: 0, если порог не достигнут.
+  double bonusFor(double venueRevenue) {
+    if (venueRevenue < threshold || value <= 0) return 0;
+    return isFixed ? value : venueRevenue * value / 100;
+  }
+}
+
 /// Условия оплаты сотрудника: ставка за час или оклад за смену,
 /// переработка и проценты с продаж. Хранятся в карточке сотрудника
 /// (текущие) и в истории изменений [PayChange] — по ней зарплата за
@@ -33,6 +58,9 @@ class PayTerms {
   /// % с напитков и бара (алкоголь, коктейли, кофе) — бармену.
   final double barPercentRate;
 
+  /// Шаги выручки заведения: бонус при достижении порога.
+  final List<RevenueStep> revenueSteps;
+
   const PayTerms({
     this.hourlyRateEnabled = false,
     this.hourlyRate = 0,
@@ -47,10 +75,11 @@ class PayTerms {
     this.checkPercentExcludesHookah = false,
     this.hookahPercentRate = 0,
     this.barPercentRate = 0,
+    this.revenueSteps = const [],
   });
 
   /// Хоть один способ оплаты включён.
-  bool get configured => hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled;
+  bool get configured => hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled || revenueSteps.isNotEmpty;
 
   // Границы — как при сохранении карточки; старые данные могли их нарушать.
   double get safeHourlyRate => hourlyRate < 0 ? 0 : hourlyRate;
@@ -84,6 +113,10 @@ class PayTerms {
         checkPercentExcludesHookah: d['checkPercentExcludesHookah'] == true,
         hookahPercentRate: _num(d['hookahPercentRate']),
         barPercentRate: _num(d['barPercentRate']),
+        revenueSteps: ((d['revenueSteps'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => RevenueStep.fromMap(Map<String, dynamic>.from(m)))
+            .toList(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -100,6 +133,7 @@ class PayTerms {
         'checkPercentExcludesHookah': checkPercentExcludesHookah,
         'hookahPercentRate': hookahPercentRate,
         'barPercentRate': barPercentRate,
+        'revenueSteps': [for (final s in revenueSteps) s.toMap()],
       };
 
   /// Сводка для журнала и отчёта: «оклад 2 500 ₽/смена, 5% с чеков».
@@ -116,6 +150,8 @@ class PayTerms {
         '${n(salesPercentRate)}% с чеков${checkPercentExcludesHookah ? ' без кальянов' : ''}',
       if (salesPercentEnabled && hookahPercentRate > 0) '${n(hookahPercentRate)}% с кальянов',
       if (salesPercentEnabled && barPercentRate > 0) '${n(barPercentRate)}% с бара',
+      if (revenueSteps.isNotEmpty)
+        '${revenueSteps.length} ${revenueSteps.length == 1 ? 'шаг' : revenueSteps.length <= 4 ? 'шага' : 'шагов'} по выручке',
     ];
     return parts.isEmpty ? 'не настроена' : parts.join(', ');
   }
@@ -125,12 +161,21 @@ class PayTerms {
       other is PayTerms && _mapEquals(toMap(), other.toMap());
 
   @override
-  int get hashCode => Object.hashAll(toMap().values);
+  int get hashCode => Object.hashAll([
+        for (final v in toMap().values)
+          if (v is List) v.map((e) => '$e').join('|') else v,
+      ]);
 
   static bool _mapEquals(Map<String, dynamic> a, Map<String, dynamic> b) {
     if (a.length != b.length) return false;
     for (final k in a.keys) {
-      if (a[k] != b[k]) return false;
+      final av = a[k], bv = b[k];
+      if (av is List && bv is List) {
+        if (av.length != bv.length) return false;
+        for (var i = 0; i < av.length; i++) {
+          if ('${av[i]}' != '${bv[i]}') return false;
+        }
+      } else if (av != bv) return false;
     }
     return true;
   }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../utils/pin_hash.dart';
 import '../../models/employee.dart';
+import '../../models/pay_terms.dart';
 import '../../models/staff_shift_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_calculator.dart';
@@ -47,6 +48,9 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
   late final _hookahPercent = TextEditingController(text: _numOrEmpty(_emp?.hookahPercentRate ?? 0));
   late final _barPercent = TextEditingController(text: _numOrEmpty(_emp?.barPercentRate ?? 0));
   late bool _checkExcludesHookah = _emp?.checkPercentExcludesHookah ?? false;
+  late final List<_StepState> _revenueSteps = [
+    for (final s in (_emp?.revenueSteps ?? const <RevenueStep>[])) _StepState.from(s),
+  ];
 
   late String _role = _emp?.role ?? AppConstants.roleEmployee;
   late String _position = _emp?.position ?? AppConstants.positionUniversal;
@@ -103,6 +107,9 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
     ]) {
       c.dispose();
     }
+    for (final s in _revenueSteps) {
+      s.dispose();
+    }
     super.dispose();
   }
 
@@ -144,6 +151,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         hookahPercentRate: _parse(_hookahPercent),
         barPercentRate: _parse(_barPercent),
         tipsLink: _tipsLink.text.trim(),
+        revenueSteps: _revenueSteps.map((s) => s.toStep()).whereType<RevenueStep>().toList(),
       );
 
   String? _validate(Employee e) {
@@ -174,6 +182,11 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
     }
     if (e.tipsLink.isNotEmpty && !(Uri.tryParse(e.tipsLink)?.isAbsolute == true && e.tipsLink.startsWith('https://'))) {
       return 'Ссылка для чаевых должна начинаться с https://';
+    }
+    for (var i = 0; i < _revenueSteps.length; i++) {
+      if (_revenueSteps[i].toStep() == null) {
+        return 'В шаге ${i + 1}: укажите порог выручки и размер бонуса больше нуля';
+      }
     }
     return null;
   }
@@ -462,6 +475,33 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
             'с остального бара смены. Какая категория меню считается баром — '
             'в «Меню» у категории.'),
       ],
+      const Divider(height: 28, color: AppColors.border),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Бонус за выручку заведения', style: TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  'Если выручка за период достигла порога — сотрудник получает бонус',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Добавить'),
+            onPressed: () => setState(() => _revenueSteps.add(_StepState.empty())),
+          ),
+        ],
+      ),
+      for (var i = 0; i < _revenueSteps.length; i++) ...[
+        const SizedBox(height: 12),
+        _stepRow(i),
+      ],
       const SizedBox(height: 14),
       _hint(Icons.lock_clock_outlined,
           'Новые ставки действуют с момента сохранения: уже отработанные смены и закрытые чеки '
@@ -607,4 +647,73 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
         decoration: InputDecoration(labelText: label, suffixText: suffix, helperText: helper),
       );
+
+  Widget _stepRow(int i) {
+    final s = _revenueSteps[i];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(child: _money(s.threshold, 'Выручка от', '₽')),
+            const SizedBox(width: 10),
+            Expanded(child: _money(s.value, 'Бонус', s.isFixed ? '₽' : '%', decimal: !s.isFixed)),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              tooltip: 'Удалить шаг',
+              onPressed: () {
+                _revenueSteps[i].dispose();
+                setState(() => _revenueSteps.removeAt(i));
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: true, label: Text('Фиксированная сумма')),
+              ButtonSegment(value: false, label: Text('Процент от выручки')),
+            ],
+            selected: {s.isFixed},
+            onSelectionChanged: (v) => setState(() => s.isFixed = v.first),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StepState {
+  final TextEditingController threshold;
+  final TextEditingController value;
+  bool isFixed;
+
+  _StepState._({required String thresholdText, required String valueText, required this.isFixed})
+      : threshold = TextEditingController(text: thresholdText),
+        value = TextEditingController(text: valueText);
+
+  factory _StepState.empty() => _StepState._(thresholdText: '', valueText: '', isFixed: true);
+
+  factory _StepState.from(RevenueStep s) {
+    String fmt(double v) =>
+        v == 0 ? '' : (v == v.roundToDouble() ? v.toInt().toString() : v.toString().replaceAll('.', ','));
+    return _StepState._(thresholdText: fmt(s.threshold), valueText: fmt(s.value), isFixed: s.isFixed);
+  }
+
+  RevenueStep? toStep() {
+    final t = double.tryParse(threshold.text.replaceAll(',', '.').replaceAll(' ', '').trim()) ?? 0;
+    final v = double.tryParse(value.text.replaceAll(',', '.').replaceAll(' ', '').trim()) ?? 0;
+    if (t <= 0 || v <= 0) return null;
+    return RevenueStep(threshold: t, isFixed: isFixed, value: v);
+  }
+
+  void dispose() {
+    threshold.dispose();
+    value.dispose();
+  }
 }

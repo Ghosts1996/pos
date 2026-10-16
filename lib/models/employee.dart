@@ -60,6 +60,9 @@ class Employee {
   /// сотруднику, минуя кассу. Без неё чаевые добавляются к счёту.
   final String tipsLink;
 
+  /// Шаги выручки заведения: бонус при достижении порога за период.
+  final List<RevenueStep> revenueSteps;
+
   Employee({
     required this.id,
     required String name,
@@ -82,6 +85,7 @@ class Employee {
     this.barPercentRate = 0,
     this.payHistory = const [],
     this.tipsLink = '',
+    this.revenueSteps = const [],
   }) : _name = name;
 
   /// Текущие условия оплаты.
@@ -99,6 +103,7 @@ class Employee {
         checkPercentExcludesHookah: checkPercentExcludesHookah,
         hookahPercentRate: hookahPercentRate,
         barPercentRate: barPercentRate,
+        revenueSteps: revenueSteps,
       );
 
   /// Условия, действовавшие в момент [t] (см. [payTermsAt]).
@@ -107,7 +112,7 @@ class Employee {
   /// Хоть один способ расчёта зарплаты настроен — иначе отчёт по сотруднику
   /// будет пустым (не ошибка, но стоит показать подсказку в интерфейсе).
   bool get payrollConfigured =>
-      hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled ||
+      hourlyRateEnabled || shiftRateEnabled || salesPercentEnabled || revenueSteps.isNotEmpty ||
       // зарплату отключили, но в отчётный период она ещё действовала
       payHistory.any((c) => c.terms.configured);
 
@@ -149,6 +154,10 @@ class Employee {
             .map((m) => PayChange.fromMap(Map<String, dynamic>.from(m)))
             .toList(),
         tipsLink: (data['tipsLink'] ?? '').toString(),
+        revenueSteps: ((data['revenueSteps'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => RevenueStep.fromMap(Map<String, dynamic>.from(m)))
+            .toList(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -170,6 +179,7 @@ class Employee {
         'hookahPercentRate': hookahPercentRate,
         'barPercentRate': barPercentRate,
         'tipsLink': tipsLink,
+        if (revenueSteps.isNotEmpty) 'revenueSteps': [for (final s in revenueSteps) s.toMap()],
       };
 
   Employee copyWith({
@@ -192,6 +202,7 @@ class Employee {
     double? hookahPercentRate,
     double? barPercentRate,
     String? tipsLink,
+    List<RevenueStep>? revenueSteps,
   }) {
     return Employee(
       id: id,
@@ -215,6 +226,7 @@ class Employee {
       barPercentRate: barPercentRate ?? this.barPercentRate,
       payHistory: payHistory,
       tipsLink: tipsLink ?? this.tipsLink,
+      revenueSteps: revenueSteps ?? this.revenueSteps,
     );
   }
 }
