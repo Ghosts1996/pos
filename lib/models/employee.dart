@@ -121,33 +121,35 @@ class Employee {
 
   factory Employee.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
-    return Employee(
-      id: doc.id,
-      name: data['name'] ?? '',
-      pinCode: data['pinCode'] ?? '',
-      pinHash: (data['pinHash'] ?? '').toString(),
-      role: data['role'] ?? 'employee',
-      position: AppConstants.normalizePosition(data['position'] as String?),
-      hourlyRateEnabled: data['hourlyRateEnabled'] ?? false,
-      hourlyRate: (data['hourlyRate'] ?? 0).toDouble(),
-      shiftRateEnabled: data['shiftRateEnabled'] ?? false,
-      shiftRate: (data['shiftRate'] ?? 0).toDouble(),
-      overtimeEnabled: data['overtimeEnabled'] ?? false,
-      overtimeThresholdHours: (data['overtimeThresholdHours'] ?? 8).toDouble(),
-      overtimeMultiplier: (data['overtimeMultiplier'] ?? 1.5).toDouble(),
-      overtimeHourRate: (data['overtimeHourRate'] ?? 0).toDouble(),
-      salesPercentEnabled: data['salesPercentEnabled'] ?? false,
-      salesPercentRate: (data['salesPercentRate'] ?? 0).toDouble(),
-      checkPercentExcludesHookah: data['checkPercentExcludesHookah'] == true,
-      hookahPercentRate: (data['hookahPercentRate'] as num?)?.toDouble() ?? 0,
-      barPercentRate: (data['barPercentRate'] as num?)?.toDouble() ?? 0,
-      payHistory: ((data['payHistory'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((m) => PayChange.fromMap(Map<String, dynamic>.from(m)))
-          .toList(),
-      tipsLink: (data['tipsLink'] ?? '').toString(),
-    );
+    return Employee.fromMap({'id': doc.id, ...data});
   }
+
+  factory Employee.fromMap(Map<String, dynamic> data) => Employee(
+        id: data['id'] as String? ?? '',
+        name: data['name'] ?? '',
+        pinCode: data['pinCode'] ?? '',
+        pinHash: (data['pinHash'] ?? '').toString(),
+        role: data['role'] ?? 'employee',
+        position: AppConstants.normalizePosition(data['position'] as String?),
+        hourlyRateEnabled: data['hourlyRateEnabled'] ?? false,
+        hourlyRate: (data['hourlyRate'] ?? 0).toDouble(),
+        shiftRateEnabled: data['shiftRateEnabled'] ?? false,
+        shiftRate: (data['shiftRate'] ?? 0).toDouble(),
+        overtimeEnabled: data['overtimeEnabled'] ?? false,
+        overtimeThresholdHours: (data['overtimeThresholdHours'] ?? 8).toDouble(),
+        overtimeMultiplier: (data['overtimeMultiplier'] ?? 1.5).toDouble(),
+        overtimeHourRate: (data['overtimeHourRate'] ?? 0).toDouble(),
+        salesPercentEnabled: data['salesPercentEnabled'] ?? false,
+        salesPercentRate: (data['salesPercentRate'] ?? 0).toDouble(),
+        checkPercentExcludesHookah: data['checkPercentExcludesHookah'] == true,
+        hookahPercentRate: (data['hookahPercentRate'] as num?)?.toDouble() ?? 0,
+        barPercentRate: (data['barPercentRate'] as num?)?.toDouble() ?? 0,
+        payHistory: ((data['payHistory'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((m) => PayChange.fromMap(Map<String, dynamic>.from(m)))
+            .toList(),
+        tipsLink: (data['tipsLink'] ?? '').toString(),
+      );
 
   Map<String, dynamic> toMap() => {
         if (Pd.mirror) 'name': name,

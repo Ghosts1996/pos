@@ -19,6 +19,32 @@ class GatewayException implements Exception {
 class GatewayApi {
   GatewayApi._();
 
+  static Future<Map<String, dynamic>> get(String path, [Map<String, String> query = const {}]) async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (kSaasGatewayUrl.isEmpty || token == null) {
+      throw GatewayException('Сервер сейчас недоступен — проверьте интернет');
+    }
+    final uri = Uri.parse('$kSaasGatewayUrl/$path').replace(queryParameters: query);
+    http.Response resp;
+    try {
+      resp = await http
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 25));
+    } catch (_) {
+      throw GatewayException('Нет связи с сервером — проверьте интернет и попробуйте ещё раз');
+    }
+    Map<String, dynamic> json;
+    try {
+      json = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    } catch (_) {
+      throw GatewayException('Сервер ответил ошибкой ${resp.statusCode}');
+    }
+    if (resp.statusCode != 200) {
+      throw GatewayException((json['error'] ?? 'Сервер ответил ошибкой ${resp.statusCode}').toString());
+    }
+    return json;
+  }
+
   static Future<Map<String, dynamic>> post(String path, [Map<String, dynamic> body = const {}]) async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     if (kSaasGatewayUrl.isEmpty || token == null) {

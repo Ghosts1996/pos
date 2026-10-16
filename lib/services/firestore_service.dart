@@ -37,6 +37,8 @@ import '../utils/checkout_checks.dart';
 import '../utils/streams.dart';
 import '../models/client_models.dart';
 import 'guest_link_service.dart';
+import '../build_info.dart';
+import 'gateway_cache_service.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -59,6 +61,8 @@ class FirestoreService {
   static final _inventoryItemsS = SharedStreams<List<InventoryItem>>();
   static final _inventoryItemS = SharedStreams<InventoryItem?>();
   static final _openInventoryCountS = SharedStreams<InventoryCount?>();
+  static final _menuCatS = SharedStreams<List<MenuCategory>>();
+  static final _menuItemS = SharedStreams<List<MenuItem>>();
 
   /// Ключ общей подписки — с заведением: у другого заведения другие данные.
   static String _k([String id = '']) => '${AppScope.tenantId ?? '-'}|$id';
@@ -1990,9 +1994,20 @@ class FirestoreService {
   }
 
   // ---------- МЕНЮ ----------
-  Stream<List<MenuCategory>> categoriesStream() {
-    return AppScope.col('menuCategories').orderBy('order').snapshots().map(
-        (snap) => snap.docs.map((d) => MenuCategory.fromDoc(d)).toList());
+
+  /// Категории меню. В SaaS с настроенным shлюзом данные берутся из
+  /// серверного кеша (обновляется раз в 5 мин) вместо прямой Firestore-подписки.
+  Stream<List<MenuCategory>> categoriesStream() => _menuCatS.get(_k(), () => _menuCatSource());
+
+  Stream<List<MenuCategory>> _menuCatSource() async* {
+    final cache = GatewayCacheService.instance;
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
+      if (cache.menuCategories.isNotEmpty) yield cache.menuCategories;
+      yield* cache.menuCategoriesStream;
+      return;
+    }
+    yield* AppScope.col('menuCategories').orderBy('order').snapshots().map(
+        (snap) => snap.docs.map(MenuCategory.fromDoc).toList());
   }
 
   /// Позиции меню по id (для фискального чека: ставка НДС, предмет
@@ -2002,9 +2017,19 @@ class FirestoreService {
     return {for (final d in docs) if (d.exists) d.id: MenuItem.fromDoc(d)};
   }
 
-  Stream<List<MenuItem>> menuItemsStream() {
-    return AppScope.col('menuItems').snapshots().map(
-        (snap) => snap.docs.map((d) => MenuItem.fromDoc(d)).toList());
+  /// Позиции меню. В SaaS с настроенным шлюзом данные берутся из
+  /// серверного кеша вместо прямой Firestore-подписки.
+  Stream<List<MenuItem>> menuItemsStream() => _menuItemS.get(_k(), () => _menuItemSource());
+
+  Stream<List<MenuItem>> _menuItemSource() async* {
+    final cache = GatewayCacheService.instance;
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
+      if (cache.menuItems.isNotEmpty) yield cache.menuItems;
+      yield* cache.menuItemsStream;
+      return;
+    }
+    yield* AppScope.col('menuItems').snapshots().map(
+        (snap) => snap.docs.map(MenuItem.fromDoc).toList());
   }
 
   /// Новая категория встаёт в конец. Две одновременные «Новая категория»
@@ -2120,11 +2145,20 @@ class FirestoreService {
 
   /// Общая подписка: меню сотрудника, X-отчёт и «кто на смене» читают
   /// одну и ту же, а не открывают каждый свою.
-  Stream<List<Employee>> employeesStream() => _employeesS.get(
-      _k(),
-      () => AppScope.col('employees')
-          .snapshots()
-          .map((snap) => snap.docs.map((d) => Employee.fromDoc(d)).toList()));
+  /// В SaaS с настроенным шлюзом данные берутся из серверного кеша.
+  Stream<List<Employee>> employeesStream() => _employeesS.get(_k(), () => _employeeSource());
+
+  Stream<List<Employee>> _employeeSource() async* {
+    final cache = GatewayCacheService.instance;
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
+      if (cache.employees.isNotEmpty) yield cache.employees;
+      yield* cache.employeesStream;
+      return;
+    }
+    yield* AppScope.col('employees')
+        .snapshots()
+        .map((snap) => snap.docs.map(Employee.fromDoc).toList());
+  }
 
   /// Список сотрудников разово — для отчётов. Не `employeesStream().first`:
   /// первый снимок подписки отдаётся из локального кэша, и сотрудник,

@@ -6993,6 +6993,80 @@ const telegram = createTelegram({
   pii,
 });
 
+// ------------------------------------------------ кеш статических данных
+//
+// Уменьшает прямые чтения Firestore из Flutter-приложения: данные меню,
+// сотрудников и профиля заведения кешируются на сервере (STATIC_DATA_TTL_MS).
+// Все устройства одного заведения получают один набор данных за одно обращение
+// к базе вместо N параллельных подписок.
+const STATIC_DATA_TTL_MS = 5 * 60 * 1000; // 5 минут
+const _staticDataCache = new Map(); // tenantId -> { data, expiresAt }
+
+/** Сбрасывает кеш заведения — вызывается при изменениях меню/профиля через API. */
+function invalidateTenantStaticCache(tenantId) {
+  if (tenantId) _staticDataCache.delete(tenantId);
+}
+
+/**
+ * GET /tenantStaticData?tenantId=...
+ * Возвращает menuCategories, menuItems, employees, venueProfile — данные,
+ * которые Flutter-приложение раньше читало прямо из Firestore snapshot-listeners
+ * на каждом устройстве. Требует авторизации: любой активный участник заведения.
+ */
+async function handleTenantStaticData(req, res) {
+  const decoded = await verifyAuth(req);
+  const params = new URL(`http://x${req.url}`).searchParams;
+  const tenantId = params.get("tenantId");
+  if (!tenantId) throw new HttpError(400, "tenantId обязателен");
+
+  // Любой активный участник заведения может читать статику.
+  const memberDoc = await db().collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get();
+  const member = memberDoc.data();
+  if (!memberDoc.exists || member.status !== "active") {
+    throw new HttpError(403, "Нет доступа к этому заведению");
+  }
+
+  const cached = _staticDataCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store",
+      "X-Cache": "HIT",
+    });
+    res.end(cached.raw);
+    return;
+  }
+
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const [catSnap, itemsSnap, empSnap, profileSnap] = await Promise.all([
+    tenantRef.collection("menuCategories").orderBy("order").get(),
+    tenantRef.collection("menuItems").get(),
+    tenantRef.collection("employees").get(),
+    tenantRef.collection("meta").doc("venueProfile").get(),
+  ]);
+
+  const data = {
+    menuCategories: catSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    menuItems: itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    employees: empSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    venueProfile: profileSnap.exists ? profileSnap.data() : null,
+    cachedAt: Date.now(),
+  };
+  const raw = JSON.stringify(data);
+  _staticDataCache.set(tenantId, { raw, expiresAt: Date.now() + STATIC_DATA_TTL_MS });
+
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Cache-Control": "no-store",
+    "X-Cache": "MISS",
+  });
+  res.end(raw);
+}
+
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
@@ -7128,6 +7202,8 @@ const server = http.createServer((req, res) => {
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
   if (req.method === "GET" && urlPath === "/staffWho") return runHandler(telegram.handleWho, req, res);
+  // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
+  if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
     return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);
