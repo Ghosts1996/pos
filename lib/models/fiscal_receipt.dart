@@ -195,12 +195,26 @@ class FiscalReceipt {
   /// бумаге (если касса с чекопечатающим устройством).
   final String buyerContact;
 
+  /// Чек «возврат прихода» (признак расчёта 2) — при возврате оплаченного чека.
+  final bool refund;
+
   const FiscalReceipt({
     required this.receiptId,
     required this.items,
     required this.payments,
     this.buyerContact = '',
+    this.refund = false,
   });
+
+  /// Возврат этого чека: те же позиции и формы оплаты. Свой номер — по
+  /// [receiptId] провайдер отсекает повторы и принял бы возврат за дубль.
+  FiscalReceipt asRefund() => FiscalReceipt(
+        receiptId: '$receiptId-refund',
+        items: items,
+        payments: payments,
+        buyerContact: buyerContact,
+        refund: true,
+      );
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
 
@@ -211,6 +225,7 @@ class FiscalReceipt {
         'items': items.map((i) => i.toJson()).toList(),
         'payments': payments.map((p) => {'type': p.type, 'amount': p.amount}).toList(),
         'buyerContact': buyerContact,
+        if (refund) 'refund': true,
       };
 
   factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
@@ -224,6 +239,7 @@ class FiscalReceipt {
             FiscalPayment((p as Map)['type'] as String? ?? 'cash', (p['amount'] as num?)?.toDouble() ?? 0),
         ],
         buyerContact: j['buyerContact'] as String? ?? '',
+        refund: j['refund'] == true,
       );
 }
 

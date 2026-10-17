@@ -874,12 +874,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       final draft = FiscalReceipt(receiptId: widget.session.id, items: items, payments: const []);
       final balanced = balancePayments(payments, draft.total);
-      final result = await FiscalQueue.send(FiscalReceipt(
+      final receipt = FiscalReceipt(
         receiptId: widget.session.id,
         items: items,
         payments: balanced.isEmpty ? [FiscalPayment('cash', draft.total)] : balanced,
         buyerContact: _contactCtrl.text.trim(),
-      ));
+      );
+      final result = await FiscalQueue.send(receipt);
+      if (result.success || result.queued) {
+        unawaited(_fs.saveFiscalReceipt(widget.session.id, receipt.toJson()).catchError((Object _) {}));
+      }
 
       if (result.queued) {
         _showKassaWarning('Касса сейчас недоступна — чек сохранён и пробьётся сам, когда связь вернётся');
