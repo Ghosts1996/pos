@@ -2663,10 +2663,23 @@ class FirestoreService {
   /// должно показывать, на сколько остаток изменился именно сейчас.
   Future<void> completeInventoryCount(String countId, String employeeName) async {
     final ref = AppScope.col('inventoryCounts').doc(countId);
-    final data = (await ref.get()).data();
-    // Уже завершили или отменили с другого устройства — второй раз не
-    // применяем, иначе движения в истории задвоятся.
-    if (data == null || data['status'] != 'in_progress') return;
+    final now = DateTime.now();
+    // Сначала забираем инвентаризацию себе транзакцией: две кассы, нажавшие
+    // «Завершить» одновременно, обе прочли бы in_progress и применили
+    // расхождения дважды. Уже завершили или отменили — выходим.
+    final data = await _db.runTransaction<Map<String, dynamic>?>((tx) async {
+      final snap = await tx.get(ref);
+      final d = snap.data();
+      if (d == null || d['status'] != 'in_progress') return null;
+      tx.update(ref, {
+        'status': 'completed',
+        'applied': false,
+        'closedAt': Timestamp.fromDate(now),
+        'closedBy': Pd.who(employeeName),
+      });
+      return d;
+    });
+    if (data == null) return;
     final entries = ((data['entries'] ?? []) as List)
         .map((e) => InventoryCountEntry.fromMap(Map<String, dynamic>.from(e as Map)))
         .where((e) => e.countedQty != null)
@@ -2674,7 +2687,6 @@ class FirestoreService {
     final current = await Future.wait(
         entries.map((e) => AppScope.col('inventoryItems').doc(e.itemId).get()));
 
-    final now = DateTime.now();
     // Лимит батча — 500 операций, на позицию их до двух.
     var batch = _db.batch();
     var ops = 0;
@@ -2718,11 +2730,7 @@ class FirestoreService {
         ops = 0;
       }
     }
-    batch.update(ref, {
-      'status': 'completed',
-      'closedAt': Timestamp.fromDate(now),
-      'closedBy': Pd.who(employeeName),
-    });
+    batch.update(ref, {'applied': true});
     await batch.commit();
   }
 

@@ -85,6 +85,18 @@ class GuestConsent extends ChangeNotifier {
     _markGiven();
   }
 
+  /// Гость удалил свои данные: согласие отозвано вместе с ними. Новый
+  /// анонимный аккаунт начинает без него — иначе экран, где оно было дано,
+  /// отправил бы новые данные, не спросив.
+  Future<void> forget(String uid) async {
+    _given = !kSaasMode;
+    _pd = false;
+    notifyListeners();
+    try {
+      await (await SharedPreferences.getInstance()).remove(_key(uid));
+    } catch (_) {}
+  }
+
   // ---------------------------------------------------------------- оператор
 
   /// Реквизиты ZalPOS (platformConfig/legal — открыты для чтения). Пока

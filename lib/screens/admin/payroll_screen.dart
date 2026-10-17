@@ -12,6 +12,7 @@ import '../../services/tips_service.dart';
 import '../../utils/bill_split.dart';
 import '../../utils/table_label.dart';
 import '../../utils/human_error.dart';
+import '../../utils/payroll_guard.dart';
 import '../../utils/adaptive.dart';
 import '../../theme/app_colors.dart';
 
@@ -26,9 +27,12 @@ import '../../theme/app_colors.dart';
 /// часов (и кто их сделал), правки самому себе, очень длинные смены,
 /// изменение ставок в этом периоде.
 class PayrollScreen extends StatefulWidget {
-  /// Кто работает с экраном — пишется в премии, штрафы и выплаты.
-  final String actorName;
-  const PayrollScreen({super.key, this.actorName = ''});
+  /// Кто работает с экраном — подписывает премии, штрафы и выплаты.
+  /// Себе их не выписывает, если есть другой администратор (PayrollGuard).
+  final Employee? actor;
+  const PayrollScreen({super.key, this.actor});
+
+  String get actorName => actor?.name ?? '';
 
   @override
   State<PayrollScreen> createState() => _PayrollScreenState();
@@ -538,7 +542,19 @@ class _PayrollScreenState extends State<PayrollScreen> {
         ),
       );
 
+  /// Премии, выплаты и их отмена самому себе — как свои смены и ставки.
+  bool _guard(String employeeId) {
+    final me = widget.actor;
+    if (me == null) return true;
+    final all = [for (final r in _results) r.employee, ..._unconfigured];
+    final reason = PayrollGuard.ownRecordBlock(me, employeeId, all, what: 'свои премии и выплаты');
+    if (reason == null) return true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(reason)));
+    return false;
+  }
+
   Future<void> _addAdjustment(Employee emp, String type, {double suggested = 0}) async {
+    if (!_guard(emp.id)) return;
     final amountCtrl = TextEditingController(text: suggested > 0.5 ? suggested.toStringAsFixed(0) : '');
     final commentCtrl = TextEditingController();
     var kind = type;
@@ -612,6 +628,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Future<void> _cancelAdjustment(PayrollAdjustment a) async {
+    if (!_guard(a.employeeId)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

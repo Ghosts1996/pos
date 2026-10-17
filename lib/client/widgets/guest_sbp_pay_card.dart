@@ -64,6 +64,9 @@ class _GuestSbpPayCardState extends State<GuestSbpPayCard> {
       _status = 'pending';
       _startedAt = DateTime.now();
       await _openBank();
+      // Пока открывался банк, экран могли закрыть: таймер после dispose
+      // опрашивал бы сервер, пока приложение живо.
+      if (!mounted) return;
       _poll?.cancel();
       _poll = Timer.periodic(const Duration(seconds: 3), (_) => _check());
     } catch (e) {

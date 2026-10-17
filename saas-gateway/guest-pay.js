@@ -1059,10 +1059,23 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   // ------------------------------------------------------------ фон
 
   /** Раз в минуту — платежи, о которых банк ещё не сообщил (гость мог закрыть приложение). */
+  let sweeping = false;
   async function sweep() {
+    // Медленный банк растягивает проход дольше минуты — второй не запускаем.
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      await sweepOnce();
+    } finally {
+      sweeping = false;
+    }
+  }
+
+  async function sweepOnce() {
     const snap = await pendingCol().limit(200).get();
     for (const d of snap.docs) {
       const { tenantId, paymentId, createdAt, kind } = d.data();
+      const age = Date.now() - (createdAt?.toMillis?.() || 0);
       try {
         if (kind === "kassa") {
           await sweepKassa(tenantId, paymentId, createdAt);
@@ -1075,10 +1088,13 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
           continue;
         }
         const st = await resolvePayment(tenantId, paymentId, p);
-        const age = Date.now() - (createdAt?.toMillis?.() || 0);
         if (st === "pending" && age > PENDING_TTL_MS) await markFailed(tenantId, paymentId, "expired");
       } catch (e) {
         console.error(`guest-pay sweep (${tenantId}/${paymentId}):`, e.message || e);
+        // Заведение удалили или сняли ключи банка — запись падала бы
+        // вечно и занимала место в выборке из 200. Сутки пытаемся, потом
+        // убираем из очереди (сам платёж остаётся в истории как был).
+        if (age > 24 * 3600 * 1000) await d.ref.delete().catch(() => {});
       }
     }
   }
