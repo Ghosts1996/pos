@@ -514,15 +514,22 @@ class SubscriptionInfo {
     return end.isAfter(n) && end.difference(n) <= window;
   }
 
+  /// Когда данные заведения удалятся: [gracePeriodDays] дней после начала
+  /// просрочки. null — подписка не просрочена.
+  DateTime? get dataPurgeAt {
+    final since = pastDueSince;
+    if (status != 'past_due' || since == null) return null;
+    return since.add(const Duration(days: gracePeriodDays));
+  }
+
   /// Сколько дней осталось до реального удаления данных заведения — null,
   /// если подписка не в просрочке (нечего отсчитывать). 0 означает "сегодня
   /// последний день": `enforceGracePeriod` стирает данные при следующем
   /// суточном прогоне после того, как пройдут все [gracePeriodDays] дней.
   int? daysUntilDataPurge({DateTime? now}) {
-    final since = pastDueSince;
-    if (status != 'past_due' || since == null) return null;
+    final deadline = dataPurgeAt;
+    if (deadline == null) return null;
     final n = now ?? DateTime.now();
-    final deadline = since.add(const Duration(days: gracePeriodDays));
     final remainingHours = deadline.difference(n).inHours;
     final remainingDays = (remainingHours / 24).ceil();
     return remainingDays < 0 ? 0 : remainingDays;
