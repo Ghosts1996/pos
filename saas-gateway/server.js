@@ -7087,84 +7087,79 @@ const supportFmt = (v) => {
   const ms = v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number(v) || 0;
   return ms ? new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ") + " МСК" : "—";
 };
-const SUB_STATUS = { trial: "пробный период", active: "оплачена", past_due: "просрочена оплата", cancelled: "отменена", expired: "закончилась", paused: "приостановлена" };
 
-/** Состояние заведения для ИИ и для сотрудников поддержки — без
- *  персональных данных (имён, телефонов, почт нет). */
+/** Состояние заведения для бота поддержки — данные, а оформляет их бот
+ *  (support-bot.js: карточка в Telegram и сжатая строка для ИИ). Без
+ *  персональных данных и без логинов, паролей и ключей интеграций. */
 async function supportVenueStatus(tenantId) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
   const tenant = (await tenantRef.get()).data();
-  if (!tenant) return "Заведение не найдено (удалено?)";
+  if (!tenant) return { missing: true, id: tenantId };
   const billingId = tenant.chainId || tenantId;
-  const [subDoc, devSnap, jobsSnap, botDoc, aiDoc] = await Promise.all([
+  const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+  const [subDoc, devSnap, jobsSnap, botDoc, aiDoc, integDoc, profileDoc, menuCount, tablesCount] = await Promise.all([
     firestore.collection("subscriptions").doc(billingId).get().catch(() => null),
     tenantRef.collection("devices").limit(60).get().catch(() => null),
-    firestore.collection("buildJobs").where("tenantId", "==", tenantId).limit(40).get().catch(() => null),
+    firestore.collection("buildJobs").where("tenantId", "==", tenantId).orderBy("createdAt", "desc").limit(30).get().catch(() => null),
     firestore.collection("telegramBots").doc(tenantId).get().catch(() => null),
     tenantRef.collection("meta").doc("aiSettings").get().catch(() => null),
+    tenantRef.collection("settings").doc("integrations").get().catch(() => null),
+    tenantRef.collection("meta").doc("venueProfile").get().catch(() => null),
+    tenantRef.collection("menuItems").count().get().then((c) => c.data().count).catch(() => null),
+    tenantRef.collection("tables").select().limit(300).get().then((q) => q.docs.filter((d) => d.id !== "takeaway").length).catch(() => null),
   ]);
   const sub = (subDoc && subDoc.data()) || null;
   const planId = (sub && sub.planId) || tenant.planId || "";
   const plan = planId ? ((await firestore.collection("plans").doc(planId).get().catch(() => null))?.data() || {}) : {};
-  const lines = [];
-  lines.push(`Заведение: ${tenant.name || tenantId} · адрес ${tenant.slug || "—"}.zalpos.ru · статус ${tenant.status || "—"}${tenant.chainId ? " · точка сети" : ""}`);
-  if (sub) {
-    const until = sub.status === "trial" ? sub.trialEndsAt : sub.currentPeriodEnd;
-    lines.push(`Подписка: ${plan.name || plan.title || planId || "—"} · ${SUB_STATUS[sub.status] || sub.status || "—"}${until ? ` до ${supportFmt(until)}` : ""}${sub.cancelAtPeriodEnd ? " · не продлится" : ""}`);
-  } else {
-    lines.push("Подписка: нет данных");
-  }
   const devices = devSnap ? devSnap.docs.map((d) => d.data()) : [];
-  if (devices.length) {
-    const activeDev = devices.filter((d) => d.status !== "disabled");
-    const seen = activeDev.map((d) => (d.lastSeenAt && typeof d.lastSeenAt.toMillis === "function" ? d.lastSeenAt.toMillis() : 0));
-    const stale = seen.filter((ms) => ms && Date.now() - ms > 3 * 86400000).length;
-    const plats = [...new Set(activeDev.map((d) => d.platform || "?"))].join(", ");
-    lines.push(`Устройства: ${activeDev.length} подключено (${plats})${devices.length - activeDev.length ? `, отключено ${devices.length - activeDev.length}` : ""}${seen.some(Boolean) ? `, последний вход ${supportFmt(Math.max(...seen))}` : ""}${stale ? `, ${stale} не входили больше 3 дней` : ""}`);
-  } else {
-    lines.push("Устройства: ни одной кассы ещё не подключено");
-  }
-  const jobs = jobsSnap ? jobsSnap.docs.map((d) => d.data()) : [];
-  if (jobs.length) {
-    const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
-    const latest = new Map();
-    for (const j of jobs.sort((a, b) => ms(b.createdAt) - ms(a.createdAt))) {
-      const key = `${j.type || "?"}/${j.platform || "?"}`;
-      if (!latest.has(key)) latest.set(key, j);
-    }
-    const names = { "pos/android": "касса Android", "pos/windows": "касса Windows", "guest/android": "приложение гостя" };
-    const st = { queued: "собирается", done: "готова", completed: "готова", success: "готова", failed: "ошибка" };
-    lines.push(`Сборки: ${[...latest.entries()].map(([k, j]) => `${names[k] || k} — ${st[j.status] || j.status} (${supportFmt(j.createdAt)})${j.status === "failed" && j.errorMessage ? `: ${String(j.errorMessage).slice(0, 160)}` : ""}`).join("; ")}`);
-  } else {
-    lines.push("Сборки: ещё не собирали (Кабинет → «Устройства» → «Собрать APK»)");
+  const activeDev = devices.filter((d) => d.status !== "disabled");
+  const seen = activeDev.map((d) => ms(d.lastSeenAt));
+  // Последняя сборка каждого приложения; «superseded» — старые готовые,
+  // заменённые новой, их не показываем.
+  const builds = [];
+  const keys = new Set();
+  for (const j of jobsSnap ? jobsSnap.docs.map((d) => d.data()) : []) {
+    if (j.status === "superseded") continue;
+    const key = `${j.type || "pos"}/${j.platform || "android"}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    builds.push({ key, status: j.status || "", at: ms(j.completedAt) || ms(j.createdAt), error: j.status === "failed" ? String(j.errorMessage || "").slice(0, 200) : "" });
   }
   const bot = botDoc && botDoc.data();
-  lines.push(`Telegram-бот заведения: ${bot ? `подключён${bot.username ? ` (@${bot.username})` : ""}${(bot.ownerChats || []).length ? "" : ", чат владельца не привязан"}${bot.staffChat ? "" : ", группа сотрудников не привязана"}` : "не подключён"}`);
-  const aiSet = aiDoc && aiDoc.data();
-  lines.push(`ИИ заведения: ${aiSet && aiSet.enabled === true ? "включён" : "выключен"}`);
-  // Что настроено в кассе — только признаки, без логинов, паролей и ключей.
-  const [integDoc, profileDoc, menuCount, tablesCount] = await Promise.all([
-    tenantRef.collection("settings").doc("integrations").get().catch(() => null),
-    tenantRef.collection("meta").doc("venueProfile").get().catch(() => null),
-    tenantRef.collection("menuItems").count().get().then((c) => c.data().count).catch(() => null),
-    tenantRef.collection("tables").count().get().then((c) => c.data().count).catch(() => null),
-  ]);
   const integ = (integDoc && integDoc.data()) || {};
   const prof = (profileDoc && profileDoc.data()) || {};
   const KASSA = { atol_cloud: "АТОЛ Онлайн", orange_data: "OrangeData", atol_local: "регистратор АТОЛ в заведении" };
-  const TERMINAL = { manual: "терминал банка (сумма вручную)", online_qr: "QR на экране кассы", tinkoff_sbp: "QR СБП Т-Банка", sber_upos: "Сбер UPOS по кабелю", cli: "терминал по кабелю (программа банка)" };
+  const TERMINAL = { manual: "терминал банка", online_qr: "QR на экране кассы", tinkoff_sbp: "QR СБП Т-Банка", sber_upos: "Сбер UPOS по кабелю", cli: "терминал по кабелю" };
   const PRINTER = { bluetooth: "Bluetooth", network: "сетевой", usb: "USB" };
-  const terminalBanks = Array.isArray(integ.terminalBanks) ? integ.terminalBanks.length : 0;
-  lines.push(`Настройка кассы: онлайн-касса 54-ФЗ — ${KASSA[integ.kassaType] || "не подключена"}`
-    + `; оплата картой — ${TERMINAL[integ.terminalProvider] || TERMINAL.manual}${terminalBanks ? ` (${terminalBanks} банк.)` : ""}`
-    + `; онлайн-оплата гостей — ${prof.onlinePay ? `работает (${prof.onlinePay})` : integ.onlinePayProvider ? `банк ${integ.onlinePayProvider} выбран, но не проверен или выключена в профиле` : "не подключена"}`
-    + `; реквизиты продавца — ${prof.sellerName && prof.sellerInn ? "заполнены" : "не заполнены"}`
-    + `; принтер чеков — ${integ.printerType && integ.printerType !== "none" ? PRINTER[integ.printerType] || integ.printerType : "не подключён"}`
-    + `; ЕГАИС — ${integ.egaisEnabled ? "включён" : "выключен"}`
-    + `; доставка из приложения — ${prof.deliveryEnabled ? "включена" : "выключена"}`
-    + `${menuCount !== null ? `; позиций меню — ${menuCount}` : ""}${tablesCount !== null ? `; столов на карте зала — ${tablesCount}` : ""}`);
-  return lines.join("\n");
+  return {
+    id: tenantId, name: tenant.name || tenantId, slug: tenant.slug || "", status: tenant.status || "", chain: !!tenant.chainId,
+    sub: sub ? {
+      plan: plan.name || plan.title || planId || "", status: sub.status || "",
+      until: ms(sub.status === "trial" ? sub.trialEndsAt : sub.currentPeriodEnd), cancelAtPeriodEnd: !!sub.cancelAtPeriodEnd,
+    } : null,
+    devices: {
+      active: activeDev.length, disabled: devices.length - activeDev.length,
+      platforms: [...new Set(activeDev.map((d) => d.platform || "?"))],
+      lastSeen: seen.length ? Math.max(...seen) : 0, stale: seen.filter((t) => t && Date.now() - t > 3 * 86400000).length,
+    },
+    builds,
+    bot: bot ? { username: bot.username || "", ownerChat: (bot.ownerChats || []).length > 0, staffChat: !!bot.staffChat } : null,
+    aiEnabled: !!(aiDoc && aiDoc.data() && aiDoc.data().enabled === true),
+    setup: {
+      kassa: KASSA[integ.kassaType] || "",
+      terminal: TERMINAL[integ.terminalProvider] || TERMINAL.manual,
+      terminalBanks: Array.isArray(integ.terminalBanks) ? integ.terminalBanks.length : 0,
+      onlinePay: prof.onlinePay ? "ok" : integ.onlinePayProvider ? "pending" : "off",
+      onlinePayBank: prof.onlinePay || integ.onlinePayProvider || "",
+      seller: !!(prof.sellerName && prof.sellerInn),
+      printer: integ.printerType && integ.printerType !== "none" ? PRINTER[integ.printerType] || integ.printerType : "",
+      egais: !!integ.egaisEnabled,
+      delivery: !!prof.deliveryEnabled,
+      menuItems: menuCount,
+      tables: tablesCount, // без служебного стола «С собой»
+    },
+  };
 }
 
 // Тарифы для ответов ИИ — из базы, как на сайте; перечитываем раз в 10 минут.

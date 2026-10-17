@@ -51,7 +51,7 @@ test("секреты находятся и скрываются, персона�
 
 test("маркер оператора в ответе ИИ", () => {
   const r = sb.parseAiReply("**Подключаю** специалиста.\n[[ОПЕРАТОР: возврат денег]]");
-  assert.deepStrictEqual(r, { text: "Подключаю специалиста.", escalate: true, reason: "возврат денег", docs: [] });
+  assert.deepStrictEqual(r, { text: "Подключаю специалиста.", md: "**Подключаю** специалиста.", escalate: true, reason: "возврат денег", docs: [] });
   assert.strictEqual(sb.parseAiReply("Готово").escalate, false);
   const d = sb.parseAiReply("Нужны согласия.\n[[ДОКУМЕНТ: consent-staff]]\n[[ДОКУМЕНТ: нет-такого]] [[ДОКУМЕНТ: consent-staff]]");
   assert.deepStrictEqual(d.docs, ["consent-staff"]);
@@ -124,6 +124,29 @@ test("документы Word: настоящий docx с реквизитами
   assert.strictEqual(docsMod.buildDoc("нет-такого", {}), null);
 });
 
+test("оформление: карточка заведения с разделами и списком проблем, Markdown ИИ → HTML", () => {
+  const now = Date.parse("2026-10-17T19:30:00Z");
+  const info = {
+    id: "BoOue", name: "Колибри <Лаунж>", slug: "kolibri", status: "active", chain: true,
+    sub: { plan: "Сеть", status: "active", until: Date.parse("2027-04-30T12:00:00Z"), cancelAtPeriodEnd: true },
+    devices: { active: 12, disabled: 0, platforms: ["windows", "android"], lastSeen: now - 3600 * 1000, stale: 11 },
+    builds: [{ key: "guest/android", status: "success", at: now }, { key: "pos/windows", status: "failed", at: now, error: "нет места" }],
+    bot: { username: "kolibri_bot", ownerChat: true, staffChat: false }, aiEnabled: false,
+    setup: { kassa: "", terminal: "терминал банка", terminalBanks: 0, onlinePay: "off", seller: false, printer: "", egais: false, delivery: true, menuItems: 0, tables: 6 },
+  };
+  const card = sb.venueCard(info, { staff: true, now });
+  for (const want of ["🏪 <b>Колибри &lt;Лаунж&gt;</b>", "💳 <b>Подписка</b>", "до 30 апреля 2027", "Автопродление выключено", "Последний вход: сегодня в 21:30",
+    "❌ Касса Windows — ошибка", "<i>нет места</i>", "✅ Карта зала — 6 столов", "❌ Меню — пусто", "❌ Онлайн-касса 54-ФЗ — не подключена",
+    "⚠️ <b>Что требует внимания</b>", "1. Касса Windows: сборка с ошибкой", "ID: <code>BoOue</code>"]) assert.ok(card.includes(want), `нет «${want}» в\n${card}`);
+  assert.ok(!sb.venueCard(info, { now }).includes("BoOue"), "клиенту не показываем внутренний ID");
+  const brief = sb.venueBrief(info, now);
+  assert.ok(!/<[a-z]/.test(brief) && brief.includes("Меню пустое") && brief.length < card.length);
+  assert.strictEqual(sb.venueIssues({ ...info, sub: { status: "expired" } }, now)[0].startsWith("Подписка не оплачена"), true);
+  assert.strictEqual(sb.fmtWhen(now - 86400000, now).startsWith("вчера"), true);
+  assert.strictEqual(sb.mdToHtml("**Готово** <script>\n- шаг `Админ`\n### Итог"), "<b>Готово</b> &lt;script&gt;\n• шаг <code>Админ</code>\n<b>Итог</b>");
+  assert.strictEqual(sb.venueCard("строка <b>"), "строка &lt;b&gt;");
+});
+
 test("ИИ на паузе после человека и при ожидании человека", () => {
   const now = Date.now();
   assert.strictEqual(sb.aiPaused({}, now), false);
@@ -154,6 +177,9 @@ function harness() {
     }
     const method = url.split("/").pop();
     calls.push({ method, body });
+    if (method === "sendMessage" && body.parse_mode === "HTML" && flags.failHtml) {
+      return { ok: false, status: 400, json: async () => ({ ok: false, description: "Bad Request: can't parse entities" }) };
+    }
     const result = {
       getMe: { id: 999, username: "zalpos_help_bot" },
       getChat: { id: -1001234567890, type: "supergroup", is_forum: true, title: "Поддержка ZalPOS" },
@@ -163,6 +189,7 @@ function harness() {
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
   };
+  const flags = { failHtml: false };
   const key = crypto.randomBytes(32);
   const sent = {};
   const bot = sb.createSupportBot({
@@ -183,7 +210,7 @@ function harness() {
     debounceMs: 0,
     guidePath: require("path").join(__dirname, "..", "saas", "console", "guide.js"),
   });
-  return { bot, db, store, calls, aiCalls, aiReplies, sent };
+  return { bot, db, store, calls, aiCalls, aiReplies, sent, flags };
 }
 
 const GROUP = -1001234567890;
@@ -192,7 +219,9 @@ const inTopic = (text, topic, from = { id: 7, first_name: "Мария" }) => ({ 
 const tickets = (store) => [...store.entries()].filter(([k]) => /^supportTickets\/[^/]+$/.test(k)).map(([k, v]) => ({ id: k.split("/")[1], ...v }));
 const messagesOf = (store, id) => [...store.entries()].filter(([k]) => k.startsWith(`supportTickets/${id}/messages/`)).map(([, v]) => v)
   .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
-const sends = (calls, chatId) => calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === Number(chatId));
+// Текст сообщения без HTML-оформления Telegram — проверяем смысл, а не теги.
+const sends = (calls, chatId) => calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === Number(chatId))
+  .map((c) => ({ ...c, body: { ...c.body, text: String(c.body.text || "").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") } }));
 
 async function setup(h) {
   await h.bot.start();
@@ -237,6 +266,7 @@ test("клиент: приветствие с законным уведомле�
   assert.ok(!prompt.includes("123-45-67") && prompt.includes("[телефон]"), "телефон ушёл в ИИ");
   assert.ok(prompt.includes("не привязан") && prompt.includes("Сервер работает"), "нет состояния");
   const answer = sends(h.calls, 42).find((c) => /Собрать APK/.test(c.body.text));
+  assert.strictEqual(answer.body.parse_mode, "HTML");
   assert.ok(answer && answer.body.reply_markup.inline_keyboard[0].some((b) => b.callback_data === `sb:ok:${t.id}`));
   const roles = messagesOf(h.store, t.id).map((m) => m.authorRole);
   assert.deepStrictEqual(roles, ["owner", "ai"]);
@@ -414,6 +444,16 @@ test("документы: кнопка в меню, ИИ предлагает д
   const file = h.calls.find((c) => c.method === "sendDocument");
   assert.ok(file && String(file.body.chat_id) === "42" && /\.docx$/.test(file.body.document.file) && file.body.document.size > 1000, JSON.stringify(file));
   assert.ok(/Реквизиты не заполнены/.test(file.body.caption), "не привязанный клиент — без реквизитов");
+});
+
+test("Telegram не принял оформление — то же сообщение уходит простым текстом", async () => {
+  const h = harness();
+  await setup(h);
+  h.flags.failHtml = true;
+  await h.bot.handleUpdate(pm("/start"));
+  const tries = h.calls.filter((c) => c.method === "sendMessage" && String(c.body.chat_id) === "42");
+  assert.strictEqual(tries.length, 2);
+  assert.ok(!tries[1].body.parse_mode && !/<b>/.test(tries[1].body.text) && /Здравствуйте/.test(tries[1].body.text));
 });
 
 test("спасибо и «ок» — без ИИ", async () => {
