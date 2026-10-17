@@ -1046,10 +1046,23 @@ const PUBLIC_ROUTES = {
   '#/demo-photos': () => screenDemoPhotos(),
 };
 
+// Кнопка «Оплатить подписку» в кассе ведёт на #/billing: после входа кабинет
+// откроется на вкладке «Оплата». Запоминаем в localStorage — вход по ссылке
+// из письма возвращает на #/ и адрес теряет.
+const PENDING_TAB_KEY = 'zalpos-pending-tab';
+
 function route() {
   clearScreen();
   if (PUBLIC_ROUTES[location.hash]) {
     return PUBLIC_ROUTES[location.hash]();
+  }
+  if (location.hash === '#/billing') {
+    try { window.localStorage.setItem(PENDING_TAB_KEY, 'billing'); } catch (_) {}
+    if (!state.uid) {
+      authMode = 'login';
+      return screenAuth();
+    }
+    history.replaceState(null, '', location.pathname + '#/');
   }
   if (!state.uid) {
     // Не вошёл — лендинг; #/login и #/signup — вход и регистрация.
@@ -3374,6 +3387,13 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
 function watchDashboardData(tenantId) {
   const body = $('dash-body');
   let activeTab = 'overview';
+  try {
+    const pending = window.localStorage.getItem(PENDING_TAB_KEY);
+    if (pending) {
+      window.localStorage.removeItem(PENDING_TAB_KEY);
+      if (DASHBOARD_NAV.some((t) => t.id === pending)) activeTab = pending;
+    }
+  } catch (_) {}
   // Открытые статьи инструкции: экран перерисовывается целиком при каждом
   // обновлении данных, без этого статьи схлопывались бы сами.
   const guideOpen = new Set();

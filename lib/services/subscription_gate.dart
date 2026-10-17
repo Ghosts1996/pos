@@ -37,6 +37,12 @@ class SubscriptionGate {
   /// см. SubscriptionInfo.daysUntilDataPurge).
   static int? get daysUntilDataPurge => _subscription?.daysUntilDataPurge();
 
+  /// Момент удаления данных — для отсчёта на экране блокировки.
+  static DateTime? get dataPurgeAt => _subscription?.dataPurgeAt;
+
+  @visibleForTesting
+  static void debugSetSubscription(SubscriptionInfo? s) => _subscription = s;
+
   /// Начинает следить за tenants/{tenantId} и subscriptions/{tenantId} —
   /// вызывается один раз сразу после AppScope.enterTenant (main.dart,
   /// экран присоединения устройства). [initialConfig] задаёт состояние
@@ -104,4 +110,12 @@ bool computeBlocked(TenantStatus tenantStatus, String? subscriptionStatus, {Tena
       (chainStatus == null || chainStatus.allowsOperations) &&
       subscriptionStatus != 'cancelled';
   return !operationsAllowed;
+}
+
+/// Отсчёт до удаления данных: целые дни и остаток меньше суток. После
+/// срока — нули.
+({int days, Duration rest}) purgeCountdown(DateTime deadline, DateTime now) {
+  final left = deadline.difference(now);
+  if (left <= Duration.zero) return (days: 0, rest: Duration.zero);
+  return (days: left.inDays, rest: left - Duration(days: left.inDays));
 }
