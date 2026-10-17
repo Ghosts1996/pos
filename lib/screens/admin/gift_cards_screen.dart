@@ -6,6 +6,7 @@ import '../../services/gift_card_service.dart';
 import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/human_error.dart';
 
 /// Подарочные сертификаты — коды на бонусы.
 ///
@@ -130,7 +131,17 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
         ],
       ),
     );
-    if (ok == true) await _service.deactivate(c.code);
+    if (ok != true) return;
+    try {
+      await _service.deactivate(c.code);
+    } catch (e) {
+      _error('Не удалось остановить сертификат', e);
+    }
+  }
+
+  void _error(String what, Object e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$what: ${humanError(e, lower: true)}')));
   }
 
   Future<void> _issue() async {
@@ -204,13 +215,19 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
       return;
     }
 
-    final card = await _service.issue(
-      bonusAmount: value,
-      maxUses: int.tryParse(uses.text.trim()) ?? 0,
-      validDays: int.tryParse(days.text.trim()) ?? 0,
-      comment: comment.text.trim(),
-      issuedBy: widget.employee.name,
-    );
+    final GiftCard card;
+    try {
+      card = await _service.issue(
+        bonusAmount: value,
+        maxUses: int.tryParse(uses.text.trim()) ?? 0,
+        validDays: int.tryParse(days.text.trim()) ?? 0,
+        comment: comment.text.trim(),
+        issuedBy: widget.employee.name,
+      );
+    } catch (e) {
+      _error('Не удалось выпустить сертификат', e);
+      return;
+    }
     if (!mounted) return;
     _showIssued(card);
   }

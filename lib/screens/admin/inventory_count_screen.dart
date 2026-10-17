@@ -5,6 +5,7 @@ import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/human_error.dart';
 
 /// Экран одного прохода инвентаризации: список позиций, зафиксированных на
 /// момент старта, с полем для фактически посчитанного количества по
@@ -59,13 +60,25 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
 
   @override
   void dispose() {
+    // Ушли с экрана сразу после ввода — значение, ждавшее дебаунса,
+    // всё равно сохраняем, а не теряем вместе с таймером.
+    _debounce.forEach((itemId, t) {
+      if (t.isActive) {
+        t.cancel();
+        _saveValue(itemId);
+      }
+    });
     for (final c in _controllers.values) {
       c.dispose();
     }
-    for (final t in _debounce.values) {
-      t.cancel();
-    }
     super.dispose();
+  }
+
+  void _saveValue(String itemId) {
+    final text = _controllers[itemId]!.text.trim().replaceAll(',', '.');
+    final value = text.isEmpty ? null : double.tryParse(text);
+    if (text.isNotEmpty && value == null) return; // не сохраняем мусор при вводе
+    unawaited(_fs.setInventoryCountValue(widget.countId, itemId, value).catchError((Object _) {}));
   }
 
   void _onChanged(String itemId) {
@@ -73,12 +86,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
     // только когда пользователь на мгновение остановился.
     _debounce[itemId]?.cancel();
     setState(() {}); // мгновенно обновляем расхождение/счётчики на экране
-    _debounce[itemId] = Timer(const Duration(milliseconds: 500), () {
-      final text = _controllers[itemId]!.text.trim().replaceAll(',', '.');
-      final value = text.isEmpty ? null : double.tryParse(text);
-      if (text.isNotEmpty && value == null) return; // не сохраняем мусор при вводе
-      _fs.setInventoryCountValue(widget.countId, itemId, value);
-    });
+    _debounce[itemId] = Timer(const Duration(milliseconds: 500), () => _saveValue(itemId));
   }
 
   double? _localCounted(InventoryCountEntry e) {
@@ -214,13 +222,21 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
     for (final t in _debounce.values) {
       t.cancel();
     }
-    for (final e in entries) {
-      final local = _localCounted(e);
-      if (local != e.countedQty) {
-        await _fs.setInventoryCountValue(widget.countId, e.itemId, local);
+    try {
+      for (final e in entries) {
+        final local = _localCounted(e);
+        if (local != e.countedQty) {
+          await _fs.setInventoryCountValue(widget.countId, e.itemId, local);
+        }
       }
+      await _fs.completeInventoryCount(widget.countId, widget.employee.name);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Не удалось завершить инвентаризацию: ${humanError(e, lower: true)}')));
+      }
+      return;
     }
-    await _fs.completeInventoryCount(widget.countId, widget.employee.name);
     if (context.mounted) Navigator.of(context).pop();
   }
 
