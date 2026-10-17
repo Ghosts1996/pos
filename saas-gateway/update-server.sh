@@ -86,6 +86,24 @@ done
 unset token v cur
 echo "ok"
 
+# Ветка сборок (GITHUB_REF). Если указанной ветки на GitHub больше нет
+# (переименовали), сборки берутся из той, с которой обновился сервер.
+# ls-remote --exit-code: 2 — ветки нет; другие ошибки (сеть, доступ)
+# настройку не трогают.
+say "Ветка для сборок"
+ref="$(awk -F= '$1 == "GITHUB_REF" { sub(/^[^=]*=/, ""); last = $0 } END { print last }' /etc/saas-gateway.env 2>/dev/null || true)"
+here="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -n "$ref" && -n "$here" && "$ref" != "$here" ]]; then
+  rc=0
+  git -C "$REPO" ls-remote --exit-code --heads origin "$ref" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then
+    sed -i "s#^GITHUB_REF=.*#GITHUB_REF=$here#" /etc/saas-gateway.env
+    echo "ветки $ref нет — сборки из $here"
+  fi
+fi
+unset ref here rc
+echo "ok"
+
 say "saas-gateway"
 command -v rsync >/dev/null || apt-get install -y rsync >/dev/null
 rsync -a --exclude node_modules "$REPO/saas-gateway/" /opt/saas-gateway/

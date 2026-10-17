@@ -6,7 +6,7 @@ on:
   # каждом изменении кода приложения в рабочей ветке. workflow_dispatch с
   # не основной ветки GitHub не даёт, пока файла нет в main.
   push:
-    branches: [claude/dazzling-babbage-n65p6l]
+    branches: [production]
     paths:
       - 'lib/**'
       - 'assets/**'

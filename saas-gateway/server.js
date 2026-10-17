@@ -52,7 +52,7 @@ const GITHUB_OWNER = "Ghosts1996";
 const GITHUB_REPO = "pos";
 const GITHUB_SAAS_WORKFLOW = "saas-on-demand-build.yml";
 // Когда ветку сольют в main, достаточно GITHUB_REF=main в /etc/saas-gateway.env.
-const GITHUB_REF = process.env.GITHUB_REF || "claude/dazzling-babbage-n65p6l";
+const GITHUB_REF = process.env.GITHUB_REF || "production";
 
 // Личные APK заведений: сборка кладёт их сюда по SSH (Storage у проекта
 // без Blaze недоступен). Отдаёт handleDownloadBuild после проверки роли.

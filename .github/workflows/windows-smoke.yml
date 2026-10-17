@@ -12,7 +12,7 @@ name: Windows-касса запускается (эмуляторы)
 on:
   workflow_dispatch:
   push:
-    branches: ['claude/**']
+    branches: [production, windows-build-ci-verify]
     paths:
       - '.github/workflows/windows-smoke.yml'
       - '.github/windows-smoke/**'

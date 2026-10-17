@@ -120,7 +120,7 @@ systemctl restart saas-gateway
 консоли — см. `saas/README.md`):
 
 ```bash
-cd /root/pos-deploy && git fetch origin claude/dazzling-babbage-n65p6l && git checkout claude/dazzling-babbage-n65p6l && git pull origin claude/dazzling-babbage-n65p6l
+cd /root/pos-deploy && git fetch origin production && git checkout production && git pull origin production
 rsync -a --exclude node_modules /root/pos-deploy/saas-gateway/ /opt/saas-gateway/
 cd /opt/saas-gateway && npm install --omit=dev
 chown -R saas-gateway:saas-gateway /opt/saas-gateway

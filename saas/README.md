@@ -43,7 +43,7 @@ Cloud Functions платформа не использует: у проекта 
 
 ## Деплой
 
-Пуш в ветку `claude/dazzling-babbage-n65p6l` с изменениями в `saas/console`,
+Пуш в ветку `production` с изменениями в `saas/console`,
 `saas/guest-web`, `saas/firestore.rules`, `saas-gateway` или `pii-gateway`
 запускает `.github/workflows/server-deploy.yml`. Он заходит на сервер и
 выполняет `saas-gateway/update-server.sh`: обновляет сервисы, веб-версию
@@ -112,7 +112,7 @@ cd .. && npx firebase-tools emulators:exec --project hookah-saas-rules-test \
 Адреса сервера (`pii.zalpos.ru`) прописаны в самих workflow.
 
 Сервер запускает сборку из ветки `GITHUB_REF` (`/etc/saas-gateway.env`, по
-умолчанию `claude/dazzling-babbage-n65p6l`). После слияния в `main` достаточно
+умолчанию `production`). После слияния в `main` достаточно
 поменять переменную и перезапустить `saas-gateway`.
 
 **Доставка личных сборок на сервер** (один раз). Ключ может только запустить

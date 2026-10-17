@@ -11,7 +11,7 @@ name: Автообновление приложений заведений
 # Не раскатывать конкретный коммит — «[no rollout]» в его сообщении.
 on:
   push:
-    branches: [claude/dazzling-babbage-n65p6l]
+    branches: [production]
     paths:
       - 'lib/**'
       - 'assets/**'

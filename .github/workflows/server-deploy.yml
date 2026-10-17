@@ -7,7 +7,7 @@ name: Обновление сервера
 # подсказкой, а обновлять можно вручную: saas-gateway/update-server.sh.
 on:
   push:
-    branches: [claude/dazzling-babbage-n65p6l]
+    branches: [production]
     paths:
       - 'saas-gateway/**'
       - 'pii-gateway/**'
