@@ -60,6 +60,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/
+    - assets/fonts/OFL-Onest.txt
+    - assets/fonts/OFL-CormorantGaramond.txt
   # Шрифты интерфейса (OFL, лицензии рядом): Onest — текст и суммы,
   # Cormorant Garamond — крупные заголовки (см. AppFonts в lib/theme).
   fonts:

@@ -399,7 +399,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       final earned = emp.revenueSteps.where((s) => s.bonusFor(r.venueRevenue) > 0).length;
       rows.add(_row(
         'Бонус за выручку',
-        '${earned} ${pluralRu(earned, 'шаг', 'шага', 'шагов')} из ${emp.revenueSteps.length} · выручка ${_rub(r.venueRevenue)}',
+        '$earned ${pluralRu(earned, 'шаг', 'шага', 'шагов')} из ${emp.revenueSteps.length} · выручка ${_rub(r.venueRevenue)}',
         _rub(r.revenueStepBonus),
       ));
     }
