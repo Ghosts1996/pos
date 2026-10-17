@@ -1152,6 +1152,72 @@ const ADMIN_TO = (t) => ({ screen: adminHome({ tap: t }), cap: `Войдите �
 const GADMIN_TO = (t) => ({ screen: X.admin('Гости и лояльность', GUEST_TILES, t), cap: `Админ → «${t}».`, acts: [{ wait: 400 }, { tap: 'tile' }] });
 const DRAWER_TO = (key, cap) => ({ screen: hall(), over: { kind: 'drawer', html: drawer({ tap: { [key]: key } }) }, cap, acts: [{ tap: key }] });
 
+/* ---- Звонки и сигналы ---- */
+X.alarmBanner = `<div class="gx-fold gx-alarm"${mk('acc')} style="margin:8px 12px 4px;padding:10px 12px;border-radius:14px;border:2px solid #D4553F;display:flex;align-items:center;gap:10px">
+  <span style="color:#E07A5F">${ic('bell', 26)}</span>
+  <div style="flex:1"><b style="font-size:15.5px;display:block">Новый заказ на кухню</b><span style="font-size:12.5px">Стол 5: Паста карбонара ×2, Том ям</span></div>
+  ${btn('Принял', { kind: 'sm', tap: 'acc', style: 'background:#C4553F;height:44px;padding:0 16px;font-size:15px;font-weight:700' })}</div>`;
+X.kitchenAlarm = () => kitchenScreen().replace('<div class="gx-chips">', `${X.alarmBanner}<div class="gx-chips">`);
+
+X.notif = (title, body, k = 'n') => `<div class="gx-hide gx-buzz"${mk(k)} style="position:absolute;left:10px;right:10px;top:30px;z-index:6;padding:10px 12px;border-radius:16px;background:#2A2520;border:1px solid var(--bd);box-shadow:0 10px 26px rgba(0,0,0,.45)">
+  <div class="gx-mu" style="font-size:11px;display:flex;justify-content:space-between"><span>ZalPOS · касса</span><span>сейчас</span></div>
+  <b style="display:block;font-size:14.5px;margin-top:2px">${title}</b><span style="font-size:12.5px">${body}</span>
+  <div class="gx-mu" style="font-size:11px;margin-top:4px;display:flex;align-items:center;gap:5px">${ic('phone', 13)} вибрация: три длинных</div></div>`;
+X.hallReady = () => hall().replace('<div class="gx-app">', `<div class="gx-app" style="position:relative">${X.notif('Готово · Стол 5', 'Можно выносить: Паста карбонара ×2, Том ям')}`);
+
+X.watch = (big, small, sub, k = 'w') => `<div class="gx-app" style="display:flex;align-items:center;justify-content:center;background:#0E0D0C">
+  <div style="position:relative;width:236px;height:236px;border-radius:50%;background:#000;border:10px solid #2C2824;box-shadow:0 0 0 2px #3A352F;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px">
+    <div class="gx-mu" style="font-size:12px">19:42</div>
+    <div class="gx-hide gx-buzz"${mk(k)}><b style="display:block;font-size:22px;margin:6px 0 2px;color:#F4EFE8">${big}</b>
+    <span style="font-size:13px;color:#F4EFE8">${small}</span><div class="gx-mu" style="font-size:11px;margin-top:6px">${sub}</div></div>
+  </div></div>`;
+
+X.secCard = (icon, title, body, style = '') => X.card(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="gx-brass">${ic(icon, 19)}</span><b style="font-size:14px">${title}</b></div>${body}`, style);
+X.signals = ({ relay = false, beep = false, lan = false } = {}) => X.scr('Звонки и сигналы', `
+  ${lan ? '' : X.secCard('fork', 'Сигнал нового заказа на кухне', '<div class="gx-mu" style="font-size:12px;line-height:1.4">Звенит на экране «Кухня и бар», пока повар не нажмёт «Принял».</div>')}
+  ${lan || beep ? '' : X.secCard('phone', 'Официанту: вибрация и часы', '<div class="gx-mu" style="font-size:12px;line-height:1.4">«Готово» с кухни и вызовы гостей — три длинных вибрации, их повторяют смарт-часы.</div>')}
+  ${lan || beep ? '' : X.secCard('wifi', 'Wi‑Fi реле: звонок, лампа, пейджер', `${relay ? `<div class="gx-card" style="padding:9px 11px;margin:6px 0;display:flex;align-items:center;gap:10px"><span style="color:var(--ok)">${ic('bell', 18)}</span><div style="flex:1"><b style="font-size:13px">Звонок на раздаче</b><div class="gx-mu" style="font-size:11px">Shelly · 192.168.1.50 · новый заказ на кухню</div></div><span class="gx-mu">${ic('play', 18)}</span></div>` : ''}
+    ${btn('Добавить реле', { kind: 'ghost sm', icon: 'plus', tap: 'add', style: 'margin-top:6px' })}`)}
+  ${beep ? X.secCard('printer', 'Зуммер кухонного принтера', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:8px">Принтер пищит, когда печатает бегунок.</div>
+    <div style="display:flex;border:1px solid var(--bd);border-radius:20px;overflow:hidden;font-size:12.5px;text-align:center">
+      <span style="flex:1;padding:8px 0" class="gx-show"${mk('b')}>● Выкл.</span><span style="flex:1;padding:8px 0" class="gx-alt"${mk('b')}>Выкл.</span>
+      <span style="flex:1;padding:8px 0;border-left:1px solid var(--bd)"${tp('b')}><span class="gx-show"${mk('b')}>Встроенный</span><span class="gx-alt"${mk('b')} style="color:var(--pr);font-weight:700">● Встроенный</span></span>
+      <span style="flex:1;padding:8px 0;border-left:1px solid var(--bd)">Через ящик</span></div>
+    <div class="gx-unfold"${mk('b')} style="--max:200px"><div style="display:flex;align-items:center;gap:10px;font-size:13px;margin:12px 0 4px">Сколько раз <span style="flex:1;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--pr) 25%,var(--bd) 25%)"></span><b>3</b></div>
+      ${switchRow('Пищать на каждый новый заказ', 'Даже если бегунки не печатают')}
+      <div style="display:flex;gap:8px">${btn('Проверить кухонный', { kind: 'ghost sm', icon: 'bell', tap: 'test' })}${btn('Проверить барный', { kind: 'ghost sm' })}</div></div>`) : ''}
+  ${lan ? X.secCard('wifi', 'Без интернета: сигналы по Wi‑Fi', `<div class="gx-mu" style="font-size:12px;line-height:1.4">Планшеты передают «новый заказ» и «готово» напрямую по Wi‑Fi заведения. Роутер нужен, интернет — нет.</div>
+    ${switchRow('Сигналы между планшетами по Wi‑Fi', '', { on: true })}
+    ${btn('Проверить, кто на связи', { kind: 'ghost sm', tap: 'ping', style: 'margin-top:2px' })}
+    <div class="gx-hide"${mk('ping')} style="margin-top:8px;font-size:13px">На связи: <b>Бар · Денис</b>, <b>Кухня · Ильдар</b>, <b>Зал · Алина</b></div>`) : ''}`,
+  { bottom: relay ? btn('Сохранить', { icon: 'check', tap: 'save' }) : '' });
+
+X.relayDialog = dialog('Новое реле', `${field('Название', { val: 'Звонок на раздаче' })}<div style="height:8px"></div>
+  ${field('Тип', { val: 'Shelly (1-е поколение: Shelly 1, 1PM, 2.5)' })}<div style="height:8px"></div>
+  ${field('IP-адрес реле в Wi‑Fi заведения', { type: 'ip', focus: true, ph: '192.168.1.50' })}
+  <div style="display:flex;justify-content:space-between;font-size:13px;margin:10px 0 4px"><span>Держать включённым</span><b>2 с</b></div>
+  <div style="font-size:12.5px;font-weight:600;margin:8px 0 4px">Когда включать</div>
+  ${[['Новый заказ на кухню', 'ev'], ['Блюдо готово', ''], ['Гость зовёт официанта', '']].map(([t, k]) => `<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0"${tp(k)}><span style="width:18px;height:18px;border-radius:4px;border:2px solid var(--mu);display:inline-flex;align-items:center;justify-content:center"><span class="gx-hide"${mk(k)} style="color:var(--pr)">${ic('check', 14, 3)}</span></span>${t}</div>`).join('')}
+  ${btn('Проверить сейчас', { kind: 'ghost sm', icon: 'play', tap: 'test', style: 'margin-top:8px' })}
+  <div class="gx-hide"${mk('ok')} style="font-size:12.5px;color:var(--ok);margin-top:6px">Реле ответило — должно было щёлкнуть</div>`,
+  `${btn('Отмена', { kind: 'text' })}${btn('Готово', { kind: 'sm', tap: 'done' })}`);
+
+// Схема подключения: блоки и провода.
+X.wire = (rows, note) => `<div class="gx-app" style="padding:22px 14px;background:var(--bg)">
+  <div style="font:600 17px var(--serif);margin-bottom:12px">${note}</div>
+  ${rows.map(([a, b, c, k]) => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px"${mk(k)}>
+    <div class="gx-card" style="flex:1;padding:9px;text-align:center;font-size:12.5px;margin:0"><b>${a}</b></div>
+    <div style="flex:none;width:58px;text-align:center;font-size:11px;color:var(--pr)"><div style="height:2px;background:var(--pr);margin-bottom:3px"></div>${b}</div>
+    <div class="gx-card" style="flex:1;padding:9px;text-align:center;font-size:12.5px;margin:0"><b>${c}</b></div></div>`).join('')}
+  </div>`;
+
+X.watchApp = () => X.scr('Уведомления', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:10px">Приложение часов на телефоне официанта: Mi Fitness, Zepp, Huawei Health или Galaxy Wearable → «Уведомления».</div>
+  ${X.card(`${switchRow('Уведомления на часы', 'Показывать на часах уведомления телефона', { on: true })}`)}
+  ${X.h('Приложения')}
+  ${X.card(`${switchRow('ZalPOS · касса', 'Готово с кухни, вызовы гостей', { tap: 'zp', mark: 'zp' })}${switchRow('Telegram', '', { on: true })}${switchRow('Почта', '')}`)}`);
+
+X.hallOffline = () => hall().replace('<div class="gx-banner">', `<div style="margin:0 12px 8px;padding:8px 10px;border-radius:10px;background:rgba(217,168,78,.16);color:var(--warn);font-size:12px;display:flex;gap:8px;align-items:center">${ic('wifi', 16)}<span>Нет интернета — касса работает. Заказы и оплаты сохранены на устройстве и отправятся сами, когда связь вернётся.</span></div><div class="gx-banner">`);
+
 export const SCENES = {
   login: {
     label: 'Вход в кассу по PIN',
@@ -1773,6 +1839,65 @@ export const SCENES = {
     frames: [
       { screen: X.webRkn(), url: 'pd.rkn.gov.ru (схема)', cap: 'За гостей ZalPOS отвечает сам. Заведению остаётся общее уведомление работодателя — если ещё не подавали: pd.rkn.gov.ru.', acts: [{ type: 'goal', text: 'кадровый и бухгалтерский учёт, расчёт зарплаты' }, { wait: 400 }] },
       { screen: X.webRkn(), url: 'pd.rkn.gov.ru (схема)', cap: 'Трансграничная передача — нет, база — Российская Федерация. Подпишите через Госуслуги: бесплатно, 15–20 минут.', acts: [{ tap: 'tb', mark: 'tb' }, { wait: 500 }, { tap: 'send' }, { wait: 900 }] },
+    ],
+  },
+  'kitchen-alarm': {
+    label: 'Громкий сигнал нового заказа',
+    frames: [
+      { screen: X.kitchenAlarm(), cap: 'Новый заказ — экран кухни мигает красным, а планшет звенит громкостью будильника каждые 4 секунды, пока его не приняли.', acts: [{ wait: 2400 }] },
+      { screen: X.kitchenAlarm(), cap: 'Повар нажимает «Принял» — звонок замолкает. Не приняли за 45 секунд — ещё раз звонит звонок на раздаче, если подключено реле.', acts: [{ wait: 400 }, { tap: 'acc', mark: 'acc' }, { wait: 1600 }] },
+    ],
+  },
+  'waiter-ready': {
+    label: '«Готово» официанту: телефон и часы',
+    frames: [
+      { screen: kitchenScreen(), cap: 'Повар нажимает «Всё готово» на своём планшете.', acts: [{ wait: 400 }, { tap: 't5', mark: 't5' }, { wait: 900 }] },
+      { screen: X.hallReady(), enter: 'fade', cap: 'У официанта этого стола всплывает «Готово · Стол 5» с длинной вибрацией — так же приходят вызовы гостей.', acts: [{ wait: 300 }, { mark: 'n' }, { wait: 2200 }] },
+      { screen: X.watch('Готово · Стол 5', 'Паста карбонара ×2, Том ям', 'ZalPOS · касса'), enter: 'fade', cap: 'Смарт-часы или фитнес-браслет повторяют уведомление на руке — телефон можно не доставать.', acts: [{ wait: 300 }, { mark: 'w' }, { wait: 2200 }] },
+    ],
+  },
+  'smartwatch': {
+    label: 'Смарт-часы официанта',
+    frames: [
+      { screen: X.watchApp(), cap: 'На телефоне официанта откройте приложение часов (Mi Fitness, Zepp, Huawei Health, Galaxy Wearable) → «Уведомления» и включите ZalPOS.', acts: [{ wait: 700 }, { tap: 'zp', mark: 'zp' }, { wait: 1200 }] },
+      { screen: X.watch('Гость зовёт', 'Стол 3 · «Принесите счёт»', 'ZalPOS · касса'), enter: 'fade', cap: 'Готово: «готово» с кухни, вызовы и заказы гостей вибрируют на руке.', acts: [{ wait: 300 }, { mark: 'w' }, { wait: 2000 }] },
+    ],
+  },
+  'signals-setup': {
+    label: 'Wi‑Fi реле: звонок или лампа',
+    frames: [
+      { screen: X.admin('Настройки', [['gear', 'Интеграции'], ['bell', 'Звонки и сигналы']], 'Звонки и сигналы'), cap: 'Админ → «Звонки и сигналы».', acts: [{ wait: 400 }, { tap: 'tile' }] },
+      { screen: X.signals(), enter: 'push', cap: 'Здесь кухня, официанты, реле, зуммер принтера и работа без интернета. Нажмите «Добавить реле».', acts: [{ wait: 900 }, { tap: 'add' }] },
+      { screen: X.signals(), over: { kind: 'dialog', html: X.relayDialog }, cap: 'Тип реле, его IP в Wi‑Fi заведения и события, на которые звонить. «Проверить сейчас» — реле должно щёлкнуть.', acts: [{ type: 'ip', text: '192.168.1.50' }, { tap: 'ev', mark: 'ev' }, { wait: 300 }, { tap: 'test', mark: 'ok' }, { wait: 1300 }, { tap: 'done' }] },
+      { screen: X.signals({ relay: true }), cap: '«Сохранить» — реле звонит с любого планшета заведения, интернет для этого не нужен.', acts: [{ wait: 700 }, { tap: 'save' }, { wait: 800 }] },
+    ],
+  },
+  'relay-wiring': {
+    label: 'Как подключить реле к звонку',
+    frames: [
+      { screen: X.wire([['Сеть 220 В · L', 'L', 'Shelly 1 · L и вход SW', ''], ['Сеть 220 В · N', 'N', 'Shelly 1 · N', ''], ['Сеть 220 В · L', 'перемычка', 'Shelly 1 · I', ''], ['Shelly 1 · O', 'провод', 'Звонок · вывод 1', ''], ['Звонок · вывод 2', 'N', 'Сеть 220 В · N', '']], 'Звонок 220 В через Shelly 1'), cap: 'Звонок 220 В: питание реле — L и N; вход I соединить с L; выход O — на звонок; второй провод звонка — на ноль. Подключает электрик, минут десять.', acts: [{ wait: 3600 }] },
+      { screen: X.wire([['Блок питания 12 В · +', '+12 В', 'Shelly 1 · I', ''], ['Shelly 1 · O', '+12 В', 'Маячок или звонок 12 В · +', ''], ['Маячок · −', '−', 'Блок питания 12 В · −', ''], ['Shelly 1 · питание', '12 В DC', 'тот же блок питания', '']], 'Маячок или звонок 12 В'), cap: 'Маячок или звонок на 12 В: контакты I и O у Shelly 1 «сухие» — они просто замыкают провод от блока питания к лампе.', acts: [{ wait: 3600 }] },
+    ],
+  },
+  'pager-watch': {
+    label: 'Часы-пейджеры официантов',
+    frames: [
+      { screen: X.wire([['Кнопка вызова · контакт 1', 'провод', 'Shelly 1 · I', ''], ['Кнопка вызова · контакт 2', 'провод', 'Shelly 1 · O', ''], ['Shelly 1 · питание', '220 В или 12 В', 'розетка / блок питания', '']], 'Кнопка системы вызова + реле'), cap: 'Возьмите одну кнопку от системы вызова (iBells, Retekess и др.) и припаяйте к контактам её кнопки два провода — на вход I и выход O реле.', acts: [{ wait: 3400 }] },
+      { screen: X.watch('Кухня · 05', 'Заберите заказ', 'вызов с кнопки №5'), enter: 'fade', cap: 'Повар нажал «Всё готово» — реле на секунду «нажимает» эту кнопку, и часы официантов вибрируют с её номером. Работает без интернета.', acts: [{ wait: 300 }, { mark: 'w' }, { wait: 2200 }] },
+    ],
+  },
+  'printer-beep': {
+    label: 'Зуммер кухонного принтера',
+    frames: [
+      { screen: X.signals({ beep: true }), cap: '«Звонки и сигналы» → «Зуммер кухонного принтера». «Встроенный» — у Xprinter, Gprinter, Rongta, HPRT, Sunmi, Epson с зуммером.', acts: [{ wait: 700 }, { tap: 'b', mark: 'b' }, { wait: 900 }] },
+      { screen: X.signals({ beep: true }), cap: 'Сколько раз пискнуть и «Проверить кухонный» — принтер должен пискнуть сразу, без бумаги.', acts: [{ mark: 'b' }, { wait: 400 }, { tap: 'test' }, { wait: 1200 }], over: { kind: 'toast', html: toast('Принтер должен пискнуть') } },
+    ],
+  },
+  'offline-lan': {
+    label: 'Работа без интернета',
+    frames: [
+      { screen: X.hallOffline(), cap: 'Пропал интернет — касса продолжает работать: заказы, оплаты, бегунки на сетевые принтеры. Всё уйдёт в облако само, когда связь вернётся.', acts: [{ wait: 2600 }] },
+      { screen: X.signals({ lan: true }), enter: 'push', cap: 'Кухня и официанты слышат друг друга по Wi‑Fi заведения. «Проверить, кто на связи» — покажет планшеты в сети.', acts: [{ wait: 600 }, { tap: 'ping', mark: 'ping' }, { wait: 1800 }] },
     ],
   },
 };

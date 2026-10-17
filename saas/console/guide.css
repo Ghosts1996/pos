@@ -328,6 +328,11 @@
 /* И наоборот: появляется после касания. */
 .gx-unfold { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .45s cubic-bezier(.4, 0, .2, 1), opacity .3s ease .12s; }
 .gx-unfold.on { max-height: var(--max, 200px); opacity: 1; }
+/* Сигналы: мигающая плашка нового заказа и «вибрация» уведомления. */
+.gx-alarm { animation: gx-alarm 1s steps(1) infinite; }
+@keyframes gx-alarm { 0% { background: rgba(212, 85, 63, .32); } 50% { background: rgba(212, 85, 63, .14); } }
+.gx-buzz.on { animation: gx-buzz .11s linear 7; }
+@keyframes gx-buzz { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
 /* Переключатель, включённый с самого начала: касание его выключает. */
 .gx-sw.inv { background: var(--pr); }
 .gx-sw.inv::after { transform: translateX(16px); background: #FFF7F0; }
