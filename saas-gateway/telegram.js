@@ -120,6 +120,38 @@ const MORE = [
 ];
 const POINT_MARK = "📍";
 
+// ---------------------------------------------------------------- оформление
+
+const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const stripHtml = (v) => String(v || "").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
+/**
+ * Текст отчёта или сигнала → HTML Telegram: заголовок (первая строка со
+ * значка) — жирным, «Подпись: значение» — подпись жирным, «Раздел:» —
+ * жирным, «📍 Точка: …» — точка жирным. Весь текст сначала экранируется,
+ * поэтому названия блюд и точек с «<» или «&» ничего не ломают.
+ */
+function fmtTg(text) {
+  let firstDone = false;
+  return String(text || "").split("\n").map((raw) => {
+    let line = escHtml(raw);
+    if (!raw.trim()) return line;
+    const isFirst = !firstDone;
+    firstDone = true;
+    if (isFirst && /^\p{Extended_Pictographic}/u.test(raw)) {
+      // Длинный сигнал — жирным только «о чём»: до первой точки.
+      const cut = line.indexOf(". ");
+      return line.length > 70 && cut > 0 ? `<b>${line.slice(0, cut + 1)}</b>${line.slice(cut + 1)}` : `<b>${line}</b>`;
+    }
+    if (/^[^•\d].{0,40}:$/.test(raw.trim())) return `<b>${line}</b>`;
+    const point = line.match(/^(📍 )([^:]{1,60}):( .*)$/u);
+    if (point) return `${point[1]}<b>${point[2]}</b>:${point[3]}`;
+    const label = line.match(/^([А-ЯЁA-Z][^:•\n]{1,34}):( .+)$/);
+    if (label) return `<b>${label[1]}:</b>${label[2]}`;
+    return line;
+  }).join("\n");
+}
+
 /** Клавиатура отчётов; pointLabel — у сети, кнопка выбора точки сверху. */
 function menuKeyboard(pointLabel = "") {
   const keyboard = [];
@@ -422,7 +454,7 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     top.forEach(([n, v], idx) => lines.push(`${idx + 1}. ${n} — ${rub(v)}`));
   }
   const warn = [...summaryWarnings(st, audit), ...notes];
-  if (warn.length) lines.push("", `⚠️ Обратите внимание: ${warn.join("; ")}`);
+  if (warn.length) lines.push("", "⚠️ Обратите внимание:", ...warn.map((w) => `• ${w}`));
   if (!st.checks && !warn.length) lines.push("", "Продаж не было.");
   return lines.join("\n");
 }
@@ -569,7 +601,16 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return data.result;
   }
 
-  const say = (bot, chatId, text, extra = {}) => api(bot.token, "sendMessage", { chat_id: chatId, text: clip(text), disable_web_page_preview: true, ...extra })
+  /** Отправка с оформлением; не принял Telegram разметку — тот же текст без неё. */
+  async function apiHtml(token, method, params) {
+    try {
+      return await api(token, method, { ...params, text: fmtTg(params.text), parse_mode: "HTML" });
+    } catch (e) {
+      if (!/parse|entit|tag/i.test(e.message || "")) throw e;
+      return api(token, method, params);
+    }
+  }
+  const say = (bot, chatId, text, extra = {}) => apiHtml(bot.token, "sendMessage", { chat_id: chatId, text: clip(text), disable_web_page_preview: true, ...extra })
     .catch((e) => console.error(`telegram send (${bot.tenantId}):`, e.message));
 
   function checkTenantId(tenantId) {
@@ -1066,10 +1107,24 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   }
 
   function helpText(bot) {
-    const lines = ["Отчёты — кнопками ниже. «📊 Ещё отчёты»: вчера, неделя, топ продаж, склад, брони, отмены, отзывы."];
-    if (multi(bot)) lines.push(`Сеть «${bot.chainName}»: кнопка «${POINT_MARK}» сверху — выбрать точку или «Все точки» (сводка по сети).`);
-    lines.push(`Сами приходят: итоги прошлой смены в ${SUMMARY_HOUR}:00, начало и конец смен, отмены позиций, закрытие без оплаты, возвраты, скидки от ${BIG_DISCOUNT_PERCENT}%.`);
-    lines.push("/menu — отчёты, /id — ваш Telegram ID, /stop — отключить уведомления.");
+    const lines = [
+      "📘 Как пользоваться ботом",
+      "",
+      "Отчёты:",
+      "• Кнопки внизу — выручка, средний чек, цеха, посадка, смена, доставка, касса.",
+      "• «📊 Ещё отчёты» — вчера, неделя, топ продаж, склад на исходе, брони, отмены и скидки, отзывы.",
+    ];
+    if (multi(bot)) lines.push(`• Сеть «${bot.chainName}»: кнопка «${POINT_MARK}» сверху — выбрать точку или «Все точки».`);
+    lines.push(
+      "",
+      "Приходит само:",
+      `• Итоги прошлой смены — в ${SUMMARY_HOUR}:00.`,
+      "• Начало и конец смен сотрудников.",
+      `• Отмены позиций, закрытие без оплаты, возвраты, скидки от ${BIG_DISCOUNT_PERCENT}%.`,
+      "• Заказы с собой и доставки — в рабочую группу, с кнопками статусов.",
+      "",
+      "Команды: /menu — отчёты · /id — ваш Telegram ID · /stop — отключить уведомления",
+    );
     return lines.join("\n");
   }
 
@@ -2052,7 +2107,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(tid, s.id) : null);
     const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
-      const m = await api(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
+      const m = await apiHtml(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
         console.error(`telegram card (${tid}):`, e.message);
         return null;
       });
@@ -2060,7 +2115,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       return;
     }
     if (!force && card.sig === sig) return;
-    await api(bot.token, "editMessageText", { chat_id: card.chatId, message_id: card.messageId, text, reply_markup: markup })
+    await apiHtml(bot.token, "editMessageText", { chat_id: card.chatId, message_id: card.messageId, text, reply_markup: markup })
       .catch(() => { /* «message is not modified» и т.п. — не важно */ });
     await cardRef.update({ sig });
   }
@@ -2303,5 +2358,5 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 module.exports = {
   createTelegram, buildSummary, buildChainSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
-  secretKey,
+  secretKey, fmtTg, stripHtml,
 };

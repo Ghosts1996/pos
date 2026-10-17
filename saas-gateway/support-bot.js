@@ -655,6 +655,16 @@ function createSupportBot(deps) {
   const HTML = { parse_mode: "HTML" };
   const toTopicHtml = (t, html, extra = {}) => toTopic(t, html, { ...HTML, ...extra });
 
+  /** Кнопки управления обращением — всегда под последним сообщением бота в
+   *  теме: у прошлого сообщения они убираются, чтобы не листать вверх. */
+  async function movePanel(t, sent) {
+    const id = sent && sent.message_id;
+    if (!id || !state.cfg || !state.cfg.groupChatId) return;
+    const prev = t.panelMsgId;
+    await patch(t, { panelMsgId: id });
+    if (prev && prev !== id) quiet(tg("editMessageReplyMarkup", { chat_id: state.cfg.groupChatId, message_id: prev, reply_markup: { inline_keyboard: [] } }), "панель");
+  }
+
   // ---- настройки
 
   async function reload() {
@@ -929,7 +939,7 @@ function createSupportBot(deps) {
       lines.push("🏪 Заведение не привязано — попросите клиента открыть кабинет → «Поддержка» → «Написать в Telegram».");
     }
     lines.push("", "✍️ Напишите ответ прямо в этой теме — он уйдёт клиенту, а ИИ замолчит.", "📝 Заметка только для своих — <code>/note текст</code>");
-    await toTopicHtml(t, lines.join("\n"), { reply_markup: topicKeyboard(t) });
+    await movePanel(t, await toTopicHtml(t, lines.join("\n"), { reply_markup: topicKeyboard(t) }));
     const earlier = history.filter((m) => m.text).slice(-10);
     if (earlier.length) await toTopicHtml(t, `🗂 <b>История переписки</b>\n\n${earlier.map((m) => `${h(roleMark(m))}\n${h(clip(m.text, 600))}`).join("\n\n")}`);
     return t.topicId;
@@ -959,7 +969,7 @@ function createSupportBot(deps) {
     if (t.escalated) return;
     await patch(t, { escalated: true, escalatedReason: reason, escalatedAt: ts(now()) });
     await renameTopic(t);
-    await toTopicHtml(t, `🔴 <b>Нужен человек</b> — ${h(reason)}\nКлиент ждёт. Ответьте в этой теме — ИИ молчит, пока вы ведёте диалог.`, { reply_markup: topicKeyboard(t) });
+    await movePanel(t, await toTopicHtml(t, `🔴 <b>Нужен человек</b> — ${h(reason)}\nКлиент ждёт. Ответьте в этой теме — ИИ молчит, пока вы ведёте диалог.`, { reply_markup: topicKeyboard(t) }));
     notifyStaff(t, reason);
     if (tellClient) {
       const hours = state.cfg.workHours ? ` Мы на связи ${state.cfg.workHours}.` : "";
@@ -1048,11 +1058,12 @@ function createSupportBot(deps) {
     const docRows = reply.docs.map((id) => [{ text: `📄 ${DOCS.find((d) => d.id === id).title}`, callback_data: `sb:doc:${id}` }]);
     const markup = t.channel === "telegram" ? { inline_keyboard: [...docRows, [{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
     const docNote = t.channel !== "telegram" && reply.docs.length
-      ? `\n\n📄 ${reply.docs.map((id) => `«${DOCS.find((d) => d.id === id).title}»`).join(", ")} — скачайте в Telegram-боте поддержки: «Поддержка» → «Написать в Telegram» → «📄 Документы».` : "";
+      ? `\n\n📄 Документы для скачивания (Word, ссылки действуют 7 дней):\n${reply.docs.map((id) => `• ${DOCS.find((d) => d.id === id).title}: ${docLink(t, id)}`).join("\n")}` : "";
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md) });
     await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id) });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
-    await toTopicHtml(t, `🤖 <b>ИИ ответил</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n${mdToHtml(reply.md)}${guide.length ? `\n\n📖 <i>${h(guide.map((d) => d.title).join(" · "))}</i>` : ""}${learned.length ? `\n📚 <i>из базы решений: ${learned.length}</i>` : ""}${code.length ? `\n🧩 <i>код: ${h(code.map((d) => d.file.split("/").pop()).join(" · "))}</i>` : ""}`);
+    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.map((d) => d.title).join(" · "))}</i>` : ""}${learned.length ? `\n📚 <i>из базы решений: ${learned.length}</i>` : ""}${code.length ? `\n🧩 <i>код: ${h(code.map((d) => d.file.split("/").pop()).join(" · "))}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
+    await movePanel(t, aiNote);
     if (reply.escalate) await escalate(t, reply.reason, { tellClient: false });
   }
 
@@ -1195,7 +1206,7 @@ function createSupportBot(deps) {
     }
     const stored = text.trim() || "[прислал файл без подписи]";
     await addMessage(t, { text: media ? `${stored}${text.trim() ? " [+ файл]" : ""}` : stored, authorRole: "owner", authorUid: `tg:${userId}`, authorName: clip(from.first_name || "", 40) });
-    await toTopicHtml(t, `👤 <b>${h(clip(from.first_name || "Клиент", 40))}</b>\n${h(stored)}`);
+    await toTopicHtml(t, `💬 <b>Клиент · ${h(clip(from.first_name || "Telegram", 40))}</b>\n<blockquote>${h(stored)}</blockquote>`);
     if (media && !text.trim()) {
       // Картинки ИИ не разбирает — пусть клиент опишет, а специалист увидит файл в теме.
       if (!aiPaused(t, now())) await deliver(t, "Вижу файл — передал его в тему специалисту. Чтобы я помог быстрее, опишите словами: что делали и какую ошибку видите.");
@@ -1442,7 +1453,7 @@ function createSupportBot(deps) {
       const all = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
       const items = all.slice(page * 5, page * 5 + 5);
       const nav = [...(page > 0 ? [btn("◀️", `kb:${page - 1}`)] : []), ...((page + 1) * 5 < all.length ? [btn("▶️", `kb:${page + 1}`)] : [])];
-      return { text: ["📚 <b>База решений</b>", `Всего: ${all.length}. Бот обобщает их из диалогов кнопкой «📚 Запомнить».`, "",
+      return { text: ["📚 <b>База решений</b>", `Всего: ${all.length}. Бот сам запоминает решения из диалогов — прежде всего ваши ответы; вручную — «📚 Запомнить» в теме.`, "",
         items.length ? items.map((k, i) => `<b>${page * 5 + i + 1}. ${h(clip(k.q || "", 120))}</b>\n${h(clip(k.a || "", 220))}\n<i>использован ${Number(k.uses) || 0} · помог ${Number(k.helpful) || 0}</i>`).join("\n\n") : "Пока пусто."].join("\n"),
         rows: [...(items.length ? [items.map((k, i) => btn(`🗑 ${page * 5 + i + 1}`, `kd:${k.id}:${page}`))] : []), ...(nav.length ? [nav] : []), back()] };
     }
@@ -1688,6 +1699,11 @@ function createSupportBot(deps) {
       humanReplies: (Number(t.humanReplies) || 0) + 1, ...(first ? { firstResponseAt: ts(now()) } : {}),
     });
     await renameTopic(t);
+    // 👍 на ответе — «дошло до клиента»; под ним — кнопки «Закрыть», «Запомнить»…
+    quiet(tg("setMessageReaction", { chat_id: msg.chat.id, message_id: msg.message_id, reaction: [{ type: "emoji", emoji: "👍" }] }), "реакция");
+    await movePanel(t, await toTopicHtml(t, `✅ <b>Доставлено клиенту</b> · ИИ молчит до ${fmtWhen(now() + pauseMs(), now()).replace(/^сегодня /, "")}`, {
+      reply_markup: topicKeyboard(t), reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
+    }));
   }
 
   function groupHelp() {
@@ -1766,8 +1782,9 @@ function createSupportBot(deps) {
     if (t.status === "closed") return;
     await patch(t, { status: "closed", closedAt: ts(now()), escalated: false, updatedAt: ts(now()), syncedAt: now() });
     await renameTopic(t);
-    await toTopicHtml(t, `✅ <b>Обращение закрыто</b>${by ? ` · ${h(by)}` : ""}`, t.humanReplies && aiReady() && !autoLearnOn()
+    const closedNote = await toTopicHtml(t, `✅ <b>Обращение закрыто</b>${by ? ` · ${h(by)}` : ""}`, t.humanReplies && aiReady() && !autoLearnOn()
       ? { reply_markup: { inline_keyboard: [[{ text: "📚 Запомнить решение для ИИ", callback_data: `sb:learn:${t.id}` }]] } } : {});
+    await movePanel(t, closedNote);
     if (t.topicId) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
     if (rate && t.channel === "telegram" && t.tgChatId) {
       await quiet(send(t.tgChatId, `✅ <b>Обращение #${t.no} закрыто</b>\nОцените, пожалуйста, как мы помогли:`, { ...HTML,
@@ -2081,11 +2098,11 @@ function createSupportBot(deps) {
     await patch(t, { syncedAt: mark });
     for (const m of fresh) {
       if (m.authorRole === "super_admin") {
-        await toTopic(t, `👨‍💼 Ответ из панели:\n${m.text}`);
+        await toTopicHtml(t, `👨‍💼 <b>Ответ из панели ZalPOS</b>${m.authorName ? ` · ${h(m.authorName)}` : ""}\n<blockquote>${h(m.text)}</blockquote>`);
         if (t.channel === "telegram" && t.tgChatId) await quiet(send(t.tgChatId, `👨‍💼 Поддержка ZalPOS:\n${m.text}`), "клиенту");
         await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), ...(t.firstResponseAt ? {} : { firstResponseAt: ts(now()) }) });
       } else {
-        await toTopicHtml(t, `👤 <b>Из кабинета</b>\n${h(m.text)}`);
+        await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
       }
     }
     if (t.status === "closed" && t.topicStatus !== "closed") {
@@ -2319,6 +2336,46 @@ function createSupportBot(deps) {
     sendJson(res, 200, { code, command: `/link ${code}`, username: state.cfg.username || "" });
   }
 
+  // ---- документы в обращениях из кабинета: подписанная ссылка на 7 дней
+
+  const docSig = (ticketId, docId, exp) => crypto.createHmac("sha256", secretKey()).update(`doc|${ticketId}|${docId}|${exp}`).digest("hex").slice(0, 32);
+  function docLink(t, docId) {
+    const exp = now() + 7 * 24 * 3600 * 1000;
+    return `${publicUrl}/supportDoc?t=${encodeURIComponent(t.id)}&d=${encodeURIComponent(docId)}&e=${exp}&s=${docSig(t.id, docId, exp)}`;
+  }
+
+  /** GET /supportDoc — файл Word с реквизитами заведения этого обращения. */
+  async function handleDocDownload(req, res) {
+    const q = new URL(`http://x${req.url}`).searchParams;
+    const t = String(q.get("t") || "");
+    const d = String(q.get("d") || "");
+    const e = Number(q.get("e")) || 0;
+    const given = Buffer.from(String(q.get("s") || ""));
+    let expected;
+    try {
+      expected = Buffer.from(docSig(t, d, e));
+    } catch (_) {
+      expected = Buffer.alloc(0);
+    }
+    const page = (code, text) => {
+      res.writeHead(code, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(text);
+    };
+    if (!expected.length || given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return page(403, "Ссылка недействительна.");
+    if (e < now()) return page(410, "Срок ссылки истёк — попросите документ в поддержке ещё раз.");
+    const ticket = await loadTicket(t);
+    if (!ticket) return page(404, "Обращение не найдено.");
+    const doc = buildDoc(d, await docData(ticket.tenantId || "").catch(() => ({})));
+    if (!doc) return page(404, "Документ не найден.");
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "Content-Disposition": `attachment; filename="document.docx"; filename*=UTF-8''${encodeURIComponent(doc.filename)}`,
+      "Content-Length": doc.buffer.length,
+      "Cache-Control": "no-store",
+    });
+    res.end(doc.buffer);
+  }
+
   /** Кабинет: «Написать в Telegram» — одноразовая ссылка, привязывающая
    *  Telegram владельца к заведению (бот увидит его состояние). */
   async function handleClientLink(req, res) {
@@ -2351,7 +2408,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleAiCheck, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, HOOK_ID, _state: state,
   };
 }

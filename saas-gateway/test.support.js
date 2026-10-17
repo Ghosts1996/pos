@@ -659,6 +659,42 @@ test("автообучение: без ответа человека и без �
   assert.strictEqual([...h.store.keys()].filter((k) => k.startsWith("supportKnowledge/")).length, 0);
 });
 
+test("тема: понятно, кто пишет; ответ сотрудника — 👍 и кнопки под ним; документы в кабинет — ссылкой", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Не печатает чек"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  const group = h.calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === GROUP);
+  assert.ok(group.some((c) => /💬 <b>Клиент · Анна<\/b>\n<blockquote>Не печатает чек<\/blockquote>/.test(c.body.text)), "сообщение клиента не подписано");
+  assert.ok(group.some((c) => /🤖 <b>ИИ ответил клиенту<\/b>/.test(c.body.text) && /<blockquote expandable>/.test(c.body.text) && c.body.reply_markup), "ответ ИИ без кнопок");
+  await h.bot.handleUpdate(inTopic("Проверьте бумагу", t.topicId));
+  await h.bot.idle();
+  assert.ok(h.calls.some((c) => c.method === "setMessageReaction"), "нет отметки «доставлено»");
+  const delivered = h.calls.filter((c) => c.method === "sendMessage" && /Доставлено клиенту/.test(c.body.text));
+  assert.ok(delivered.length === 1 && delivered[0].body.reply_markup.inline_keyboard.flat().some((b) => b.text === "✅ Закрыть"));
+  assert.ok(h.calls.some((c) => c.method === "editMessageReplyMarkup" && c.body.reply_markup.inline_keyboard.length === 0), "старые кнопки не убраны");
+
+  // Документ в обращении из кабинета — ссылкой, файл отдаётся по подписи.
+  const T = admin.firestore.Timestamp.fromMillis;
+  const at = Date.now() - 1000;
+  h.store.set("supportTickets/c9", { tenantId: "t1", subject: "Документы", status: "open", createdBy: "owner1", createdAt: T(at), updatedAt: T(at), lastAuthorRole: "owner" });
+  h.store.set("supportTickets/c9/messages/m1", { text: "Нужен приказ об ответственном за персональные данные", authorUid: "owner1", authorRole: "owner", createdAt: T(at) });
+  h.aiReplies.push("Готово, держите приказ.\n[[ДОКУМЕНТ: order-pdn]]");
+  h.bot.onTicketDoc("c9", h.store.get("supportTickets/c9"));
+  await h.bot.idle();
+  const ai = messagesOf(h.store, "c9").find((m) => m.authorRole === "ai");
+  const link = (ai.text.match(/https:\/\/\S+supportDoc\?\S+/) || [])[0];
+  assert.ok(link, ai.text);
+  const out = { headers: {}, body: null, code: 0 };
+  const res = { writeHead: (c, hd) => { out.code = c; out.headers = hd || {}; }, end: (b) => { out.body = b; } };
+  await h.bot.handleDocDownload({ url: link.replace(/^https:\/\/[^/]+\/saas/, "") }, res);
+  assert.strictEqual(out.code, 200);
+  assert.ok(Buffer.isBuffer(out.body) && out.body.slice(0, 2).toString() === "PK" && /docx/.test(out.headers["Content-Disposition"]));
+  await h.bot.handleDocDownload({ url: link.replace(/^https:\/\/[^/]+\/saas/, "").replace(/s=[0-9a-f]+/, "s=deadbeef") }, res);
+  assert.strictEqual(out.code, 403);
+});
+
 test("спасибо и «ок» — без ИИ", async () => {
   const h = harness();
   await setup(h);

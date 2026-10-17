@@ -7455,6 +7455,8 @@ const server = http.createServer((req, res) => {
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
   if (req.method === "GET" && urlPath === "/staffWho") return runHandler(telegram.handleWho, req, res);
+  // Документ поддержки по подписанной ссылке из обращения в кабинете.
+  if (req.method === "GET" && urlPath === "/supportDoc") return runHandler(supportBot.handleDocDownload, req, res);
   // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.

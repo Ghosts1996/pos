@@ -107,7 +107,11 @@ const sent = [];
 let msgId = 100;
 const fetchImpl = async (url, opts) => {
   const [, token, method] = url.match(/bot([^/]+)\/(\w+)$/);
-  const body = JSON.parse(opts.body);
+  const raw = JSON.parse(opts.body);
+  // Сообщения с оформлением проверяем по тексту без тегов; разметка — в body.html.
+  const body = raw.parse_mode === "HTML"
+    ? { ...raw, html: raw.text, text: String(raw.text || "").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") }
+    : raw;
   sent.push({ token, method, body });
   if (method === "getMe") {
     const k = token.slice(0, 3);
@@ -692,6 +696,9 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.match(weekAfter, /Итого: 5\s000 ₽ · 4 чек\./);
   assert.equal(closedReads, before, "после перезапуска неделя — из файла на сервере");
   require("fs").rmSync(cacheDir, { recursive: true, force: true });
+  // Оформление: заголовок и подписи жирным, пользовательский текст экранирован.
+  assert.equal(tgmod.fmtTg("📊 Кафе <А&Б> — итоги\n\nВыручка: 100 ₽\nТоп продаж:\n1. Чай <b> — 100 ₽"),
+    "<b>📊 Кафе &lt;А&amp;Б&gt; — итоги</b>\n\n<b>Выручка:</b> 100 ₽\n<b>Топ продаж:</b>\n1. Чай &lt;b&gt; — 100 ₽");
   console.log("SIM OK");
   process.exit(0);
 })().catch((e) => { console.error("SIM FAIL", e); process.exit(1); });

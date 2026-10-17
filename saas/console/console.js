@@ -3250,6 +3250,16 @@ const TIMEZONE_OPTIONS = [
 ];
 
 // Вопросы, которые на самом деле задают при выборе и подключении.
+// Галочка согласия в «Поддержке»: отметили один раз — дальше стоит сама
+// (каждое обращение всё равно хранит своё согласие с датой и редакцией).
+const SUPPORT_CONSENT_KEY = 'zalpos-support-consent';
+function supportConsentGiven() {
+  try { return window.localStorage.getItem(SUPPORT_CONSENT_KEY) === LEGAL_EDITION; } catch (_) { return false; }
+}
+function rememberSupportConsent() {
+  try { window.localStorage.setItem(SUPPORT_CONSENT_KEY, LEGAL_EDITION); } catch (_) {}
+}
+
 const FAQ_ITEMS = [
   { q: 'Что входит в пробный период?', a: 'Все функции выбранного тарифа. Оплата не запрашивается, пока пробный период не закончится, банковская карта не нужна. Срок указан в карточке тарифа. В пробный период тариф можно бесплатно поменять в разделе «Оплата», например чтобы попробовать тариф с ИИ-помощником.' },
   { q: 'Что будет, если не оплатить вовремя?', a: 'Касса и приложение на всех устройствах заведения блокируются сразу после окончания оплаченного периода. Данные при этом хранятся ещё 10 дней: оплатите за это время, и всё вернётся как было. Потом данные удаляются безвозвратно.' },
@@ -4328,7 +4338,7 @@ function watchDashboardData(tenantId) {
           ${ticketMessages === null ? '<div class="spinner"></div>' : (ticketMessages.length ? ticketMessages.map((m) => `
             <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
               <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 Ассистент ZalPOS' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · поддержка ZalPOS` : 'Поддержка ZalPOS') : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
-              <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
+              <div class="small rich-text" style="margin-top:2px">${richText(m.text || '')}</div>
             </div>
           `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
         </div>
@@ -4343,19 +4353,16 @@ function watchDashboardData(tenantId) {
     const ticketListHtml = () => `
       <h2>Поддержка</h2>
       <div class="card">
-        <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-          <div class="small grow" style="min-width:0"><b>Быстрее — в Telegram</b>
-            <div class="muted">ИИ-ассистент ответит сразу и видит состояние вашего заведения. Нужен человек — напишите «оператор».</div>
-          </div>
-          <button class="btn" id="f-support-tg" style="width:auto">💬 Написать в Telegram</button>
-        </div>
-      </div>
-      <div class="card">
         <label class="field"><span>Тема</span>
           <input id="f-ticket-subject" placeholder="Например: не собирается APK">
         </label>
         <label class="field"><span>Сообщение</span>
           <textarea id="f-ticket-message" rows="3" placeholder="Опишите, что случилось"></textarea>
+        </label>
+        <label class="row" style="gap:10px;align-items:flex-start;margin:2px 0 12px;cursor:pointer">
+          <input type="checkbox" id="f-ticket-consent" style="width:auto;margin-top:3px;flex:none" ${supportConsentGiven() ? 'checked' : ''}>
+          <span class="small muted">Согласен на обработку данных из обращения, чтобы поддержка ответила, в том числе ИИ-ассистентом — ему текст передаётся без телефонов и почт
+            (<a href="#/legal/privacy" target="_blank" rel="noopener">политика конфиденциальности</a>). Не указывайте пароли, коды из СМС и данные гостей.</span>
         </label>
         <button class="btn btn-primary" id="f-ticket-create">Создать обращение</button>
       </div>
@@ -4661,6 +4668,11 @@ function watchDashboardData(tenantId) {
           toast('Заполните тему и сообщение');
           return;
         }
+        if (!$('f-ticket-consent').checked) {
+          toast('Отметьте согласие на обработку данных обращения — без него поддержка не сможет ответить');
+          return;
+        }
+        rememberSupportConsent();
         const btn = $('f-ticket-create');
         btn.disabled = true;
         try {
@@ -4668,6 +4680,8 @@ function watchDashboardData(tenantId) {
           const ticketRef = await addDoc(collection(state.db, 'supportTickets'), {
             tenantId, subject, status: 'open', createdBy: state.uid, createdAt: now, updatedAt: now,
             lastAuthorRole: 'owner',
+            // Согласие на обработку данных обращения (ч. 1 ст. 9 152-ФЗ): когда и по какой редакции.
+            pdConsent: true, pdConsentAt: now, pdConsentEdition: LEGAL_EDITION,
           });
           await addDoc(collection(state.db, 'supportTickets', ticketRef.id, 'messages'), {
             text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
@@ -4678,30 +4692,6 @@ function watchDashboardData(tenantId) {
           selectTicket(ticketRef.id);
         } catch (e) {
           toast(`Не удалось создать обращение: ${e?.message || e}`);
-        } finally {
-          btn.disabled = false;
-        }
-      };
-    }
-    if ($('f-support-tg')) {
-      $('f-support-tg').onclick = async () => {
-        const btn = $('f-support-tg');
-        btn.disabled = true;
-        // Окно — сразу по нажатию: открытое после ответа сервера браузер
-        // телефона заблокировал бы как всплывающее.
-        const win = window.open('', '_blank');
-        try {
-          const { data } = await callSaasGateway('supportBotLink', { tenantId });
-          if (!data.enabled) {
-            if (win) win.close();
-            toast('Поддержка в Telegram скоро заработает — пока создайте обращение здесь');
-            return;
-          }
-          if (win) win.location.href = data.url;
-          else location.href = data.url;
-        } catch (e) {
-          if (win) win.close();
-          toast(e?.status === 404 ? 'Поддержка в Telegram скоро заработает — пока создайте обращение здесь' : (e?.message || String(e)));
         } finally {
           btn.disabled = false;
         }
@@ -6345,7 +6335,7 @@ function watchAdminSupportTickets() {
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
               <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
                 <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
-                <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
+                <div class="small rich-text" style="margin-top:2px">${richText(m.text || '')}</div>
               </div>
             `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
             <textarea class="f-admin-ticket-reply" id="f-admin-reply-${esc(t.id)}" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу..." style="width:100%;resize:vertical;margin-top:6px"></textarea>
@@ -6431,18 +6421,34 @@ function watchAdminSupportTickets() {
 // (isSuperAdmin) нечего.
 function watchAdminBroadcasts() {
   const body = $('admin-broadcasts');
-  sub(onSnapshot(query(collection(state.db, 'broadcasts'), orderBy('createdAt', 'desc'), limit(30)), (snap) => {
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    body.innerHTML = items.length ? `<div class="card">${items.map((b) => `
-      <div class="row" style="justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">
-        <div class="small grow" style="min-width:0">
+  let items = [];
+  let editingId = null; // объявление, которое сейчас правят на месте
+
+  const draw = () => {
+    body.innerHTML = items.length ? `<div class="card">${items.map((b) => editingId === b.id ? `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <label class="field"><span>Заголовок</span>
+          <input id="f-bc-edit-title" value="${esc(b.title || '')}">
+        </label>
+        <label class="field"><span>Текст</span>
+          <textarea id="f-bc-edit-body" rows="6">${esc(b.body || '')}</textarea>
+        </label>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary f-bc-save" data-id="${esc(b.id)}" style="width:auto">Сохранить</button>
+          <button class="btn f-bc-cancel" style="width:auto">Отмена</button>
+        </div>
+      </div>` : `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div class="small" style="min-width:0">
           <b>${esc(b.title || '')}</b>${b.active ? '' : ' <span class="muted">(снято)</span>'}
           <div class="muted rich-text">${richText(b.body || '')}</div>
-          <div class="muted">${fmtDateTime(b.createdAt)}</div>
+          <div class="muted">${fmtDateTime(b.createdAt)}${b.editedAt ? ` · изменено ${fmtDateTime(b.editedAt)}` : ''}</div>
         </div>
-        <button class="btn-link f-broadcast-toggle" data-id="${esc(b.id)}" data-active="${b.active ? '1' : '0'}" style="width:auto;flex-shrink:0">
-          ${b.active ? 'Снять' : 'Вернуть'}
-        </button>
+        <div class="row" style="gap:16px;flex-wrap:wrap;margin-top:6px">
+          <button class="btn-link f-bc-edit" data-id="${esc(b.id)}" style="width:auto">Изменить</button>
+          <button class="btn-link f-broadcast-toggle" data-id="${esc(b.id)}" data-active="${b.active ? '1' : '0'}" style="width:auto">${b.active ? 'Снять' : 'Вернуть'}</button>
+          <button class="btn-link f-bc-delete" data-id="${esc(b.id)}" style="width:auto;color:var(--danger)">Удалить</button>
+        </div>
       </div>
     `).join('')}</div>` : '<p class="small muted">Объявлений пока не было.</p>';
 
@@ -6457,6 +6463,52 @@ function watchAdminBroadcasts() {
         }
       };
     });
+    document.querySelectorAll('.f-bc-edit').forEach((el) => {
+      el.onclick = () => { editingId = el.dataset.id; draw(); };
+    });
+    document.querySelectorAll('.f-bc-cancel').forEach((el) => {
+      el.onclick = () => { editingId = null; draw(); };
+    });
+    document.querySelectorAll('.f-bc-save').forEach((el) => {
+      el.onclick = async () => {
+        const title = $('f-bc-edit-title').value.trim();
+        const text = $('f-bc-edit-body').value.trim();
+        if (!title || !text) {
+          toast('Заполните заголовок и текст');
+          return;
+        }
+        el.disabled = true;
+        try {
+          await setDoc(doc(state.db, 'broadcasts', el.dataset.id), { title, body: text, editedAt: Timestamp.fromDate(new Date()) }, { merge: true });
+          editingId = null;
+          draw();
+          toast('Объявление сохранено');
+        } catch (e) {
+          toast(`Не удалось сохранить: ${e?.message || e}`);
+          el.disabled = false;
+        }
+      };
+    });
+    document.querySelectorAll('.f-bc-delete').forEach((el) => {
+      el.onclick = async () => {
+        if (!confirm('Удалить объявление совсем? Владельцы перестанут его видеть, вернуть нельзя.')) return;
+        el.disabled = true;
+        try {
+          await deleteDoc(doc(state.db, 'broadcasts', el.dataset.id));
+          toast('Объявление удалено');
+        } catch (e) {
+          toast(`Не удалось удалить: ${e?.message || e}`);
+          el.disabled = false;
+        }
+      };
+    });
+  };
+
+  sub(onSnapshot(query(collection(state.db, 'broadcasts'), orderBy('createdAt', 'desc'), limit(30)), (snap) => {
+    items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Пока правят — не перерисовываем поверх ввода (кроме удаления правимого).
+    if (editingId && items.some((b) => b.id === editingId) && document.getElementById('f-bc-edit-title')) return;
+    draw();
   }, () => {
     body.innerHTML = '<p class="small muted">Объявления недоступны.</p>';
   }));
