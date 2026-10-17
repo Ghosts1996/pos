@@ -50,5 +50,6 @@ jobs:
           [ -z "$SSH_KEY" ] && exit 0
           got="$(curl -fsS --max-time 20 https://pii.zalpos.ru/saas/health)"
           echo "$got"
-          echo "$got" | grep -q "\"version\":\"${GITHUB_SHA::7}\"" \
+          # Короткий хеш на сервере бывает длиннее 7 знаков — сверяем начало.
+          echo "$got" | grep -q "\"version\":\"${GITHUB_SHA::7}" \
             || { echo "::error::Сервер отвечает, но версия не ${GITHUB_SHA::7}"; exit 1; }
