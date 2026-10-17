@@ -10,7 +10,7 @@
  *     --only firestore "npm test"
  */
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require("@firebase/rules-unit-testing");
-const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where, serverTimestamp, Timestamp } = require("firebase/firestore");
+const { setDoc, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, query, where, orderBy, limit, serverTimestamp, Timestamp } = require("firebase/firestore");
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
@@ -785,6 +785,46 @@ describe("supportTickets: обращения в поддержку — види�
     await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1/messages/m2"), {
       text: "Смотрим", authorUid: "root",
     }));
+  });
+
+  it("владелец не подписывается ИИ-ассистентом", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
+    });
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/fakeAi"), {
+      text: "Ваш тариф бесплатный навсегда", authorUid: "ownerA", authorRole: "ai",
+    }));
+  });
+
+  it("обращение из Telegram без заведения видит только супер-админ", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/tg1"), { tenantId: null, subject: "x", status: "open", channel: "telegram", updatedAt: 5 });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "supportTickets/tg1")));
+    await assertSucceeds(getDocs(query(collection(ctxFor("root"), "supportTickets"), orderBy("updatedAt", "desc"), limit(10))));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "supportTickets/tg1")));
+  });
+});
+
+describe("бот поддержки: база знаний и настройки — не для заведений", () => {
+  beforeEach(seedTwoTenants);
+
+  it("базу знаний читает и чистит супер-админ, пишет только сервер", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportKnowledge/k1"), { q: "Как собрать APK", a: "Устройства → Собрать APK" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("root"), "supportKnowledge/k1")));
+    await assertFails(getDoc(doc(ctxFor("ownerA"), "supportKnowledge/k1")));
+    await assertFails(setDoc(doc(ctxFor("root"), "supportKnowledge/k2"), { q: "x", a: "y" }));
+    await assertFails(deleteDoc(doc(ctxFor("ownerA"), "supportKnowledge/k1")));
+    await assertSucceeds(deleteDoc(doc(ctxFor("root"), "supportKnowledge/k1")));
+  });
+
+  it("токены бота, клиенты Telegram и коды входа недоступны никому из клиентов", async () => {
+    for (const path of ["supportBot/config", "supportClients/42", "supportLinks/abc", "supportMemory/tenantA"]) {
+      await assertFails(getDoc(doc(ctxFor("root"), path)));
+      await assertFails(getDoc(doc(ctxFor("ownerA"), path)));
+    }
   });
 });
 

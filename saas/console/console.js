@@ -1077,8 +1077,8 @@ function route() {
   if (PUBLIC_ROUTES[location.hash]) {
     return PUBLIC_ROUTES[location.hash]();
   }
-  if (location.hash === '#/billing') {
-    try { window.localStorage.setItem(PENDING_TAB_KEY, 'billing'); } catch (_) {}
+  if (location.hash === '#/billing' || location.hash === '#/support') {
+    try { window.localStorage.setItem(PENDING_TAB_KEY, location.hash.slice(2)); } catch (_) {}
     if (!state.uid) {
       authMode = 'login';
       return screenAuth();
@@ -4326,8 +4326,8 @@ function watchDashboardData(tenantId) {
         </div>
         <div style="margin-top:10px">
           ${ticketMessages === null ? '<div class="spinner"></div>' : (ticketMessages.length ? ticketMessages.map((m) => `
-            <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
-              <div class="small muted">${esc(m.authorRole === 'super_admin' ? 'Платформа' : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
+            <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
+              <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 Ассистент ZalPOS' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · поддержка ZalPOS` : 'Поддержка ZalPOS') : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
               <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
             </div>
           `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
@@ -4343,6 +4343,14 @@ function watchDashboardData(tenantId) {
     const ticketListHtml = () => `
       <h2>Поддержка</h2>
       <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="small grow" style="min-width:0"><b>Быстрее — в Telegram</b>
+            <div class="muted">ИИ-ассистент ответит сразу и видит состояние вашего заведения. Нужен человек — напишите «оператор».</div>
+          </div>
+          <button class="btn" id="f-support-tg" style="width:auto">💬 Написать в Telegram</button>
+        </div>
+      </div>
+      <div class="card">
         <label class="field"><span>Тема</span>
           <input id="f-ticket-subject" placeholder="Например: не собирается APK">
         </label>
@@ -4357,7 +4365,7 @@ function watchDashboardData(tenantId) {
             <b>${esc(t.subject || '')}</b>
             <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
           </div>
-          ${t.lastAuthorRole === 'super_admin' && t.status !== 'closed'
+          ${(t.lastAuthorRole === 'super_admin' || t.lastAuthorRole === 'ai') && t.status !== 'closed'
             ? '<div class="small" style="color:var(--success);font-weight:700;white-space:nowrap">Есть ответ</div>'
             : `<div class="small muted">${t.status === 'closed' ? 'Решено' : 'Открыто'}</div>`}
         </div>
@@ -4670,6 +4678,30 @@ function watchDashboardData(tenantId) {
           selectTicket(ticketRef.id);
         } catch (e) {
           toast(`Не удалось создать обращение: ${e?.message || e}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
+    if ($('f-support-tg')) {
+      $('f-support-tg').onclick = async () => {
+        const btn = $('f-support-tg');
+        btn.disabled = true;
+        // Окно — сразу по нажатию: открытое после ответа сервера браузер
+        // телефона заблокировал бы как всплывающее.
+        const win = window.open('', '_blank');
+        try {
+          const { data } = await callSaasGateway('supportBotLink', { tenantId });
+          if (!data.enabled) {
+            if (win) win.close();
+            toast('Поддержка в Telegram скоро заработает — пока создайте обращение здесь');
+            return;
+          }
+          if (win) win.location.href = data.url;
+          else location.href = data.url;
+        } catch (e) {
+          if (win) win.close();
+          toast(e?.status === 404 ? 'Поддержка в Telegram скоро заработает — пока создайте обращение здесь' : (e?.message || String(e)));
         } finally {
           btn.disabled = false;
         }
@@ -5742,6 +5774,8 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="support">
         <h1>Поддержка</h1>
+        <div id="admin-support-bot"><div class="spinner"></div></div>
+        <h2 style="margin-top:18px">Обращения</h2>
         <div id="admin-support"><div class="spinner"></div></div>
       </div>
 
@@ -5918,10 +5952,221 @@ function screenSuperAdmin() {
   watchAdminInfra();
   watchAdminBroadcasts();
   watchAdminSupportTickets();
+  watchSupportBotAdmin();
   watchSecurity();
   // Отметка входа в панель (IP, браузер) — см. handleRecordAdminLogin в
   // saas-gateway. Сбой не мешает работе панели.
   callSaasGateway('recordAdminLogin', {}).catch(() => {});
+}
+
+// ИИ-бот поддержки в Telegram (saas-gateway/support-bot.js): токен, рабочая
+// группа с «Темами», сотрудники, провайдер ИИ, база знаний. Токен и ключ ИИ
+// уходят только на сервер и хранятся там зашифрованными — обратно в панель
+// не возвращаются.
+function watchSupportBotAdmin() {
+  const body = $('admin-support-bot');
+  let st = null;
+  let loadError = '';
+  let groupCode = null;
+  let knowledge = null;
+  let saving = false;
+
+  const load = async () => {
+    try {
+      st = (await callSaasGateway('supportBotStatus', {})).data;
+      loadError = '';
+    } catch (e) {
+      loadError = e?.status === 404 ? 'Сервер ещё не обновлён до версии с ботом поддержки — обновится сам после выкладки.' : (e?.message || String(e));
+    }
+    draw();
+  };
+  const loadKnowledge = async () => {
+    try {
+      const snap = await getDocs(query(collection(state.db, 'supportKnowledge'), limit(200)));
+      knowledge = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    } catch (e) {
+      knowledge = [];
+    }
+    draw();
+  };
+
+  const vendorOptions = (cur) => AI_VENDORS.map((v) => `<option value="${esc(v.id)}" ${v.id === cur ? 'selected' : ''}>${esc(v.title)}</option>`).join('');
+
+  const draw = () => {
+    if (!st && !loadError) { body.innerHTML = '<div class="spinner"></div>'; return; }
+    const s = st || {};
+    const ai = s.ai || {};
+    const vendor = aiVendor(ai.vendor || 'tooken');
+    const g = s.group;
+    const groupLine = !s.groupChatId ? '<span style="color:var(--warning)">не подключена</span>'
+      : g && g.admin && g.canManageTopics ? `✓ ${esc(g.title || String(s.groupChatId))}`
+        : `<span style="color:var(--danger)">${esc(g?.title || String(s.groupChatId))}: ${g?.error ? esc(g.error) : 'боту нужны права администратора с «Управлением темами»'}</span>`;
+    const usage = s.usage || {};
+    renderKeepingInputs(body, `
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <b>🤖 ИИ-бот поддержки в Telegram</b>
+          <span class="small" style="font-weight:700;color:${s.connected ? 'var(--success)' : 'var(--warning)'}">
+            ${s.connected ? `Работает · <a href="https://t.me/${esc(s.username)}" target="_blank" rel="noopener">@${esc(s.username)}</a>` : 'Не подключён'}
+          </span>
+        </div>
+        ${loadError ? `<p class="small" style="color:var(--danger)">${esc(loadError)}</p>` : ''}
+        <p class="small muted" style="margin-top:6px">Клиенты пишут боту — ИИ отвечает сразу, видя подписку, кассы, сборки и ошибки заведения.
+          Каждое обращение — отдельная тема в вашей группе. Ответили в теме сами — ИИ замолкает. Слова «оператор», «верните деньги», жалобы — сразу к вам.</p>
+        <details style="margin:8px 0">
+          <summary class="small" style="cursor:pointer;font-weight:600">Как подключить — 5 шагов</summary>
+          <ol class="small" style="margin:8px 0 0 18px;line-height:1.6">
+            <li>В Telegram откройте <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> → <b>/newbot</b> → придумайте имя (например «ZalPOS Поддержка») → скопируйте токен. Отдельный бот, не бот заведения.</li>
+            <li>Создайте группу для сотрудников поддержки → настройки группы → <b>«Темы»</b> → включить.</li>
+            <li>Добавьте бота в группу → сделайте <b>администратором</b> с правом <b>«Управление темами»</b>.</li>
+            <li>Вставьте токен ниже и нажмите «Сохранить». Затем впишите ID группы или нажмите «Код для группы» и отправьте код в группу.</li>
+            <li>Впишите Telegram ID сотрудников (узнать: написать <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a>) — им придёт сигнал «🔴 Нужен человек». Каждый один раз жмёт у бота «Старт».</li>
+          </ol>
+        </details>
+        <label class="field"><span>Токен бота</span>
+          <input type="password" autocomplete="off" id="f-sb-token" placeholder="${s.connected ? '✓ сохранён · пусто — не менять' : '123456789:AA…  из @BotFather'}">
+        </label>
+        <label class="field"><span>ID группы поддержки</span>
+          <input id="f-sb-group" inputmode="numeric" value="${esc(s.groupChatId ? String(s.groupChatId) : '')}" placeholder="-1001234567890">
+        </label>
+        <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 8px">
+          <span class="small muted">Группа: ${groupLine}</span>
+          ${s.connected ? '<button class="btn-link" id="f-sb-code" style="width:auto">Код для группы</button>' : ''}
+        </div>
+        ${groupCode ? `
+          <div class="card" style="background:var(--surface-2)">
+            <div class="small">Отправьте в группу (действует 30 минут):</div>
+            <div class="row" style="gap:8px;align-items:center;margin-top:6px">
+              <code style="font-size:16px;font-weight:700">${esc(groupCode)}</code>
+              <button class="btn-link" id="f-sb-code-copy" style="width:auto">Скопировать</button>
+            </div>
+          </div>` : ''}
+        <label class="field"><span>Telegram ID сотрудников поддержки</span>
+          <textarea id="f-sb-staff" rows="3" placeholder="123456789 Константин&#10;987654321 Мария">${esc(s.staff || '')}</textarea>
+        </label>
+
+        <div style="margin-top:12px;font-weight:700">ИИ</div>
+        <label class="row" style="gap:8px;align-items:center;margin:6px 0">
+          <input type="checkbox" id="f-sb-ai-on" style="width:auto" ${s.aiEnabled === false ? '' : 'checked'}>
+          <span class="small">ИИ отвечает первым (выключите — все обращения сразу к людям)</span>
+        </label>
+        <label class="field"><span>Провайдер</span>
+          <select id="f-sb-vendor">${vendorOptions(vendor.id)}</select>
+        </label>
+        <label class="field"><span>API-ключ</span>
+          <input type="password" autocomplete="off" id="f-sb-key" placeholder="${ai.hasKey ? '✓ сохранён · пусто — не менять' : esc(vendor.hint)}">
+        </label>
+        <label class="field"><span>Модель</span>
+          <input id="f-sb-model" list="f-sb-models" value="${esc(ai.model || '')}" placeholder="${esc(vendor.model || 'gpt-4o-mini')}">
+          <datalist id="f-sb-models">${vendor.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
+        </label>
+        <label class="field"><span>Адрес API${vendor.id === 'custom' ? '' : ' (необязательно)'}</span>
+          <input id="f-sb-url" value="${esc(ai.baseUrl && ai.baseUrl !== vendor.baseUrl ? ai.baseUrl : '')}" placeholder="${esc(vendor.baseUrl || 'https://ваш-шлюз/v1')}">
+        </label>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <label class="field grow"><span>Пауза ИИ после ответа человека, ч</span>
+            <input id="f-sb-pause" type="number" min="1" max="72" value="${esc(String(s.humanPauseHours || 12))}">
+          </label>
+          <label class="field grow"><span>Ответов ИИ в сутки, не больше</span>
+            <input id="f-sb-limit" type="number" min="10" max="5000" value="${esc(String(s.dailyAiLimit || 300))}">
+          </label>
+        </div>
+        <label class="field"><span>Часы работы людей (видит клиент)</span>
+          <input id="f-sb-hours" value="${esc(s.workHours || '')}" placeholder="ежедневно с 10:00 до 22:00 МСК">
+        </label>
+        <button class="btn btn-primary" id="f-sb-save" ${saving ? 'disabled' : ''}>${saving ? 'Сохраняю…' : (s.connected ? 'Сохранить' : 'Подключить бота')}</button>
+        ${s.connected ? `
+          <p class="small muted" style="margin-top:10px">
+            Сегодня ИИ ответил ${Number(usage.calls) || 0} раз (${(Number(usage.tokens) || 0).toLocaleString('ru-RU')} токенов) ·
+            база знаний: ${Number(s.knowledge) || 0} · статей инструкции: ${Number(s.guideArticles) || 0}
+          </p>` : ''}
+        ${s.lastError ? `<p class="small" style="color:var(--danger)">Последняя ошибка: ${esc(s.lastError)}</p>` : ''}
+        ${s.connected ? `
+          <details id="f-sb-kb-details" style="margin-top:8px" ${knowledge ? 'open' : ''}>
+            <summary class="small" style="cursor:pointer;font-weight:600">📚 Чему научился бот</summary>
+            ${knowledge === null ? '<p class="small muted">Откройте, чтобы загрузить.</p>' : (knowledge.length ? knowledge.map((k) => `
+              <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+                <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start">
+                  <div class="small grow" style="min-width:0"><b>${esc(k.q || '')}</b>
+                    <div class="muted rich-text" style="margin-top:2px">${esc(k.a || '')}</div>
+                    <div class="muted" style="margin-top:2px">использован ${Number(k.uses) || 0} · помог ${Number(k.helpful) || 0}${k.createdBy ? ` · ${esc(k.createdBy)}` : ''}</div>
+                  </div>
+                  <button class="btn-link f-sb-kb-del" data-id="${esc(k.id)}" style="width:auto;color:var(--danger)">Удалить</button>
+                </div>
+              </div>`).join('') : '<p class="small muted">Пока пусто. В теме обращения нажмите «📚 Запомнить» — бот обобщит решение без персональных данных.</p>')}
+          </details>` : ''}
+      </div>
+    `);
+
+    $('f-sb-vendor').onchange = () => {
+      const v = aiVendor($('f-sb-vendor').value);
+      $('f-sb-model').placeholder = v.model || 'gpt-4o-mini';
+      $('f-sb-url').placeholder = v.baseUrl || 'https://ваш-шлюз/v1';
+      $('f-sb-key').placeholder = v.hint;
+      $('f-sb-models').innerHTML = v.models.map((m) => `<option value="${esc(m)}">`).join('');
+    };
+    $('f-sb-save').onclick = async () => {
+      const vendorId = $('f-sb-vendor').value;
+      const v = aiVendor(vendorId);
+      const payload = {
+        token: $('f-sb-token').value.trim(),
+        groupChatId: $('f-sb-group').value.trim(),
+        staff: $('f-sb-staff').value,
+        aiEnabled: $('f-sb-ai-on').checked,
+        ai: {
+          vendor: vendorId, apiKey: $('f-sb-key').value.trim(),
+          model: $('f-sb-model').value.trim() || v.model, baseUrl: $('f-sb-url').value.trim() || v.baseUrl,
+        },
+        humanPauseHours: Number($('f-sb-pause').value) || 12,
+        dailyAiLimit: Number($('f-sb-limit').value) || 300,
+        workHours: $('f-sb-hours').value.trim(),
+      };
+      if (!payload.token && !(st && st.connected)) { toast('Вставьте токен бота из @BotFather'); return; }
+      if (String(payload.groupChatId) === String(st?.groupChatId || '')) delete payload.groupChatId;
+      saving = true;
+      draw();
+      try {
+        st = (await callSaasGateway('supportBotSetup', payload)).data;
+        loadError = '';
+        ['f-sb-token', 'f-sb-key'].forEach((id) => { if ($(id)) $(id).value = ''; });
+        toast(st.connected ? 'Бот поддержки сохранён' : 'Сохранено');
+      } catch (e) {
+        toast(e?.message || String(e));
+      } finally {
+        saving = false;
+        draw();
+      }
+    };
+    if ($('f-sb-code')) {
+      $('f-sb-code').onclick = async () => {
+        try {
+          groupCode = (await callSaasGateway('supportBotGroupCode', {})).data.command;
+          draw();
+        } catch (e) {
+          toast(e?.message || String(e));
+        }
+      };
+    }
+    if ($('f-sb-code-copy')) $('f-sb-code-copy').onclick = () => copyToClipboard(groupCode);
+    const kbDetails = $('f-sb-kb-details');
+    if (kbDetails) kbDetails.ontoggle = () => { if (kbDetails.open && knowledge === null) loadKnowledge(); };
+    document.querySelectorAll('.f-sb-kb-del').forEach((el) => {
+      el.onclick = async () => {
+        if (!confirm('Удалить запись из базы знаний бота?')) return;
+        try {
+          await deleteDoc(doc(state.db, 'supportKnowledge', el.dataset.id));
+          knowledge = (knowledge || []).filter((k) => k.id !== el.dataset.id);
+          draw();
+        } catch (e) {
+          toast(`Не удалось удалить: ${e?.message || e}`);
+        }
+      };
+    });
+  };
+
+  draw();
+  load();
 }
 
 // Обращения всех заведений. Переписку грузим только для раскрытого тикета,
@@ -5970,18 +6215,19 @@ function watchAdminSupportTickets() {
       <div style="padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="row f-admin-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;cursor:pointer">
           <div class="small grow" style="min-width:0">
-            ${isPriority(t) ? '<span class="cab-plan-badge" style="margin-right:6px">Приоритет</span>' : ''}<b>${esc(t.subject || '')}</b> · ${esc(tenantNames.get(t.tenantId) || t.tenantId)}
-            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}</div>
+            ${isPriority(t) ? '<span class="cab-plan-badge" style="margin-right:6px">Приоритет</span>' : ''}${t.no ? `<span class="muted">#${esc(String(t.no))}</span> ` : ''}<b>${esc(t.subject || '')}</b> · ${esc(t.tenantId ? (tenantNames.get(t.tenantId) || t.tenantId) : `Telegram${t.tgName ? ` · ${t.tgName}` : ''}`)}
+            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}${t.channel === 'telegram' && t.tenantId ? ' · Telegram' : ''}</div>
           </div>
-          ${t.status !== 'closed' && t.lastAuthorRole !== 'super_admin'
-            ? '<div class="small" style="color:var(--warning);font-weight:700;white-space:nowrap">Ждёт ответа</div>'
-            : `<div class="small muted">${t.status === 'closed' ? 'Решено' : 'Ответили'}</div>`}
+          ${t.status === 'closed' ? '<div class="small muted">Решено</div>'
+            : t.escalated ? '<div class="small" style="color:var(--danger);font-weight:700;white-space:nowrap">🔴 Нужен человек</div>'
+              : t.lastAuthorRole === 'owner' ? '<div class="small" style="color:var(--warning);font-weight:700;white-space:nowrap">Ждёт ответа</div>'
+                : `<div class="small muted">${t.lastAuthorRole === 'ai' ? '🤖 Ответил ИИ' : 'Ответили'}</div>`}
         </div>
         ${expandedId === t.id ? `
           <div style="margin-top:10px">
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
-              <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
-                <div class="small muted">${esc(m.authorRole === 'super_admin' ? 'Платформа' : 'Владелец')} · ${fmtDateTime(m.createdAt)}</div>
+              <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
+                <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
                 <div class="small" style="margin-top:2px;white-space:pre-wrap">${esc(m.text || '')}</div>
               </div>
             `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
@@ -6036,7 +6282,7 @@ function watchAdminSupportTickets() {
 
   sub(onSnapshot(query(collection(state.db, 'supportTickets'), orderBy('updatedAt', 'desc'), limit(100)), async (snap) => {
     tickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    await Promise.all([...new Set(tickets.map((t) => t.tenantId))].filter((id) => !tenantNames.has(id)).map(async (id) => {
+    await Promise.all([...new Set(tickets.map((t) => t.tenantId))].filter((id) => id && !tenantNames.has(id)).map(async (id) => {
       try {
         const tSnap = await getDoc(doc(state.db, 'tenants', id));
         const t = tSnap.exists() ? tSnap.data() : {};

@@ -966,9 +966,18 @@ service cloud.firestore {
         allow create: if hasRole(
           get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.tenantId,
           ['owner', 'admin']) && request.resource.data.authorUid == request.auth.uid &&
-          (isSuperAdmin() || request.resource.data.get('authorRole', '') != 'super_admin');
+          (isSuperAdmin() || !(request.resource.data.get('authorRole', '') in ['super_admin', 'ai']));
         allow update, delete: if false;
       }
+    }
+
+    // ---- База знаний ИИ-бота поддержки: обобщённые решения без
+    //      персональных данных. Пишет сервер (support-bot.js), смотрит и
+    //      удаляет неудачные записи супер-админ. Настройки бота
+    //      (supportBot), клиенты, коды входа и память — только сервер. ----
+    match /supportKnowledge/{entryId} {
+      allow read, delete: if isSuperAdmin();
+      allow create, update: if false;
     }
 
     // ---- Суточные снимки метрик платформы (регистрации, MRR) — финансы

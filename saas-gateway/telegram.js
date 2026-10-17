@@ -2303,4 +2303,5 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 module.exports = {
   createTelegram, buildSummary, buildChainSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
+  secretKey,
 };

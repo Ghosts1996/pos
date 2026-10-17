@@ -14,6 +14,21 @@ const SERVER_VERSION = (() => {
     return "";
   }
 })();
+// Последние ошибки и предупреждения журнала — в памяти: по ним ИИ-бот
+// поддержки видит, что сломалось у заведения (ищет строки с его id).
+const ERROR_RING = [];
+const ERROR_RING_MAX = 600;
+for (const level of ["error", "warn"]) {
+  const orig = console[level].bind(console);
+  console[level] = (...args) => {
+    try {
+      const text = args.map((a) => (a instanceof Error ? `${a.message}` : typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+      ERROR_RING.push({ at: Date.now(), text: text.slice(0, 400) });
+      if (ERROR_RING.length > ERROR_RING_MAX) ERROR_RING.splice(0, ERROR_RING.length - ERROR_RING_MAX);
+    } catch (_) {}
+    orig(...args);
+  };
+}
 const admin = require("firebase-admin");
 const { execFile } = require("child_process");
 const tls = require("tls");
@@ -24,7 +39,8 @@ const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = requ
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
 const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
-const { createTelegram } = require("./telegram");
+const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
+const { createSupportBot } = require("./support-bot");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -7065,6 +7081,110 @@ const telegram = createTelegram({
   pii,
 });
 
+// ИИ-бот поддержки платформы в Telegram — см. support-bot.js.
+const SUPPORT_STARTED_AT = Date.now();
+const supportFmt = (v) => {
+  const ms = v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number(v) || 0;
+  return ms ? new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ") + " МСК" : "—";
+};
+const SUB_STATUS = { trial: "пробный период", active: "оплачена", past_due: "просрочена оплата", cancelled: "отменена", expired: "закончилась", paused: "приостановлена" };
+
+/** Состояние заведения для ИИ и для сотрудников поддержки — без
+ *  персональных данных (имён, телефонов, почт нет). */
+async function supportVenueStatus(tenantId) {
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const tenant = (await tenantRef.get()).data();
+  if (!tenant) return "Заведение не найдено (удалено?)";
+  const billingId = tenant.chainId || tenantId;
+  const [subDoc, devSnap, jobsSnap, botDoc, aiDoc] = await Promise.all([
+    firestore.collection("subscriptions").doc(billingId).get().catch(() => null),
+    tenantRef.collection("devices").limit(60).get().catch(() => null),
+    firestore.collection("buildJobs").where("tenantId", "==", tenantId).limit(40).get().catch(() => null),
+    firestore.collection("telegramBots").doc(tenantId).get().catch(() => null),
+    tenantRef.collection("meta").doc("aiSettings").get().catch(() => null),
+  ]);
+  const sub = (subDoc && subDoc.data()) || null;
+  const planId = (sub && sub.planId) || tenant.planId || "";
+  const plan = planId ? ((await firestore.collection("plans").doc(planId).get().catch(() => null))?.data() || {}) : {};
+  const lines = [];
+  lines.push(`Заведение: ${tenant.name || tenantId} · адрес ${tenant.slug || "—"}.zalpos.ru · статус ${tenant.status || "—"}${tenant.chainId ? " · точка сети" : ""}`);
+  if (sub) {
+    const until = sub.status === "trial" ? sub.trialEndsAt : sub.currentPeriodEnd;
+    lines.push(`Подписка: ${plan.name || plan.title || planId || "—"} · ${SUB_STATUS[sub.status] || sub.status || "—"}${until ? ` до ${supportFmt(until)}` : ""}${sub.cancelAtPeriodEnd ? " · не продлится" : ""}`);
+  } else {
+    lines.push("Подписка: нет данных");
+  }
+  const devices = devSnap ? devSnap.docs.map((d) => d.data()) : [];
+  if (devices.length) {
+    const activeDev = devices.filter((d) => d.status !== "disabled");
+    const seen = activeDev.map((d) => (d.lastSeenAt && typeof d.lastSeenAt.toMillis === "function" ? d.lastSeenAt.toMillis() : 0));
+    const stale = seen.filter((ms) => ms && Date.now() - ms > 3 * 86400000).length;
+    const plats = [...new Set(activeDev.map((d) => d.platform || "?"))].join(", ");
+    lines.push(`Устройства: ${activeDev.length} подключено (${plats})${devices.length - activeDev.length ? `, отключено ${devices.length - activeDev.length}` : ""}${seen.some(Boolean) ? `, последний вход ${supportFmt(Math.max(...seen))}` : ""}${stale ? `, ${stale} не входили больше 3 дней` : ""}`);
+  } else {
+    lines.push("Устройства: ни одной кассы ещё не подключено");
+  }
+  const jobs = jobsSnap ? jobsSnap.docs.map((d) => d.data()) : [];
+  if (jobs.length) {
+    const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+    const latest = new Map();
+    for (const j of jobs.sort((a, b) => ms(b.createdAt) - ms(a.createdAt))) {
+      const key = `${j.type || "?"}/${j.platform || "?"}`;
+      if (!latest.has(key)) latest.set(key, j);
+    }
+    const names = { "pos/android": "касса Android", "pos/windows": "касса Windows", "guest/android": "приложение гостя" };
+    const st = { queued: "собирается", done: "готова", completed: "готова", success: "готова", failed: "ошибка" };
+    lines.push(`Сборки: ${[...latest.entries()].map(([k, j]) => `${names[k] || k} — ${st[j.status] || j.status} (${supportFmt(j.createdAt)})${j.status === "failed" && j.errorMessage ? `: ${String(j.errorMessage).slice(0, 160)}` : ""}`).join("; ")}`);
+  } else {
+    lines.push("Сборки: ещё не собирали (Кабинет → «Устройства» → «Собрать APK»)");
+  }
+  const bot = botDoc && botDoc.data();
+  lines.push(`Telegram-бот заведения: ${bot ? `подключён${bot.username ? ` (@${bot.username})` : ""}${(bot.ownerChats || []).length ? "" : ", чат владельца не привязан"}${bot.staffChat ? "" : ", группа сотрудников не привязана"}` : "не подключён"}`);
+  const aiSet = aiDoc && aiDoc.data();
+  lines.push(`ИИ заведения: ${aiSet && aiSet.enabled === true ? "включён" : "выключен"}`);
+  return lines.join("\n");
+}
+
+async function supportPlatformStatus() {
+  const hourAgo = Date.now() - 3600 * 1000;
+  const errors = ERROR_RING.filter((e) => e.at > hourAgo).length;
+  const lines = [`Сервер работает, версия ${SERVER_VERSION || "?"}, без перезапуска ${Math.round((Date.now() - SUPPORT_STARTED_AT) / 3600000)} ч, ошибок в журнале за час: ${errors}`];
+  try {
+    const snap = await db().collection("broadcasts").where("active", "==", true).limit(5).get();
+    for (const d of snap.docs) lines.push(`Объявление платформы: ${String(d.data().title || "").slice(0, 120)} — ${String(d.data().body || "").slice(0, 300)}`);
+  } catch (_) {}
+  return lines.join("\n");
+}
+
+function supportRecentErrors(tenantId) {
+  if (!tenantId) return [];
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  return ERROR_RING.filter((e) => e.at > dayAgo && e.text.includes(tenantId))
+    .slice(-8).map((e) => `${supportFmt(e.at)}: ${e.text}`);
+}
+
+const supportBot = createSupportBot({
+  db,
+  admin,
+  verifyAuth,
+  parseJsonBody,
+  readBody,
+  sendJson,
+  HttpError,
+  requireSuperAdmin,
+  requireTenantRole,
+  publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+  secretKey: tgSecretKey,
+  encrypt: tgEncrypt,
+  decrypt: tgDecrypt,
+  aiVendors: AI_VENDOR_DEFAULTS,
+  assertPublicAiUrl,
+  venueStatus: supportVenueStatus,
+  platformStatus: supportPlatformStatus,
+  recentErrors: supportRecentErrors,
+});
+
 // ------------------------------------------------ кеш статических данных
 //
 // Уменьшает прямые чтения Firestore из Flutter-приложения: данные меню,
@@ -7149,6 +7269,11 @@ const ROUTES = {
   "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,
   "/telegramJoinChain": telegram.handleJoinChain,
+  // Бот поддержки платформы: настройка — супер-админ, ссылка «Написать в Telegram» — владелец.
+  "/supportBotSetup": supportBot.handleSetup,
+  "/supportBotStatus": supportBot.handleStatus,
+  "/supportBotGroupCode": supportBot.handleGroupCode,
+  "/supportBotLink": supportBot.handleClientLink,
   // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
@@ -7277,6 +7402,7 @@ const server = http.createServer((req, res) => {
   // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
+  if (req.method === "POST" && urlPath === `/tgHook/${supportBot.HOOK_ID}`) return runHandler(supportBot.handleHook, req, res);
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
     return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);
   }
@@ -7312,6 +7438,7 @@ scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetenti
 if (process.env.PORT !== "8099") {
   telegram.start();
   guestPay.startSweeper();
+  supportBot.start().catch((e) => console.error("support-bot: запуск:", e.message || e));
 }
 
 const port = Number(process.env.PORT || 8081);
