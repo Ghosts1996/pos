@@ -287,18 +287,27 @@ async function requireChainRole(chainId, uid, allowedRoles) {
   }
 }
 
+const CHAIN_ROLE_RANK = { employee: 1, manager: 2, admin: 3, owner: 4 };
+
 /**
  * Членство в точке сети дублируем в chainMembers: правила общих коллекций
  * сети (chains/{chainId}/clients и др.) смотрят туда, в пути нет tenantId.
- * Ошибку только логируем — основная запись уже сделана.
+ * Роль в сети — не ниже уже выданной: приглашение в точку «сотрудником»
+ * не понижает владельца или администратора сети и не отключает его.
+ * Владельцем сети через точку не становятся — он назначается при создании
+ * сети. Ошибку только логируем — основная запись уже сделана.
  */
 async function syncChainMembership(chainId, uid, role, status) {
   if (!chainId) return;
+  const ref = db().collection("chainMembers").doc(`${chainId}_${uid}`);
   try {
-    await db().collection("chainMembers").doc(`${chainId}_${uid}`).set(
-      { chainId, userId: uid, role, status, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
+    await db().runTransaction(async (tx) => {
+      const cur = (await tx.get(ref)).data();
+      const curRank = cur?.status === "active" ? CHAIN_ROLE_RANK[cur.role] || 0 : 0;
+      if (curRank >= CHAIN_ROLE_RANK.admin && (status !== "active" || curRank > (CHAIN_ROLE_RANK[role] || 0))) return;
+      const next = role === "owner" && cur?.role !== "owner" ? "admin" : role;
+      tx.set(ref, { chainId, userId: uid, role: next, status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    });
   } catch (e) {
     console.error(`syncChainMembership(${chainId}, ${uid}) не удался:`, e.message || e);
   }
@@ -1590,6 +1599,10 @@ async function resolveSubscriptionCheckout(decoded, { tenantId, chainId, planId,
     await requireChainRole(chainId, decoded.uid, ["owner", "admin"]);
   } else {
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+    // У точки сети своей подписки нет: оплата на её старую подписку
+    // оживила бы её, а через месяц просрочка стёрла бы данные точки.
+    const tenant = (await db().collection("tenants").doc(tenantId).get()).data();
+    if (tenant?.chainId) throw new HttpError(412, "Заведение входит в сеть — подписку оплачивают в кабинете сети");
   }
 
   const planDoc = await db().collection("plans").doc(planId).get();
@@ -2164,9 +2177,21 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
   });
   if (alreadyProcessed) return;
 
+  const target = (await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).get()).data() || {};
+  if (status === "succeeded" && !chainId && target.chainId) {
+    // Счёт выставили до вступления в сеть, а оплатили после. Деньги
+    // пришли, но продлевать нечего — разбирается платформа (зачесть сети
+    // или вернуть).
+    await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaidForChainPoint", metadata: { paymentId, planId, amount, chainId: target.chainId } });
+    console.error(`saas-gateway: оплата ${paymentId} за точку сети ${tenantId} — нужна ручная обработка`);
+    await eventRef.update({ applied: true, needsManualReview: true });
+    return;
+  }
+
   if (status === "succeeded") {
     const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
     const subRef = firestore.collection("subscriptions").doc(billingId);
+    const plansCol = firestore.collection("plans");
     await firestore.runTransaction(async (tx) => {
       const cur = (await tx.get(subRef)).data() || {};
       // Оплата раньше срока (или автопродление за сутки до конца) не должна
@@ -2176,7 +2201,16 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
       const ends = [now];
       if (cur.status === "active" && cur.currentPeriodEnd?.toMillis) ends.push(cur.currentPeriodEnd.toMillis());
       if (cur.status === "trial" && cur.trialEndsAt?.toMillis) ends.push(cur.trialEndsAt.toMillis());
-      const base = Math.max(...ends);
+      // Смена тарифа: оставшиеся оплаченные дни пересчитываются по цене
+      // нового. Иначе месяц «Про» поверх года «Старта» давал бы год «Про»,
+      // а переход на тариф дешевле съедал бы переплату.
+      let carryMs = Math.max(...ends) - now;
+      if (carryMs > 0 && cur.status === "active" && cur.planId && cur.planId !== planId) {
+        const [was, next] = await Promise.all([tx.get(plansCol.doc(cur.planId)), tx.get(plansCol.doc(planId))]);
+        const monthly = (doc) => planPriceForPeriod(doc.data() || {}, "monthly");
+        if (monthly(was) > 0 && monthly(next) > 0) carryMs = Math.round(carryMs * monthly(was) / monthly(next));
+      }
+      const base = now + carryMs;
       const update = {
         tenantId, chainId, planId, billingPeriod,
         status: "active",
@@ -2197,7 +2231,8 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
       tx.set(subRef, update, { merge: true });
     });
     await firestore.collection(chainId ? "chains" : "tenants").doc(billingId).set({
-      status: "active",
+      // Блокировку супер-админа и удалённое заведение оплата не снимает.
+      ...(["suspended", "deleted"].includes(target.status) ? {} : { status: "active" }),
       planId,
       // Подписка оплачена тестовым платежом — в MRR платформы не идёт.
       testPayment: test === true,
@@ -2311,8 +2346,13 @@ async function runChargeRecurringSubscriptions() {
     // Нечем списать — подписка уйдёт в past_due сама, владелец оплатит из кабинета.
     if (!sub.robokassaParentInvId) continue;
 
+    // Одна попытка на период. Если Робокасса приняла запрос, а банк
+    // отказал, уведомления не будет; повтор каждые сутки откладывал бы
+    // past_due бесконечно, и касса работала бы без оплаты. Успешная
+    // оплата сбрасывает renewalAttemptedAt.
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
-    if (Date.now() - lastAttemptMs < 20 * 3600000) continue;
+    const periodEndMs = sub.currentPeriodEnd?.toMillis?.() ?? 0;
+    if (lastAttemptMs >= periodEndMs - 86400000) continue;
 
     const planDoc = await firestore.collection("plans").doc(sub.planId).get();
     const plan = planDoc.data() || {};
@@ -2378,7 +2418,30 @@ async function runEnforceGracePeriod() {
     .where("status", "==", "past_due")
     .where("pastDueSince", "<=", deadline)
     .get();
+  const recentInvoices = admin.firestore.Timestamp.fromMillis(now - 30 * 86400000);
   for (const subDoc of overdue.docs) {
+    // Удаление сети идёт долго: подписку могли оплатить, пока стирали
+    // предыдущую. Перед удалением — свежий статус.
+    const fresh = (await subDoc.ref.get()).data() || {};
+    if (fresh.status !== "past_due" || !(fresh.pastDueSince?.toMillis?.() <= deadline.toMillis())) continue;
+    if (!fresh.chainId) {
+      const tenant = (await firestore.collection("tenants").doc(subDoc.id).get()).data() || {};
+      // Старая подписка точки, вступившей в сеть: данные точки живут по подписке сети.
+      if (tenant.chainId) continue;
+    }
+    // Выставлен счёт для перевода, а поступление ещё не отмечено: деньги
+    // могут уже идти, удалять нельзя.
+    const pending = await firestore.collection("bankInvoices")
+      .where(fresh.chainId ? "chainId" : "tenantId", "==", subDoc.id)
+      .where("status", "==", "pending")
+      .get();
+    if (pending.docs.some((d) => (d.data().createdAt?.toMillis?.() ?? 0) >= recentInvoices.toMillis())) {
+      await writeAuditLog({
+        tenantId: fresh.chainId ? null : subDoc.id, actorId: null, action: "purgePostponedBankInvoice",
+        metadata: { chainId: fresh.chainId || null },
+      });
+      continue;
+    }
     if (subDoc.data().chainId) {
       await purgeChainData(subDoc.id);
       console.log(`saas-gateway: данные сети ${subDoc.id} стёрты по истечении льготного периода`);
