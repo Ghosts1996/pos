@@ -5698,8 +5698,8 @@ const BILLING_SECRETS = [
 ];
 // Строки из актуального saas/firestore.rules — по ним видно, опубликованы
 // ли последние правила (защита сеансов супер-админов, склад кассы, ключи
-// ИИ отдельно от гостей, реквизиты платформы).
-const RULES_FEATURE_MARKERS = ["adminSessionFresh", "inventoryItems", "aiSecrets", "platformConfig"];
+// ИИ отдельно от гостей, реквизиты платформы, история ставок).
+const RULES_FEATURE_MARKERS = ["adminSessionFresh", "inventoryItems", "aiSecrets", "platformConfig", "snapshotOk"];
 
 // Реквизиты владельца платформы для оферты, политики конфиденциальности и
 // подвала сайта (их требует и модерация платёжного сервиса). Хранятся в
