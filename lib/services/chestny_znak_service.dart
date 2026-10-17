@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
 import 'app_scope.dart';
 import '../models/fiscal_receipt.dart';
 import '../models/marking_code.dart';
@@ -34,8 +37,9 @@ class ChestnyZnakService {
   /// [checkOnlineStatus] — он же в силах поймать код, проданный на ДРУГОЙ
   /// кассе/точке или вовсе поддельный, чего локальный журнал не увидит.
   Future<bool> isAlreadySold(MarkingCode code) async {
-    final doc = await AppScope.col('marking_codes_sold').doc(_docId(code)).get();
-    return doc.exists;
+    final col = AppScope.col('marking_codes_sold');
+    final docs = await Future.wait([col.doc(_docId(code)).get(), col.doc(_legacyDocId(code)).get()]);
+    return docs.any((d) => d.exists);
   }
 
   /// Онлайн-проверка кода напрямую в ИС МП «Честный знак» (методом
@@ -85,7 +89,13 @@ class ChestnyZnakService {
     });
   }
 
-  String _docId(MarkingCode code) => code.uniqueKey.hashCode.toUnsigned(62).toString();
+  // SHA-256 от кода: одинаков на всех платформах. String.hashCode в вебе и
+  // в Windows-сборке разный, да ещё и с коллизиями — по нему одну бутылку
+  // можно было продать дважды с разных касс.
+  String _docId(MarkingCode code) => sha256.convert(utf8.encode(code.uniqueKey)).toString();
+
+  // Так назывались записи до перехода на SHA-256 — их тоже проверяем.
+  String _legacyDocId(MarkingCode code) => code.uniqueKey.hashCode.toUnsigned(62).toString();
 
   /// Коды маркировки, привязанные к чеку [receiptId] (обычно — id сессии
   /// стола) — используются при сборке фискального чека, чтобы подставить
