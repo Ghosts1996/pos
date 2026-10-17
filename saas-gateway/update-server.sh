@@ -107,9 +107,10 @@ echo "ok"
 say "saas-gateway"
 command -v rsync >/dev/null || apt-get install -y rsync >/dev/null
 rsync -a --exclude node_modules "$REPO/saas-gateway/" /opt/saas-gateway/
-# Инструкция кабинета — база знаний ИИ-бота поддержки (support-bot.js).
+# Инструкция и частые вопросы кабинета — база знаний ИИ-бота поддержки (support-bot.js).
 mkdir -p /opt/saas-gateway/kb
 cp "$REPO/saas/console/guide.js" /opt/saas-gateway/kb/guide.mjs 2>/dev/null || true
+cp "$REPO/saas/console/console.js" /opt/saas-gateway/kb/console.js 2>/dev/null || true
 git -C "$REPO" rev-parse --short HEAD > /opt/saas-gateway/VERSION 2>/dev/null || true
 (cd /opt/saas-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
 chown -R saas-gateway:saas-gateway /opt/saas-gateway

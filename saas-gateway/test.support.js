@@ -22,7 +22,9 @@ test("слова-триггеры зовут человека, вопросы о
   }
   for (const t of ["как сделать возврат чека", "оператор фискальных данных не принимает чек", "посуда не списывается",
     "за столом 3 человека", "нужно добавить сотрудника", "как посмотреть жалобы гостей", "как удалить данные гостя",
-    "отправил в судомойку", "как вернуть оплату гостю по карте", "не собирается APK"]) {
+    "отправил в судомойку", "как вернуть оплату гостю по карте", "не собирается APK",
+    "как ответить на претензию гостя", "нужен ли юрист для лицензии на алкоголь", "как подать уведомление в роскомнадзор",
+    "что грозит от роспотребнадзора за уголок потребителя", "гость оставил жалобу на официанта"]) {
     assert.strictEqual(sb.humanTrigger(t), "", `не должен звать человека: ${t}`);
   }
   assert.ok(sb.isUrgent("Срочно! касса не открывается, гости ждут"));
@@ -49,8 +51,11 @@ test("секреты находятся и скрываются, персона�
 
 test("маркер оператора в ответе ИИ", () => {
   const r = sb.parseAiReply("**Подключаю** специалиста.\n[[ОПЕРАТОР: возврат денег]]");
-  assert.deepStrictEqual(r, { text: "Подключаю специалиста.", escalate: true, reason: "возврат денег" });
+  assert.deepStrictEqual(r, { text: "Подключаю специалиста.", escalate: true, reason: "возврат денег", docs: [] });
   assert.strictEqual(sb.parseAiReply("Готово").escalate, false);
+  const d = sb.parseAiReply("Нужны согласия.\n[[ДОКУМЕНТ: consent-staff]]\n[[ДОКУМЕНТ: нет-такого]] [[ДОКУМЕНТ: consent-staff]]");
+  assert.deepStrictEqual(d.docs, ["consent-staff"]);
+  assert.strictEqual(d.text, "Нужны согласия.");
 });
 
 test("сотрудники из панели и ссылка на тему", () => {
@@ -69,6 +74,54 @@ test("инструкция находится по вопросу", async () => 
   const msgs = sb.buildMessages({ venue: "Подписка: оплачена", guide: top, history: [{ authorRole: "owner", text: "мой телефон +79991234567" }] });
   assert.strictEqual(msgs[0].role, "system");
   assert.ok(!JSON.stringify(msgs).includes("9991234567"));
+});
+
+test("база знаний: инструкция, статьи поддержки и частые вопросы кабинета находятся по вопросам клиентов", async () => {
+  const bot = sb.createSupportBot({ db: () => ({}), admin, debounceMs: 0 });
+  const n = await bot.loadGuide();
+  const docs = bot._state.guide;
+  assert.ok(n > 100 && docs.some((d) => d.kind === "faq") && docs.some((d) => d.kind === "kb"), `документов: ${n}`);
+  const top = (q) => sb.rankDocs(q, docs, 3).map((d) => d.title).join(" | ");
+  for (const [q, want] of [
+    ["как установить кассу на айфон", /iPhone/], ["нужна ли лицензия на алкоголь", /Алкоголь/], ["можно ли курить кальян в кафе", /Кальяны и табак/],
+    ["какие документы нужны по персональным данным сотрудников", /Персональные данные/], ["как подать уведомление в ркн", /Роскомнадзор/],
+    ["не устанавливается apk на xiaomi", /Android: не устанавливается/], ["сколько стоит тариф", /Тарифы/], ["нужен ли акт за подписку", /акты/],
+    ["что должно быть в уголке потребителя", /Права гостя|документы/], ["честный знак пиво разливное", /Честный знак/],
+    ["как подключить оплату по сбп гостям", /Онлайн-оплата гостей|способы оплаты/], ["заказы яндекс еда", /Яндекс Еды/],
+  ]) assert.ok(want.test(top(q)), `${q} → ${top(q)}`);
+});
+
+test("документы Word: настоящий docx с реквизитами заведения и ZalPOS", () => {
+  const docsMod = require("./support-docs");
+  const zlib = require("zlib");
+  const unzip = (buf) => {
+    const out = {};
+    let i = 0;
+    while (buf.readUInt32LE(i) === 0x04034b50) {
+      const csize = buf.readUInt32LE(i + 18);
+      const nlen = buf.readUInt16LE(i + 26);
+      const elen = buf.readUInt16LE(i + 28);
+      const name = buf.slice(i + 30, i + 30 + nlen).toString("utf8");
+      const data = zlib.inflateRawSync(buf.slice(i + 30 + nlen + elen, i + 30 + nlen + elen + csize));
+      assert.strictEqual(docsMod.crc32(data), buf.readUInt32LE(i + 14), `CRC ${name}`);
+      out[name] = data.toString("utf8");
+      i += 30 + nlen + elen + csize;
+    }
+    return out;
+  };
+  const venue = { name: "Колибри", sellerName: "ООО «Колибри»", sellerInn: "7701234567", sellerOgrn: "1157746000000", sellerAddress: "г. Москва, ул. Ленина, 1" };
+  for (const d of docsMod.DOCS) {
+    const r = docsMod.buildDoc(d.id, { venue, platform: { fullName: "Иванов Иван Иванович", inn: "500100732259", ogrnip: "304500116000157", address: "г. Москва" } });
+    const files = unzip(r.buffer);
+    assert.ok(files["[Content_Types].xml"] && files["_rels/.rels"] && files["word/document.xml"], d.id);
+    assert.ok(r.filename.endsWith(".docx") && r.filled);
+    assert.ok(files["word/document.xml"].includes("Колибри"), `${d.id}: нет реквизитов заведения`);
+  }
+  const consent = unzip(docsMod.buildDoc("consent-staff", { venue, platform: { fullName: "Иванов Иван Иванович", inn: "500100732259" } }).buffer)["word/document.xml"];
+  assert.ok(consent.includes("ОГРН 1157746000000") && consent.includes("Иванов Иван Иванович") && consent.includes("по поручению"));
+  const blank = docsMod.buildDoc("order-pdn", {});
+  assert.strictEqual(blank.filled, false);
+  assert.strictEqual(docsMod.buildDoc("нет-такого", {}), null);
 });
 
 test("ИИ на паузе после человека и при ожидании человека", () => {
@@ -90,7 +143,10 @@ function harness() {
   let msgId = 100;
   let topicId = 500;
   const fetchImpl = async (url, opts) => {
-    const body = JSON.parse(opts.body || "{}");
+    const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
+    const body = isForm
+      ? Object.fromEntries([...opts.body.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { file: v.name, size: v.size }]))
+      : JSON.parse(opts.body || "{}");
     if (url.endsWith("/chat/completions")) {
       aiCalls.push(body);
       const content = aiReplies.length ? aiReplies.shift() : "1. Откройте «Устройства».\n2. Нажмите «Собрать APK».";
@@ -123,6 +179,7 @@ function harness() {
     venueStatus: async (tid) => `Заведение ${tid}: подписка оплачена; сборка кассы — ошибка: нет места`,
     platformStatus: async () => "Сервер работает",
     recentErrors: () => ["12:00: build failed for t1"],
+    docData: async (tid) => ({ venue: tid ? { name: "Колибри", sellerName: "ООО «Колибри»", sellerInn: "7701234567" } : {}, platform: {} }),
     debounceMs: 0,
     guidePath: require("path").join(__dirname, "..", "saas", "console", "guide.js"),
   });
@@ -336,6 +393,27 @@ test("вебхук с чужим секретом — 403", async () => {
   const secret = h.store.get("supportBot/config").hookSecret;
   await h.bot.handleHook({ headers: { "x-telegram-bot-api-secret-token": secret }, raw: JSON.stringify(pm("/start")) }, { writeHead: (c) => { code = c; }, end: () => {} });
   assert.strictEqual(code, 200);
+});
+
+test("документы: кнопка в меню, ИИ предлагает документ, файл приходит в чат", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("/start"));
+  assert.ok(sends(h.calls, 42)[0].body.reply_markup.keyboard.flat().some((b) => b.text === "📄 Документы"));
+  await h.bot.handleUpdate(pm("📄 Документы"));
+  const menu = sends(h.calls, 42).find((c) => /Документы для заведения/.test(c.body.text));
+  assert.ok(menu && menu.body.reply_markup.inline_keyboard.length === 7);
+  h.aiReplies.push("Для работников нужно отдельное согласие.\n[[ДОКУМЕНТ: consent-staff]]");
+  await h.bot.handleUpdate(pm("Какие бумаги подписать с сотрудниками по персональным данным?"));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("юридический помощник") && prompt.includes("consent-staff") && prompt.includes("Персональные данные"), "подсказка без юриста и знаний");
+  const answer = sends(h.calls, 42).find((c) => /отдельное согласие/.test(c.body.text));
+  assert.ok(answer.body.reply_markup.inline_keyboard[0][0].callback_data === "sb:doc:consent-staff", JSON.stringify(answer.body.reply_markup));
+  await h.bot.handleUpdate({ callback_query: { id: "d1", from: { id: 42 }, data: "sb:doc:consent-staff", message: { message_id: 5, chat: { id: 42 } } } });
+  const file = h.calls.find((c) => c.method === "sendDocument");
+  assert.ok(file && String(file.body.chat_id) === "42" && /\.docx$/.test(file.body.document.file) && file.body.document.size > 1000, JSON.stringify(file));
+  assert.ok(/Реквизиты не заполнены/.test(file.body.caption), "не привязанный клиент — без реквизитов");
 });
 
 test("спасибо и «ок» — без ИИ", async () => {

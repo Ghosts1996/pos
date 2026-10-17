@@ -7143,13 +7143,72 @@ async function supportVenueStatus(tenantId) {
   lines.push(`Telegram-бот заведения: ${bot ? `подключён${bot.username ? ` (@${bot.username})` : ""}${(bot.ownerChats || []).length ? "" : ", чат владельца не привязан"}${bot.staffChat ? "" : ", группа сотрудников не привязана"}` : "не подключён"}`);
   const aiSet = aiDoc && aiDoc.data();
   lines.push(`ИИ заведения: ${aiSet && aiSet.enabled === true ? "включён" : "выключен"}`);
+  // Что настроено в кассе — только признаки, без логинов, паролей и ключей.
+  const [integDoc, profileDoc, menuCount, tablesCount] = await Promise.all([
+    tenantRef.collection("settings").doc("integrations").get().catch(() => null),
+    tenantRef.collection("meta").doc("venueProfile").get().catch(() => null),
+    tenantRef.collection("menuItems").count().get().then((c) => c.data().count).catch(() => null),
+    tenantRef.collection("tables").count().get().then((c) => c.data().count).catch(() => null),
+  ]);
+  const integ = (integDoc && integDoc.data()) || {};
+  const prof = (profileDoc && profileDoc.data()) || {};
+  const KASSA = { atol_cloud: "АТОЛ Онлайн", orange_data: "OrangeData", atol_local: "регистратор АТОЛ в заведении" };
+  const TERMINAL = { manual: "терминал банка (сумма вручную)", online_qr: "QR на экране кассы", tinkoff_sbp: "QR СБП Т-Банка", sber_upos: "Сбер UPOS по кабелю", cli: "терминал по кабелю (программа банка)" };
+  const PRINTER = { bluetooth: "Bluetooth", network: "сетевой", usb: "USB" };
+  const terminalBanks = Array.isArray(integ.terminalBanks) ? integ.terminalBanks.length : 0;
+  lines.push(`Настройка кассы: онлайн-касса 54-ФЗ — ${KASSA[integ.kassaType] || "не подключена"}`
+    + `; оплата картой — ${TERMINAL[integ.terminalProvider] || TERMINAL.manual}${terminalBanks ? ` (${terminalBanks} банк.)` : ""}`
+    + `; онлайн-оплата гостей — ${prof.onlinePay ? `работает (${prof.onlinePay})` : integ.onlinePayProvider ? `банк ${integ.onlinePayProvider} выбран, но не проверен или выключена в профиле` : "не подключена"}`
+    + `; реквизиты продавца — ${prof.sellerName && prof.sellerInn ? "заполнены" : "не заполнены"}`
+    + `; принтер чеков — ${integ.printerType && integ.printerType !== "none" ? PRINTER[integ.printerType] || integ.printerType : "не подключён"}`
+    + `; ЕГАИС — ${integ.egaisEnabled ? "включён" : "выключен"}`
+    + `; доставка из приложения — ${prof.deliveryEnabled ? "включена" : "выключена"}`
+    + `${menuCount !== null ? `; позиций меню — ${menuCount}` : ""}${tablesCount !== null ? `; столов на карте зала — ${tablesCount}` : ""}`);
   return lines.join("\n");
+}
+
+// Тарифы для ответов ИИ — из базы, как на сайте; перечитываем раз в 10 минут.
+let supportPlansCache = { at: 0, text: "" };
+async function supportPlansText() {
+  if (Date.now() - supportPlansCache.at < 10 * 60 * 1000) return supportPlansCache.text;
+  const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
+  const snap = await db().collection("plans").get();
+  const lines = snap.docs.map((d) => d.data()).filter((p) => p.archived !== true && Number(p.priceRub) > 0)
+    .sort((a, b) => Number(a.priceRub) - Number(b.priceRub))
+    .map((p) => `${p.name}${p.isChainPlan ? " (сеть)" : ""}: ${rub(p.priceRub)}/мес, ${rub(p.priceRubSemiannual)}/6 мес, ${rub(p.priceRubYearly)}/год`
+      + `${p.isChainPlan && Number(p.priceRubAdditional) > 0 ? `; каждая следующая точка ${rub(p.priceRubAdditional)}/мес` : ""}`
+      + `; сотрудников ${Number(p.maxEmployees) > 0 ? `до ${p.maxEmployees}` : "без ограничений"}; ИИ ${p.aiEnabled ? "есть" : "нет"}`
+      + `${p.prioritySupport ? "; приоритетная поддержка" : ""}; пробный период ${Number(p.trialDays) || 0} дн.`);
+  supportPlansCache = { at: Date.now(), text: lines.join("\n") };
+  return supportPlansCache.text;
+}
+
+/** Реквизиты для документов из бота поддержки: заведение и ZalPOS. */
+async function supportDocData(tenantId) {
+  const firestore = db();
+  const [profile, tenant, legal] = await Promise.all([
+    tenantId ? firestore.collection("tenants").doc(tenantId).collection("meta").doc("venueProfile").get().catch(() => null) : null,
+    tenantId ? firestore.collection("tenants").doc(tenantId).get().catch(() => null) : null,
+    firestore.collection("platformConfig").doc("legal").get().catch(() => null),
+  ]);
+  const p = (profile && profile.data()) || {};
+  const l = (legal && legal.data()) || {};
+  return {
+    venue: {
+      name: p.name || (tenant && tenant.data() && tenant.data().name) || "", address: p.address || "", phone: p.phone || "",
+      workingHours: p.workingHours || null, rules: p.rules || "",
+      sellerName: p.sellerName || "", sellerInn: p.sellerInn || "", sellerOgrn: p.sellerOgrn || "", sellerAddress: p.sellerAddress || "",
+    },
+    platform: { fullName: l.fullName || "", inn: l.inn || "", ogrnip: l.ogrnip || "", address: l.address || "", email: l.email || "" },
+  };
 }
 
 async function supportPlatformStatus() {
   const hourAgo = Date.now() - 3600 * 1000;
   const errors = ERROR_RING.filter((e) => e.at > hourAgo).length;
   const lines = [`Сервер работает, версия ${SERVER_VERSION || "?"}, без перезапуска ${Math.round((Date.now() - SUPPORT_STARTED_AT) / 3600000)} ч, ошибок в журнале за час: ${errors}`];
+  const plans = await supportPlansText().catch(() => "");
+  if (plans) lines.push(`Тарифы сейчас:\n${plans}`);
   try {
     const snap = await db().collection("broadcasts").where("active", "==", true).limit(5).get();
     for (const d of snap.docs) lines.push(`Объявление платформы: ${String(d.data().title || "").slice(0, 120)} — ${String(d.data().body || "").slice(0, 300)}`);
@@ -7183,6 +7242,7 @@ const supportBot = createSupportBot({
   venueStatus: supportVenueStatus,
   platformStatus: supportPlatformStatus,
   recentErrors: supportRecentErrors,
+  docData: supportDocData,
 });
 
 // ------------------------------------------------ кеш статических данных
