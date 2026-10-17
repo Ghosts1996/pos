@@ -179,7 +179,9 @@ class Employee {
         'hookahPercentRate': hookahPercentRate,
         'barPercentRate': barPercentRate,
         'tipsLink': tipsLink,
-        if (revenueSteps.isNotEmpty) 'revenueSteps': [for (final s in revenueSteps) s.toMap()],
+        // Пустой список пишется тоже: update не трогает отсутствующие поля,
+        // и удалённый последний шаг остался бы в базе.
+        'revenueSteps': [for (final s in revenueSteps) s.toMap()],
       };
 
   Employee copyWith({

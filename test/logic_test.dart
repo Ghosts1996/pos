@@ -589,9 +589,8 @@ void main() {
       expect(TenantStatus.active.allowsOperations, isTrue);
     });
 
-    // Жёсткая блокировка: просрочка платежа останавливает кассу немедленно
-    // (владелец явно попросил именно так, не "мягкую блокировку"), но
-    // данные ещё не удалены — на это даётся GRACE_PERIOD_DAYS дней (см.
+    // Жёсткая блокировка: просрочка платежа останавливает кассу немедленно,
+    // но данные ещё не удалены — на это даётся GRACE_PERIOD_DAYS дней (см.
     // SubscriptionInfo.daysUntilDataPurge, saas/functions/index.js).
     test('past_due/suspended/cancelled/deleted блокируют операционную работу', () {
       expect(TenantStatus.pastDue.allowsOperations, isFalse);

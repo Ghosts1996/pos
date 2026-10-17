@@ -224,6 +224,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         checkPercentExcludesHookah: emp.checkPercentExcludesHookah,
         hookahPercentRate: emp.hookahPercentRate,
         barPercentRate: emp.barPercentRate,
+        revenueSteps: emp.revenueSteps,
       );
     }
     try {

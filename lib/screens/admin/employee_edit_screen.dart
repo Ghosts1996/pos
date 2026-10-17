@@ -184,7 +184,11 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       return 'Ссылка для чаевых должна начинаться с https://';
     }
     for (var i = 0; i < _revenueSteps.length; i++) {
-      if (_revenueSteps[i].toStep() == null) {
+      final step = _revenueSteps[i].toStep();
+      if (step != null && !step.isFixed && step.value > 100) {
+        return 'В шаге ${i + 1}: процент от выручки не может быть больше 100';
+      }
+      if (step == null) {
         return 'В шаге ${i + 1}: укажите порог выручки и размер бонуса больше нуля';
       }
     }
