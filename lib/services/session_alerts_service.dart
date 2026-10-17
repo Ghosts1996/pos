@@ -7,6 +7,12 @@ import '../models/session_model.dart';
 import '../utils/constants.dart';
 import '../utils/shift_crew.dart';
 import 'notification_service.dart';
+import 'signals/lan_signal_codec.dart';
+import 'signals/lan_signals.dart';
+import 'signals/ready_watch.dart';
+import 'signals/signal_bootstrap.dart';
+import 'signals/signal_hub.dart';
+import 'signals/signal_settings.dart';
 import 'staff_session_store.dart';
 import 'venue_service.dart';
 
@@ -92,6 +98,16 @@ class SessionAlertsService {
   StreamSubscription? _reservations;
   StreamSubscription? _calls;
   StreamSubscription? _orders;
+  StreamSubscription<LanMessage>? _lanReady;
+
+  /// Сколько было готово по строкам чеков: sessionId → lineId → ready.
+  /// Не сбрасывается при переподписке — иначе «готово», пришедшее в эту
+  /// секунду, потерялось бы как «первый снимок».
+  final _readySeen = <String, Map<String, int>>{};
+
+  /// Уже прозвеневшие «готово» (чек|строка|сколько): одно и то же приходит
+  /// по Wi‑Fi заведения и следом из облака.
+  final _readyRung = <String>{};
 
   /// Что уже запланировано: sessionId → (конец сеанса, число перезабивок).
   /// Нужно, чтобы не переставлять будильники на каждое чтение стрима —
@@ -144,10 +160,14 @@ class SessionAlertsService {
     } catch (_) {}
     VenueService.instance.watch();
 
+    // Реле, часы официантов и сигналы по Wi‑Fi — те же настройки, что у
+    // кассы; в изоляте службы их надо подтянуть самим.
+    SignalBootstrap.start();
     _watchSessions();
     _watchReservations();
     _watchCalls();
     _watchOrders();
+    _watchLanReady();
   }
 
   void _applyMe(Map<String, dynamic>? data) {
@@ -282,6 +302,8 @@ class SessionAlertsService {
     await _reservations?.cancel();
     await _calls?.cancel();
     await _orders?.cancel();
+    await _lanReady?.cancel();
+    _lanReady = null;
     _sessions = _reservations = _calls = _orders = null;
     _planned.clear();
     _firstReservationSnapshot = true;
@@ -302,6 +324,7 @@ class SessionAlertsService {
       for (final doc in snap.docs) {
         final s = SessionModel.fromDoc(doc);
         alive.add(s.id);
+        _checkReady(s);
 
         final known = _planned[s.id];
         final firstSeen = known == null;
@@ -313,6 +336,7 @@ class SessionAlertsService {
         unawaited(_scheduleFor(s, coalFrom: coalBase(s)));
       }
 
+      _readySeen.removeWhere((id, _) => !alive.contains(id));
       // Чек закрыли или перенесли — снимаем его будильники.
       for (final id in _planned.keys.toList()) {
         if (alive.contains(id)) continue;
@@ -321,6 +345,64 @@ class SessionAlertsService {
         unawaited(_notify.cancel(NotificationService.idFor('end_$id')));
       }
     }, onError: (_) {});
+  }
+
+  // ---------- ГОТОВО С КУХНИ ----------
+
+  /// Кухня отметила блюда готовыми — звеним официанту чека.
+  void _checkReady(SessionModel s) {
+    final before = _readySeen[s.id];
+    _readySeen[s.id] = readyByLine(s.orderItems);
+    final up = readyIncreases(before, s.orderItems);
+    if (up.isEmpty) return;
+    _ringReady(
+      sessionId: s.id,
+      tableName: s.tableName,
+      waiterId: s.employeeId,
+      lines: {for (final i in up) i.lineId: i.ready},
+      summary: readySummary(up),
+    );
+  }
+
+  /// То же «готово», но по Wi‑Fi заведения — доходит и без интернета.
+  void _watchLanReady() {
+    _lanReady = LanSignals.instance.messages.where((m) => m.kind == LanKind.dishReady).listen((m) {
+      if (m.sessionId.isEmpty) return;
+      _ringReady(
+        sessionId: m.sessionId,
+        tableName: m.tableName,
+        waiterId: m.waiterId,
+        lines: m.readyLines,
+        summary: m.summary,
+      );
+    });
+  }
+
+  void _ringReady({
+    required String sessionId,
+    required String tableName,
+    required String waiterId,
+    required Map<String, int> lines,
+    required String summary,
+  }) {
+    final keys = [for (final e in lines.entries) '$sessionId|${e.key}|${e.value}'];
+    if (keys.isEmpty || keys.every(_readyRung.contains)) return;
+    _readyRung.addAll(keys);
+    if (_readyRung.length > 500) _readyRung.clear();
+    if (!readyIsMine(
+      checkWaiterId: waiterId,
+      myId: _myEmployeeId,
+      onShift: _onShift,
+      mine: _mine,
+      myPosition: _myPosition,
+    )) {
+      return;
+    }
+    unawaited(_notify.showUrgent(
+      id: NotificationService.idFor('ready_$sessionId'),
+      title: 'Готово · ${tableName.isEmpty ? 'стол' : tableName}',
+      body: summary.isEmpty ? 'Можно выносить' : 'Можно выносить: $summary',
+    ).catchError((Object _) {}));
   }
 
   /// От чего считать угли: от последней перезабивки, а если её не было —
@@ -416,6 +498,11 @@ class SessionAlertsService {
         if (change.type != DocumentChangeType.added) continue;
 
         final c = WaiterCall.fromDoc(change.doc);
+        // Звонок на реле и пейджер официанта — одна касса на всё заведение.
+        unawaited(SignalHub.instance
+            .remote(SignalEvent.guestCall, change.doc.reference,
+                table: c.tableName, text: c.comment.isEmpty ? c.type.label : '${c.type.label}: ${c.comment}')
+            .catchError((Object _) {}));
         if (!_mine) continue; // на смене другой сотрудник — это его вызов
         // Специализация не совпадает — не моя часть вызовов (например,
         // официант не должен получать вызов кальянщика на угли, если он
@@ -425,7 +512,7 @@ class SessionAlertsService {
           continue;
         }
 
-        unawaited(_notify.show(
+        unawaited(_notify.showUrgent(
           id: NotificationService.idFor('call_${c.id}'),
           title: c.type.label,
           body: '${c.tableName.isEmpty ? 'Стол' : c.tableName}'
@@ -452,6 +539,10 @@ class SessionAlertsService {
       for (final change in snap.docChanges) {
         if (change.type != DocumentChangeType.added) continue;
         final o = GuestOrder.fromDoc(change.doc);
+        unawaited(SignalHub.instance
+            .remote(SignalEvent.guestOrder, change.doc.reference, table: o.tableName,
+                text: o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '))
+            .catchError((Object _) {}));
         // Заказ доставки/с собой из приложения — всем на смене: кто первым
         // свободен, тот и звонит гостю.
         if (o.orderType.isNotEmpty) {
@@ -465,7 +556,7 @@ class SessionAlertsService {
         if (!_mine) continue; // на смене другой сотрудник — это его заказ
         if (!o.isFor(_myPosition)) continue;
 
-        unawaited(_notify.show(
+        unawaited(_notify.showUrgent(
           id: NotificationService.idFor('order_${o.id}'),
           title: 'Заказ из приложения · ${o.tableName.isEmpty ? 'стол' : o.tableName}',
           body: o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '),

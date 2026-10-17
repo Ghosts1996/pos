@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
@@ -44,6 +46,32 @@ class NotificationService {
     description: 'Угли через 35 минут и окончание сеанса',
     importance: Importance.high,
   );
+
+  /// Новый заказ на кухню: звучит громкостью будильника и повторяется,
+  /// пока повар не нажмёт «Принял» (см. [showAlarm]).
+  static final _channelKitchenAlarm = AndroidNotificationChannel(
+    'zalpos_kitchen_alarm',
+    'Новые заказы на кухню',
+    description: 'Громкий повторяющийся сигнал, пока заказ не приняли',
+    importance: Importance.max,
+    enableVibration: true,
+    vibrationPattern: Int64List.fromList([0, 900, 400, 900, 400, 900]),
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+  );
+
+  /// «Готово» с кухни и вызовы гостей: длинная вибрация, которую слышно
+  /// в кармане и которую повторяют смарт-часы и фитнес-браслеты.
+  static final _channelUrgent = AndroidNotificationChannel(
+    'zalpos_urgent',
+    'Готово с кухни и вызовы гостей',
+    description: 'Блюдо готово к выносу, гость зовёт официанта',
+    importance: Importance.max,
+    enableVibration: true,
+    vibrationPattern: urgentVibration,
+  );
+
+  /// Три длинных — отличается от обычного уведомления на ощупь.
+  static final urgentVibration = Int64List.fromList([0, 700, 250, 700, 250, 700]);
 
   /// Последняя ошибка инициализации — её показывает [diagnose].
   String? _initError;
@@ -103,6 +131,8 @@ class NotificationService {
     try {
       await android?.createNotificationChannel(_channelInstant);
       await android?.createNotificationChannel(_channelTimers);
+      await android?.createNotificationChannel(_channelKitchenAlarm);
+      await android?.createNotificationChannel(_channelUrgent);
       await android?.requestNotificationsPermission();
     } catch (e) {
       _initError = '$e';
@@ -170,6 +200,57 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: _icon,
+          styleInformation: BigTextStyleInformation(body),
+        ),
+      ),
+    );
+  }
+
+  /// Срочное: «готово с кухни», вызов гостя. Длинная вибрация — её
+  /// повторяют смарт-часы, привязанные к телефону.
+  Future<void> showUrgent({required int id, required String title, required String body}) async {
+    await init();
+    if (kIsWeb || isWindowsApp) return;
+    await _plugin.show(
+      id,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelUrgent.id,
+          _channelUrgent.name,
+          importance: Importance.max,
+          priority: Priority.max,
+          icon: _icon,
+          category: AndroidNotificationCategory.message,
+          enableVibration: true,
+          vibrationPattern: urgentVibration,
+          styleInformation: BigTextStyleInformation(body),
+        ),
+      ),
+    );
+  }
+
+  /// Сигнал кухни: громкость будильника, звук повторяется, пока
+  /// уведомление не снимут ([cancel]) — на экране кухни это кнопка
+  /// «Принял». Флаг 4 — Notification.FLAG_INSISTENT.
+  Future<void> showAlarm({required int id, required String title, required String body}) async {
+    await init();
+    if (kIsWeb || isWindowsApp) return;
+    await _plugin.show(
+      id,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelKitchenAlarm.id,
+          _channelKitchenAlarm.name,
+          importance: Importance.max,
+          priority: Priority.max,
+          icon: _icon,
+          category: AndroidNotificationCategory.alarm,
+          audioAttributesUsage: AudioAttributesUsage.alarm,
+          additionalFlags: Int32List.fromList(const [4]),
           styleInformation: BigTextStyleInformation(body),
         ),
       ),

@@ -16,6 +16,7 @@ import '../utils/constants.dart';
 import '../utils/promo_policy.dart';
 import '../utils/venue_terms.dart';
 import 'people_directory.dart';
+import 'signals/signal_hub.dart';
 
 /// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -880,6 +881,10 @@ class GuestLinkService {
       return null;
     });
     if (problem != null) throw StateError(problem);
+    // Принятый заказ гостя — такой же новый заказ для цеха.
+    for (final i in priced) {
+      SignalHub.instance.itemAdded(order.sessionId, station: i.effectiveKind, lineId: i.lineId, name: i.displayName, qty: i.qty);
+    }
   }
 
   Future<void> markOrderReady(GuestOrder order, String employeeName) async {

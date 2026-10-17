@@ -8,6 +8,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../utils/adaptive.dart';
 import '../utils/kitchen_slips.dart';
+import 'signals/signal_settings.dart';
 import '../models/aggregator.dart';
 
 /// Печать информационного (не фискального) чека на 58/80-мм принтере
@@ -252,7 +253,41 @@ Future<List<int>> buildKitchenSlipsBytes(List<KitchenSlip> slips, {PaperSize pap
     bytes.addAll(g.feed(2));
     bytes.addAll(g.cut());
   }
+  // Повар слышит бегунок, даже не глядя на принтер.
+  bytes.addAll(printerBeepBytes(signalSettings.printerBeep, signalSettings.printerBeepTimes));
   return bytes;
+}
+
+/// ESC/POS-команда зуммера. [PrinterBeep.builtIn] — ESC B n t (n раз по
+/// t×50 мс): так пищат Xprinter, Gprinter, Rongta, HPRT, Sunmi и Epson с
+/// зуммером. [PrinterBeep.drawer] — ESC p: импульс 200 мс в разъём
+/// денежного ящика, куда подключают внешний звонок или лампу на 12–24 В.
+/// Принтер без зуммера неизвестную команду просто пропускает.
+List<int> printerBeepBytes(String mode, int times) {
+  final n = times.clamp(1, 9);
+  switch (mode) {
+    case PrinterBeep.builtIn:
+      return [0x1B, 0x42, n, 4];
+    case PrinterBeep.drawer:
+      return [for (var i = 0; i < n; i++) ...[0x1B, 0x70, 0x00, 0x64, 0xC8]];
+    default:
+      return const [];
+  }
+}
+
+/// Только пискнуть принтером цеха — без бумаги. Для нового заказа, если
+/// бегунки не печатают ([SignalSettings.printerBeepOnOrder]).
+Future<String?> beepStationPrinter(String station, {String? mode, int? times}) async {
+  final bytes = printerBeepBytes(mode ?? signalSettings.printerBeep, times ?? signalSettings.printerBeepTimes);
+  if (bytes.isEmpty) return 'зуммер выключен';
+  final target = printerForStation(station);
+  if (target == null) return 'принтер не подключён';
+  try {
+    await target.$1.printBytes(bytes);
+    return null;
+  } catch (e) {
+    return '$e';
+  }
 }
 
 /// Общая сборка ESC/POS-байтов из [ReceiptData] — не зависит от способа
@@ -547,6 +582,8 @@ void _applyPrintFlags(Map<String, dynamic> data) {
   printKitchenAuto = data['printKitchenAuto'] as bool? ?? false;
   kitchenPrinterIp = (data['kitchenPrinterIp'] as String? ?? '').trim();
   barPrinterIp = (data['barPrinterIp'] as String? ?? '').trim();
+  // Сигналы (реле, зуммер, локальная сеть) — в том же документе.
+  applySignalSettings(data);
   // Агрегаторы доставки — для окна оплаты: тот же документ настроек, и
   // так же подхватываются, если админ поменял их на другом устройстве.
   applyAggregatorSettings(data);

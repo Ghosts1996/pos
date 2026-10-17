@@ -16,6 +16,7 @@ import 'payroll_screen.dart';
 import 'reports_screen.dart';
 import 'inventory_screen.dart';
 import 'integrations_settings_screen.dart';
+import 'signals_settings_screen.dart';
 import 'ai_settings_screen.dart';
 import 'ai_insights_screen.dart';
 import 'activity_log_screen.dart';
@@ -70,6 +71,8 @@ class AdminHomeScreen extends StatelessWidget {
       'Настройки': [
         _AdminTile('Интеграции', Icons.settings_input_antenna,
             (ctx) => const IntegrationsSettingsScreen()),
+        _AdminTile('Звонки и сигналы', Icons.notifications_active_outlined,
+            (ctx) => const SignalsSettingsScreen()),
       ],
     };
 

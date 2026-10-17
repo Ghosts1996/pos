@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import 'people_directory.dart';
+import 'signals/signal_hub.dart';
 import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
@@ -823,6 +824,8 @@ class FirestoreService {
       }
       return true;
     });
+    SignalHub.instance.itemAdded(sessionId,
+        station: kind, lineId: lineId, name: chosen.isEmpty ? menuItem.name : '${menuItem.name} (${chosen.join(', ')})', qty: qty);
   }
 
   /// Позиции от гостя по текущему меню — см. [priceGuestItems].
@@ -845,6 +848,11 @@ class FirestoreService {
       _editCheckItems(sessionId, (items) {
         final idx = items.indexWhere((i) => i.lineId == lineId);
         if (idx < 0) return false;
+        // «+1» к уже заказанному — тоже новый заказ для цеха.
+        if (delta > 0 && items[idx].menuItemId.isNotEmpty) {
+          SignalHub.instance.itemAdded(sessionId,
+              station: items[idx].effectiveKind, lineId: lineId, name: items[idx].displayName, qty: delta);
+        }
         final newQty = items[idx].qty + delta;
         if (newQty <= 0) {
           items.removeAt(idx);
@@ -857,16 +865,20 @@ class FirestoreService {
       });
 
   /// Экран «Кухня и бар»: отметить строки чека готовыми целиком.
-  Future<void> markItemsReady(String sessionId, Set<String> lineIds) => _editCheckItems(sessionId, (items) {
-        var changed = false;
-        for (var k = 0; k < items.length; k++) {
-          if (lineIds.contains(items[k].lineId) && items[k].pending > 0) {
-            items[k] = items[k].markReady();
-            changed = true;
-          }
+  Future<void> markItemsReady(String sessionId, Set<String> lineIds) async {
+    var changed = false;
+    await _editCheckItems(sessionId, (items) {
+      for (var k = 0; k < items.length; k++) {
+        if (lineIds.contains(items[k].lineId) && items[k].pending > 0) {
+          items[k] = items[k].markReady();
+          changed = true;
         }
-        return changed;
-      });
+      }
+      return changed;
+    });
+    // Официанту — «можно выносить»: по Wi‑Fi заведения, на реле и часы.
+    if (changed) unawaited(SignalHub.instance.dishReady(sessionId, lineIds).catchError((Object _) {}));
+  }
 
   /// Бегунок напечатан: [sentQty] — сколько штук каждой строки (lineId →
   /// количество) было в строке на момент печати. Добавленное за это время

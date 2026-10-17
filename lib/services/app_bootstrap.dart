@@ -21,6 +21,7 @@ import 'session_alerts_service.dart';
 import 'ai/ai_settings.dart';
 import 'ai/ai_scheduler.dart';
 import 'background_jobs_service.dart';
+import 'signals/signal_bootstrap.dart';
 import '../utils/startup_log.dart';
 
 /// Всё, что не блокирует старт приложения — принтер/касса/ИИ подтянутся
@@ -36,6 +37,8 @@ void startBackgroundServices() {
   NetStatus.start();
   FiscalQueue.start();
   unawaited(loadSavedPrinterSettings());
+  // Звонки и сигналы: реле, зуммер, сигналы между планшетами по Wi‑Fi.
+  SignalBootstrap.start();
   unawaited(loadSavedKassaSettings());
   unawaited(loadSavedTerminalSettings());
   unawaited(loadSavedEgaisSettings());
