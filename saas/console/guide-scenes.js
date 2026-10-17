@@ -942,7 +942,7 @@ X.itemForm = ({ stock = false, tobacco = false } = {}) => X.scr('Новая по
   <div style="display:flex;gap:8px;margin-bottom:8px">${field('Цена, ₽', { type: 'iprice', style: 'height:48px;flex:1' })}${field('Ставка НДС', { val: 'Без НДС', style: 'height:48px;flex:1' })}</div>
   ${field('Состав / описание', { val: 'Чаша на грейпфруте, микс от мастера', style: 'height:48px;margin-bottom:8px' })}
   <div class="gx-card" style="padding:10px 12px;margin-bottom:6px${stock ? ';border-color:var(--pr)' : ''}"><b style="font-size:13.5px">Склад (автосписание)</b>
-    <div style="display:flex;gap:8px;margin-top:8px">${field('Продукт', { val: stock ? '<span class="gx-show" data-mark="prod">не выбран</span><span class="gx-alt" data-mark="prod">Табак Darkside</span>' : 'не выбран', tap: stock ? 'prod' : '', style: 'height:44px;flex:1.4' })}${field('Граммовка', { type: stock ? 'gram' : '', ph: 'г', style: 'height:44px;flex:1' })}</div></div>
+    <div style="display:flex;gap:8px;margin-top:8px">${field('Продукт', { val: stock ? '<span class="gx-show" data-mark="prod">не выбран</span><span class="gx-alt" data-mark="prod">Смесь для кальяна</span>' : 'не выбран', tap: stock ? 'prod' : '', style: 'height:44px;flex:1.4' })}${field('Граммовка', { type: stock ? 'gram' : '', ph: 'г', style: 'height:44px;flex:1' })}</div></div>
   ${switchRow('Составная позиция (микс)', 'Несколько продуктов склада')}
   ${switchRow('Табак / никотин', 'Без фото, без скидок и бонусов, только в заведении', { tap: tobacco ? 'tob' : '', mark: tobacco ? 'tob' : '' })}`,
   { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
@@ -1047,21 +1047,21 @@ X.mergeDialog = dialog('Объединить с новым устройство�
 
 /* ---- Склад ---- */
 X.stock = ({ added = false } = {}) => X.scr('Склад', `${X.chips(['Остатки', 'История', 'Что заказать'])}
-  ${[['Табак Darkside', 'Табак', '1,24 кг', false, 'dk'], ['Уголь кокосовый', 'Кальяны', '3,5 кг', false], ['Лимоны', 'Бар', '0,4 кг', true], ['Молоко 3,2%', 'Бар', '6 л', false]].map(([n, c, v, low, k]) =>
+  ${[['Смесь для кальяна', 'Кальяны', '1,24 кг', false, 'dk'], ['Уголь кокосовый', 'Кальяны', '3,5 кг', false], ['Лимоны', 'Бар', '0,4 кг', true], ['Молоко 3,2%', 'Бар', '6 л', false]].map(([n, c, v, low, k]) =>
     `<div style="display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--bd)"${tp(k)}><div class="gx-ico" style="background:var(--el);color:var(--mu)">${ic('box', 18)}</div><div style="flex:1"><b style="font-size:14.5px">${n}</b><div class="gx-mu" style="font-size:11.5px">${c}</div></div><b style="${low ? 'color:#E07A5F' : ''}">${v}${low ? ' · мало' : ''}</b></div>`).join('')}
   ${added ? '' : `<div class="gx-unfold"${mk('new')}>`}<div style="display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--bd)"><div class="gx-ico">${ic('box', 18)}</div><div style="flex:1"><b style="font-size:14.5px">Мята свежая</b><div class="gx-mu" style="font-size:11.5px">Бар · порог 0,2 кг</div></div><b>0 кг</b></div>${added ? '' : '</div>'}`)
   + X.fab('Новая позиция склада', 'new');
 X.stockDialog = dialog('Новая позиция склада', `${field('Название', { type: 'sn', focus: true })}<div style="height:8px"></div>${field('Категория', { val: 'Бар' })}<div style="height:8px"></div>
   <div style="display:flex;gap:8px">${field('Единица измерения', { val: 'кг', style: 'flex:1' })}${field('Порог «мало»', { type: 'thr', style: 'flex:1' })}</div>`, `${btn('Отмена', { kind: 'text' })}${btn('Сохранить', { kind: 'sm', tap: 'save' })}`);
-X.stockItem = () => X.scr('Табак Darkside', `${X.card(`<div class="gx-mu" style="font-size:12px">Остаток</div><b style="font-size:30px"><span class="gx-show"${mk('in')}>1,24 кг</span><span class="gx-alt"${mk('in')}>3,24 кг</span></b>`)}
+X.stockItem = () => X.scr('Смесь для кальяна', `${X.card(`<div class="gx-mu" style="font-size:12px">Остаток</div><b style="font-size:30px"><span class="gx-show"${mk('in')}>1,24 кг</span><span class="gx-alt"${mk('in')}>3,24 кг</span></b>`)}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">${btn('Приход', { icon: 'plus', tap: 'in' })}${btn('Списание', { kind: 'ghost', icon: 'minus' })}</div>${btn('Скорректировать остаток вручную', { kind: 'text', style: 'width:100%' })}
   ${X.h('История движений')}
   <div class="gx-unfold"${mk('in')}>${X.line('Приход · +2 кг · Ольга', 'сейчас', { mu: true })}</div>
   ${X.line('Продажа · Классический кальян ×1 · −20 г', '21:40', { mu: true })}${X.line('Продажа · Кальян на молоке ×2 · −40 г', '20:15', { mu: true })}${X.line('Списание · угощение · −20 г · Максим', 'вчера', { mu: true })}`);
 X.inv = ({ started = false } = {}) => X.scr('Инвентаризация', started ? `<div class="gx-mu" style="font-size:12px;margin-bottom:8px">Инвентаризация в процессе · посчитано 2 из 4</div>
-  ${[['Табак Darkside', '1,24 кг', 'c1', '1,18'], ['Уголь кокосовый', '3,5 кг', '', '3,5'], ['Лимоны', '0,4 кг', 'c3', ''], ['Молоко 3,2%', '6 л', '', '6']].map(([n, exp, k, val]) =>
+  ${[['Смесь для кальяна', '1,24 кг', 'c1', '1,18'], ['Уголь кокосовый', '3,5 кг', '', '3,5'], ['Лимоны', '0,4 кг', 'c3', ''], ['Молоко 3,2%', '6 л', '', '6']].map(([n, exp, k, val]) =>
     `<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--bd)"><div style="flex:1"><b style="font-size:14px">${n}</b><div class="gx-mu" style="font-size:11.5px">по учёту ${exp}</div></div>${field('', { type: k, val: k ? '' : val, ph: k ? 'факт' : '', style: 'width:96px;height:40px' })}</div>`).join('')}
-  <div class="gx-unfold"${mk('res')}><div class="gx-card" style="padding:10px 12px;margin-top:10px;border-color:rgba(217,168,78,.6)"><b style="font-size:13.5px">Расхождений: 2</b><div style="font-size:12.5px;line-height:1.5;margin-top:4px">Табак Darkside −60 г · Лимоны −0,1 кг<br>Остатки поправлены, запись в журнале.</div></div></div>`
+  <div class="gx-unfold"${mk('res')}><div class="gx-card" style="padding:10px 12px;margin-top:10px;border-color:rgba(217,168,78,.6)"><b style="font-size:13.5px">Расхождений: 2</b><div style="font-size:12.5px;line-height:1.5;margin-top:4px">Смесь для кальяна −60 г · Лимоны −0,1 кг<br>Остатки поправлены, запись в журнале.</div></div></div>`
   : `<div style="text-align:center;padding:120px 10px 0"><span class="gx-mu">${ic('checks', 34)}</span><b style="display:block;font-size:18px;margin:12px 0 6px">Новая инвентаризация</b><div class="gx-mu" style="font-size:13px;line-height:1.4">Пересчитайте то, что есть на самом деле. Сотрудники тоже могут считать: меню ☰ → «Инвентаризация».</div></div>`,
   { bottom: started ? btn('Завершить инвентаризацию', { tap: 'fin' }) : btn('Начать инвентаризацию', { tap: 'start' }) });
 
@@ -1108,7 +1108,7 @@ X.aiChat = () => sheet(`<b style="display:flex;align-items:center;gap:8px;font-s
 X.aiInsights = () => X.scr('ИИ-разборы', `<div class="gx-tiles" style="padding:0;gap:10px">${[['chart', 'Выручка'], ['box', 'Заявка на закупку'], ['tag', 'Идеи акций'], ['star', 'Отзывы гостей'], ['cal', 'Брони на смену'], ['spark', 'Свободный диалог с аналитиком']].map(([i, t]) =>
   `<div class="gx-card" style="height:84px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;text-align:center;padding:6px"${tp(t === 'Заявка на закупку' ? 'buy' : '')}>${ic(i, 22)}<span style="font-size:12.5px;font-weight:500">${t}</span></div>`).join('')}</div>`);
 X.aiBuy = () => X.scr('Заявка на закупку', `<div class="gx-card" style="padding:12px 14px;font-size:13px;line-height:1.6"><span class="gx-brass" style="display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:6px">${ic('spark', 16)}По продажам за 14 дней и остаткам</span>
-  <b>Срочно (кончится за 2 дня):</b><br>• Лимоны — 3 кг<br>• Мята свежая — 0,8 кг<br><b>На неделю:</b><br>• Табак Darkside — 1 кг (расход ~140 г/день)<br>• Уголь кокосовый — 6 кг<br>• Молоко 3,2% — 12 л<br><span class="gx-mu">Сок яблочный продаётся вдвое медленнее — можно не брать.</span></div>`,
+  <b>Срочно (кончится за 2 дня):</b><br>• Лимоны — 3 кг<br>• Мята свежая — 0,8 кг<br><b>На неделю:</b><br>• Смесь для кальяна — 1 кг (расход ~140 г/день)<br>• Уголь кокосовый — 6 кг<br>• Молоко 3,2% — 12 л<br><span class="gx-mu">Сок яблочный продаётся вдвое медленнее — можно не брать.</span></div>`,
   { bottom: `<div style="display:flex;gap:8px">${btn('Скопировать', { kind: 'ghost', style: 'flex:1' })}${btn('Отправить в Telegram', { style: 'flex:1' })}</div>` });
 
 /* ---- Кабинет: сеть, бэкап, поддержка, Windows, РКН ---- */
