@@ -88,7 +88,10 @@ jobs:
           node .github/scripts/patch-windows-runner.js
           rm -f test/widget_test.dart
           node .github/windows-smoke/patch-emulators.js
-          flutter pub get
+          # flutter create обновил pubspec.lock до свежих пакетов — вернуть
+          # версии из репозитория.
+          git checkout -- pubspec.lock
+          flutter pub get --enforce-lockfile
           # Как в сборке заведений: исправление плагина cloud_firestore.
           node .github/scripts/patch-firestore-windows.js
           # И Firebase C++ SDK заранее, с повторами.

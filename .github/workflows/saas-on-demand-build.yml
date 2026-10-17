@@ -496,7 +496,13 @@ jobs:
           XMLEOF
 
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          # flutter create сам запускает pub get и обновляет pubspec.lock до
+          # самых свежих пакетов. Собираем ровно на версиях из репозитория:
+          # 17.10.2026 вышел shared_preferences_android 2.5.0, и с ним касса
+          # падала на старте.
+          git checkout -- pubspec.lock
+          flutter pub get --enforce-lockfile
 
       - name: Generate app launcher icon
         env:
@@ -742,7 +748,13 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: flutter pub get
+        run: |
+          # flutter create сам запускает pub get и обновляет pubspec.lock до
+          # самых свежих пакетов. Собираем ровно на версиях из репозитория:
+          # 17.10.2026 вышел shared_preferences_android 2.5.0, и с ним касса
+          # падала на старте.
+          git checkout -- pubspec.lock
+          flutter pub get --enforce-lockfile
 
       # Firebase C++ SDK — заранее и с повторами: сервер Google при
       # скачивании плагином иногда отвечал 502 (подробности — в скрипте).

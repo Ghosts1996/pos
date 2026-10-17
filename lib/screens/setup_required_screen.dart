@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../firebase_options.dart';
 import '../theme/app_colors.dart';
 
 /// Показывается вместо аварийного закрытия приложения, если Firebase ещё
@@ -9,6 +10,15 @@ import '../theme/app_colors.dart';
 class SetupRequiredScreen extends StatelessWidget {
   final String? errorDetails;
   const SetupRequiredScreen({super.key, this.errorDetails});
+
+  /// Инструкция по Firebase — только когда дело в нём. Любой другой сбой
+  /// запуска (плагин, память устройства) — это не «настройте Firebase»,
+  /// и владельцу заведения нужен другой текст.
+  static bool needsFirebaseSetup(String? error, {bool configured = true}) {
+    if (!configured) return true;
+    final e = (error ?? '').toLowerCase();
+    return e.contains('firebase') || e.contains('apikey') || e.contains('projectid');
+  }
 
   static const _steps = [
     'Установите FlutterFire CLI: dart pub global activate flutterfire_cli',
@@ -22,6 +32,7 @@ class SetupRequiredScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!needsFirebaseSetup(errorDetails, configured: DefaultFirebaseOptions.isConfigured)) return _crash(context);
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -98,6 +109,60 @@ class SetupRequiredScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.copy, size: 16),
                 label: const Text('Скопировать команды настройки'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _crash(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 12),
+              const Icon(Icons.error_outline, color: AppColors.warning, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                'Касса не запустилась',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Закройте приложение и откройте снова. Не помогло — скачайте свежую версию '
+                'на zalpos.ru или напишите в поддержку и приложите текст ошибки ниже.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+              ),
+              const SizedBox(height: 18),
+              if (errorDetails != null)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.danger.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+                  ),
+                  child: SelectableText(errorDetails!,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace')),
+                ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: errorDetails ?? 'нет текста ошибки'));
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(const SnackBar(content: Text('Текст ошибки скопирован')));
+                },
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('Скопировать текст ошибки'),
               ),
             ],
           ),
