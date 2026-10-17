@@ -2057,8 +2057,9 @@ class FirestoreService {
 
   Stream<List<MenuCategory>> _menuCatSource() async* {
     final cache = GatewayCacheService.instance;
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
-      if (cache.menuCategories.isNotEmpty) yield cache.menuCategories;
+    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+      yield cache.menuCategories;
       yield* cache.menuCategoriesStream;
       return;
     }
@@ -2079,8 +2080,9 @@ class FirestoreService {
 
   Stream<List<MenuItem>> _menuItemSource() async* {
     final cache = GatewayCacheService.instance;
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
-      if (cache.menuItems.isNotEmpty) yield cache.menuItems;
+    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+      yield cache.menuItems;
       yield* cache.menuItemsStream;
       return;
     }
@@ -2206,8 +2208,9 @@ class FirestoreService {
 
   Stream<List<Employee>> _employeeSource() async* {
     final cache = GatewayCacheService.instance;
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty) {
-      if (cache.employees.isNotEmpty) yield cache.employees;
+    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+      yield cache.employees;
       yield* cache.employeesStream;
       return;
     }

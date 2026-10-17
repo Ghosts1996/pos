@@ -1377,3 +1377,7 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
   .m-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--border-strong); transition: width .25s ease, background-color .25s ease; }
   .m-dots i.on { width: 18px; background: var(--primary); }
 }
+
+/* Объявления платформы: абзацы как набрали, длинные ссылки переносятся. */
+.rich-text { white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; }
+.rich-text .rich-link { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }

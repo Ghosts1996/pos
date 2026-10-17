@@ -27,6 +27,11 @@ class GatewayCacheService {
 
   bool get hasData => menuCategories.isNotEmpty || menuItems.isNotEmpty;
 
+  /// Сервер хоть раз ответил. До этого экраны читают базу напрямую:
+  /// иначе пустой кеш или недоступный сервер оставляли «Меню»,
+  /// «Сотрудников» и «Зарплату» с вечной загрузкой.
+  bool loaded = false;
+
   final _catCtrl = StreamController<List<MenuCategory>>.broadcast();
   final _itemCtrl = StreamController<List<MenuItem>>.broadcast();
   final _empCtrl = StreamController<List<Employee>>.broadcast();
@@ -58,30 +63,33 @@ class GatewayCacheService {
     menuItems = const [];
     employees = const [];
     venueProfile = null;
+    loaded = false;
+  }
+
+  /// Разбор списка: запись, которую не удалось прочитать, пропускаем, а
+  /// не теряем из-за неё весь список.
+  static List<T> _parse<T>(Object? raw, T Function(Map<String, dynamic>) from) {
+    final out = <T>[];
+    for (final m in (raw as List?) ?? const []) {
+      if (m is! Map) continue;
+      try {
+        out.add(from(Map<String, dynamic>.from(m)));
+      } catch (_) {}
+    }
+    return out;
   }
 
   Future<void> _fetch(String tenantId) async {
     try {
       final data = await GatewayApi.get('tenantStaticData', {'tenantId': tenantId});
-      menuCategories = (data['menuCategories'] as List?)
-              ?.whereType<Map<String, dynamic>>()
-              .map(MenuCategory.fromMap)
-              .toList() ??
-          const [];
-      menuItems = (data['menuItems'] as List?)
-              ?.whereType<Map<String, dynamic>>()
-              .map(MenuItem.fromMap)
-              .toList() ??
-          const [];
-      employees = (data['employees'] as List?)
-              ?.whereType<Map<String, dynamic>>()
-              .map(Employee.fromMap)
-              .toList() ??
-          const [];
+      menuCategories = _parse(data['menuCategories'], MenuCategory.fromMap);
+      menuItems = _parse(data['menuItems'], MenuItem.fromMap);
+      employees = _parse(data['employees'], Employee.fromMap);
       final rawProfile = data['venueProfile'];
       if (rawProfile is Map<String, dynamic>) {
         venueProfile = VenueProfile.fromMap(rawProfile);
       }
+      loaded = true;
       _catCtrl.add(menuCategories);
       _itemCtrl.add(menuItems);
       _empCtrl.add(employees);

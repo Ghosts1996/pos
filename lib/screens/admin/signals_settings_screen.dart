@@ -151,25 +151,60 @@ class _SignalsSettingsScreenState extends State<SignalsSettingsScreen> {
         icon: Icons.watch_outlined,
         title: 'Официанту: вибрация и часы',
         children: [
-          const _Hint('Кухня нажала «Готово» — официант чека получает уведомление с длинной вибрацией '
-              '(три длинных). Так же вибрируют вызовы гостей и заказы из приложения. Смарт-часы и браслеты '
-              '(Xiaomi Smart Band, Amazfit, Huawei, Samsung Galaxy Watch) повторяют это уведомление на руке — '
-              'достаточно включить для ZalPOS уведомления в приложении часов на телефоне официанта.'),
+          const _Hint('Каждое событие — отдельное уведомление с длинной вибрацией, и в заголовке сразу видно, '
+              'что случилось: «✅ Готово · Стол 5», «🔥 Зовут кальянщика», «🙋 Зовут официанта», «🧾 Просят счёт», '
+              '«📱 Заказ из приложения», «📅 Новая бронь», «🔥 Пора менять угли». Любые часы и браслеты, которые '
+              'показывают уведомления телефона, повторят их на руке: Huawei, Honor, Xiaomi, Amazfit, Samsung, '
+              'Garmin и другие. Для этого в приложении часов на телефоне включите уведомления для ZalPOS.'),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () async {
-              await NotificationService.instance.showUrgent(
-                id: NotificationService.idFor('ready_test'),
-                title: 'Готово · Стол 5',
-                body: 'Можно выносить: Цезарь ×2, Лимонад',
-              );
-              _snack('Уведомление отправлено — проверьте вибрацию телефона и часов');
-            },
-            icon: const Icon(Icons.vibration),
-            label: const Text('Проверить вибрацию на этом устройстве'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await NotificationService.instance.showUrgent(
+                    id: NotificationService.idFor('ready_test_${DateTime.now().millisecondsSinceEpoch}'),
+                    title: '✅ Готово · Стол 5',
+                    body: 'Можно выносить: Цезарь ×2, Лимонад',
+                  );
+                  _snack('Уведомление отправлено — проверьте вибрацию телефона');
+                },
+                icon: const Icon(Icons.vibration),
+                label: const Text('Проверить вибрацию'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _testWatch,
+                icon: const Icon(Icons.watch_outlined),
+                label: const Text('Проверить часы'),
+              ),
+            ],
           ),
+          const SizedBox(height: 6),
+          const _Hint('Часы Huawei и Honor получают уведомления, только когда экран телефона выключен. '
+              '«Проверить часы» пришлёт три уведомления через 10 секунд — заблокируйте телефон и смотрите на часы.'),
         ],
       );
+
+  /// Три разных уведомления с паузой: успеть заблокировать телефон, а
+  /// на часах — увидеть, что каждое подписано по-своему.
+  Future<void> _testWatch() async {
+    _snack('Заблокируйте телефон — через 10 секунд придут три уведомления');
+    const tests = [
+      ('🔥 Зовут кальянщика · Стол 3', 'Гость ждёт за столом'),
+      ('🧾 Просят счёт · Диван 8', 'Гость ждёт счёт'),
+      ('✅ Готово · Стол 5', 'Можно выносить: Цезарь ×2, Лимонад'),
+    ];
+    await Future<void>.delayed(const Duration(seconds: 10));
+    for (final (title, body) in tests) {
+      await NotificationService.instance.showUrgent(
+        id: NotificationService.idFor('watch_test_$title'),
+        title: title,
+        body: body,
+      );
+      await Future<void>.delayed(const Duration(seconds: 4));
+    }
+  }
 
   // ----------------------------------------------------------------- реле
 

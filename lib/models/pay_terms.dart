@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/people_directory.dart';
+import '../utils/parse.dart';
 
 /// Шаг выручки заведения: если за период заведение заработало не меньше
 /// [threshold], сотрудник получает бонус — фиксированную сумму ([isFixed])
@@ -202,9 +203,9 @@ class PayChange {
   static final DateTime since = DateTime.fromMillisecondsSinceEpoch(0);
 
   factory PayChange.fromMap(Map<String, dynamic> m) {
-    final at = m['at'];
+    // Из кеша сервера дата приходит JSON-объектом, а не Timestamp.
     return PayChange(
-      at: at is Timestamp ? at.toDate() : since,
+      at: asDate(m['at']) ?? since,
       terms: PayTerms.fromMap(Map<String, dynamic>.from((m['terms'] as Map?) ?? const {})),
       byId: (m['byId'] ?? '').toString(),
       byName: (m['byName'] ?? '').toString(),

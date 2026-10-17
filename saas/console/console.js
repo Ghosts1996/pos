@@ -412,6 +412,27 @@ function esc(s) {
   ));
 }
 
+// Текст объявления: ссылки кликабельны, переносы строк сохраняются
+// (white-space: pre-line у контейнера). Ссылку ищем в исходном тексте и
+// экранируем по частям — иначе «->» сразу за адресом попадал бы в ссылку.
+const LINK_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'«»]+[^\s<>"'«».,;:!?)\]]/gi;
+function richText(text) {
+  const raw = String(text ?? '');
+  // Набрано одной строкой со стрелками «->» между пунктами (переносы
+  // потерялись при вставке) — стрелка и есть перенос.
+  const src = raw.includes('\n') ? raw : raw.replace(/\s+->\s+/g, '\n');
+  let out = '';
+  let last = 0;
+  for (const m of src.matchAll(LINK_RE)) {
+    const url = m[0];
+    const href = /^https?:/i.test(url) ? url : `https://${url}`;
+    out += esc(src.slice(last, m.index)) +
+      `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="rich-link">${esc(url)}</a>`;
+    last = m.index + url.length;
+  }
+  return out + esc(src.slice(last));
+}
+
 // 1×1 прозрачный GIF — заглушка для <img src> логотипа, пока своего нет:
 // пустой src сам по себе триггерит повторный запрос текущей страницы.
 const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7';
@@ -3633,7 +3654,7 @@ function watchDashboardData(tenantId) {
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div class="grow" style="min-width:0">
             <div style="font-weight:700">📣 ${esc(b.title || '')}</div>
-            <div class="small muted" style="margin-top:4px">${esc(b.body || '')}</div>
+            <div class="small muted rich-text" style="margin-top:4px">${richText(b.body || '')}</div>
           </div>
           <button class="btn-link f-broadcast-dismiss" data-id="${esc(b.id)}" style="width:auto;flex-shrink:0">✕</button>
         </div>
@@ -5712,7 +5733,7 @@ function screenSuperAdmin() {
             <input id="f-broadcast-title" placeholder="Например: Новая функция — учёт переработки">
           </label>
           <label class="field"><span>Текст</span>
-            <textarea id="f-broadcast-body" rows="3" placeholder="Коротко, что изменилось и что нужно сделать"></textarea>
+            <textarea id="f-broadcast-body" rows="6" placeholder="Коротко, что изменилось и что нужно сделать. Каждая мысль — с новой строки, ссылки станут кликабельными"></textarea>
           </label>
           <button class="btn btn-primary" id="f-broadcast-publish">Опубликовать</button>
         </div>
@@ -6053,7 +6074,7 @@ function watchAdminBroadcasts() {
       <div class="row" style="justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="small grow" style="min-width:0">
           <b>${esc(b.title || '')}</b>${b.active ? '' : ' <span class="muted">(снято)</span>'}
-          <div class="muted">${esc(b.body || '')}</div>
+          <div class="muted rich-text">${richText(b.body || '')}</div>
           <div class="muted">${fmtDateTime(b.createdAt)}</div>
         </div>
         <button class="btn-link f-broadcast-toggle" data-id="${esc(b.id)}" data-active="${b.active ? '1' : '0'}" style="width:auto;flex-shrink:0">

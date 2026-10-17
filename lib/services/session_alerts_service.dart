@@ -13,6 +13,7 @@ import 'signals/ready_watch.dart';
 import 'signals/signal_bootstrap.dart';
 import 'signals/signal_hub.dart';
 import 'signals/signal_settings.dart';
+import 'signals/staff_alert_text.dart';
 import 'staff_session_store.dart';
 import 'venue_service.dart';
 
@@ -398,10 +399,13 @@ class SessionAlertsService {
     )) {
       return;
     }
+    final a = readyAlert(tableName, summary);
+    // Своё уведомление на каждое «готово»: обновление прежнего часы не
+    // показывают и не вибрируют.
     unawaited(_notify.showUrgent(
-      id: NotificationService.idFor('ready_$sessionId'),
-      title: 'Готово · ${tableName.isEmpty ? 'стол' : tableName}',
-      body: summary.isEmpty ? 'Можно выносить' : 'Можно выносить: $summary',
+      id: NotificationService.idFor('ready_${sessionId}_${keys.join()}'),
+      title: a.title,
+      body: a.body,
     ).catchError((Object _) {}));
   }
 
@@ -433,24 +437,14 @@ class SessionAlertsService {
     // Угли — только тому, кто ведёт кальяны: кальянщику, а в кальянной
     // ещё универсалу и админу. Официанту и бармену они ни к чему.
     if (_hookahDuty) {
-      await _notify.scheduleAt(
-        id: coalId,
-        when: coalFrom.add(coalAfter),
-        title: 'Угли: ${s.tableName}',
-        body: s.refillCount > 0
-            ? 'Прошло ${coalAfter.inMinutes} минут после перезабивки — проверьте угли'
-            : 'Прошло ${coalAfter.inMinutes} минут — пора поменять угли',
-      );
+      final a = coalAlert(s.tableName, minutes: coalAfter.inMinutes, afterRefill: s.refillCount > 0);
+      await _notify.scheduleAt(id: coalId, when: coalFrom.add(coalAfter), title: a.title, body: a.body);
     }
 
     // Стол «без ограничений» не заканчивается — предупреждать не о чем.
     if (AppConstants.isUnlimitedRemaining(s.remaining)) return;
-    await _notify.scheduleAt(
-      id: endId,
-      when: s.plannedEnd.subtract(warnBefore),
-      title: 'Сеанс заканчивается: ${s.tableName}',
-      body: 'Через ${warnBefore.inMinutes} минут конец сеанса — предложите продление или счёт',
-    );
+    final end = sessionEndAlert(s.tableName, minutes: warnBefore.inMinutes);
+    await _notify.scheduleAt(id: endId, when: s.plannedEnd.subtract(warnBefore), title: end.title, body: end.body);
   }
 
   // ---------- БРОНИ ----------
@@ -471,14 +465,8 @@ class SessionAlertsService {
         if (r.source != 'kolibri') continue;
         if (!_mine) continue; // на смене другой сотрудник — это его вызов
 
-        final t = r.startTime;
-        unawaited(_notify.show(
-          id: NotificationService.idFor('res_${r.id}'),
-          title: 'Новая бронь',
-          body: '${r.guestName}, ${r.guestsCount} чел. на '
-              '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'
-              '${r.comment.isEmpty ? '' : ' · «${r.comment}»'}',
-        ));
+        final a = reservationAlert(guest: r.guestName, people: r.guestsCount, at: r.startTime, comment: r.comment);
+        unawaited(_notify.showUrgent(id: NotificationService.idFor('res_${r.id}'), title: a.title, body: a.body));
       }
     }, onError: (_) {});
   }
@@ -512,12 +500,8 @@ class SessionAlertsService {
           continue;
         }
 
-        unawaited(_notify.showUrgent(
-          id: NotificationService.idFor('call_${c.id}'),
-          title: c.type.label,
-          body: '${c.tableName.isEmpty ? 'Стол' : c.tableName}'
-              '${c.comment.isEmpty ? '' : ' · «${c.comment}»'}',
-        ));
+        final a = callAlert(c.type, c.tableName, comment: c.comment);
+        unawaited(_notify.showUrgent(id: NotificationService.idFor('call_${c.id}'), title: a.title, body: a.body));
       }
     }, onError: (_) {});
   }
@@ -546,21 +530,18 @@ class SessionAlertsService {
         // Заказ доставки/с собой из приложения — всем на смене: кто первым
         // свободен, тот и звонит гостю.
         if (o.orderType.isNotEmpty) {
-          unawaited(_notify.show(
-            id: NotificationService.idFor('order_${o.id}'),
-            title: '${o.orderType == 'delivery' ? 'Доставка' : 'Заказ с собой'} из приложения — позвоните гостю',
-            body: '${o.guestName.isEmpty ? '' : '${o.guestName}: '}${o.items.map((i) => '${i.displayName} ×${i.qty}').join(', ')}',
-          ));
+          final a = takeawayAlert(
+              delivery: o.orderType == 'delivery',
+              guest: o.guestName,
+              items: o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '));
+          unawaited(_notify.showUrgent(id: NotificationService.idFor('order_${o.id}'), title: a.title, body: a.body));
           continue;
         }
         if (!_mine) continue; // на смене другой сотрудник — это его заказ
         if (!o.isFor(_myPosition)) continue;
 
-        unawaited(_notify.showUrgent(
-          id: NotificationService.idFor('order_${o.id}'),
-          title: 'Заказ из приложения · ${o.tableName.isEmpty ? 'стол' : o.tableName}',
-          body: o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '),
-        ));
+        final a = guestOrderAlert(o.tableName, o.items.map((i) => '${i.displayName} ×${i.qty}').join(', '));
+        unawaited(_notify.showUrgent(id: NotificationService.idFor('order_${o.id}'), title: a.title, body: a.body));
       }
     }, onError: (_) {});
   }
