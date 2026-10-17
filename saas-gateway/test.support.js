@@ -223,6 +223,24 @@ test("ИИ: кончились токены у первого ключа — о�
   await assert.rejects(r.complete(providers.slice(0, 1), msgs), /все ключи недоступны/);
 });
 
+
+test("карта кода: описания и надписи экранов без секретов; фильтр ответа не выдаёт внутреннее", () => {
+  const { buildCodeMap, scrub } = require("./build-code-map");
+  const map = buildCodeMap(require("path").join(__dirname, ".."));
+  assert.ok(map.length > 150, `файлов: ${map.length}`);
+  const kassa = map.find((d) => d.file === "lib/services/kassa_service.dart");
+  assert.ok(kassa && /54-ФЗ/.test(kassa.text) && /АТОЛ/.test(kassa.text));
+  assert.ok(map.some((d) => /Надписи на экране: .*«/.test(d.text)), "нет надписей кнопок");
+  assert.ok(!map.some((d) => /firebase_options|support-bot\.js|\.env/.test(d.file)), "лишние файлы");
+  const all = JSON.stringify(map);
+  for (const bad of [/\bsk-[A-Za-z0-9]{12,}/, /AIza[0-9A-Za-z_-]{20}/, /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/, /-----BEGIN/]) assert.ok(!bad.test(all), `утечка ${bad}`);
+  assert.strictEqual(scrub("ключ sk-abcdefghijklmnop1234 на 10.0.0.5:8080 пишите a@b.ru"), "ключ [ключ] на [адрес] пишите [почта]");
+
+  const g = sb.guardReply("Это в lib/services/kassa_service.dart и server.js, данные в tenants/abc/settings, сервер 85.1.2.3. Result URL: https://pii.zalpos.ru/saas/guestPayRobokassa, а не https://pii.zalpos.ru/saas/tgHook/_support");
+  assert.ok(!/kassa_service|server\.js|tenants\/abc|85\.1\.2\.3|tgHook/.test(g), g);
+  assert.ok(g.includes("https://pii.zalpos.ru/saas/guestPayRobokassa"), "нужный клиенту адрес Робокассы остался");
+});
+
 // ---------------------------------------------------------------- весь путь
 
 function harness() {
@@ -581,6 +599,64 @@ test("несколько ключей из панели: порядок, ста�
   await h.bot.handleUpdate(pm("Нужна ли лицензия на алкоголь и какой штраф по 171-ФЗ?"));
   await h.bot.idle();
   assert.strictEqual(h.aiCalls[h.aiCalls.length - 1].model, "gpt-4o", "юридический вопрос — сильная модель");
+});
+
+test("бот видит устройство программы, но клиенту не называет файлы", async () => {
+  const h = harness();
+  await setup(h);
+  h.aiReplies.push("**Откройте «Интеграции»** — касса пробивает чеки через kassa_service.dart и АТОЛ.");
+  await h.bot.handleUpdate(pm("Как подключить онлайн-кассу АТОЛ для чеков 54-ФЗ?"));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Как устроено в программе") && prompt.includes("Конфиденциальность"), "нет карты кода или правил");
+  const toClient = sends(h.calls, 42).find((c) => /Интеграции/.test(c.body.text));
+  assert.ok(toClient && !/kassa_service/.test(toClient.body.text), "клиенту ушло имя файла");
+  assert.ok(sends(h.calls, GROUP).some((c) => /код: .*\.dart/.test(c.body.text)), "сотрудникам — какие файлы смотрел");
+});
+
+test("автообучение: ответ специалиста + «спасибо» → бот сам сохраняет, похожее — дополняет", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Не печатает бегунок на кухню"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  await h.bot.handleUpdate(inTopic("Включите «Бегунки на кухню и бар» в Интеграциях и выберите принтер кухни", t.topicId));
+  h.aiReplies.push('{"save":true,"merge":false,"q":"Не печатаются бегунки на кухню","a":"Касса · Админ · «Интеграции» → «Бегунки на кухню и бар» → выберите принтер кухни.","tags":["бегунок","кухня"],"why":"специалист дал рабочее решение"}');
+  await h.bot.handleUpdate(pm("Спасибо, помогло!"));
+  await h.bot.idle();
+  let kb = [...h.store.entries()].filter(([k]) => k.startsWith("supportKnowledge/"));
+  assert.strictEqual(kb.length, 1, "не запомнил");
+  assert.strictEqual(kb[0][1].source, "auto:specialist");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Сам запомнил решение/.test(c.body.text)));
+  const learnPrompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(learnPrompt.includes("Специалист: Включите") && learnPrompt.includes("главный источник"));
+  // Повторно то же обращение не разбирает (экономия токенов).
+  const calls = h.aiCalls.length;
+  await h.bot.autoLearn(tickets(h.store)[0], "ещё раз");
+  assert.strictEqual(h.aiCalls.length, calls);
+
+  // Похожий вопрос у другого клиента — запись дополняется, а не дублируется.
+  await h.bot.handleUpdate(pm("Не печатаются бегунки на кухне", 43));
+  await h.bot.idle();
+  const t2 = tickets(h.store).find((x) => x.tgUserId === 43);
+  await h.bot.handleUpdate(inTopic("Ещё проверьте, что принтер кухни включён в ту же Wi-Fi сеть", t2.topicId));
+  h.aiReplies.push('{"save":true,"merge":true,"q":"Не печатаются бегунки на кухню","a":"1. «Бегунки на кухню и бар» → принтер кухни. 2. Принтер в той же Wi-Fi сети.","tags":["бегунок"],"why":"новая деталь про сеть"}');
+  await h.bot.handleUpdate(pm("спасибо", 43));
+  await h.bot.idle();
+  kb = [...h.store.entries()].filter(([k]) => k.startsWith("supportKnowledge/"));
+  assert.strictEqual(kb.length, 1, "дубль вместо дополнения");
+  assert.ok(/Wi-Fi/.test(kb[0][1].a));
+});
+
+test("автообучение: без ответа человека и без «помогло» ничего не сохраняет и не тратит ИИ", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Как добавить кальян в меню?"));
+  await h.bot.idle();
+  const n = h.aiCalls.length;
+  await h.bot.autoLearn(tickets(h.store)[0], "проверка");
+  assert.strictEqual(h.aiCalls.length, n);
+  assert.strictEqual([...h.store.keys()].filter((k) => k.startsWith("supportKnowledge/")).length, 0);
 });
 
 test("спасибо и «ок» — без ИИ", async () => {

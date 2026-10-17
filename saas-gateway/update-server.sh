@@ -111,6 +111,8 @@ rsync -a --exclude node_modules "$REPO/saas-gateway/" /opt/saas-gateway/
 mkdir -p /opt/saas-gateway/kb
 cp "$REPO/saas/console/guide.js" /opt/saas-gateway/kb/guide.mjs 2>/dev/null || true
 cp "$REPO/saas/console/console.js" /opt/saas-gateway/kb/console.js 2>/dev/null || true
+# Карта кода — что за что отвечает (описания и надписи, без кода и секретов).
+node /opt/saas-gateway/build-code-map.js "$REPO" /opt/saas-gateway/kb/code-map.json || true
 git -C "$REPO" rev-parse --short HEAD > /opt/saas-gateway/VERSION 2>/dev/null || true
 (cd /opt/saas-gateway && npm install --omit=dev --no-audit --no-fund >/dev/null)
 chown -R saas-gateway:saas-gateway /opt/saas-gateway

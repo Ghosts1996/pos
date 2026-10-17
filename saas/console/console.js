@@ -6077,6 +6077,10 @@ function watchSupportBotAdmin() {
           <input type="checkbox" id="f-sb-ai-on" style="width:auto" ${s.aiEnabled === false ? '' : 'checked'}>
           <span class="small">ИИ отвечает первым (выключите — все обращения сразу к людям)</span>
         </label>
+        <label class="row" style="gap:8px;align-items:center;margin:6px 0">
+          <input type="checkbox" id="f-sb-autolearn" style="width:auto" ${s.autoLearn === false ? '' : 'checked'}>
+          <span class="small">Автообучение: бот сам запоминает решения из диалогов — прежде всего ваши ответы и ответы сотрудников</span>
+        </label>
         <label class="field"><span>Какой моделью отвечать</span>
           <select id="f-sb-routing">
             ${[['auto', 'Авто — сам выбирает (рекомендуем)'], ['light', 'Всегда лёгкая — дешевле'], ['heavy', 'Всегда сильная — точнее']]
@@ -6138,7 +6142,7 @@ function watchSupportBotAdmin() {
         ${s.connected ? `
           <p class="small muted" style="margin-top:10px">
             Сегодня ИИ ответил ${Number(usage.calls) || 0} раз (${(Number(usage.tokens) || 0).toLocaleString('ru-RU')} токенов) ·
-            база знаний: ${Number(s.knowledge) || 0} · статей инструкции: ${Number(s.guideArticles) || 0}
+            база решений: ${Number(s.knowledge) || 0} · статей в знаниях: ${Number(s.guideArticles) || 0} · файлов кода: ${Number(s.codeFiles) || 0}
           </p>` : ''}
         ${s.lastError ? `<p class="small" style="color:var(--danger)">Последняя ошибка: ${esc(s.lastError)}</p>` : ''}
         ${s.connected ? `
@@ -6153,7 +6157,7 @@ function watchSupportBotAdmin() {
                   </div>
                   <button class="btn-link f-sb-kb-del" data-id="${esc(k.id)}" style="width:auto;color:var(--danger)">Удалить</button>
                 </div>
-              </div>`).join('') : '<p class="small muted">Пока пусто. В теме обращения нажмите «📚 Запомнить» — бот обобщит решение без персональных данных.</p>')}
+              </div>`).join('') : '<p class="small muted">Пока пусто. Бот сам запоминает решения, когда вы или сотрудник ответили клиенту и вопрос решён, — обобщённо, без персональных данных. Можно и вручную: в теме обращения «📚 Запомнить».</p>')}
           </details>` : ''}
       </div>
     `);
@@ -6221,6 +6225,7 @@ function watchSupportBotAdmin() {
         staff: $('f-sb-staff').value,
         admins: $('f-sb-admins').value,
         aiEnabled: $('f-sb-ai-on').checked,
+        autoLearn: $('f-sb-autolearn').checked,
         ai: {
           routing: $('f-sb-routing').value,
           providers: provDraft.map((p) => ({
