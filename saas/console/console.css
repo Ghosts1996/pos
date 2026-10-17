@@ -293,7 +293,13 @@ a:hover { color: var(--primary-2); }
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 22px; height: 22px; color: currentColor;
 }
-.nav-icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6; }
+.nav-icon svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.45; }
+/* Медная деталь иконки; у неактивного раздела — чуть приглушённая. */
+.nav-icon .ac { stroke: var(--primary); }
+.nav-icon .ac-f { fill: var(--primary); stroke: none; }
+.nav-item .nav-icon .ac, .nav-item .nav-icon .ac-f { opacity: .72; transition: opacity .15s ease; }
+.nav-item:hover .nav-icon .ac, .nav-item:hover .nav-icon .ac-f,
+.nav-item.active .nav-icon .ac, .nav-item.active .nav-icon .ac-f { opacity: 1; }
 
 @media (min-width: 860px) {
   .dash-topbar, .nav-backdrop { display: none; }

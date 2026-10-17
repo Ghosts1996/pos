@@ -3283,34 +3283,37 @@ function screenDashboard() {
 
 // Свои SVG-иконки вместо эмодзи: у эмодзи разная палитра и размеры, ряд
 // выглядел случайным. Один viewBox 24×24, цвет задаёт фон чипа.
+// Иконки разделов — свой набор в стиле ZalPOS: тонкая линия на сетке 24,
+// скруглённые концы и одна медная деталь у каждой (как ромб в логотипе):
+// .ac — медная линия, .ac-f — медная заливка (цвет — в console.css).
 const NAV_ICON_PATHS = {
-  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
-  device: '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
-  card: '<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>',
-  gem: '<path d="M12 2 21 9l-9 13L3 9Z"/><path d="M3 9h18M8 2l2 7M16 2l-2 7"/>',
-  palette: '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="16" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="13.5" cy="15" r="1.3" fill="currentColor" stroke="none"/>',
-  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6.2 6-6.2s6 2.7 6 6.2"/><circle cx="17.5" cy="9" r="2.4"/><path d="M15.2 13.8c2.4.3 4.3 2.5 4.3 5.2"/>',
-  user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5"/>',
-  gear: '<circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><line x1="19" y1="12" x2="16.5" y2="12"/><line x1="5" y1="12" x2="7.5" y2="12"/><line x1="12" y1="5" x2="12" y2="7.5"/><line x1="12" y1="19" x2="12" y2="16.5"/><line x1="16.95" y1="7.05" x2="15.18" y2="8.82"/><line x1="7.05" y1="16.95" x2="8.82" y2="15.18"/><line x1="16.95" y1="16.95" x2="15.18" y2="15.18"/><line x1="7.05" y1="7.05" x2="8.82" y2="8.82"/>',
-  question: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 1 1 3.9 2.4c-.9.5-1.2 1-1.2 2"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
-  chat: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4.5 3.5V16H5.5A1.5 1.5 0 0 1 4 14.5Z"/>',
-  logout: '<path d="M9 4H5.5A1.5 1.5 0 0 0 4 5.5v13A1.5 1.5 0 0 0 5.5 20H9"/><path d="M13 12h7m0 0-3-3m3 3-3 3"/>',
-  badge: '<circle cx="12" cy="12" r="9"/><path d="M8.3 12.3l2.4 2.4 4.6-5"/>',
-  building: '<rect x="4" y="3" width="16" height="18" rx="1.5"/><rect x="10" y="14" width="4" height="7" rx="0.5"/>',
-  bell: '<path d="M18 8.5a6 6 0 1 0-12 0c0 6.5-2.5 8.5-2.5 8.5h17S18 15 18 8.5Z"/><path d="M13.7 20.5a2 2 0 0 1-3.4 0"/>',
-  list: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>',
-  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
-  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
-  back: '<path d="M11 5 4 12l7 7"/><line x1="4" y1="12" x2="20" y2="12"/>',
-  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M12 8.5 13.2 11l2.3 1-2.3 1L12 15.5 10.8 13l-2.3-1 2.3-1Z"/>',
-  book: '<path d="M12 6.5C10.3 5.2 7.8 4.5 4.5 4.5v14c3.3 0 5.8.7 7.5 2 1.7-1.3 4.2-2 7.5-2v-14c-3.3 0-5.8.7-7.5 2Z"/><line x1="12" y1="6.5" x2="12" y2="20.5"/>',
+  home: '<path d="M4 10.4 12 4l8 6.4"/><path d="M6 9.2v10a.8.8 0 0 0 .8.8h10.4a.8.8 0 0 0 .8-.8v-10"/><path class="ac" d="M10 20v-3.6a2 2 0 0 1 4 0V20"/>',
+  book: '<path d="M12 7.2C10.2 5.8 7.7 5.2 4.5 5.2v12.6c3.2 0 5.7.6 7.5 2 1.8-1.4 4.3-2 7.5-2V5.2c-3.2 0-5.7.6-7.5 2Z"/><path d="M12 7.2v12.6"/><path class="ac-f" d="M15 5.7v4.6l1.25-.95 1.25.95V5.4Z"/>',
+  device: '<rect x="6.5" y="3" width="11" height="18" rx="2.4"/><path d="M10.6 5.8h2.8"/><circle class="ac-f" cx="12" cy="17.7" r="1.05"/>',
+  card: '<rect x="3" y="5.5" width="18" height="13" rx="2.4"/><path d="M3 9.6h18"/><path d="M13.5 14.6h4"/><rect class="ac" x="6" y="12.6" width="4" height="3.2" rx=".9"/>',
+  gem: '<path d="M7 4.5h10l3.5 4.8L12 19.8 3.5 9.3Z"/><path d="M3.5 9.3h17"/><path d="M9.6 9.3 12 19.8l2.4-10.5"/><path class="ac-f" d="M9.6 9.3 12 4.8l2.4 4.5Z"/>',
+  palette: '<path d="M12 3.6a8.4 8.4 0 1 0 0 16.8c1.15 0 1.8-.8 1.8-1.7 0-1.15-1-1.6-1-2.6 0-.9.7-1.6 1.6-1.6h2.2a3.8 3.8 0 0 0 3.8-3.9c0-4-3.8-7-8.4-7Z"/><circle cx="7.6" cy="11.4" r=".95"/><circle cx="14.6" cy="7.9" r=".95"/><circle class="ac-f" cx="10.1" cy="7.7" r="1.2"/>',
+  users: '<circle cx="9" cy="8.6" r="3.2"/><path d="M3.5 19.6c.4-3.2 2.7-5.3 5.5-5.3s5.1 2.1 5.5 5.3"/><path class="ac" d="M15.4 5.6a2.9 2.9 0 0 1 0 5.8M17.3 14.4c1.8.6 2.9 2.4 3.2 5.2"/>',
+  spark: '<path d="M10.5 5c.6 3.7 2.4 5.5 6 6.1-3.6.6-5.4 2.4-6 6.1-.6-3.7-2.4-5.5-6-6.1 3.6-.6 5.4-2.4 6-6.1Z"/><path class="ac-f" d="M18 3.4l.65 1.75 1.75.65-1.75.65L18 8.2l-.65-1.75-1.75-.65 1.75-.65Z"/>',
+  user: '<rect x="3" y="5" width="18" height="14" rx="2.4"/><circle cx="9" cy="10.9" r="2.2"/><path d="M5.9 16.2c.5-1.6 1.6-2.4 3.1-2.4s2.6.8 3.1 2.4"/><path class="ac" d="M14.6 10.2h3.6M14.6 13.6h2.4"/>',
+  gear: '<path d="M4 7h8.6M17.4 7H20M4 12h2.6M11.4 12H20M4 17h10.6"/><circle cx="15" cy="7" r="2.1"/><circle cx="9" cy="12" r="2.1"/><circle class="ac-f" cx="17.2" cy="17" r="2.1"/>',
+  question: '<circle cx="12" cy="12" r="8.5"/><path d="M9.7 9.7a2.4 2.4 0 1 1 3.5 2.1c-.75.4-1.2.9-1.2 1.7v.3"/><circle class="ac-f" cx="12" cy="16.6" r="1.05"/>',
+  chat: '<path d="M20 12.1c0 3.6-3.6 6.4-8 6.4-1.1 0-2.15-.2-3.1-.5l-4.4 1.5 1.25-3.4C4.65 14.9 4 13.6 4 12.1c0-3.6 3.6-6.4 8-6.4s8 2.8 8 6.4Z"/><circle class="ac-f" cx="8.5" cy="12.1" r="1"/><circle class="ac-f" cx="12" cy="12.1" r="1"/><circle class="ac-f" cx="15.5" cy="12.1" r="1"/>',
+  logout: '<path d="M13.5 4.5H7.2a2.2 2.2 0 0 0-2.2 2.2v10.6a2.2 2.2 0 0 0 2.2 2.2h6.3"/><path class="ac" d="M10.5 12H20M16.8 8.8 20 12l-3.2 3.2"/>',
+  badge: '<path d="M12 3.5 19 6v5.4c0 4.3-2.9 7.8-7 9.1-4.1-1.3-7-4.8-7-9.1V6Z"/><path class="ac" d="M8.8 12.2l2.2 2.2 4.2-4.6"/>',
+  building: '<path d="M5 11.4v8.1h14v-8.1"/><path d="M10 19.5v-4.6h4v4.6"/><path class="ac" d="M4 9.6 5.4 4.5h13.2L20 9.6a2 2 0 0 1-4 0 2 2 0 0 1-4 0 2 2 0 0 1-4 0 2 2 0 0 1-4 0Z"/>',
+  bell: '<path d="M6.5 16.4V11a5.5 5.5 0 0 1 11 0v5.4l1.6 1.6H4.9Z"/><path d="M12 3.4v2.1"/><path class="ac" d="M10.1 20.4a2.1 2.1 0 0 0 3.8 0"/>',
+  list: '<path d="M9.5 7h10M9.5 12h10M9.5 17h6.5"/><circle class="ac-f" cx="5.4" cy="7" r="1.15"/><circle class="ac-f" cx="5.4" cy="12" r="1.15"/><circle class="ac-f" cx="5.4" cy="17" r="1.15"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.4"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><circle class="ac-f" cx="12" cy="14.6" r="1.25"/><path class="ac" d="M12 15.6v1.8"/>',
+  plus: '<path d="M12 20.5s6.5-5.6 6.5-10.7a6.5 6.5 0 0 0-13 0c0 5.1 6.5 10.7 6.5 10.7Z"/><path class="ac" d="M12 7v5.6M9.2 9.8h5.6"/>',
+  back: '<path d="M19.5 12h-14"/><path class="ac" d="M10.5 6.5 5 12l5.5 5.5"/>',
 };
 
 function navIconHtml(name, color) {
   // Значок — линейный, цвета текста: цветные плитки под каждым разделом
   // спорили между собой и с содержимым. [color] больше не нужен.
   void color;
-  return `<span class="nav-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON_PATHS[name] || ''}</svg></span>`;
+  return `<span class="nav-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICON_PATHS[name] || ''}</svg></span>`;
 }
 
 // Провайдеры ИИ — те же значения, что AiVendors в
