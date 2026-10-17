@@ -30,8 +30,10 @@ class PayrollResult {
   final double barPersonal;
   final double barPay;
 
-  /// Бонусы за достижение порогов выручки заведения.
+  /// Бонусы за достижение порогов выручки заведения и шаги, по которым они
+  /// посчитаны (условия на конец периода).
   final double revenueStepBonus;
+  final List<RevenueStep> revenueSteps;
 
   /// Выручка заведения за период — нужна для отображения шагов в отчёте.
   final double venueRevenue;
@@ -68,6 +70,7 @@ class PayrollResult {
     this.barPersonal = 0,
     this.barPay = 0,
     this.revenueStepBonus = 0,
+    this.revenueSteps = const [],
     this.venueRevenue = 0,
     this.tips = 0,
     this.manualShifts = 0,
@@ -127,6 +130,7 @@ class PayrollCalculator {
     List<SaleCredit> credits = const [],
     double tips = 0,
     double venueRevenue = 0,
+    DateTime? periodEnd,
   }) {
     final live = closedShifts.where((s) => !s.cancelled).toList();
     final groups = _group(live, (s) => employee.termsAt(s.effectiveStart).shiftRateEnabled,
@@ -184,9 +188,13 @@ class PayrollCalculator {
       }
     }
 
+    // Шаги — период целиком, поэтому условия берутся на его конец: шаг,
+    // добавленный в последний день, не платится задним числом за прошлые
+    // месяцы, а удалённый — не пропадает из уже закрытого периода.
+    final steps = (periodEnd != null ? employee.termsAt(periodEnd) : employee.payTerms).revenueSteps;
     var revenueStepBonus = 0.0;
     if (venueRevenue > 0) {
-      for (final step in employee.revenueSteps) {
+      for (final step in steps) {
         revenueStepBonus += step.bonusFor(venueRevenue);
       }
     }
@@ -213,6 +221,7 @@ class PayrollCalculator {
       barPersonal: barPersonal,
       barPay: barPay,
       revenueStepBonus: revenueStepBonus,
+      revenueSteps: steps,
       venueRevenue: venueRevenue,
       tips: tips,
       manualShifts: manual.length,

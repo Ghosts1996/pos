@@ -95,6 +95,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
           .where((s) => s.endedAt != null && !s.endedAt!.isBefore(_rangeStart) && s.endedAt!.isBefore(_rangeEnd))
           .toList();
       final sessions = await _fs.closedSessionsInRange(_rangeStart, _rangeEnd);
+      // Условия шагов выручки — на конец периода (для текущего — на сейчас).
+      final now = DateTime.now();
+      final stepsAt = _rangeEnd.isAfter(now) ? now : _rangeEnd.subtract(const Duration(seconds: 1));
       final venueRevenue = sessions.fold<double>(
         0,
         (sum, s) => s.status == 'closed' && !s.refunded && !s.closedWithoutPayment
@@ -129,7 +132,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           // нужно выдать, поэтому карточка нужна.
           if (empTips > 0 || adj.containsKey(emp.id) || itemBonus.containsKey(emp.id)) {
             results.add(PayrollCalculator.calculate(employee: emp, closedShifts: empShifts, tips: empTips,
-                venueRevenue: venueRevenue));
+                venueRevenue: venueRevenue, periodEnd: stepsAt));
           } else {
             unconfigured.add(emp);
           }
@@ -137,7 +140,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         }
         results.add(PayrollCalculator.calculate(
             employee: emp, closedShifts: empShifts, credits: sales.of(emp.id), tips: empTips,
-            venueRevenue: venueRevenue));
+            venueRevenue: venueRevenue, periodEnd: stepsAt));
       }
       final unassignedTips = tipShares.entries
           .where((e) => !usedTipKeys.contains(e.key))
@@ -396,10 +399,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
           ib.qtyByItem.entries.map((e) => '${e.key} × ${e.value}').join(', '), _rub(ib.amount)));
     }
     if (r.revenueStepBonus > 0.005) {
-      final earned = emp.revenueSteps.where((s) => s.bonusFor(r.venueRevenue) > 0).length;
+      final earned = r.revenueSteps.where((s) => s.bonusFor(r.venueRevenue) > 0).length;
       rows.add(_row(
         'Бонус за выручку',
-        '$earned ${pluralRu(earned, 'шаг', 'шага', 'шагов')} из ${emp.revenueSteps.length} · выручка ${_rub(r.venueRevenue)}',
+        '$earned ${pluralRu(earned, 'шаг', 'шага', 'шагов')} из ${r.revenueSteps.length} · выручка ${_rub(r.venueRevenue)}',
         _rub(r.revenueStepBonus),
       ));
     }
