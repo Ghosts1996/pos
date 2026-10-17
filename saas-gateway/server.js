@@ -1716,7 +1716,8 @@ function parsePayer(raw) {
   return { type, name, inn, kpp };
 }
 
-/** Реквизиты — в базу в РФ токеном владельца, до записи счёта. */
+/** Реквизиты — в базу в РФ токеном владельца, до записи счёта. false —
+ *  номер в базе в РФ уже занят чужой записью. */
 async function recordPayerInRussia(req, payload) {
   const auth = String(req.headers["authorization"] || "");
   let resp = null;
@@ -1732,11 +1733,13 @@ async function recordPayerInRussia(req, payload) {
     } catch (_) { /* следующий адрес */ }
   }
   if (!resp) throw new HttpError(503, "Сервер данных в РФ недоступен — попробуйте через минуту");
+  if (resp.status === 409) return false;
   if (!resp.ok) {
     let msg = "";
     try { msg = (await resp.json()).error || ""; } catch (_) {}
     throw new HttpError(503, `Не удалось сохранить реквизиты плательщика: ${msg || resp.status}`);
   }
+  return true;
 }
 
 /** Свой счётчик номеров. Занятые пропускаем: если счётчик обнулят, новый
@@ -1762,12 +1765,18 @@ async function handleCreateBankInvoice(req, res) {
   const body = await parseJsonBody(req);
   const payer = parsePayer(body.payer);
   const c = await resolveSubscriptionCheckout(decoded, body);
-  const number = await nextBankInvoiceNumber();
+  // Номер, занятый в базе в РФ чужими реквизитами, пропускаем.
+  let number = 0;
+  for (let attempt = 0; attempt < 20 && !number; attempt++) {
+    const candidate = await nextBankInvoiceNumber();
+    const ok = await recordPayerInRussia(req, {
+      invoiceId: String(candidate), billingId: c.chainId || c.tenantId,
+      payerType: payer.type, name: payer.name, inn: payer.inn, kpp: payer.kpp,
+    });
+    if (ok) number = candidate;
+  }
+  if (!number) throw new HttpError(503, "Не удалось выдать номер счёта — попробуйте через минуту");
   const id = String(number);
-  await recordPayerInRussia(req, {
-    invoiceId: id, billingId: c.chainId || c.tenantId,
-    payerType: payer.type, name: payer.name, inn: payer.inn, kpp: payer.kpp,
-  });
   // Точку сети запоминаем, чтобы счёт был виден в её кабинете; продлевается
   // всё равно подписка сети.
   let pointId = c.tenantId;

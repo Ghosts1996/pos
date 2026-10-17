@@ -363,12 +363,23 @@ async function handleRecordPayer(req, res, body) {
     return sendJson(res, 502, { error: "не удалось проверить права" });
   }
   try {
-    await getPool().query(
+    const r = await getPool().query(
       `INSERT INTO payer_requisites (invoice_id, billing_id, payer_type, name, inn, kpp, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (invoice_id) DO NOTHING`,
+       ON CONFLICT (invoice_id) DO NOTHING
+       RETURNING invoice_id`,
       [invoiceId, billingId, payerType, str(body.name, 200), inn, str(body.kpp, 9), auth.decoded.uid]
     );
+    if (!r.rowCount) {
+      // Номер уже записан. Повтор того же запроса — успех; чужая запись
+      // (номер заняли заранее) — 409, saas-gateway возьмёт следующий.
+      const cur = await getPool().query(
+        "SELECT billing_id, created_by FROM payer_requisites WHERE invoice_id = $1", [invoiceId]);
+      const row = cur.rows[0];
+      if (!row || row.billing_id !== billingId || row.created_by !== auth.decoded.uid) {
+        return sendJson(res, 409, { error: "номер счёта уже занят", code: "invoice_taken" });
+      }
+    }
   } catch (_) {
     return sendJson(res, 500, { error: "не удалось сохранить в первичной базе" });
   }

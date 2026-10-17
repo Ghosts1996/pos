@@ -122,6 +122,23 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal(own.json.guests[0].phone, "79112223344");
   });
 
+  test("гость не берёт чужой номер и не меняет свой — имя при этом сохраняется", async () => {
+    let r = await other({ tenantId: "t1", kind: "pii_put", k: "guest", id: "g2", fields: { name: "Вор", phone: "+7 911 222-33-44" } });
+    assert.equal(r.status, 200);
+    r = await staff({ tenantId: "t1", kind: "pii_phone", phone: "79112223344" });
+    assert.deepEqual(r.json.uids, ["g1"]);
+    r = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "guest", id: "g2" }] });
+    assert.deepEqual([r.json.guests[0].name, r.json.guests[0].phone], ["Вор", ""]);
+    await guest({ tenantId: "t1", kind: "pii_put", k: "guest", id: "g1", fields: { phone: "79990000000" } });
+    r = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "guest", id: "g1" }] });
+    assert.equal(r.json.guests[0].phone, "79112223344");
+    // Персонал номер менять может.
+    await staff({ tenantId: "t1", kind: "pii_put", k: "guest", id: "g1", fields: { phone: "79990000000" } });
+    r = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "guest", id: "g1" }] });
+    assert.equal(r.json.guests[0].phone, "79990000000");
+    await staff({ tenantId: "t1", kind: "pii_put", k: "guest", id: "g1", fields: { phone: "79112223344" } });
+  });
+
   test("гость видит имена только тех сотрудников, кто на смене, и без телефона", async () => {
     await staff({ tenantId: "t1", kind: "pii_put", k: "staff", id: "e2", fields: { name: "Борис" } });
     const r = await guest({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "staff", id: "e1" }, { k: "staff", id: "e2" }] });
