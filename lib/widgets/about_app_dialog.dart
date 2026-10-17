@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../build_info.dart';
 import '../services/app_update_service.dart';
 import '../theme/app_colors.dart';
+import 'open_source_licenses.dart';
 
 /// Номер сборки на устройстве — для подписи в меню.
 String get appBuildLabel {
@@ -76,6 +77,13 @@ class _AboutAppDialogState extends State<_AboutAppDialog> {
               const SizedBox(height: 16),
               Text(_result!, style: const TextStyle(fontWeight: FontWeight.w600)),
             ],
+            const SizedBox(height: 12),
+            TextButton.icon(
+              style: TextButton.styleFrom(padding: EdgeInsets.zero, foregroundColor: AppColors.textMuted),
+              onPressed: () => showOpenSourceLicenses(context, appName: 'ZalPOS · касса'),
+              icon: const Icon(Icons.description_outlined, size: 18),
+              label: const Text('Лицензии открытого ПО'),
+            ),
           ],
         ),
       ),

@@ -175,7 +175,9 @@ class PayTerms {
         for (var i = 0; i < av.length; i++) {
           if ('${av[i]}' != '${bv[i]}') return false;
         }
-      } else if (av != bv) return false;
+      } else if (av != bv) {
+        return false;
+      }
     }
     return true;
   }

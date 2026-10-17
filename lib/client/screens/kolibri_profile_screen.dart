@@ -22,6 +22,7 @@ import '../widgets/guest_consent_checks.dart';
 import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
+import '../../widgets/open_source_licenses.dart';
 
 /// Профиль гостя: имя, телефон, бонусы, история операций.
 ///
@@ -651,6 +652,13 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               child: Text('Удалить мои данные', style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
             ),
           ),
+
+        Center(
+          child: TextButton(
+            onPressed: () => showOpenSourceLicenses(context, appName: KolibriColors.appName),
+            child: Text('Лицензии открытого ПО', style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+          ),
+        ),
 
         const SizedBox(height: 8),
         // Номер сборки: приложение ставится файлом, и без него нельзя
