@@ -236,6 +236,20 @@ describe("Нельзя обойти бэкенд для создания/эск�
     );
   });
 
+  it("owner A не заводит себе членство в B, подменив tenantId в теле документа", async () => {
+    const db = ctxFor("ownerA");
+    await assertFails(
+      setDoc(doc(db, "tenantMembers/tenantB_ownerA"), {
+        tenantId: "tenantA", userId: "ownerA", role: "employee", status: "active",
+      })
+    );
+    await assertFails(
+      setDoc(doc(db, "tenantMembers/tenantB_someone"), {
+        tenantId: "tenantA", userId: "someone", role: "manager", status: "active",
+      })
+    );
+  });
+
   it("рядовой employee не может повысить себя до admin", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("tenantMembers/tenantA_empA"), {
@@ -749,6 +763,19 @@ describe("supportTickets: обращения в поддержку — види�
     await assertFails(setDoc(doc(ctxFor("ownerB"), "supportTickets/t1/messages/m1"), {
       text: "Помогите", authorUid: "ownerB",
     }));
+  });
+
+  it("владелец не подписывается «Платформой» и не перевешивает тикет на чужое заведение", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA", lastAuthorRole: "owner" });
+    });
+    const db = ctxFor("ownerA");
+    await assertFails(setDoc(doc(db, "supportTickets/t1/messages/fake"), {
+      text: "Оплатите по новым реквизитам", authorUid: "ownerA", authorRole: "super_admin",
+    }));
+    await assertFails(setDoc(doc(db, "supportTickets/t1"), { tenantId: "tenantB" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "supportTickets/t1"), { lastAuthorRole: "super_admin" }, { merge: true }));
+    await assertSucceeds(setDoc(doc(db, "supportTickets/t1"), { status: "closed", lastAuthorRole: "owner", updatedAt: 1 }, { merge: true }));
   });
 
   it("супер-админ может отвечать в любом тикете", async () => {
@@ -1591,6 +1618,43 @@ describe("Зарплата: часы и ставки нельзя накрути
     await assertFails(updateDoc(ref, { shiftRate: 2600, payHistory: [forged, now, next] }));
     // Имя и PIN — без истории, как раньше (так пишет и кабинет).
     await assertSucceeds(updateDoc(ref, { name: "Иван П.", pinCode: "4321" }));
+  });
+
+  it("снимок «как было» не поднимает старую ставку, новый сотрудник — без истории задним числом", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/employees/e3"),
+        { name: "Олег", pinCode: "1111", role: "employee", shiftRateEnabled: true, shiftRate: 2000 });
+    });
+    const db = ctxFor("empA");
+    const ref = doc(db, "tenants/tenantA/employees/e3");
+    const now = { at: Timestamp.now(), terms: { shiftRateEnabled: true, shiftRate: 2500 }, byId: "a1", byName: "Админ" };
+    const fakeBefore = { at: ts(0), terms: { shiftRateEnabled: true, shiftRate: 9000 }, byId: "", byName: "" };
+    await assertFails(updateDoc(ref, { shiftRate: 2500, payHistory: [fakeBefore, now] }));
+    const backdated = { at: ts(Date.now() - 20 * 24 * H), terms: { shiftRateEnabled: true, shiftRate: 9000 }, byId: "", byName: "" };
+    await assertFails(updateDoc(ref, { shiftRate: 2500, payHistory: [backdated, now] }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/employees/e4"), {
+      name: "Новый", role: "employee", shiftRateEnabled: true, shiftRate: 9000,
+      payHistory: [{ at: ts(0), terms: { shiftRateEnabled: true, shiftRate: 9000 }, byId: "", byName: "" }],
+    }));
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/employees/e5"), {
+      name: "Новый", role: "employee", shiftRateEnabled: true, shiftRate: 2000,
+      payHistory: [{ at: Timestamp.now(), terms: { shiftRateEnabled: true, shiftRate: 2000 }, byId: "a1", byName: "Админ" }],
+    }));
+  });
+
+  it("шаги выручки — с записью в истории; карточка без поля сохраняется с []", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/employees/e6"),
+        { name: "Анна", pinCode: "2222", role: "employee", shiftRateEnabled: true, shiftRate: 2000 });
+    });
+    const db = ctxFor("empA");
+    const ref = doc(db, "tenants/tenantA/employees/e6");
+    await assertSucceeds(updateDoc(ref, { name: "Анна К.", revenueSteps: [] }));
+    const step = [{ threshold: 300000, isFixed: true, value: 5000 }];
+    await assertFails(updateDoc(ref, { revenueSteps: step }));
+    const before = { at: ts(0), terms: { shiftRateEnabled: true, shiftRate: 2000, revenueSteps: [] }, byId: "", byName: "" };
+    const now = { at: Timestamp.now(), terms: { shiftRateEnabled: true, shiftRate: 2000, revenueSteps: step }, byId: "a1", byName: "Админ" };
+    await assertSucceeds(updateDoc(ref, { revenueSteps: step, payHistory: [before, now] }));
   });
 
   it("первая настройка зарплаты может действовать с начала", async () => {

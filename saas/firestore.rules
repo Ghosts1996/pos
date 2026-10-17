@@ -253,8 +253,13 @@ service cloud.firestore {
       // Третья ветка — планшет присоединяется сам: код приглашения он уже
       // предъявил, создавая tenants/{tenantId}/devices/{uid}, поэтому может
       // завести себе роль employee, не выше.
+      //
+      // id — всегда «<tenantId>_<userId>»: членство ищется по id, и запись
+      // tenantMembers/B_<uid> с полем tenantId: A от владельца A сделала бы
+      // его сотрудником чужого заведения B.
       allow create: if isSuperAdmin() ||
         (hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
+         id == request.resource.data.tenantId + '_' + request.resource.data.userId &&
          request.resource.data.role in ['manager', 'employee']) ||
         (isSelf(request.resource.data.userId) &&
          request.resource.data.role == 'employee' &&
@@ -263,6 +268,8 @@ service cloud.firestore {
          exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)/devices/$(request.auth.uid)));
       allow update: if isSuperAdmin() ||
         (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
+         request.resource.data.tenantId == resource.data.tenantId &&
+         request.resource.data.userId == resource.data.userId &&
          resource.data.role in ['manager', 'employee'] &&
          request.resource.data.role in ['manager', 'employee']);
       // Убрать можно только рядового участника — иначе админ удалил бы
@@ -305,6 +312,7 @@ service cloud.firestore {
       // уже есть, а менять её может только владелец или админ сети.
       allow create: if isSuperAdmin() ||
         (hasChainRole(request.resource.data.chainId, ['owner', 'admin']) &&
+         id == request.resource.data.chainId + '_' + request.resource.data.userId &&
          request.resource.data.role in ['manager', 'employee']) ||
         (signedIn() &&
          id == request.resource.data.chainId + '_' + request.auth.uid &&
@@ -319,6 +327,8 @@ service cloud.firestore {
          exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)/devices/$(request.auth.uid)));
       allow update: if isSuperAdmin() ||
         (hasChainRole(resource.data.chainId, ['owner', 'admin']) &&
+         request.resource.data.chainId == resource.data.chainId &&
+         request.resource.data.userId == resource.data.userId &&
          resource.data.role in ['manager', 'employee'] &&
          request.resource.data.role in ['manager', 'employee']);
       allow delete: if isSuperAdmin() ||
@@ -481,6 +491,28 @@ service cloud.firestore {
         'hookahPercentRate', 'barPercentRate'];
     }
     function clockSkew() { return duration.value(5, 'm'); }
+    function nowish(t) {
+      return t is timestamp && t >= request.time - clockSkew() && t <= request.time + clockSkew();
+    }
+    // Шаги выручки — тоже оплата. Сравниваем значения, а не affectedKeys:
+    // у старых карточек поля нет, и первое сохранение пишет [].
+    function payChanged(d, o) {
+      return d.diff(o).affectedKeys().hasAny(payFields()) ||
+        d.get('revenueSteps', []) != o.get('revenueSteps', []);
+    }
+    function sameTerm(t, o, f) { return !(f in o) || t.get(f, null) == o[f]; }
+    // Запись «как было до первой правки» обязана повторять текущие условия
+    // карточки — иначе через неё подняли бы ставку для всех прошлых смен.
+    function snapshotOk(t, o) {
+      return t is map &&
+        sameTerm(t, o, 'hourlyRateEnabled') && sameTerm(t, o, 'hourlyRate') &&
+        sameTerm(t, o, 'shiftRateEnabled') && sameTerm(t, o, 'shiftRate') &&
+        sameTerm(t, o, 'overtimeEnabled') && sameTerm(t, o, 'overtimeThresholdHours') &&
+        sameTerm(t, o, 'overtimeMultiplier') && sameTerm(t, o, 'overtimeHourRate') &&
+        sameTerm(t, o, 'salesPercentEnabled') && sameTerm(t, o, 'salesPercentRate') &&
+        sameTerm(t, o, 'checkPercentExcludesHookah') && sameTerm(t, o, 'hookahPercentRate') &&
+        sameTerm(t, o, 'barPercentRate') && sameTerm(t, o, 'revenueSteps');
+    }
     function payHistoryAppendOk(d, o) {
       let before = o.get('payHistory', []);
       let after = d.get('payHistory', []);
@@ -490,19 +522,24 @@ service cloud.firestore {
         o.get('shiftRateEnabled', false) == true || o.get('salesPercentEnabled', false) == true;
       return after is list && m >= n + 1 && m <= n + 2 && m <= 500 &&
         (n == 0 || after[0:n] == before) &&
+        // Две записи разом — только первая правка: снимок прежних условий
+        // «с начала» и новые.
+        (m == n + 1 || (n == 0 && after[0].at == timestamp.value(0) && snapshotOk(after[0].get('terms', null), o))) &&
         after[m - 1].at is timestamp &&
         ((after[m - 1].at >= request.time - clockSkew() && after[m - 1].at <= request.time + clockSkew()) ||
          (n == 0 && !wasPaid && after[m - 1].at == timestamp.value(0)));
     }
     match /tenants/{tenantId}/employees/{employeeId} {
       allow read: if isStaff(tenantId);
+      // Условия нового сотрудника действуют с момента создания.
       allow create: if isStaff(tenantId) &&
         request.resource.data.get('payHistory', []) is list &&
-        request.resource.data.get('payHistory', []).size() <= 1;
+        (request.resource.data.get('payHistory', []).size() == 0 ||
+         (request.resource.data.payHistory.size() == 1 && nowish(request.resource.data.payHistory[0].at)));
       allow update: if isStaff(tenantId) && (
-        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(payFields()) &&
+        (!payChanged(request.resource.data, resource.data) &&
           request.resource.data.get('payHistory', []) == resource.data.get('payHistory', [])) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasAny(payFields()) &&
+        (payChanged(request.resource.data, resource.data) &&
           payHistoryAppendOk(request.resource.data, resource.data)));
       allow delete: if isStaff(tenantId);
     }
@@ -907,13 +944,20 @@ service cloud.firestore {
     }
 
     // ---- Обращения в поддержку: владелец и админ своего заведения и
-    //      супер-админ. Создать — только на своё заведение и от своего имени. ----
+    //      супер-админ. Создать — только на своё заведение и от своего имени.
+    //      Подпись «Платформа» (super_admin) ставит только супер-админ, и
+    //      обращение нельзя перевесить на чужое заведение: иначе в чужом
+    //      кабинете появился бы «ответ поддержки» с чужими реквизитами. ----
     match /supportTickets/{ticketId} {
       allow read: if hasRole(resource.data.tenantId, ['owner', 'admin']);
       allow create: if hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
         request.resource.data.createdBy == request.auth.uid &&
-        request.resource.data.status == 'open';
-      allow update: if hasRole(resource.data.tenantId, ['owner', 'admin']);
+        request.resource.data.status == 'open' &&
+        (isSuperAdmin() || request.resource.data.get('lastAuthorRole', '') != 'super_admin');
+      allow update: if isSuperAdmin() ||
+        (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuthorRole']) &&
+         request.resource.data.get('lastAuthorRole', '') != 'super_admin');
 
       match /messages/{messageId} {
         allow read: if hasRole(
@@ -921,7 +965,8 @@ service cloud.firestore {
           ['owner', 'admin']);
         allow create: if hasRole(
           get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.tenantId,
-          ['owner', 'admin']) && request.resource.data.authorUid == request.auth.uid;
+          ['owner', 'admin']) && request.resource.data.authorUid == request.auth.uid &&
+          (isSuperAdmin() || request.resource.data.get('authorRole', '') != 'super_admin');
         allow update, delete: if false;
       }
     }
