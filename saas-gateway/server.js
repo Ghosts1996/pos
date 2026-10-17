@@ -6523,6 +6523,15 @@ const AI_VENDOR_DEFAULTS = {
   },
   custom: { baseUrl: "", format: "auto", model: "gpt-4o-mini", analyticsModel: "gpt-4o-mini" },
 };
+// Шлюзы только для дополнительных ключей (AiVendors.presets в Dart).
+const AI_EXTRA_VENDOR_DEFAULTS = {
+  ...AI_VENDOR_DEFAULTS,
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", format: "openai", model: "openai/gpt-4o-mini", analyticsModel: "openai/gpt-4o" },
+  deepseek: { baseUrl: "https://api.deepseek.com/v1", format: "openai", model: "deepseek-chat", analyticsModel: "deepseek-chat" },
+  openai: { baseUrl: "https://api.openai.com/v1", format: "openai", model: "gpt-4o-mini", analyticsModel: "gpt-4o" },
+  anthropic: { baseUrl: "https://api.anthropic.com/v1", format: "anthropic", model: "claude-haiku-5-5", analyticsModel: "claude-sonnet-5-5" },
+};
+const AI_EXTRA_SLOT = /^extra:([A-Za-z0-9_-]{1,24})$/;
 const AI_PROXY_PATHS = new Set(["chat/completions", "messages", "v1/messages"]);
 const AI_PROXY_LIMIT = 30; // запросов гостя
 const AI_PROXY_WINDOW_MS = 10 * 60 * 1000; // за 10 минут
@@ -6540,6 +6549,26 @@ function inferAiVendor(baseUrl) {
  *  meta/aiSecrets заведения (и старого формата, где ключ лежал прямо в
  *  aiSettings). */
 function resolveAiVendor(settings, secrets, slot) {
+  const extra = AI_EXTRA_SLOT.exec(String(slot || ""));
+  if (extra) {
+    // Дополнительный ключ: публичная часть — aiSettings.extraKeys (список
+    // по порядку), ключ и адрес — aiSecrets.extraKeys[id].
+    const id = extra[1];
+    const list = Array.isArray(settings.extraKeys) ? settings.extraKeys.slice(0, 8) : [];
+    const entry = list.find((k) => k && typeof k === "object" && k.id === id);
+    if (!entry || entry.enabled === false) return null;
+    const vendorId = AI_EXTRA_VENDOR_DEFAULTS[entry.vendor] ? entry.vendor : "custom";
+    const def = AI_EXTRA_VENDOR_DEFAULTS[vendorId];
+    const sec = ((secrets.extraKeys || {})[id]) || {};
+    const model = String(entry.model || "").trim();
+    return {
+      vendorId,
+      apiKey: String(sec.apiKey || ""),
+      baseUrl: String(sec.baseUrl || def.baseUrl || "").replace(/\/+$/, ""),
+      format: entry.format || def.format,
+      models: [model || def.model, String(entry.analyticsModel || "").trim() || model || def.analyticsModel],
+    };
+  }
   const vendorId = slot === "fallback"
     ? settings.fallbackVendor
     : (settings.vendor || inferAiVendor(settings.baseUrl));
@@ -6635,7 +6664,9 @@ async function handleAiProxy(req, res) {
   const { tenantId, slot, path: apiPath, format } = body;
   const payload = body.body && typeof body.body === "object" ? { ...body.body } : null;
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
-  if (slot !== "primary" && slot !== "fallback") throw new HttpError(400, "Неизвестный провайдер");
+  if (slot !== "primary" && slot !== "fallback" && !AI_EXTRA_SLOT.test(String(slot || ""))) {
+    throw new HttpError(400, "Неизвестный провайдер");
+  }
   if (!AI_PROXY_PATHS.has(apiPath) || !payload) throw new HttpError(400, "Некорректный запрос к ИИ");
 
   const firestore = db();
@@ -7506,4 +7537,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData });
+Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });

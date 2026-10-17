@@ -281,6 +281,32 @@ async function main() {
     }
     check("журнал в Firestore: от номера гостя — только хвост",
       server.maskPhone("+7 (900) 111-22-33") === "…2233" && server.maskPhone("") === null && server.maskPhone(undefined) === null);
+    {
+      const settings = {
+        vendor: "darkapi", fallbackVendor: "gemini", vendors: { darkapi: { model: "deepseek-v4-pro" } },
+        extraKeys: [
+          { id: "k1", vendor: "darkapi", model: "deepseek-chat", enabled: true, hasKey: true },
+          { id: "k2", vendor: "anthropic", enabled: true, hasKey: true },
+          { id: "k3", vendor: "openrouter", enabled: false, hasKey: true },
+          { id: "k4", vendor: "nope", enabled: true, hasKey: true },
+        ],
+      };
+      const secrets = {
+        vendors: { darkapi: { apiKey: "dk" }, gemini: { apiKey: "gk" } },
+        extraKeys: { k1: { apiKey: "dk2", baseUrl: "" }, k2: { apiKey: "ak", baseUrl: "" }, k3: { apiKey: "ok" }, k4: { apiKey: "ck", baseUrl: "https://gw.example/v1/" } },
+      };
+      const p = server.resolveAiVendor(settings, secrets, "primary");
+      const x1 = server.resolveAiVendor(settings, secrets, "extra:k1");
+      const x2 = server.resolveAiVendor(settings, secrets, "extra:k2");
+      const x4 = server.resolveAiVendor(settings, secrets, "extra:k4");
+      check("ИИ: дополнительные ключи — свой ключ и модель у каждого, любой шлюз, выключенный не подставляется",
+        p.apiKey === "dk" && p.models[0] === "deepseek-v4-pro"
+        && x1.apiKey === "dk2" && x1.baseUrl === "https://darkapi.shop/v1" && x1.models[0] === "deepseek-chat"
+        && x2.format === "anthropic" && x2.baseUrl === "https://api.anthropic.com/v1" && x2.apiKey === "ak"
+        && server.resolveAiVendor(settings, secrets, "extra:k3") === null
+        && server.resolveAiVendor(settings, secrets, "extra:zz") === null
+        && x4.vendorId === "custom" && x4.baseUrl === "https://gw.example/v1");
+    }
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     {

@@ -96,9 +96,55 @@ class AiVendors {
         'Формат можно оставить «Определить автоматически».',
   );
 
+  // Шлюзы только для дополнительных ключей (AiExtraKey): основной и
+  // резервный провайдеры по-прежнему из [all] — их понимают и
+  // установленные версии кассы.
+  static const openrouter = AiVendor(
+    id: 'openrouter',
+    title: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    format: 'openai',
+    defaultModel: 'openai/gpt-4o-mini',
+    defaultAnalyticsModel: 'openai/gpt-4o',
+    keyHint: 'Ключ из openrouter.ai/keys',
+  );
+
+  static const deepseek = AiVendor(
+    id: 'deepseek',
+    title: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    format: 'openai',
+    defaultModel: 'deepseek-chat',
+    defaultAnalyticsModel: 'deepseek-chat',
+    keyHint: 'Ключ из platform.deepseek.com',
+  );
+
+  static const openai = AiVendor(
+    id: 'openai',
+    title: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    format: 'openai',
+    defaultModel: 'gpt-4o-mini',
+    defaultAnalyticsModel: 'gpt-4o',
+    keyHint: 'Ключ из platform.openai.com',
+  );
+
+  static const anthropic = AiVendor(
+    id: 'anthropic',
+    title: 'Anthropic (Claude)',
+    baseUrl: 'https://api.anthropic.com/v1',
+    format: 'anthropic',
+    defaultModel: 'claude-haiku-5-5',
+    defaultAnalyticsModel: 'claude-sonnet-5-5',
+    keyHint: 'Ключ из console.anthropic.com',
+  );
+
   static const all = [tooken, darkapi, gemini, custom];
 
-  static AiVendor byId(String id) => all.firstWhere((v) => v.id == id, orElse: () => tooken);
+  /// Все известные шлюзы, включая доступные только дополнительным ключам.
+  static const presets = [tooken, darkapi, gemini, openrouter, deepseek, openai, anthropic, custom];
+
+  static AiVendor byId(String id) => presets.firstWhere((v) => v.id == id, orElse: () => tooken);
 
   /// Какой провайдер у старых настроек (до выбора провайдера) — по адресу.
   static String inferFromBaseUrl(String baseUrl) {
@@ -144,9 +190,42 @@ class AiVendorConfig {
       );
 }
 
+/// Дополнительный ключ: любой шлюз, в том числе второй ключ того же
+/// провайдера. Очередь — основной, резервный, затем дополнительные по
+/// порядку. Настраиваются в кабинете (раздел «ИИ»): публичная часть —
+/// meta/aiSettings.extraKeys (список), ключ и адрес — meta/aiSecrets.extraKeys.
+class AiExtraKey {
+  static const maxCount = 8;
+  static final idPattern = RegExp(r'^[A-Za-z0-9_-]{1,24}$');
+
+  final String id;
+  final String vendor;
+  final String format;
+  final String model;
+  final String analyticsModel;
+  final bool enabled;
+  final bool hasKey;
+  final String apiKey;
+  final String baseUrl;
+
+  const AiExtraKey({
+    required this.id,
+    required this.vendor,
+    this.format = '',
+    this.model = '',
+    this.analyticsModel = '',
+    this.enabled = true,
+    this.hasKey = false,
+    this.apiKey = '',
+    this.baseUrl = '',
+  });
+
+  bool get keySet => apiKey.isNotEmpty || hasKey;
+}
+
 /// Готовая «точка» для запроса: провайдер с заполненными значениями по
-/// умолчанию. [slot] — 'primary' или 'fallback' (по нему saas-gateway
-/// понимает, чей ключ подставить, когда гость ходит через прокси).
+/// умолчанию. [slot] — 'primary', 'fallback' или 'extra:<id>' (по нему
+/// saas-gateway понимает, чей ключ подставить, когда гость ходит через прокси).
 class AiEndpoint {
   final AiVendor vendor;
   final String slot;
@@ -189,6 +268,9 @@ class AiSettings {
   /// переключение провайдера не стирает остальные ключи.
   final Map<String, AiVendorConfig> vendors;
 
+  /// Дополнительные ключи после резервного — см. [AiExtraKey].
+  final List<AiExtraKey> extraKeys;
+
   final double temperature;
   final int maxTokens;
 
@@ -205,6 +287,7 @@ class AiSettings {
     this.vendor = 'tooken',
     this.fallbackVendor = '',
     this.vendors = const {},
+    this.extraKeys = const [],
     this.temperature = 0.4,
     this.maxTokens = 900,
     this.agents = const {},
@@ -236,6 +319,31 @@ class AiSettings {
     if (fallbackVendor.isEmpty || fallbackVendor == vendor) return null;
     if (!configFor(fallbackVendor).keySet) return null;
     return endpointFor(fallbackVendor, slot: 'fallback');
+  }
+
+  /// Включённые дополнительные ключи с ключом, по порядку. У персонала
+  /// (ключ виден) нужен и адрес; гостю адрес подставит сервер платформы.
+  List<AiEndpoint> get extras {
+    final out = <AiEndpoint>[];
+    for (final k in extraKeys) {
+      if (!k.enabled || !k.keySet) continue;
+      final v = AiVendors.byId(k.vendor);
+      final baseUrl = (k.baseUrl.trim().isNotEmpty ? k.baseUrl.trim() : v.baseUrl).replaceAll(RegExp(r'/+$'), '');
+      if (k.apiKey.isNotEmpty && baseUrl.isEmpty) continue;
+      final model = k.model.trim().isNotEmpty ? k.model.trim() : v.defaultModel;
+      out.add(AiEndpoint(
+        vendor: v,
+        slot: 'extra:${k.id}',
+        baseUrl: baseUrl,
+        apiKey: k.apiKey,
+        format: k.format.isNotEmpty ? k.format : v.format,
+        model: model,
+        analyticsModel: k.analyticsModel.trim().isNotEmpty
+            ? k.analyticsModel.trim()
+            : (k.model.trim().isNotEmpty ? model : v.defaultAnalyticsModel),
+      ));
+    }
+    return out;
   }
 
   /// Модели основного провайдера — их выбирают агенты.
@@ -297,11 +405,32 @@ class AiSettings {
       );
     }
 
+    final extraKeys = <AiExtraKey>[];
+    final extraSec = ((secrets ?? const {})['extraKeys'] as Map?) ?? const {};
+    for (final raw in (d['extraKeys'] as List?) ?? const []) {
+      if (raw is! Map || extraKeys.length >= AiExtraKey.maxCount) continue;
+      final id = (raw['id'] ?? '').toString();
+      if (!AiExtraKey.idPattern.hasMatch(id) || extraKeys.any((k) => k.id == id)) continue;
+      final s = (extraSec[id] as Map?) ?? const {};
+      extraKeys.add(AiExtraKey(
+        id: id,
+        vendor: AiVendors.byId((raw['vendor'] ?? '').toString()).id,
+        format: (raw['format'] ?? '').toString(),
+        model: (raw['model'] ?? '').toString(),
+        analyticsModel: (raw['analyticsModel'] ?? '').toString(),
+        enabled: raw['enabled'] != false,
+        hasKey: raw['hasKey'] == true,
+        apiKey: (s['apiKey'] ?? '').toString(),
+        baseUrl: (s['baseUrl'] ?? '').toString(),
+      ));
+    }
+
     return AiSettings(
       enabled: d['enabled'] ?? false,
       vendor: vendorId,
       fallbackVendor: (d['fallbackVendor'] as String?) ?? '',
       vendors: vendors,
+      extraKeys: extraKeys,
       temperature: (d['temperature'] ?? 0.4).toDouble(),
       maxTokens: (d['maxTokens'] as num?)?.toInt() ?? 900,
       agents: Map<String, bool>.from(
@@ -312,6 +441,8 @@ class AiSettings {
   }
 
   /// Открытая часть (meta/aiSettings): без адресов и ключей.
+  /// Дополнительные ключи сюда не попадают: их правит кабинет, а
+  /// сохранение из кассы (merge) оставляет их как есть.
   Map<String, dynamic> toPublicMap() => {
         'enabled': enabled,
         'vendor': vendor,
@@ -344,6 +475,7 @@ class AiSettings {
     String? vendor,
     String? fallbackVendor,
     Map<String, AiVendorConfig>? vendors,
+    List<AiExtraKey>? extraKeys,
     double? temperature,
     int? maxTokens,
     Map<String, bool>? agents,
@@ -354,6 +486,7 @@ class AiSettings {
         vendor: vendor ?? this.vendor,
         fallbackVendor: fallbackVendor ?? this.fallbackVendor,
         vendors: vendors ?? this.vendors,
+        extraKeys: extraKeys ?? this.extraKeys,
         temperature: temperature ?? this.temperature,
         maxTokens: maxTokens ?? this.maxTokens,
         agents: agents ?? this.agents,
@@ -496,12 +629,13 @@ class AiSettingsStore {
       }, SetOptions(merge: true));
     }
     final saved = await _read(_target(_path)) ?? pub;
+    // Сохранение из кассы не трогает extraKeys в aiSecrets — их не теряем.
     if (isChainShared) {
       _chainData = saved;
-      if (_split) _chainSecrets = settings.toSecretsMap();
+      if (_split) _chainSecrets = {...?_chainSecrets, ...settings.toSecretsMap()};
     } else {
       _data = saved;
-      if (_split) _secrets = settings.toSecretsMap();
+      if (_split) _secrets = {...?_secrets, ...settings.toSecretsMap()};
     }
     _rebuild();
   }

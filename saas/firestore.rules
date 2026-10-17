@@ -351,7 +351,8 @@ service cloud.firestore {
         !('apiKey' in request.resource.data) &&
         !('vendorKeys' in request.resource.data) &&
         (!('vendors' in request.resource.data) ||
-          aiVendorsArePublic(request.resource.data.vendors));
+          aiVendorsArePublic(request.resource.data.vendors)) &&
+        aiExtrasArePublic(request.resource.data);
     }
     match /chains/{chainId}/meta/aiSecrets {
       allow read: if isChainStaff(chainId);
@@ -885,6 +886,20 @@ service cloud.firestore {
         aiVendorPublic(v, 'tooken') && aiVendorPublic(v, 'darkapi') &&
         aiVendorPublic(v, 'gemini') && aiVendorPublic(v, 'custom');
     }
+    // Дополнительные ключи (до 8): в публичной части только шлюз, модели и
+    // флаги — ключ и адрес лежат в aiSecrets.extraKeys.
+    function aiExtraPublic(l, i) {
+      return l.size() <= i ||
+        (l[i] is map && l[i].keys().hasOnly(['id', 'vendor', 'format', 'model', 'analyticsModel', 'enabled', 'hasKey']));
+    }
+    function aiExtrasArePublic(d) {
+      return !('extraKeys' in d) ||
+        (d.extraKeys is list && d.extraKeys.size() <= 8 &&
+          aiExtraPublic(d.extraKeys, 0) && aiExtraPublic(d.extraKeys, 1) &&
+          aiExtraPublic(d.extraKeys, 2) && aiExtraPublic(d.extraKeys, 3) &&
+          aiExtraPublic(d.extraKeys, 4) && aiExtraPublic(d.extraKeys, 5) &&
+          aiExtraPublic(d.extraKeys, 6) && aiExtraPublic(d.extraKeys, 7));
+    }
     // Публичная часть настроек ИИ — её читает и приложение гостя, поэтому
     // ключей здесь быть не может. Ключи — в meta/aiSecrets.
     match /tenants/{tenantId}/meta/aiSettings {
@@ -893,7 +908,8 @@ service cloud.firestore {
         !('apiKey' in request.resource.data) &&
         !('vendorKeys' in request.resource.data) &&
         (!('vendors' in request.resource.data) ||
-          aiVendorsArePublic(request.resource.data.vendors));
+          aiVendorsArePublic(request.resource.data.vendors)) &&
+        aiExtrasArePublic(request.resource.data);
     }
     // Ключи и адреса провайдеров ИИ: только персонал (POS вызывает ИИ
     // напрямую). Гостевое приложение ходит через шлюз /aiProxy.

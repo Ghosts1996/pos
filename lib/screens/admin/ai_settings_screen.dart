@@ -372,6 +372,17 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               ],
               onChanged: (v) => setState(() => _settings = _settings.copyWith(fallbackVendor: v ?? '')),
             ),
+            if (AppScope.isSaasMode) ...[
+              const SizedBox(height: 10),
+              Text(
+                _settings.extraKeys.isEmpty
+                    ? 'Ещё ключи (любые шлюзы, несколько ключей одного провайдера) добавляются '
+                        'в кабинете zalpos.ru → ИИ → «Дополнительные ключи».'
+                    : 'Дополнительные ключи: работают ${_settings.extras.length} из ${_settings.extraKeys.length}, '
+                        'идут после резервного. Меняются в кабинете zalpos.ru → ИИ.',
+                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            ],
             const Divider(height: 32),
             _section('Параметры генерации'),
             _slider(

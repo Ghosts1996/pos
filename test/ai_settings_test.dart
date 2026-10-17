@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/services/ai/ai_settings.dart';
+import 'package:hookah_pos/services/ai/tooken_client.dart';
 
 void main() {
   group('AiSettings.fromMap', () {
@@ -116,6 +117,62 @@ void main() {
       });
       expect(same.fallback, isNull);
     });
+
+    test('дополнительные ключи: любые шлюзы, по порядку, выключенные и без ключа пропускаются', () {
+      final staff = AiSettings.fromMap(
+        {
+          'enabled': true,
+          'vendor': 'darkapi',
+          'vendors': {
+            'darkapi': {'hasKey': true},
+          },
+          'extraKeys': [
+            {'id': 'a1', 'vendor': 'darkapi', 'model': 'deepseek-v4-pro', 'hasKey': true},
+            {'id': 'b2', 'vendor': 'anthropic', 'hasKey': true},
+            {'id': 'c3', 'vendor': 'openrouter', 'hasKey': true, 'enabled': false},
+            {'id': 'd4', 'vendor': 'custom', 'hasKey': true},
+            {'id': 'bad id!', 'vendor': 'openai', 'hasKey': true},
+            {'id': 'e5', 'vendor': 'openai', 'hasKey': false},
+          ],
+        },
+        secrets: {
+          'vendors': {
+            'darkapi': {'apiKey': 'dk', 'baseUrl': ''},
+          },
+          'extraKeys': {
+            'a1': {'apiKey': 'dk2', 'baseUrl': ''},
+            'b2': {'apiKey': 'ak', 'baseUrl': ''},
+            'c3': {'apiKey': 'ok', 'baseUrl': ''},
+            'd4': {'apiKey': 'ck', 'baseUrl': ''},
+          },
+        },
+      );
+      expect(staff.extraKeys.map((k) => k.id), ['a1', 'b2', 'c3', 'd4', 'e5']);
+      final eps = staff.extras;
+      // c3 выключен, d4 — свой шлюз без адреса, e5 — без ключа.
+      expect(eps.map((e) => e.slot), ['extra:a1', 'extra:b2']);
+      expect(eps[0].apiKey, 'dk2');
+      expect(eps[0].model, 'deepseek-v4-pro');
+      expect(eps[0].analyticsModel, 'deepseek-v4-pro');
+      expect(eps[0].baseUrl, AiVendors.darkapi.baseUrl);
+      expect(eps[1].format, 'anthropic');
+      expect(eps[1].baseUrl, AiVendors.anthropic.baseUrl);
+      expect(eps[1].model, AiVendors.anthropic.defaultModel);
+
+      // Гость ключей не видит, но знает очередь — адрес подставит сервер.
+      final guest = AiSettings.fromMap({
+        'enabled': true,
+        'vendor': 'darkapi',
+        'vendors': {
+          'darkapi': {'hasKey': true},
+        },
+        'extraKeys': [
+          {'id': 'd4', 'vendor': 'custom', 'hasKey': true, 'format': 'anthropic'},
+        ],
+      });
+      expect(guest.extras.single.slot, 'extra:d4');
+      expect(guest.extras.single.format, 'anthropic');
+    });
   });
 
   group('AiSettings: сохранение', () {
@@ -163,6 +220,36 @@ void main() {
       expect(restored.primary.analyticsModel, 'gemini-2.5-pro');
       expect(restored.fallback?.vendor.id, 'darkapi');
       expect(restored.fallback?.apiKey, 'dk');
+    });
+
+    test('сохранение из кассы не трогает дополнительные ключи (их правит кабинет)', () {
+      final s = AiSettings.fromMap(
+        {
+          'enabled': true,
+          'vendor': 'tooken',
+          'extraKeys': [
+            {'id': 'a1', 'vendor': 'deepseek', 'hasKey': true},
+          ],
+        },
+        secrets: {
+          'extraKeys': {
+            'a1': {'apiKey': 'secret-extra', 'baseUrl': ''},
+          },
+        },
+      );
+      expect(s.toPublicMap().containsKey('extraKeys'), isFalse);
+      expect(s.toSecretsMap().containsKey('extraKeys'), isFalse);
+      expect(s.copyWith(maxTokens: 500).extraKeys.single.apiKey, 'secret-extra');
+    });
+  });
+
+  group('TookenClient.restFor', () {
+    test('кончились деньги — ключ отдыхает дольше, чем при сбое сети', () {
+      expect(TookenClient.restFor(AiException('нет денег', statusCode: 402)), const Duration(hours: 6));
+      expect(TookenClient.restFor(AiException('ключ', statusCode: 401)), const Duration(hours: 1));
+      expect(TookenClient.restFor(AiException('лимит', statusCode: 429)), const Duration(minutes: 10));
+      expect(TookenClient.restFor(AiException('таймаут')), const Duration(minutes: 1));
+      expect(TookenClient.restFor(AiException('плохой запрос', statusCode: 400)), isNull);
     });
   });
 }

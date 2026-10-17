@@ -1321,6 +1321,27 @@ describe("Настройки ИИ: ключи провайдеров не вид
       vendors: { other: { model: "x" } },
     }, { merge: true }));
   });
+
+  it("дополнительные ключи: в публичной части без ключей и адресов, не больше 8", async () => {
+    const db = ctxFor("ownerA");
+    const extra = (i) => ({ id: `k${i}`, vendor: "openrouter", format: "", model: "m", analyticsModel: "", enabled: true, hasKey: true });
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/meta/aiSecrets"), {
+      extraKeys: { k1: { apiKey: "k", baseUrl: "" } },
+    }, { merge: true }));
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      enabled: true, vendor: "darkapi", extraKeys: [extra(1), extra(2)],
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      extraKeys: [extra(1), { ...extra(2), apiKey: "leak" }],
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      extraKeys: [{ ...extra(1), baseUrl: "https://x" }],
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), {
+      extraKeys: Array.from({ length: 9 }, (_, i) => extra(i)),
+    }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), { extraKeys: "k" }, { merge: true }));
+  });
 });
 
 describe("ИИ сети: один ключ на все точки", () => {

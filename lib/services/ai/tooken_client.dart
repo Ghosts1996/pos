@@ -319,10 +319,39 @@ class TookenClient {
     );
   }
 
-  /// Провайдеры по порядку: основной и (если задан) резервный.
+  /// Ключи, которые недавно отказали, — до какого времени их ставить в
+  /// конец очереди. Кончились деньги — ключ «отдыхает» часами и не
+  /// задерживает каждый ответ ожиданием отказа.
+  final _restUntil = <String, DateTime>{};
+
+  String _restKey(AiEndpoint ep) => '${ep.slot}|${ep.vendor.id}';
+
+  /// Сколько ключу отдыхать после ошибки; null — ошибка не в ключе
+  /// (неверный запрос), очередь не меняем.
+  static Duration? restFor(AiException e) {
+    final code = e.statusCode;
+    if (code == null) return const Duration(minutes: 1); // нет связи, таймаут
+    if (code == 402) return const Duration(hours: 6);
+    if (code == 401 || code == 403) return const Duration(hours: 1);
+    if (code == 404) return const Duration(minutes: 30);
+    if (code == 429) return const Duration(minutes: 10);
+    if (code >= 500) return const Duration(minutes: 2);
+    return null;
+  }
+
+  void _noteFailure(AiEndpoint ep, AiException e) {
+    final rest = restFor(e);
+    if (rest != null) _restUntil[_restKey(ep)] = DateTime.now().add(rest);
+  }
+
+  /// Ключи по порядку: основной, резервный, дополнительные; отдыхающие —
+  /// в конце (их всё равно пробуем, если отказали все остальные).
   List<AiEndpoint> _endpoints() {
     final s = _settings;
-    return [s.primary, if (s.fallback != null) s.fallback!];
+    final all = [s.primary, if (s.fallback != null) s.fallback!, ...s.extras];
+    final now = DateTime.now();
+    bool resting(AiEndpoint ep) => _restUntil[_restKey(ep)]?.isAfter(now) ?? false;
+    return [...all.where((ep) => !resting(ep)), ...all.where(resting)];
   }
 
   /// Агенты просят «модель по умолчанию» или «модель аналитики» основного
@@ -354,11 +383,11 @@ class TookenClient {
       throw AiException('ИИ не настроен: выберите провайдера и укажите ключ в «Админ → Настройки ИИ».');
     }
     final eps = _endpoints();
-    AiException? primaryError;
+    final errors = <AiException>[];
     for (var i = 0; i < eps.length; i++) {
       final ep = eps[i];
       try {
-        return await completeOn(
+        final res = await completeOn(
           ep,
           messages: messages,
           model: _modelOn(ep, model),
@@ -370,17 +399,23 @@ class TookenClient {
           timeout: timeout,
           cacheFor: cacheFor,
         );
+        _restUntil.remove(_restKey(ep));
+        return res;
       } on AiException catch (e) {
         if (e.fromGateway) rethrow;
-        if (i == eps.length - 1) {
-          if (primaryError != null) {
-            throw AiException('Основной провайдер (${eps.first.vendor.title}): ${primaryError.message} '
-                'Резервный (${ep.vendor.title}): ${e.message}',
-                statusCode: e.statusCode);
-          }
-          rethrow;
+        _noteFailure(ep, e);
+        errors.add(e); // пробуем следующий ключ
+        if (i < eps.length - 1) continue;
+        if (errors.length == 1) rethrow;
+        if (errors.length == 2 && eps.first.slot == 'primary' && ep.slot == 'fallback') {
+          throw AiException('Основной провайдер (${eps.first.vendor.title}): ${errors.first.message} '
+              'Резервный (${ep.vendor.title}): ${e.message}',
+              statusCode: e.statusCode);
         }
-        primaryError = e; // пробуем резервного провайдера
+        throw AiException(
+            'Не ответил ни один из ${errors.length} ключей ИИ. '
+            '${[for (var j = 0; j < errors.length; j++) '${j + 1}) ${errors[j].message}'].join(' ')}',
+            statusCode: e.statusCode);
       }
     }
     throw AiException('Не удалось получить ответ ИИ');
@@ -648,9 +683,11 @@ class TookenClient {
           yielded = true;
           yield piece;
         }
+        _restUntil.remove(_restKey(ep));
         return;
       } catch (e) {
-        // Резервный провайдер — только если основной не успел ничего
+        _noteFailure(ep, e is AiException ? e : AiException('$e'));
+        // Следующий ключ — только если этот не успел ничего
         // напечатать, иначе ответ склеился бы из двух разных.
         if (yielded || i == eps.length - 1) rethrow;
       }
