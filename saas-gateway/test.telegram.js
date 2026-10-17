@@ -474,7 +474,9 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
 
   // Касса сейчас: сколько должно быть наличных — как X-отчёт
   store.set("tenants/C2/meta/shiftState", { openShiftId: "s2" });
-  store.set("tenants/C2/shifts/s2", { status: "open", openedAt: new TS(Date.now() - 2 * H), openingCash: 5000 });
+  // Смена — в пределах сегодняшних рабочих суток: открытая до 6:00 подтянула бы
+  // в копию вчерашний день раньше, чем ниже появится вчерашний чек.
+  store.set("tenants/C2/shifts/s2", { status: "open", openedAt: new TS(Math.max(Date.now() - 2 * H, tgmod.businessDayStart(new Date(), TZ).getTime())), openingCash: 5000 });
   store.set("tenants/C2/sessions/p3", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 30000), orderItems: [{ name: "Пирог", price: 1200, qty: 1 }], paymentCash: 1200, tipsCash: 100 });
   store.set("tenants/C2/sessions/p4", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 20000), orderItems: [{ name: "Пирог", price: 1200, qty: 1 }], paymentCash: 1200, refunded: true });
   store.set("tenants/C2/cashOps/o1", { shiftId: "s2", type: "collection", amount: 1000 });
