@@ -372,14 +372,26 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     }
     if (k === "guest") {
       if (!a.staff && id !== a.uid) throw new VaultError(403, "нельзя писать чужой профиль");
+      let guestPhone = phone;
+      if (!a.staff && phone) {
+        // Как в /guestProfile: номер привязывает бонусы, гость задаёт его
+        // один раз и не может взять чужой — иначе касса по номеру жертвы
+        // нашла бы его профиль. Номер тогда не меняем, имя сохраняем.
+        const prev = (await query(`SELECT phone FROM guest_profiles WHERE tenant_id = $1 AND uid = $2`, [a.storeKey, id])).rows[0]?.phone || "";
+        if (prev && phoneDigits(prev) !== phoneDigits(phone)) guestPhone = null;
+        else if (!prev) {
+          const taken = await query(`SELECT 1 FROM guest_profiles WHERE tenant_id = $1 AND phone = $2 AND uid <> $3 LIMIT 1`, [a.storeKey, phone, id]);
+          if (taken.rowCount) guestPhone = null;
+        }
+      }
       await query(
         `INSERT INTO guest_profiles (tenant_id, uid, name, phone, updated_at)
          VALUES ($1, $2, COALESCE($3, ''), COALESCE($4, ''), now())
          ON CONFLICT (tenant_id, uid) DO UPDATE SET
            name = COALESCE($3, guest_profiles.name), phone = COALESCE($4, guest_profiles.phone), updated_at = now()`,
-        [a.storeKey, id, name, phone]
+        [a.storeKey, id, name, guestPhone]
       );
-      if (phone !== null) await markGuestPhone(a, id, phoneOk(phone));
+      if (guestPhone !== null) await markGuestPhone(a, id, phoneOk(guestPhone));
       return;
     }
     if (!CONTACT_KINDS.includes(k)) throw new VaultError(400, "неизвестный вид записи");
