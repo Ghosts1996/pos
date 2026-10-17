@@ -38,6 +38,7 @@ const path = require("path");
 const vm = require("vm");
 const { KB, CORE_FACTS } = require("./support-kb");
 const { DOCS, buildDoc } = require("./support-docs");
+const aiMod = require("./support-ai");
 
 const API_BASE = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/+$/, "");
 const HOOK_BASE = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, "");
@@ -69,6 +70,9 @@ const CLIENT_KB = {
   keyboard: [[{ text: BTN.ask }, { text: BTN.human }], [{ text: BTN.list }, { text: BTN.venue }], [{ text: BTN.docs }, { text: BTN.data }]],
   resize_keyboard: true, is_persistent: true, input_field_placeholder: "Опишите вопрос…",
 };
+// У админов бота (ID — в панели супер-админа) сверху кнопка админки.
+const ADMIN_BTN = "⚙️ Админка";
+const ADMIN_KB = { ...CLIENT_KB, keyboard: [[{ text: ADMIN_BTN }], ...CLIENT_KB.keyboard] };
 const STAFF_BTN = { stats: "📊 Сводка", waiting: "🔴 Ждут ответа", client: "↩️ Меню клиента" };
 const STAFF_KB = {
   keyboard: [[{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_BTN.client }]],
@@ -575,7 +579,7 @@ function createSupportBot(deps) {
   const hookUrl = () => (HOOK_BASE ? `${HOOK_BASE}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`);
 
   const state = {
-    cfg: null, token: "", aiKey: "", guide: [], learned: [], topicToTicket: new Map(),
+    cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), guide: [], learned: [], topicToTicket: new Map(),
     usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "",
   };
   const timers = new Map();
@@ -640,11 +644,18 @@ function createSupportBot(deps) {
     const d = (await cfgRef().get()).data() || null;
     state.cfg = d;
     state.token = "";
-    state.aiKey = "";
+    state.aiKeys = new Map();
     if (!d || d.enabled === false || !d.tokenEnc) return state.cfg;
     try {
       state.token = decrypt(secretKey(), d.tokenEnc);
-      state.aiKey = d.ai && d.ai.keyEnc ? decrypt(secretKey(), d.ai.keyEnc) : "";
+      for (const p of aiMod.normalizeProviders(d.ai)) {
+        if (!p.keyEnc) continue;
+        try {
+          state.aiKeys.set(p.id, decrypt(secretKey(), p.keyEnc));
+        } catch (_) {
+          console.error(`support-bot: ключ ИИ ${p.title} не расшифровать`);
+        }
+      }
     } catch (e) {
       state.lastError = "не расшифровать токен — ключ шифрования на сервере сменился";
       console.error(`support-bot: ${state.lastError}`);
@@ -654,7 +665,10 @@ function createSupportBot(deps) {
   }
   const active = () => !!(state.cfg && state.token);
   const pauseMs = () => Math.max(1, Number(state.cfg && state.cfg.humanPauseHours) || DEFAULT_PAUSE_HOURS) * 3600 * 1000;
-  const aiReady = () => !!(state.cfg && state.cfg.aiEnabled !== false && state.aiKey && state.cfg.ai && state.cfg.ai.baseUrl);
+  const providers = () => aiMod.normalizeProviders(state.cfg && state.cfg.ai);
+  const aiReady = () => !!(state.cfg && state.cfg.aiEnabled !== false && providers().some((p) => p.enabled && state.aiKeys.get(p.id) && p.baseUrl && (p.light || p.heavy)));
+  const routing = () => ((state.cfg && state.cfg.ai && state.cfg.ai.routing) || "auto");
+  const isAdminId = (id) => ((state.cfg && state.cfg.admins) || []).some((a) => Number(a.id) === Number(id));
 
   /** Инструкция кабинета + база поддержки + частые вопросы. Копии файлов
    *  кабинета кладёт update-server.sh в kb/; в репозитории — рядом. */
@@ -696,33 +710,85 @@ function createSupportBot(deps) {
   // ---- учёт расхода ИИ (на сутки, по МСК)
 
   const today = () => new Date(now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-  function countUsage(tokens) {
+  function countUsage(tokens, p = null, heavy = false) {
     const day = today();
-    if (state.usage.day !== day) state.usage = { day, calls: 0, tokens: 0 };
+    if (state.usage.day !== day) state.usage = { day, calls: 0, tokens: 0, heavy: 0, byProvider: {} };
     state.usage.calls += 1;
     state.usage.tokens += Number(tokens) || 0;
-    quiet(db().collection("supportBot").doc("usage").set({ ...state.usage }), "учёт");
+    if (heavy) state.usage.heavy = (Number(state.usage.heavy) || 0) + 1;
+    if (p) {
+      const bp = state.usage.byProvider || (state.usage.byProvider = {});
+      const cur = bp[p.id] || { calls: 0, tokens: 0 };
+      bp[p.id] = { calls: cur.calls + 1, tokens: cur.tokens + (Number(tokens) || 0) };
+    }
+    quiet(db().collection("supportBot").doc("usage").set(JSON.parse(JSON.stringify(state.usage))), "учёт");
   }
   function overDailyLimit() {
     const limit = Number(state.cfg && state.cfg.dailyAiLimit) || DEFAULT_DAILY_LIMIT;
     return state.usage.day === today() && state.usage.calls >= limit;
   }
 
-  async function ai(messages, { maxTokens = 600, temperature = 0.3 } = {}) {
-    const c = state.cfg.ai;
-    const resp = await doFetch(`${String(c.baseUrl).replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.aiKey}` },
-      body: JSON.stringify({ model: c.model, messages, max_tokens: maxTokens, temperature }),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
-      redirect: "error",
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(`ИИ ответил ${resp.status}: ${clip((data.error && data.error.message) || "", 160)}`);
-    const text = (((data.choices || [])[0] || {}).message || {}).content || "";
-    countUsage((data.usage && data.usage.total_tokens) || 0);
-    if (!String(text).trim()) throw new Error("ИИ вернул пустой ответ");
-    return String(text);
+  // ---- ИИ: провайдеры по порядку, переключение, когда кончились токены
+
+  const alerted = new Map(); // что и когда уже сообщали админам
+  const savedStatus = new Map();
+  function alertAdmins(key, html, everyMs = 6 * 3600 * 1000) {
+    const last = alerted.get(key) || 0;
+    if (now() - last < everyMs) return;
+    alerted.set(key, now());
+    for (const a of (state.cfg && state.cfg.admins) || []) send(a.id, html, { parse_mode: "HTML" }).catch(() => {});
+  }
+  const router = aiMod.createAiRouter({
+    fetchImpl: doFetch,
+    now,
+    getKey: (p) => state.aiKeys.get(p.id) || "",
+    onStatus: (p, st) => {
+      // В базу — только когда состояние ключа поменялось (или раз в 10 минут),
+      // а не после каждого ответа.
+      const prev = savedStatus.get(p.id);
+      if (!prev || prev.state !== st.state || now() - prev.at > 10 * 60 * 1000) {
+        savedStatus.set(p.id, { state: st.state, at: now() });
+        quiet(db().collection("supportBot").doc("aiStatus").set({ [p.id]: { ...st, at: now() } }, { merge: true }), "статус ИИ");
+      }
+      if (st.state === "exhausted" || st.state === "auth") {
+        alertAdmins(`st:${p.id}:${st.state}`, `⚠️ <b>ИИ: ${h(p.title)} — ${h(st.text)}</b>\nКлюч отдыхает до ${fmtWhen(st.until, now())}. Пополните баланс или замените ключ в панели → «Поддержка» → «ИИ».`);
+      }
+    },
+    onSwitch: (from, to) => alertAdmins(`sw:${from.id}:${to.id}`, `🔁 <b>ИИ переключился</b>: ${h(from.title)} → ${h(to.title)}. Клиенты ничего не заметили.`),
+    onUsage: (p, model, tokens, heavy) => countUsage(tokens, p, heavy),
+  });
+
+  /** Ответ ИИ целиком: текст, провайдер, модель. tier — light | heavy. */
+  async function aiFull(messages, { maxTokens = 600, temperature = 0.3, tier = "light" } = {}) {
+    const mode = routing();
+    const t = mode === "heavy" ? "heavy" : mode === "light" ? "light" : tier;
+    try {
+      return { ...(await router.complete(providers(), messages, { tier: t, maxTokens: t === "heavy" ? Math.max(maxTokens, 900) : maxTokens, temperature })), tier: t };
+    } catch (e) {
+      if (e.all) alertAdmins("all-down", `🔴 <b>ИИ не отвечает</b> — все ключи недоступны.\n<i>${h(clip(e.message, 500))}</i>\nОбращения уходят людям.`, 3600 * 1000);
+      throw e;
+    }
+  }
+  const ai = async (messages, opts) => (await aiFull(messages, opts)).text;
+
+  /** Модели не указаны — спрашиваем список у провайдера и выбираем сами. */
+  async function autoModels(list) {
+    const out = [];
+    for (const p of list) {
+      if (p.chosen || !state.aiKeys.get(p.id)) {
+        out.push(p);
+        continue;
+      }
+      let picked;
+      try {
+        picked = aiMod.pickModels(await router.listModels(p), p.vendor);
+      } catch (_) {
+        const def = aiMod.VENDORS[p.vendor] || {};
+        picked = { light: def.light || "", heavy: def.heavy || def.light || "" };
+      }
+      out.push({ ...p, light: picked.light || p.light, heavy: picked.heavy || p.heavy, chosen: true });
+    }
+    return out;
   }
 
   // ---- очередь: сообщения подряд склеиваем, обращение обрабатываем по одному
@@ -930,8 +996,10 @@ function createSupportBot(deps) {
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
     const messages = buildMessages({ venue, platform, errors, guide, learned, memory, summary, history, linked: !!t.tenantId });
     let reply;
+    let used;
     try {
-      reply = parseAiReply(await ai(messages));
+      used = await aiFull(messages, { tier: aiMod.needsHeavy(question, history) ? "heavy" : "light" });
+      reply = parseAiReply(used.text);
     } catch (e) {
       state.lastError = e.message;
       console.error(`support-bot: ИИ #${t.no}: ${e.message}`);
@@ -945,7 +1013,7 @@ function createSupportBot(deps) {
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md) });
     await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id) });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
-    await toTopicHtml(t, `🤖 <b>ИИ ответил</b>\n${mdToHtml(reply.md)}${guide.length ? `\n\n📖 <i>${h(guide.map((d) => d.title).join(" · "))}</i>` : ""}${learned.length ? `\n📚 <i>из базы решений: ${learned.length}</i>` : ""}`);
+    await toTopicHtml(t, `🤖 <b>ИИ ответил</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n${mdToHtml(reply.md)}${guide.length ? `\n\n📖 <i>${h(guide.map((d) => d.title).join(" · "))}</i>` : ""}${learned.length ? `\n📚 <i>из базы решений: ${learned.length}</i>` : ""}`);
     if (reply.escalate) await escalate(t, reply.reason, { tellClient: false });
   }
 
@@ -962,7 +1030,8 @@ function createSupportBot(deps) {
   const NOTICE = (policy) => [
     "👋 <b>Здравствуйте! Это поддержка ZalPOS</b>",
     "",
-    "🤖 Сначала отвечает ИИ-ассистент: он знает все функции ZalPOS и видит состояние вашего заведения — подписку, кассы, сборки, настройки. Помогает и с законами: персональные данные, онлайн-касса, табак, алкоголь, маркировка.",
+    state.cfg && state.cfg.greeting ? h(state.cfg.greeting)
+      : "🤖 Сначала отвечает ИИ-ассистент: он знает все функции ZalPOS и видит состояние вашего заведения — подписку, кассы, сборки, настройки. Помогает и с законами: персональные данные, онлайн-касса, табак, алкоголь, маркировка.",
     "",
     "👨‍💼 Живой специалист подключится, если написать <b>«оператор»</b> или нажать «👤 Позвать человека».",
     "",
@@ -997,7 +1066,15 @@ function createSupportBot(deps) {
       client.noticeAt = true;
     }
 
-    const kb = { reply_markup: CLIENT_KB, parse_mode: "HTML" };
+    const kb = { reply_markup: kbFor(userId), parse_mode: "HTML" };
+    // Админ вводит значение для настройки (часы работы, сотрудник, приветствие).
+    if (isAdminId(userId) && state.awaiting.has(userId) && raw.trim() && !raw.startsWith("/") && raw.trim() !== ADMIN_BTN) {
+      return adminInput(chatId, userId, raw.trim());
+    }
+    if (raw.trim() === ADMIN_BTN || /^\/admin(@\w+)?$/.test(raw.trim())) {
+      if (!isAdminId(userId)) return send(chatId, "Админка доступна только администраторам бота.", kb);
+      return adminOpen(chatId);
+    }
     const cmd = raw.match(/^\/(\w+)(?:@\w+)?\s*(.*)$/s);
     const button = Object.entries(BTN).find(([, label]) => raw.trim() === label);
     const staffButton = isStaffId(userId) ? Object.entries(STAFF_BTN).find(([, label]) => raw.trim() === label) : null;
@@ -1136,7 +1213,7 @@ function createSupportBot(deps) {
     const open = await openTicketOf(client);
     if (open && !open.tenantId) await patch(open, { tenantId: link.tenantId });
     const name = ((await db().collection("tenants").doc(link.tenantId).get()).data() || {}).name || "ваше заведение";
-    await send(chatId, `✅ Вы вошли как сотрудник «${name}». Теперь я вижу состояние заведения: подписку, устройства, сборки и ошибки — и отвечу точнее.`, { reply_markup: CLIENT_KB });
+    await send(chatId, `✅ Вы вошли как сотрудник «${name}». Теперь я вижу состояние заведения: подписку, устройства, сборки и ошибки — и отвечу точнее.`, { reply_markup: kbFor(userId) });
   }
 
   async function forgetClient(userId, chatId) {
@@ -1169,9 +1246,9 @@ function createSupportBot(deps) {
     for (const d of (await ticketsCol().where("tgUserId", "==", userId).limit(50).get()).docs) found.set(d.id, d.data());
     if (client.tenantId) for (const d of (await ticketsCol().where("tenantId", "==", client.tenantId).limit(50).get()).docs) found.set(d.id, d.data());
     const list = [...found.values()].sort((a, b) => toMs(b.updatedAt || b.createdAt) - toMs(a.updatedAt || a.createdAt)).slice(0, 7);
-    if (!list.length) return send(chatId, "📋 Обращений пока не было. Просто напишите вопрос — я отвечу.", { reply_markup: CLIENT_KB });
+    if (!list.length) return send(chatId, "📋 Обращений пока не было. Просто напишите вопрос — я отвечу.", { reply_markup: kbFor(chatId) });
     const lines = list.map((t) => `<b>${t.no ? `#${t.no}` : "•"} ${h(clip(t.subject || "обращение", 50))}</b>\n${STATUS_WORD(t)} · ${fmtWhen(toMs(t.updatedAt || t.createdAt), now())}${t.channel === "telegram" ? "" : " · из кабинета"}`);
-    return send(chatId, `📋 <b>Ваши обращения</b>\n\n${lines.join("\n\n")}\n\nПродолжить последнее — просто напишите. Новое — «${BTN.ask}».`, { ...HTML, reply_markup: CLIENT_KB });
+    return send(chatId, `📋 <b>Ваши обращения</b>\n\n${lines.join("\n\n")}\n\nПродолжить последнее — просто напишите. Новое — «${BTN.ask}».`, { ...HTML, reply_markup: kbFor(chatId) });
   }
 
   async function sendVenue(chatId, client) {
@@ -1181,7 +1258,7 @@ function createSupportBot(deps) {
       });
     }
     const info = await venueStatus(client.tenantId).catch(() => null);
-    return send(chatId, `${info ? venueCard(info, { now: now() }) : "Нет данных о заведении."}\n\nЕсли что-то выглядит не так — напишите, разберёмся.`, { ...HTML, reply_markup: CLIENT_KB });
+    return send(chatId, `${info ? venueCard(info, { now: now() }) : "Нет данных о заведении."}\n\nЕсли что-то выглядит не так — напишите, разберёмся.`, { ...HTML, reply_markup: kbFor(chatId) });
   }
 
   async function sendDocsMenu(chatId, client) {
@@ -1220,6 +1297,275 @@ function createSupportBot(deps) {
       const t = await loadTicket(client.ticketId);
       if (t && t.status !== "closed") await toTopic(t, `📄 Клиент скачал документ: ${doc.title}`);
     }
+  }
+
+  // ---- админка в боте: ID админов задаются в панели супер-админа
+
+  const kbFor = (id) => (isAdminId(id) ? ADMIN_KB : CLIENT_KB);
+  const ROUTING_TITLE = { auto: "авто — сложные вопросы сильной модели", light: "всегда лёгкая модель (дешевле)", heavy: "всегда сильная модель (точнее)" };
+  const back = (to = "main") => [{ text: "← Назад", callback_data: `sb:a:${to}` }];
+  const btn = (text, data) => ({ text, callback_data: `sb:a:${data}` });
+
+  async function saveCfg(patch) {
+    await cfgRef().set({ ...patch, updatedAt: ts(now()) }, { merge: true });
+    await reload();
+  }
+  async function saveProviders(list) {
+    await saveCfg({ ai: { ...(state.cfg.ai || {}), providers: list.map(({ title, chosen, ...p }) => p) } });
+  }
+
+  function provLine(p) {
+    const st = router.status.get(p.id);
+    if (!p.enabled) return "⏸ выключен";
+    if (!state.aiKeys.get(p.id)) return "❌ нет ключа";
+    if (!st) return "• ещё не отвечал";
+    if (st.state === "ok") return `✅ работает${st.ms ? ` · ${(st.ms / 1000).toFixed(1)} с` : ""}`;
+    return `${st.state === "exhausted" ? "🪫" : "⚠️"} ${h(st.text)}${st.until > now() ? ` · отдыхает до ${fmtWhen(st.until, now())}` : ""}`;
+  }
+
+  async function adminScreen(screen, arg = "") {
+    const c = state.cfg || {};
+    const u = state.usage.day === today() ? state.usage : { calls: 0, tokens: 0, heavy: 0, byProvider: {} };
+    const lim = Number(c.dailyAiLimit) || DEFAULT_DAILY_LIMIT;
+    const pause = Number(c.humanPauseHours) || DEFAULT_PAUSE_HOURS;
+    const list = providers();
+    if (screen === "main") {
+      const open = (await ticketsCol().where("status", "==", "open").limit(300).get()).docs.map((d) => d.data());
+      const text = [
+        "⚙️ <b>Админка бота поддержки</b>", "",
+        `🤖 ИИ: <b>${c.aiEnabled === false ? "выключен — отвечают только люди" : "включён"}</b>`,
+        `⚖️ Режим: ${h(ROUTING_TITLE[routing()] || ROUTING_TITLE.auto)}`,
+        `🔑 Ключи: ${list.length ? list.map((p) => `${provLine(p).split(" ")[0]} ${h(p.title)}`).join(" · ") : "не добавлены"}`,
+        `📈 Сегодня: <b>${u.calls}</b> из ${lim} ответов ИИ${u.heavy ? ` (сильных ${u.heavy})` : ""} · ${Number(u.tokens || 0).toLocaleString("ru-RU")} токенов`,
+        `📂 Открыто: <b>${open.length}</b> · 🔴 ждут человека: <b>${open.filter((t) => t.escalated).length}</b>`,
+        `⏸ Пауза ИИ после ответа человека: ${pause} ч`,
+        `🕘 Часы работы: ${h(c.workHours || "не указаны")}`,
+        `👥 Сотрудников: ${(c.staff || []).length} · группа: ${c.groupChatId ? `✅ ${h(c.groupTitle || "подключена")}` : "❌ не подключена"}`,
+        `📚 База решений: ${state.learned.length} · статей в знаниях: ${state.guide.length}`,
+      ].join("\n");
+      return { text, rows: [
+        [btn(c.aiEnabled === false ? "🤖 Включить ИИ" : "🔕 Выключить ИИ", "ai"), btn("🔑 Модели и ключи", "keys")],
+        [btn("⚖️ Режим ИИ", "mode"), btn("📈 Лимит в сутки", "limit")],
+        [btn("⏸ Пауза после человека", "pause"), btn("🕘 Часы работы", "hours")],
+        [btn("👥 Сотрудники", "staff"), btn("✏️ Приветствие", "greet")],
+        [btn("📚 База решений", "kb:0"), btn("🔴 Ждут ответа", "wait")],
+        [btn("📊 Статистика", "stats"), btn("🧪 Проверить ИИ", "test")],
+        [btn("🔄 Обновить", "main")],
+      ] };
+    }
+    if (screen === "keys") {
+      const lines = list.map((p, i) => {
+        const pu = (u.byProvider || {})[p.id] || { calls: 0 };
+        return `<b>${i + 1}. ${h(p.title)}</b> — ${provLine(p)}\n    лёгкая: <code>${h(p.light || "авто")}</code> · сильная: <code>${h(p.heavy || "авто")}</code>\n    сегодня: ${pu.calls} ${plural(pu.calls, "ответ", "ответа", "ответов")}`;
+      });
+      const rows = list.map((p, i) => [
+        btn(`${p.enabled ? "⏸ Выключить" : "▶️ Включить"} ${p.title}`, `pt:${p.id}`),
+        ...(i > 0 ? [btn("⬆️ Выше", `pu:${p.id}`)] : []),
+      ]);
+      rows.push([btn("🧪 Проверить все ключи", "check"), btn("🧩 Подобрать модели", "pick")], back());
+      return { rows, text: [
+        "🔑 <b>Модели и ключи</b>", "",
+        lines.length ? lines.join("\n\n") : "Ключей пока нет.",
+        "", "Порядок — приоритет: бот пишет через верхний ключ, а если у него закончились токены или он не отвечает — сам переключается на следующий и сообщает вам.",
+        "🔒 Ключи добавляются и меняются только в панели (zalpos.ru → «Поддержка») — так они не попадают в переписку Telegram.",
+      ].join("\n") };
+    }
+    if (screen === "mode") {
+      return { text: ["⚖️ <b>Режим ИИ</b>", "", "Авто — простые вопросы отвечает лёгкая модель (в 10–20 раз дешевле), а юридические, расчёты, сравнения и долгие диалоги — сильная.", "", `Сейчас: <b>${h(ROUTING_TITLE[routing()] || ROUTING_TITLE.auto)}</b>`].join("\n"),
+        rows: [...Object.entries(ROUTING_TITLE).map(([k, v]) => [btn(`${routing() === k ? "✓ " : ""}${v}`, `set:mode:${k}`)]), back()] };
+    }
+    if (screen === "limit") {
+      return { text: `📈 <b>Лимит ответов ИИ в сутки</b>\n\nСейчас: <b>${lim}</b>. Дальше лимита обращения уходят людям — защита от неожиданного расхода.`,
+        rows: [[100, 300, 500].map((n) => btn(`${n === lim ? "✓ " : ""}${n}`, `set:limit:${n}`)), [1000, 2000, 5000].map((n) => btn(`${n === lim ? "✓ " : ""}${n}`, `set:limit:${n}`)), back()] };
+    }
+    if (screen === "pause") {
+      return { text: `⏸ <b>Пауза ИИ после ответа человека</b>\n\nКогда сотрудник ответил в теме, ИИ молчит это время, чтобы не перебивать. Сейчас: <b>${pause} ч</b>.`,
+        rows: [[1, 3, 6].map((n) => btn(`${n === pause ? "✓ " : ""}${n} ч`, `set:pause:${n}`)), [12, 24, 48].map((n) => btn(`${n === pause ? "✓ " : ""}${n} ч`, `set:pause:${n}`)), back()] };
+    }
+    if (screen === "hours") {
+      return { text: `🕘 <b>Часы работы поддержки</b>\n\nКлиент видит их, когда зовёт человека.\nСейчас: <b>${h(c.workHours || "не указаны")}</b>`,
+        rows: [[btn("✏️ Изменить", "in:hours"), ...(c.workHours ? [btn("🧹 Убрать", "hclear")] : [])], back()] };
+    }
+    if (screen === "greet") {
+      return { text: `✏️ <b>Приветствие</b>\n\nПервый абзац сообщения новому клиенту. Уведомление о данных и как позвать человека бот добавит сам.\n\nСейчас:\n<i>${h(c.greeting || "по умолчанию — про ИИ-ассистента, состояние заведения и законы")}</i>`,
+        rows: [[btn("✏️ Изменить", "in:greet"), ...(c.greeting ? [btn("↩️ По умолчанию", "greset")] : [])], back()] };
+    }
+    if (screen === "staff") {
+      const staff = c.staff || [];
+      return { text: ["👥 <b>Сотрудники поддержки</b>", "", "Им в личку приходит «🔴 Нужен человек» с кнопкой на тему. Каждый должен один раз нажать у бота «Старт».", "",
+        staff.length ? staff.map((x, i) => `${i + 1}. ${h(x.name || "без имени")} · <code>${x.id}</code>`).join("\n") : "Пока никого."].join("\n"),
+        rows: [...staff.map((x) => [btn(`🗑 ${x.name || x.id}`, `sd:${x.id}`)]), [btn("➕ Добавить", "in:staff")], back()] };
+    }
+    if (screen === "kb") {
+      const page = Math.max(0, Number(arg) || 0);
+      const snap = await knowledgeCol().limit(500).get();
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+      const items = all.slice(page * 5, page * 5 + 5);
+      const nav = [...(page > 0 ? [btn("◀️", `kb:${page - 1}`)] : []), ...((page + 1) * 5 < all.length ? [btn("▶️", `kb:${page + 1}`)] : [])];
+      return { text: ["📚 <b>База решений</b>", `Всего: ${all.length}. Бот обобщает их из диалогов кнопкой «📚 Запомнить».`, "",
+        items.length ? items.map((k, i) => `<b>${page * 5 + i + 1}. ${h(clip(k.q || "", 120))}</b>\n${h(clip(k.a || "", 220))}\n<i>использован ${Number(k.uses) || 0} · помог ${Number(k.helpful) || 0}</i>`).join("\n\n") : "Пока пусто."].join("\n"),
+        rows: [...(items.length ? [items.map((k, i) => btn(`🗑 ${page * 5 + i + 1}`, `kd:${k.id}:${page}`))] : []), ...(nav.length ? [nav] : []), back()] };
+    }
+    if (screen === "wait") {
+      const open = (await ticketsCol().where("status", "==", "open").limit(300).get()).docs.map((d) => ({ id: d.id, ...d.data() }))
+        .filter((t) => t.escalated || t.lastAuthorRole === "owner").sort((a, b) => toMs(a.updatedAt) - toMs(b.updatedAt)).slice(0, 10);
+      const rows = open.map((t) => {
+        const link = topicLink(c.groupChatId, t.topicId);
+        return link ? [{ text: `${t.escalated ? "🔴" : "⏳"} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
+      }).filter(Boolean);
+      return { text: open.length ? `🔴 <b>Ждут ответа: ${open.length}</b>\n\n${open.map((t) => `${t.escalated ? "🔴" : "⏳"} <b>#${t.no || "?"}</b> ${h(clip(t.subject || "", 60))}${t.escalatedReason ? ` — <i>${h(t.escalatedReason)}</i>` : ""} · ${fmtWhen(toMs(t.updatedAt), now())}`).join("\n")}` : "🎉 <b>Никто не ждёт ответа</b>",
+        rows: [...rows, back()] };
+    }
+    if (screen === "stats") {
+      const closed = (await ticketsCol().where("status", "==", "closed").limit(300).get()).docs.map((d) => d.data());
+      const rated = closed.filter((t) => Number(t.csat) > 0);
+      const avg = rated.length ? (rated.reduce((a, t) => a + Number(t.csat), 0) / rated.length).toFixed(1) : "—";
+      const byAiOnly = closed.filter((t) => !t.humanReplies && Number(t.aiReplies) > 0).length;
+      return { text: [await statsText(), "",
+        `⭐ Средняя оценка: <b>${avg}</b>${rated.length ? ` (${rated.length} ${plural(rated.length, "оценка", "оценки", "оценок")})` : ""}`,
+        `🤖 Решено без человека: <b>${closed.length ? Math.round((byAiOnly / closed.length) * 100) : 0}%</b> из ${closed.length} закрытых`,
+        u.calls ? `🧠 Сильная модель сегодня: ${u.heavy || 0} из ${u.calls} ответов` : "",
+        ...list.map((p) => {
+          const pu = (u.byProvider || {})[p.id] || { calls: 0, tokens: 0 };
+          return `🔑 ${h(p.title)}: ${pu.calls} ${plural(pu.calls, "ответ", "ответа", "ответов")} · ${Number(pu.tokens || 0).toLocaleString("ru-RU")} токенов`;
+        }),
+      ].filter(Boolean).join("\n"), rows: [back()] };
+    }
+    if (screen === "test") {
+      if (!aiReady()) return { text: "🧪 ИИ не настроен — добавьте ключ в панели.", rows: [back()] };
+      const out = [];
+      for (const tier of ["light", "heavy"]) {
+        const t0 = now();
+        try {
+          const r = await router.complete(providers(), [{ role: "user", content: "Ответь одним коротким предложением: ты на связи?" }], { tier, maxTokens: 40, temperature: 0 });
+          out.push(`${tier === "heavy" ? "🧠 Сильная" : "⚡ Лёгкая"}: ✅ ${h(r.provider.title)} · <code>${h(r.model)}</code> · ${((now() - t0) / 1000).toFixed(1)} с\n<i>${h(clip(r.text, 120))}</i>`);
+        } catch (e) {
+          out.push(`${tier === "heavy" ? "🧠 Сильная" : "⚡ Лёгкая"}: ❌ ${h(clip(e.message, 300))}`);
+        }
+      }
+      return { text: `🧪 <b>Проверка ИИ</b>\n\n${out.join("\n\n")}`, rows: [[btn("🔁 Ещё раз", "test")], back()] };
+    }
+    return adminScreen("main");
+  }
+
+  async function adminOpen(chatId, screen = "main", arg = "") {
+    const v = await adminScreen(screen, arg);
+    return send(chatId, v.text, { ...HTML, reply_markup: { inline_keyboard: v.rows } });
+  }
+  async function adminEdit(chatId, messageId, screen, arg = "") {
+    const v = await adminScreen(screen, arg);
+    try {
+      await tg("editMessageText", { chat_id: chatId, message_id: messageId, text: v.text, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: { inline_keyboard: v.rows } });
+    } catch (e) {
+      if (!/not modified/i.test(e.message)) await adminOpen(chatId, screen, arg);
+    }
+  }
+
+  const ADMIN_PROMPTS = {
+    hours: "🕘 Напишите часы работы одним сообщением, например: <i>ежедневно с 10:00 до 22:00 МСК</i>",
+    staff: "👥 Пришлите Telegram ID сотрудника и имя, например: <code>123456789 Мария</code>\nУзнать ID — @userinfobot. Можно несколько, каждый с новой строки.",
+    greet: "✏️ Пришлите новый текст приветствия (до 600 символов).",
+  };
+
+  async function onAdminCallback(q, data, answer) {
+    const chatId = q.message.chat.id;
+    const mid = q.message.message_id;
+    const [, , act, a1 = "", a2 = ""] = data.split(":");
+    const c = state.cfg || {};
+    if (act === "ai") {
+      await saveCfg({ aiEnabled: c.aiEnabled === false });
+      await answer(c.aiEnabled === false ? "ИИ включён" : "ИИ выключен — отвечают люди");
+      return adminEdit(chatId, mid, "main");
+    }
+    if (act === "set") {
+      if (a1 === "mode" && ROUTING_TITLE[a2]) await saveCfg({ ai: { ...(c.ai || {}), routing: a2 } });
+      if (a1 === "limit") await saveCfg({ dailyAiLimit: Math.min(5000, Math.max(10, Number(a2) || DEFAULT_DAILY_LIMIT)) });
+      if (a1 === "pause") await saveCfg({ humanPauseHours: Math.min(72, Math.max(1, Number(a2) || DEFAULT_PAUSE_HOURS)) });
+      await answer("Сохранено");
+      return adminEdit(chatId, mid, a1);
+    }
+    if (act === "pt" || act === "pu") {
+      const list = providers();
+      const i = list.findIndex((p) => p.id === a1);
+      if (i >= 0 && act === "pt") list[i] = { ...list[i], enabled: !list[i].enabled };
+      if (i > 0 && act === "pu") [list[i - 1], list[i]] = [list[i], list[i - 1]];
+      await saveProviders(list);
+      await answer("Сохранено");
+      return adminEdit(chatId, mid, "keys");
+    }
+    if (act === "check") {
+      await answer("Проверяю ключи…");
+      for (const p of providers()) if (p.enabled) await router.check(p);
+      return adminEdit(chatId, mid, "keys");
+    }
+    if (act === "pick") {
+      await answer("Подбираю модели…");
+      await saveProviders(providers().map((p) => ({ ...p, light: "", heavy: "" })));
+      await pickModelsNow();
+      return adminEdit(chatId, mid, "keys");
+    }
+    if (act === "hclear") {
+      await saveCfg({ workHours: "" });
+      await answer("Убрано");
+      return adminEdit(chatId, mid, "hours");
+    }
+    if (act === "greset") {
+      await saveCfg({ greeting: "" });
+      await answer("Приветствие по умолчанию");
+      return adminEdit(chatId, mid, "greet");
+    }
+    if (act === "sd") {
+      await saveCfg({ staff: (c.staff || []).filter((x) => String(x.id) !== a1) });
+      await answer("Удалён");
+      return adminEdit(chatId, mid, "staff");
+    }
+    if (act === "kd") {
+      await knowledgeCol().doc(a1).delete();
+      await loadKnowledge().catch(() => {});
+      await answer("Удалено из базы");
+      return adminEdit(chatId, mid, "kb", a2);
+    }
+    if (act === "in" && ADMIN_PROMPTS[a1]) {
+      state.awaiting.set(q.from.id, { kind: a1, at: now() });
+      await answer();
+      return send(chatId, ADMIN_PROMPTS[a1], { ...HTML, reply_markup: { inline_keyboard: [[btn("Отмена", "cancel")]] } });
+    }
+    if (act === "cancel") {
+      state.awaiting.delete(q.from.id);
+      await answer("Отменено");
+      return quiet(tg("editMessageText", { chat_id: chatId, message_id: mid, text: "Отменено." }), "кнопка");
+    }
+    await answer(act === "test" ? "Проверяю ИИ…" : "");
+    return adminEdit(chatId, mid, act, a1);
+  }
+
+  async function adminInput(chatId, userId, text) {
+    const w = state.awaiting.get(userId);
+    state.awaiting.delete(userId);
+    if (!w || now() - w.at > 30 * 60 * 1000) return adminOpen(chatId);
+    const c = state.cfg || {};
+    if (w.kind === "hours") {
+      await saveCfg({ workHours: clip(text, 80) });
+      await send(chatId, "✅ Часы работы сохранены.");
+      return adminOpen(chatId, "hours");
+    }
+    if (w.kind === "greet") {
+      await saveCfg({ greeting: clip(text, 600) });
+      await send(chatId, "✅ Приветствие сохранено.");
+      return adminOpen(chatId, "greet");
+    }
+    if (w.kind === "staff") {
+      const add = parseStaff(text);
+      if (!add.length) {
+        state.awaiting.set(userId, w);
+        return send(chatId, "Не вижу ID — пришлите число из @userinfobot и имя, например <code>123456789 Мария</code>.", HTML);
+      }
+      const staff = [...(c.staff || []).filter((x) => !add.some((a) => a.id === Number(x.id))), ...add].slice(0, MAX_STAFF);
+      await saveCfg({ staff });
+      await send(chatId, `✅ Добавлено: ${add.map((a) => a.name || a.id).join(", ")}. Пусть каждый нажмёт у бота «Старт».`);
+      return adminOpen(chatId, "staff");
+    }
+    return adminOpen(chatId);
   }
 
   async function sendWaiting(chatId) {
@@ -1363,7 +1709,7 @@ function createSupportBot(deps) {
       const msgs = buildMessages({ venue, guide: rankDocs(query, state.guide, 3), learned: rankDocs(query, state.learned, 3, 1.5), summary: t.summary || "", history, linked: !!t.tenantId });
       msgs.push({ role: "system", content: "Напиши черновик следующего ответа клиенту от лица специалиста поддержки. Без маркера [[ОПЕРАТОР]]." });
       try {
-        const d = parseAiReply(await ai(msgs));
+        const d = parseAiReply(await ai(msgs, { tier: "heavy" }));
         await toTopicHtml(t, `✍️ <b>Черновик</b> <i>(клиенту не отправлен)</i>\n\n${mdToHtml(d.md)}`);
       } catch (e) {
         await toTopic(t, `Черновик не получился: ${e.message}`);
@@ -1443,6 +1789,10 @@ function createSupportBot(deps) {
     const answer = (text = "") => quiet(tg("answerCallbackQuery", { callback_query_id: q.id, text }), "кнопка");
     const chatId = q.message && q.message.chat && q.message.chat.id;
     const from = q.from || {};
+    if (data.startsWith("sb:a:")) {
+      if (!chatId || isGroup(chatId) || !isAdminId(from.id)) return answer("Нет доступа");
+      return onAdminCallback(q, data, answer);
+    }
 
     // Кнопки под карточкой обращения в теме сотрудников.
     const g = data.match(/^sb:g:(take|close|ai|mute|draft|info|learn):([\w-]+)$/);
@@ -1695,14 +2045,33 @@ function createSupportBot(deps) {
       throw new HttpError(400, "Вставьте токен бота из @BotFather");
     }
     const ai = body.ai && typeof body.ai === "object" ? body.ai : null;
+    let autoPick = false;
     if (ai) {
-      const vendor = aiVendors[ai.vendor] ? ai.vendor : "custom";
-      const def = aiVendors[vendor] || {};
-      const baseUrl = String(ai.baseUrl || def.baseUrl || "").trim().replace(/\/+$/, "");
-      if (baseUrl) await assertPublicAiUrl(baseUrl);
-      const next = { vendor, baseUrl, model: clip(String(ai.model || def.model || "gpt-4o-mini").trim(), 80), keyEnc: (prev.ai || {}).keyEnc || "" };
-      if (String(ai.apiKey || "").trim()) next.keyEnc = encrypt(key, String(ai.apiKey).trim());
-      upd.ai = next;
+      const before = aiMod.normalizeProviders(prev.ai);
+      // Старая форма панели — один провайдер; новая — список.
+      const incoming = Array.isArray(ai.providers) ? ai.providers
+        : [{ id: (before[0] || {}).id || "p1", vendor: ai.vendor, baseUrl: ai.baseUrl, light: ai.model, heavy: "", apiKey: ai.apiKey, enabled: true }];
+      if (incoming.length > aiMod.MAX_PROVIDERS) throw new HttpError(400, `Не больше ${aiMod.MAX_PROVIDERS} провайдеров`);
+      const list = [];
+      for (let i = 0; i < incoming.length; i++) {
+        const x = incoming[i] || {};
+        const vendor = aiMod.VENDORS[x.vendor] ? x.vendor : "custom";
+        const def = aiMod.VENDORS[vendor];
+        const id = /^[\w-]{1,20}$/.test(String(x.id || "")) ? String(x.id) : `p${crypto.randomBytes(3).toString("hex")}`;
+        const old = before.find((b) => b.id === id) || {};
+        const baseUrl = String(x.baseUrl || def.baseUrl || "").trim().replace(/\/+$/, "");
+        if (!baseUrl) throw new HttpError(400, `${def.title}: укажите адрес API`);
+        if (baseUrl !== old.baseUrl) await assertPublicAiUrl(baseUrl);
+        const apiKey = String(x.apiKey || "").trim();
+        const light = clip(String(x.light || "").trim(), 80);
+        const heavy = clip(String(x.heavy || "").trim(), 80);
+        if (!light || !heavy) autoPick = true;
+        list.push({
+          id, vendor, baseUrl, format: def.format, light, heavy, enabled: x.enabled !== false,
+          keyEnc: apiKey ? encrypt(key, apiKey) : old.keyEnc || "",
+        });
+      }
+      upd.ai = { providers: list, routing: ["auto", "light", "heavy"].includes(ai.routing) ? ai.routing : ((prev.ai || {}).routing || "auto") };
     }
     if (body.groupChatId !== undefined && String(body.groupChatId).trim() !== "") {
       const gid = Number(String(body.groupChatId).trim());
@@ -1728,15 +2097,37 @@ function createSupportBot(deps) {
       upd.groupTitle = clip(chat.title || "", 80);
     }
     if (body.staff !== undefined) upd.staff = parseStaff(body.staff);
+    if (body.admins !== undefined) upd.admins = parseStaff(body.admins);
     if (body.humanPauseHours !== undefined) upd.humanPauseHours = Math.min(72, Math.max(1, Number(body.humanPauseHours) || DEFAULT_PAUSE_HOURS));
     if (body.dailyAiLimit !== undefined) upd.dailyAiLimit = Math.min(5000, Math.max(10, Number(body.dailyAiLimit) || DEFAULT_DAILY_LIMIT));
     if (body.workHours !== undefined) upd.workHours = clip(String(body.workHours || "").trim(), 80);
     if (body.policyUrl !== undefined) upd.policyUrl = /^https:\/\//.test(String(body.policyUrl || "")) ? clip(String(body.policyUrl), 200) : "";
     if (body.aiEnabled !== undefined) upd.aiEnabled = body.aiEnabled !== false;
     if (body.enabled !== undefined) upd.enabled = body.enabled !== false;
+    // providers — массив: при merge Firestore заменяет его целиком, удалённые
+    // из формы провайдеры не остаются.
     await cfgRef().set(upd, { merge: true });
     await reload();
+    if (autoPick) await pickModelsNow();
     if (active()) watchTickets();
+    sendJson(res, 200, await statusOf());
+  }
+
+  /** Модели не указаны — подобрать у провайдеров и сохранить. */
+  async function pickModelsNow() {
+    const cur = providers();
+    const next = await autoModels(cur);
+    if (JSON.stringify(next.map((p) => [p.light, p.heavy])) === JSON.stringify(cur.map((p) => [p.light, p.heavy]))) return;
+    const ai = { ...(state.cfg.ai || {}), providers: next.map(({ title, chosen, ...p }) => p) };
+    await cfgRef().set({ ai }, { merge: true });
+    await reload();
+  }
+
+  /** Панель: проверить все ключи маленьким запросом. */
+  async function handleAiCheck(req, res) {
+    await superAdmin(req);
+    await pickModelsNow().catch(() => {});
+    for (const p of providers()) if (p.enabled) await router.check(p);
     sendJson(res, 200, await statusOf());
   }
 
@@ -1753,7 +2144,20 @@ function createSupportBot(deps) {
     return {
       connected: active(), enabled: c.enabled !== false, username: c.username || "", group,
       groupChatId: c.groupChatId || null, staff: (c.staff || []).map((x) => `${x.id}${x.name ? ` ${x.name}` : ""}`).join("\n"),
-      ai: c.ai ? { vendor: c.ai.vendor || "", model: c.ai.model || "", baseUrl: c.ai.baseUrl || "", hasKey: !!c.ai.keyEnc } : null,
+      ai: {
+        routing: routing(),
+        providers: providers().map((p) => {
+          const st = router.status.get(p.id) || null;
+          const u = ((state.usage.day === today() && state.usage.byProvider) || {})[p.id] || { calls: 0, tokens: 0 };
+          return {
+            id: p.id, vendor: p.vendor, title: p.title, baseUrl: p.baseUrl, light: p.light, heavy: p.heavy, enabled: p.enabled,
+            hasKey: !!p.keyEnc, status: st ? { state: st.state, text: st.text, until: st.until || 0, lastOkAt: st.lastOkAt || 0, detail: st.detail || "", ms: st.ms || 0 } : null,
+            usage: u,
+          };
+        }),
+        vendors: Object.entries(aiMod.VENDORS).map(([id, v]) => ({ id, title: v.title, baseUrl: v.baseUrl, light: v.light, heavy: v.heavy, hint: v.hint })),
+      },
+      admins: (c.admins || []).map((x) => `${x.id}${x.name ? ` ${x.name}` : ""}`).join("\n"),
       aiEnabled: c.aiEnabled !== false, humanPauseHours: Number(c.humanPauseHours) || DEFAULT_PAUSE_HOURS,
       dailyAiLimit: Number(c.dailyAiLimit) || DEFAULT_DAILY_LIMIT, workHours: c.workHours || "", policyUrl: c.policyUrl || "",
       usage: state.usage.day === today() ? state.usage : { day: today(), calls: 0, tokens: 0 },
@@ -1793,6 +2197,8 @@ function createSupportBot(deps) {
 
   async function start() {
     await reload().catch((e) => console.error(`support-bot: настройки: ${e.message || e}`));
+    const st = await db().collection("supportBot").doc("aiStatus").get().catch(() => null);
+    for (const [id, v] of Object.entries((st && st.data && st.data()) || {})) router.restore(id, v);
     await loadGuide();
     await loadKnowledge().catch(() => {});
     const u = (await db().collection("supportBot").doc("usage").get().catch(() => null));
@@ -1806,7 +2212,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleAiCheck, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, HOOK_ID, _state: state,
   };
 }

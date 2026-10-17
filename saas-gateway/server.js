@@ -7329,6 +7329,7 @@ const ROUTES = {
   "/supportBotStatus": supportBot.handleStatus,
   "/supportBotGroupCode": supportBot.handleGroupCode,
   "/supportBotLink": supportBot.handleClientLink,
+  "/supportBotAiCheck": supportBot.handleAiCheck,
   // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,

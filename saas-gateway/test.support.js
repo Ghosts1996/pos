@@ -156,6 +156,73 @@ test("ИИ на паузе после человека и при ожидани�
   assert.strictEqual(sb.aiPaused({ aiMode: "off" }, now), true);
 });
 
+
+// ---------------------------------------------------------------- ИИ: ключи и модели
+
+test("ИИ: старые настройки, автовыбор моделей, сложность вопроса, разбор ошибок", () => {
+  const ai = require("./support-ai");
+  const legacy = ai.normalizeProviders({ vendor: "tooken", baseUrl: "https://tooken.club/v1", model: "gpt-4o-mini", keyEnc: "v1:x" });
+  assert.deepStrictEqual([legacy[0].id, legacy[0].light, legacy[0].heavy, legacy[0].format], ["p1", "gpt-4o-mini", "gpt-4o", "openai"]);
+  assert.strictEqual(ai.normalizeProviders({ providers: [{ vendor: "anthropic", keyEnc: "k" }] })[0].format, "anthropic");
+  assert.deepStrictEqual(ai.pickModels(["text-embedding-3-small", "gpt-4o-2024-08-06", "gpt-4o", "gpt-4o-mini", "whisper-1"], "custom"), { light: "gpt-4o-mini", heavy: "gpt-4o" });
+  assert.deepStrictEqual(ai.pickModels(["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-1"], "custom"), { light: "claude-haiku-4-5-20251001", heavy: "claude-sonnet-4-5" });
+  assert.deepStrictEqual(ai.pickModels(["deepseek-chat", "deepseek-reasoner"], "deepseek"), { light: "deepseek-chat", heavy: "deepseek-reasoner" });
+  assert.strictEqual(ai.needsHeavy("как добавить официанта"), false);
+  assert.strictEqual(ai.needsHeavy("нужна ли лицензия на алкоголь и какой штраф"), true);
+  assert.strictEqual(ai.needsHeavy("сравни тарифы и посчитай, что выгоднее"), true);
+  assert.strictEqual(ai.needsHeavy("ок", [{ authorRole: "ai" }, { authorRole: "ai" }, { authorRole: "ai" }]), true);
+  assert.strictEqual(ai.classifyError(402, "").kind, "exhausted");
+  assert.strictEqual(ai.classifyError(400, "Your credit balance is too low").kind, "exhausted");
+  assert.strictEqual(ai.classifyError(403, "insufficient_quota").kind, "exhausted");
+  assert.strictEqual(ai.classifyError(401, "Invalid API key").kind, "auth");
+  assert.strictEqual(ai.classifyError(404, "model not found").kind, "model");
+  assert.strictEqual(ai.classifyError(429, "slow down").kind, "rate");
+  assert.strictEqual(ai.classifyError(502, "").kind, "down");
+  const a = ai.toAnthropic([{ role: "system", content: "S1" }, { role: "system", content: "S2" }, { role: "assistant", content: "привет" }, { role: "user", content: "?" }]);
+  assert.strictEqual(a.system, "S1\n\nS2");
+  assert.strictEqual(a.messages[0].role, "user");
+});
+
+test("ИИ: кончились токены у первого ключа — отвечает второй, первый отдыхает; Anthropic тоже", async () => {
+  const ai = require("./support-ai");
+  let t = 1_000_000;
+  const hits = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    hits.push({ url, model: body.model, key: opts.headers.Authorization || opts.headers["x-api-key"] });
+    if (url.startsWith("https://a.example")) return { ok: false, status: 402, json: async () => ({ error: { message: "Insufficient balance" } }) };
+    if (url.startsWith("https://b.example")) return { ok: false, status: 404, json: async () => ({ error: { message: "model gpt-4o not found" } }) };
+    if (url === "https://api.anthropic.com/v1/messages") {
+      assert.ok(body.system && body.messages[0].role === "user" && opts.headers["anthropic-version"]);
+      return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: "Ответ Claude" }], usage: { input_tokens: 10, output_tokens: 5 } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: `ответ ${body.model}` } }], usage: { total_tokens: 7 } }) };
+  };
+  const switches = [];
+  const r = ai.createAiRouter({ fetchImpl, now: () => t, getKey: (p) => `key-${p.id}`, onSwitch: (a, b) => switches.push(`${a.id}>${b.id}`) });
+  const providers = ai.normalizeProviders({ providers: [
+    { id: "a", vendor: "custom", baseUrl: "https://a.example/v1", light: "m-light", heavy: "m-heavy", keyEnc: "x" },
+    { id: "b", vendor: "custom", baseUrl: "https://b.example/v1", light: "gpt-4o-mini", heavy: "gpt-4o", keyEnc: "x" },
+    { id: "c", vendor: "anthropic", keyEnc: "x" },
+  ] });
+  const msgs = [{ role: "system", content: "s" }, { role: "user", content: "вопрос" }];
+  const first = await r.complete(providers, msgs, { tier: "heavy" });
+  assert.strictEqual(first.provider.id, "c");
+  assert.strictEqual(first.text, "Ответ Claude");
+  assert.strictEqual(first.tokens, 15);
+  assert.deepStrictEqual(hits.map((x) => x.model), ["m-heavy", "gpt-4o", "gpt-4o-mini", "claude-sonnet-5-5"], "у b нет сильной модели — пробуем лёгкую");
+  assert.strictEqual(r.status.get("a").state, "exhausted");
+  assert.deepStrictEqual(switches, ["a>c"]);
+  hits.length = 0;
+  await r.complete(providers, msgs, { tier: "light" });
+  assert.ok(!hits.some((x) => x.url.startsWith("https://a.example")), "ключ с пустым балансом отдыхает");
+  t += 7 * 3600 * 1000;
+  hits.length = 0;
+  await r.complete(providers, msgs, { tier: "light" }).catch(() => {});
+  assert.ok(hits[0].url.startsWith("https://a.example"), "через 6 часов ключ пробуем снова");
+  await assert.rejects(r.complete(providers.slice(0, 1), msgs), /все ключи недоступны/);
+});
+
 // ---------------------------------------------------------------- весь путь
 
 function harness() {
@@ -454,6 +521,66 @@ test("Telegram не принял оформление — то же сообще
   const tries = h.calls.filter((c) => c.method === "sendMessage" && String(c.body.chat_id) === "42");
   assert.strictEqual(tries.length, 2);
   assert.ok(!tries[1].body.parse_mode && !/<b>/.test(tries[1].body.text) && /Здравствуйте/.test(tries[1].body.text));
+});
+
+test("админка в боте: кнопка только у админов, настройки кнопками, ввод сотрудника", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleSetup({ body: { admins: "777000111 Константин" } }, {});
+  await h.bot.handleUpdate(pm("/start", 777000111));
+  const kb = sends(h.calls, 777000111)[0].body.reply_markup.keyboard;
+  assert.strictEqual(kb[0][0].text, "⚙️ Админка");
+  await h.bot.handleUpdate(pm("/start", 42));
+  assert.ok(!sends(h.calls, 42)[0].body.reply_markup.keyboard.flat().some((b) => b.text === "⚙️ Админка"), "у клиента админки нет");
+  await h.bot.handleUpdate(pm("⚙️ Админка", 42));
+  assert.ok(sends(h.calls, 42).some((c) => /только администраторам/.test(c.body.text)));
+  assert.strictEqual(h.aiCalls.length, 0);
+
+  await h.bot.handleUpdate(pm("⚙️ Админка", 777000111));
+  const panel = sends(h.calls, 777000111).find((c) => /Админка бота поддержки/.test(c.body.text));
+  assert.ok(panel && /Ключи:/.test(panel.body.text) && panel.body.reply_markup.inline_keyboard.length >= 6);
+  const cb = (data, from = 777000111) => h.bot.handleUpdate({ callback_query: { id: "a", from: { id: from }, data, message: { message_id: 50, chat: { id: from } } } });
+  await cb("sb:a:set:pause:3");
+  assert.strictEqual(h.store.get("supportBot/config").humanPauseHours, 3);
+  await cb("sb:a:set:mode:light");
+  assert.strictEqual(h.store.get("supportBot/config").ai.routing, "light");
+  assert.ok(h.store.get("supportBot/config").ai.providers[0].keyEnc, "ключ не потерялся при смене режима");
+  await cb("sb:a:ai");
+  assert.strictEqual(h.store.get("supportBot/config").aiEnabled, false);
+  await cb("sb:a:ai");
+  await cb("sb:a:in:staff");
+  await h.bot.handleUpdate(pm("888000222 Мария", 777000111));
+  assert.deepStrictEqual(h.store.get("supportBot/config").staff.map((x) => x.id), [555000111, 888000222]);
+  await cb("sb:a:sd:555000111");
+  assert.deepStrictEqual(h.store.get("supportBot/config").staff.map((x) => x.id), [888000222]);
+  assert.ok(h.calls.some((c) => c.method === "editMessageText" && /Сотрудники поддержки/.test(c.body.text)));
+  const before = JSON.stringify(h.store.get("supportBot/config"));
+  await cb("sb:a:set:pause:48", 42);
+  assert.strictEqual(JSON.stringify(h.store.get("supportBot/config")), before, "не админ ничего не меняет");
+  await cb("sb:a:stats");
+  assert.ok(h.calls.some((c) => c.method === "editMessageText" && /Средняя оценка/.test(c.body.text)));
+});
+
+test("несколько ключей из панели: порядок, старый ключ сохраняется, сложный вопрос — сильной модели", async () => {
+  const h = harness();
+  await setup(h);
+  const p1 = h.store.get("supportBot/config").ai.providers[0];
+  await h.bot.handleSetup({ body: { ai: { routing: "auto", providers: [
+    { id: p1.id, vendor: "tooken", light: "gpt-4o-mini", heavy: "gpt-4o" },
+    { vendor: "deepseek", apiKey: "sk-deepseek-123456789", light: "deepseek-chat", heavy: "deepseek-reasoner" },
+  ] } } }, {});
+  const cfg = h.store.get("supportBot/config");
+  assert.strictEqual(cfg.ai.providers.length, 2);
+  assert.strictEqual(cfg.ai.providers[0].keyEnc, p1.keyEnc, "пустое поле ключа — старый ключ остаётся");
+  assert.ok(cfg.ai.providers[1].keyEnc && !JSON.stringify(cfg).includes("sk-deepseek"));
+  assert.deepStrictEqual(h.sent.body.ai.providers.map((p) => p.title), ["Tooken Club", "DeepSeek"]);
+  await h.bot.handleUpdate(pm("Как добавить официанта?"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls[h.aiCalls.length - 1].model, "gpt-4o-mini");
+  await h.bot.handleUpdate(pm("/new"));
+  await h.bot.handleUpdate(pm("Нужна ли лицензия на алкоголь и какой штраф по 171-ФЗ?"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls[h.aiCalls.length - 1].model, "gpt-4o", "юридический вопрос — сильная модель");
 });
 
 test("спасибо и «ок» — без ИИ", async () => {

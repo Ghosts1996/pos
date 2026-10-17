@@ -5970,11 +5970,36 @@ function watchSupportBotAdmin() {
   let groupCode = null;
   let knowledge = null;
   let saving = false;
+  let checking = false;
+  // Черновик списка ключей ИИ: правки живут здесь до «Сохранить».
+  let provDraft = null;
+  const SB_VENDORS_FALLBACK = [
+    { id: 'tooken', title: 'Tooken Club', baseUrl: 'https://tooken.club/v1', light: 'gpt-4o-mini', heavy: 'gpt-4o', hint: 'Ключ из кабинета tooken.club' },
+    { id: 'custom', title: 'Свой шлюз', baseUrl: '', light: '', heavy: '', hint: 'OpenAI-совместимый адрес …/v1' },
+  ];
+  const sbVendors = () => (st && st.ai && st.ai.vendors) || SB_VENDORS_FALLBACK;
+  const sbVendor = (id) => sbVendors().find((v) => v.id === id) || sbVendors()[sbVendors().length - 1];
+  const draftFrom = (s) => {
+    const list = (s && s.ai && s.ai.providers) || [];
+    return list.length ? list.map((p) => ({ ...p, apiKey: '' }))
+      : [{ id: '', vendor: 'tooken', baseUrl: '', light: '', heavy: '', apiKey: '', enabled: true, hasKey: false, status: null, usage: null }];
+  };
+  const provStatus = (p) => {
+    if (!p.enabled) return '<span class="muted">⏸ выключен</span>';
+    if (!p.hasKey && !p.apiKey) return '<span style="color:var(--danger)">нет ключа</span>';
+    const x = p.status;
+    const used = p.usage && p.usage.calls ? ` · сегодня ${p.usage.calls} отв.` : '';
+    if (!x) return `<span class="muted">ещё не отвечал${used}</span>`;
+    if (x.state === 'ok') return `<span style="color:var(--success)">✓ работает${used}</span>`;
+    const until = x.until && x.until > Date.now() ? ` до ${new Date(x.until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : '';
+    return `<span style="color:${x.state === 'exhausted' ? 'var(--warning)' : 'var(--danger)'}">${x.state === 'exhausted' ? '🪫' : '⚠️'} ${esc(x.text || x.state)}${until}</span>`;
+  };
 
   const load = async () => {
     try {
       st = (await callSaasGateway('supportBotStatus', {})).data;
       loadError = '';
+      if (!provDraft) provDraft = draftFrom(st);
     } catch (e) {
       loadError = e?.status === 404 ? 'Сервер ещё не обновлён до версии с ботом поддержки — обновится сам после выкладки.' : (e?.message || String(e));
     }
@@ -5991,13 +6016,10 @@ function watchSupportBotAdmin() {
     draw();
   };
 
-  const vendorOptions = (cur) => AI_VENDORS.map((v) => `<option value="${esc(v.id)}" ${v.id === cur ? 'selected' : ''}>${esc(v.title)}</option>`).join('');
-
   const draw = () => {
     if (!st && !loadError) { body.innerHTML = '<div class="spinner"></div>'; return; }
     const s = st || {};
-    const ai = s.ai || {};
-    const vendor = aiVendor(ai.vendor || 'tooken');
+    if (!provDraft) provDraft = draftFrom(s);
     const g = s.group;
     const groupLine = !s.groupChatId ? '<span style="color:var(--warning)">не подключена</span>'
       : g && g.admin && g.canManageTopics ? `✓ ${esc(g.title || String(s.groupChatId))}`
@@ -6046,24 +6068,61 @@ function watchSupportBotAdmin() {
           <textarea id="f-sb-staff" rows="3" placeholder="123456789 Константин&#10;987654321 Мария">${esc(s.staff || '')}</textarea>
         </label>
 
+        <label class="field"><span>Администраторы бота — кнопка «⚙️ Админка» в Telegram</span>
+          <textarea id="f-sb-admins" rows="2" placeholder="123456789 Константин">${esc(s.admins || '')}</textarea>
+        </label>
+
         <div style="margin-top:12px;font-weight:700">ИИ</div>
         <label class="row" style="gap:8px;align-items:center;margin:6px 0">
           <input type="checkbox" id="f-sb-ai-on" style="width:auto" ${s.aiEnabled === false ? '' : 'checked'}>
           <span class="small">ИИ отвечает первым (выключите — все обращения сразу к людям)</span>
         </label>
-        <label class="field"><span>Провайдер</span>
-          <select id="f-sb-vendor">${vendorOptions(vendor.id)}</select>
+        <label class="field"><span>Какой моделью отвечать</span>
+          <select id="f-sb-routing">
+            ${[['auto', 'Авто — сам выбирает (рекомендуем)'], ['light', 'Всегда лёгкая — дешевле'], ['heavy', 'Всегда сильная — точнее']]
+              .map(([k, t]) => `<option value="${k}" ${((s.ai && s.ai.routing) || 'auto') === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}
+          </select>
         </label>
-        <label class="field"><span>API-ключ</span>
-          <input type="password" autocomplete="off" id="f-sb-key" placeholder="${ai.hasKey ? '✓ сохранён · пусто — не менять' : esc(vendor.hint)}">
-        </label>
-        <label class="field"><span>Модель</span>
-          <input id="f-sb-model" list="f-sb-models" value="${esc(ai.model || '')}" placeholder="${esc(vendor.model || 'gpt-4o-mini')}">
-          <datalist id="f-sb-models">${vendor.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
-        </label>
-        <label class="field"><span>Адрес API${vendor.id === 'custom' ? '' : ' (необязательно)'}</span>
-          <input id="f-sb-url" value="${esc(ai.baseUrl && ai.baseUrl !== vendor.baseUrl ? ai.baseUrl : '')}" placeholder="${esc(vendor.baseUrl || 'https://ваш-шлюз/v1')}">
-        </label>
+        <p class="small muted" style="margin:-4px 0 8px">Авто: простые вопросы — лёгкая модель (в 10–20 раз дешевле), юридические, расчёты и долгие диалоги — сильная. Ключи — по порядку: бот пишет через верхний, а когда у него кончились токены или он не отвечает — сам переходит к следующему и пишет админам. Модели можно не указывать — бот выберет сам.</p>
+        ${(provDraft || []).map((p, i) => {
+          const v = sbVendor(p.vendor);
+          return `
+          <div class="card" style="background:var(--surface-2);padding:12px">
+            <div class="row" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+              <b class="small">${i + 1}. ${esc(v.title)}</b>
+              <span class="small">${provStatus(p)}</span>
+            </div>
+            <label class="field"><span>Провайдер</span>
+              <select class="f-sb-p" data-i="${i}" data-f="vendor">${sbVendors().map((x) => `<option value="${esc(x.id)}" ${x.id === p.vendor ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+            </label>
+            <label class="field"><span>API-ключ</span>
+              <input type="password" autocomplete="off" class="f-sb-p" data-i="${i}" data-f="apiKey" value="${esc(p.apiKey || '')}" placeholder="${esc(p.hasKey ? '✓ сохранён · пусто — не менять' : v.hint || '')}">
+            </label>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              <label class="field grow"><span>Лёгкая модель</span>
+                <input class="f-sb-p" data-i="${i}" data-f="light" value="${esc(p.light || '')}" placeholder="${esc(v.light ? `авто: ${v.light}` : 'авто — выберет бот')}">
+              </label>
+              <label class="field grow"><span>Сильная модель</span>
+                <input class="f-sb-p" data-i="${i}" data-f="heavy" value="${esc(p.heavy || '')}" placeholder="${esc(v.heavy ? `авто: ${v.heavy}` : 'авто — выберет бот')}">
+              </label>
+            </div>
+            <label class="field"><span>Адрес API${v.id === 'custom' ? '' : ' (необязательно)'}</span>
+              <input class="f-sb-p" data-i="${i}" data-f="baseUrl" value="${esc(p.baseUrl && p.baseUrl !== v.baseUrl ? p.baseUrl : '')}" placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}">
+            </label>
+            <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+              <label class="row" style="gap:6px;align-items:center"><input type="checkbox" class="f-sb-p" data-i="${i}" data-f="enabled" style="width:auto" ${p.enabled !== false ? 'checked' : ''}><span class="small">Включён</span></label>
+              <span class="row" style="gap:10px">
+                ${i > 0 ? `<button class="btn-link f-sb-pm" data-i="${i}" data-d="-1" style="width:auto">↑ выше</button>` : ''}
+                <button class="btn-link f-sb-pdel" data-i="${i}" style="width:auto;color:var(--danger)">Удалить</button>
+              </span>
+            </div>
+            ${p.status && p.status.detail && p.status.state !== 'ok' ? `<p class="small muted" style="margin:6px 0 0">${esc(p.status.detail)}</p>` : ''}
+          </div>`;
+        }).join('')}
+        <div class="row" style="gap:10px;flex-wrap:wrap;margin:4px 0 10px">
+          ${(provDraft || []).length < 8 ? '<button class="btn" id="f-sb-padd" style="width:auto">➕ Добавить ключ</button>' : ''}
+          ${s.connected ? `<button class="btn" id="f-sb-check" style="width:auto" ${checking ? 'disabled' : ''}>${checking ? 'Проверяю…' : '🧪 Проверить ключи'}</button>` : ''}
+        </div>
         <div class="row" style="gap:10px;flex-wrap:wrap">
           <label class="field grow"><span>Пауза ИИ после ответа человека, ч</span>
             <input id="f-sb-pause" type="number" min="1" max="72" value="${esc(String(s.humanPauseHours || 12))}">
@@ -6099,24 +6158,76 @@ function watchSupportBotAdmin() {
       </div>
     `);
 
-    $('f-sb-vendor').onchange = () => {
-      const v = aiVendor($('f-sb-vendor').value);
-      $('f-sb-model').placeholder = v.model || 'gpt-4o-mini';
-      $('f-sb-url').placeholder = v.baseUrl || 'https://ваш-шлюз/v1';
-      $('f-sb-key').placeholder = v.hint;
-      $('f-sb-models').innerHTML = v.models.map((m) => `<option value="${esc(m)}">`).join('');
-    };
+    document.querySelectorAll('.f-sb-p').forEach((el) => {
+      const apply = () => {
+        const p = provDraft[Number(el.dataset.i)];
+        if (!p) return;
+        const f = el.dataset.f;
+        if (f === 'enabled') p.enabled = el.checked;
+        else if (f === 'vendor') {
+          p.vendor = el.value;
+          p.baseUrl = '';
+          p.light = '';
+          p.heavy = '';
+          draw();
+        } else p[f] = el.value;
+      };
+      el.oninput = apply;
+      el.onchange = apply;
+    });
+    document.querySelectorAll('.f-sb-pm').forEach((el) => {
+      el.onclick = () => {
+        const i = Number(el.dataset.i);
+        [provDraft[i - 1], provDraft[i]] = [provDraft[i], provDraft[i - 1]];
+        draw();
+      };
+    });
+    document.querySelectorAll('.f-sb-pdel').forEach((el) => {
+      el.onclick = () => {
+        const p = provDraft[Number(el.dataset.i)];
+        if (p && p.hasKey && !confirm('Удалить этот ключ из бота? Он сотрётся после «Сохранить».')) return;
+        provDraft.splice(Number(el.dataset.i), 1);
+        draw();
+      };
+    });
+    if ($('f-sb-padd')) {
+      $('f-sb-padd').onclick = () => {
+        provDraft.push({ id: '', vendor: 'tooken', baseUrl: '', light: '', heavy: '', apiKey: '', enabled: true, hasKey: false, status: null, usage: null });
+        draw();
+      };
+    }
+    if ($('f-sb-check')) {
+      $('f-sb-check').onclick = async () => {
+        checking = true;
+        draw();
+        try {
+          st = (await callSaasGateway('supportBotAiCheck', {})).data;
+          const keep = provDraft;
+          provDraft = draftFrom(st).map((p, i) => ({ ...p, apiKey: (keep.find((k) => k.id && k.id === p.id) || keep[i] || {}).apiKey || '' }));
+          const bad = (st.ai.providers || []).filter((p) => p.enabled && p.status && p.status.state !== 'ok');
+          toast(bad.length ? `Не работают: ${bad.map((p) => p.title).join(', ')}` : 'Все ключи работают');
+        } catch (e) {
+          toast(e?.message || String(e));
+        } finally {
+          checking = false;
+          draw();
+        }
+      };
+    }
     $('f-sb-save').onclick = async () => {
-      const vendorId = $('f-sb-vendor').value;
-      const v = aiVendor(vendorId);
       const payload = {
         token: $('f-sb-token').value.trim(),
         groupChatId: $('f-sb-group').value.trim(),
         staff: $('f-sb-staff').value,
+        admins: $('f-sb-admins').value,
         aiEnabled: $('f-sb-ai-on').checked,
         ai: {
-          vendor: vendorId, apiKey: $('f-sb-key').value.trim(),
-          model: $('f-sb-model').value.trim() || v.model, baseUrl: $('f-sb-url').value.trim() || v.baseUrl,
+          routing: $('f-sb-routing').value,
+          providers: provDraft.map((p) => ({
+            id: p.id || undefined, vendor: p.vendor, apiKey: (p.apiKey || '').trim(), enabled: p.enabled !== false,
+            light: (p.light || '').trim(), heavy: (p.heavy || '').trim(),
+            baseUrl: (p.baseUrl || '').trim() || sbVendor(p.vendor).baseUrl,
+          })),
         },
         humanPauseHours: Number($('f-sb-pause').value) || 12,
         dailyAiLimit: Number($('f-sb-limit').value) || 300,
@@ -6129,7 +6240,8 @@ function watchSupportBotAdmin() {
       try {
         st = (await callSaasGateway('supportBotSetup', payload)).data;
         loadError = '';
-        ['f-sb-token', 'f-sb-key'].forEach((id) => { if ($(id)) $(id).value = ''; });
+        provDraft = draftFrom(st);
+        if ($('f-sb-token')) $('f-sb-token').value = '';
         toast(st.connected ? 'Бот поддержки сохранён' : 'Сохранено');
       } catch (e) {
         toast(e?.message || String(e));
