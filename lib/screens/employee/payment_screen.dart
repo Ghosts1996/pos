@@ -335,6 +335,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// С терминала уже списали, а чек не закрыт: уйти можно, но кассир
   /// должен понимать, что деньги гостя уже у заведения.
   Future<void> _confirmLeave() async {
+    // Терминал ещё ждёт карту: уйти сейчас — и списание пройдёт, когда
+    // экрана уже нет, а чек останется неоплаченным.
+    if (_terminalBusy) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Дождитесь ответа терминала или отмените операцию на нём')));
+      return;
+    }
     if (_terminalPending) {
       final leave = await showDialog<bool>(
         context: context,
@@ -555,7 +562,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   Future<void> _pay() async {
-    if (!_canPay || _busy) return;
+    if (!_canPay || _busy || _terminalBusy) return;
     setState(() => _busy = true);
     if (!await _confirmStock()) {
       if (mounted) setState(() => _busy = false);
@@ -563,15 +570,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
     try {
       final split = _tipsSplit;
-      // Чек покупателю пробил агрегатор — своей кассой не пробиваем.
-      final fiscal = _printFiscalReceipt && !_aggIssuesReceipt;
+      // Чек покупателю пробил агрегатор — своей кассой не пробиваем. Без
+      // оплаты денег не было — и расчёта, который надо фискализировать, тоже.
+      final fiscal = _printFiscalReceipt && !_aggIssuesReceipt && !_closeWithoutPayment;
       final agg = _aggAmount > 0.004 ? _aggChoice : null;
       final tipsVia = split.cash >= _tipsTotal - 0.004
           ? 'cash'
           : split.cash < 0.004
               ? 'card'
               : 'mixed';
-      await _fs.closeSessionWithPayment(
+      final closed = await _fs.closeSessionWithPayment(
         widget.session.id,
         widget.session.tableId,
         cash: _closeWithoutPayment ? 0 : _revenueCash,
@@ -597,6 +605,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
         seenDiscountPercent: widget.session.discountPercent,
         loyaltyClientUid: _clientUid,
       );
+      if (!closed) {
+        // Чек за это время закрыли с другой кассы: эта оплата не записана.
+        // Бонусы, печать и фискальный чек по ней — уже двойные.
+        await _rollbackRedemptions();
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Чек уже закрыт'),
+            content: const Text('Этот чек только что закрыли на другом устройстве. Оплата здесь не проведена. '
+                'Если с гостя уже взяли деньги на терминале — сделайте возврат на терминале.'),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+          ),
+        );
+        if (mounted) Navigator.of(context).pop(false);
+        return;
+      }
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.
       if (_clientUid.isNotEmpty && !_closeWithoutPayment) {
@@ -624,7 +649,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
       _paidDone = true; // списанные бонусы/сертификаты ушли в оплату
       if (_printReceipt) await _printOnThermalPrinter();
-      if (fiscal) await _sendToKassa();
+      if (fiscal) {
+        final error = await _sendToKassa();
+        if (error != null) {
+          // Счёт закрыт, а чека у ККТ нет — это нарушение 54-ФЗ, его нельзя
+          // прятать в снекбар, который кассир не заметит.
+          unawaited(_fs.markFiscalFailed(widget.session.id, error).catchError((Object _) {}));
+          if (mounted) await _showFiscalFailed(error);
+        }
+      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -739,10 +772,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// выше печатает лишь информационную копию на маленьком принтере и не
   /// имеет отношения к 54-ФЗ. Пока касса не подключена (Настройки →
   /// Интеграции), чек отсюда не уходит — кассир видит предупреждение.
-  Future<void> _sendToKassa() async {
+  /// Отправляет фискальный чек. Возвращает текст ошибки, если чек не
+  /// пробит и сам не пробьётся (касса отклонила или не настроена).
+  Future<String?> _sendToKassa() async {
     if (!kassaService.isAvailable) {
-      _showKassaWarning('Касса не настроена — откройте Настройки → Интеграции');
-      return;
+      return 'касса не настроена (Настройки → Интеграции)';
     }
     try {
       final cz = ChestnyZnakService();
@@ -850,7 +884,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       if (result.queued) {
         _showKassaWarning('Касса сейчас недоступна — чек сохранён и пробьётся сам, когда связь вернётся');
       } else if (!result.success) {
-        _showKassaWarning('Касса отклонила чек: ${result.errorMessage}');
+        return 'касса отклонила чек: ${result.errorMessage ?? 'без описания'}';
       } else {
         if (result.pending) {
           // Касса приняла чек, но итоговый ФД ещё не подтверждён (обычно
@@ -865,8 +899,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
         }
       }
     } catch (e) {
-      _showKassaWarning('Не удалось отправить чек в кассу: ${humanError(e, lower: true)}');
+      return 'не удалось отправить чек в кассу: ${humanError(e, lower: true)}';
     }
+    return null;
+  }
+
+  Future<void> _showFiscalFailed(String error) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Фискальный чек не пробит'),
+        content: Text('Оплата записана, счёт закрыт, но чек на кассе не пробит: $error.\n\n'
+            'Пробейте чек на ККТ вручную на ту же сумму и теми же способами оплаты.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+      ),
+    );
   }
 
   void _showKassaWarning(String text) {
@@ -881,7 +929,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // выход перехватываем: сначала возвращаем деньги гостю, потом
       // закрываем экран. Работает и для системной кнопки «назад», и для
       // жеста, и для стрелки в AppBar.
-      canPop: !_hasPendingRedemptions && !_terminalPending,
+      canPop: !_hasPendingRedemptions && !_terminalPending && !_terminalBusy,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         unawaited(_confirmLeave());
@@ -1067,7 +1115,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     disabledBackgroundColor: AppColors.disabled,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  onPressed: _canPay && !_busy ? _pay : null,
+                  onPressed: _canPay && !_busy && !_terminalBusy ? _pay : null,
                   child: _busy
                       ? const SizedBox(
                           width: 22,

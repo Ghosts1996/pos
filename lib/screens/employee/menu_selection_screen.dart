@@ -107,7 +107,9 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
         return;
       }
 
-      await _add(menuItem);
+      // Код маркировки — только к реально добавленной позиции: иначе он
+      // числился бы проданным, а бутылка оставалась на полке.
+      if (!await _add(menuItem)) return;
       if (marking != null) {
         await _cz.attachToReceipt(
           marking,
@@ -134,11 +136,11 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
     if (code != null) await _onScan(code);
   }
 
-  Future<void> _add(MenuItem item) async {
+  Future<bool> _add(MenuItem item) async {
     var mods = const <String>[];
     if (item.hasModifiers) {
       final picked = await showModifierPicker(context, item);
-      if (picked == null) return;
+      if (picked == null) return false;
       mods = picked;
     }
     try {
@@ -147,11 +149,13 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Добавлено: ${item.name}'), duration: const Duration(seconds: 1)));
       }
+      return true;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Не удалось добавить: ${humanError(e, lower: true)}')));
       }
+      return false;
     }
   }
 

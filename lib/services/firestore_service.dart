@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import 'people_directory.dart';
 import '../utils/parse.dart';
@@ -986,7 +987,11 @@ class FirestoreService {
   /// [loyaltyClientUid] — гость из приложения, сидевший на этом чеке: по
   /// нему возврат отменит начисленный кешбэк (см. [refundSession]), а
   /// удаление данных гостя найдёт чеки с его именем в подписи.
-  Future<void> closeSessionWithPayment(
+  ///
+  /// Возвращает false, если чек уже закрыли с другого устройства: тогда
+  /// оплата этим вызовом не записана, и ни бонусы, ни фискальный чек по
+  /// ней проводить нельзя.
+  Future<bool> closeSessionWithPayment(
     String sessionId,
     String tableId, {
     required double cash,
@@ -1132,13 +1137,29 @@ class FirestoreService {
       unawaited(tableRef.update(freed(doc.data())).catchError((Object _) {}));
       // Остальное — после возвращения связи, не задерживая кассира.
       unawaited(_afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName).catchError((Object _) {}));
-      return;
+      return !alreadyClosed;
     }
-    await _db.runTransaction((tx) async {
-      final doc = await tx.get(tableRef);
-      tx.update(tableRef, freed(doc.data()));
-    });
-    await _afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName);
+    // Чек уже закрыт и оплата записана: сбой дальше (стол, склад) — не
+    // повод говорить кассиру «оплата не прошла» и проводить её второй раз.
+    try {
+      await _db.runTransaction((tx) async {
+        final doc = await tx.get(tableRef);
+        tx.update(tableRef, freed(doc.data()));
+      });
+      await _afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName);
+    } catch (e) {
+      debugPrint('closeSessionWithPayment: чек $sessionId закрыт, но после закрытия ошибка: $e');
+    }
+    return !alreadyClosed;
+  }
+
+  /// Касса не пробила фискальный чек по закрытому счёту: снимаем отметку,
+  /// чтобы такой чек нашли и пробили вручную.
+  Future<void> markFiscalFailed(String sessionId, String error) {
+    return _write(AppScope.col('sessions').doc(sessionId).update({
+      'fiscalReceiptPrinted': false,
+      'fiscalError': error,
+    }));
   }
 
   Future<void> _afterClose(
