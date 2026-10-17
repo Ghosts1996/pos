@@ -118,7 +118,7 @@ class AtolLocalKassaService implements KassaService {
     final contact = splitReceiptContact(receipt.buyerContact);
     final emailOrPhone = contact.email ?? contact.phone;
     return {
-      'type': 'sell',
+      'type': receipt.refund ? 'sellReturn' : 'sell',
       'taxationType': taxSystem.name,
       if (cashierName.isNotEmpty)
         'operator': {'name': cashierName, if (cashierInn.isNotEmpty) 'vatin': cashierInn},

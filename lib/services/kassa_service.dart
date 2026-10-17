@@ -368,7 +368,7 @@ class AtolCloudKassaService implements KassaService {
       final body = jsonEncode(buildReceiptBody(receipt));
       Future<http.Response> sell() async => http
           .post(
-            Uri.parse('$baseUrl/possystem/$apiVersion/$groupCode/sell'),
+            Uri.parse('$baseUrl/possystem/$apiVersion/$groupCode/${receipt.refund ? 'sell_refund' : 'sell'}'),
             headers: {'Content-Type': 'application/json; charset=utf-8', 'Token': await _ensureToken()},
             body: body,
           )
@@ -536,7 +536,7 @@ class OrangeDataKassaService implements KassaService {
       if (keyName != null && keyName!.isNotEmpty) 'key': keyName,
       'content': {
         'ffdVersion': 4, // ФФД 1.2
-        'type': 1, // приход
+        'type': receipt.refund ? 2 : 1, // приход или возврат прихода
         'positions': receipt.items.map((i) {
           final marked = (i.markingCode ?? '').isNotEmpty;
           final permit = i.markingPermit;

@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
+import '../../models/fiscal_receipt.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/fiscal_queue.dart';
+import '../../services/kassa_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
@@ -118,11 +123,23 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
     );
     if (confirm != true) return;
     try {
-      await _fs.refundSession(s.id, employeeName: widget.employee.name, employeeId: widget.employee.id);
+      final done = await _fs.refundSession(s.id, employeeName: widget.employee.name, employeeId: widget.employee.id);
       _load();
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Возврат оформлен')));
+      final fiscalError = done && s.fiscalReceiptPrinted ? await _sendFiscalRefund(s) : null;
+      if (!mounted) return;
+      if (fiscalError != null) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Чек возврата не пробит'),
+            content: Text('Возврат в учёте оформлен, но $fiscalError.\n\n'
+                'Пробейте на ККТ чек «возврат прихода» на ${rub(s.totalWithDiscount)} вручную.'),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(done && s.fiscalReceiptPrinted ? 'Возврат оформлен, чек возврата отправлен в кассу' : 'Возврат оформлен')));
       }
     } catch (e) {
       if (mounted) {
@@ -130,6 +147,27 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
             .showSnackBar(SnackBar(content: Text('Не удалось оформить возврат: ${humanError(e, lower: true)}')));
       }
     }
+  }
+
+  /// Чек «возврат прихода» по чеку, сохранённому при оплате. Текст
+  /// ошибки — если возврат придётся пробить вручную.
+  Future<String?> _sendFiscalRefund(SessionModel s) async {
+    String? error;
+    try {
+      final saved = await _fs.fiscalReceiptOf(s.id);
+      if (saved == null) {
+        error = 'чек продажи пробит до обновления кассы, и его состава нет в базе';
+      } else if (!kassaService.isAvailable) {
+        error = 'касса не настроена (Настройки → Интеграции)';
+      } else {
+        final result = await FiscalQueue.send(FiscalReceipt.fromJson(saved).asRefund());
+        if (!result.success && !result.queued) error = 'касса отклонила чек возврата: ${result.errorMessage ?? 'без описания'}';
+      }
+    } catch (e) {
+      error = 'не удалось отправить чек возврата: ${humanError(e, lower: true)}';
+    }
+    unawaited(_fs.markFiscalRefund(s.id, error: error).catchError((Object _) {}));
+    return error;
   }
 
   void _openDetails(SessionModel s) {

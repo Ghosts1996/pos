@@ -1356,7 +1356,8 @@ class FirestoreService {
   /// «Возврат наличными» в текущую смену. Если за чек гостю начисляли
   /// кешбэк, возврат его отменяет (см. [applyLoyaltyRefund]) — иначе
   /// бонусы за возвращённый чек оставались бы у гостя.
-  Future<void> refundSession(String sessionId, {String employeeName = '', String employeeId = ''}) async {
+  /// true — возврат оформлен этим вызовом (а не был оформлен раньше).
+  Future<bool> refundSession(String sessionId, {String employeeName = '', String employeeId = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     final stateRef = AppScope.col('meta').doc('shiftState');
     // Гостя ищем до транзакции: внутри неё запросы по коллекциям нельзя.
@@ -1364,14 +1365,14 @@ class FirestoreService {
     final clientRef = uid.isEmpty ? null : AppScope.loyaltyCol('clients').doc(uid);
     final visitRef = clientRef?.collection('visits').doc(sessionId);
 
-    await _db.runTransaction((tx) async {
+    return _db.runTransaction<bool>((tx) async {
       final doc = await tx.get(ref);
       final state = await tx.get(stateRef);
       final client = clientRef == null ? null : (await tx.get(clientRef)).data();
       final visit = visitRef == null ? null : (await tx.get(visitRef)).data();
       final data = doc.data();
       // Вернуть можно только оплаченный чек и только один раз.
-      if (data == null || data['refunded'] == true || data['status'] != 'closed') return;
+      if (data == null || data['refunded'] == true || data['status'] != 'closed') return false;
       final now = Timestamp.fromDate(DateTime.now());
       final cash = ((data['paymentCash'] ?? 0) as num).toDouble();
       final update = <String, dynamic>{
@@ -1414,7 +1415,29 @@ class FirestoreService {
         update['refundLoyalty'] = r.refund.toMap(uid);
       }
       tx.update(ref, update);
+      return true;
     });
+  }
+
+  /// Фискальный чек, отправленный при оплате, — по нему пробивается
+  /// возврат с теми же позициями и формами оплаты. Контакт гостя не
+  /// храним: это персональные данные.
+  Future<void> saveFiscalReceipt(String sessionId, Map<String, dynamic> receipt) {
+    return _write(AppScope.col('sessions').doc(sessionId).update({
+      'fiscalReceipt': {...receipt}..remove('buyerContact'),
+    }));
+  }
+
+  Future<Map<String, dynamic>?> fiscalReceiptOf(String sessionId) async {
+    final r = (await AppScope.col('sessions').doc(sessionId).get()).data()?['fiscalReceipt'];
+    return r is Map ? Map<String, dynamic>.from(r) : null;
+  }
+
+  Future<void> markFiscalRefund(String sessionId, {String? error}) {
+    return _write(AppScope.col('sessions').doc(sessionId).update({
+      'fiscalRefundSent': error == null,
+      'fiscalRefundError': error ?? FieldValue.delete(),
+    }));
   }
 
   /// Отменить возврат чека (если оформили по ошибке) — снова учитывается

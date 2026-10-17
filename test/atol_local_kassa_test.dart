@@ -92,4 +92,25 @@ void main() {
     expect(back.payments.single.type, 'card');
     expect(back.buyerContact, 'a@b.ru');
   });
+
+  test('возврат: свой номер, те же позиции и оплаты, переживает очередь', () {
+    const sale = FiscalReceipt(
+      receiptId: 's3',
+      items: [FiscalReceiptItem(name: 'Чай', price: 300, quantity: 2)],
+      payments: [FiscalPayment('cash', 100), FiscalPayment('card', 500)],
+    );
+    final refund = sale.asRefund();
+    expect(refund.refund, isTrue);
+    expect(refund.receiptId, 's3-refund');
+    expect(refund.total, sale.total);
+    expect(refund.payments.map((p) => p.type), ['cash', 'card']);
+    final back = FiscalReceipt.fromJson(refund.toJson());
+    expect(back.refund, isTrue);
+    expect(FiscalReceipt.fromJson(sale.toJson()).refund, isFalse);
+
+    expect(AtolLocalKassaService(address: '10.0.0.5').buildTask(refund)['type'], 'sellReturn');
+    final od = OrangeDataKassaService(inn: '7700000000', clientCertPem: 'c', clientKeyPem: 'k');
+    expect((od.buildDocument(refund)['content'] as Map)['type'], 2);
+    expect((od.buildDocument(sale)['content'] as Map)['type'], 1);
+  });
 }
