@@ -1225,6 +1225,9 @@ function route() {
   if (location.hash.startsWith('#/invoice/')) {
     return screenBankInvoice(location.hash.slice('#/invoice/'.length));
   }
+  if (location.hash.startsWith('#/act/')) {
+    return screenBankAct(location.hash.slice('#/act/'.length));
+  }
   if (location.hash === '#/admin') {
     // Панель платформы не зависит от того, есть ли у супер-админа
     // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
@@ -2438,7 +2441,7 @@ function legalParty(l) {
 function receiptRuleText(l) {
   return l && l.taxRegime === 'npd'
     ? 'Исполнитель применяет специальный налоговый режим «Налог на профессиональный доход» (Федеральный закон № 422-ФЗ) и не является плательщиком НДС. Чек формируется в приложении «Мой налог» и направляется в электронной форме на email Заказчика: при оплате картой — сразу, на физическое лицо; при оплате по счёту индивидуальным предпринимателем или организацией — с указанием ИНН покупателя, не позднее 9-го числа месяца, следующего за месяцем оплаты (ст. 14 Федерального закона № 422-ФЗ); ссылка на такой чек появляется и в личном кабинете.'
-    : 'При оплате формируется кассовый чек в соответствии с Федеральным законом № 54-ФЗ и направляется в электронной форме на email Заказчика.';
+    : 'При оплате картой или через СБП формируется кассовый чек в соответствии с Федеральным законом № 54-ФЗ и направляется в электронной форме на email Заказчика. При оплате по счёту с расчётного счёта индивидуального предпринимателя или организации кассовый чек не применяется (п. 9 ст. 2 Федерального закона № 54-ФЗ): основанием для учёта служат счёт и акт, которые формируются в личном кабинете.';
 }
 
 async function fillLegalRequisites() {
@@ -2496,7 +2499,7 @@ function legalSection(title, paragraphs) {
   return `<h2>${title}</h2>${paragraphs.map((p) => `<p class="small muted">${p}</p>`).join('')}`;
 }
 
-const LEGAL_EDITION = 'Редакция от 10 октября 2026 г.';
+const LEGAL_EDITION = 'Редакция от 18 октября 2026 г.';
 
 function screenLegalOffer() {
   screenEl().innerHTML = publicPageWrapHtml('Публичная оферта', `
@@ -2512,7 +2515,7 @@ function screenLegalOffer() {
       ${legalSection('3. Предмет договора', [
         'Исполнитель предоставляет Заказчику простую (неисключительную) лицензию на использование Платформы по модели SaaS (удалённый доступ через сеть Интернет) на территории всего мира на срок оплаченного периода, в объёме выбранного Тарифа. Заказчик не вправе модифицировать, декомпилировать Платформу и создавать производные продукты.',
         'Функции Платформы, включая учёт заказов и оплат, карту зала, склад, бронирование, программу лояльности, учёт смен и зарплаты, гостевое приложение и отчёты, определяются Тарифом. Исполнитель вправе развивать Платформу, не уменьшая объём функций оплаченного периода.',
-        'Порядок оказания услуги: доступ к Платформе в объёме оплаченного Тарифа открывается автоматически в личном кабинете на сайте https://zalpos.ru сразу после подтверждения оплаты платёжным сервисом; приложения скачиваются в личном кабинете. Материальные носители не передаются, доставка не осуществляется. Подписание актов не требуется.',
+        'Порядок оказания услуги: доступ к Платформе в объёме оплаченного Тарифа открывается автоматически в личном кабинете на сайте https://zalpos.ru сразу после подтверждения оплаты платёжным сервисом; приложения скачиваются в личном кабинете. Материальные носители не передаются, доставка не осуществляется. Право использования считается предоставленным в момент открытия доступа.',
       ])}
     </div>
     <div class="card">
@@ -2522,7 +2525,7 @@ function screenLegalOffer() {
       ${legalSection('5. Стоимость, порядок оплаты и чеки', [
         `Стоимость указана в Тарифе в рублях РФ и опубликована на сайте https://zalpos.ru и в личном кабинете; оплата — авансом за месяц, полгода или год. Оплата принимается через платёжный сервис ${PAYMENT_SERVICE} банковскими картами «Мир», Visa, Mastercard, через Систему быстрых платежей и другими способами, доступными на странице оплаты. Данные карты вводятся на защищённой странице платёжного сервиса; Исполнитель их не получает и не хранит.`,
         'Индивидуальные предприниматели и юридические лица оплачивают по счёту, выставленному в личном кабинете, переводом с расчётного счёта; через платёжный сервис принимаются только платежи физических лиц. Оплата по счёту — авансовая; доступ продлевается после поступления денежных средств на расчётный счёт Исполнителя (обычно 1–3 рабочих дня). Счёт действителен 10 банковских дней.',
-        '<span class="legal-receipt">Чек об оплате направляется в электронной форме на email Заказчика в порядке, установленном законодательством РФ.</span> Акты оказанных услуг не составляются; чек подтверждает оплату и предоставление доступа.',
+        '<span class="legal-receipt">Чек об оплате направляется в электронной форме на email Заказчика в порядке, установленном законодательством РФ.</span> При оплате картой или через СБП чек подтверждает оплату и предоставление доступа, акты не составляются. При оплате по счёту после поступления денежных средств Исполнитель формирует в личном кабинете акт о предоставлении права использования за оплаченный период; акт можно распечатать и подписать со стороны Заказчика. Если Заказчик в течение 5 рабочих дней со дня формирования акта не направил мотивированных возражений, право использования считается предоставленным надлежащим образом, а акт — принятым.',
         'Автопродление включается только отдельной отметкой Заказчика перед оплатой. При включённом автопродлении Заказчик поручает списывать оплату очередного периода по действующей цене Тарифа с карты, которой произведена оплата; автопродление отключается в личном кабинете в любой момент. Исполнитель вправе изменять стоимость Тарифов, уведомив Заказчика не менее чем за 30 дней; изменение не распространяется на оплаченный период.',
         'При неоплате очередного периода доступ ко всем приложениям Заведения приостанавливается; данные сохраняются 10 календарных дней, после чего могут быть удалены безвозвратно.',
       ])}
@@ -2593,7 +2596,7 @@ function screenLegalPayment() {
         'Картой и через СБП платят физические лица — от своего имени, чек выдаётся на физическое лицо.',
       ])}
       ${legalSection('Оплата от ИП и организаций — по счёту', [
-        'Если нужен чек на ИП или организацию (для учёта расходов), в личном кабинете выберите «ИП или организация», укажите название и ИНН и нажмите у нужного тарифа кнопку оплаты — появится счёт, его можно распечатать или сохранить в PDF. Оплатите его переводом с расчётного счёта; подписка продлится, когда деньги поступят, обычно через 1–3 рабочих дня.',
+        'Если нужен чек на ИП или организацию (для учёта расходов), в личном кабинете выберите «ИП или организация», укажите название и ИНН и нажмите у нужного тарифа кнопку оплаты — появится счёт, его можно распечатать или сохранить в PDF. Оплатите его переводом с расчётного счёта; подписка продлится, когда деньги поступят, обычно через 1–3 рабочих дня. Отдельный договор подписывать не нужно: оплата счёта — согласие с публичной офертой (лицензионным договором), она и есть договор (п. 3 ст. 438 ГК РФ). После оплаты в личном кабинете у счёта появится акт для бухгалтерии.',
       ])}
       ${legalSection('Когда откроется доступ', [
         'Сразу после подтверждения оплаты — обычно в течение нескольких минут — подписка продлевается автоматически, доступ открывается в личном кабинете на zalpos.ru. Доставки нет: все приложения скачиваются в личном кабинете.',
@@ -4061,6 +4064,7 @@ function watchDashboardData(tenantId) {
               </div>
               <a class="btn-link" href="#/invoice/${esc(b.id)}" style="width:auto">Открыть</a>
               ${b.receiptUrl ? `<a class="btn-link" href="${esc(b.receiptUrl)}" target="_blank" rel="noopener" style="width:auto">Чек</a>` : ''}
+              ${b.status === 'paid' ? `<a class="btn-link" href="#/act/${esc(b.id)}" style="width:auto">Акт</a>` : ''}
               ${canManage && b.status === 'pending' ? `<button class="btn-link f-bank-cancel" data-id="${esc(b.id)}" style="width:auto">Отменить</button>` : ''}
             </div>
           `).join('')}
@@ -7851,13 +7855,17 @@ function watchBankInvoicesAdmin() {
   const body = $('admin-bank-invoices');
   if (!body) return;
   const isoToRu = (iso) => (iso ? iso.split('-').reverse().join('.') : '—');
-  sub(onSnapshot(query(collection(state.db, 'bankInvoices'), orderBy('createdAt', 'desc'), limit(100)), (snap) => {
+  sub(onSnapshot(query(collection(state.db, 'bankInvoices'), orderBy('createdAt', 'desc'), limit(100)), async (snap) => {
+    await loadPlatformLegal().catch(() => null);
     const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     if (!list.length) {
       body.innerHTML = '<p class="small muted">Счетов пока не было.</p>';
       return;
     }
     const today = new Date().toISOString().slice(0, 10);
+    // Чек с ИНН покупателя нужен самозанятому; на УСН/ОСН безнал от ИП и
+    // организаций идёт без кассового чека — документ для них акт.
+    const npd = legalCache?.taxRegime === 'npd';
     body.innerHTML = `<div class="card">${list.map((b) => {
       const p = b.payer || {};
       const late = b.status === 'paid' && !b.receiptIssuedAt && b.receiptDueDate && b.receiptDueDate < today;
@@ -7866,7 +7874,8 @@ function watchBankInvoicesAdmin() {
           <div class="grow small">
             <b>№ ${esc(String(b.number))}</b> от ${fmtDate(b.createdAt)} · ${Number(b.amount || 0).toLocaleString('ru-RU')} ₽ · ${esc(BANK_INVOICE_STATUS_LABELS[b.status] || b.status)}
             <div class="muted">${p.type === 'org' ? 'Организация' : 'ИП'} ${esc(p.name || '')} · ИНН ${esc(p.inn || '—')}${p.kpp ? `, КПП ${esc(p.kpp)}` : ''} · ${esc(b.title || '')}${b.email ? ` · ${esc(b.email)}` : ''}</div>
-            ${b.status === 'paid' ? (b.receiptIssuedAt
+            ${b.status === 'paid' ? `<div class="muted"><a href="#/act/${esc(b.id)}">Акт № ${esc(String(b.number))}</a></div>` : ''}
+            ${b.status === 'paid' && npd ? (b.receiptIssuedAt
               ? `<div class="muted">Чек выдан ${fmtDate(b.receiptIssuedAt)}${b.receiptUrl ? ` · <a href="${esc(b.receiptUrl)}" target="_blank" rel="noopener">открыть чек</a>` : ''}</div>`
               : `<div style="color:${late ? 'var(--danger)' : 'var(--warning)'}">Нужен чек в «Мой налог» на ${p.type === 'org' ? 'организацию' : 'ИП'} с ИНН ${esc(p.inn || '')} — до ${isoToRu(b.receiptDueDate)}${late ? ' (срок прошёл)' : ''}</div>`) : ''}
           </div>
@@ -7874,7 +7883,7 @@ function watchBankInvoicesAdmin() {
             <button class="btn btn-ghost f-bank-paid" data-id="${esc(b.id)}" data-label="№ ${esc(String(b.number))} на ${Number(b.amount || 0).toLocaleString('ru-RU')} ₽" style="width:auto">Оплата получена</button>
             <button class="btn-link f-bank-cancel-admin" data-id="${esc(b.id)}" style="width:auto">Отменить</button>
           ` : ''}
-          ${b.status === 'paid' && !b.receiptIssuedAt ? `<button class="btn btn-ghost f-bank-receipt" data-id="${esc(b.id)}" style="width:auto">Чек выдан</button>` : ''}
+          ${b.status === 'paid' && npd && !b.receiptIssuedAt ? `<button class="btn btn-ghost f-bank-receipt" data-id="${esc(b.id)}" style="width:auto">Чек выдан</button>` : ''}
         </div>
       `;
     }).join('')}</div>`;
@@ -9179,7 +9188,7 @@ async function screenBankInvoice(id) {
       <button class="btn btn-primary" id="f-invoice-print" style="width:auto" ${inv.status === 'cancelled' ? 'disabled' : ''}>Печать / сохранить в PDF</button>
     </div>
     ${inv.status === 'cancelled' ? '<p class="small no-print" style="color:var(--danger)">Счёт отменён — не оплачивайте его.</p>' : ''}
-    ${inv.status === 'paid' ? '<p class="small no-print" style="color:var(--success)">Счёт оплачен, подписка продлена.</p>' : ''}
+    ${inv.status === 'paid' ? `<p class="small no-print" style="color:var(--success)">Счёт оплачен, подписка продлена. <a href="#/act/${esc(id)}">Акт для бухгалтерии →</a></p>` : ''}
     ${missing ? '<p class="small no-print" style="color:var(--danger)">Реквизиты получателя ещё не заполнены — напишите в поддержку, прежде чем платить.</p>' : ''}
     <div class="invoice-doc">
       <h1>Счёт на оплату № ${esc(String(inv.number))} от ${esc(longDate)}</h1>
@@ -9194,14 +9203,73 @@ async function screenBankInvoice(id) {
         <tbody><tr><td>1</td><td>${esc(inv.title || '')}</td><td>1</td><td>${sum}</td><td>${sum}</td></tr></tbody>
       </table>
       <p class="invoice-total">Итого к оплате: ${sum} ₽. Без НДС${npd ? ' — получатель применяет налог на профессиональный доход и не является плательщиком НДС (ч. 8 ст. 2 Федерального закона № 422-ФЗ)' : ''}.</p>
+      <p>Основание: публичная оферта — лицензионный договор на предоставление права использования программного комплекса ZalPOS (${esc(LEGAL_EDITION.replace(/^Редакция/, 'редакция'))}), https://zalpos.ru/#/legal/offer. Оплата счёта — акцепт оферты (п. 3 ст. 438 ГК РФ), отдельный договор не требуется.</p>
       <p>Назначение платежа: <b>Оплата по счёту № ${esc(String(inv.number))} от ${esc(created.toLocaleDateString('ru-RU'))} за право использования ZalPOS. Без НДС.</b></p>
       <p class="invoice-note">Оплата по счёту означает согласие с публичной офертой https://zalpos.ru/#/legal/offer.
       Подписка продлевается после поступления денег на расчётный счёт получателя.
-      ${npd ? `Чек с ИНН плательщика формируется в приложении «Мой налог» и направляется на email ${esc(inv.email || 'владельца кабинета')}; он же доступен в личном кабинете.` : 'Документы об оплате направляются на email владельца кабинета.'}
+      ${npd ? `Чек с ИНН плательщика формируется в приложении «Мой налог» и направляется на email ${esc(inv.email || 'владельца кабинета')}; он же доступен в личном кабинете.` : 'После поступления оплаты в личном кабинете формируется акт о предоставлении права использования.'}
       Счёт действителен 10 банковских дней.</p>
     </div>
   `;
   $('f-invoice-print').onclick = () => window.print();
+}
+
+/** Акт о предоставлении права использования — по оплаченному счёту.
+ *  Безнал между ИП и организациями идёт без кассового чека (п. 9 ст. 2
+ *  54-ФЗ), и бухгалтерии заказчика нужен первичный документ (ст. 9 402-ФЗ). */
+async function screenBankAct(id) {
+  const el = screenEl();
+  el.innerHTML = '<div class="spinner"></div>';
+  let inv;
+  let l;
+  try {
+    const [snap, legal] = await Promise.all([getDoc(doc(state.db, 'bankInvoices', id)), loadPlatformLegal()]);
+    if (!snap.exists()) throw new Error('счёт не найден');
+    inv = snap.data();
+    l = legal || {};
+  } catch (e) {
+    el.innerHTML = `<p class="small" style="color:var(--danger)">Не удалось открыть акт: ${esc(e?.message || e)}</p><p class="small"><a href="#/">← В личный кабинет</a></p>`;
+    return;
+  }
+  if (inv.status !== 'paid') {
+    el.innerHTML = '<p class="small">Акт появится, когда оплата по счёту поступит на расчётный счёт.</p><p class="small"><a href="#/">← В личный кабинет</a></p>';
+    return;
+  }
+  const party = legalParty(l);
+  const toDate = (x) => (x?.toDate ? x.toDate() : null);
+  const actDate = toDate(inv.paidAt) || new Date();
+  const invDate = toDate(inv.createdAt) || actDate;
+  const sum = Number(inv.amount || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const payer = inv.payer || {};
+  const v = (x) => esc(x || '—');
+  const npd = l.taxRegime === 'npd';
+  const signer = party.isOrg ? '' : party.short;
+  el.innerHTML = `
+    <div class="no-print row" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <a class="btn btn-ghost" href="#/" style="width:auto">← В личный кабинет</a>
+      <button class="btn btn-primary" id="f-act-print" style="width:auto">Печать / сохранить в PDF</button>
+    </div>
+    <div class="invoice-doc">
+      <h1>Акт № ${esc(String(inv.number))} от ${esc(actDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }))}</h1>
+      <p style="margin-top:-6px">о предоставлении права использования программного комплекса ZalPOS</p>
+      <table>
+        <tr><td>Исполнитель (лицензиар)</td><td>${esc(party.full || '—')}${npd ? ', плательщик налога на профессиональный доход' : ''}<br>ИНН ${v(l.inn)}, ${party.isOrg ? 'ОГРН' : 'ОГРНИП'} ${v(l.ogrnip)}<br>${v(l.address)}</td></tr>
+        <tr><td>Заказчик (лицензиат)</td><td>${v(payer.name)}<br>ИНН ${v(payer.inn)}${payer.kpp ? `, КПП ${esc(payer.kpp)}` : ''}</td></tr>
+        <tr><td>Основание</td><td>Публичная оферта — лицензионный договор, https://zalpos.ru/#/legal/offer; счёт № ${esc(String(inv.number))} от ${esc(invDate.toLocaleDateString('ru-RU'))}</td></tr>
+      </table>
+      <table>
+        <thead><tr><th>№</th><th>Наименование</th><th>Кол-во</th><th>Цена, ₽</th><th>Сумма, ₽</th></tr></thead>
+        <tbody><tr><td>1</td><td>${esc(inv.title || '')}. Простая (неисключительная) лицензия, удалённый доступ через интернет, на срок оплаченного периода с ${esc(actDate.toLocaleDateString('ru-RU'))}</td><td>1</td><td>${sum}</td><td>${sum}</td></tr></tbody>
+      </table>
+      <p class="invoice-total">Итого: ${sum} ₽. Без НДС${npd ? ' — исполнитель применяет налог на профессиональный доход (ч. 8 ст. 2 Федерального закона № 422-ФЗ)' : ''}.</p>
+      <p>Право использования предоставлено в полном объёме: доступ к программному комплексу открыт в личном кабинете ${esc(actDate.toLocaleDateString('ru-RU'))}. Заказчик претензий по объёму и срокам не имеет.</p>
+      <table class="act-sign">
+        <tr><td>Исполнитель<br><br>_____________________ ${esc(signer)}</td><td>Заказчик<br><br>_____________________ ${v(payer.name)}</td></tr>
+      </table>
+      <p class="invoice-note">Акт сформирован в личном кабинете ZalPOS. По оферте он считается принятым, если в течение 5 рабочих дней не поступили мотивированные возражения.${npd ? ' Документ об оплате — чек из «Мой налог» с ИНН заказчика (он в личном кабинете у счёта).' : ''}</p>
+    </div>
+  `;
+  $('f-act-print').onclick = () => window.print();
 }
 
 // Работающее заведение становится первой точкой новой сети вместе с гостями
