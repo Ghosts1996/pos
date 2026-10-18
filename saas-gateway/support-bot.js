@@ -3036,6 +3036,65 @@ function createSupportBot(deps) {
     sendJson(res, 200, await statusOf());
   }
 
+  /** Панель: убрать персональные данные поддержки из облака и Telegram.
+   *  Обращения из Telegram — удалить целиком (сообщения, вложения, клиенты,
+   *  память, ссылки); обращения из кабинета, записанные до обезличивания, —
+   *  обезличить на месте; старые темы в группе сотрудников — удалить (новые
+   *  появятся сами, уже с обезличенным текстом). dryRun — только посчитать. */
+  async function handlePurgeForeign(req, res) {
+    await superAdmin(req);
+    const body = await parseJsonBody(req);
+    const dry = body.dryRun === true;
+    const all = (await ticketsCol().get()).docs;
+    const tgDocs = all.filter((d) => d.data().channel === "telegram" || (d.data().tgUserId && d.data().channel !== "cabinet"));
+    const cabDocs = all.filter((d) => !tgDocs.includes(d) && !d.data().scrubbedAt);
+    const topics = new Set(all.map((d) => d.data().topicId).filter(Boolean));
+    const out = { telegramTickets: tgDocs.length, cabinetTickets: cabDocs.length, topics: topics.size };
+    if (dry) return sendJson(res, 200, { dryRun: true, ...out });
+
+    const eachDoc = async (col, fn) => {
+      for (;;) {
+        const page = await col.limit(400).get();
+        if (!page.docs.length) return;
+        for (const d of page.docs) await fn(d);
+        if (page.docs.length < 400) return;
+      }
+    };
+    for (const d of tgDocs) {
+      await eachDoc(d.ref.collection("messages"), (m) => m.ref.delete());
+      await supportFiles.removeTicket(d.data().tenantId, d.id);
+      await d.ref.delete();
+    }
+    const scrub = (v) => maskSecrets(scrubPii(String(v || "")));
+    for (const d of cabDocs) {
+      const msgs = (await d.ref.collection("messages").get()).docs;
+      for (const m of msgs) {
+        const x = m.data();
+        const text = scrub(x.text);
+        const attachments = Array.isArray(x.attachments) ? x.attachments.map(({ desc, ...a }) => (desc ? { ...a, desc: scrub(desc) } : a)) : undefined;
+        await m.ref.set({ text, authorName: x.authorName ? clip(scrub(x.authorName), 40) : "", ...(attachments ? { attachments } : {}) }, { merge: true });
+      }
+      const x = d.data();
+      await d.ref.set({ subject: clip(scrub(x.subject), 200), summary: scrub(x.summary), topicId: null, topicStatus: null, scrubbedAt: ts(now()) }, { merge: true });
+    }
+    for (const col of ["supportClients", "supportLinks", "supportTopics"]) await eachDoc(db().collection(col), (d) => d.ref.delete());
+    for (const d of (await db().collection("supportMemory").get()).docs) {
+      if (d.id.startsWith("tg:")) await d.ref.delete();
+      else await d.ref.set({ notes: (d.data().notes || []).map(scrub) }, { merge: true });
+    }
+    let removedTopics = 0;
+    if (active() && state.cfg.groupChatId) {
+      for (const topicId of topics) {
+        const ok = await quiet(tg("deleteForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: topicId }), "удалить тему");
+        if (ok) removedTopics++;
+        state.topicToTicket.delete(topicId);
+      }
+    }
+    await cfgRef().set({ purgedForeignAt: ts(now()) }, { merge: true });
+    console.log(`support-bot: очистка — удалено обращений из Telegram ${tgDocs.length}, обезличено из кабинета ${cabDocs.length}, тем ${removedTopics}`);
+    sendJson(res, 200, { ...out, removedTopics });
+  }
+
   async function handleGroupCode(req, res) {
     await superAdmin(req);
     if (!active()) throw new HttpError(400, "Сначала подключите бота");
@@ -3179,7 +3238,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleAiCheck, handleDocDownload, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handlePurgeForeign, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
   };
 }

@@ -6520,6 +6520,11 @@ function watchSupportBotAdmin() {
             база решений: ${Number(s.knowledge) || 0} · статей в знаниях: ${Number(s.guideArticles) || 0} · файлов кода: ${Number(s.codeFiles) || 0}
           </p>` : ''}
         ${s.lastError ? `<p class="small" style="color:var(--danger)">Последняя ошибка: ${esc(s.lastError)}</p>` : ''}
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <b class="small">Старые данные поддержки</b>
+          <p class="small muted" style="margin:4px 0 8px">Удалить обращения, пришедшие в Telegram (с сообщениями, файлами и памятью бота), обезличить обращения из кабинета, записанные до обезличивания, и удалить старые темы в группе сотрудников. Новые темы появятся сами.</p>
+          <button type="button" class="btn btn-ghost" id="f-sb-purge" style="width:auto;color:var(--danger)">Удалить и обезличить…</button>
+        </div>
         ${s.connected ? `
           <details id="f-sb-kb-details" style="margin-top:8px" ${knowledge ? 'open' : ''}>
             <summary class="small" style="cursor:pointer;font-weight:600">📚 Чему научился бот</summary>
@@ -6593,6 +6598,21 @@ function watchSupportBotAdmin() {
         }
       };
     }
+    $('f-sb-purge').onclick = async () => {
+      const btn = $('f-sb-purge');
+      btn.disabled = true;
+      try {
+        const n = (await callSaasGateway('supportBotPurgeForeign', { dryRun: true })).data;
+        if (!n.telegramTickets && !n.cabinetTickets && !n.topics) { toast('Удалять нечего — старых данных нет'); return; }
+        if (!confirm(`Удалить обращений из Telegram: ${n.telegramTickets}, обезличить обращений из кабинета: ${n.cabinetTickets}, удалить тем в группе сотрудников: ${n.topics}?\n\nОтменить это нельзя.`)) return;
+        const r = (await callSaasGateway('supportBotPurgeForeign', {})).data;
+        toast(`Готово: удалено ${r.telegramTickets}, обезличено ${r.cabinetTickets}, тем удалено ${r.removedTopics}`);
+      } catch (e) {
+        toast(`Не удалось: ${e?.message || e}`);
+      } finally {
+        btn.disabled = false;
+      }
+    };
     $('f-sb-save').onclick = async () => {
       const payload = {
         token: $('f-sb-token').value.trim(),

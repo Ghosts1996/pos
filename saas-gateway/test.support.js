@@ -1196,6 +1196,37 @@ test("только Россия: обращение из кабинета обе
   await assert.rejects(h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "x", text: "y" } }, {}), /согласие/);
 });
 
+test("очистка: обращения из Telegram удаляются целиком, старые из кабинета обезличиваются, темы сотрудников удаляются", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Не печатает чек, мой телефон +7 999 123-45-67"));
+  await h.bot.idle();
+  const [tg] = tickets(h.store);
+  assert.strictEqual(tg.channel, "telegram");
+  const T = admin.firestore.Timestamp.fromMillis;
+  h.store.set("supportTickets/c1", { tenantId: "t1", subject: "Касса — Петров Иван Сергеевич", status: "open", createdBy: "owner1", createdAt: T(1), updatedAt: T(1), channel: "cabinet", topicId: 777 });
+  h.store.set("supportTickets/c1/messages/m1", { text: "Меня зовут Анна, почта anna@mail.ru", authorUid: "owner1", authorRole: "owner", createdAt: T(1) });
+  h.store.set("supportMemory/tg:42", { notes: ["Анна из кафе"] });
+
+  await h.bot.handlePurgeForeign({ body: { dryRun: true } }, {});
+  assert.deepStrictEqual({ tg: h.sent.body.telegramTickets, cab: h.sent.body.cabinetTickets }, { tg: 1, cab: 1 });
+  assert.ok(h.store.has(`supportTickets/${tg.id}`), "dryRun что-то удалил");
+
+  await h.bot.handlePurgeForeign({ body: {} }, {});
+  assert.strictEqual(h.sent.code, 200);
+  assert.ok(![...h.store.keys()].some((k) => k.startsWith(`supportTickets/${tg.id}`)), "обращение из Telegram осталось");
+  assert.ok(![...h.store.keys()].some((k) => /^supportClients\/|^supportMemory\/tg:|^supportTopics\//.test(k)));
+  const c1 = h.store.get("supportTickets/c1");
+  assert.strictEqual(c1.subject, "Касса — [ФИО]");
+  assert.ok(c1.scrubbedAt && !c1.topicId);
+  assert.strictEqual(h.store.get("supportTickets/c1/messages/m1").text, "Меня зовут [имя], почта [почта]");
+  assert.ok(h.calls.some((c) => c.method === "deleteForumTopic" && c.body.message_thread_id === 777));
+  assert.ok(!JSON.stringify([...h.store.values()]).includes("123-45-67"));
+  // Повторно — уже обезличенное не трогает.
+  await h.bot.handlePurgeForeign({ body: { dryRun: true } }, {});
+  assert.strictEqual(h.sent.body.cabinetTickets, 0);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {
