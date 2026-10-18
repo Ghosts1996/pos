@@ -594,6 +594,9 @@ function createSupportBot(deps) {
   const clientRef = (id) => db().collection("supportClients").doc(String(id));
   const memoryRef = (key) => db().collection("supportMemory").doc(String(key).replace(/\//g, "_"));
   const knowledgeCol = () => db().collection("supportKnowledge");
+  // Тема в группе — одна на клиента (заведение или человека в Telegram):
+  // supportTopics/{ключ клиента} → topicId.
+  const topicsCol = () => db().collection("supportTopics");
   const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
   const hookUrl = () => (HOOK_BASE ? `${HOOK_BASE}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`);
 
@@ -906,6 +909,9 @@ function createSupportBot(deps) {
 
   async function renameTopic(t) {
     if (!t.topicId || !state.cfg.groupChatId) return;
+    // В теме клиента несколько обращений — имя по текущему, старое не перебивает.
+    const cur = await ticketByTopic(t.topicId);
+    if (cur && cur.id !== t.id) return;
     const name = topicTitle(t, await venueName(t));
     if (name === t.topicName) return;
     t.topicName = name;
@@ -914,24 +920,59 @@ function createSupportBot(deps) {
   }
 
   /** Тема в группе поддержки под обращение; карточка — что за клиент и что у него. */
+  /** Ключ клиента для общей темы: заведение, иначе человек в Telegram или кабинете. */
+  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}` : t.createdBy ? `o_${t.createdBy}` : "");
+
+  /** Тема, где уже шла переписка с этим клиентом (в том числе до общих тем). */
+  async function clientTopic(t) {
+    const key = clientKey(t);
+    if (!key) return null;
+    const saved = (await topicsCol().doc(key).get()).data();
+    if (saved && saved.topicId) return { key, topicId: saved.topicId };
+    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : ["createdBy", t.createdBy];
+    const snap = await ticketsCol().where(field[0], "==", field[1]).limit(100).get();
+    const prev = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.id !== t.id && x.topicId)
+      .sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt))[0];
+    return prev ? { key, topicId: prev.topicId } : { key, topicId: null };
+  }
+
   async function ensureTopic(t, history = []) {
     if (t.topicId || !state.cfg.groupChatId) return t.topicId || null;
     if (!t.no) await patch(t, { no: await nextNo() });
     const vname = await venueName(t);
-    let topic;
-    try {
-      topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: TOPIC_COLOR });
-    } catch (e) {
-      state.lastError = `не создать тему: ${e.message}`;
-      console.error(`support-bot: ${state.lastError}`);
-      await quiet(send(state.cfg.groupChatId, `⚠️ Обращение #${t.no} (${t.subject || ""}): не получилось создать тему — дайте боту право «Управление темами». ${e.message}`), "группа");
-      return null;
+    const known = await clientTopic(t).catch(() => null);
+    let reused = false;
+    if (known && known.topicId) {
+      // Новое обращение того же клиента — в его тему, а не новой темой.
+      const before = await ticketByTopic(known.topicId).catch(() => null);
+      await quiet(tg("reopenForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: known.topicId }), "переоткрыть тему");
+      const probe = await quiet(send(state.cfg.groupChatId, `━━━━━━━━━━━━\n🆕 <b>Новое обращение #${t.no}</b>`, { ...HTML, message_thread_id: known.topicId }), "тема");
+      if (probe) {
+        reused = true;
+        t.topicId = known.topicId;
+        if (before && before.id !== t.id && before.panelMsgId) {
+          quiet(tg("editMessageReplyMarkup", { chat_id: state.cfg.groupChatId, message_id: before.panelMsgId, reply_markup: { inline_keyboard: [] } }), "панель");
+        }
+      }
     }
-    t.topicId = topic.message_thread_id;
-    t.topicName = topicTitle(t, vname);
+    if (!reused) {
+      let topic;
+      try {
+        topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: TOPIC_COLOR });
+      } catch (e) {
+        state.lastError = `не создать тему: ${e.message}`;
+        console.error(`support-bot: ${state.lastError}`);
+        await quiet(send(state.cfg.groupChatId, `⚠️ Обращение #${t.no} (${t.subject || ""}): не получилось создать тему — дайте боту право «Управление темами». ${e.message}`), "группа");
+        return null;
+      }
+      t.topicId = topic.message_thread_id;
+      t.topicName = topicTitle(t, vname);
+    }
     state.topicToTicket.set(t.topicId, t.id);
-    await patch(t, { topicId: t.topicId, topicName: t.topicName });
-    const lines = [`🆕 <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : "из кабинета"}`];
+    await patch(t, { topicId: t.topicId, ...(reused ? {} : { topicName: t.topicName }) });
+    if (known && known.key) await quiet(topicsCol().doc(known.key).set({ topicId: t.topicId, ticketId: t.id, updatedAt: ts(now()) }, { merge: true }), "тема клиента");
+    if (reused) await renameTopic(t);
+    const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : "из кабинета"}`];
     if (t.channel === "telegram") lines.push(`👤 ${h(t.tgName || "Клиент")}${t.tgUsername ? ` (@${h(t.tgUsername)})` : ""} · ID <code>${h(t.tgUserId)}</code>`);
     lines.push(`💬 Тема: <i>${h(t.subject || "—")}</i>`, "");
     if (t.tenantId) {
@@ -949,13 +990,21 @@ function createSupportBot(deps) {
 
   const roleMark = (m) => (m.authorRole === "ai" ? "🤖 ИИ:" : m.authorRole === "super_admin" ? `👨‍💼 ${m.authorName || "Поддержка"}:` : `👤 ${m.authorName || "Клиент"}:`);
 
+  /** Текущее обращение темы: в теме клиента их может быть несколько —
+   *  берём открытое, иначе последнее. */
   async function ticketByTopic(topicId) {
     const cached = state.topicToTicket.get(topicId);
-    if (cached) return loadTicket(cached);
-    const snap = await ticketsCol().where("topicId", "==", topicId).limit(1).get();
+    if (cached) {
+      const t = await loadTicket(cached);
+      if (t && t.topicId === topicId) return t;
+    }
+    const snap = await ticketsCol().where("topicId", "==", topicId).limit(100).get();
     if (!snap.docs.length) return null;
-    state.topicToTicket.set(topicId, snap.docs[0].id);
-    return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const pick = (list) => list.sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt))[0];
+    const t = pick(all.filter((x) => x.status !== "closed")) || pick(all);
+    state.topicToTicket.set(topicId, t.id);
+    return t;
   }
 
   /** Ответ клиенту туда, откуда он пишет. */
@@ -1208,6 +1257,8 @@ function createSupportBot(deps) {
     }
     const stored = text.trim() || "[прислал файл без подписи]";
     await addMessage(t, { text: media ? `${stored}${text.trim() ? " [+ файл]" : ""}` : stored, authorRole: "owner", authorUid: `tg:${userId}`, authorName: clip(from.first_name || "", 40) });
+    // Клиент пишет в это обращение — ответы из темы идут в него.
+    if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
     await toTopicHtml(t, `💬 <b>Клиент · ${h(clip(from.first_name || "Telegram", 40))}</b>\n<blockquote>${h(stored)}</blockquote>`);
     if (media && !text.trim()) {
       // Картинки ИИ не разбирает — пусть клиент опишет, а специалист увидит файл в теме.
@@ -1732,7 +1783,8 @@ function createSupportBot(deps) {
     return [
       "🧭 <b>Как работать с обращениями</b>",
       "",
-      "Каждое обращение — своя тема:",
+      "Каждый клиент — своя тема: новые обращения заведения идут в неё же, с разделителем «🆕 Новое обращение #N».",
+      "Значок темы — по текущему обращению:",
       "🤖 отвечает ИИ · 🔴 нужен человек · 🟡 ведёт специалист · ✅ решено",
       "",
       `✍️ Пишите прямо в теме — ответ уйдёт клиенту, а ИИ замолчит на ${Number(state.cfg.humanPauseHours) || DEFAULT_PAUSE_HOURS} ч.`,
@@ -1823,7 +1875,7 @@ function createSupportBot(deps) {
       ]] },
     });
     await movePanel(t, closedNote);
-    if (t.topicId) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
+    if (t.topicId && !(await otherOpenInTopic(t))) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
     if (rate && t.channel === "telegram" && t.tgChatId) {
       await quiet(send(t.tgChatId, `✅ <b>Обращение #${t.no} закрыто</b>\nОцените, пожалуйста, как мы помогли:`, { ...HTML,
         reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map((n) => ({ text: `${n} ⭐`, callback_data: `sb:rate:${t.id}:${n}` }))] },
@@ -1834,6 +1886,13 @@ function createSupportBot(deps) {
     }
     if (aiReady()) chain(`mem:${t.id}`, () => remember(t));
     if (t.humanReplies || t.helpful || Number(t.csat) >= 4) learnSoon(t, "обращение закрыто");
+  }
+
+  async function otherOpenInTopic(t) {
+    const snap = await ticketsCol().where("topicId", "==", t.topicId).limit(100).get().catch(() => null);
+    const other = snap ? snap.docs.map((d) => ({ id: d.id, ...d.data() })).find((x) => x.id !== t.id && x.status !== "closed") : null;
+    if (other) state.topicToTicket.set(t.topicId, other.id);
+    return !!other;
   }
 
   /** Краткая память о клиенте: с чем приходил и чем закончилось. */
@@ -2195,13 +2254,14 @@ function createSupportBot(deps) {
         if (t.channel === "telegram" && t.tgChatId) await quiet(send(t.tgChatId, `👨‍💼 Поддержка ZalPOS:\n${m.text}`), "клиенту");
         await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), ...(t.firstResponseAt ? {} : { firstResponseAt: ts(now()) }) });
       } else {
+        if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
         await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
       }
     }
     if (t.status === "closed" && t.topicStatus !== "closed") {
       await patch(t, { topicStatus: "closed" });
       await renameTopic(t);
-      if (t.topicId) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
+      if (t.topicId && !(await otherOpenInTopic(t))) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
       return;
     }
     if (t.status !== "closed" && t.topicStatus === "closed") {

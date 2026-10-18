@@ -697,6 +697,29 @@ test("автообучение: не стал запоминать — пише�
   assert.ok(note.body.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `sb:learn:${t.id}`));
 });
 
+test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Не печатает чек"));
+  await h.bot.idle();
+  await h.bot.handleUpdate(inTopic("/close", tickets(h.store)[0].topicId));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("/new"));
+  await h.bot.handleUpdate(pm("Как добавить стол на карту зала?"));
+  await h.bot.idle();
+  const list = tickets(h.store).sort((a, b) => a.no - b.no);
+  assert.strictEqual(list.length, 2);
+  assert.strictEqual(h.calls.filter((c) => c.method === "createForumTopic").length, 1, "создана вторая тема");
+  assert.strictEqual(list[1].topicId, list[0].topicId);
+  assert.ok(h.calls.some((c) => c.method === "reopenForumTopic"), "тема не открыта снова");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Новое обращение #2/.test(c.body.text)));
+  // Ответ в теме — во второе (текущее) обращение.
+  await h.bot.handleUpdate(inTopic("Карта зала → «＋ Стол»", list[0].topicId));
+  await h.bot.idle();
+  assert.ok(messagesOf(h.store, list[1].id).some((m) => m.authorRole === "super_admin"), "ответ ушёл не туда");
+  assert.ok(!messagesOf(h.store, list[0].id).some((m) => m.authorRole === "super_admin"));
+});
+
 test("автообучение: без ответа человека и без «помогло» ничего не сохраняет и не тратит ИИ", async () => {
   const h = harness();
   await setup(h);
