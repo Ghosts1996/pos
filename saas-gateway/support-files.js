@@ -144,11 +144,21 @@ async function removeTenant(tenantId) {
   await fs.promises.rm(path.join(DIR, tenantId), { recursive: true, force: true }).catch(() => {});
 }
 
+/** Вложения одного обращения — когда клиент удаляет свои данные. */
+async function removeTicket(tenantId, ticketId) {
+  if (!SAFE_ID.test(String(ticketId || ""))) return;
+  await fs.promises.rm(folder(tenantId, ticketId), { recursive: true, force: true }).catch(() => {});
+}
+
 /** Описания вложений из сообщения — только корректные, не больше лимита. */
 function listOf(m) {
   const list = Array.isArray(m && m.attachments) ? m.attachments : [];
   return list.filter((a) => a && FILE_ID.test(String(a.id || ""))).slice(0, MAX_PER_MESSAGE)
-    .map((a) => ({ id: a.id, name: cleanName(a.name, a.id.split(".").pop()), type: EXT_TYPE[a.id.split(".").pop()], size: Number(a.size) || 0 }));
+    .map((a) => ({
+      id: a.id, name: cleanName(a.name, a.id.split(".").pop()), type: EXT_TYPE[a.id.split(".").pop()], size: Number(a.size) || 0,
+      // Что на скриншоте — так его «видит» ИИ (support-bot.js, describeImages).
+      ...(a.desc ? { desc: String(a.desc).slice(0, 900) } : {}),
+    }));
 }
 
-module.exports = { DIR, MAX_BYTES, MAX_PER_MESSAGE, CHUNK_MAX, TYPES, isImage, matches, save, savePart, read, removeTenant, listOf, cleanName };
+module.exports = { DIR, MAX_BYTES, MAX_PER_MESSAGE, CHUNK_MAX, TYPES, isImage, matches, save, savePart, read, removeTenant, removeTicket, listOf, cleanName };

@@ -428,6 +428,8 @@ const supportFileType = (f) => {
   return Object.values(SUPPORT_EXT_TYPES).includes(f.type) ? f.type : byExt;
 };
 
+const dropPreviews = (list) => list.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
+
 /** Проверить и добавить выбранные или вставленные файлы в черновик. */
 function addSupportFiles(list, files) {
   for (const f of Array.from(files || [])) {
@@ -470,7 +472,6 @@ async function uploadSupportFiles(ticketId, list) {
     }
     out.push({ id: json.id, name: json.name, type: json.type, size: json.size });
   }
-  list.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
   return out;
 }
 
@@ -3643,6 +3644,8 @@ function watchDashboardData(tenantId) {
   // Файлы, выбранные, но ещё не отправленные: в новое обращение и в ответ.
   const ticketDraftFiles = [];
   const replyDraftFiles = [];
+  // Пока сообщение уходит — надпись на кнопке «Отправить» (и защита от повторов).
+  let replySending = '';
   // Подписка на переписку меняется при выборе тикета (selectTicket), поэтому
   // не через sub(onSnapshot). Здесь только закрываем её при уходе с экрана.
   sub(() => { if (unsubTicketMessages) unsubTicketMessages(); });
@@ -4499,7 +4502,7 @@ function watchDashboardData(tenantId) {
         <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ… Скриншот можно вставить сюда (Ctrl+V)" style="width:100%;resize:vertical;margin-top:10px"></textarea>
         ${pendingFilesHtml(replyDraftFiles, 'f-reply-rm')}
         <div class="row att-actions">
-          <button class="btn btn-primary" id="f-ticket-reply-send" style="width:auto">Отправить</button>
+          <button class="btn btn-primary" id="f-ticket-reply-send" style="width:auto" ${replySending ? 'disabled' : ''}>${esc(replySending || 'Отправить')}</button>
           <button type="button" class="btn btn-ghost att-add" id="f-reply-attach" style="width:auto">📎 Прикрепить</button>
           <input type="file" id="f-reply-files" accept="${SUPPORT_ACCEPT}" multiple hidden>
         </div>
@@ -5030,6 +5033,7 @@ function watchDashboardData(tenantId) {
             text, authorUid: state.uid, authorRole: 'owner', createdAt: at, ...(attachments.length ? { attachments } : {}),
           });
           if (at !== now) await setDoc(doc(state.db, 'supportTickets', ticketRef.id), { updatedAt: at, lastAuthorRole: 'owner' }, { merge: true });
+          if (!uploadError) dropPreviews(ticketDraftFiles);
           ticketDraftFiles.splice(0);
           if ($('f-ticket-subject')) $('f-ticket-subject').value = '';
           if ($('f-ticket-message')) $('f-ticket-message').value = '';
@@ -5047,27 +5051,33 @@ function watchDashboardData(tenantId) {
       $('f-ticket-reply-send').onclick = async () => {
         const replyEl = $('f-ticket-reply');
         const text = replyEl.value.trim();
-        if ((!text && !replyDraftFiles.length) || !selectedTicket) return;
-        const btn = $('f-ticket-reply-send');
-        btn.disabled = true;
+        if ((!text && !replyDraftFiles.length) || !selectedTicket || replySending) return;
+        const ticket = selectedTicket;
+        // Форму очищаем сразу — видно, что сообщение ушло; при ошибке вернём.
+        const files = replyDraftFiles.splice(0);
+        replySending = files.length ? 'Загружаю файлы…' : 'Отправляю…';
+        replyEl.value = '';
+        draw();
         try {
-          const attachments = replyDraftFiles.length ? await uploadSupportFiles(selectedTicket.id, replyDraftFiles) : [];
+          const attachments = files.length ? await uploadSupportFiles(ticket.id, files) : [];
           const now = Timestamp.fromDate(new Date());
-          await addDoc(collection(state.db, 'supportTickets', selectedTicket.id, 'messages'), {
+          await addDoc(collection(state.db, 'supportTickets', ticket.id, 'messages'), {
             text, authorUid: state.uid, authorRole: 'owner', createdAt: now, ...(attachments.length ? { attachments } : {}),
           });
-          replyDraftFiles.splice(0);
-          await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
+          await setDoc(doc(state.db, 'supportTickets', ticket.id), {
             updatedAt: now,
             lastAuthorRole: 'owner',
-            status: selectedTicket.status === 'closed' ? 'open' : selectedTicket.status,
+            status: ticket.status === 'closed' ? 'open' : ticket.status,
           }, { merge: true });
-          // Новое сообщение уже перерисовало экран — replyEl устарел.
-          if ($('f-ticket-reply')) $('f-ticket-reply').value = '';
+          dropPreviews(files);
         } catch (e) {
+          replyDraftFiles.unshift(...files);
+          const el = $('f-ticket-reply');
+          if (el && !el.value.trim()) el.value = text;
           toast(`Не удалось отправить: ${e?.message || e}`);
         } finally {
-          btn.disabled = false;
+          replySending = '';
+          draw();
         }
       };
     }
@@ -6723,20 +6733,24 @@ function watchAdminSupportTickets() {
         const text = textEl.value.trim();
         if (!text && !adminDraftFiles.length) return;
         el.disabled = true;
+        const files = adminDraftFiles.splice(0);
+        textEl.value = '';
         try {
-          const attachments = adminDraftFiles.length ? await uploadSupportFiles(ticketId, adminDraftFiles) : [];
+          const attachments = files.length ? await uploadSupportFiles(ticketId, files) : [];
           const now = Timestamp.fromDate(new Date());
           await addDoc(collection(state.db, 'supportTickets', ticketId, 'messages'), {
             text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now, ...(attachments.length ? { attachments } : {}),
           });
-          adminDraftFiles.splice(0);
+          dropPreviews(files);
           await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now, lastAuthorRole: 'super_admin' }, { merge: true });
-          const fresh = document.getElementById(`f-admin-reply-${ticketId}`);
-          if (fresh) fresh.value = '';
         } catch (e) {
+          adminDraftFiles.unshift(...files);
+          const back = document.getElementById(`f-admin-reply-${ticketId}`);
+          if (back && !back.value.trim()) back.value = text;
           toast(`Не удалось отправить: ${e?.message || e}`);
         } finally {
           el.disabled = false;
+          draw();
         }
       };
     });

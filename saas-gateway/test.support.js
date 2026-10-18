@@ -264,6 +264,9 @@ function harness() {
       : JSON.parse(opts.body || "{}");
     if (url.endsWith("/chat/completions")) {
       aiCalls.push(body);
+      if (flags.failVision && JSON.stringify(body.messages || []).includes("image_url")) {
+        return { ok: false, status: 400, json: async () => ({ error: { message: "model does not support images" } }) };
+      }
       const content = aiReplies.length ? aiReplies.shift() : "1. Откройте «Устройства».\n2. Нажмите «Собрать APK».";
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }], usage: { total_tokens: 120 } }) };
     }
@@ -282,7 +285,7 @@ function harness() {
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
   };
-  const flags = { failHtml: false };
+  const flags = { failHtml: false, failVision: false };
   const key = crypto.randomBytes(32);
   const sent = {};
   const bot = sb.createSupportBot({
@@ -748,11 +751,17 @@ test("вложения: скриншот из кабинета — в тему �
   const f = await supportFiles.save({ tenantId: "t1", ticketId: "c5", buffer: jpg, type: "image/jpeg", name: "ошибка.jpg" });
   h.store.set("supportTickets/c5", { tenantId: "t1", subject: "Ошибка при оплате", status: "open", createdBy: "owner1", createdAt: T(at), updatedAt: T(at), lastAuthorRole: "owner" });
   h.store.set("supportTickets/c5/messages/m1", { text: "Вот что пишет касса при оплате картой", attachments: [f], authorUid: "owner1", authorRole: "owner", createdAt: T(at) });
+  h.aiReplies.push("Касса ZalPOS, окно оплаты картой: ошибка «Терминал не ответил», кнопки «Повторить» и «Отмена».");
   h.bot.onTicketDoc("c5", h.store.get("supportTickets/c5"));
   await h.bot.idle();
   const photo = h.calls.find((c) => c.method === "sendPhoto");
   assert.ok(photo && /ошибка\.jpg/.test(photo.body.caption) && photo.body.photo, "скриншот не попал в тему");
-  assert.ok(JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("приложено: ошибка.jpg"), "ИИ не знает о вложении");
+  const vision = h.aiCalls.find((c) => JSON.stringify(c.messages).includes("image_url"));
+  assert.ok(vision && JSON.stringify(vision.messages).includes("data:image/jpeg;base64,"), "скриншот не показан модели");
+  const last = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(last.includes("скриншот «ошибка.jpg» — что на нём:") && last.includes("Терминал не ответил"), "ИИ не видит, что на скриншоте");
+  assert.ok(messagesOf(h.store, "c5").find((x) => x.id === "m1" || x.text === "Вот что пишет касса при оплате картой").attachments[0].desc, "описание не сохранено");
+  assert.ok(sends(h.calls, GROUP).some((c) => /ИИ посмотрел скриншот/.test(c.body.text)));
   // Специалист отвечает фото в теме — оно во вложениях обращения кабинета.
   const topic = h.store.get("supportTickets/c5").topicId;
   const m = inTopic("", topic);
@@ -809,6 +818,46 @@ test("клиент зовёт бота («Нет бот ии помоги») —
   await h.bot.idle();
   assert.strictEqual(h.aiCalls.length, m);
   assert.ok(sends(h.calls, GROUP).some((c) => /ИИ в теме выключен/.test(c.body.text)));
+});
+
+test("скриншот без текста: модель без картинок — ключ не наказан, клиенту просьба описать", async () => {
+  const h = harness();
+  await setup(h);
+  h.flags.failVision = true;
+  const T = admin.firestore.Timestamp.fromMillis;
+  const at = Date.now() - 1000;
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 7, 7, 7, 7]);
+  const f = await supportFiles.save({ tenantId: "t1", ticketId: "c7", buffer: jpg, type: "image/jpeg", name: "экран.jpg" });
+  h.store.set("supportTickets/c7", { tenantId: "t1", subject: "Скрин", status: "open", createdBy: "owner1", createdAt: T(at), updatedAt: T(at), lastAuthorRole: "owner" });
+  h.store.set("supportTickets/c7/messages/m1", { text: "", attachments: [f], authorUid: "owner1", authorRole: "owner", createdAt: T(at) });
+  h.bot.onTicketDoc("c7", h.store.get("supportTickets/c7"));
+  await h.bot.idle();
+  const ai = messagesOf(h.store, "c7").find((m) => m.authorRole === "ai");
+  assert.ok(ai && /разобрать его не получилось/.test(ai.text), JSON.stringify(ai));
+  // Обычный вопрос после этого — ключ не «отдыхает».
+  h.flags.failVision = false;
+  await h.bot.handleUpdate(pm("Как добавить стол?"));
+  await h.bot.idle();
+  assert.ok(sends(h.calls, 42).some((c) => /Устройства/.test(c.body.text)), "ключ ушёл отдыхать после пробы картинки");
+});
+
+test("фото клиента в Telegram — во вложения, ИИ смотрит его и отвечает", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Не проходит оплата"));
+  await h.bot.idle();
+  const n = h.aiCalls.length;
+  h.aiReplies.push("Касса ZalPOS, окно «Терминал оплаты»: ошибка «Банк не подключён».");
+  h.aiReplies.push("**Подключите банк** в «Интеграциях».");
+  const m = pm("", 42, { photo: [{ file_id: "s", file_size: 10 }, { file_id: "b", file_size: 100 }] });
+  delete m.message.text;
+  await h.bot.handleUpdate(m);
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  const withPic = messagesOf(h.store, t.id).find((x) => (x.attachments || []).length);
+  assert.ok(withPic && withPic.attachments[0].desc && /Банк не подключён/.test(withPic.attachments[0].desc), JSON.stringify(withPic));
+  assert.ok(h.aiCalls.length >= n + 2, "ИИ не посмотрел и не ответил");
+  assert.ok(sends(h.calls, 42).some((c) => /Подключите банк/.test(c.body.text)));
 });
 
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {

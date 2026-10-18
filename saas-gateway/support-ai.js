@@ -107,9 +107,20 @@ function classifyError(status, message) {
 }
 
 /** Anthropic: system отдельно, первым — сообщение пользователя. */
+/** Содержимое в формате OpenAI (строка или части text/image_url) → Anthropic. */
+function anthropicContent(content) {
+  if (!Array.isArray(content)) return String(content || "");
+  return content.map((c) => {
+    const url = c && c.type === "image_url" && String((c.image_url && c.image_url.url) || "");
+    const m = url && url.match(/^data:([\w/+.-]+);base64,(.+)$/);
+    if (m) return { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } };
+    return { type: "text", text: String((c && c.text) || "") };
+  });
+}
+
 function toAnthropic(messages) {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-  const rest = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
+  const rest = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: anthropicContent(m.content) }));
   if (!rest.length || rest[0].role !== "user") rest.unshift({ role: "user", content: "(начало переписки)" });
   return { system, messages: rest };
 }
@@ -171,7 +182,9 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
   }
 
   /** Ответ ИИ: провайдеры по порядку, у каждого — нужная модель, потом запасная. */
-  async function complete(providers, messages, { tier = "light", maxTokens = 600, temperature = 0.3 } = {}) {
+  /** soft — пробный запрос (например, картинка): ошибка не отправляет ключ
+   *  «отдыхать» и не считается переключением — модель могла просто не уметь. */
+  async function complete(providers, messages, { tier = "light", maxTokens = 600, temperature = 0.3, soft = false } = {}) {
     const list = providers.filter(usable);
     if (!list.length) throw new Error("ИИ не настроен: нет включённых ключей");
     const errors = [];
@@ -197,6 +210,7 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
         } catch (e) {
           const c = classifyError(e.status, e.message);
           errors.push(`${p.title} (${models[i]}): ${c.text}`);
+          if (soft) continue;
           // Модели нет — пробуем вторую модель того же провайдера.
           if (c.kind === "model" && i < models.length - 1) continue;
           const st = { state: c.kind, text: c.text, until: now() + c.ms, lastOkAt: (status.get(p.id) || {}).lastOkAt || 0, detail: e.message };

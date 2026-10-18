@@ -472,7 +472,12 @@ function buildMessages({ venue = "", platform = "", errors = [], guide = [], lea
     const mine = m.authorRole === "ai";
     const staff = m.authorRole === "super_admin";
     const files = supportFiles.listOf(m);
-    const note = files.length ? `\n[приложено: ${files.map((f) => f.name).join(", ")} — ты вложения не видишь; если без них не понять, попроси описать словами, что на экране, или позови специалиста]` : "";
+    const seen = files.filter((f) => f.desc);
+    const blind = files.filter((f) => !f.desc);
+    const note = [
+      ...seen.map((f) => `\n[скриншот «${f.name}» — что на нём: ${f.desc}]`),
+      blind.length ? `\n[приложено: ${blind.map((f) => f.name).join(", ")} — содержимое тебе не видно; если без него не понять, попроси описать словами, что на экране, или позови специалиста]` : "",
+    ].join("");
     msgs.push({ role: mine || staff ? "assistant" : "user", content: `${staff ? "[Специалист поддержки] " : ""}${clip(scrubPii(m.text || ""), 1500)}${note}` });
   }
   return msgs;
@@ -1099,8 +1104,10 @@ function createSupportBot(deps) {
     let i = history.length - 1;
     while (i > 0 && history[i - 1].authorRole === "owner") i--;
     const question = history.slice(i).map((m) => m.text || "").join("\n").trim();
-    if (!question && history.slice(i).some((m) => supportFiles.listOf(m).length)) {
-      // Прислали только скриншот: ИИ его не видит — просим пару слов, специалист увидит файл в теме.
+    const fresh = history.slice(i);
+    const imagesNow = fresh.some((m) => supportFiles.listOf(m).some((f) => supportFiles.isImage(f.type)));
+    if (!question && fresh.some((m) => supportFiles.listOf(m).length) && !imagesNow) {
+      // Прислали только документ без текста — просим пару слов, специалист увидит файл в теме.
       if (aiPaused(t, now())) return;
       return deliver(t, "Файл получил, спасибо! Напишите в двух словах, что не так или что хотите сделать, — так отвечу точнее. Специалист тоже видит вложение.");
     }
@@ -1127,7 +1134,7 @@ function createSupportBot(deps) {
       await patch(t, { urgentAt: ts(now()) });
       await toTopic(t, "⚡ Похоже, у клиента всё стоит — ИИ отвечает, но гляньте, пожалуйста.");
     }
-    const talk = smallTalk(question);
+    const talk = imagesNow ? "" : smallTalk(question);
     if (talk === "ack") return;
     if (talk === "thanks") return deliver(t, "Рад был помочь! Если появится ещё вопрос — пишите сюда.");
     if (talk === "hello") return deliver(t, "Здравствуйте! Опишите, пожалуйста, что случилось или что хотите настроить — помогу. Позвать человека можно в любой момент словом «оператор».");
@@ -1136,6 +1143,11 @@ function createSupportBot(deps) {
     if ((Number(t.aiReplies) || 0) >= TICKET_AI_LIMIT) return escalate(t, "длинный диалог — нужен человек");
 
     if (t.channel === "telegram") quiet(tg("sendChatAction", { chat_id: t.tgChatId, action: "typing" }), "печатает");
+    // Скриншоты клиента — ИИ сначала смотрит их и описывает словами.
+    const looked = imagesNow ? await describeImages(t, fresh) : 0;
+    if (imagesNow && !question && !looked) {
+      return deliver(t, "Скриншот получил, но разобрать его не получилось. Напишите в двух словах, что на экране и что не так, — помогу. Специалист тоже видит вложение.");
+    }
     let summary = t.summary || "";
     if (history.length > SUMMARIZE_AFTER && (Number(t.summarizedUpTo) || 0) < history.length - HISTORY_TAIL - 6) {
       const old = history.slice(0, history.length - HISTORY_TAIL);
@@ -1151,7 +1163,8 @@ function createSupportBot(deps) {
     }
     // «Где её купить?» без слова «касса» — ищем и по прошлым сообщениям клиента.
     const earlier = history.slice(0, i).filter((m) => m.authorRole === "owner").slice(-3).map((m) => m.text || "").join("\n");
-    const query = `${t.subject || ""}\n${earlier}\n${question}\n${question}`;
+    const screens = fresh.flatMap((m) => supportFiles.listOf(m)).map((f) => f.desc || "").join("\n");
+    const query = `${t.subject || ""}\n${earlier}\n${question}\n${question}\n${screens}`;
     const guide = rankDocs(query, state.guide, 5);
     const learned = rankDocs(query, state.learned, 3, 1.5);
     const code = rankDocs(query, state.code, 2, 4);
@@ -1162,6 +1175,9 @@ function createSupportBot(deps) {
     ]);
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
     const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId });
+    if (imagesNow && !question) {
+      messages.push({ role: "system", content: "Клиент прислал скриншот без текста. По описанию скриншота пойми, что у него на экране и что не так, и помоги по шагам. Не уверен, в чём вопрос, — спроси одним коротким вопросом." });
+    }
     if (calledAi) {
       messages.push({ role: "system", content: "Клиент позвал тебя (ИИ-ассистента), чтобы ответил ты, а не специалист. Не здоровайся и не переспрашивай, что случилось: найди в переписке его последний нерешённый вопрос и ответь на него по шагам. Если ответ уже давал специалист — продолжи с того места." });
     }
@@ -1328,12 +1344,19 @@ function createSupportBot(deps) {
       await ensureTopic(t);
       if (t.topicId) await quiet(tg("copyMessage", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId, from_chat_id: chatId, message_id: msg.message_id }), "файл в тему");
     }
-    const stored = text.trim() || "[прислал файл без подписи]";
-    await addMessage(t, { text: media ? `${stored}${text.trim() ? " [+ файл]" : ""}` : stored, authorRole: "owner", authorUid: `tg:${userId}`, authorName: clip(from.first_name || "", 40) });
+    // Фото и картинки-документы — во вложения обращения: ИИ их посмотрит.
+    const isPic = !!(msg.photo || (msg.document && /^image\//.test(String(msg.document.mime_type || ""))));
+    const pic = media && isPic && !secrets.length ? await topicFileToCabinet(t, msg).catch((e) => { console.error(`support-bot: фото клиента: ${e.message}`); return null; }) : null;
+    const stored = text.trim() || (pic ? "" : "[прислал файл без подписи]");
+    await addMessage(t, {
+      text: media && !pic ? `${stored}${text.trim() ? " [+ файл]" : ""}` : stored,
+      ...(pic ? { attachments: [pic] } : {}),
+      authorRole: "owner", authorUid: `tg:${userId}`, authorName: clip(from.first_name || "", 40),
+    });
     // Клиент пишет в это обращение — ответы из темы идут в него.
     if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
-    await toTopicHtml(t, `💬 <b>Клиент · ${h(clip(from.first_name || "Telegram", 40))}</b>\n<blockquote>${h(stored)}</blockquote>`);
-    if (media && !text.trim()) {
+    if (stored) await toTopicHtml(t, `💬 <b>Клиент · ${h(clip(from.first_name || "Telegram", 40))}</b>\n<blockquote>${h(stored)}</blockquote>`);
+    if (media && !text.trim() && !pic) {
       // Картинки ИИ не разбирает — пусть клиент опишет, а специалист увидит файл в теме.
       if (!aiPaused(t, now())) await deliver(t, "Вижу файл — передал его в тему специалисту. Чтобы я помог быстрее, опишите словами: что делали и какую ошибку видите.");
       return;
@@ -1397,7 +1420,8 @@ function createSupportBot(deps) {
     const snap = await ticketsCol().where("tgUserId", "==", userId).limit(200).get();
     for (const d of snap.docs) {
       const msgs = await d.ref.collection("messages").limit(500).get();
-      for (const m of msgs.docs) if (m.data().authorRole === "owner") await m.ref.set({ text: "[удалено по просьбе клиента]", authorName: "" }, { merge: true });
+      for (const m of msgs.docs) if (m.data().authorRole === "owner") await m.ref.set({ text: "[удалено по просьбе клиента]", authorName: "", attachments: [] }, { merge: true });
+      await supportFiles.removeTicket(d.data().tenantId, d.id);
       await d.ref.set({ tgName: "", tgUsername: "", tgChatId: null, erasedAt: ts(now()), status: "closed" }, { merge: true });
     }
     await memoryRef(`tg:${userId}`).delete().catch(() => {});
@@ -2353,6 +2377,47 @@ function createSupportBot(deps) {
     await renameTopic(t);
     const last = history[history.length - 1];
     if (fresh.length && last && last.authorRole === "owner" && t.status !== "closed") await respond(t);
+  }
+
+  /** Посмотреть скриншоты клиента моделью с картинками и записать в
+   *  сообщение, что на них (attachments[].desc) — один раз на файл. Модель не
+   *  умеет картинки — ключ не наказывается (soft), ИИ попросит описать. */
+  async function describeImages(t, msgs) {
+    let done = 0;
+    let budget = 3;
+    for (const m of msgs) {
+      if (m.authorRole !== "owner" || !m.id) continue;
+      const raw = Array.isArray(m.attachments) ? m.attachments : [];
+      let changed = false;
+      for (const a of raw) {
+        if (!budget || !a || a.desc || !supportFiles.isImage(supportFiles.listOf({ attachments: [a] })[0]?.type)) continue;
+        const file = await supportFiles.read({ tenantId: t.tenantId, ticketId: t.id, id: a.id });
+        if (!file || file.buffer.length > 5 * 1024 * 1024) continue;
+        budget--;
+        try {
+          const r = await router.complete(providers(), [
+            { role: "system", content: "Ты помогаешь поддержке ZalPOS (касса и учёт для общепита). Опиши скриншот клиента по-русски, до 600 символов: что это за экран (касса ZalPOS, кабинет zalpos.ru, приложение гостя, сайт банка или другой программы, телефон), какой раздел открыт, точный текст ошибок и сообщений, заметные кнопки и поля. Только то, что видно, без догадок. Телефоны, почты, имена людей, номера карт и ключи не переписывай." },
+            { role: "user", content: [
+              { type: "text", text: `Что на скриншоте${m.text ? `? Клиент пишет: «${clip(scrubPii(m.text), 300)}»` : "?"}` },
+              { type: "image_url", image_url: { url: `data:${file.type};base64,${file.buffer.toString("base64")}` } },
+            ] },
+          ], { tier: "light", maxTokens: 400, temperature: 0.1, soft: true });
+          const desc = clip(guardReply(scrubPii(maskSecrets(plain(r.text)))), 900);
+          if (!desc) continue;
+          a.desc = desc;
+          changed = true;
+          done++;
+        } catch (e) {
+          console.error(`support-bot: скриншот #${t.no}: ${e.message}`);
+        }
+      }
+      if (changed) {
+        await quiet(ticketRef(t.id).collection("messages").doc(m.id).set({ attachments: raw }, { merge: true }), "описание скриншота");
+        const seen = raw.filter((a) => a && a.desc);
+        if (seen.length) await toTopicHtml(t, `👁 <b>ИИ посмотрел скриншот</b>\n${seen.map((a) => `<blockquote expandable>${h(a.desc)}</blockquote>`).join("\n")}`);
+      }
+    }
+    return done;
   }
 
   /** Вложения сообщения из кабинета — файлами в тему (фото — картинкой). */
