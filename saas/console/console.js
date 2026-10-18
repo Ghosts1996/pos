@@ -1204,11 +1204,9 @@ const PUBLIC_ROUTES = {
 const PENDING_TAB_KEY = 'zalpos-pending-tab';
 
 // ---------- ЧАТ ПОДДЕРЖКИ (круглая кнопка в углу) ----------
-// Один на весь сайт (support-chat.js). Режим — по тому, кто смотрит:
-// посетитель и вошедший без своего заведения — консультант по продукту и
-// тарифам; владелец или администратор — поддержка его заведения (ИИ видит
-// состояние и раздел кабинета). Модуль грузится отдельно и не задерживает
-// первый экран.
+// Для посетителей сайта и вошедших без своего заведения (support-chat.js) —
+// консультант по продукту и тарифам. В кабинете кнопки нет: там раздел
+// «Поддержка». Модуль грузится отдельно и не задерживает первый экран.
 let supportChat = null;
 let supportChatLoading = null;
 let supportChatCtx = { mode: 'hidden' };
@@ -1237,9 +1235,8 @@ function supportChatForRoute() {
   const page = SUPPORT_PAGE_NAMES[h] || '';
   if (!state.uid) return setSupportChat({ mode: 'site', page: page || 'Главная' });
   if (!state.tenantsLoaded) return;
-  const t = (state.tenants || []).find((x) => x.id === state.activeTenantId);
-  if (t && (t.role === 'owner' || t.role === 'admin')) return setSupportChat({ mode: 'cabinet', tenantId: t.id, page: page || supportChatCtx.page || '' });
-  if (t) return setSupportChat({ mode: 'site', role: t.role === 'manager' ? 'manager' : 'employee', page });
+  // У кого есть заведение — поддержка в кабинете («Поддержка»), кнопка не нужна.
+  if ((state.tenants || []).length) return setSupportChat({ mode: 'hidden' });
   return setSupportChat({ mode: 'site', role: 'account', page: page || 'Создание заведения' });
 }
 
@@ -4797,11 +4794,8 @@ function watchDashboardData(tenantId) {
       faq: faqHtml, support: supportHtml,
     };
     renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
-    // Чат в углу знает раздел кабинета; на странице «Поддержка» — свой чат.
-    if (activeTab === 'support') setSupportChat({ mode: 'hidden' });
-    else if (role === 'owner' || role === 'admin') {
-      setSupportChat({ mode: 'cabinet', tenantId, page: (DASHBOARD_NAV.find((x) => x.id === activeTab) || {}).label || '' });
-    }
+    // В кабинете кнопки чата нет: у него есть раздел «Поддержка».
+    setSupportChat({ mode: 'hidden' });
 
     document.querySelectorAll('.f-dash-tab').forEach((el) => {
       el.onclick = (e) => {
