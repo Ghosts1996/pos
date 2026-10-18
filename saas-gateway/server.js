@@ -7357,7 +7357,8 @@ async function supportPlatformStatus() {
   if (plans) lines.push(`Тарифы сейчас:\n${plans}`);
   try {
     const snap = await db().collection("broadcasts").where("active", "==", true).limit(5).get();
-    for (const d of snap.docs) lines.push(`Объявление платформы: ${String(d.data().title || "").slice(0, 120)} — ${String(d.data().body || "").slice(0, 300)}`);
+    // Полный текст бот берёт сам (раздел «Действующие объявления»), здесь — только заголовки.
+    for (const d of snap.docs) lines.push(`Объявление платформы: ${String(d.data().title || "").slice(0, 120)}`);
   } catch (_) {}
   return lines.join("\n");
 }
@@ -7414,6 +7415,34 @@ async function handleInvalidateTenantCache(req, res) {
   if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
   await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
   invalidateTenantStaticCache(tenantId);
+  sendJson(res, 200, { ok: true });
+}
+
+// Подтверждения, без которых кабинет не запускает перенос данных из другой
+// кассы. Тексты — в console.js (importHtml), здесь только их коды.
+const IMPORT_CONSENTS = ["owner_data", "partial", "staff_assignment"];
+
+/**
+ * POST /recordImportConsent { tenantId, importId, kind, consents[], file }
+ * Журнал подтверждений переноса: кто, когда и что подтвердил. Пишется до
+ * первой записи данных; клиентам коллекция закрыта правилами (общего match
+ * по подколлекциям заведения нет), читается из панели платформы.
+ */
+async function handleRecordImportConsent(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, importId, kind, consents, file } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  if (typeof importId !== "string" || !/^imp[a-z0-9]{4,24}$/.test(importId)) throw new HttpError(400, "Неверный номер переноса");
+  if (!["menu", "stock", "recipes", "staff", "cards"].includes(kind)) throw new HttpError(400, "Неизвестный тип данных");
+  const given = Array.isArray(consents) ? consents.filter((c) => IMPORT_CONSENTS.includes(c)) : [];
+  const need = kind === "staff" ? IMPORT_CONSENTS : IMPORT_CONSENTS.filter((c) => c !== "staff_assignment");
+  if (!need.every((c) => given.includes(c))) throw new HttpError(400, "Отметьте все подтверждения");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  await db().collection("tenants").doc(tenantId).collection("importConsents").doc(importId).set({
+    uid: decoded.uid, kind, consents: given,
+    file: typeof file === "string" ? file.slice(0, 200) : "",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
   sendJson(res, 200, { ok: true });
 }
 
@@ -7497,6 +7526,7 @@ const ROUTES = {
   "/supportSiteSend": supportBot.handleSiteSend,
   "/supportCabinetMessages": supportBot.handleCabinetMessages,
   "/invalidateTenantCache": handleInvalidateTenantCache,
+  "/recordImportConsent": handleRecordImportConsent,
   "/supportSiteMessages": supportBot.handleSiteMessages,
   "/supportBotPurgeForeign": supportBot.handlePurgeForeign,
   "/supportBotAiCheck": supportBot.handleAiCheck,

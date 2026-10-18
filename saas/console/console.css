@@ -1400,6 +1400,8 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 .consent-row input[type="checkbox"] { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
 .consent-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; line-height: 1.45; text-wrap: pretty; }
 .consent-text > span:first-child { font-size: 14px; font-weight: 600; }
+/* Перенос данных: предупреждение перед подтверждениями. */
+.imp-warn { margin: 12px 0 14px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); box-shadow: 3px 0 0 var(--primary) inset; line-height: 1.5; }
 .nowrap { white-space: nowrap; }
 
 /* Поддержка: «Ассистент печатает…» */

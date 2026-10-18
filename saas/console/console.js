@@ -2713,7 +2713,7 @@ function screenLegalPrivacy() {
         'Персональные данные Гостей и работников заведений хранятся только на этом сервере и за пределы РФ не передаются — у всех заведений на Платформе.',
         'Для синхронизации данных между устройствами, резервного копирования, авторизации пользователей и push-уведомлений используется облачная инфраструктура Google LLC: авторизация и push-уведомления — на серверах в США, хранение и синхронизация данных — в центрах обработки данных Google Cloud в Бельгии и Нидерландах. Данные заведений передаются туда только обезличенными — меню, заказы, суммы и идентификаторы без имён, телефонов и адресов.',
         'Обращения в техническую поддержку принимаются в личном кабинете и проходят через сервер Оператора в РФ: до записи в облачную инфраструктуру, передачи сотрудникам поддержки (мессенджер Telegram) и ИИ-ассистенту поддержки из темы и текста обращения автоматически удаляются номера телефонов, адреса электронной почты, ИНН и другие номера, номера банковских карт, имена пользователей и фамилии, имена и отчества — дальше обрабатывается только обезличенный текст. Скриншоты и файлы обращений хранятся только на сервере в РФ и за её пределы не передаются. Обращения в Telegram-бот поддержки не принимаются.',
-        'Чат поддержки на сайте (кнопка в правом нижнем углу) работает и без входа в кабинет. Сообщения посетителя проходят через сервер Оператора в РФ и обезличиваются так же, как обращения из кабинета, до записи и до передачи ИИ-ассистенту и сотрудникам поддержки; указывать имя, телефон и другие контактные данные не нужно. Чтобы продолжить диалог, в браузере посетителя (localStorage) хранится случайный ключ диалога; на сервере — только его хеш. IP-адрес используется только для защиты от спама (ограничения частоты сообщений) и вместе с диалогом не сохраняется. Диалоги посетителей сайта удаляются автоматически через 30 дней. На вопросы отвечает ИИ-ассистент; по просьбе посетителя («оператор») подключается сотрудник поддержки.',
+        'Чат поддержки на сайте (кнопка в правом нижнем углу) работает и без входа в кабинет. Сообщения посетителя проходят через сервер Оператора в РФ и обезличиваются так же, как обращения из кабинета, до записи и до передачи ИИ-ассистенту и сотрудникам поддержки; указывать имя, телефон и другие контактные данные не нужно. Чтобы продолжить диалог, в браузере посетителя (localStorage) хранятся случайный ключ диалога и случайный ключ браузера; на сервере — только их хеши. По хешу ключа браузера сотрудники поддержки видят условный номер («Гость 4821»), чтобы не путать диалоги разных посетителей; имя, телефон и другие данные, позволяющие установить личность, для этого не используются. IP-адрес используется только для защиты от спама (ограничения частоты сообщений) и вместе с диалогом не сохраняется. Диалоги посетителей сайта удаляются автоматически через 30 дней. На вопросы отвечает ИИ-ассистент; по просьбе посетителя («оператор») подключается сотрудник поддержки.',
         'Трансграничная передача касается только пользователей личного кабинета: адрес электронной почты используется для входа через сервис авторизации Google LLC. Она осуществляется с согласия пользователя, данного при регистрации, и после уведомления Роскомнадзора в порядке ст. 12 Федерального закона № 152-ФЗ; получатель обеспечивает защиту данных (шифрование при хранении и передаче, сертификация ISO/IEC 27001, 27017, 27018).',
       ])}
       ${legalSection('7. Сроки обработки и хранения', [
@@ -3673,6 +3673,24 @@ function watchDashboardData(tenantId) {
   const importLog = () => { try { return JSON.parse(window.localStorage.getItem(IMPORT_LOG_KEY) || '[]'); } catch (_) { return []; } };
   const saveImportLog = (list) => { try { window.localStorage.setItem(IMPORT_LOG_KEY, JSON.stringify(list.slice(0, 20))); } catch (_) {} };
   const loadImportCore = async () => (importCore = importCore || await import('./import-core.js'));
+  // Подтверждения перед переносом (коды проверяет /recordImportConsent).
+  // text — готовый HTML, без данных пользователя.
+  const IMPORT_CONSENTS = [
+    { id: 'partial', title: 'Понимаю, что перенос может быть неполным',
+      text: 'Проверю меню, цены, остатки, техкарты и сотрудников в кассе до начала работы и при необходимости поправлю вручную. Ошибочный перенос можно отменить целиком.' },
+    { id: 'owner_data', title: 'Данные принадлежат моему заведению, и я вправе их переносить',
+      text: 'Файл выгружен из учётной записи моего заведения штатной функцией прежней системы. В нём нет данных гостей и чужих заведений.' },
+    { id: 'staff_assignment', staff: true, title: 'Поручаю ZalPOS хранить имена сотрудников',
+      text: 'Заведение — работодатель и оператор персональных данных сотрудников и вправе поручить их обработку (ч. 3 ст. 6 152-ФЗ): сотрудники согласны, что их имена ведутся в кассе. Переносятся только имя и должность; ZalPOS хранит имена на серверах в России по поручению заведения — по <a href="#/legal/offer" target="_blank" rel="noopener">договору-оферте</a> и <a href="#/legal/privacy" target="_blank" rel="noopener">Политике конфиденциальности</a>.' },
+  ];
+  // Что точно не переносится — честно, по каждому типу.
+  const IMPORT_NOT_MOVED = {
+    menu: 'Модификаторы, комбо, фото, налоговые ставки и признаки маркировки не переносятся — их нужно настроить в кассе.',
+    stock: 'История приходов и списаний не переносится — только текущий остаток, цена закупки и минимум.',
+    recipes: 'Переносятся состав, количество, отход и число порций; варианты и замены ингредиентов, технология приготовления и фото — нет.',
+    staff: 'Переносятся имя и должность; PIN-коды, ставки, графики и права доступа — нет.',
+    cards: 'Переносятся номер и процент скидки; имена, телефоны и бонусы гостей — нет.',
+  };
   const tcol = (name) => collection(state.db, 'tenants', tenantId, name);
 
   /** Что уже есть в заведении — чтобы не плодить дубли. */
@@ -3708,6 +3726,14 @@ function watchDashboardData(tenantId) {
     const ops = [];
     const result = { importId, created: 0, updated: 0, pins: [], warnings: [] };
     const progress = (done, all) => { imp.progress = `Записываю: ${done} из ${all}`; draw(); };
+    // Подтверждения — в журнал на сервере до первой записи. Без журнала не
+    // переносим; 404 — сервер ещё не обновлён, тогда не держим работу.
+    const consents = Object.keys(imp.consent || {}).filter((k) => imp.consent[k]);
+    try {
+      await callSaasGateway('recordImportConsent', { tenantId, importId, kind: plan.kind, consents, file: imp.fileName || '' });
+    } catch (err) {
+      if (err?.status !== 404) throw new Error(`не сохранились подтверждения (${err?.message || err}) — проверьте интернет и повторите`);
+    }
     if (plan.kind === 'menu') {
       const catId = new Map(existing.categories.map((c) => [I.nameKey(c.name), c.id]));
       let order = Math.max(0, ...existing.categories.map((c) => Number(c.order) || 0));
@@ -3819,7 +3845,7 @@ function watchDashboardData(tenantId) {
     await commitOps(ops, progress);
     // Касса берёт меню из кеша сервера — сбросим его, чтобы перенос был виден сразу.
     callSaasGateway('invalidateTenantCache', { tenantId }).catch(() => {});
-    saveImportLog([{ id: importId, at: Date.now(), kind: plan.kind, file: imp.fileName || '', created: result.created, updated: result.updated }, ...importLog()]);
+    saveImportLog([{ id: importId, at: Date.now(), kind: plan.kind, file: imp.fileName || '', created: result.created, updated: result.updated, consents }, ...importLog()]);
     return result;
   }
 
@@ -5061,6 +5087,9 @@ function watchDashboardData(tenantId) {
           cards: () => `Карта ${esc(x.number)} — ${x.percent} %`,
         }[plan.kind])();
         const errs = [...imp.rowErrors.map((e) => `Строка ${e.row}: ${e.msg}`), ...plan.errors.map((e) => e.msg)];
+        // Без всех отметок «Перенести» не нажимается; коды — в журнале на сервере.
+        const consents = IMPORT_CONSENTS.filter((c) => !c.staff || plan.kind === 'staff');
+        const consentOk = consents.every((c) => imp.consent && imp.consent[c.id]);
         return `${head}
           <div class="card" style="margin-top:10px">
             <div class="small" style="font-weight:600">${esc(LABEL[plan.kind])} · ${esc(imp.fileName)}</div>
@@ -5070,11 +5099,20 @@ function watchDashboardData(tenantId) {
             ${plan.skip.length ? `<details class="small muted"><summary>Что пропустим</summary>${plan.skip.slice(0, 50).map((x) => `<div>${esc(x.name || x.dish || x.number)} — ${esc(x.why)}</div>`).join('')}</details>` : ''}
             ${errs.length ? `<details class="small" style="color:var(--danger)" open><summary>Ошибки — эти строки не перенесём</summary>${errs.slice(0, 50).map((m) => `<div>${esc(m)}</div>`).join('')}${errs.length > 50 ? `<div>и ещё ${errs.length - 50}</div>` : ''}</details>` : ''}
             ${plan.kind === 'staff' ? '<p class="small muted">Каждому создадим новый PIN: сотруднику — 4 цифры, администратору — 6. Список покажем один раз — сохраните его и раздайте лично.</p>' : ''}
+            <div class="imp-warn small">
+              <b>Перенос может быть неполным.</b> Выгрузки разных систем устроены по-разному: мы переносим только то, что показано
+              выше. ${esc(IMPORT_NOT_MOVED[plan.kind])} Перед началом работы проверьте результат в кассе.
+            </div>
+            ${consents.map((c) => `
+              <label class="consent-row">
+                <input type="checkbox" class="f-imp-consent" data-id="${c.id}" ${imp.consent && imp.consent[c.id] ? 'checked' : ''} ${imp.busy ? 'disabled' : ''}>
+                <span class="consent-text"><span>${esc(c.title)}</span><span class="small muted">${c.text}</span></span>
+              </label>`).join('')}
             ${imp.progress ? `<p class="small muted">${esc(imp.progress)}</p>` : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
             <div class="row" style="gap:8px;margin-top:12px">
               <button class="btn btn-ghost" id="f-imp-edit" style="width:auto" ${imp.busy ? 'disabled' : ''}>Назад</button>
-              <button class="btn btn-primary" id="f-imp-run" style="width:auto" ${imp.busy || !(plan.create.length + plan.update.length) ? 'disabled' : ''}>${imp.busy ? 'Переношу…' : 'Перенести'}</button>
+              <button class="btn btn-primary" id="f-imp-run" style="width:auto" ${imp.busy || !consentOk || !(plan.create.length + plan.update.length) ? 'disabled' : ''}>${imp.busy ? 'Переношу…' : 'Перенести'}</button>
             </div>
           </div>${history}`;
       }
@@ -5184,6 +5222,7 @@ function watchDashboardData(tenantId) {
             imp.existing = await importExisting();
             imp.plan = I.planImport(imp.kind, items, imp.existing, { update: imp.update });
             imp.rowErrors = errors;
+            imp.consent = {};
             imp.step = 'preview';
           } catch (err) {
             imp.error = `Не получилось проверить данные заведения: ${err?.message || err}`;
@@ -5191,6 +5230,9 @@ function watchDashboardData(tenantId) {
           draw();
         };
       }
+      document.querySelectorAll('.f-imp-consent').forEach((el) => {
+        el.onchange = () => { imp.consent = { ...(imp.consent || {}), [el.dataset.id]: el.checked }; draw(); };
+      });
       if ($('f-imp-run')) {
         $('f-imp-run').onclick = async () => {
           imp.busy = true;
@@ -6556,7 +6598,7 @@ function screenSuperAdmin() {
 
       <div class="admin-tab-panel" data-panel="broadcasts">
         <h1>Объявления</h1>
-        <p class="small muted">Показываются баннером на «Обзоре» личного кабинета всем владельцам, пока объявление активно.</p>
+        <p class="small muted">Показываются баннером на «Обзоре» личного кабинета всем владельцам, пока объявление активно. ИИ-бот поддержки сразу видит активные объявления и отвечает по ним на вопросы об акциях и новостях; снятое объявление он забывает. Пишите условия акции полностью — сроки, кому, как получить: бот ничего сверх текста не додумывает.</p>
         <div class="card">
           <label class="field"><span>Заголовок</span>
             <input id="f-broadcast-title" placeholder="Например: Новая функция — учёт переработки">
