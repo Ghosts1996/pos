@@ -11,6 +11,24 @@
 
 const SITE_KEY = 'zalposSiteChat_v1';
 const CAB_KEY = (tenantId) => `zalposCabChat_v1_${tenantId}`;
+// Постоянный случайный ключ браузера (не диалога): по нему сотрудники видят
+// «Гость 4821» и в новом диалоге того же человека. Имени не спрашиваем — в
+// Telegram сотрудникам персональные данные не уходят.
+const VISITOR_KEY = 'zalposSiteVisitor_v1';
+function visitorKey() {
+  try {
+    let v = window.localStorage.getItem(VISITOR_KEY) || '';
+    if (!/^[\w-]{20,80}$/.test(v)) {
+      const b = new Uint8Array(24);
+      crypto.getRandomValues(b);
+      v = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      window.localStorage.setItem(VISITOR_KEY, v);
+    }
+    return v;
+  } catch (_) {
+    return '';
+  }
+}
 
 const ICON = {
   // Гарнитура: дуга, амбушюры и микрофон — как у служб поддержки.
@@ -295,7 +313,7 @@ export function mountSupportChat({ gatewayUrl, getToken = async () => null, priv
       } else {
         r = await api('supportSiteSend', conv
           ? { ticketId: conv.ticketId, token: conv.token, text, page: ctx.page }
-          : { text, consent: true, consentEdition, page: ctx.page, role: ctx.role });
+          : { text, consent: true, consentEdition, page: ctx.page, role: ctx.role, visitor: visitorKey() });
         if (r.token) conv = { ticketId: r.ticketId, token: r.token, last: 0 };
       }
       if (my !== gen) return;

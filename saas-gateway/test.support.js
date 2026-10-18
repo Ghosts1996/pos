@@ -1627,6 +1627,99 @@ test("шаблоны: из подтверждённого решения бот 
   assert.strictEqual(h.aiCalls.length, n + 1, "включённый шаблон потратил токены");
 });
 
+test("одна буква («Р») — без ИИ; после вопроса бота «а или б?» — это ответ, решает ИИ", async () => {
+  assert.strictEqual(sb.noiseKind("Р"), "tiny");
+  assert.strictEqual(sb.noiseKind("ип"), "");
+  assert.strictEqual(sb.noiseKind("чек"), "");
+  assert.strictEqual(sb.noiseKind("2"), "");
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Р"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 0, "одна буква потратила токены");
+  assert.ok(sends(h.calls, 42).some((c) => /Не разобрал сообщение/.test(c.body.text)));
+
+  const h2 = harness();
+  await setup(h2);
+  h2.aiReplies.push("Касса будет на Android или на Windows? Напишите «а» или «б».");
+  await h2.bot.handleUpdate(pm("Как поставить кассу?"));
+  await h2.bot.idle();
+  await h2.bot.handleUpdate(pm("а"));
+  await h2.bot.idle();
+  assert.strictEqual(h2.aiCalls.length, 2, "ответ на вопрос бота принят за мусор");
+});
+
+test("самообучение: ИИ переспросил «не понял» — бот запоминает и в следующий раз отвечает без ИИ; сотрудник может снять", async () => {
+  const h = harness();
+  await setup(h);
+  // «ээх» фильтр не ловит — первые три раза решает ИИ и переспрашивает.
+  for (let i = 0; i < 3; i++) {
+    h.aiReplies.push("Не понял, что вы имеете в виду. Напишите, пожалуйста, вопрос целиком.");
+    await h.bot.handleUpdate(pm("ээх", 60 + i));
+    await h.bot.idle();
+  }
+  assert.strictEqual(h.aiCalls.length, 3);
+  assert.ok(h.bot.learnedJunk("Ээх!"));
+  assert.ok(sends(h.calls, GROUP).some((c) => /Запомнил как бессмыслицу/.test(c.body.text)));
+  await h.bot.handleUpdate(pm("ээх", 70));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 3, "выученная бессмыслица снова потратила токены");
+  // Вопросы-обрывки не учим: «как?» — продолжение разговора.
+  h.aiReplies.push("Уточните, пожалуйста, что именно настроить?");
+  await h.bot.handleUpdate(pm("как?", 71));
+  await h.bot.idle();
+  assert.ok(!h.bot.learnedJunk("как"));
+  // Кнопка «Это не мусор» — снова отвечает ИИ.
+  const btn = sends(h.calls, GROUP).map((c) => c.body.reply_markup).filter(Boolean)
+    .flatMap((m) => m.inline_keyboard.flat()).find((b) => /^sb:nzoff:/.test(b.callback_data));
+  await h.bot.handleUpdate({ callback_query: { id: "cq9", from: { id: 7 }, data: btn.callback_data, message: { message_id: 5, chat: { id: GROUP } } } });
+  assert.ok(!h.bot.learnedJunk("ээх"));
+});
+
+test("чат сайта: у каждого посетителя постоянный «Гость №» — новый диалог того же браузера с тем же номером, сотрудники видят прошлые", async () => {
+  const h = harness();
+  await setup(h);
+  const req = (body, ip) => ({ body, headers: { "x-real-ip": ip } });
+  const visitor = "v".repeat(30);
+  await h.bot.handleSiteSend(req({ text: "Сколько стоит касса?", consent: true, visitor }, "10.2.0.1"), {});
+  const first = h.sent.body.ticketId;
+  await h.bot.idle();
+  await h.bot.handleSiteSend(req({ text: "Есть ли демо?", consent: true, visitor }, "10.2.0.2"), {});
+  const second = h.sent.body.ticketId;
+  await h.bot.handleSiteSend(req({ text: "А склад есть?", consent: true, visitor: "w".repeat(30) }, "10.2.0.3"), {});
+  const other = h.sent.body.ticketId;
+  await h.bot.idle();
+  const all = tickets(h.store);
+  const [a, b, c] = [first, second, other].map((id) => all.find((x) => x.id === id));
+  assert.ok(/^\d{4}$/.test(a.visitorTag));
+  assert.strictEqual(a.visitorTag, b.visitorTag, "тот же браузер — другой номер");
+  assert.notStrictEqual(a.visitorTag, c.visitorTag);
+  assert.ok(!JSON.stringify(all).includes(visitor), "ключ браузера хранится открыто");
+  assert.deepStrictEqual(b.visitorPrev, [a.no]);
+  assert.ok(h.calls.some((x) => x.method === "createForumTopic" && x.body.name.includes(`Гость ${a.visitorTag}`)));
+  assert.ok(sends(h.calls, GROUP).some((x) => /Он уже писал: #/.test(x.body.text)));
+  assert.strictEqual(sb.siteWho({}), "Посетитель");
+});
+
+test("объявления платформы: бот знает действующую акцию и отвечает по ней, снятую — забывает", async () => {
+  const h = harness();
+  h.store.set("broadcasts/b1", { title: "ИИ в кассе: 10 000 000 токенов бесплатно", body: "Бонус по ссылке https://tooken.club/r/ABC — подключите Telegram на сайте tooken.club.", active: true, createdAt: { toMillis: () => Date.now() } });
+  h.store.set("broadcasts/b2", { title: "Старая акция", body: "Скидка 50%", active: false });
+  await setup(h);
+  assert.strictEqual(await h.bot.loadNews(), 1);
+  await h.bot.handleUpdate(pm("Как получить бесплатные токены по акции?"));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Действующие объявления и акции") && prompt.includes("tooken.club/r/ABC"), "акции нет в подсказке");
+  assert.ok(!prompt.includes("Скидка 50%"), "снятое объявление в подсказке");
+  // Обычный вопрос — без объявлений (токены не тратятся).
+  await h.bot.handleUpdate(pm("Не собирается APK", 43));
+  await h.bot.idle();
+  assert.ok(!JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("Действующие объявления"));
+  h.store.set("broadcasts/b1", { ...h.store.get("broadcasts/b1"), active: false });
+  assert.strictEqual(await h.bot.loadNews(), 0);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

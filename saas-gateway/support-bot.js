@@ -228,10 +228,14 @@ function gibberish(text) {
   });
 }
 
+// Короткие осмысленные ответы из одной-двух букв: «ип», «ии», «1с».
+const TINY_OK = /^(ип|ии|ai|ну|чз|ос|пк|тв|ок|ok|да)$/;
+
 /** Сообщение без нового смысла — на него не нужен отдельный вызов ИИ:
  *  "ping" — «ты тут?», «бот, помоги»; "ack" — «ок»; "dup" — повтор уже
- *  написанного; "junk" — набор букв; "" — настоящий вопрос. Сообщения с
- *  файлами — всегда вопрос. */
+ *  написанного; "junk" — набор букв; "tiny" — одна-две буквы («р», «ыы»):
+ *  мусор, если бот ничего не спрашивал (иначе это может быть выбор «а»/«б»);
+ *  "" — настоящий вопрос. Сообщения с файлами — всегда вопрос. */
 function noiseKind(text, earlier = [], hasFiles = false) {
   if (hasFiles) return "";
   const t = norm(text).replace(/[\s.!?…]+$/u, "");
@@ -241,8 +245,16 @@ function noiseKind(text, earlier = [], hasFiles = false) {
   if (smallTalk(text) === "ack") return "ack";
   if (t.length <= 40 && aiCall(text)) return "ping";
   if (gibberish(text)) return "junk";
+  if (/^[a-zа-яё]{1,2}$/.test(t) && !TINY_OK.test(t)) return "tiny";
   return "";
 }
+
+/** Ответ ИИ — переспрос «не понял, напишите вопрос целиком»: значит,
+ *  сообщение клиента было без смысла (повторится — ответим без ИИ). */
+const CLARIFY = /(не понял|не совсем понял|не разобрал|не могу понять|что вы имеете в виду|что имеете в виду|уточните,? (пожалуйста,? )?(что|вопрос|о ч)|напишите[^.?!\n]{0,40}(вопрос|подробнее|целиком|словами|что нужно))/i;
+const NOT_NOISE = /^(как|что|где|когда|почему|зачем|сколько|какой|какая|какие|куда|откуда|кто|чем|а|и|и что|а как|а где|а что|ну и|ещё|еще|дальше|подробнее|why|how|what)$/;
+/** Ключ выученной бессмыслицы: «Р!» и «р» — одно. */
+const noiseKey = (text) => norm(text).replace(/[\s.!?…,]+$/u, "").replace(/\s+/g, " ").trim();
 
 /** Короткие «спасибо», «ок», «привет» — ответ без ИИ (экономия токенов). */
 function smallTalk(text) {
@@ -720,11 +732,17 @@ const SITE_STATE = [
   "Контакты в этом чате не нужны и не запрашивай их: для связи — регистрация на сайте или кабинет.",
 ].join("\n");
 
-function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null, site = false, account = false, member = "", cabinet = false, page = "" }) {
+// Вопрос об акциях и новостях — показываем ИИ все действующие объявления.
+const NEWS_Q = /(акци|бонус|скидк|промо|подар|бесплатн|розыгрыш|новост|объявлен|токен|реферал|спецпредлож|предложени)/;
+
+function buildMessages({ venue = "", platform = "", news = [], errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null, site = false, account = false, member = "", cabinet = false, page = "" }) {
   const ctx = [];
   ctx.push(`# Кто пишет\n${site ? (member ? SITE_MEMBER_STATE(member) : account ? SITE_ACCOUNT_STATE : SITE_STATE) : cabinet && linked ? CABINET_STATE : linked ? "Пишет из Telegram, привязан к заведению (оно ниже)." : "Пишет из Telegram без привязки к заведению."}${PAGE_HINT(page, site)}`);
   ctx.push(`# Состояние заведения\n${site ? "Нет: человек пишет с сайта, данных заведения ты не видишь и не называешь." : linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
   if (platform) ctx.push(`# Платформа\n${platform}`);
+  if (news.length) {
+    ctx.push(`# Действующие объявления и акции ZalPOS\nОфициальные: их опубликовал администратор платформы, клиенты видят их в кабинете. На вопросы об акциях, бонусах и новостях отвечай по ним: суть, условия, как получить, ссылка из объявления (её можно дать). Условий сверх текста не придумывай — чего в тексте нет, уточни у специалиста. Акции, которой здесь нет, сейчас нет: решения о прошлых акциях в базе могли устареть.\n\n${news.map((d) => `## ${d.title}\n${clip(d.text, 1400)}`).join("\n\n")}`);
+  }
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
   if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
   if (learned.length) ctx.push(`# База решений (проверено поддержкой)\n${learned.map((d) => `## ${d.title}\n${clip(d.text, 800)}`).join("\n\n")}`);
@@ -733,7 +751,7 @@ function buildMessages({ venue = "", platform = "", errors = [], guide = [], lea
     const rest = web.results.filter((r) => !web.pages.some((p) => p.url === r.url)).slice(0, 4).map((r) => `- ${r.title} (${domainOf(r.url)}): ${clip(r.snippet, 220)} — ${r.url}`);
     ctx.push(`# Из интернета (поиск: «${clip(web.query, 120)}»)\n${[...pages, rest.length ? `Ещё в выдаче:\n${rest.join("\n")}` : ""].filter(Boolean).join("\n\n")}`);
   }
-  if (!guide.length && !learned.length && !(web && web.pages.length)) {
+  if (!guide.length && !learned.length && !news.length && !(web && web.pages.length)) {
     ctx.push("# Знания\nПо этому вопросу нет проверенных знаний (нет проверенных знаний по вопросу). Отвечай только если ответ прямо есть в «О продукте» или в «Состоянии». Иначе не отвечай по памяти: уточни вопрос одним вопросом, а если он понятен — скажи, что уточнишь у специалиста, и добавь [[ОПЕРАТОР: нет в знаниях]].");
   }
   if (code.length) ctx.push(`# Как устроено в программе (внутреннее: клиенту не называй файлы, классы и код)\n${code.map((d) => `## ${d.title}\n${clip(d.text, 900)}`).join("\n\n")}`);
@@ -772,9 +790,13 @@ function aiPaused(t, now = Date.now()) {
   return t.aiMode === "off" || t.escalated === true || toMs(t.aiPausedUntil) > now;
 }
 
+/** Посетитель сайта для сотрудников: «Гость 4821» — постоянный номер его
+ *  браузера (не имя: в Telegram персональные данные не передаём). */
+const siteWho = (t) => (t.visitorTag ? `Гость ${t.visitorTag}` : "Посетитель");
+
 function topicTitle(t, venueName = "") {
   const icon = t.status === "closed" ? ICON.closed : t.escalated ? ICON.human : t.humanAt && toMs(t.aiPausedUntil) > Date.now() ? ICON.answered : ICON.ai;
-  const who = venueName || t.tgName || (t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "Сайт" : "Кабинет");
+  const who = venueName || t.tgName || (t.channel === "telegram" ? "Telegram" : t.channel === "site" ? (t.visitorTag ? `Сайт · ${siteWho(t)}` : "Сайт") : "Кабинет");
   return clip(`${icon} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
 }
 
@@ -951,7 +973,7 @@ function createSupportBot(deps) {
 
   const state = {
     cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(),
-    usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "",
+    usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "", noise: new Map(), news: [],
     templates: tplIndex(TEMPLATES.map((t) => ({ ...t, id: `b_${t.id}`, source: "builtin", status: "active" }))),
   };
   const timers = new Map();
@@ -1171,6 +1193,81 @@ function createSupportBot(deps) {
     const t = tplById(id);
     if (t) t.status = status;
     await templatesCol().doc(id).set({ ...(t && t.source === "builtin" ? { source: "builtin" } : {}), status, statusAt: ts(now()) }, { merge: true });
+  }
+
+  // ---- объявления платформы (кабинет → «Объявления»): бот знает действующие
+  // акции и новости и отвечает по ним; снятое объявление он забывает.
+
+  function setNews(docs) {
+    state.news = docs.map((d) => {
+      const b = d.data() || {};
+      const at = toMs(b.createdAt);
+      return indexDoc({
+        id: `news_${d.id}`, kind: "news", title: clip(String(b.title || "Объявление"), 200),
+        text: `${clip(String(b.body || ""), 2000)}${at ? `\nОпубликовано: ${fmtDate(at, now())}` : ""}`, boost: 3, at,
+      });
+    }).sort((a, b) => b.at - a.at);
+    return state.news.length;
+  }
+  async function loadNews() {
+    return setNews((await db().collection("broadcasts").where("active", "==", true).limit(10).get()).docs);
+  }
+  let unsubNews = null;
+  /** Новое объявление бот видит сразу, без ожидания перезагрузки знаний. */
+  function watchNews() {
+    const q = db().collection("broadcasts").where("active", "==", true).limit(10);
+    if (unsubNews || typeof q.onSnapshot !== "function") return;
+    unsubNews = q.onSnapshot((snap) => setNews(snap.docs), (e) => {
+      console.error(`support-bot: объявления: ${e.message || e}`);
+      unsubNews = null;
+    });
+  }
+
+  // ---- самообучение на бессмыслице: ИИ переспросил «не понял» — запомнили
+  // сообщение; повторится — ответим сами, без ИИ. Сотрудник может снять
+  // отметку кнопкой в теме.
+
+  const noiseRef = () => db().collection("supportBot").doc("noise");
+  const noiseId = (key) => crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
+  const NOISE_MAX = 500;
+  async function loadNoise() {
+    const snap = await noiseRef().get();
+    const items = (snap.exists && snap.data().items) || {};
+    state.noise = new Map(Object.entries(items).filter(([, v]) => v && v.k));
+    return state.noise.size;
+  }
+  /** Выученная бессмыслица: до 2 знаков — с первого раза, длиннее — с
+   *  третьего (одно непонятое «ааа» ещё не правило). */
+  function learnedJunk(text) {
+    const k = noiseKey(text);
+    if (!k || k.length > 24) return false;
+    const e = state.noise.get(noiseId(k));
+    return !!(e && !e.off && e.k === k && Number(e.hits) >= (k.length <= 2 ? 1 : 3));
+  }
+  /** Вид сообщения с учётом выученного: выученное — как «tiny» (если бот
+   *  сам что-то спросил, это может быть ответ — тогда решает ИИ). */
+  const kindOf = (text, earlier, hasFiles) => noiseKind(text, earlier, hasFiles) || (!hasFiles && learnedJunk(text) ? "tiny" : "");
+  /** Запомнить: ИИ не понял это сообщение. true — отметка только что включилась. */
+  async function noteNoise(text) {
+    const k = noiseKey(text);
+    // Цифры и вопросы-обрывки («как?», «почему») — не мусор: это продолжение разговора.
+    if (!k || k.length > 24 || /\d/.test(k) || NOT_NOISE.test(k)) return false;
+    const id = noiseId(k);
+    const e = state.noise.get(id) || { k, hits: 0 };
+    if (e.off) return false;
+    const was = learnedJunk(text);
+    e.hits = (Number(e.hits) || 0) + 1;
+    e.at = now();
+    state.noise.set(id, e);
+    if (state.noise.size > NOISE_MAX) {
+      // Самые старые — вон; переписываем документ целиком.
+      const keep = [...state.noise.entries()].sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, NOISE_MAX);
+      state.noise = new Map(keep);
+      await quiet(noiseRef().set({ items: Object.fromEntries(keep) }), "бессмыслица");
+    } else {
+      await quiet(noiseRef().set({ items: { [id]: e } }, { merge: true }), "бессмыслица");
+    }
+    return !was && learnedJunk(text);
   }
 
   async function loadKnowledge() {
@@ -1428,6 +1525,10 @@ function createSupportBot(deps) {
       lines.push(info ? venueCard(info, { staff: true, now: now() }) : `🏪 ${h(vname || t.tenantId)}`);
     } else if (t.channel === "site") {
       lines.push("🌐 Посетитель сайта zalpos.ru — пока не клиент или не вошёл в кабинет. Помогите выбрать тариф и начать; контактов в чате нет — данные обезличены.");
+      if (t.visitorTag) {
+        const prev = (Array.isArray(t.visitorPrev) ? t.visitorPrev : []).filter(Boolean);
+        lines.push(`👤 <b>${h(siteWho(t))}</b> — номер браузера посетителя, у каждого свой${prev.length ? `. Он уже писал: ${prev.map((n) => `#${h(n)}`).join(", ")}` : ""}.`);
+      }
     } else {
       lines.push("🏪 Заведение не привязано — попросите клиента открыть кабинет → «Поддержка» → «Написать в Telegram».");
     }
@@ -1575,7 +1676,7 @@ function createSupportBot(deps) {
     // Один и тот же текст, присланный дважды подряд, — один вопрос.
     const question = [...new Set(fresh.map((m) => String(m.text || "").trim()).filter(Boolean))].join("\n").trim();
     const priorOwner = history.slice(0, i).filter((m) => m.authorRole === "owner").map((m) => m.text || "");
-    const kinds = fresh.map((m) => noiseKind(m.text || "", priorOwner, supportFiles.listOf(m).length > 0));
+    const kinds = fresh.map((m) => kindOf(m.text || "", priorOwner, supportFiles.listOf(m).length > 0));
     const substantive = kinds.some((k) => !k);
     const imagesNow = fresh.some((m) => supportFiles.listOf(m).some((f) => supportFiles.isImage(f.type)));
     if (!question && fresh.some((m) => supportFiles.listOf(m).length) && !imagesNow) {
@@ -1618,8 +1719,13 @@ function createSupportBot(deps) {
         return;
       }
     }
+    // Последнее, что сказала поддержка, — вопрос? Тогда «да», «ок», «ну что?» — это ответ.
+    const prevBot = [...history.slice(0, i)].reverse().find((m) => m.authorRole !== "owner" && m.authorRole !== "note");
+    const askedBack = !!(prevBot && /\?/.test(String(prevBot.text || "").slice(-400)));
     // Набор букв без смысла — ИИ не зовём; подскажем один раз, дальше молчим.
-    if (kinds.every((k) => k === "junk" || k === "ack") && kinds.includes("junk")) {
+    // Одна-две буквы — мусор, только если бот ничего не спрашивал.
+    const junky = (k) => k === "junk" || (k === "tiny" && !askedBack);
+    if (kinds.every((k) => k === "ack" || junky(k)) && kinds.some(junky)) {
       if (now() - toMs(t.junkAt) <= WAIT_PING_MS) return;
       await patch(t, { junkAt: ts(now()) });
       return deliver(t, "Не разобрал сообщение. Напишите словами, что нужно сделать или что не работает, — помогу.");
@@ -1639,9 +1745,6 @@ function createSupportBot(deps) {
       await patch(t, { urgentAt: ts(now()) });
       await toTopic(t, "⚡ Похоже, у клиента всё стоит — ИИ отвечает, но гляньте, пожалуйста.");
     }
-    // Последнее, что сказала поддержка, — вопрос? Тогда «да», «ок», «ну что?» — это ответ.
-    const prevBot = [...history.slice(0, i)].reverse().find((m) => m.authorRole !== "owner" && m.authorRole !== "note");
-    const askedBack = !!(prevBot && /\?/.test(String(prevBot.text || "").slice(-400)));
     const pinged = fresh.every((m) => PING.test(norm(m.text || "")) || smallTalk(m.text || "") === "ack");
     const talk = imagesNow ? "" : smallTalk(question);
     // Прошлый ответ был шаблоном: «спасибо» — шаблон помог; «не то» — нет.
@@ -1675,9 +1778,11 @@ function createSupportBot(deps) {
       && kinds.filter((k) => !k).length === 1
       ? matchTemplate(question, state.templates, { audience, exclude: lastTpl ? [lastTpl] : [] }) : null;
     const tplFill = (a) => a.replace("{{plans}}", tplPlans || "");
+    // Вопрос про действующее объявление (акцию) — отвечает ИИ по его тексту, не шаблон.
+    const newsHit = rankDocs(question, state.news, 1, 3).length > 0;
     if (tplMatch && tplMatch.template.status === "active" && tplMatch.template.direct
       && tplMatch.score >= TPL_DIRECT && tplMatch.score - tplMatch.second >= TPL_MARGIN
-      && !askedBack && !UNHAPPY.test(norm(question)) && !isUrgent(question)
+      && !askedBack && !newsHit && !UNHAPPY.test(norm(question)) && !isUrgent(question)
       && !deceitSignals(question).length && !suspiciousLinks(question).length
       && (!tplMatch.template.a.includes("{{plans}}") || tplPlans)) {
       const tp = tplMatch.template;
@@ -1735,7 +1840,9 @@ function createSupportBot(deps) {
     // знаниях нет уверенного ответа (иначе это лишние тысячи токенов).
     const guide = strong(rankDocs(query, state.guide, 4), 0.45);
     const learned = rankDocs(query, state.learned, 3, 1.5);
-    const sure = (guide[0] && guide[0].score >= 8) || learned.length > 0;
+    // Объявления: о чём спросили — то и даём; вопрос об акциях — все действующие.
+    const news = NEWS_Q.test(norm(question)) ? state.news.slice(0, 5) : rankDocs(query, state.news, 2, 3);
+    const sure = (guide[0] && guide[0].score >= 8) || learned.length > 0 || news.length > 0;
     const code = question.length >= 25 && !sure ? strong(rankDocs(query, state.code, 2, 5), 0.6) : [];
     // Внешний вопрос (закон, банк, оборудование, сторонний сервис) или знаний мало — ищем в интернете.
     const webData = talk || pinged ? null : await maybeResearch(t, { question: `${earlier}\n${question}`.trim(), guide, learned, sure });
@@ -1747,7 +1854,7 @@ function createSupportBot(deps) {
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
     const page = clip(String([...fresh].reverse().find((m) => m.page)?.page || ""), 60);
     const messages = buildMessages({
-      venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData,
+      venue, platform, news, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData,
       site: t.channel === "site", account: t.channel === "site" && !!t.siteUid, member: t.channel === "site" && t.siteUid ? t.siteRole || "" : "", cabinet: t.channel !== "telegram" && t.channel !== "site", page,
     });
     if (askedBack && (talk === "ack" || pinged || question.length < 25)) {
@@ -1805,7 +1912,7 @@ function createSupportBot(deps) {
     const after = await messagesOf(t);
     const seen = [...priorOwner, ...fresh.map((m) => m.text || "")];
     const addedReal = after.slice(history.length).filter((m) => m.authorRole === "owner")
-      .some((m) => !noiseKind(m.text || "", seen, supportFiles.listOf(m).length > 0));
+      .some((m) => !kindOf(m.text || "", seen, supportFiles.listOf(m).length > 0));
     if (addedReal) {
       await doneTyping();
       return;
@@ -1830,8 +1937,16 @@ function createSupportBot(deps) {
       aiBurst: burst + 1, aiBurstAt: burst ? t.aiBurstAt : ts(now()),
     });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
-    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${TIER_LABEL[used.tier] ? ` · ${TIER_LABEL[used.tier]}` : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
+    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${TIER_LABEL[used.tier] ? ` · ${TIER_LABEL[used.tier]}` : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${news.length ? ` · 📣 ${news.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
     await movePanel(t, aiNote);
+    // ИИ переспросил «не понял» на короткое сообщение — запомним, чтобы в
+    // следующий раз не тратить на такое вызов ИИ.
+    if (fresh.length === 1 && !askedBack && !imagesNow && question.length <= 24 && CLARIFY.test(reply.text) && reply.text.length < 400) {
+      if (await noteNoise(question)) {
+        await toTopicHtml(t, `🧹 <b>Запомнил как бессмыслицу</b>: «${h(noiseKey(question))}» — дальше отвечаю на такое без ИИ.`,
+          { reply_markup: { inline_keyboard: [[{ text: "↩️ Это не мусор", callback_data: `sb:nzoff:${noiseId(noiseKey(question))}` }]] } });
+      }
+    }
     if (reply.escalate) await escalate(t, reply.reason, { tellClient: false, byAi: true });
     else if (deceit >= DECEIT_LIMIT && wary) await escalate(t, "несколько попыток обойти правила — нужен человек", { tellClient: false });
   }
@@ -3011,6 +3126,17 @@ function createSupportBot(deps) {
       return forgetClient(from.id, chatId);
     }
 
+    const nz = data.match(/^sb:nzoff:([0-9a-f]{12})$/);
+    if (nz) {
+      if (!isGroup(chatId)) return answer();
+      const e = state.noise.get(nz[1]);
+      if (e) {
+        e.off = true;
+        await quiet(noiseRef().set({ items: { [nz[1]]: e } }, { merge: true }), "бессмыслица");
+      }
+      await quiet(tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }), "кнопка");
+      return answer("Хорошо: на это сообщение снова отвечает ИИ");
+    }
     const tm = data.match(/^sb:(tplon|tploff|tpldel):([\w-]+)$/);
     if (tm) {
       if (!isGroup(chatId)) return answer();
@@ -3165,7 +3291,7 @@ function createSupportBot(deps) {
       } else {
         if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
         await patch(t, { clientAt: m.createdAt || ts(now()) });
-        const from = t.channel === "site" ? "Посетитель · сайт" : "Клиент · кабинет";
+        const from = t.channel === "site" ? `${siteWho(t)} · сайт` : "Клиент · кабинет";
         if (m.text) await toTopicHtml(t, `💬 <b>${from}</b>\n<blockquote>${h(m.text)}</blockquote>`);
         await filesToTopic(t, m, `💬 ${from}`);
       }
@@ -3669,6 +3795,7 @@ function createSupportBot(deps) {
   }
   // Название раздела, где человек сейчас: «Тарифы», «Устройства».
   const cleanPage = (v) => clip(String(v || "").replace(/[^\p{L}\p{N} .,«»·()-]/gu, "").trim(), 60);
+  const visitorTagOf = (hash) => String(1000 + (parseInt(hash.slice(0, 8), 16) % 9000));
   const siteHash = (token) => crypto.createHash("sha256").update(`zalpos-site:${token}`).digest("hex");
   const siteOn = () => active() && aiReady() && !(state.cfg && state.cfg.siteChat === false);
 
@@ -3704,8 +3831,18 @@ function createSupportBot(deps) {
       if (!siteAllow("new", ip, SITE_NEW_PER_DAY, 24 * 3600 * 1000)) throw new HttpError(429, "Слишком много новых диалогов — продолжите прежний или напишите позже");
       token = crypto.randomBytes(24).toString("base64url");
       const ref = ticketsCol().doc();
+      // Постоянный ключ браузера (не диалога): новый диалог того же человека
+      // получит тот же «Гость 4821», и сотрудники не спутают людей.
+      const visitor = /^[\w-]{20,80}$/.test(String(body.visitor || "")) ? String(body.visitor) : "";
+      const visitorHash = visitor ? crypto.createHash("sha256").update(`zalpos-visitor:${visitor}`).digest("hex") : "";
+      const visitorPrev = visitorHash
+        ? await ticketsCol().where("visitorHash", "==", visitorHash).limit(10).get()
+          .then((snap) => snap.docs.map((d) => d.data()).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt)).slice(0, 5).map((x) => x.no).filter(Boolean))
+          .catch(() => [])
+        : [];
       t = {
         id: ref.id, channel: "site", siteKeyHash: siteHash(token), subject: clip(text, 120), status: "open",
+        ...(visitorHash ? { visitorHash, visitorTag: visitorTagOf(visitorHash), visitorPrev } : {}),
         ...(uid ? { siteUid: uid, ...(["manager", "employee"].includes(body.role) ? { siteRole: body.role } : {}) } : {}),
         createdBy: "site", createdAt: at, updatedAt: at, lastAuthorRole: "owner",
         pdConsent: true, pdConsentAt: at, pdConsentEdition: clip(String(body.consentEdition || ""), 80),
@@ -3800,6 +3937,9 @@ function createSupportBot(deps) {
     await loadGuide();
     await loadKnowledge().catch(() => {});
     await loadTemplates().catch(() => {});
+    await loadNoise().catch(() => {});
+    await loadNews().catch(() => {});
+    if (active()) { try { watchNews(); } catch (_) {} }
     const u = (await db().collection("supportBot").doc("usage").get().catch(() => null));
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
@@ -3817,6 +3957,8 @@ function createSupportBot(deps) {
     setInterval(() => {
       loadKnowledge().catch(() => {});
       loadTemplates().catch(() => {});
+      loadNoise().catch(() => {});
+      if (!unsubNews) loadNews().catch(() => {});
       reload().catch(() => {});
       for (const [k, r] of state.rate) if (now() > r.reset) state.rate.delete(k);
     }, KB_RELOAD_MS).unref();
@@ -3824,7 +3966,7 @@ function createSupportBot(deps) {
 
   return {
     start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend, handleSiteMessages, handlePurgeForeign, sweepSite, handleAiCheck, handleDocDownload, router,
-    onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
+    onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),
   };
@@ -3832,5 +3974,5 @@ function createSupportBot(deps) {
 
 module.exports = {
   createSupportBot, matchTemplate, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
-  boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
+  boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, siteWho, splitText, HOOK_ID, SYSTEM_PROMPT,
 };
