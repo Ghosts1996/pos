@@ -1129,7 +1129,7 @@ async function chainLocationQuote(chainId) {
     throw new HttpError(402, "Подписка сети не оплачена — сначала продлите её во вкладке «Оплата»");
   }
   const endMs = sub.currentPeriodEnd?.toMillis ? sub.currentPeriodEnd.toMillis() : 0;
-  const remainingDays = Math.max(0, Math.ceil((endMs - Date.now()) / 86400000));
+  const remainingDays = paidDaysLeft(sub);
   const periodPrice = billingPrice(plan, sub, planId, (p) => additionalLocationPriceForPeriod(p, billingPeriod));
   const amount = Math.round((periodPrice / BILLING_PERIOD_DAYS[billingPeriod]) * remainingDays);
   if (amount < 1) return { ...base, free: true, reason: "periodEnds", amount: 0, remainingDays };
@@ -1573,6 +1573,43 @@ const PRICE_LOCK_FIELDS = [
   "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly", "customAdditionalPrice",
 ];
 const PRICE_LOCK_DAYS = 30;
+/**
+ * Сколько срока перейдёт в новый оплаченный период. Остаток пробного
+ * периода — бесплатные дни: переходят как есть, по цене не пересчитываются
+ * и ни во что не превращаются. Оплаченные дни при смене тарифа
+ * пересчитываются по цене нового (месяц «Про» поверх года «Старта» не даёт
+ * год «Про», переход на тариф дешевле не съедает переплату); тот же тариф —
+ * дни как есть. Бесплатная часть всегда в начале срока: subscriptions.freeUntil.
+ * Просрочка (past_due, cancelled) — переносить нечего, период — с «сейчас».
+ * → { carryMs, freeMs }
+ */
+function periodCarry({ now, cur, planId, wasMonthly = 0, nextMonthly = 0 }) {
+  const ms = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : Number(t) || 0);
+  const c = cur || {};
+  let free = 0;
+  let paid = 0;
+  if (c.status === "trial") {
+    free = Math.max(0, ms(c.trialEndsAt) - now);
+  } else if (c.status === "active") {
+    const left = Math.max(0, ms(c.currentPeriodEnd) - now);
+    free = Math.min(left, Math.max(0, ms(c.freeUntil) - now));
+    paid = left - free;
+    if (paid > 0 && c.planId && c.planId !== planId && wasMonthly > 0 && nextMonthly > 0) {
+      paid = Math.round((paid * wasMonthly) / nextMonthly);
+    }
+  }
+  return { carryMs: free + paid, freeMs: free };
+}
+
+/** Оплаченные (не бесплатные) дни до конца срока — за них доплачивает новая
+ *  точка сети. Дни из пробного периода бесплатны и для неё. */
+function paidDaysLeft(sub, now = Date.now()) {
+  const ms = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : Number(t) || 0);
+  const end = ms(sub && sub.currentPeriodEnd);
+  const from = Math.max(now, ms(sub && sub.freeUntil));
+  return Math.max(0, Math.ceil((end - from) / 86400000));
+}
+
 function billingPrice(plan, sub, planId, compute) {
   const now = compute(plan);
   const lock = sub && sub.priceLock;
@@ -2217,24 +2254,24 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
     const periodDays = BILLING_PERIOD_DAYS[billingPeriod];
     const subRef = firestore.collection("subscriptions").doc(billingId);
     const plansCol = firestore.collection("plans");
+    // Сеть сравниваем по месячной цене за все её точки, а не за первую.
+    const points = chainId ? Math.max(1, await countChainLocations(chainId)) : 1;
+    const monthlyOf = (p) => (chainId ? chainPriceForPeriod(p, "monthly", points) : planPriceForPeriod(p, "monthly"));
     await firestore.runTransaction(async (tx) => {
       const cur = (await tx.get(subRef)).data() || {};
-      // Оплата раньше срока (или автопродление за сутки до конца) не должна
-      // съедать оставшиеся оплаченные/пробные дни: новый период — от конца
-      // текущего, если он ещё не наступил.
+      // Оплата раньше срока (или автопродление за сутки до конца) не
+      // съедает оставшиеся дни: новый период — от конца текущего. Пробные
+      // дни переходят бесплатными, оплаченные при смене тарифа —
+      // пересчитываются по цене нового (periodCarry).
       const now = Date.now();
-      const ends = [now];
-      if (cur.status === "active" && cur.currentPeriodEnd?.toMillis) ends.push(cur.currentPeriodEnd.toMillis());
-      if (cur.status === "trial" && cur.trialEndsAt?.toMillis) ends.push(cur.trialEndsAt.toMillis());
-      // Смена тарифа: оставшиеся оплаченные дни пересчитываются по цене
-      // нового. Иначе месяц «Про» поверх года «Старта» давал бы год «Про»,
-      // а переход на тариф дешевле съедал бы переплату.
-      let carryMs = Math.max(...ends) - now;
-      if (carryMs > 0 && cur.status === "active" && cur.planId && cur.planId !== planId) {
+      let wasMonthly = 0;
+      let nextMonthly = 0;
+      if (cur.status === "active" && cur.planId && cur.planId !== planId) {
         const [was, next] = await Promise.all([tx.get(plansCol.doc(cur.planId)), tx.get(plansCol.doc(planId))]);
-        const monthly = (doc) => planPriceForPeriod(doc.data() || {}, "monthly");
-        if (monthly(was) > 0 && monthly(next) > 0) carryMs = Math.round(carryMs * monthly(was) / monthly(next));
+        wasMonthly = monthlyOf(was.data() || {});
+        nextMonthly = monthlyOf(next.data() || {});
       }
+      const { carryMs, freeMs } = periodCarry({ now, cur, planId, wasMonthly, nextMonthly });
       const base = now + carryMs;
       const update = {
         tenantId, chainId, planId, billingPeriod,
@@ -2243,6 +2280,8 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
         externalSubscriptionId: paymentId,
         currentPeriodStart: admin.firestore.FieldValue.serverTimestamp(),
         currentPeriodEnd: admin.firestore.Timestamp.fromMillis(base + periodDays * 86400000),
+        // Начало срока — бесплатные дни из пробного периода (не за деньги).
+        freeUntil: freeMs > 0 ? admin.firestore.Timestamp.fromMillis(now + freeMs) : null,
         cancelAtPeriodEnd: false,
         // Иначе при СЛЕДУЮЩЕЙ просрочке остался бы старый pastDueSince
         // (markPastDue его не перезаписывает) — и данные заведения стёрлись
@@ -7639,4 +7678,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
