@@ -545,8 +545,10 @@ function bindAttachPicker({ button, input, pasteInto, list, redraw }) {
 // (white-space: pre-line у контейнера). Ссылку ищем в исходном тексте и
 // экранируем по частям — иначе «->» сразу за адресом попадал бы в ссылку.
 const LINK_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'«»]+[^\s<>"'«».,;:!?)\]]/gi;
-function richText(text) {
+/** Текст с переносами и ссылками; bold — **жирное** из ответов поддержки. */
+function richText(text, { bold = false } = {}) {
   const raw = String(text ?? '');
+  const fmt = (part) => (bold ? esc(part).replace(/\*\*([^*\n]{1,200})\*\*/g, '<b>$1</b>') : esc(part));
   // Набрано одной строкой со стрелками «->» между пунктами (переносы
   // потерялись при вставке) — стрелка и есть перенос.
   const src = raw.includes('\n') ? raw : raw.replace(/\s+->\s+/g, '\n');
@@ -555,11 +557,11 @@ function richText(text) {
   for (const m of src.matchAll(LINK_RE)) {
     const url = m[0];
     const href = /^https?:/i.test(url) ? url : `https://${url}`;
-    out += esc(src.slice(last, m.index)) +
+    out += fmt(src.slice(last, m.index)) +
       `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="rich-link">${esc(url)}</a>`;
     last = m.index + url.length;
   }
-  return out + esc(src.slice(last));
+  return out + fmt(src.slice(last));
 }
 
 // 1×1 прозрачный GIF — заглушка для <img src> логотипа, пока своего нет:
@@ -4499,7 +4501,7 @@ function watchDashboardData(tenantId) {
           ${ticketMessages === null ? '<div class="spinner"></div>' : (ticketMessages.length ? ticketMessages.map((m) => `
             <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
               <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 Ассистент ZalPOS' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · поддержка ZalPOS` : 'Поддержка ZalPOS') : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
-              ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text)}</div>` : ''}
+              ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text, { bold: m.authorRole !== 'owner' })}</div>` : ''}
               ${attachmentsHtml(selectedTicket.id, m.attachments)}
             </div>
           `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
@@ -6745,7 +6747,7 @@ function watchAdminSupportTickets() {
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
               <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
                 <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
-                ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text)}</div>` : ''}
+                ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text, { bold: m.authorRole !== 'owner' })}</div>` : ''}
                 ${attachmentsHtml(t.id, m.attachments)}
               </div>
             `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}

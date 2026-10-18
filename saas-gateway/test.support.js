@@ -1227,6 +1227,56 @@ test("очистка: обращения из Telegram удаляются цел
   assert.strictEqual(h.sent.body.cabinetTickets, 0);
 });
 
+test("шаблоны настройки из кода приложения: каждый банк онлайн-оплаты, терминалы, агрегаторы — с полями и путями", () => {
+  const { buildRecipes } = require("./build-code-map");
+  const r = buildRecipes(require("path").join(__dirname, ".."));
+  const sber = r.find((d) => d.id === "recipe:pay:sber");
+  assert.ok(sber && /Логин API/.test(sber.text) && /\*\*Онлайн-оплата гостей\*\*/.test(sber.text) && /Сохранить и проверить подключение/.test(sber.text), JSON.stringify(sber));
+  const robo = r.find((d) => d.id === "recipe:pay:robokassa");
+  assert.ok(robo && /Пароль №2/.test(robo.text));
+  assert.ok(r.find((d) => d.id === "recipe:terminal" && /Вайлдберриз Банк/.test(d.text)));
+  assert.ok(r.find((d) => d.id === "recipe:aggregators" && /Яндекс Еда/.test(d.text)));
+  assert.ok(!JSON.stringify(r).includes("$_rbsHint"));
+});
+
+test("оформление: кнопки — жирным вместо «ёлочек», законы — в «ёлочках»; адреса локальной сети не скрываются", () => {
+  assert.strictEqual(sb.boldUi("Откройте «Админ» → «Интеграции» и нажмите «Тестовый чек»."), "Откройте **Админ** → **Интеграции** и нажмите **Тестовый чек**.");
+  assert.strictEqual(sb.boldUi("Закон «О защите прав потребителей», ООО «Колибри»"), "Закон «О защите прав потребителей», ООО «Колибри»");
+  assert.strictEqual(sb.guardReply("Например http://192.168.1.10:16732"), "Например http://192.168.1.10:16732");
+  assert.ok(sb.guardReply("сервер 85.12.3.4").includes("[адрес скрыт]"));
+  assert.ok(sb.SYSTEM_PROMPT.includes("без эмодзи") && !sb.SYSTEM_PROMPT.includes("Кнопки и разделы — в «ёлочках»"));
+});
+
+test("знания: шаблоны и «что нового» в подсказке; ответ в кабинет — с жирным", async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const pth = require("path");
+  const dir = fs.mkdtempSync(pth.join(os.tmpdir(), "kb-"));
+  fs.writeFileSync(pth.join(dir, "code-map.json"), JSON.stringify({ files: [], recipes: require("./build-code-map").buildRecipes(pth.join(__dirname, "..")) }));
+  fs.writeFileSync(pth.join(dir, "changes.txt"), "2026-10-18 Зал открывается схемой, список — в шторке\n2026-10-18 Тесты правил Firestore\n");
+  const h = harness();
+  await setup(h);
+  // Подменяем пути знаний и перечитываем.
+  h.bot.__setKbPaths({ codeMapPath: pth.join(dir, "code-map.json"), changesPath: pth.join(dir, "changes.txt") });
+  await h.bot.loadGuide();
+  const ids = h.bot._state.guide.map((d) => d.id);
+  assert.ok(ids.includes("recipe:pay:sber") && ids.includes("changes:latest"), ids.filter((x) => /recipe|changes/.test(x)).join(","));
+  const ch = h.bot._state.guide.find((d) => d.id === "changes:latest");
+  assert.ok(/Зал открывается схемой/.test(ch.text) && !/Firestore/.test(ch.text));
+
+  const T = admin.firestore.Timestamp.fromMillis;
+  const at = Date.now() - 1000;
+  h.aiReplies.push("**Подключаем Сбербанк**\n1. Откройте «Интеграции» → «Онлайн-оплата гостей».");
+  h.store.set("supportTickets/c2", { tenantId: "t1", subject: "Онлайн-оплата Сбербанк", status: "open", createdBy: "owner1", createdAt: T(at), updatedAt: T(at), lastAuthorRole: "owner" });
+  h.store.set("supportTickets/c2/messages/m1", { text: "Как подключить онлайн-оплату через Сбербанк интернет-эквайринг?", authorUid: "owner1", authorRole: "owner", createdAt: T(at) });
+  h.bot.onTicketDoc("c2", h.store.get("supportTickets/c2"));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Онлайн-оплата гостей: Сбербанк"), "шаблон не попал в подсказку");
+  const ai = messagesOf(h.store, "c2").find((m) => m.authorRole === "ai");
+  assert.ok(ai && ai.text.includes("**Интеграции** → **Онлайн-оплата гостей**"), ai && ai.text);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

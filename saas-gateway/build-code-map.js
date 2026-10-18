@@ -177,6 +177,81 @@ function buildCodeMap(repo) {
   return out;
 }
 
+// ---------------------------------------------------------------- шаблоны настройки
+// Справочники из кода приложения → готовые короткие инструкции для бота.
+// Пересобираются при каждом обновлении сервера: новый банк или поле в
+// приложении — и бот уже знает, куда его вписать.
+
+/** Значения строковых полей конструктора: label: 'a' 'b' → «ab». */
+function dartFields(block) {
+  const out = {};
+  for (const m of block.matchAll(/(\w+):\s*((?:'(?:[^'\\]|\\.)*'\s*)+)/g)) {
+    out[m[1]] = [...m[2].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((x) => x[1].replace(/\\'/g, "'")).join("");
+  }
+  for (const m of block.matchAll(/(\w+):\s*(true|false)/g)) out[m[1]] = m[2] === "true";
+  return out;
+}
+const RBS_HINT = "СБП включается на стороне банка — тогда гость увидит её на странице оплаты рядом с картой.";
+const BANK_SITE = {
+  tinkoff: "tbank.ru → Бизнес → Интернет-эквайринг", tinkoff_form: "tbank.ru → Бизнес → Интернет-эквайринг",
+  sber: "sberbank.ru → Бизнесу → Интернет-эквайринг", alfa: "alfabank.ru → Бизнесу → Интернет-эквайринг",
+  vtb: "vtb.ru → Бизнесу → Интернет-эквайринг", mts: "mtsbank.ru → Бизнесу → Интернет-эквайринг",
+  raiffeisen: "raiffeisen.ru → Бизнесу → Приём платежей по СБП", robokassa: "robokassa.com → регистрация магазина (ИП, ООО или самозанятый)",
+};
+
+function buildRecipes(repo) {
+  const read = (rel) => { try { return fs.readFileSync(path.join(repo, rel), "utf8"); } catch (_) { return ""; } };
+  const out = [];
+  const pay = read("lib/models/online_pay.dart");
+  for (const m of pay.matchAll(/OnlinePayProvider\(([\s\S]*?)\n\s{4}\),/g)) {
+    const f = dartFields(m[1].replace(/\$_rbsHint/g, RBS_HINT));
+    if (!f.id || !f.label) continue;
+    const fields = [f.loginLabel, f.passwordLabel, f.password2Label, f.urlLabel].filter(Boolean);
+    out.push({
+      id: `recipe:pay:${f.id}`,
+      title: `Онлайн-оплата гостей: ${f.label} — как подключить`,
+      text: [
+        `Гость платит онлайн${f.sbpOnly ? " через СБП" : ""} из приложения или по QR за столом и в заказах доставки.`,
+        `1. Подключите у банка интернет-эквайринг (договор)${BANK_SITE[f.id] ? `: ${BANK_SITE[f.id]}` : ""}.`,
+        `2. Где взять данные: ${f.hint}`,
+        `3. Касса · Админ · **Интеграции** → **Онлайн-оплата гостей** → **Банк**: ${f.label}. Заполните: ${fields.map((x) => `**${x}**`).join(", ")}.${f.hasTestMode ? " Для проверки — флажок тестового режима и тестовые данные банка." : ""}`,
+        "4. **Сохранить и проверить подключение** — деньги при проверке не списываются.",
+        "5. Касса · Админ · **Профиль заведения** → включите **Гость оплачивает онлайн из приложения** → **Сохранить**.",
+      ].join("\n"),
+    });
+  }
+  const banks = [...read("lib/models/terminal_bank.dart").matchAll(/TerminalBank\('[\w-]+',\s*'([^']+)'\)/g)].map((m) => m[1]);
+  if (banks.length) {
+    out.push({
+      id: "recipe:terminal",
+      title: "Оплата картой и СБП на терминале банка: какие банки, как настроить",
+      text: [
+        "Подходит любой терминал любого банка — стационарный, переносной или Tap on Phone. Касса не обязана быть связана с ним кабелем: кассир набирает сумму на терминале, касса спрашивает, прошла ли оплата, и записывает банк в чек и отчёт.",
+        `1. Касса · Админ · **Интеграции** → **Терминал оплаты** → **Терминал любого банка**.`,
+        `2. **Терминалы каких банков стоят в заведении**: ${banks.join(", ")} или **Другой банк** со своим названием.`,
+        "3. Терминал Сбера на Windows-кассе по кабелю — **Сбер — терминал на кассе** (UPOS): сумма уходит на терминал сама.",
+        "4. Другой терминал по кабелю на Windows — **Терминал по кабелю — ARCUS 2 и другие**: путь к программе банка и параметры дал банк.",
+        "Эквайринг (договор и сам терминал) оформляют в своём банке; ZalPOS комиссию не берёт.",
+      ].join("\n"),
+    });
+  }
+  const aggs = [...read("lib/models/aggregator.dart").matchAll(/Aggregator\('[\w-]+',\s*'([^']+)'\)/g)].map((m) => m[1]);
+  if (aggs.length) {
+    out.push({
+      id: "recipe:aggregators",
+      title: "Агрегаторы доставки: как учитывать заказы",
+      text: [
+        `Поддерживаются: ${aggs.join(", ")}.`,
+        "1. Касса · Админ · **Интеграции** → **Агрегаторы доставки** → включите нужный и укажите комиссию по договору (для отчёта «к выплате»).",
+        "2. В окне оплаты появится способ **Агрегатор**: деньги переведёт агрегатор позже, по своему графику и за вычетом комиссии.",
+        "3. Если гость платит в приложении агрегатора, включите **Чек покупателю пробивает агрегатор** — касса свой фискальный чек не печатает.",
+        "Договор с агрегатором заключают на его сайте для партнёров.",
+      ].join("\n"),
+    });
+  }
+  return out;
+}
+
 if (require.main === module) {
   const [repo, outFile] = process.argv.slice(2);
   if (!repo || !outFile) {
@@ -184,9 +259,10 @@ if (require.main === module) {
     process.exit(2);
   }
   const map = buildCodeMap(repo);
+  const recipes = buildRecipes(repo);
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  fs.writeFileSync(outFile, JSON.stringify({ builtAt: new Date().toISOString(), files: map }));
-  console.log(`карта кода: ${map.length} файлов`);
+  fs.writeFileSync(outFile, JSON.stringify({ builtAt: new Date().toISOString(), files: map, recipes }));
+  console.log(`карта кода: ${map.length} файлов, шаблонов настройки: ${recipes.length}`);
 }
 
-module.exports = { buildCodeMap, describeFile, scrub, uiStrings };
+module.exports = { buildCodeMap, buildRecipes, describeFile, scrub, uiStrings };

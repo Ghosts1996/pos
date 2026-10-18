@@ -41,7 +41,7 @@ const supportFiles = require("./support-files");
 const { createWebSearch, SEARCH_PROVIDERS, domainOf } = require("./support-web");
 const { DOCS, buildDoc } = require("./support-docs");
 const aiMod = require("./support-ai");
-const { buildCodeMap } = require("./build-code-map");
+const { buildCodeMap, buildRecipes } = require("./build-code-map");
 
 const API_BASE = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/+$/, "");
 const HOOK_BASE = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, "");
@@ -299,7 +299,9 @@ function plain(text) {
  *  пути в базе и служебные адреса не уходят, даже если ИИ их назвал. */
 function guardReply(text) {
   let s = maskSecrets(text);
-  s = s.replace(/\b\d{1,3}(\.\d{1,3}){3}(:\d+)?\b/g, "[адрес скрыт]");
+  // Адреса серверов скрываем; адреса локальной сети (192.168.…, 10.…,
+  // 172.16–31.…, 127.0.0.1) — нет: это пример для настройки кассы, а не тайна.
+  s = s.replace(/\b\d{1,3}(\.\d{1,3}){3}(:\d+)?\b/g, (ip) => (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.0\.0\.1)/.test(ip) ? ip : "[адрес скрыт]"));
   // Пути файлов — только вне ссылок (у адресов перед путём стоит «/» или домен).
   s = s.replace(/(?<![\w/.:-])((?:lib|saas-gateway|saas|pii-gateway|android|windows|\.github)\/[\w./-]+|[\w-]+\.(?:dart|js|mjs|ts|yml|yaml|sh|env))(?=[\s).,»"'`:;!?]|$)/g, "внутренний модуль");
   s = s.replace(/\b(tenants|supportBot|supportTickets|supportKnowledge|supportClients|platformConfig|platformStatus|telegramBots|subscriptions|tenantMembers|superAdmins|buildJobs)\/[\w/-]+/g, "[служебные данные]");
@@ -357,6 +359,18 @@ function neutralize(text) {
 const PROMISE_RE = /(мы |я )?(верн[её]м|вернем|возвращаем|возместим|компенсируем|начислим|продлим|предоставим|подарим|сделаем)\s+(вам\s+)?(деньг|средств|оплат|стоимост|бесплатн|скидк|компенсац|месяц|подписк|промокод|бонус)|(вам|вас) (будет |уже )?(начислен|возвращен|возвращён|продлен|продлён)[а-я]* (бесплатн|месяц|подписк|деньг|скидк)|(гарантирую|обещаю|точно сделаем|исправим (до|к|в течение|за) )|бесплатн[а-я]* (месяц|период|подписк)[а-я]* (для вас|вам|в подарок)|(да,?\s*)?(вы правы,?\s*)?(мы|zalpos|сервис) (должн[а-я]*|обязан[а-я]*|виноват[а-я]*) (вам )?(вернуть|компенсир|деньг)/;
 const promisesSomething = (text) => PROMISE_RE.test(norm(text));
 
+/** «Кнопка» → **Кнопка** рядом со стрелкой «→» или словами «кнопка»,
+ *  «раздел», «пункт»… — так в ответе видно, что нажать. Названия законов
+ *  и организаций («О защите прав потребителей», ООО «Колибри») не трогаем. */
+const UI_WORD = "(?:кнопк[а-я]*|раздел[а-я]*|пункт[а-я]*|вкладк[а-я]*|пол[еяю]|меню|экран[а-я]*|переключател[а-я]*|флажок|флажк[а-я]*|галочк[а-я]*|выберите|нажмите|откройте|включите)";
+function boldUi(md) {
+  return String(md || "").split("\n").map((line) => line
+    .replace(new RegExp(`(${UI_WORD}\\s+)«([^«»\\n]{1,60})»`, "gi"), "$1**$2**")
+    .replace(/«([^«»\n]{1,60})»(?=\s*→)/g, "**$1**")
+    .replace(/(→\s*)«([^«»\n]{1,60})»/g, "$1**$2**")
+    .replace(/\*\*\*\*/g, "")).join("\n");
+}
+
 /** [[ОПЕРАТОР: причина]] в конце ответа ИИ — он сам зовёт человека;
  *  [[ДОКУМЕНТ: id]] — предлагает документ из support-docs.js кнопкой. */
 function parseAiReply(raw) {
@@ -364,7 +378,7 @@ function parseAiReply(raw) {
   const m = text.match(/\[\[\s*(?:ОПЕРАТОР|OPERATOR|HUMAN)\s*:?\s*([^\]]*)\]\]/i);
   const docs = [...new Set([...text.matchAll(/\[\[\s*(?:ДОКУМЕНТ|DOC)\s*:\s*([\w-]+)\s*\]\]/gi)].map((x) => x[1]))]
     .filter((id) => DOCS.some((d) => d.id === id));
-  const md = text.replace(/\[\[[^\]]*\]\]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  const md = boldUi(text.replace(/\[\[[^\]]*\]\]/g, "").replace(/\n{3,}/g, "\n\n").trim());
   return { text: plain(md).replace(/\n{3,}/g, "\n\n").trim(), md, escalate: !!m, reason: m ? (m[1] || "").trim() || "ИИ не уверен в ответе" : "", docs };
 }
 
@@ -509,7 +523,7 @@ const SYSTEM_PROMPT = [
   "## 3. Веди к результату",
   "- Смотри всю переписку: не повторяй шаги, которые человек уже сделал, продолжай с того места, где он сейчас. Ответ специалиста поддержки в переписке важнее твоего — следуй ему.",
   "- Давай 2–5 шагов за раз — ровно до точки, где видно, получилось ли. Каждый шаг — одно действие с точным путём («Касса · Админ · Интеграции → «Онлайн-касса» → «Тестовый чек»»).",
-  "- В конце — как проверить результат и короткий вопрос: «Получилось? Если нет — напишите, что видите на экране». Следующее сообщение строй по ответу человека.",
+  "- В конце — как проверить, что заработало. Короткий вопрос «Получилось?» — только когда шагов несколько и нужен ответ клиента. Следующее сообщение строй по ответу человека.",
   "- Шаги не помогли — разберись, на каком шаге затык, и дай другой путь. Не помогло второй раз или нужно действие на стороне ZalPOS — зови специалиста.",
   "- Человек подтвердил, что всё работает, — коротко подтверди итог одной фразой, без новых советов.",
   "- Видишь в «Состоянии» причину (ошибка сборки, подписка закончилась, касса давно не выходила на связь, ошибки сервера) — назови её простыми словами и скажи, что сделать.",
@@ -557,9 +571,11 @@ const SYSTEM_PROMPT = [
   "- Одной фразой скажи, что подключаешь специалиста, и в самом конце отдельной строкой добавь [[ОПЕРАТОР: короткая причина]], — если: ответа нет в источниках и ты не уверен; возврат денег или спор об оплате подписки; претензия или жалоба на ZalPOS; удаление аккаунта или заведения; похоже на сбой у всех; нужно что-то изменить в данных заведения; ошибка повторяется после твоих шагов; ты дважды не смог помочь.",
   "",
   "## 7. Оформление (читают в Telegram с телефона)",
-  "- По-русски, на «вы», дружелюбно и по делу, без воды, извинений и повторов вопроса.",
-  "- Первая строка — суть ответа **жирным**. Дальше шаги «1.», «2.» или пункты «• », по одной мысли в строке; важное предупреждение — отдельной строкой с ⚠️; между блоками — пустая строка. Кнопки и разделы — в «ёлочках».",
-  "- Без таблиц и заголовков «#». Обычно до 900 символов. Эмодзи — 1–2 к месту. Не подписывайся.",
+  "- По-русски, на «вы», как опытный специалист поддержки в живом чате: просто, коротко, грамотно. Без вводных («Конечно!», «Отличный вопрос», «Я помогу вам»), без эмодзи, без повтора вопроса, без подписи.",
+  "- Первая строка — суть одной фразой. Дальше шаги «1.», «2.» — одно действие в строке; между блоками — пустая строка.",
+  "- Названия кнопок, разделов, полей и пунктов меню — **жирным**, без кавычек: Касса · Админ · **Интеграции** → **Онлайн-касса (54-ФЗ)**. Жирным — только то, что нужно найти или нажать, и одно главное предупреждение. «Ёлочки» — только для названий законов, организаций и цитат.",
+  "- Предупреждение — отдельной строкой, начинается с «Важно:».",
+  "- Без таблиц и заголовков. Обычно до 700 символов: всё, что нужно для результата, и ничего лишнего. Ссылки и адреса — как есть, без звёздочек вокруг.",
 ].join("\n");
 
 /**
@@ -572,8 +588,8 @@ function buildMessages({ venue = "", platform = "", errors = [], guide = [], lea
   ctx.push(`# Состояние заведения\n${linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
   if (platform) ctx.push(`# Платформа\n${platform}`);
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
-  if (guide.length) ctx.push(`# Знания (инструкция, база поддержки, частые вопросы)\n${guide.map((d) => `## ${d.title}\n${clip(d.text, 1400)}`).join("\n\n")}`);
-  if (learned.length) ctx.push(`# База решений (проверено поддержкой)\n${learned.map((d) => `## ${d.title}\n${clip(d.text, 900)}`).join("\n\n")}`);
+  if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
+  if (learned.length) ctx.push(`# База решений (проверено поддержкой)\n${learned.map((d) => `## ${d.title}\n${clip(d.text, 800)}`).join("\n\n")}`);
   if (web && (web.pages.length || web.results.length)) {
     const pages = web.pages.map((p) => `## ${p.title} (${domainOf(p.url)})\n${p.url}\n${clip(p.text, 1600)}`);
     const rest = web.results.filter((r) => !web.pages.some((p) => p.url === r.url)).slice(0, 4).map((r) => `- ${r.title} (${domainOf(r.url)}): ${clip(r.snippet, 220)} — ${r.url}`);
@@ -933,15 +949,44 @@ function createSupportBot(deps) {
    *  собирает update-server.sh; в репозитории — собираем сами. */
   async function loadCode() {
     let files = [];
+    let recipes = [];
     const file = deps.codeMapPath || path.join(__dirname, "kb", "code-map.json");
     try {
-      if (fs.existsSync(file)) files = JSON.parse(fs.readFileSync(file, "utf8")).files || [];
-      else if (fs.existsSync(path.join(__dirname, "..", "lib"))) files = buildCodeMap(path.join(__dirname, ".."));
+      if (fs.existsSync(file)) {
+        const map = JSON.parse(fs.readFileSync(file, "utf8"));
+        files = map.files || [];
+        recipes = map.recipes || [];
+      } else if (fs.existsSync(path.join(__dirname, "..", "lib"))) {
+        files = buildCodeMap(path.join(__dirname, ".."));
+        recipes = buildRecipes(path.join(__dirname, ".."));
+      }
     } catch (e) {
       console.error(`support-bot: карта кода: ${e.message || e}`);
     }
     state.code = files.map((d) => indexDoc({ ...d, kind: "code" }));
+    // Шаблоны настройки из справочников приложения (банки, терминалы,
+    // агрегаторы) и лента обновлений — в знания, рядом с инструкцией.
+    const extra = [...recipes.map((d) => indexDoc({ ...d, kind: "guide", boost: 2 })), ...changesDocs()];
+    state.guide = [...state.guide.filter((d) => !/^(recipe|changes):/.test(d.id)), ...extra];
     return state.code.length;
+  }
+
+  /** Что нового: последние изменения программы (kb/changes.txt пишет
+   *  update-server.sh из истории репозитория) — бот рассказывает о
+   *  новинках и знает, что уже умеет свежая версия. */
+  function changesDocs() {
+    const file = deps.changesPath || path.join(__dirname, "kb", "changes.txt");
+    let lines = [];
+    try {
+      if (fs.existsSync(file)) lines = fs.readFileSync(file, "utf8").split("\n");
+    } catch (_) {}
+    lines = lines.map((l) => l.trim()).filter((l) => /^\d{4}-\d{2}-\d{2} /.test(l))
+      // Служебное (тесты, сборка, правила базы) клиенту неинтересно.
+      .filter((l) => !/(^\S+ (merge|revert)\b|тест|ci\b|workflow|сборк[аи] apk|firestore|правила базы|рефактор)/i.test(l))
+      .slice(0, 40);
+    if (!lines.length) return [];
+    const fmt = (l) => { const [d, ...rest] = l.split(" "); return `${d.split("-").reverse().join(".")}: ${rest.join(" ")}`; };
+    return [indexDoc({ id: "changes:latest", kind: "guide", title: "Что нового в ZalPOS: последние обновления кассы, кабинета и бота", text: `Обновления приходят сами (касса — «Обновления» в меню ☰).\n${lines.map(fmt).join("\n")}`, boost: 1 })];
   }
 
   async function loadKnowledge() {
@@ -1207,12 +1252,14 @@ function createSupportBot(deps) {
   }
 
   /** Ответ клиенту туда, откуда он пишет. */
-  async function deliver(t, text, { markup, role = "ai", authorName = "", authorUid = "", bare = false, html = "" } = {}) {
+  async function deliver(t, text, { markup, role = "ai", authorName = "", authorUid = "", bare = false, html = "", md = "" } = {}) {
     if (t.channel === "telegram") {
       const prefix = bare ? "" : role === "super_admin" ? `👨‍💼 <b>${h(authorName || "Поддержка")}</b>, ZalPOS:\n` : role === "ai" ? "🤖 " : "";
       await send(t.tgChatId, `${prefix}${html || h(text)}`, { ...HTML, ...(markup ? { reply_markup: markup } : {}) });
     }
-    await addMessage(t, { text, authorRole: role, authorUid: authorUid || (role === "ai" ? "support-bot" : ""), authorName });
+    // В кабинете — с **жирным** (кабинет его показывает), без заголовков и `кода`.
+    const stored = t.channel !== "telegram" && md ? md.replace(/^#{1,6}\s*/gm, "").replace(/`{1,3}/g, "").trim() : text;
+    await addMessage(t, { text: stored, authorRole: role, authorUid: authorUid || (role === "ai" ? "support-bot" : ""), authorName });
   }
 
   async function escalate(t, reason, { tellClient = true } = {}) {
@@ -1393,9 +1440,12 @@ function createSupportBot(deps) {
     const query = `${t.subject || ""}\n${earlier}\n${question}\n${question}\n${screens}`;
     // Слабые совпадения отбрасываем: в подсказке и в теме — только то, что по делу.
     const strong = (list, k) => list.filter((d) => d.score >= Math.max(2, (list[0] ? list[0].score : 0) * k));
-    const guide = strong(rankDocs(query, state.guide, 5), 0.4);
+    // Экономно: до 4 статей, до 3 решений; карта кода — только когда в
+    // знаниях нет уверенного ответа (иначе это лишние тысячи токенов).
+    const guide = strong(rankDocs(query, state.guide, 4), 0.45);
     const learned = rankDocs(query, state.learned, 3, 1.5);
-    const code = question.length >= 25 ? strong(rankDocs(query, state.code, 2, 5), 0.6) : [];
+    const sure = (guide[0] && guide[0].score >= 8) || learned.length > 0;
+    const code = question.length >= 25 && !sure ? strong(rankDocs(query, state.code, 2, 5), 0.6) : [];
     // Внешний вопрос (закон, банк, оборудование, сторонний сервис) или знаний мало — ищем в интернете.
     const webData = talk || pinged ? null : await maybeResearch(t, { question: `${earlier}\n${question}`.trim(), guide, learned });
     const [venue, platform, memory] = await Promise.all([
@@ -1462,7 +1512,7 @@ function createSupportBot(deps) {
     const markup = t.channel === "telegram" ? { inline_keyboard: [...docRows, [{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
     const docNote = t.channel !== "telegram" && reply.docs.length
       ? `\n\n📄 Документы для скачивания (Word, ссылки действуют 7 дней):\n${reply.docs.map((id) => `• ${DOCS.find((d) => d.id === id).title}: ${docLink(t, id)}`).join("\n")}` : "";
-    await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md) });
+    await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md), md: `${reply.md}${docNote}` });
     await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id) });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
     const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
@@ -3240,10 +3290,12 @@ function createSupportBot(deps) {
   return {
     start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handlePurgeForeign, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
+    // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
+    __setKbPaths: (p) => Object.assign(deps, p),
   };
 }
 
 module.exports = {
   createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
-  stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
+  boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
 };
