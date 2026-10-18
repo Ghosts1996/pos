@@ -3,9 +3,10 @@
 
    Экран телефона рисуется в своих «пикселях кассы» (360 × 700) и
    масштабируется под рамку — пропорции, отступы и шрифты те же, что в
-   приложении. Цвета экрана — палитра кассы «Графит и медь» (lib/theme/
-   app_colors.dart): касса всегда тёмная, поэтому и рисунок тёмный в обеих
-   темах сайта. Сцена вокруг телефона — в цветах сайта. */
+   приложении. Планшет — 1024 × 640 в альбомной ориентации, касса на
+   Windows — в окне на рабочем столе. Цвета экрана — палитра кассы «Графит
+   и медь» (lib/theme/app_colors.dart), тема кассы по умолчанию. Сцена
+   вокруг устройства — в цветах сайта. */
 
 .gx {
   --gx-stage: #EAE2D6;
@@ -530,3 +531,162 @@
 .guide-faq-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .guide-q { margin: 10px 0 2px; font-size: 14.5px; font-weight: 600; line-height: 1.45; }
 .guide-a { margin: 0; font-size: 14px; line-height: 1.55; color: var(--muted); }
+
+/* ---- Зал схемой: так касса открывается по умолчанию ---- */
+.gx-map {
+  position: absolute; left: 10px; right: 10px; top: 236px; bottom: 12px; border-radius: 20px; overflow: hidden;
+  border: 1px solid var(--bd);
+  background: radial-gradient(circle at 1px 1px, rgba(242, 234, 223, .07) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(30, 26, 22, .6);
+}
+.gx-map-in { position: absolute; left: 50%; top: 14px; width: 336px; height: 340px; margin-left: -168px; }
+.gx-walls { position: absolute; inset: 0; width: 100%; height: 100%; }
+.gx-walls path { stroke: #D8CFC2; stroke-width: 5; stroke-linecap: round; opacity: .55; }
+.gx-map-lbl { position: absolute; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--mu); text-transform: uppercase; }
+.gx-mt {
+  position: absolute; height: 92px; border-radius: 14px; padding: 9px 8px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: var(--sf); border: 1.6px solid rgba(109, 178, 135, .6); text-align: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+}
+.gx-mt b { font-size: 13px; line-height: 1.2; }
+.gx-mt-s { font-size: 10.5px; color: var(--mu); }
+.gx-mt-st { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 10.5px; font-weight: 600; color: var(--ok); }
+.gx-mt-st i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.gx-mt-time { margin-top: 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ok); }
+.gx-mt-sum { font-size: 11px; font-weight: 600; }
+.gx-mt.busy { border-color: rgba(134, 166, 224, .95); background: #22232A; }
+.gx-mt.busy .gx-mt-time { color: var(--busy); }
+.gx-mt.warn { border-color: rgba(217, 168, 78, .95); background: #2A2216; }
+.gx-mt.warn .gx-mt-time { color: var(--warn); }
+.gx-mt.alert { border-color: var(--bad); border-width: 2.4px; background: #2A1A16; box-shadow: 0 0 14px rgba(212, 85, 63, .45); }
+.gx-mt.alert .gx-mt-time { color: var(--bad); }
+.gx-mt-bell {
+  position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--bad); color: #FFF8F0; box-shadow: 0 0 0 2px var(--bg);
+}
+.gx-map-pill {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); height: 42px; padding: 0 18px 0 14px; border-radius: 21px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--tx);
+  background: var(--el); border: 1px solid var(--bd); box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+}
+.gx-map-pill svg { color: var(--pr); }
+.gx-sheet-h { display: flex; align-items: center; justify-content: space-between; margin: -2px 0 12px; font-size: 16px; }
+.gx-sheet .gx-tables { padding: 0; }
+
+/* ---- Переключатель «Телефон / Планшет» у сцен кассы ---- */
+.gx-devs {
+  display: inline-flex; gap: 2px; padding: 3px; margin: -8px 0 16px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.gx-dev {
+  height: 28px; padding: 0 12px; margin: 0; border: 0; border-radius: 999px; background: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; font: 600 12.5px/1 var(--sans); color: var(--muted, #736A5D);
+}
+.gx-dev svg { width: 15px; height: 15px; }
+.gx-dev.on { background: var(--primary); color: var(--on-ink, #fff); }
+.gx-dev:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* ---- Планшет: альбомная ориентация, экран 960 × 600 «пикселей кассы» ---- */
+.gx-tablet {
+  position: relative; width: min(100%, 660px); padding: 12px; border-radius: 30px;
+  background: linear-gradient(160deg, #3A342E 0%, #1A1714 40%, #0E0C0A 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), inset 0 1px 0 rgba(255, 255, 255, .12), var(--gx-device-shadow);
+}
+.gx-tablet::before { /* фронтальная камера в рамке */
+  content: ''; position: absolute; left: 50%; top: 4px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: #050404;
+}
+.gx-tablet::after { /* кнопка питания сверху */
+  content: ''; position: absolute; right: 70px; top: -2px; width: 40px; height: 3px; border-radius: 2px 2px 0 0; background: linear-gradient(90deg, #2E2925, #191613);
+}
+.gx-screen.tab { border-radius: 18px; clip-path: inset(0 round 18px); aspect-ratio: 960 / 600; }
+.gx-screen.tab .gx-view { width: 960px; height: 600px; }
+.gx-screen.tab .gx-status { padding: 0 26px; }
+.gx-screen.tab .gx-tables { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gx-screen.tab .gx-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gx-screen.tab .gx-keys { transform: scale(.82); transform-origin: top center; }
+.gx-screen.tab .gx-map { top: 236px; }
+.gx-screen.tab .gx-map-in { top: 10px; transform: scale(.8); transform-origin: top center; }
+/* Формы и списки на планшете — по центру ограниченной ширины (CenteredBody
+   в кассе), шапка и схема зала — во всю ширину. */
+.gx-screen.tab .gx-app > :not(.gx-status):not(.gx-bar):not(.gx-map):not(.gx-sep):not(.gx-bottom):not([style*="position:absolute"]) { max-width: 720px; margin-left: auto !important; margin-right: auto !important; }
+.gx-screen.tab .gx-app > .gx-banner { max-width: none; margin-left: 14px !important; margin-right: 14px !important; }
+.gx-screen.tab .gx-app > .gx-chips { max-width: none; margin-left: 0 !important; margin-right: 0 !important; }
+.gx-screen.tab .gx-app > .gx-tables { max-width: none; }
+.gx-screen.tab .gx-bottom { padding-left: max(14px, calc(50% - 360px)); padding-right: max(14px, calc(50% - 360px)); }
+/* Окна и шторки на планшете — по центру ограниченной ширины, как в кассе. */
+.gx-screen.tab .gx-sheet { left: 50%; right: auto; width: 620px; margin-left: -310px; }
+.gx-screen.tab .gx-dialog { left: 50%; right: auto; width: 440px; margin-left: -220px; }
+
+/* ---- Windows: окно на рабочем столе с панелью задач ---- */
+.gx-win {
+  position: relative; width: 100%; max-width: 720px; border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 10.4;
+  background: radial-gradient(120% 90% at 70% 110%, #2B6CD8 0%, #1A4AA8 34%, #0E2A66 62%, #0A1838 100%);
+  box-shadow: var(--gx-device-shadow); display: flex; flex-direction: column;
+}
+.gx-win::before { /* мягкие «лепестки» обоев */
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(40% 55% at 64% 92%, rgba(130, 190, 255, .55), transparent 70%),
+    radial-gradient(30% 40% at 40% 100%, rgba(80, 140, 240, .45), transparent 70%);
+}
+.gx-win-desk { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 3.2% 3% 2.4% 11%; }
+.gx-win-icon {
+  position: absolute; left: 1.4%; top: 3%; width: 8%; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font: 500 9px/1.2 var(--sans); color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); opacity: 0; transition: opacity .4s ease;
+}
+.gx-win-icon.on { opacity: 1; }
+.gx-win-icon span { width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(140deg, #C7743F, #8E3F1C); display: flex; align-items: center; justify-content: center; font: 600 13px/1 var(--serif); color: #FFF4E8; box-shadow: 0 2px 6px rgba(0, 0, 0, .4); }
+.gx-win-window {
+  position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden;
+  background: #F3F3F3; box-shadow: 0 18px 40px rgba(0, 0, 0, .5), 0 0 0 1px rgba(0, 0, 0, .25);
+}
+.gx-win-title { flex: none; height: 26px; display: flex; align-items: center; gap: 7px; padding-left: 10px; background: #EEF0F3; color: #1B1B1B; font: 400 10.5px/1 var(--sans); }
+.gx-win-title .app { width: 13px; height: 13px; border-radius: 3px; background: linear-gradient(140deg, #C7743F, #8E3F1C); flex: none; }
+.gx-win-title .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-win-title .ctl { display: flex; height: 100%; }
+.gx-win-title .ctl i { width: 38px; height: 100%; display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 11px; color: #1B1B1B; }
+.gx-win-title .ctl i:last-child { font-size: 12px; }
+.gx-win-addr { flex: none; height: 24px; display: none; align-items: center; gap: 8px; padding: 0 10px; background: #F7F7F7; border-bottom: 1px solid #E3E3E3; }
+.gx-win-addr span { flex: 1; height: 16px; border-radius: 8px; background: #fff; border: 1px solid #E0E0E0; font: 400 9px/14px var(--sans); color: #444; padding: 0 10px; }
+.gx-win.url .gx-win-addr { display: flex; }
+.gx-win .gx-screen.web { flex: 1; aspect-ratio: auto; min-height: 0; }
+.gx-win-bar {
+  position: relative; flex: none; height: 34px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(243, 243, 243, .82); backdrop-filter: blur(14px); border-top: 1px solid rgba(255, 255, 255, .5);
+}
+.gx-win-bar > i { width: 24px; height: 24px; border-radius: 5px; display: flex; align-items: center; justify-content: center; }
+.gx-win-bar > i.on::after { content: ''; position: absolute; bottom: 2px; width: 10px; height: 3px; border-radius: 2px; background: #2B6CD8; }
+.gx-win-bar > i { position: relative; }
+.gx-win-start { display: grid !important; grid-template-columns: 7px 7px; gap: 1.5px; place-content: center; }
+.gx-win-start b { width: 7px; height: 7px; background: #1F7AE0; border-radius: 1px; }
+.gx-win-search { width: 96px !important; height: 22px !important; border-radius: 11px !important; background: #fff; border: 1px solid #DADADA; justify-content: flex-start !important; gap: 5px; padding-left: 8px; font: 400 9px/1 var(--sans); color: #666; font-style: normal; }
+.gx-win-tray { position: absolute; right: 10px; display: flex; align-items: center; gap: 10px; font: 400 9px/1.25 var(--sans); color: #1B1B1B; text-align: right; }
+:root[data-theme="dark"] .gx-win-window { background: #202020; }
+:root[data-theme="dark"] .gx-win-title { background: #202020; color: #F3F3F3; }
+:root[data-theme="dark"] .gx-win-title .ctl i { color: #F3F3F3; }
+:root[data-theme="dark"] .gx-win-addr { background: #2B2B2B; border-color: #333; }
+:root[data-theme="dark"] .gx-win-addr span { background: #1E1E1E; border-color: #3A3A3A; color: #CCC; }
+:root[data-theme="dark"] .gx-win-bar { background: rgba(32, 32, 32, .85); border-color: rgba(255, 255, 255, .06); }
+:root[data-theme="dark"] .gx-win-tray { color: #F3F3F3; }
+:root[data-theme="dark"] .gx-win-search { background: #2B2B2B; border-color: #3A3A3A; color: #AAA; }
+/* Касса в окне Windows — её экран, как в приложении на компьютере. */
+.gx-screen.web .gx-app { font-size: 14px; }
+/* SmartScreen — синяя заставка Windows на всё окно. */
+.gx-smart { position: absolute; inset: 0; background: #0063B1; color: #fff; padding: 38px 48px; font: 400 14px/1.5 var(--sans); }
+.gx-smart h4 { margin: 0 0 14px; font: 300 30px/1.15 var(--sans); }
+.gx-smart .lnk { text-decoration: underline; }
+.gx-smart .acts { position: absolute; right: 30px; bottom: 26px; display: flex; gap: 10px; }
+.gx-smart .acts span { min-width: 150px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0 16px; border: 2px solid rgba(255, 255, 255, .85); font-size: 13.5px; }
+.gx-smart .acts span.def { background: #fff; color: #0063B1; border-color: #fff; }
+/* Экран окна — по высоте окна, без полосы снизу при любом соотношении сторон. */
+.gx-win .gx-screen.web .gx-view { height: calc(100% / var(--s, .63)); }
+/* Узкая статья (телефон): панель задач и заголовок окна компактнее. */
+.gx-win { container-type: inline-size; }
+@container (max-width: 480px) {
+  .gx-win-search, .gx-win-tray > span:first-child { display: none !important; }
+  .gx-win-bar { height: 28px; gap: 4px; }
+  .gx-win-bar > i { width: 20px; height: 20px; }
+  .gx-win-tray { right: 6px; font-size: 8px; }
+  .gx-win-title { height: 20px; font-size: 9px; padding-left: 7px; }
+  .gx-win-title .ctl i { width: 24px; font-size: 9px; }
+  .gx-win-desk { padding: 3% 3% 2.4% 3%; }
+  .gx-win-icon { display: none; }
+}

@@ -57,6 +57,7 @@ const P = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12h2.6M18.9 12h2.6M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/>',
   wifi: '<path d="M3.5 9.5a12 12 0 0 1 17 0M6.5 12.5a7.6 7.6 0 0 1 11 0M9.5 15.5a3.4 3.4 0 0 1 5 0M12 19h.01"/>',
   phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  tablet: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M18.5 12h.01"/>',
   monitor: '<rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/>',
   palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.4 0 1.9-1 1.4-2.1-.6-1.3.2-2.6 1.6-2.6h1.8A3.7 3.7 0 0 0 20.5 12 8.5 8.5 0 0 0 12 3.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="8" r="1"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 16 15 11l-8.5 8.5"/>',
@@ -122,17 +123,45 @@ function tableCard(t, { tap = '', mark = '' } = {}) {
   </div>`;
 }
 
-function hall({ who = 'Алина', tapTable = '', tapMenu = '', tapBanner = '', tables = HALL, takeaway = 0, tapTakeaway = '' } = {}) {
-  return `<div class="gx-app">${status()}
-    ${appBar({ title: 'Зал', sub: who, left: 'menu', right: takeaway ? ['bag', 'map', 'spark'] : ['map', 'spark'], tapLeft: tapMenu,
-    tapRight: { bag: tapTakeaway }, badge: { bag: takeaway } })}
-    <div class="gx-banner">${ic('bell', 17)}<span>Гости зовут: 3 · ждут 3 мин</span><span class="gx-mu"${tp(tapBanner)}>Показать ›</span></div>
-    <div class="gx-chips"><span class="gx-chip on">${ic('check', 14, 2.2)} Все зоны</span><span class="gx-chip">Основной зал</span><span class="gx-chip">2 этаж</span><span class="gx-chip">Терраса</span></div>
-    <div class="gx-chips"><span class="gx-chip on">Все 27</span><span class="gx-chip"><span class="dot" style="background:var(--ok)"></span>Свободны 19</span><span class="gx-chip"><span class="dot" style="background:var(--busy)"></span>Заняты 8</span></div>
-    <div class="gx-h">Основной зал · 11</div>
-    <div class="gx-tables">${tables.map((t) => tableCard(t, { tap: t.n === tapTable ? 'table' : '' })).join('')}</div>
+// Расстановка демо-зала на схеме (в «пикселях кассы», холст 336 × 340):
+// так зал выглядит при входе — схемой, список столов спрятан.
+const HALL_AT = {
+  'Диван 8': [16, 16, 198], 'Бар': [228, 16], 'Стол 1': [16, 122], 'Стол 2': [122, 122],
+  'Стол 3': [228, 122], 'Стол 4': [16, 228], 'Стол 5': [122, 228], 'Стол 6': [228, 228],
+};
+
+function mapTile(t, tap) {
+  const [x, y, w = 92] = HALL_AT[t.n] || [16, 16];
+  const free = t.st === 'free';
+  return `<div class="${cls('gx-mt', t.st)}" style="left:${x}px;top:${y}px;width:${w}px"${tp(tap)}>
+    ${t.bell ? `<span class="gx-mt-bell">${ic('bell', 11, 2.4)}</span>` : ''}
+    <b>${t.n}</b><span class="gx-mt-s">${t.s} ${t.s < 5 ? 'места' : 'мест'}</span>
+    ${free ? '<span class="gx-mt-st"><i></i>Свободен</span>' : `<span class="gx-mt-time">${t.time}</span><span class="gx-mt-sum">${t.sum}</span>`}
   </div>`;
 }
+
+function hall({ who = 'Алина', tapTable = '', tapMenu = '', tapBanner = '', tables = HALL, takeaway = 0, tapTakeaway = '', tapList = '' } = {}) {
+  return `<div class="gx-app">${status()}
+    ${appBar({ title: 'Зал', sub: who, left: 'menu', right: takeaway ? ['bag', 'grid', 'spark'] : ['grid', 'spark'], tapLeft: tapMenu,
+    tapRight: { bag: tapTakeaway }, badge: { bag: takeaway } })}
+    <div class="gx-banner">${ic('bell', 17)}<span>Гости зовут: 3 · ждут 3 мин</span><span class="gx-mu"${tp(tapBanner)}>Показать ›</span></div>
+    <div class="gx-chips"><span class="gx-chip on">Основной зал</span><span class="gx-chip">2 этаж</span><span class="gx-chip">Терраса</span></div>
+    <div class="gx-chips"><span class="gx-chip on">Все 11</span><span class="gx-chip"><span class="dot" style="background:var(--ok)"></span>Свободны 5</span><span class="gx-chip"><span class="dot" style="background:var(--busy)"></span>Заняты 4</span><span class="gx-chip"><span class="dot" style="background:var(--warn)"></span>Скоро освободятся 2</span></div>
+    <div class="gx-map">
+      <div class="gx-map-in">
+        <svg class="gx-walls" viewBox="0 0 336 340" fill="none"><path d="M6 6h236M276 6h54v328H6V6"/><path d="M216 6v-0"/></svg>
+        <span class="gx-map-lbl" style="left:244px;top:-1px">Вход</span>
+        <span class="gx-map-lbl" style="left:132px;top:318px">Кухня</span>
+        ${tables.map((t) => mapTile(t, t.n === tapTable ? 'table' : '')).join('')}
+      </div>
+      <div class="gx-map-pill"${tp(tapList)}>${ic('checks', 17, 2)}Показать список · 11</div>
+    </div>
+  </div>`;
+}
+
+// Список столов — шторкой поверх схемы (кнопка «Показать список»).
+const hallList = ({ tapTable = '' } = {}) => sheet(`<div class="gx-sheet-h"><b>Столы · 11</b>${ic('plus', 20).replace('<svg', '<svg style="transform:rotate(45deg);color:var(--mu)"')}</div>
+  <div class="gx-tables">${HALL.slice(0, 6).map((t) => tableCard(t, { tap: t.n === tapTable ? 'table' : '' })).join('')}</div>`);
 
 const drawerItem = ({ icon, t, s = '', tap = '', badge = '', ok = false, chev = false, mark = '' }) =>
   `<div class="${cls('gx-di', ok && 'ok')}"${tp(tap)}${mk(mark)}>${ic(icon, 22)}
@@ -1130,14 +1159,26 @@ X.webSupport = () => webPage(`<h3>Поддержка</h3><div class="gx-mu" styl
   <div class="gx-unfold"${mk('ans')} style="--max:200px"><div class="gx-web-card gx-web-narrow"><b style="font-size:13px">Поддержка ZalPOS · 4 мин назад</b><div style="font-size:13px;line-height:1.5;margin-top:4px">Здравствуйте! Принтер выбран как Bluetooth, а на Windows нужен «Wi‑Fi / LAN». Переключите и нажмите «Тестовая печать».</div></div></div>`);
 X.winDl = () => web('Устройства', `<h3>Устройства</h3><div class="gx-web-card"><h5>Сборка APK</h5><div class="gx-mu" style="font-size:13px;margin-bottom:8px">Готово · версия 1.41</div>
   ${[['Касса', ''], ['Касса (Windows)', 'win'], ['Гостевое приложение', '']].map(([n, k]) => `<div class="gx-web-row"><span style="flex:1;color:var(--mu)">${n} · готова</span><span class="gx-web-link"${tp(k)}>Скачать</span></div>`).join('')}</div>`);
-X.winSmart = () => webPage(`<div class="gx-web-card gx-web-narrow" style="background:#1F4E8C;color:#fff;border-color:#1F4E8C;padding:22px">
-  <b style="font-size:20px">Система Windows защитила ваш компьютер</b><div style="font-size:13px;line-height:1.5;margin:10px 0;opacity:.9">Фильтр SmartScreen предотвратил запуск неопознанного приложения.</div>
-  <div style="text-decoration:underline;font-size:13px"${tp('more')}>Подробнее</div>
-  <div class="gx-unfold"${mk('more')}><div style="font-size:12.5px;margin-top:10px;opacity:.9">Приложение: ZalPOS-Kassa-Setup.exe<br>Издатель: неизвестный издатель</div></div>
-  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px"><span class="gx-hide"${mk('more')} style="border:1px solid #fff;padding:7px 14px;font-size:13px"${tp('run')}>Выполнить в любом случае</span><span style="background:#fff;color:#1F4E8C;padding:7px 14px;font-size:13px">Не выполнять</span></div></div>`, { url: 'Windows' });
-X.winApp = () => webPage(`<div class="gx-web-card gx-web-narrow" style="text-align:center;padding:30px 20px"><div class="gx-web-brand big">Zal<em>POS</em></div>
-  <div style="font-size:14px;margin:10px 0 4px">Касса установлена и подключена к заведению</div><div class="gx-mu" style="font-size:12.5px">Кафе «Лето» · ярлык на рабочем столе и в меню «Пуск»</div>
-  <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">${['1', '2', '3', '4'].map(() => '<span style="width:12px;height:12px;border-radius:50%;border:1.5px solid var(--bd)"></span>').join('')}</div></div>`, { url: 'Касса ZalPOS для Windows' });
+// Синее окно SmartScreen — как его показывает Windows 10 и 11.
+X.winSmart = () => `<div class="gx-smart"><h4>Система Windows защитила ваш компьютер</h4>
+  <div style="max-width:560px;opacity:.95">Фильтр SmartScreen Microsoft Defender предотвратил запуск неопознанного приложения, которое может подвергнуть компьютер риску.</div>
+  <div class="lnk" style="margin-top:12px;display:inline-block"${tp('more')}>Подробнее</div>
+  <div class="gx-unfold"${mk('more')}><div style="margin-top:14px;opacity:.95">Приложение: ZalPOS-Kassa-Setup.exe<br>Издатель: неизвестный издатель</div></div>
+  <div class="acts"><span class="gx-hide"${mk('more')}${tp('run')}>Выполнить в любом случае</span><span class="def">Не выполнять</span></div></div>`;
+// Касса в окне Windows: зал схемой во всю ширину, список столов — по кнопке.
+X.winApp = () => `<div class="gx-app gx-wide">
+  <div class="gx-bar" style="height:52px;border-bottom:1px solid var(--bd)"><div class="gx-bar-btn">${ic('menu', 22)}</div><div class="gx-bar-title"><b>Зал</b><span>Алина</span></div>
+    <div class="gx-bar-btn">${ic('grid', 20)}</div><div class="gx-bar-btn">${ic('spark', 20)}</div></div>
+  <div class="gx-chips" style="margin-top:10px"><span class="gx-chip on">Основной зал</span><span class="gx-chip">2 этаж</span><span class="gx-chip">Терраса</span>
+    <span style="width:14px"></span><span class="gx-chip on">Все 11</span><span class="gx-chip"><span class="dot" style="background:var(--ok)"></span>Свободны 5</span><span class="gx-chip"><span class="dot" style="background:var(--busy)"></span>Заняты 4</span></div>
+  <div class="gx-map" style="top:104px">
+    <div class="gx-map-in" style="top:10px;transform:scale(.94);transform-origin:top center">
+      <svg class="gx-walls" viewBox="0 0 336 340" fill="none"><path d="M6 6h236M276 6h54v328H6V6"/></svg>
+      <span class="gx-map-lbl" style="left:244px;top:-1px">Вход</span><span class="gx-map-lbl" style="left:132px;top:318px">Кухня</span>
+      ${HALL.map((t) => mapTile(t, '')).join('')}
+    </div>
+    <div class="gx-map-pill">${ic('checks', 17, 2)}Показать список · 11</div>
+  </div></div>`;
 X.webRkn = () => webPage(`<h3>Уведомление об обработке ПД</h3><div class="gx-mu" style="margin-bottom:10px">Схема формы на pd.rkn.gov.ru — подпись через Госуслуги</div>
   <div class="gx-web-card gx-web-narrow" style="margin-top:0">
     ${wField('Цель обработки', { type: 'goal', ph: '' })}
@@ -1243,10 +1284,19 @@ export const SCENES = {
     ],
   },
 
+  'hall-list': {
+    label: 'Зал: схема и список столов',
+    frames: [
+      { screen: hall({ tapList: 'list' }), cap: 'Зал открывается схемой. Схему можно двигать и приближать двумя пальцами.', acts: [{ wait: 900 }, { tap: 'list' }] },
+      { screen: hall(), over: { kind: 'sheet', html: hallList({ tapTable: 'Стол 2' }) }, cap: '«Показать список» — столы выезжают шторкой снизу. Смахните её вниз, чтобы снова видеть схему.', acts: [{ wait: 1200 }, { tap: 'table' }] },
+      { screen: tableFree(), enter: 'push', cap: 'Стол открывается одним касанием — из схемы или из списка.', acts: [{ wait: 1500 }] },
+    ],
+  },
+
   'open-table': {
     label: 'Открыть стол',
     frames: [
-      { screen: hall({ tapTable: 'Стол 2' }), cap: 'Нажмите на свободный стол — с зелёной точкой и надписью «Свободен».', acts: [{ tap: 'table' }] },
+      { screen: hall({ tapTable: 'Стол 2', tapList: 'list' }), cap: 'Зал открывается схемой: столы стоят, как в заведении. Нажмите на свободный — с зелёной точкой «Свободен».', acts: [{ wait: 700 }, { tap: 'table' }] },
       { screen: tableFree(), enter: 'push', cap: 'Нажмите «Начать сеанс».', acts: [{ tap: 'start' }] },
       {
         screen: tableFree(),
@@ -1521,11 +1571,11 @@ export const SCENES = {
     ],
   },
   windows: {
-    label: 'Поставить кассу на Windows', device: 'web',
+    label: 'Поставить кассу на Windows', device: 'windows',
     frames: [
-      { screen: X.winDl(), cap: 'Кабинет → «Устройства»: «Скачать» у строки «Касса (Windows)» и запустите установщик. Права администратора не нужны.', acts: [{ wait: 400 }, { tap: 'win' }, { wait: 500 }] },
-      { screen: X.winSmart(), enter: 'fade', cap: 'Windows может показать «Система Windows защитила ваш компьютер» — нажмите «Подробнее», потом «Выполнить в любом случае».', acts: [{ tap: 'more', mark: 'more' }, { wait: 400 }, { tap: 'run' }] },
-      { screen: X.winApp(), enter: 'fade', cap: 'Касса появится на рабочем столе и в меню «Пуск» и сама подключится к заведению. Принтер на Windows — по сети, сканер — «пистолет».', acts: [{ wait: 2000 }] },
+      { screen: X.winDl(), win: { title: 'Кабинет ZalPOS — браузер', url: 'zalpos.ru' }, cap: 'В браузере на компьютере: кабинет → «Устройства» → «Скачать» у строки «Касса (Windows)». Запустите скачанный файл — права администратора не нужны.', acts: [{ wait: 400 }, { tap: 'win' }, { wait: 500 }] },
+      { screen: X.winSmart(), win: { title: 'Windows SmartScreen' }, enter: 'fade', cap: 'Windows может показать «Система Windows защитила ваш компьютер» — нажмите «Подробнее», потом «Выполнить в любом случае».', acts: [{ tap: 'more', mark: 'more' }, { wait: 400 }, { tap: 'run' }] },
+      { screen: X.winApp(), win: { title: 'ZalPOS — Кафе «Лето»', icon: true }, enter: 'fade', cap: 'Ярлык ZalPOS появится на рабочем столе и в меню «Пуск», касса сама подключится к заведению. F11 — во весь экран. Принтер — по сети, сканер — «пистолет».', acts: [{ wait: 2400 }] },
     ],
   },
   updates: {
@@ -1929,7 +1979,29 @@ const CURSOR = '<svg viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.4 2.9 6.6 3-
 
 const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const VIEW_W = { phone: 360, web: 960 };
+const VIEW_W = { phone: 360, tablet: 960, web: 960 };
+
+// Сцены кассы показываем на телефоне или планшете — выбор один на всю
+// инструкцию и запоминается в браузере.
+const DEVICE_KEY = 'gx-device';
+const deviceChoice = () => {
+  try { return localStorage.getItem(DEVICE_KEY) === 'tablet' ? 'tablet' : 'phone'; } catch (_) { return 'phone'; }
+};
+function switchDevice(d) {
+  try { localStorage.setItem(DEVICE_KEY, d); } catch (_) { /* приватный режим — только на эту страницу */ }
+  for (const [fig, p] of [...players]) {
+    if (p.site) continue;
+    // Планшет — во всю ширину статьи, телефон — в колонке рядом с шагами.
+    const body = fig.closest('.guide-item-body');
+    if (body) body.classList.toggle('wide', d === 'tablet');
+    p.destroy();
+    players.set(fig, new Player(fig, p.scene));
+  }
+}
+
+const WIN_BAR = `<div class="gx-win-bar"><i class="gx-win-start"><b></b><b></b><b></b><b></b></i><i class="gx-win-search">${ic('search', 11, 2)}Поиск</i>
+  <i style="background:#F2C14E"></i><i style="background:linear-gradient(140deg,#3AA0F0,#1F6FD0)"></i><i class="on" style="background:linear-gradient(140deg,#C7743F,#8E3F1C)"></i>
+  <span class="gx-win-tray"><span>РУС</span><span>19:42<br>18.10.2026</span></span></div>`;
 
 class Player {
   constructor(fig, scene) {
@@ -1944,14 +2016,32 @@ class Player {
     this.started = false;
     // Сцена кабинета на узком экране — мобильная версия сайта в телефоне:
     // окно браузера в треть ширины было бы не прочитать.
-    const site = scene.device === 'web';
+    // Касса на Windows — окно на рабочем столе при любой ширине: это и
+    // есть то, что человек увидит у себя на компьютере.
+    const winOS = scene.device === 'windows';
+    const site = scene.device === 'web' || winOS;
     const width = fig.getBoundingClientRect().width || window.innerWidth;
-    const web = site && width >= 560;
+    const web = winOS || (site && width >= 560);
+    const tablet = !site && deviceChoice() === 'tablet';
+    this.site = site;
+    const devs = site ? '' : `<div class="gx-devs" role="group" aria-label="Устройство">${[['phone', 'Телефон', 'phone'], ['tablet', 'Планшет', 'tablet']]
+      .map(([k, t, i]) => `<button type="button" class="${cls('gx-dev', (tablet ? 'tablet' : 'phone') === k && 'on')}" data-dev="${k}" aria-pressed="${(tablet ? 'tablet' : 'phone') === k}">${ic(i, 15, 2)}${t}</button>`).join('')}</div>`;
+    let device;
+    if (winOS) {
+      device = `<div class="gx-win" aria-hidden="true"><div class="gx-win-desk"><div class="gx-win-icon"><span>Z</span>ZalPOS</div>
+        <div class="gx-win-window"><div class="gx-win-title"><span class="app"></span><span class="name">ZalPOS</span><span class="ctl"><i>—</i><i>▢</i><i>✕</i></span></div>
+        <div class="gx-win-addr">${ic('lock', 10, 2.2)}<span>zalpos.ru</span></div><div class="gx-screen web"></div></div></div>${WIN_BAR}</div>`;
+    } else if (web) {
+      device = `<div class="gx-browser" aria-hidden="true"><div class="gx-browser-bar"><i></i><i></i><i></i><span class="gx-url">zalpos.ru</span></div><div class="gx-screen web"></div></div>`;
+    } else if (tablet) {
+      device = '<div class="gx-tablet" aria-hidden="true"><div class="gx-screen tab"></div></div>';
+    } else {
+      device = `<div class="gx-phone" aria-hidden="true"><div class="${cls('gx-screen', site && 'webm')}"><div class="gx-island"></div></div></div>`;
+    }
     fig.innerHTML = `
       <div class="gx-stage">
-        ${web
-          ? `<div class="gx-browser" aria-hidden="true"><div class="gx-browser-bar"><i></i><i></i><i></i><span class="gx-url">zalpos.ru</span></div><div class="gx-screen web"></div></div>`
-          : `<div class="gx-phone" aria-hidden="true"><div class="${cls('gx-screen', site && 'webm')}"><div class="gx-island"></div></div></div>`}
+        ${devs}
+        ${device}
         <div class="gx-foot">
           <div class="gx-cap" aria-live="polite"><span class="gx-cap-n">1</span><span class="gx-cap-t"></span></div>
           <div class="gx-ctrl">
@@ -1972,7 +2062,9 @@ class Player {
     this.touch.className = web ? 'gx-touch web' : 'gx-touch';
     if (web) this.touch.innerHTML = CURSOR;
     this.screen.appendChild(this.touch);
-    this.viewW = VIEW_W[web ? 'web' : 'phone'];
+    this.viewW = VIEW_W[web ? 'web' : tablet ? 'tablet' : 'phone'];
+    this.win = winOS ? fig.querySelector('.gx-win') : null;
+    fig.querySelectorAll('.gx-dev').forEach((b) => { b.onclick = () => { if (!b.classList.contains('on')) switchDevice(b.dataset.dev); }; });
 
     this.segs.forEach((b) => { b.onclick = () => this.jump(Number(b.dataset.i)); });
     this.ppBtn.onclick = () => {
@@ -2147,6 +2239,14 @@ class Player {
     const f = this.frames[i];
     const url = this.fig.querySelector('.gx-url');
     if (url) url.textContent = f.url || 'zalpos.ru';
+    if (this.win) {
+      // Окно Windows: заголовок, адресная строка браузера и ярлык на столе — по шагу.
+      const w = f.win || {};
+      this.win.querySelector('.name').textContent = w.title || 'ZalPOS';
+      this.win.querySelector('.gx-win-addr span').textContent = w.url || '';
+      this.win.classList.toggle('url', Boolean(w.url));
+      this.win.querySelector('.gx-win-icon').classList.toggle('on', Boolean(w.icon));
+    }
     this.capN.textContent = String(i + 1);
     this.capT.textContent = f.cap || '';
     if (animate) { this.capT.classList.remove('swap'); void this.capT.offsetWidth; this.capT.classList.add('swap'); }
@@ -2356,4 +2456,4 @@ export function unmountScene(fig) {
 }
 
 export const hasScene = (id) => Boolean(id && SCENES[id]);
-export const isWideScene = (id) => Boolean(id && SCENES[id] && SCENES[id].device === 'web');
+export const isWideScene = (id) => Boolean(id && SCENES[id] && (['web', 'windows'].includes(SCENES[id].device) || deviceChoice() === 'tablet'));
