@@ -33,6 +33,7 @@
  * supportMemory/{tenantId | tg:<id>}.
  */
 const crypto = require("crypto");
+const { TEMPLATES } = require("./support-templates");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -463,6 +464,7 @@ const SYNONYMS = [
   [/(?<![а-я])ккт(?![а-я])/g, "онлайн-касса ккт"], [/(?<![а-я])фн(?![а-я])/g, "фискальный накопитель"],
   [/(?<![а-я])тг(?![а-я])|телеграм[а-я]*/g, "telegram"], [/(?<![а-я])ии(?![а-я])|нейросет[а-я]*|chatgpt|гпт/g, "ии"],
   [/стоимост[а-я]*|(?<![а-я])цен[аыу](?![а-я])|прайс[а-я]*|сколько стоит/g, "цена тариф"],
+  [/(?<![а-я])(ип|ооо|юрлиц[а-я]*|юр\.? ?лиц[а-я]*)(?![а-я])/g, "юрлицо организация"], [/безнал[а-я]*|расч[её]тн[а-я]* сч[её]т[а-я]*/g, "безнал счёт"],
 ];
 
 /** Основы слов: первые 5 букв (точно) и «~» + первые 4 (мягко: «уголок» и
@@ -510,6 +512,58 @@ function rankDocs(query, docs, k = 3, minScore = 1.2) {
 }
 
 const stripTags = (s) => String(s || "").replace(/<[^>]+>/g, "");
+
+// ------------------------------------------------------------ шаблоны ответов
+
+// Совпадение вопроса с шаблоном (0…1): доля общих основ слов, взвешенных по
+// редкости, и с той, и с другой стороны. Уверенно — отвечаем шаблоном без
+// ИИ; частично — шаблон идёт ИИ подсказкой.
+const TPL_DIRECT = 0.62;
+const TPL_MARGIN = 0.12;
+const TPL_HINT = 0.5;
+
+/** Шаблоны → с основами слов каждого примера и весами слов. */
+function tplIndex(list) {
+  const items = list.map((t) => ({ ...t, _ex: (t.q || []).map((q) => new Set(stems(q))).filter((x) => x.size) }));
+  const df = new Map();
+  let n = 0;
+  for (const t of items) for (const ex of t._ex) { n++; for (const w of ex) df.set(w, (df.get(w) || 0) + 1); }
+  const weight = (w) => Math.log(1 + (n || 1) / (df.get(w) || 0.5)) * (w[0] === "~" ? 0.5 : 1);
+  return { items, weight };
+}
+
+/** Лучший шаблон под вопрос и запас до второго (другого) шаблона. */
+function matchTemplate(question, index, { audience = "any", exclude = [] } = {}) {
+  const q = new Set(stems(question));
+  if (!q.size || !index || !index.items.length) return null;
+  const wq = [...q].reduce((a, w) => a + index.weight(w), 0);
+  const scored = [];
+  for (const t of index.items) {
+    if (t.status === "off" || exclude.includes(t.id)) continue;
+    if (t.audience !== "any" && t.audience !== audience) continue;
+    let best = 0;
+    for (const ex of t._ex) {
+      let shared = 0;
+      for (const w of q) if (ex.has(w)) shared += index.weight(w);
+      if (!shared) continue;
+      const we = [...ex].reduce((a, w) => a + index.weight(w), 0);
+      const cq = shared / wq;
+      const ce = shared / we;
+      best = Math.max(best, (2 * cq * ce) / (cq + ce));
+    }
+    if (best > 0) scored.push({ t, score: best });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  return { template: scored[0].t, score: scored[0].score, second: scored[1] ? scored[1].score : 0 };
+}
+
+/** «Тарифы сейчас» из состояния платформы — для {{plans}} в шаблоне. */
+function plansFrom(platform) {
+  const m = String(platform || "").match(/Тарифы сейчас:\n([\s\S]*?)(?:\n(?:Объявление|Сервер)|$)/);
+  if (!m) return "";
+  return m[1].trim().split("\n").filter(Boolean).map((l) => `- ${l.replace(/^(.+?):/, "**$1**:")}`).join("\n");
+}
 
 /** База знаний поддержки (support-kb.js) → документы поиска. */
 const kbDocs = () => KB.map((d) => indexDoc({ ...d, kind: "kb" }));
@@ -897,6 +951,7 @@ function createSupportBot(deps) {
   const state = {
     cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(),
     usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "",
+    templates: tplIndex(TEMPLATES.map((t) => ({ ...t, id: `b_${t.id}`, source: "builtin", status: "active" }))),
   };
   const timers = new Map();
   const inflight = new Set();
@@ -1078,6 +1133,45 @@ function createSupportBot(deps) {
     return [indexDoc({ id: "changes:latest", kind: "guide", title: "Что нового в ZalPOS: последние обновления кассы, кабинета и бота", text: `Обновления приходят сами (касса — «Обновления» в меню ☰).\n${lines.map(fmt).join("\n")}`, boost: 1 })];
   }
 
+  // ---- шаблоны ответов: встроенные (support-templates.js) + свои из базы
+
+  const templatesCol = () => db().collection("supportTemplates");
+  /** Встроенные с отметками из базы (выключен, счётчики) и созданные ботом
+   *  или поддержкой (кандидаты — только подсказкой, пока не подтвердятся). */
+  async function loadTemplates() {
+    let docs = [];
+    try {
+      docs = (await templatesCol().limit(1000).get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch (_) {}
+    const over = new Map(docs.filter((d) => d.source === "builtin").map((d) => [d.id, d]));
+    const list = TEMPLATES.map((t) => {
+      const o = over.get(`b_${t.id}`) || {};
+      return { ...t, id: `b_${t.id}`, source: "builtin", status: o.status || "active", wins: Number(o.wins) || 0, fails: Number(o.fails) || 0 };
+    });
+    for (const d of docs) {
+      if (d.source === "builtin" || !Array.isArray(d.q) || !d.q.length || !d.a) continue;
+      list.push({ id: d.id, q: d.q, a: d.a, audience: d.audience || "any", direct: d.direct !== false, source: d.source || "auto", status: d.status || "candidate", wins: Number(d.wins) || 0, fails: Number(d.fails) || 0 });
+    }
+    state.templates = tplIndex(list);
+    return list.length;
+  }
+  const tplById = (id) => (state.templates ? state.templates.items.find((x) => x.id === id) : null);
+  /** Счётчики шаблона в базе (у встроенного — запись-отметка b_<id>). */
+  function tplCount(id, field, extra = {}) {
+    const t = tplById(id);
+    if (!t) return;
+    t[field] = (Number(t[field]) || 0) + 1;
+    quiet(templatesCol().doc(id).set({
+      ...(t.source === "builtin" ? { source: "builtin" } : {}),
+      [field]: admin.firestore.FieldValue.increment(1), lastAt: ts(now()), ...extra,
+    }, { merge: true }), "шаблон");
+  }
+  async function tplStatus(id, status) {
+    const t = tplById(id);
+    if (t) t.status = status;
+    await templatesCol().doc(id).set({ ...(t && t.source === "builtin" ? { source: "builtin" } : {}), status, statusAt: ts(now()) }, { merge: true });
+  }
+
   async function loadKnowledge() {
     const snap = await knowledgeCol().limit(800).get();
     state.learned = snap.docs.map((d) => {
@@ -1090,6 +1184,14 @@ function createSupportBot(deps) {
   // ---- учёт расхода ИИ (на сутки, по МСК)
 
   const today = () => new Date(now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  /** Ответ шаблоном — без ИИ: считаем, сколько вызовов сэкономили. */
+  function countTpl() {
+    const day = today();
+    if (state.usage.day !== day) state.usage = { day, calls: 0, tokens: 0, heavy: 0, byProvider: {} };
+    state.usage.tpl = (Number(state.usage.tpl) || 0) + 1;
+    quiet(db().collection("supportBot").doc("usage").set(JSON.parse(JSON.stringify(state.usage))), "учёт");
+  }
+
   function countUsage(tokens, p = null, heavy = false, { tier = "", cost = 0 } = {}) {
     const day = today();
     if (state.usage.day !== day) state.usage = { day, calls: 0, tokens: 0, heavy: 0, byProvider: {} };
@@ -1541,8 +1643,54 @@ function createSupportBot(deps) {
     const askedBack = !!(prevBot && /\?/.test(String(prevBot.text || "").slice(-400)));
     const pinged = fresh.every((m) => PING.test(norm(m.text || "")) || smallTalk(m.text || "") === "ack");
     const talk = imagesNow ? "" : smallTalk(question);
+    // Прошлый ответ был шаблоном: «спасибо» — шаблон помог; «не то» — нет.
+    // Два промаха без побед — шаблон выключается, дальше отвечает ИИ.
+    const lastTpl = t.lastTemplate && prevBot && prevBot.authorRole === "ai" && toMs(prevBot.createdAt) >= toMs(t.lastTemplateAt) - 5000 ? t.lastTemplate : "";
+    if (lastTpl && talk === "thanks") {
+      tplCount(lastTpl, "wins");
+      const lt = tplById(lastTpl);
+      // Кандидат, дважды подтверждённый клиентами, начинает отвечать сам.
+      if (lt && lt.status === "candidate" && lt.wins >= 2 && !lt.fails) {
+        await tplStatus(lastTpl, "active");
+        await toTopicHtml(t, `📋 <b>Шаблон подтверждён клиентами</b> — теперь отвечает сам: <i>${h(clip(lt.q[0], 120))}</i>`);
+      }
+    }
+    if (lastTpl && (UNHAPPY.test(norm(question)) || humanTrigger(question) === "ИИ не помог")) {
+      tplCount(lastTpl, "fails");
+      const lt = tplById(lastTpl);
+      if (lt && lt.fails >= 2 && lt.fails > lt.wins) {
+        await tplStatus(lastTpl, "off");
+        await toTopicHtml(t, `📋 <b>Шаблон выключен</b> — дважды не помог: <i>${h(clip(lt.q[0], 120))}</i>. Проверьте его: кнопка ниже включит снова.`,
+          { reply_markup: { inline_keyboard: [[{ text: "✅ Включить шаблон", callback_data: `sb:tplon:${lastTpl}` }]] } });
+      }
+      await patch(t, { lastTemplate: "" });
+    }
     if (talk === "ack" && !askedBack) return;
     if (talk === "thanks") return deliver(t, "Рад был помочь! Если появится ещё вопрос — пишите сюда.");
+    // Частый вопрос — готовым проверенным ответом, без ИИ (ноль токенов).
+    const audience = t.channel === "site" ? "site" : t.channel === "telegram" ? "any" : "cabinet";
+    const tplPlans = plansFrom(await platformStatus().catch(() => ""));
+    const tplMatch = !imagesNow && !afterSoft && question.length >= 6 && question.length <= 240
+      && kinds.filter((k) => !k).length === 1
+      ? matchTemplate(question, state.templates, { audience, exclude: lastTpl ? [lastTpl] : [] }) : null;
+    const tplFill = (a) => a.replace("{{plans}}", tplPlans || "");
+    if (tplMatch && tplMatch.template.status === "active" && tplMatch.template.direct
+      && tplMatch.score >= TPL_DIRECT && tplMatch.score - tplMatch.second >= TPL_MARGIN
+      && !askedBack && !UNHAPPY.test(norm(question)) && !isUrgent(question)
+      && !deceitSignals(question).length && !suspiciousLinks(question).length
+      && (!tplMatch.template.a.includes("{{plans}}") || tplPlans)) {
+      const tp = tplMatch.template;
+      const reply = parseAiReply(tplFill(tp.a));
+      const markup = t.channel === "telegram" ? { inline_keyboard: [[{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
+      await deliver(t, reply.text, { markup, html: mdToHtml(reply.md), md: reply.md });
+      await patch(t, { lastTemplate: tp.id, lastTemplateAt: ts(now()), tplReplies: (Number(t.tplReplies) || 0) + 1 });
+      tplCount(tp.id, "uses");
+      countTpl();
+      const note = await toTopicHtml(t, `📋 <b>Ответ по шаблону</b> <i>· без ИИ · совпадение ${Math.round(tplMatch.score * 100)} %</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`,
+        { reply_markup: { inline_keyboard: [[{ text: "🚫 Выключить шаблон", callback_data: `sb:tploff:${tp.id}` }]] } });
+      await movePanel(t, note);
+      return;
+    }
     if (talk === "hello") return deliver(t, "Здравствуйте! Опишите, пожалуйста, что случилось или что хотите настроить — помогу. Позвать человека можно в любой момент словом «оператор».");
     if (!aiReady()) return escalate(t, "ИИ не настроен", { tellClient: !t.waitNoticeAt });
     if (overDailyLimit()) return escalate(t, "исчерпан суточный лимит ИИ");
@@ -1609,6 +1757,10 @@ function createSupportBot(deps) {
     if (imagesNow && !question) {
       messages.push({ role: "system", content: "Клиент прислал скриншот без текста. По описанию скриншота пойми, что у него на экране и что не так, и помоги по шагам. Не уверен, в чём вопрос, — спроси одним коротким вопросом." });
     }
+    const tplHint = tplMatch && tplMatch.score >= TPL_HINT ? tplMatch.template : null;
+    if (tplHint) {
+      messages.push({ role: "system", content: `# Проверенный шаблон ответа на похожий вопрос\n${tplFill(tplHint.a).replace("{{plans}}", "")}\n\nОпирайся на него: подходит к вопросу и к ситуации клиента — ответь по нему коротко (можно своими словами и с учётом «Состояния»); подходит частично — возьми верное и дополни по знаниям; не подходит — не используй.` });
+    }
     if (afterSoft) {
       messages.push({ role: "system", content: "По прошлому вопросу клиента уже позван специалист. Ответь на новое сообщение клиента. Если это тот же вопрос и уверенного ответа в знаниях нет — одной фразой скажи, что специалист уже подключён и ответит здесь." });
     }
@@ -1636,7 +1788,7 @@ function createSupportBot(deps) {
     let used;
     try {
       // Низкая температура — меньше фантазии в путях и названиях кнопок.
-      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack, sure, lastTier: t.lastTier || "" }), temperature: 0.15 });
+      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack, sure: sure || !!tplHint, lastTier: t.lastTier || "" }), temperature: 0.15 });
       reply = parseAiReply(used.text);
       reply.text = guardReply(reply.text);
       reply.md = guardReply(reply.md);
@@ -1670,7 +1822,9 @@ function createSupportBot(deps) {
     const docNote = t.channel !== "telegram" && reply.docs.length
       ? `\n\n📄 Документы для скачивания (Word, ссылки действуют 7 дней):\n${reply.docs.map((id) => `• ${DOCS.find((d) => d.id === id).title}: ${docLink(t, id)}`).join("\n")}` : "";
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md), md: `${reply.md}${docNote}` });
+    // Подсказка-шаблон: «спасибо» на этот ответ засчитается шаблону.
     await patch(t, {
+      ...(tplHint ? { lastTemplate: tplHint.id, lastTemplateAt: ts(now()) } : { lastTemplate: "" }),
       aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id), lastTier: used.tier || "",
       aiBurst: burst + 1, aiBurstAt: burst ? t.aiBurstAt : ts(now()),
     });
@@ -2717,6 +2871,65 @@ function createSupportBot(deps) {
     await loadKnowledge().catch(() => {});
     await toTopicHtml(t, `📚 <b>${r.merge && existing ? "Дополнил запись в базе решений" : "Сам запомнил решение"}</b>${r.why ? ` · <i>${h(clip(r.why, 160))}</i>` : ""}\n\n<b>Вопрос:</b> ${h(fields.q)}\n<b>Решение:</b> ${h(fields.a)}`,
       { reply_markup: { inline_keyboard: [[{ text: "🗑 Удалить из базы", callback_data: `sb:kdel:${id}` }]] } });
+    await proposeTemplate(t, fields).catch((e) => console.error(`support-bot: шаблон из #${t.no}: ${e.message}`));
+    return id;
+  }
+
+  /** Подтверждённое решение → шаблон ответа, если вопрос частый, а ответ
+   *  общий для всех заведений. Сначала смотрим альтернативы: похожие шаблоны
+   *  и статьи знаний — дубль не заводим, неточный улучшаем, с противоречием
+   *  знаниям не сохраняем. Новый — кандидат: подсказывает ИИ и начинает
+   *  отвечать сам после двух «спасибо» или кнопки сотрудника. */
+  async function proposeTemplate(t, fields) {
+    if (!aiReady()) return null;
+    // Альтернативы: похожие шаблоны любой аудитории (по вопросу и по ответу).
+    const near = [];
+    for (const x of state.templates.items) {
+      if (x.status === "off") continue;
+      const one = { items: [x], weight: state.templates.weight };
+      const score = Math.max(...[fields.q, `${fields.q} ${fields.a}`].map((p) => (matchTemplate(p, one, { audience: x.audience }) || { score: 0 }).score));
+      if (score >= 0.3) near.push({ x, score });
+    }
+    near.sort((a, b) => b.score - a.score);
+    const alts = near.slice(0, 3);
+    const docs = rankDocs(`${fields.q} ${fields.a}`, state.guide, 3);
+    const raw = await ai([
+      { role: "system", content: [
+        "Ты ведёшь шаблоны ответов поддержки ZalPOS: готовые ответы на частые вопросы, которые бот отправляет без ИИ. Реши, нужен ли шаблон из проверенного решения ниже.",
+        "Делай шаблон (action: new), только если: вопрос задают разные заведения; ответ одинаков для всех (без данных конкретного заведения, сумм, дат и имён); каждый шаг совпадает со «Знаниями» — названия кнопок и разделов дословно.",
+        "Сначала сравни с альтернативами — уже готовыми шаблонами. Тот же вопрос и ответ не хуже — action: skip. Тот же вопрос, но новый ответ точнее или полнее — action: improve с id этого шаблона (только у source: auto или staff). Противоречит «Знаниям» или встроенному шаблону — action: skip и объясни.",
+        "Ответ шаблона: первая строка — суть, дальше шаги «1.», названия кнопок — **жирным**, до 700 символов, на «вы», без приветствия. Примеры вопроса — 4–6 разных формулировок, как пишут клиенты (коротко, разговорно).",
+        "direct: false, если ответ может зависеть от настроек заведения (тогда шаблон только подсказывает ИИ).",
+        'Ответ строго JSON: {"action":"new|improve|skip","id":"","q":["…"],"a":"…","audience":"any|site|cabinet","direct":true,"why":"коротко"}.',
+      ].join("\n") },
+      { role: "user", content: [
+        `Проверенное решение — вопрос: ${clip(fields.q, 300)}\nОтвет: ${clip(fields.a, 1200)}`,
+        `Альтернативы (готовые шаблоны):\n${alts.length ? alts.map(({ x, score }) => `- id ${x.id} (${x.source}, ${x.status}, похожесть ${Math.round(score * 100)} %): ${clip(x.q[0], 120)} → ${clip(x.a, 500)}`).join("\n") : "нет"}`,
+        `Знания:\n${docs.map((d) => `- ${d.title}: ${clip(d.text, 700)}`).join("\n") || "нет"}`,
+      ].join("\n\n") },
+    ], { maxTokens: 900, temperature: 0.1 });
+    const r = looseJson(raw);
+    if (!r || !["new", "improve"].includes(r.action)) {
+      if (r && r.why) await quiet(toTopicHtml(t, `📋 Шаблон не нужен — <i>${h(clip(r.why, 200))}</i>`), "шаблон");
+      return null;
+    }
+    const q = (Array.isArray(r.q) ? r.q : []).map((x) => clip(scrubPii(String(x)), 160)).filter((x) => x.length >= 6).slice(0, 8);
+    const a = clip(guardReply(scrubPii(String(r.a || ""))), 1200);
+    if (q.length < 2 || a.length < 40) return null;
+    const audience = ["any", "site", "cabinet"].includes(r.audience) ? r.audience : "any";
+    const target = r.action === "improve" ? tplById(String(r.id || "")) : null;
+    let id;
+    if (target && target.source !== "builtin") {
+      id = target.id;
+      await templatesCol().doc(id).set({ q: [...new Set([...q, ...target.q])].slice(0, 10), a, audience, direct: r.direct !== false, updatedAt: ts(now()), improvedFrom: t.no || null }, { merge: true });
+    } else {
+      const ref = templatesCol().doc();
+      id = ref.id;
+      await ref.set({ q, a, audience, direct: r.direct !== false, status: "candidate", source: "auto", uses: 0, wins: 0, fails: 0, ticketNo: t.no || null, createdAt: ts(now()) });
+    }
+    await loadTemplates().catch(() => {});
+    await toTopicHtml(t, `📋 <b>${target ? "Улучшил шаблон ответа" : "Новый шаблон ответа — на проверке"}</b>${r.why ? ` · <i>${h(clip(r.why, 160))}</i>` : ""}\n<b>Вопросы:</b> ${h(q.slice(0, 3).join(" · "))}\n<blockquote expandable>${mdToHtml(a)}</blockquote>\n${target ? "" : "Пока подсказывает ИИ; отвечать сам начнёт после двух «спасибо» от клиентов или по кнопке."}`,
+      { reply_markup: { inline_keyboard: [[{ text: "✅ Включить сразу", callback_data: `sb:tplon:${id}` }, { text: "🗑 Удалить", callback_data: `sb:tpldel:${id}` }]] } });
     return id;
   }
 
@@ -2797,6 +3010,17 @@ function createSupportBot(deps) {
       return forgetClient(from.id, chatId);
     }
 
+    const tm = data.match(/^sb:(tplon|tploff|tpldel):([\w-]+)$/);
+    if (tm) {
+      if (!isGroup(chatId)) return answer();
+      const [, act, id] = tm;
+      if (act === "tpldel" && tplById(id) && tplById(id).source === "builtin") await tplStatus(id, "off");
+      else if (act === "tpldel") await templatesCol().doc(id).delete();
+      else await tplStatus(id, act === "tplon" ? "active" : "off");
+      await loadTemplates().catch(() => {});
+      await quiet(tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }), "кнопка");
+      return answer(act === "tplon" ? "Шаблон включён" : act === "tploff" ? "Шаблон выключен" : "Шаблон удалён");
+    }
     const m = data.match(/^sb:(ok|hu|rate|learn|kdel):([\w-]+)(?::(\d))?$/);
     if (!m) return answer();
     const [, act, id, n] = m;
@@ -3069,6 +3293,7 @@ function createSupportBot(deps) {
       `🔴 Ждут человека: <b>${waiting}</b>`,
       `🤖 ИИ сегодня: <b>${u.calls}</b> из ${lim} ответов · ${Number(u.tokens || 0).toLocaleString("ru-RU")} токенов`,
       `📚 База решений: <b>${state.learned.length}</b> · статей в знаниях: ${state.guide.length}`,
+      `📋 Шаблонов: <b>${state.templates.items.filter((x) => x.status === "active").length}</b> рабочих · ${state.templates.items.filter((x) => x.status === "candidate").length} на проверке · ответов шаблоном сегодня: ${Number(u.tpl) || 0}`,
     ].join("\n");
   }
 
@@ -3573,6 +3798,7 @@ function createSupportBot(deps) {
     for (const [id, v] of Object.entries((st && st.data && st.data()) || {})) router.restore(id, v);
     await loadGuide();
     await loadKnowledge().catch(() => {});
+    await loadTemplates().catch(() => {});
     const u = (await db().collection("supportBot").doc("usage").get().catch(() => null));
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
@@ -3589,6 +3815,7 @@ function createSupportBot(deps) {
     sweepSite().catch(() => {});
     setInterval(() => {
       loadKnowledge().catch(() => {});
+      loadTemplates().catch(() => {});
       reload().catch(() => {});
       for (const [k, r] of state.rate) if (now() > r.reset) state.rate.delete(k);
     }, KB_RELOAD_MS).unref();
@@ -3603,6 +3830,6 @@ function createSupportBot(deps) {
 }
 
 module.exports = {
-  createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
+  createSupportBot, matchTemplate, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
   boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
 };

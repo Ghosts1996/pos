@@ -670,7 +670,7 @@ test("автообучение: ответ специалиста + «спаси
   assert.strictEqual(kb.length, 1, "не запомнил");
   assert.strictEqual(kb[0][1].source, "auto:specialist");
   assert.ok(sends(h.calls, GROUP).some((c) => /Сам запомнил решение/.test(c.body.text)));
-  const learnPrompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  const learnPrompt = JSON.stringify(h.aiCalls.find((c) => JSON.stringify(c.messages).includes("главный источник")).messages);
   assert.ok(learnPrompt.includes("Специалист: Включите") && learnPrompt.includes("главный источник"));
   // Повторно то же обращение не разбирает (экономия токенов).
   const calls = h.aiCalls.length;
@@ -1493,11 +1493,11 @@ test("окно чата в кабинете: обращение заведени
   const req = (body) => ({ uid: "owner1", headers: { authorization: "Bearer x" }, body });
   await h.bot.handleCabinetMessages(req({}), {});
   assert.strictEqual(h.sent.body.enabled, true);
-  await h.bot.handleCabinetSend(req({ tenantId: "t1", text: "Как поставить кассу на планшет?", source: "widget", consent: true, page: "Устройства" }), {});
+  await h.bot.handleCabinetSend(req({ tenantId: "t1", text: "Касса на планшете медленно открывает меню после обновления", source: "widget", consent: true, page: "Устройства" }), {});
   const { ticketId } = h.sent.body;
   await h.bot.idle();
   const t = h.store.get(`supportTickets/${ticketId}`);
-  assert.strictEqual(t.subject, "Как поставить кассу на планшет?");
+  assert.strictEqual(t.subject, "Касса на планшете медленно открывает меню после обновления");
   assert.strictEqual(t.channel, "cabinet");
   const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
   assert.ok(prompt.includes("Пишет владелец или администратор заведения из личного кабинета"), "нет режима кабинета");
@@ -1520,9 +1520,9 @@ test("чат сайта: вошёл без заведения, менеджер 
   let p = await send({ text: "Как создать заведение?", consent: true, page: "Создание заведения", role: "account" }, "u1");
   assert.ok(p.includes("вошёл в аккаунт, но заведения у него ещё нет"), "аккаунт без заведения");
   assert.ok(p.includes("раздел сайта: «Создание заведения»"));
-  p = await send({ text: "Как закрыть смену?", consent: true, role: "manager" }, "u2");
+  p = await send({ text: "Официант не видит вызовы гостей на телефоне", consent: true, role: "manager" }, "u2");
   assert.ok(p.includes("как менеджер заведения"), "менеджер");
-  p = await send({ text: "Сколько стоит?", consent: true, role: "manager" });
+  p = await send({ text: "Подойдёт ли касса для кофейни с летней верандой?", consent: true, role: "manager" });
   assert.ok(p.includes("Пишет посетитель сайта") && !p.includes("как менеджер"), "без входа роль из браузера не верим");
   assert.ok(p.includes("Нет: человек пишет с сайта"), "сайт не видит заведение");
 
@@ -1549,6 +1549,82 @@ test("знания: карта сайта, курсы, стоп-лист, мод
     ["Можно ли поставить кассу на iPad или загрузить меню из файла", "kb:limits"],
   ];
   for (const [q, id] of cases) assert.ok(top(q).includes(id), `${q} → ${top(q).join(", ")}`);
+});
+
+test("шаблоны: частый вопрос — ответ без ИИ; похожий — подсказка ИИ; два промаха — шаблон выключается", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Как закрыть смену?"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 0, "на частый вопрос потрачены токены");
+  assert.ok(sends(h.calls, 42).some((c) => /Закрыть смену заведения/.test(c.body.text)));
+  assert.ok(sends(h.calls, GROUP).some((c) => /Ответ по шаблону/.test(c.body.text)));
+  let [t] = tickets(h.store);
+  assert.strictEqual(t.lastTemplate, "b_close-shift");
+
+  // «Не то» на шаблон — промах; второй промах в другом обращении — выключен.
+  await h.bot.handleUpdate(pm("не то, мне нужно другое"));
+  await h.bot.idle();
+  const tpl = (id) => h.bot._state.templates.items.find((x) => x.id === id);
+  assert.strictEqual(tpl("b_close-shift").fails, 1);
+  await h.bot.handleUpdate(pm("Как закрыть смену?", 43));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("опять не то", 43));
+  await h.bot.idle();
+  assert.strictEqual(h.store.get("supportTemplates/b_close-shift").status, "off");
+  const before = h.aiCalls.length;
+  await h.bot.handleUpdate(pm("Как закрыть смену?", 44));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, before + 1, "выключенный шаблон всё ещё отвечает");
+
+  // «Спасибо» на шаблон засчитывается победой.
+  await h.bot.handleUpdate(pm("Забыл пин код", 45));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("Спасибо, помогло!", 45));
+  await h.bot.idle();
+  assert.strictEqual(tpl("b_forgot-pin").wins, 1);
+
+  // Частичное совпадение — без прямого ответа, шаблон в подсказке ИИ.
+  await h.bot.handleUpdate(pm("Как поменять логотип в приложении гостя для сети?", 46));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Проверенный шаблон ответа"), "нет подсказки-шаблона");
+
+  // Мусор и подмена не попадают в шаблоны: цены без тарифов — не прямым ответом.
+  assert.strictEqual(sb.plansFrom("Сервер работает"), "");
+  assert.ok(/\*\*Старт\*\*/.test(sb.plansFrom("Сервер работает\nТарифы сейчас:\nСтарт: 1 790 ₽/мес\nБизнес: 2 390 ₽/мес")));
+});
+
+test("шаблоны: из подтверждённого решения бот сам заводит кандидата, сверив альтернативы; кнопка включает", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Как подключить весы к кассе для развесного товара?"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  await h.bot.handleUpdate(inTopic("Весы пока не подключаются: вес вводят вручную в карточке позиции.", t.topicId));
+  h.aiReplies.push('{"save":true,"merge":false,"q":"Можно ли подключить весы","a":"Весы к кассе не подключаются, вес вводят вручную.","tags":["весы"],"why":"частый вопрос"}');
+  h.aiReplies.push('{"action":"new","q":["Можно подключить весы?","Весы к кассе","Работают ли электронные весы","Как взвешивать товар"],"a":"Весы к кассе пока не подключаются: вес вводят вручную в карточке позиции.","audience":"any","direct":true,"why":"частый вопрос, ответ общий"}');
+  await h.bot.handleUpdate(pm("Спасибо, помогло!"));
+  await h.bot.idle();
+  const tplPrompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(tplPrompt.includes("Альтернативы") && tplPrompt.includes("Сначала сравни с альтернативами"), "не смотрит альтернативы");
+  const saved = [...h.store.entries()].filter(([k, v]) => /^supportTemplates\/[^/]+$/.test(k) && v.source === "auto");
+  assert.strictEqual(saved.length, 1, "кандидат не создан");
+  assert.strictEqual(saved[0][1].status, "candidate");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Новый шаблон ответа/.test(c.body.text)));
+  const id = saved[0][0].split("/")[1];
+
+  // Кандидат не отвечает сам, пока не подтверждён.
+  const n = h.aiCalls.length;
+  await h.bot.handleUpdate(pm("Можно подключить весы?", 47));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, n + 1, "кандидат ответил без проверки");
+  // Сотрудник включил — дальше отвечает без ИИ.
+  await h.bot.handleUpdate({ callback_query: { id: "cq1", from: { id: 7 }, data: `sb:tplon:${id}`, message: { message_id: 5, chat: { id: GROUP } } } });
+  assert.strictEqual(h.store.get(`supportTemplates/${id}`).status, "active");
+  await h.bot.handleUpdate(pm("Можно подключить весы?", 48));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, n + 1, "включённый шаблон потратил токены");
 });
 
 (async () => {
