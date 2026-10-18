@@ -697,6 +697,18 @@ test("автообучение: не стал запоминать — пише�
   assert.ok(note.body.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `sb:learn:${t.id}`));
 });
 
+test("подсказка: отвечать по вопросу, без догадок, вести к результату; нет знаний — так и сказано", async () => {
+  const sp = sb.SYSTEM_PROMPT;
+  assert.ok(/Отвечай ровно на вопрос/.test(sp) && /Пиши только то, в чём уверен/.test(sp) && /Веди к результату/.test(sp));
+  assert.ok(/Получилось\?/.test(sp) && /\[\[ОПЕРАТОР/.test(sp));
+  const empty = sb.buildMessages({ guide: [], learned: [], history: [{ authorRole: "owner", text: "Как подключить Яндекс Еду?" }] })[1].content;
+  assert.ok(empty.includes("нет проверенных знаний по вопросу"));
+  const docs = sb.guideDocs([{ id: "s", title: "Касса", items: [{ title: "Онлайн-касса", steps: ["Откройте «Интеграции»"] }] }]);
+  assert.strictEqual(docs.length, 1);
+  const full = sb.buildMessages({ guide: docs, learned: [], history: [] })[1].content;
+  assert.ok(!full.includes("нет проверенных знаний по вопросу"));
+});
+
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {
   const h = harness();
   await setup(h);
