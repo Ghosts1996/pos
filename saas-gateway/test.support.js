@@ -728,6 +728,15 @@ test("вложения: проверка типа и размера, чтени�
   await assert.rejects(supportFiles.save({ tenantId: "t1", ticketId: "c1", buffer: Buffer.from("MZ\x90\x00"), type: "image/png", name: "virus.png" }), /не похоже/);
   await assert.rejects(supportFiles.save({ tenantId: "t1", ticketId: "c1", buffer: Buffer.from("x"), type: "application/x-msdownload", name: "a.exe" }), /тип/);
   assert.deepStrictEqual(supportFiles.listOf({ attachments: [{ id: "bad" }, f] }).map((a) => a.id), [f.id]);
+  // Частями (nginx режет тела больше 1 МБ): склеивается только на последней.
+  const big = Buffer.concat([png, crypto.randomBytes(2 * 1024 * 1024)]);
+  const parts = [big.slice(0, 900000), big.slice(900000, 1800000), big.slice(1800000)];
+  assert.strictEqual(await supportFiles.savePart({ uid: "u1", uploadId: "a1b2c3d4e5f60718", part: 0, parts: 3, buffer: parts[0] }), null);
+  assert.strictEqual(await supportFiles.savePart({ uid: "u1", uploadId: "a1b2c3d4e5f60718", part: 1, parts: 3, buffer: parts[1] }), null);
+  const whole = await supportFiles.savePart({ uid: "u1", uploadId: "a1b2c3d4e5f60718", part: 2, parts: 3, buffer: parts[2] });
+  assert.ok(whole && whole.equals(big), "части не склеились");
+  await assert.rejects(supportFiles.savePart({ uid: "u1", uploadId: "a1b2c3d4e5f60718", part: 0, parts: 99, buffer: parts[0] }), /15 МБ/);
+  await assert.rejects(supportFiles.savePart({ uid: "u1", uploadId: "../x", part: 0, parts: 1, buffer: parts[0] }), /некорректная/);
 });
 
 test("вложения: скриншот из кабинета — в тему фото, фото специалиста — в кабинет; ИИ знает, что файл есть", async () => {

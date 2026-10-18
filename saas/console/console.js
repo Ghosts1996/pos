@@ -454,12 +454,20 @@ function pendingFilesHtml(list, cls) {
 async function uploadSupportFiles(ticketId, list) {
   const token = await state.auth.currentUser?.getIdToken();
   const out = [];
+  // Частями по 768 КБ: перед сервером стоит nginx, который большие тела режет.
+  const CHUNK = 768 * 1024;
   for (const a of list) {
-    const res = await fetch(`${SAAS_GATEWAY_URL}/supportUpload?ticketId=${encodeURIComponent(ticketId)}&name=${encodeURIComponent(a.name)}`, {
-      method: 'POST', headers: { 'Content-Type': a.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: a.file,
-    });
-    const json = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`«${a.name}»: ${json?.error || `ошибка ${res.status}`}`);
+    const parts = Math.max(1, Math.ceil(a.file.size / CHUNK));
+    const upload = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+    let json = null;
+    for (let i = 0; i < parts; i++) {
+      const res = await fetch(`${SAAS_GATEWAY_URL}/supportUpload?ticketId=${encodeURIComponent(ticketId)}&name=${encodeURIComponent(a.name)}&upload=${upload}&part=${i}&parts=${parts}`, {
+        method: 'POST', headers: { 'Content-Type': a.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: a.file.slice(i * CHUNK, (i + 1) * CHUNK),
+      });
+      json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`«${a.name}»: ${json?.error || (res.status === 413 ? 'файл слишком большой' : `ошибка ${res.status}`)}`);
+    }
     out.push({ id: json.id, name: json.name, type: json.type, size: json.size });
   }
   list.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });

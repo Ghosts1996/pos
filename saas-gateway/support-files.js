@@ -89,6 +89,55 @@ async function read({ tenantId, ticketId, id }) {
   }
 }
 
+// Файл приходит частями (до ~1 МБ каждая): nginx перед сервером по
+// умолчанию не пропускает тело больше 1 МБ.
+const CHUNK_MAX = 1024 * 1024;
+const MAX_PARTS = Math.ceil(MAX_BYTES / (768 * 1024)) + 1;
+const TMP = path.join(DIR, "_parts");
+const UPLOAD_ID = /^[a-f0-9]{16,32}$/;
+
+/** Часть файла. Возвращает весь файл, когда пришла последняя часть, иначе null. */
+async function savePart({ uid, uploadId, part, parts, buffer }) {
+  if (!UPLOAD_ID.test(String(uploadId || "")) || !/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ""))) throw new Error("некорректная загрузка");
+  if (!(parts >= 1 && parts <= MAX_PARTS && part >= 0 && part < parts)) throw new Error("файл больше 15 МБ");
+  if (!buffer || buffer.length > CHUNK_MAX) throw new Error("часть файла слишком большая");
+  const dir = path.join(TMP, `${uid}_${uploadId}`);
+  if (part === 0) {
+    await sweepParts();
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(path.join(dir, String(part)), buffer);
+  if (part < parts - 1) return null;
+  const chunks = [];
+  let total = 0;
+  for (let i = 0; i < parts; i++) {
+    const b = await fs.promises.readFile(path.join(dir, String(i))).catch(() => null);
+    if (!b) {
+      await fs.promises.rm(dir, { recursive: true, force: true });
+      throw new Error("файл пришёл не целиком — отправьте ещё раз");
+    }
+    total += b.length;
+    if (total > MAX_BYTES) {
+      await fs.promises.rm(dir, { recursive: true, force: true });
+      throw new Error("файл больше 15 МБ");
+    }
+    chunks.push(b);
+  }
+  await fs.promises.rm(dir, { recursive: true, force: true });
+  return Buffer.concat(chunks);
+}
+
+/** Брошенные недогруженные файлы старше часа — удалить. */
+async function sweepParts() {
+  const names = await fs.promises.readdir(TMP).catch(() => []);
+  const old = Date.now() - 3600 * 1000;
+  for (const n of names) {
+    const st = await fs.promises.stat(path.join(TMP, n)).catch(() => null);
+    if (st && st.mtimeMs < old) await fs.promises.rm(path.join(TMP, n), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** Все вложения заведения — вместе с его данными. */
 async function removeTenant(tenantId) {
   if (!SAFE_ID.test(String(tenantId || ""))) return;
@@ -102,4 +151,4 @@ function listOf(m) {
     .map((a) => ({ id: a.id, name: cleanName(a.name, a.id.split(".").pop()), type: EXT_TYPE[a.id.split(".").pop()], size: Number(a.size) || 0 }));
 }
 
-module.exports = { DIR, MAX_BYTES, MAX_PER_MESSAGE, TYPES, isImage, matches, save, read, removeTenant, listOf, cleanName };
+module.exports = { DIR, MAX_BYTES, MAX_PER_MESSAGE, CHUNK_MAX, TYPES, isImage, matches, save, savePart, read, removeTenant, listOf, cleanName };

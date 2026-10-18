@@ -3308,8 +3308,13 @@ async function supportTicketFor(decoded, ticketId) {
 async function handleSupportUpload(req, res) {
   const decoded = await verifyAuth(req);
   const now = Date.now();
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const part = Number(q.get("part") || 0);
+  const parts = Number(q.get("parts") || 1);
   const lim = supportUploadLimiter.get(decoded.uid);
-  if (!lim || lim.resetAt <= now) {
+  if (part > 0) {
+    // Следующие части того же файла лимит не тратят.
+  } else if (!lim || lim.resetAt <= now) {
     if (supportUploadLimiter.size > 5000) supportUploadLimiter.clear();
     supportUploadLimiter.set(decoded.uid, { count: 1, resetAt: now + 10 * 60 * 1000 });
   } else if (lim.count >= 60) {
@@ -3317,11 +3322,16 @@ async function handleSupportUpload(req, res) {
   } else {
     lim.count += 1;
   }
-  const q = new URL(req.url, "http://localhost").searchParams;
   const ticketId = q.get("ticketId") || "";
   const t = await supportTicketFor(decoded, ticketId);
-  const buffer = await readRawBody(req, supportFiles.MAX_BYTES + 1);
+  // Частями (part/parts/upload) — из кабинета; целиком — маленькие файлы.
+  const chunked = q.has("upload");
+  const raw = await readRawBody(req, chunked ? supportFiles.CHUNK_MAX : supportFiles.MAX_BYTES + 1);
   try {
+    const buffer = chunked
+      ? await supportFiles.savePart({ uid: decoded.uid, uploadId: q.get("upload"), part, parts, buffer: raw })
+      : raw;
+    if (!buffer) return sendJson(res, 200, { ok: true, part });
     const file = await supportFiles.save({ tenantId: t.tenantId, ticketId, buffer, type: req.headers["content-type"], name: q.get("name") || "" });
     sendJson(res, 200, file);
   } catch (e) {
