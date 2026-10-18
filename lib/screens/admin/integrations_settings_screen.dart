@@ -17,6 +17,8 @@ import '../../models/aggregator.dart';
 import '../../services/gateway_api.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/kitchen_slips.dart';
+import '../../utils/sale_kind.dart';
 import '../../theme/app_colors.dart';
 
 /// Настройки интеграций: чековый принтер (Bluetooth/сеть) и адрес УТМ
@@ -39,6 +41,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   bool _kitchenAuto = false;
   final _kitchenIpCtrl = TextEditingController();
   final _barIpCtrl = TextEditingController();
+  final _hookahIpCtrl = TextEditingController();
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
   final _utmHostCtrl = TextEditingController();
@@ -120,6 +123,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kitchenAuto = data['printKitchenAuto'] as bool? ?? false;
     _kitchenIpCtrl.text = data['kitchenPrinterIp'] as String? ?? '';
     _barIpCtrl.text = data['barPrinterIp'] as String? ?? '';
+    _hookahIpCtrl.text = data['hookahPrinterIp'] as String? ?? '';
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
     _utmHostCtrl.text = data['utmHost'] ?? '';
@@ -210,6 +214,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     printKitchenAuto = _kitchenAuto;
     kitchenPrinterIp = _kitchenIpCtrl.text.trim();
     barPrinterIp = _barIpCtrl.text.trim();
+    hookahPrinterIp = _hookahIpCtrl.text.trim();
     final aggregators = {for (final a in _aggsEdited) a.id: a.toMap()};
     await _doc.set({
       'printSplitHookah': _splitHookah,
@@ -217,6 +222,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'printKitchenAuto': _kitchenAuto,
       'kitchenPrinterIp': _kitchenIpCtrl.text.trim(),
       'barPrinterIp': _barIpCtrl.text.trim(),
+      'hookahPrinterIp': _hookahIpCtrl.text.trim(),
       'printerType': _printerType,
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
@@ -611,6 +617,44 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     }
   }
 
+  /// Пробный бегунок на принтер каждого цеха — видно, что куда печатает.
+  Future<void> _testStations() async {
+    setState(() {
+      _testing = true;
+      _printerResult = null;
+    });
+    _applyActivePrinter();
+    kitchenPrinterIp = _kitchenIpCtrl.text.trim();
+    barPrinterIp = _barIpCtrl.text.trim();
+    hookahPrinterIp = _hookahIpCtrl.text.trim();
+    final report = <String>[];
+    for (final station in SaleKind.all) {
+      final slip = KitchenSlip(
+        station: station,
+        tableName: 'Проверка',
+        at: DateTime.now(),
+        lines: const [KitchenSlipLine(menuItemId: 'test', name: 'Пробный бегунок', qty: 1, lineQty: 1)],
+      );
+      final target = printerForStation(station);
+      if (target == null) {
+        report.add('${slip.title}: принтер не подключён');
+        continue;
+      }
+      try {
+        await target.$1.printKitchenSlips([slip]);
+        report.add('${slip.title}: напечатано');
+      } catch (e) {
+        report.add('${slip.title}: ${humanError(e, lower: true)}');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _printerResult = report.join('\n');
+        _testing = false;
+      });
+    }
+  }
+
   Future<void> _testPrinter() async {
     setState(() {
       _testing = true;
@@ -841,6 +885,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _onlineUrlCtrl.dispose();
     _kitchenIpCtrl.dispose();
     _barIpCtrl.dispose();
+    _hookahIpCtrl.dispose();
     _networkIpCtrl.dispose();
     _utmHostCtrl.dispose();
     _fsrarIdCtrl.dispose();
@@ -995,10 +1040,35 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           TextField(
             controller: _barIpCtrl,
             decoration: const InputDecoration(
-              labelText: 'Принтер бара и кальянов — IP (необязательно)',
+              labelText: 'Принтер бара — IP (необязательно)',
               hintText: '192.168.1.102',
               helperText: 'Пусто — печатает чековый принтер',
               helperMaxLines: 2,
+            ),
+          ),
+          TextField(
+            controller: _hookahIpCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Принтер кальянщика — IP (необязательно)',
+              hintText: '192.168.1.103',
+              helperText: 'Пусто — кальяны печатает принтер бара',
+              helperMaxLines: 2,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Чеки гостям печатает чековый принтер выше — его ставят в зале. Что куда уходит, решает '
+              'категория блюда в «Меню»: кухня, бар или кальяны.',
+              style: TextStyle(fontSize: 12.5),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _testing ? null : _testStations,
+              icon: const Icon(Icons.receipt_long, size: 18),
+              label: const Text('Проверить принтеры цехов'),
             ),
           ),
         ],

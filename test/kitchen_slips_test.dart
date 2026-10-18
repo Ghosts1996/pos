@@ -169,7 +169,12 @@ void main() {
       barPrinterIp = '192.168.1.102';
       expect(printerForStation(SaleKind.kitchen)!.$2, 'ip:192.168.1.101');
       expect(printerForStation(SaleKind.bar)!.$2, 'ip:192.168.1.102');
+      // Принтера кальянщика нет — кальяны на барный; есть — на свой.
       expect(printerForStation(SaleKind.hookah)!.$2, 'ip:192.168.1.102');
+      hookahPrinterIp = '192.168.1.103';
+      expect(printerForStation(SaleKind.hookah)!.$2, 'ip:192.168.1.103');
+      expect(printerForStation(SaleKind.bar)!.$2, 'ip:192.168.1.102');
+      hookahPrinterIp = '';
       kitchenPrinterIp = '';
       activeReceiptPrinter = NetworkReceiptPrinter(ip: '192.168.1.50');
       expect(printerForStation(SaleKind.kitchen)!.$2, 'main');

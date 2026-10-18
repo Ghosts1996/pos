@@ -563,14 +563,21 @@ bool printKitchenTickets = false;
 bool printKitchenAuto = false;
 
 /// Сетевые принтеры цехов (IP, порт 9100): бегунки кухни — на кухонный,
-/// бара и кальянов — на барный. Пусто — на чековый принтер кассы.
+/// бара — на барный, кальянов — на принтер кальянщика (не указан — на
+/// барный). Пусто — на чековый принтер кассы: он же печатает чеки гостям.
 String kitchenPrinterIp = '';
 String barPrinterIp = '';
+String hookahPrinterIp = '';
 
 /// Принтер для бегунка цеха [station] и ключ, по которому бегунки одного
 /// принтера печатаются одним заходом. null — принтера нет совсем.
 (ReceiptPrinter, String)? printerForStation(String station) {
-  final ip = (station == 'kitchen' ? kitchenPrinterIp : barPrinterIp).trim();
+  final hookah = hookahPrinterIp.trim();
+  final ip = (switch (station) {
+    'kitchen' => kitchenPrinterIp,
+    'hookah' => hookah.isNotEmpty ? hookah : barPrinterIp,
+    _ => barPrinterIp,
+  }).trim();
   if (ip.isNotEmpty) return (NetworkReceiptPrinter(ip: ip), 'ip:$ip');
   final main = activeReceiptPrinter;
   return main == null ? null : (main, 'main');
@@ -582,6 +589,7 @@ void _applyPrintFlags(Map<String, dynamic> data) {
   printKitchenAuto = data['printKitchenAuto'] as bool? ?? false;
   kitchenPrinterIp = (data['kitchenPrinterIp'] as String? ?? '').trim();
   barPrinterIp = (data['barPrinterIp'] as String? ?? '').trim();
+  hookahPrinterIp = (data['hookahPrinterIp'] as String? ?? '').trim();
   // Сигналы (реле, зуммер, локальная сеть) — в том же документе.
   applySignalSettings(data);
   // Агрегаторы доставки — для окна оплаты: тот же документ настроек, и

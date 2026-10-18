@@ -1286,6 +1286,16 @@ test("знания: шаблоны и «что нового» в подсказ�
   assert.ok(ai && ai.text.includes("**Интеграции** → **Онлайн-оплата гостей**"), ai && ai.text);
 });
 
+test("знания: 4 принтера (зал, кухня, бар, кальяны) — бот находит готовую инструкцию с принтером кальянщика", async () => {
+  const h = harness();
+  await setup(h);
+  const q = "Как подключить 4 принтера один на кухню другой на бар в кальянную и в зал общий чтобы кальяны уходили кальянщику чеки отдельно бар на бар уходил а блюда на кухню";
+  const top = sb.rankDocs(q, h.bot._state.guide, 3);
+  assert.ok(top.some((d) => d.id === "kb:printers-stations"), top.map((d) => d.id).join(", "));
+  const doc = h.bot._state.guide.find((d) => d.id === "kb:printers-stations");
+  assert.ok(/Принтер кальянщика/.test(doc.text) && /Проверить принтеры цехов/.test(doc.text));
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {
