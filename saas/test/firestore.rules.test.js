@@ -754,6 +754,13 @@ describe("supportTickets: обращения в поддержку — види�
     await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m1"), {
       text: "Помогите", authorUid: "ownerA",
     }));
+    const file = (i) => ({ id: `${"a".repeat(24)}.png`, name: `скрин${i}.png`, type: "image/png", size: 1000 });
+    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m2"), {
+      text: "", authorUid: "ownerA", attachments: [file(1), file(2)],
+    }));
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m3"), {
+      text: "", authorUid: "ownerA", attachments: [1, 2, 3, 4, 5, 6].map(file),
+    }));
   });
 
   it("владелец чужого заведения не может писать сообщения в тикет tenantA", async () => {

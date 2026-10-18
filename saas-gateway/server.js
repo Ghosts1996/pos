@@ -3286,9 +3286,77 @@ async function handleUploadMenuImage(req, res) {
   sendJson(res, 200, { path: `/branding/${tenantId}/menu/${folder}/${entityId}.${ext}` });
 }
 
+// ------------------------------------------------------- вложения поддержки
+
+const supportFiles = require("./support-files");
+const supportUploadLimiter = new Map(); // uid -> { count, resetAt }
+
+/** Обращение, к которому у пользователя есть доступ: владелец или админ
+ *  заведения (как в правилах базы) либо супер-админ. */
+async function supportTicketFor(decoded, ticketId) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(ticketId || ""))) throw new HttpError(400, "Не указано обращение");
+  const snap = await db().collection("supportTickets").doc(ticketId).get();
+  if (!snap.exists) throw new HttpError(404, "Обращение не найдено");
+  const t = snap.data();
+  if (await isSuperAdmin(decoded)) return t;
+  if (!t.tenantId) throw new HttpError(403, "Нет доступа к обращению");
+  await requireTenantRole(t.tenantId, decoded.uid, ["owner", "admin"]);
+  return t;
+}
+
+/** Скриншот или файл в обращение (тело — сам файл, имя — в ?name=). */
+async function handleSupportUpload(req, res) {
+  const decoded = await verifyAuth(req);
+  const now = Date.now();
+  const lim = supportUploadLimiter.get(decoded.uid);
+  if (!lim || lim.resetAt <= now) {
+    if (supportUploadLimiter.size > 5000) supportUploadLimiter.clear();
+    supportUploadLimiter.set(decoded.uid, { count: 1, resetAt: now + 10 * 60 * 1000 });
+  } else if (lim.count >= 60) {
+    throw new HttpError(429, "Слишком много файлов подряд — попробуйте через несколько минут");
+  } else {
+    lim.count += 1;
+  }
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const ticketId = q.get("ticketId") || "";
+  const t = await supportTicketFor(decoded, ticketId);
+  const buffer = await readRawBody(req, supportFiles.MAX_BYTES + 1);
+  try {
+    const file = await supportFiles.save({ tenantId: t.tenantId, ticketId, buffer, type: req.headers["content-type"], name: q.get("name") || "" });
+    sendJson(res, 200, file);
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+}
+
+/** Вложение обращения — только тем, у кого есть доступ к обращению. */
+async function handleSupportFile(req, res) {
+  const decoded = await verifyAuth(req);
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const ticketId = q.get("t") || "";
+  const t = await supportTicketFor(decoded, ticketId);
+  const file = await supportFiles.read({ tenantId: t.tenantId, ticketId, id: q.get("f") || "" });
+  if (!file) throw new HttpError(404, "Файл не найден");
+  const inline = supportFiles.isImage(file.type) || file.type === "application/pdf" || file.type === "video/mp4";
+  const name = supportFiles.cleanName(q.get("name") || "", (q.get("f") || "").split(".").pop());
+  res.writeHead(200, {
+    "Content-Type": file.type,
+    "Content-Length": file.buffer.length,
+    "Content-Disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  });
+  res.end(file.buffer);
+}
+
 /** Логотип и фото меню удалённого заведения — вместе с его данными. */
 async function removeTenantUploads(tenantId) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) return;
+  await supportFiles.removeTenant(tenantId);
   await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId), { recursive: true, force: true }).catch(() => {});
   await fs.promises.rm(path.join(BRANDING_UPLOADS_DIR, tenantId), { recursive: true, force: true }).catch(() => {});
 }
@@ -7348,6 +7416,7 @@ async function handleTenantStaticData(req, res) {
 // ------------------------------------------------------------- routing
 
 const ROUTES = {
+  "/supportUpload": handleSupportUpload,
   "/telegramSetup": telegram.handleSetup,
   "/telegramLinkCode": telegram.handleLinkCode,
   "/telegramAccess": telegram.handleAccess,
@@ -7488,6 +7557,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/staffWho") return runHandler(telegram.handleWho, req, res);
   // Документ поддержки по подписанной ссылке из обращения в кабинете.
   if (req.method === "GET" && urlPath === "/supportDoc") return runHandler(supportBot.handleDocDownload, req, res);
+  // Вложение обращения в поддержку — по входу, только с доступом к обращению.
+  if (req.method === "GET" && urlPath === "/supportFile") return runHandler(handleSupportFile, req, res);
   // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.

@@ -37,6 +37,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { KB, CORE_FACTS } = require("./support-kb");
+const supportFiles = require("./support-files");
 const { DOCS, buildDoc } = require("./support-docs");
 const aiMod = require("./support-ai");
 const { buildCodeMap } = require("./build-code-map");
@@ -454,7 +455,9 @@ function buildMessages({ venue = "", platform = "", errors = [], guide = [], lea
   for (const m of history.slice(-HISTORY_TAIL)) {
     const mine = m.authorRole === "ai";
     const staff = m.authorRole === "super_admin";
-    msgs.push({ role: mine || staff ? "assistant" : "user", content: `${staff ? "[Специалист поддержки] " : ""}${clip(scrubPii(m.text), 1500)}` });
+    const files = supportFiles.listOf(m);
+    const note = files.length ? `\n[приложено: ${files.map((f) => f.name).join(", ")} — ты вложения не видишь; если без них не понять, попроси описать словами, что на экране, или позови специалиста]` : "";
+    msgs.push({ role: mine || staff ? "assistant" : "user", content: `${staff ? "[Специалист поддержки] " : ""}${clip(scrubPii(m.text || ""), 1500)}${note}` });
   }
   return msgs;
 }
@@ -1080,6 +1083,11 @@ function createSupportBot(deps) {
     let i = history.length - 1;
     while (i > 0 && history[i - 1].authorRole === "owner") i--;
     const question = history.slice(i).map((m) => m.text || "").join("\n").trim();
+    if (!question && history.slice(i).some((m) => supportFiles.listOf(m).length)) {
+      // Прислали только скриншот: ИИ его не видит — просим пару слов, специалист увидит файл в теме.
+      if (aiPaused(t, now())) return;
+      return deliver(t, "Файл получил, спасибо! Напишите в двух словах, что не так или что хотите сделать, — так отвечу точнее. Специалист тоже видит вложение.");
+    }
 
     const trig = humanTrigger(question);
     if (trig) return escalate(t, trig);
@@ -1787,11 +1795,14 @@ function createSupportBot(deps) {
         } else {
           await deliver(t, maskSecrets(raw), { role: "super_admin", authorName: name, authorUid: `tg:${from.id}` });
         }
-      } else {
-        if (!raw.trim()) {
-          await toTopic(t, "Файлы в кабинет не передаются — напишите словами или пришлите ссылку.");
+      } else if (media) {
+        const file = await topicFileToCabinet(t, msg);
+        if (!file) {
+          await toTopic(t, "Такой файл в кабинет не передать — пришлите фото, документ или видео.");
           return;
         }
+        await addMessage(t, { text: maskSecrets(raw), attachments: [file], authorRole: "super_admin", authorUid: `tg:${from.id}`, authorName: name });
+      } else {
         await deliver(t, maskSecrets(raw), { role: "super_admin", authorName: name, authorUid: `tg:${from.id}` });
       }
     } catch (e) {
@@ -2285,12 +2296,14 @@ function createSupportBot(deps) {
     await patch(t, { syncedAt: mark });
     for (const m of fresh) {
       if (m.authorRole === "super_admin") {
-        await toTopicHtml(t, `👨‍💼 <b>Ответ из панели ZalPOS</b>${m.authorName ? ` · ${h(m.authorName)}` : ""}\n<blockquote>${h(m.text)}</blockquote>`);
+        await toTopicHtml(t, `👨‍💼 <b>Ответ из панели ZalPOS</b>${m.authorName ? ` · ${h(m.authorName)}` : ""}\n<blockquote>${h(m.text || "📎 файл")}</blockquote>`);
+        await filesToTopic(t, m, "👨‍💼 Из панели");
         if (t.channel === "telegram" && t.tgChatId) await quiet(send(t.tgChatId, `👨‍💼 Поддержка ZalPOS:\n${m.text}`), "клиенту");
         await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), ...(t.firstResponseAt ? {} : { firstResponseAt: ts(now()) }) });
       } else {
         if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
-        await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
+        if (m.text) await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
+        await filesToTopic(t, m, "💬 Клиент · кабинет");
       }
     }
     if (t.status === "closed" && t.topicStatus !== "closed") {
@@ -2306,6 +2319,34 @@ function createSupportBot(deps) {
     await renameTopic(t);
     const last = history[history.length - 1];
     if (fresh.length && last && last.authorRole === "owner" && t.status !== "closed") await respond(t);
+  }
+
+  /** Вложения сообщения из кабинета — файлами в тему (фото — картинкой). */
+  async function filesToTopic(t, m, who) {
+    if (!t.topicId || !state.cfg || !state.cfg.groupChatId) return;
+    for (const f of supportFiles.listOf(m)) {
+      const file = await supportFiles.read({ tenantId: t.tenantId, ticketId: t.id, id: f.id });
+      if (!file) continue;
+      const photo = supportFiles.isImage(file.type) && file.type !== "image/gif" && file.buffer.length < 10 * 1024 * 1024;
+      await quiet(tgFile(photo ? "sendPhoto" : "sendDocument", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId, caption: clip(`📎 ${who} · ${f.name}`, 1000) },
+        photo ? "photo" : "document", f.name, file.buffer, file.type), "вложение в тему");
+    }
+  }
+
+  /** Фото или файл специалиста из темы — во вложения обращения кабинета. */
+  async function topicFileToCabinet(t, msg) {
+    const photo = Array.isArray(msg.photo) && msg.photo.length ? msg.photo[msg.photo.length - 1] : null;
+    const docm = msg.document || msg.video || null;
+    const src = photo || docm;
+    if (!src || !src.file_id) return null;
+    if (Number(src.file_size) > supportFiles.MAX_BYTES) throw new Error("файл больше 15 МБ");
+    const info = await tg("getFile", { file_id: src.file_id });
+    const resp = await doFetch(`${API_BASE}/file/bot${state.token}/${info.file_path}`, { signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error(`Telegram не отдал файл (${resp.status})`);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const type = photo ? "image/jpeg" : String((docm && docm.mime_type) || "");
+    const name = photo ? "photo.jpg" : String((docm && docm.file_name) || "file");
+    return supportFiles.save({ tenantId: t.tenantId, ticketId: t.id, buffer, type, name });
   }
 
   let unsubTickets = null;

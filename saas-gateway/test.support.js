@@ -5,7 +5,10 @@
 const assert = require("assert");
 const crypto = require("crypto");
 const { fakeDb, admin, HttpError } = require("./test-helpers");
+// Вложения обращений — во временную папку.
+process.env.SUPPORT_UPLOADS_DIR = require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "support-files-"));
 const sb = require("./support-bot");
+const supportFiles = require("./support-files");
 const { encrypt, decrypt } = require("./telegram");
 
 let passed = 0;
@@ -250,7 +253,11 @@ function harness() {
   const aiReplies = [];
   let msgId = 100;
   let topicId = 500;
-  const fetchImpl = async (url, opts) => {
+  const fetchImpl = async (url, opts = {}) => {
+    if (url.includes("/file/bot")) {
+      const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+      return { ok: true, status: 200, arrayBuffer: async () => jpg.buffer.slice(jpg.byteOffset, jpg.byteOffset + jpg.length) };
+    }
     const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
     const body = isForm
       ? Object.fromEntries([...opts.body.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { file: v.name, size: v.size }]))
@@ -270,6 +277,7 @@ function harness() {
       getChat: { id: -1001234567890, type: "supergroup", is_forum: true, title: "Поддержка ZalPOS" },
       getChatMember: { status: "administrator", can_manage_topics: true },
       createForumTopic: { message_thread_id: ++topicId },
+      getFile: { file_path: "photos/file_1.jpg" },
       sendMessage: { message_id: ++msgId },
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
@@ -707,6 +715,46 @@ test("подсказка: отвечать по вопросу, без дога�
   assert.strictEqual(docs.length, 1);
   const full = sb.buildMessages({ guide: docs, learned: [], history: [] })[1].content;
   assert.ok(!full.includes("нет проверенных знаний по вопросу"));
+});
+
+test("вложения: проверка типа и размера, чтение только своего обращения", async () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(20)]);
+  const f = await supportFiles.save({ tenantId: "t1", ticketId: "c1", buffer: png, type: "image/png", name: "../../etc/скрин.png" });
+  assert.ok(/^[a-f0-9]{24}\.png$/.test(f.id) && f.name === "скрин.png" && f.size === png.length, JSON.stringify(f));
+  const back = await supportFiles.read({ tenantId: "t1", ticketId: "c1", id: f.id });
+  assert.ok(back && back.buffer.equals(png) && back.type === "image/png");
+  assert.strictEqual(await supportFiles.read({ tenantId: "t1", ticketId: "c2", id: f.id }), null, "чужое обращение");
+  assert.strictEqual(await supportFiles.read({ tenantId: "t1", ticketId: "c1", id: "../x.png" }), null);
+  await assert.rejects(supportFiles.save({ tenantId: "t1", ticketId: "c1", buffer: Buffer.from("MZ\x90\x00"), type: "image/png", name: "virus.png" }), /не похоже/);
+  await assert.rejects(supportFiles.save({ tenantId: "t1", ticketId: "c1", buffer: Buffer.from("x"), type: "application/x-msdownload", name: "a.exe" }), /тип/);
+  assert.deepStrictEqual(supportFiles.listOf({ attachments: [{ id: "bad" }, f] }).map((a) => a.id), [f.id]);
+});
+
+test("вложения: скриншот из кабинета — в тему фото, фото специалиста — в кабинет; ИИ знает, что файл есть", async () => {
+  const h = harness();
+  await setup(h);
+  const T = admin.firestore.Timestamp.fromMillis;
+  const at = Date.now() - 1000;
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9]);
+  const f = await supportFiles.save({ tenantId: "t1", ticketId: "c5", buffer: jpg, type: "image/jpeg", name: "ошибка.jpg" });
+  h.store.set("supportTickets/c5", { tenantId: "t1", subject: "Ошибка при оплате", status: "open", createdBy: "owner1", createdAt: T(at), updatedAt: T(at), lastAuthorRole: "owner" });
+  h.store.set("supportTickets/c5/messages/m1", { text: "Вот что пишет касса при оплате картой", attachments: [f], authorUid: "owner1", authorRole: "owner", createdAt: T(at) });
+  h.bot.onTicketDoc("c5", h.store.get("supportTickets/c5"));
+  await h.bot.idle();
+  const photo = h.calls.find((c) => c.method === "sendPhoto");
+  assert.ok(photo && /ошибка\.jpg/.test(photo.body.caption) && photo.body.photo, "скриншот не попал в тему");
+  assert.ok(JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("приложено: ошибка.jpg"), "ИИ не знает о вложении");
+  // Специалист отвечает фото в теме — оно во вложениях обращения кабинета.
+  const topic = h.store.get("supportTickets/c5").topicId;
+  const m = inTopic("", topic);
+  m.message.photo = [{ file_id: "small", file_size: 10 }, { file_id: "big", file_size: 100 }];
+  m.message.caption = "Вот где включить";
+  delete m.message.text;
+  await h.bot.handleUpdate(m);
+  await h.bot.idle();
+  const staff = messagesOf(h.store, "c5").find((x) => x.authorRole === "super_admin");
+  assert.ok(staff && staff.text === "Вот где включить" && staff.attachments.length === 1 && /\.jpg$/.test(staff.attachments[0].id), JSON.stringify(staff));
+  assert.ok(await supportFiles.read({ tenantId: "t1", ticketId: "c5", id: staff.attachments[0].id }), "файл не сохранён");
 });
 
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {

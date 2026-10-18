@@ -982,7 +982,10 @@ service cloud.firestore {
         allow create: if hasRole(
           get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.tenantId,
           ['owner', 'admin']) && request.resource.data.authorUid == request.auth.uid &&
-          (isSuperAdmin() || !(request.resource.data.get('authorRole', '') in ['super_admin', 'ai']));
+          (isSuperAdmin() || !(request.resource.data.get('authorRole', '') in ['super_admin', 'ai'])) &&
+          // Вложения: описания файлов, загруженных через /supportUpload (до 5).
+          (!('attachments' in request.resource.data) ||
+            (request.resource.data.attachments is list && request.resource.data.attachments.size() <= 5));
         allow update, delete: if false;
       }
     }

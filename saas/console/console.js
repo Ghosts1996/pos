@@ -412,6 +412,126 @@ function esc(s) {
   ));
 }
 
+// ---- Вложения обращений в поддержку: скриншоты и файлы. Лежат на сервере
+// платформы (не в открытом доступе) — показываем, скачивая по входу.
+const SUPPORT_MAX_FILES = 5;
+const SUPPORT_MAX_BYTES = 15 * 1024 * 1024;
+const SUPPORT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,video/mp4,application/zip,.zip,.docx,.xlsx,.txt,.pdf';
+const SUPPORT_EXT_TYPES = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf',
+  txt: 'text/plain', log: 'text/plain', mp4: 'video/mp4', zip: 'application/zip',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+const supportFileType = (f) => {
+  const byExt = SUPPORT_EXT_TYPES[String(f.name || '').split('.').pop().toLowerCase()] || '';
+  return Object.values(SUPPORT_EXT_TYPES).includes(f.type) ? f.type : byExt;
+};
+
+/** Проверить и добавить выбранные или вставленные файлы в черновик. */
+function addSupportFiles(list, files) {
+  for (const f of Array.from(files || [])) {
+    if (list.length >= SUPPORT_MAX_FILES) { toast(`Не больше ${SUPPORT_MAX_FILES} файлов в сообщении`); break; }
+    const type = supportFileType(f);
+    if (!type) { toast(`«${f.name}»: такой тип не принимаем — картинка, PDF, текст, Word, Excel, ZIP или MP4`); continue; }
+    if (f.size > SUPPORT_MAX_BYTES) { toast(`«${f.name}» больше 15 МБ`); continue; }
+    // Скриншот из буфера приходит как «image.png» — дадим понятное имя.
+    const name = /^image\.(png|jpe?g)$/i.test(f.name || '') ? `скриншот-${new Date().toLocaleTimeString('ru-RU').replace(/:/g, '-')}.png` : (f.name || 'файл');
+    list.push({ file: f, type, name, size: f.size, preview: type.startsWith('image/') ? URL.createObjectURL(f) : '' });
+  }
+}
+
+function pendingFilesHtml(list, cls) {
+  if (!list.length) return '';
+  return `<div class="att-list">${list.map((a, i) => `
+    <div class="att-pending">
+      ${a.preview ? `<img src="${esc(a.preview)}" alt="">` : '<span class="att-ico">📄</span>'}
+      <span class="att-name">${esc(a.name)}<small>${fmtBytes(a.size)}</small></span>
+      <button type="button" class="att-rm ${cls}" data-i="${i}" aria-label="Убрать">×</button>
+    </div>`).join('')}</div>`;
+}
+
+async function uploadSupportFiles(ticketId, list) {
+  const token = await state.auth.currentUser?.getIdToken();
+  const out = [];
+  for (const a of list) {
+    const res = await fetch(`${SAAS_GATEWAY_URL}/supportUpload?ticketId=${encodeURIComponent(ticketId)}&name=${encodeURIComponent(a.name)}`, {
+      method: 'POST', headers: { 'Content-Type': a.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: a.file,
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`«${a.name}»: ${json?.error || `ошибка ${res.status}`}`);
+    out.push({ id: json.id, name: json.name, type: json.type, size: json.size });
+  }
+  list.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
+  return out;
+}
+
+const supportBlobs = new Map(); // `${ticketId}/${fileId}` -> objectURL
+async function supportFileUrl(ticketId, fileId) {
+  const key = `${ticketId}/${fileId}`;
+  if (supportBlobs.has(key)) return supportBlobs.get(key);
+  const token = await state.auth.currentUser?.getIdToken();
+  const res = await fetch(`${SAAS_GATEWAY_URL}/supportFile?t=${encodeURIComponent(ticketId)}&f=${encodeURIComponent(fileId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(res.status === 404 ? 'файл не найден' : `ошибка ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  supportBlobs.set(key, url);
+  return url;
+}
+
+function attachmentsHtml(ticketId, list) {
+  const files = (Array.isArray(list) ? list : []).filter((a) => a && a.id).slice(0, SUPPORT_MAX_FILES);
+  if (!files.length) return '';
+  return `<div class="att-list">${files.map((a) => (String(a.type || '').startsWith('image/')
+    ? `<button type="button" class="att-thumb f-att" data-t="${esc(ticketId)}" data-f="${esc(a.id)}" data-name="${esc(a.name || '')}" title="${esc(a.name || '')}">
+         <img data-att="${esc(ticketId)}|${esc(a.id)}" alt="${esc(a.name || 'скриншот')}"></button>`
+    : `<button type="button" class="att-file f-att" data-t="${esc(ticketId)}" data-f="${esc(a.id)}" data-name="${esc(a.name || '')}" data-dl="1">
+         <span class="att-ico">📄</span><span class="att-name">${esc(a.name || 'файл')}<small>${a.size ? fmtBytes(a.size) : ''}</small></span></button>`)).join('')}</div>`;
+}
+
+/** Подгрузить миниатюры и повесить открытие/скачивание. */
+function bindAttachments(root) {
+  root.querySelectorAll('img[data-att]').forEach((img) => {
+    if (img.src) return;
+    const [t, f] = img.dataset.att.split('|');
+    supportFileUrl(t, f).then((url) => { img.src = url; }).catch(() => { img.alt = 'не загрузилось'; });
+  });
+  root.querySelectorAll('.f-att').forEach((el) => {
+    el.onclick = async () => {
+      try {
+        const url = await supportFileUrl(el.dataset.t, el.dataset.f);
+        if (el.dataset.dl) {
+          const a = document.createElement('a');
+          a.href = url; a.download = el.dataset.name || 'файл';
+          document.body.appendChild(a); a.click(); a.remove();
+        } else {
+          window.open(url, '_blank', 'noopener');
+        }
+      } catch (e) {
+        toast(`Не удалось открыть файл: ${e?.message || e}`);
+      }
+    };
+  });
+}
+
+/** Кнопка «Прикрепить», выбор файлов и вставка скриншота (Ctrl+V) в поле. */
+function bindAttachPicker({ button, input, pasteInto, list, redraw }) {
+  if (button && input) {
+    button.onclick = () => input.click();
+    input.onchange = () => { addSupportFiles(list, input.files); input.value = ''; redraw(); };
+  }
+  if (pasteInto) {
+    pasteInto.onpaste = (e) => {
+      const files = Array.from(e.clipboardData?.files || []);
+      if (!files.length) return;
+      e.preventDefault();
+      addSupportFiles(list, files);
+      redraw();
+    };
+  }
+}
+
 // Текст объявления: ссылки кликабельны, переносы строк сохраняются
 // (white-space: pre-line у контейнера). Ссылку ищем в исходном тексте и
 // экранируем по частям — иначе «->» сразу за адресом попадал бы в ссылку.
@@ -3512,6 +3632,9 @@ function watchDashboardData(tenantId) {
   let selectedTicketId = null;
   let ticketMessages = null;
   let unsubTicketMessages = null;
+  // Файлы, выбранные, но ещё не отправленные: в новое обращение и в ответ.
+  const ticketDraftFiles = [];
+  const replyDraftFiles = [];
   // Подписка на переписку меняется при выборе тикета (selectTicket), поэтому
   // не через sub(onSnapshot). Здесь только закрываем её при уходе с экрана.
   sub(() => { if (unsubTicketMessages) unsubTicketMessages(); });
@@ -3541,6 +3664,7 @@ function watchDashboardData(tenantId) {
     if (unsubTicketMessages) { unsubTicketMessages(); unsubTicketMessages = null; }
     selectedTicketId = ticketId;
     ticketMessages = null;
+    replyDraftFiles.splice(0);
     if (ticketId) {
       unsubTicketMessages = onSnapshot(
         query(collection(state.db, 'supportTickets', ticketId, 'messages'), orderBy('createdAt', 'asc')),
@@ -4359,12 +4483,18 @@ function watchDashboardData(tenantId) {
           ${ticketMessages === null ? '<div class="spinner"></div>' : (ticketMessages.length ? ticketMessages.map((m) => `
             <div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
               <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 Ассистент ZalPOS' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · поддержка ZalPOS` : 'Поддержка ZalPOS') : 'Вы')} · ${fmtDateTime(m.createdAt)}</div>
-              <div class="small rich-text" style="margin-top:2px">${richText(m.text || '')}</div>
+              ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text)}</div>` : ''}
+              ${attachmentsHtml(selectedTicket.id, m.attachments)}
             </div>
           `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
         </div>
-        <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ..." style="width:100%;resize:vertical;margin-top:10px"></textarea>
-        <button class="btn btn-primary" id="f-ticket-reply-send" style="margin-top:8px">Отправить</button>
+        <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ… Скриншот можно вставить сюда (Ctrl+V)" style="width:100%;resize:vertical;margin-top:10px"></textarea>
+        ${pendingFilesHtml(replyDraftFiles, 'f-reply-rm')}
+        <div class="row att-actions">
+          <button class="btn btn-primary" id="f-ticket-reply-send" style="width:auto">Отправить</button>
+          <button type="button" class="btn btn-ghost att-add" id="f-reply-attach" style="width:auto">📎 Прикрепить</button>
+          <input type="file" id="f-reply-files" accept="${SUPPORT_ACCEPT}" multiple hidden>
+        </div>
         <button class="btn-link f-ticket-toggle-status" id="f-ticket-toggle-status" data-status="${esc(selectedTicket.status)}" style="width:auto;margin-top:8px">
           ${selectedTicket.status === 'closed' ? 'Переоткрыть обращение' : 'Обращение решено'}
         </button>
@@ -4378,12 +4508,18 @@ function watchDashboardData(tenantId) {
           <input id="f-ticket-subject" placeholder="Например: не собирается APK">
         </label>
         <label class="field"><span>Сообщение</span>
-          <textarea id="f-ticket-message" rows="3" placeholder="Опишите, что случилось"></textarea>
+          <textarea id="f-ticket-message" rows="3" placeholder="Опишите, что случилось. Скриншот можно вставить сюда (Ctrl+V)"></textarea>
         </label>
-        <label class="row" style="gap:10px;align-items:flex-start;margin:2px 0 12px;cursor:pointer">
-          <input type="checkbox" id="f-ticket-consent" style="width:auto;margin-top:3px;flex:none" ${supportConsentGiven() ? 'checked' : ''}>
-          <span class="small muted">Согласен на обработку данных из обращения, чтобы поддержка ответила, в том числе ИИ-ассистентом — ему текст передаётся без телефонов и почт
-            (<a href="#/legal/privacy" target="_blank" rel="noopener">политика конфиденциальности</a>). Не указывайте пароли, коды из СМС и данные гостей.</span>
+        ${pendingFilesHtml(ticketDraftFiles, 'f-new-rm')}
+        <button type="button" class="btn btn-ghost att-add" id="f-ticket-attach" style="width:auto;margin:0 0 14px">📎 Прикрепить скриншот или файл</button>
+        <input type="file" id="f-ticket-files" accept="${SUPPORT_ACCEPT}" multiple hidden>
+        <label class="consent-row">
+          <input type="checkbox" id="f-ticket-consent" ${supportConsentGiven() ? 'checked' : ''}>
+          <span class="consent-text">
+            <span>Согласен на обработку данных обращения</span>
+            <span class="small muted">Ответит поддержка или ИИ&#8209;ассистент — ему текст уходит без телефонов и почт. Не пишите пароли, коды из СМС и данные гостей.
+              <a href="#/legal/privacy" target="_blank" rel="noopener" class="nowrap">Политика конфиденциальности</a></span>
+          </span>
         </label>
         <button class="btn btn-primary" id="f-ticket-create">Создать обращение</button>
       </div>
@@ -4835,13 +4971,26 @@ function watchDashboardData(tenantId) {
       el.onclick = () => selectTicket(el.dataset.id);
     });
     if ($('f-ticket-back')) $('f-ticket-back').onclick = () => selectTicket(null);
+    if (activeTab === 'support') {
+      bindAttachments(body);
+      bindAttachPicker({ button: $('f-ticket-attach'), input: $('f-ticket-files'), pasteInto: $('f-ticket-message'), list: ticketDraftFiles, redraw: draw });
+      bindAttachPicker({ button: $('f-reply-attach'), input: $('f-reply-files'), pasteInto: $('f-ticket-reply'), list: replyDraftFiles, redraw: draw });
+      document.querySelectorAll('.f-new-rm, .f-reply-rm').forEach((el) => {
+        el.onclick = () => {
+          const list = el.classList.contains('f-new-rm') ? ticketDraftFiles : replyDraftFiles;
+          const [gone] = list.splice(Number(el.dataset.i), 1);
+          if (gone && gone.preview) URL.revokeObjectURL(gone.preview);
+          draw();
+        };
+      });
+    }
     if ($('f-ticket-create')) {
       $('f-ticket-create').onclick = async () => {
         const subjectEl = $('f-ticket-subject');
         const messageEl = $('f-ticket-message');
         const subject = subjectEl.value.trim();
         const text = messageEl.value.trim();
-        if (!subject || !text) {
+        if (!subject || (!text && !ticketDraftFiles.length)) {
           toast('Заполните тему и сообщение');
           return;
         }
@@ -4860,17 +5009,29 @@ function watchDashboardData(tenantId) {
             // Согласие на обработку данных обращения (ч. 1 ст. 9 152-ФЗ): когда и по какой редакции.
             pdConsent: true, pdConsentAt: now, pdConsentEdition: LEGAL_EDITION,
           });
+          let attachments = [];
+          let uploadError = '';
+          if (ticketDraftFiles.length) {
+            btn.textContent = 'Загружаю файлы…';
+            attachments = await uploadSupportFiles(ticketRef.id, ticketDraftFiles).catch((e) => { uploadError = e?.message || String(e); return []; });
+          }
+          // Пока грузились файлы, сервер мог уже увидеть пустое обращение —
+          // сообщение с отметкой «позже» и свежий updatedAt, чтобы его не пропустить.
+          const at = attachments.length || uploadError ? Timestamp.fromDate(new Date()) : now;
           await addDoc(collection(state.db, 'supportTickets', ticketRef.id, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
+            text, authorUid: state.uid, authorRole: 'owner', createdAt: at, ...(attachments.length ? { attachments } : {}),
           });
-          subjectEl.value = '';
-          messageEl.value = '';
-          toast('Обращение создано');
+          if (at !== now) await setDoc(doc(state.db, 'supportTickets', ticketRef.id), { updatedAt: at, lastAuthorRole: 'owner' }, { merge: true });
+          ticketDraftFiles.splice(0);
+          if ($('f-ticket-subject')) $('f-ticket-subject').value = '';
+          if ($('f-ticket-message')) $('f-ticket-message').value = '';
+          toast(uploadError ? `Обращение создано, но файл не загрузился: ${uploadError}` : 'Обращение создано');
           selectTicket(ticketRef.id);
         } catch (e) {
           toast(`Не удалось создать обращение: ${e?.message || e}`);
         } finally {
           btn.disabled = false;
+          btn.textContent = 'Создать обращение';
         }
       };
     }
@@ -4878,14 +5039,16 @@ function watchDashboardData(tenantId) {
       $('f-ticket-reply-send').onclick = async () => {
         const replyEl = $('f-ticket-reply');
         const text = replyEl.value.trim();
-        if (!text || !selectedTicket) return;
+        if ((!text && !replyDraftFiles.length) || !selectedTicket) return;
         const btn = $('f-ticket-reply-send');
         btn.disabled = true;
         try {
+          const attachments = replyDraftFiles.length ? await uploadSupportFiles(selectedTicket.id, replyDraftFiles) : [];
           const now = Timestamp.fromDate(new Date());
           await addDoc(collection(state.db, 'supportTickets', selectedTicket.id, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'owner', createdAt: now,
+            text, authorUid: state.uid, authorRole: 'owner', createdAt: now, ...(attachments.length ? { attachments } : {}),
           });
+          replyDraftFiles.splice(0);
           await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
             updatedAt: now,
             lastAuthorRole: 'owner',
@@ -6467,11 +6630,13 @@ function watchAdminSupportTickets() {
   let expandedId = null;
   let messages = null;
   let unsubMessages = null;
+  const adminDraftFiles = [];
 
   const selectTicket = (ticketId) => {
     if (unsubMessages) { unsubMessages(); unsubMessages = null; }
     expandedId = expandedId === ticketId ? null : ticketId;
     messages = null;
+    adminDraftFiles.splice(0);
     if (expandedId) {
       unsubMessages = onSnapshot(
         query(collection(state.db, 'supportTickets', expandedId, 'messages'), orderBy('createdAt', 'asc')),
@@ -6512,11 +6677,17 @@ function watchAdminSupportTickets() {
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
               <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
                 <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
-                <div class="small rich-text" style="margin-top:2px">${richText(m.text || '')}</div>
+                ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text)}</div>` : ''}
+                ${attachmentsHtml(t.id, m.attachments)}
               </div>
             `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
-            <textarea class="f-admin-ticket-reply" id="f-admin-reply-${esc(t.id)}" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу..." style="width:100%;resize:vertical;margin-top:6px"></textarea>
-            <button class="btn btn-primary f-admin-ticket-send" data-id="${esc(t.id)}" style="margin-top:6px">Отправить</button>
+            <textarea class="f-admin-ticket-reply" id="f-admin-reply-${esc(t.id)}" data-id="${esc(t.id)}" rows="2" placeholder="Ответ владельцу… Скриншот — Ctrl+V" style="width:100%;resize:vertical;margin-top:6px"></textarea>
+            ${pendingFilesHtml(adminDraftFiles, 'f-admin-rm')}
+            <div class="row att-actions">
+              <button class="btn btn-primary f-admin-ticket-send" data-id="${esc(t.id)}" style="width:auto">Отправить</button>
+              <button type="button" class="btn btn-ghost att-add" id="f-admin-attach" style="width:auto">📎 Прикрепить</button>
+              <input type="file" id="f-admin-files" accept="${SUPPORT_ACCEPT}" multiple hidden>
+            </div>
             <button class="btn-link f-admin-ticket-toggle" data-id="${esc(t.id)}" data-status="${esc(t.status)}" style="width:auto;margin-top:6px">
               ${t.status === 'closed' ? 'Переоткрыть' : 'Отметить решённым'}
             </button>
@@ -6528,18 +6699,29 @@ function watchAdminSupportTickets() {
     document.querySelectorAll('.f-admin-ticket-open').forEach((el) => {
       el.onclick = () => selectTicket(el.dataset.id);
     });
+    bindAttachments(body);
+    bindAttachPicker({ button: $('f-admin-attach'), input: $('f-admin-files'), pasteInto: expandedId ? $(`f-admin-reply-${expandedId}`) : null, list: adminDraftFiles, redraw: draw });
+    document.querySelectorAll('.f-admin-rm').forEach((el) => {
+      el.onclick = () => {
+        const [gone] = adminDraftFiles.splice(Number(el.dataset.i), 1);
+        if (gone && gone.preview) URL.revokeObjectURL(gone.preview);
+        draw();
+      };
+    });
     document.querySelectorAll('.f-admin-ticket-send').forEach((el) => {
       el.onclick = async () => {
         const ticketId = el.dataset.id;
         const textEl = document.querySelector(`.f-admin-ticket-reply[data-id="${ticketId}"]`);
         const text = textEl.value.trim();
-        if (!text) return;
+        if (!text && !adminDraftFiles.length) return;
         el.disabled = true;
         try {
+          const attachments = adminDraftFiles.length ? await uploadSupportFiles(ticketId, adminDraftFiles) : [];
           const now = Timestamp.fromDate(new Date());
           await addDoc(collection(state.db, 'supportTickets', ticketId, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now,
+            text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now, ...(attachments.length ? { attachments } : {}),
           });
+          adminDraftFiles.splice(0);
           await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now, lastAuthorRole: 'super_admin' }, { merge: true });
           const fresh = document.getElementById(`f-admin-reply-${ticketId}`);
           if (fresh) fresh.value = '';
