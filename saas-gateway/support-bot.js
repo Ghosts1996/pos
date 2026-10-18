@@ -57,6 +57,9 @@ const TICKET_AI_LIMIT = 30;
 const HISTORY_TAIL = 8;
 const SUMMARIZE_AFTER = 14;
 const KB_RELOAD_MS = 10 * 60 * 1000;
+// Специалист ответил и 15 минут тишины — бот сам решает, что запомнить.
+const LEARN_AFTER_HUMAN_MS = 15 * 60 * 1000;
+const LEARN_SWEEP_MS = 5 * 60 * 1000;
 const CLIENT_RATE = { max: 20, windowMs: 60 * 1000 };
 const DEFAULT_POLICY_URL = "https://zalpos.ru/#/legal/privacy";
 
@@ -2028,8 +2031,9 @@ function createSupportBot(deps) {
       const raw = await ai([
         { role: "system", content: [
           "Ты ведёшь базу знаний поддержки ZalPOS. Прочитай переписку и реши, есть ли в ней проверенное решение, которое пригодится другим клиентам.",
-          "Сохраняй, если специалист поддержки дал ответ или инструкцию, или клиент подтвердил, что ответ помог. Ответы специалиста — главный источник: решение бери из них, а не из догадок ИИ; если специалист поправил ИИ — верна версия специалиста.",
-          "Не сохраняй: приветствия и разговор ни о чём; разовый сбой одного заведения без общего решения; споры об оплате и возвраты; личные договорённости; то, что уже есть в похожей записи без новых деталей.",
+          "Сохраняй (save: true), если специалист поддержки дал конкретный ответ: инструкцию, путь в меню, факт о продукте, правило, ссылку на нужный раздел, — даже если клиент ещё не ответил. Особенно важно, если ИИ не знал ответа и позвал специалиста: так база закрывает пробелы. Сохраняй и ответ ИИ, если клиент подтвердил, что он помог.",
+          "Ответы специалиста — главный источник: решение бери из них, а не из догадок ИИ; если специалист поправил ИИ — верна версия специалиста.",
+          "Не сохраняй: приветствия, «сейчас посмотрю», «уточню» и разговор ни о чём; разовый сбой одного заведения без общего решения; споры об оплате и возвраты; личные договорённости и реферальные ссылки; то, что уже есть в похожей записи без новых деталей.",
           "Обобщи: без имён, телефонов, почт, названий заведений, номеров обращений, сумм, ключей и внутренних адресов.",
           existing ? `Похожая запись уже есть — В: ${clip(existing.q, 300)} О: ${clip(existing.a, 900)}. Если в переписке есть новое или более точное — верни объединённую запись (merge: true), иначе save: false.` : "",
           'Ответ строго JSON без пояснений: {"save":true,"merge":false,"q":"вопрос в общем виде","a":"решение по шагам, до 900 символов","tags":["3–6 ключевых слов"],"why":"почему это стоит запомнить, коротко"} или {"save":false,"why":"коротко почему нет"}.',
@@ -2040,13 +2044,13 @@ function createSupportBot(deps) {
       if (!r) throw new Error("ИИ ответил не по формату");
     } catch (e) {
       console.error(`support-bot: автообучение #${t.no}: ${e.message}`);
-      if (people) await quiet(learnNote(t, "📚 Не получилось разобрать переписку для базы решений."), "автообучение");
+      if (people && why !== SWEEP_WHY) await quiet(learnNote(t, "📚 Не получилось разобрать переписку для базы решений."), "автообучение");
       return null;
     }
     await patch(t, { learnCheckedAt: ts(now()) });
     if (!r || !r.save || !r.q || !r.a) {
       // Отвечал специалист — покажем, почему не запомнил, и как запомнить вручную.
-      if (people) await quiet(learnNote(t, `📚 Не стал запоминать${r && r.why ? ` — <i>${h(clip(r.why, 160))}</i>` : ""}.`), "автообучение");
+      if (people && why !== SWEEP_WHY) await quiet(learnNote(t, `📚 Не стал запоминать${r && r.why ? ` — <i>${h(clip(r.why, 160))}</i>` : ""}.`), "автообучение");
       return null;
     }
     const fields = {
@@ -2088,15 +2092,17 @@ function createSupportBot(deps) {
     return best;
   }
 
-  /** Специалист ответил, клиент больше не пишет 2 часа — пора подумать, что запомнить. */
+  const SWEEP_WHY = "специалист ответил, вопрос затих";
+  /** Специалист ответил и 15 минут тишины — бот сам решает, что запомнить.
+   *  Каждый новый ответ специалиста — новый разбор (похожее дополняется). */
   async function sweepLearn() {
     if (!autoLearnOn() || !aiReady()) return;
     const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
     for (const d of snap.docs) {
       const t = { id: d.id, ...d.data() };
-      if (!t.humanReplies || !t.humanAt || now() - toMs(t.humanAt) < 2 * 3600 * 1000) continue;
+      if (!t.humanReplies || !t.humanAt || now() - toMs(t.humanAt) < LEARN_AFTER_HUMAN_MS) continue;
       if (t.lastAuthorRole === "owner" || toMs(t.learnCheckedAt) >= toMs(t.humanAt)) continue;
-      await chain(`learn:${t.id}`, () => autoLearn(t, "специалист ответил, вопрос затих"));
+      await chain(`learn:${t.id}`, () => autoLearn(t, SWEEP_WHY));
     }
   }
 
@@ -2584,6 +2590,8 @@ function createSupportBot(deps) {
     if (active()) setGroupCommands().catch(() => {});
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
+    }, LEARN_SWEEP_MS).unref();
+    setInterval(() => {
       loadKnowledge().catch(() => {});
       reload().catch(() => {});
       for (const [k, r] of state.rate) if (now() > r.reset) state.rate.delete(k);

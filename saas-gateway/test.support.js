@@ -732,6 +732,29 @@ test("одна тема на клиента: новое обращение — �
   assert.ok(!messagesOf(h.store, list[0].id).some((m) => m.authorRole === "super_admin"));
 });
 
+test("автообучение: ответ специалиста и 15 минут тишины — запоминает сам, без «спасибо»", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Как подключить Яндекс Еду?"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  await h.bot.handleUpdate(inTopic("Касса · Админ · «Интеграции» → «Агрегаторы» → Яндекс Еда → вставьте ключ из кабинета партнёра", t.topicId));
+  await h.bot.idle();
+  // Рано — не трогает.
+  const n = h.aiCalls.length;
+  await h.bot.sweepLearn();
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, n);
+  const cur = h.store.get(`supportTickets/${t.id}`);
+  h.store.set(`supportTickets/${t.id}`, { ...cur, humanAt: admin.firestore.Timestamp.fromMillis(Date.now() - 16 * 60 * 1000) });
+  h.aiReplies.push('{"save":true,"merge":false,"q":"Как подключить Яндекс Еду","a":"Касса · Админ · «Интеграции» → «Агрегаторы» → Яндекс Еда → ключ из кабинета партнёра.","tags":["яндекс еда"],"why":"специалист дал путь"}');
+  await h.bot.sweepLearn();
+  await h.bot.idle();
+  const kb = [...h.store.entries()].filter(([k]) => k.startsWith("supportKnowledge/"));
+  assert.strictEqual(kb.length, 1, "сам не запомнил");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Сам запомнил решение/.test(c.body.text)));
+});
+
 test("автообучение: без ответа человека и без «помогло» ничего не сохраняет и не тратит ИИ", async () => {
   const h = harness();
   await setup(h);
