@@ -782,6 +782,35 @@ test("знания: онлайн-касса — где купить, как за
   }
 });
 
+test("клиент зовёт бота («Нет бот ии помоги») — ИИ снова отвечает на нерешённый вопрос; просто «бот» — не зов", async () => {
+  assert.ok(sb.aiCall("Нет бот ии помоги") && sb.aiCall("пусть ответит бот") && sb.aiCall("ИИ, ответь"));
+  assert.ok(!sb.aiCall("Telegram-бот заведения не присылает отчёты") && !sb.aiCall("хочу подключить ии помощников") && !sb.aiCall("помогите настроить бота"));
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Где купить онлайн-кассу?"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  await h.bot.handleUpdate(inTopic("/take", t.topicId));
+  await h.bot.idle();
+  const n = h.aiCalls.length;
+  await h.bot.handleUpdate(pm("Нет бот ии помоги"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, n + 1, "ИИ не ответил");
+  assert.ok(JSON.stringify(h.aiCalls[n].messages).includes("Клиент позвал тебя"));
+  assert.ok(sends(h.calls, GROUP).some((c) => /Клиент позвал ИИ/.test(c.body.text)));
+  assert.strictEqual(tickets(h.store)[0].aiPausedUntil, 0);
+  // ИИ выключен в теме вручную — клиенту вежливо, сотрудникам — подсказка.
+  await h.bot.handleUpdate(inTopic("/mute", t.topicId));
+  await h.bot.idle();
+  await h.bot.handleUpdate(inTopic("Сейчас посмотрю", t.topicId));
+  await h.bot.idle();
+  const m = h.aiCalls.length;
+  await h.bot.handleUpdate(pm("бот, ответь"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, m);
+  assert.ok(sends(h.calls, GROUP).some((c) => /ИИ в теме выключен/.test(c.body.text)));
+});
+
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {
   const h = harness();
   await setup(h);

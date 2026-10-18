@@ -159,6 +159,22 @@ function humanTrigger(text) {
 
 const isUrgent = (text) => URGENT.test(norm(text));
 
+// Клиент зовёт именно бота: «бот, помоги», «ИИ ответь», «пусть ответит бот»,
+// «нет, бот». Просто слово «бот» (Telegram-бот заведения не работает) — не зов.
+const AI_WORD = "(?:бот|ботик|ии|ai|ассистент|робот|нейросет[а-я]*|искусственный интеллект)";
+const AI_VERB = "(?:помоги(?:те)?|помочь|ответь(?:те)?|подскажи(?:те)?|скажи(?:те)?|продолжи|продолжай|давай|вернись|ответ)";
+const AI_CALL = [
+  new RegExp(`(?:^|[^а-яa-z])${AI_WORD}[\\s,!.:—-]+(?:[а-яa-z]+[\\s,!.:—-]+)?${AI_VERB}(?![а-я])`),
+  new RegExp(`(?:^|[^а-я])${AI_VERB}[\\s,!.:—-]+(?:[а-я]+[\\s,!.:—-]+)?(?:ты[\\s,]+)?${AI_WORD}(?![а-яa-z])`),
+  new RegExp(`(?:^|[^а-я])(?:хочу|пусть|позови(?:те)?|верни(?:те)?|включи(?:те)?|нужен|нужна)[\\s,]+(?:(?:чтобы|что|мне|ответит|ответил|ответила|отвечает|отвечал|поможет|помог|снова|опять)[\\s,]+){0,2}(?:бот[а-я]*|ии|ассистент[а-я]*|робот[а-я]*|нейросет[а-я]*)(?![а-я])`),
+  new RegExp(`^(?:нет|не надо|не нужно)[\\s,!.—-]+(?:лучше[\\s,]+)?${AI_WORD}(?![а-яa-z])`),
+  new RegExp(`^${AI_WORD}[\\s,!.?]*(?:ты где|ау|ты тут|ты здесь)?[\\s?!.]*$`),
+];
+const aiCall = (text) => {
+  const t = norm(text);
+  return !!t && AI_CALL.some((re) => re.test(t));
+};
+
 /** Короткие «спасибо», «ок», «привет» — ответ без ИИ (экономия токенов). */
 function smallTalk(text) {
   // Несколько сообщений подряд («Спасибо!», «ок») — каждое по отдельности.
@@ -1091,6 +1107,18 @@ function createSupportBot(deps) {
 
     const trig = humanTrigger(question);
     if (trig) return escalate(t, trig);
+    // Клиент зовёт бота — ИИ снова в разговоре, пока специалист не напишет.
+    const calledAi = aiCall(question);
+    if (calledAi && aiPaused(t, now())) {
+      if (t.aiMode === "off") {
+        await toTopic(t, "🤖 Клиент просит ответ ИИ, но ИИ в теме выключен — /ai или «🤖 Включить ИИ», если можно.");
+        return deliver(t, "Сейчас вашим вопросом занимается специалист — он скоро ответит здесь.");
+      }
+      await patch(t, { escalated: false, aiPausedUntil: 0, aiMode: "auto" });
+      Object.assign(t, { escalated: false, aiPausedUntil: 0, aiMode: "auto" });
+      await renameTopic(t);
+      await toTopicHtml(t, "🤖 <b>Клиент позвал ИИ</b> — ИИ снова отвечает. Напишете в теме — ИИ замолчит.");
+    }
     // «Спасибо, помогло» — знак, что решение рабочее: пора его запомнить (и
     // когда отвечал человек, а ИИ на паузе).
     if (smallTalk(question) === "thanks" && (t.humanReplies || t.aiReplies)) learnSoon(t, "клиент поблагодарил за ответ");
@@ -1134,6 +1162,9 @@ function createSupportBot(deps) {
     ]);
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
     const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId });
+    if (calledAi) {
+      messages.push({ role: "system", content: "Клиент позвал тебя (ИИ-ассистента), чтобы ответил ты, а не специалист. Не здоровайся и не переспрашивай, что случилось: найди в переписке его последний нерешённый вопрос и ответь на него по шагам. Если ответ уже давал специалист — продолжи с того места." });
+    }
     let reply;
     let used;
     try {
@@ -1833,6 +1864,7 @@ function createSupportBot(deps) {
       "🤖 отвечает ИИ · 🔴 нужен человек · 🟡 ведёт специалист · ✅ решено",
       "",
       `✍️ Пишите прямо в теме — ответ уйдёт клиенту, а ИИ замолчит на ${Number(state.cfg.humanPauseHours) || DEFAULT_PAUSE_HOURS} ч.`,
+      "🤖 Клиент пишет «бот, помоги» — ИИ снова отвечает (если не выключен в теме).",
       "",
       "<b>Кнопки под карточкой</b>",
       "🙋 Беру — обращение ваше",
@@ -2648,6 +2680,6 @@ function createSupportBot(deps) {
 }
 
 module.exports = {
-  createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
+  createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
   stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
 };
