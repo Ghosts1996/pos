@@ -254,6 +254,17 @@ function harness() {
   let msgId = 100;
   let topicId = 500;
   const fetchImpl = async (url, opts = {}) => {
+    if (url.startsWith("https://html.duckduckgo.com/")) {
+      calls.push({ method: "web:search", body: String(opts.body || "") });
+      const html = '<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.atol.ru%2Fpartners%2F&amp;rut=x">Партнёры АТОЛ</a>'
+        + '<a class="result__snippet" href="#">Найдите официального партнёра АТОЛ в своём городе</a>';
+      return { ok: true, status: 200, text: async () => html };
+    }
+    if (url.startsWith("https://www.atol.ru/")) {
+      calls.push({ method: "web:page", body: url });
+      const page = Buffer.from("<html><body><nav>меню</nav><h1>Партнёры АТОЛ</h1><p>Купить АТОЛ 30Ф можно у официальных партнёров: выберите город и позвоните партнёру. Партнёры помогают зарегистрировать кассу в ФНС и подключить ОФД. Список партнёров обновляется ежедневно.</p><p>Ещё немного текста, чтобы страница была длиннее двухсот символов и бот её прочитал целиком.</p></body></html>");
+      return { ok: true, status: 200, headers: { get: (k) => (k === "content-type" ? "text/html; charset=utf-8" : null) }, arrayBuffer: async () => page.buffer.slice(page.byteOffset, page.byteOffset + page.length) };
+    }
     if (url.includes("/file/bot")) {
       const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
       return { ok: true, status: 200, arrayBuffer: async () => jpg.buffer.slice(jpg.byteOffset, jpg.byteOffset + jpg.length) };
@@ -319,12 +330,15 @@ const messagesOf = (store, id) => [...store.entries()].filter(([k]) => k.startsW
 const sends = (calls, chatId) => calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === Number(chatId))
   .map((c) => ({ ...c, body: { ...c.body, text: String(c.body.text || "").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") } }));
 
-async function setup(h) {
+// Поиск в интернете в тестах по умолчанию выключен (он добавляет вызовы ИИ);
+// отдельные тесты включают его — setup(h, { web: true }).
+async function setup(h, { web = false } = {}) {
   await h.bot.start();
   await h.bot.handleSetup({ body: {
     token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll",
     ai: { vendor: "tooken", apiKey: "sk-test-key-1234567890abcdef" },
     groupChatId: String(GROUP), staff: "555000111 Константин", workHours: "с 10 до 22 МСК",
+    web: { enabled: web },
   } }, {});
   assert.strictEqual(h.sent.code, 200, JSON.stringify(h.sent.body));
 }
@@ -622,7 +636,7 @@ test("бот видит устройство программы, но клиен
   assert.ok(prompt.includes("Как устроено в программе") && prompt.includes("Конфиденциальность"), "нет карты кода или правил");
   const toClient = sends(h.calls, 42).find((c) => /Интеграции/.test(c.body.text));
   assert.ok(toClient && !/kassa_service/.test(toClient.body.text), "клиенту ушло имя файла");
-  assert.ok(sends(h.calls, GROUP).some((c) => /код: .*\.dart/.test(c.body.text)), "сотрудникам — какие файлы смотрел");
+  assert.ok(!sends(h.calls, GROUP).some((c) => /код: .*\.dart/.test(c.body.text)), "в теме не нужен список файлов кода");
 });
 
 test("автообучение: ответ специалиста + «спасибо» → бот сам сохраняет, похожее — дополняет", async () => {
@@ -858,6 +872,47 @@ test("фото клиента в Telegram — во вложения, ИИ смо
   assert.ok(withPic && withPic.attachments[0].desc && /Банк не подключён/.test(withPic.attachments[0].desc), JSON.stringify(withPic));
   assert.ok(h.aiCalls.length >= n + 2, "ИИ не посмотрел и не ответил");
   assert.ok(sends(h.calls, 42).some((c) => /Подключите банк/.test(c.body.text)));
+});
+
+test("живой разговор: на «Да» после вопроса «А или Б?» бот не молчит и не переспрашивает", async () => {
+  const h = harness();
+  await setup(h);
+  h.aiReplies.push("Вы хотите настроить онлайн-оплату гостей или подключить фискальную кассу АТОЛ?");
+  await h.bot.handleUpdate(pm("Как настроить?"));
+  await h.bot.idle();
+  const n = h.aiCalls.length;
+  await h.bot.handleUpdate(pm("Да"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, n + 1, "на «Да» бот промолчал");
+  const prompt = JSON.stringify(h.aiCalls[n].messages);
+  assert.ok(prompt.includes("Не повторяй вопрос") && prompt.includes("Твой прошлый вопрос клиенту"), "нет подсказки не переспрашивать");
+  assert.ok(sb.SYSTEM_PROMPT.includes("Один и тот же уточняющий вопрос — никогда дважды подряд"));
+  // «Вы тут?» — бот понимает, что его ждут.
+  await h.bot.handleUpdate(pm("Вы тут?"));
+  await h.bot.idle();
+  assert.ok(JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("Да, я здесь"));
+  assert.ok(!tickets(h.store)[0].aiTypingAt, "индикатор «печатает» не снят");
+});
+
+test("поиск в интернете: внешний вопрос — бот сам ищет, читает страницу и отвечает со ссылкой на источник", async () => {
+  const h = harness();
+  await setup(h, { web: true });
+  h.aiReplies.push('{"search":true,"query":"где купить АТОЛ 30Ф официальный партнёр"}');
+  h.aiReplies.push("**Купить можно у партнёра АТОЛ** в вашем городе.\n\nИсточник: atol.ru");
+  await h.bot.handleUpdate(pm("Где купить АТОЛ 30Ф в моём городе?"));
+  await h.bot.idle();
+  assert.ok(h.calls.some((c) => c.method === "web:search"), "не искал");
+  assert.ok(h.calls.some((c) => c.method === "web:page"), "не прочитал страницу");
+  const last = h.aiCalls[h.aiCalls.length - 1];
+  const prompt = JSON.stringify(last.messages);
+  assert.ok(prompt.includes("# Из интернета") && prompt.includes("официальных партнёров") && !prompt.includes("<nav>"), "найденное не попало в подсказку");
+  assert.ok(sends(h.calls, GROUP).some((c) => /ИИ ответил клиенту/.test(c.body.text) && /сильная модель/.test(c.body.text)), "по найденному — сильная модель");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Искал в интернете/.test(c.body.text)));
+  // Вопрос о кнопках ZalPOS — планировщик решает не искать.
+  h.aiReplies.push('{"search":false}');
+  await h.bot.handleUpdate(pm("А как в кассе открыть стол?"));
+  await h.bot.idle();
+  assert.strictEqual(h.calls.filter((c) => c.method === "web:search").length, 1, "искал без нужды");
 });
 
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {

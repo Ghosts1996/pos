@@ -38,6 +38,7 @@ const path = require("path");
 const vm = require("vm");
 const { KB, CORE_FACTS } = require("./support-kb");
 const supportFiles = require("./support-files");
+const { createWebSearch, SEARCH_PROVIDERS, domainOf } = require("./support-web");
 const { DOCS, buildDoc } = require("./support-docs");
 const aiMod = require("./support-ai");
 const { buildCodeMap } = require("./build-code-map");
@@ -158,6 +159,13 @@ function humanTrigger(text) {
 }
 
 const isUrgent = (text) => URGENT.test(norm(text));
+
+// «Вы тут?», «алло», «ну что?» — клиент ждёт ответа.
+const PING = /^(?:вы|ты)?\s*(?:тут|здесь|где)\s*\??!*$|^(?:алло|ау+|эй|ну|ну что|ну и|и что|и\?|что там|у что|ответьте|есть кто|кто-нибудь|\?+)[?!. ]*$/;
+// Недоволен ответом — нужна модель посильнее.
+const UNHAPPY = /(не то|не так|не понял|не поняла|непонятно|не понятно|не работает|не получается|не выходит|опять|снова|вс[её] ещ[её]|ещ[её] раз|не помогает|бесполезн|ерунд|чушь)/;
+// Вопрос про внешний мир — повод заглянуть в интернет.
+const EXTERNAL = /(закон|фз|постановлени|штраф|налог|фнс|налогов|nalog|офд|егаис|честн|маркировк|роскомнадзор|роспотреб|санпин|меркурий|лицензи|банк|сбер|т-банк|тинькофф|альфа|втб|эквайринг|терминал|атол|orangedata|ferma|эвотор|evotor|штрих|принтер|сканер|драйвер|модел[ья]|цен[аы]|стоимост|сколько стоит|где купить|купить|сайт|ссылк|актуальн|нов(ые|ое) правил|с 20\d\d|изменени|код ошибки|ошибка \d|error|госуслуг|кэп|эцп|рутокен|окв[эе]д|ип |ооо )/;
 
 // Клиент зовёт именно бота: «бот, помоги», «ИИ ответь», «пусть ответит бот»,
 // «нет, бот». Просто слово «бот» (Telegram-бот заведения не работает) — не зов.
@@ -427,6 +435,19 @@ const SYSTEM_PROMPT = [
   "- Человек подтвердил, что всё работает, — коротко подтверди итог одной фразой, без новых советов.",
   "- Видишь в «Состоянии» причину (ошибка сборки, подписка закончилась, касса давно не выходила на связь, ошибки сервера) — назови её простыми словами и скажи, что сделать.",
   "",
+  "## 3а. Как живой специалист",
+  "- Ведёшь разговор, а не отвечаешь на отдельные реплики: помни, о чём говорили, кто что предлагал, на чём остановились.",
+  "- Задал вопрос с вариантами («А или Б?»), а клиент ответил «да», «ага», «угу», «давай» или непонятно — НЕ переспрашивай тем же вопросом. Выбери самый вероятный вариант по переписке (о чём шла речь раньше, что клиент уже покупал или настраивал), скажи одной фразой, что выбрал, и сразу помогай. В конце — «Если нужно другое — скажите».",
+  "- Один и тот же уточняющий вопрос — никогда дважды подряд. Лучше дай ответ на самый вероятный вариант, чем снова спрашивать.",
+  "- «Вы тут?», «алло», «ау», «ну что?», несколько коротких сообщений подряд — человек ждёт. Ответь коротко «Да, я здесь» и сразу дай ответ по существу, без извинений и без повтора прошлого вопроса.",
+  "- Клиент раздражён или пишет капслоком — признай проблему одной фразой («Понимаю, это неудобно») и сразу к делу.",
+  "- Пиши как опытный человек: короткие фразы, без канцелярита («данный», «осуществить», «в рамках»), без «Отличный вопрос!», без пересказа вопроса клиента. Ошибся — признай и исправь.",
+  "- Опечатки и просторечие («антол», «полючить», «скинь») понимай по смыслу и не поправляй клиента.",
+  "",
+  "## 3б. Интернет",
+  "- Раздел «Из интернета» — свежие сведения из поиска по внешним темам (законы, банки, ОФД, оборудование, сторонние сервисы). Опирайся на них, проверяй здравым смыслом и в конце укажи источник: «Источник: сайт.ру». О функциях и кнопках ZalPOS интернету не верь — только «Знаниям».",
+  "- Ссылки давай только на официальные сайты из «Знаний» или «Из интернета» — не придумывай адреса страниц.",
+  "",
   "## 4. Что умеешь и чего не делаешь",
   "- Помогаешь со всем, что есть в знаниях: установка на любое устройство, оплаты и эквайринг, онлайн-касса, ИИ, карта зала, меню, склад, сотрудники и зарплата, лояльность, доставка, Telegram-бот, оборудование.",
   "- Юридические вопросы (персональные данные, онлайн-касса, табак и кальяны, алкоголь и ЕГАИС, маркировка, права потребителей, сотрудники, реклама, музыка, налоги): требования простыми словами со ссылкой на закон и статью и что сделать по шагам. Это справка, а не заключение юриста: суммы штрафов, пороги и сроки — с оговоркой «проверьте актуальную редакцию»; споры, проверки, суды и сложные случаи — к юристу или бухгалтеру. Никогда не помогай обходить закон.",
@@ -454,14 +475,19 @@ const SYSTEM_PROMPT = [
  * ограничена: инструкция до 3 статей, база — до 3 решений, переписка —
  * краткое содержание и последние HISTORY_TAIL сообщений.
  */
-function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true }) {
+function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null }) {
   const ctx = [];
   ctx.push(`# Состояние заведения\n${linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
   if (platform) ctx.push(`# Платформа\n${platform}`);
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
   if (guide.length) ctx.push(`# Знания (инструкция, база поддержки, частые вопросы)\n${guide.map((d) => `## ${d.title}\n${clip(d.text, 1400)}`).join("\n\n")}`);
   if (learned.length) ctx.push(`# База решений (проверено поддержкой)\n${learned.map((d) => `## ${d.title}\n${clip(d.text, 900)}`).join("\n\n")}`);
-  if (!guide.length && !learned.length) {
+  if (web && (web.pages.length || web.results.length)) {
+    const pages = web.pages.map((p) => `## ${p.title} (${domainOf(p.url)})\n${p.url}\n${clip(p.text, 1600)}`);
+    const rest = web.results.filter((r) => !web.pages.some((p) => p.url === r.url)).slice(0, 4).map((r) => `- ${r.title} (${domainOf(r.url)}): ${clip(r.snippet, 220)} — ${r.url}`);
+    ctx.push(`# Из интернета (поиск: «${clip(web.query, 120)}»)\n${[...pages, rest.length ? `Ещё в выдаче:\n${rest.join("\n")}` : ""].filter(Boolean).join("\n\n")}`);
+  }
+  if (!guide.length && !learned.length && !(web && web.pages.length)) {
     ctx.push("# Знания\nПо этому вопросу нет проверенных знаний (нет проверенных знаний по вопросу). Отвечай только если ответ прямо есть в «О продукте» или в «Состоянии». Иначе не отвечай по памяти: уточни вопрос одним вопросом, а если он понятен — скажи, что уточнишь у специалиста, и добавь [[ОПЕРАТОР: нет в знаниях]].");
   }
   if (code.length) ctx.push(`# Как устроено в программе (внутреннее: клиенту не называй файлы, классы и код)\n${code.map((d) => `## ${d.title}\n${clip(d.text, 900)}`).join("\n\n")}`);
@@ -641,6 +667,13 @@ function createSupportBot(deps) {
     docData = async () => ({}),
   } = deps;
   const doFetch = deps.fetchImpl || fetch;
+  // Поиск в интернете: настройки в supportBot.web (ключ поисковика — зашифрован).
+  const webOn = () => !!(state.cfg && (state.cfg.web || {}).enabled !== false);
+  const web = createWebSearch({
+    fetchImpl: doFetch,
+    assertPublicUrl: (u) => assertPublicAiUrl(u),
+    settings: () => ({ provider: ((state.cfg && state.cfg.web) || {}).provider || "auto", key: state.webKey || "" }),
+  });
   const debounceMs = deps.debounceMs ?? 2500;
   const now = () => (deps.now ? deps.now() : Date.now());
   const cfgRef = () => db().collection("supportBot").doc("config");
@@ -732,9 +765,17 @@ function createSupportBot(deps) {
     state.cfg = d;
     state.token = "";
     state.aiKeys = new Map();
+    state.webKey = "";
     if (!d || d.enabled === false || !d.tokenEnc) return state.cfg;
     try {
       state.token = decrypt(secretKey(), d.tokenEnc);
+      if (d.web && d.web.keyEnc) {
+        try {
+          state.webKey = decrypt(secretKey(), d.web.keyEnc);
+        } catch (_) {
+          console.error("support-bot: ключ поиска не расшифровать");
+        }
+      }
       for (const p of aiMod.normalizeProviders(d.ai)) {
         if (!p.keyEnc) continue;
         try {
@@ -1134,8 +1175,12 @@ function createSupportBot(deps) {
       await patch(t, { urgentAt: ts(now()) });
       await toTopic(t, "⚡ Похоже, у клиента всё стоит — ИИ отвечает, но гляньте, пожалуйста.");
     }
+    // Последнее, что сказала поддержка, — вопрос? Тогда «да», «ок», «ну что?» — это ответ.
+    const prevBot = [...history.slice(0, i)].reverse().find((m) => m.authorRole !== "owner" && m.authorRole !== "note");
+    const askedBack = !!(prevBot && /\?/.test(String(prevBot.text || "").slice(-400)));
+    const pinged = fresh.every((m) => PING.test(norm(m.text || "")) || smallTalk(m.text || "") === "ack");
     const talk = imagesNow ? "" : smallTalk(question);
-    if (talk === "ack") return;
+    if (talk === "ack" && !askedBack) return;
     if (talk === "thanks") return deliver(t, "Рад был помочь! Если появится ещё вопрос — пишите сюда.");
     if (talk === "hello") return deliver(t, "Здравствуйте! Опишите, пожалуйста, что случилось или что хотите настроить — помогу. Позвать человека можно в любой момент словом «оператор».");
     if (!aiReady()) return escalate(t, "ИИ не настроен", { tellClient: !t.waitNoticeAt });
@@ -1143,9 +1188,13 @@ function createSupportBot(deps) {
     if ((Number(t.aiReplies) || 0) >= TICKET_AI_LIMIT) return escalate(t, "длинный диалог — нужен человек");
 
     if (t.channel === "telegram") quiet(tg("sendChatAction", { chat_id: t.tgChatId, action: "typing" }), "печатает");
+    // В кабинете — «Ассистент печатает…», пока готовится ответ.
+    await quiet(patch(t, { aiTypingAt: ts(now()) }), "печатает");
+    const doneTyping = () => quiet(patch(t, { aiTypingAt: null }), "печатает");
     // Скриншоты клиента — ИИ сначала смотрит их и описывает словами.
     const looked = imagesNow ? await describeImages(t, fresh) : 0;
     if (imagesNow && !question && !looked) {
+      await doneTyping();
       return deliver(t, "Скриншот получил, но разобрать его не получилось. Напишите в двух словах, что на экране и что не так, — помогу. Специалист тоже видит вложение.");
     }
     let summary = t.summary || "";
@@ -1165,16 +1214,25 @@ function createSupportBot(deps) {
     const earlier = history.slice(0, i).filter((m) => m.authorRole === "owner").slice(-3).map((m) => m.text || "").join("\n");
     const screens = fresh.flatMap((m) => supportFiles.listOf(m)).map((f) => f.desc || "").join("\n");
     const query = `${t.subject || ""}\n${earlier}\n${question}\n${question}\n${screens}`;
-    const guide = rankDocs(query, state.guide, 5);
+    // Слабые совпадения отбрасываем: в подсказке и в теме — только то, что по делу.
+    const strong = (list, k) => list.filter((d) => d.score >= Math.max(2, (list[0] ? list[0].score : 0) * k));
+    const guide = strong(rankDocs(query, state.guide, 5), 0.4);
     const learned = rankDocs(query, state.learned, 3, 1.5);
-    const code = rankDocs(query, state.code, 2, 4);
+    const code = question.length >= 25 ? strong(rankDocs(query, state.code, 2, 5), 0.6) : [];
+    // Внешний вопрос (закон, банк, оборудование, сторонний сервис) или знаний мало — ищем в интернете.
+    const webData = talk || pinged ? null : await maybeResearch(t, { question: `${earlier}\n${question}`.trim(), guide, learned });
     const [venue, platform, memory] = await Promise.all([
       t.tenantId ? venueStatus(t.tenantId).then((v) => venueBrief(v, now())).catch(() => "") : "",
       platformStatus().catch(() => ""),
       memoryOf(t).catch(() => ""),
     ]);
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
-    const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId });
+    const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData });
+    if (askedBack && (talk === "ack" || pinged || question.length < 25)) {
+      messages.push({ role: "system", content: `Твой прошлый вопрос клиенту: «${clip(prevBot.text, 300)}». Клиент ответил коротко («${clip(question, 80)}»). Не повторяй вопрос: выбери самый вероятный вариант по переписке, скажи, что выбрал, и сразу помоги по шагам.` });
+    } else if (pinged) {
+      messages.push({ role: "system", content: "Клиент ждёт и торопит («Вы тут?»). Коротко «Да, я здесь» — и сразу ответ по существу на его нерешённый вопрос." });
+    }
     if (imagesNow && !question) {
       messages.push({ role: "system", content: "Клиент прислал скриншот без текста. По описанию скриншота пойми, что у него на экране и что не так, и помоги по шагам. Не уверен, в чём вопрос, — спроси одним коротким вопросом." });
     }
@@ -1185,15 +1243,20 @@ function createSupportBot(deps) {
     let used;
     try {
       // Низкая температура — меньше фантазии в путях и названиях кнопок.
-      used = await aiFull(messages, { tier: aiMod.needsHeavy(question, history) ? "heavy" : "light", temperature: 0.15 });
+      used = await aiFull(messages, { tier: pickTier({ question, history, images: imagesNow, web: !!webData, askedBack }), temperature: 0.15 });
       reply = parseAiReply(used.text);
       reply.text = guardReply(reply.text);
       reply.md = guardReply(reply.md);
     } catch (e) {
       state.lastError = e.message;
       console.error(`support-bot: ИИ #${t.no}: ${e.message}`);
+      await doneTyping();
       return escalate(t, "ИИ не ответил");
     }
+    // Пока думали, клиент дописал — этот ответ устарел, следующий учтёт всё сразу.
+    const after = await messagesOf(t);
+    if (after.length > history.length && after.slice(history.length).some((m) => m.authorRole === "owner")) return;
+    await doneTyping();
     if (!reply.text) return escalate(t, reply.reason || "ИИ не нашёл ответа");
     const docRows = reply.docs.map((id) => [{ text: `📄 ${DOCS.find((d) => d.id === id).title}`, callback_data: `sb:doc:${id}` }]);
     const markup = t.channel === "telegram" ? { inline_keyboard: [...docRows, [{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
@@ -1202,9 +1265,64 @@ function createSupportBot(deps) {
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md) });
     await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id) });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
-    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.map((d) => d.title).join(" · "))}</i>` : ""}${learned.length ? `\n📚 <i>из базы решений: ${learned.length}</i>` : ""}${code.length ? `\n🧩 <i>код: ${h(code.map((d) => d.file.split("/").pop()).join(" · "))}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
+    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
     await movePanel(t, aiNote);
     if (reply.escalate) await escalate(t, reply.reason, { tellClient: false });
+  }
+
+  /** Модель под задачу: сильная — для законов, расчётов, скриншотов, ответов по
+   *  найденному в интернете, недовольства и долгих диалогов; иначе лёгкая. */
+  function pickTier({ question, history, images, web: usedWeb, askedBack: answering }) {
+    const mode = routing();
+    if (mode === "light" || mode === "heavy") return mode;
+    if (aiMod.needsHeavy(question, history) || images || usedWeb) return "heavy";
+    if (UNHAPPY.test(norm(question))) return "heavy";
+    if (answering && history.filter((m) => m.authorRole === "ai").length >= 2) return "heavy";
+    return "light";
+  }
+
+  /** Нужен ли интернет: ИИ сам решает по вопросу (планировщик на лёгкой
+   *  модели), только для внешних тем или когда знаний не хватает. */
+  async function maybeResearch(t, { question, guide, learned }) {
+    if (!webOn() || !aiReady() || !question) return null;
+    const q = norm(question);
+    const thin = !learned.length && (!guide.length || guide[0].score < 5);
+    if (!EXTERNAL.test(q) && !thin) return null;
+    if ((Number(t.webSearches) || 0) >= 8) return null;
+    const day = today();
+    if (state.usage.day === day && (Number(state.usage.web) || 0) >= 300) return null;
+    let plan;
+    try {
+      const raw = await ai([
+        { role: "system", content: [
+          "Ты решаешь, нужен ли поиск в интернете, чтобы точно ответить клиенту поддержки ZalPOS (касса для общепита).",
+          "Ищи только внешние факты: законы и их изменения, требования ФНС, Роскомнадзора, Роспотребнадзора, ОФД, ЕГАИС, «Честного знака», банки и эквайринг, оборудование и драйверы, сторонние программы и их ошибки, где купить, официальные сайты.",
+          "Не ищи о функциях, кнопках и настройках ZalPOS — они есть во внутренних знаниях. Короткие реплики («да», «вы тут?») — без поиска.",
+          `Во внутренних знаниях по вопросу нашлось: ${guide.slice(0, 3).map((d) => d.title).join("; ") || "ничего"}.`,
+          'Ответ строго JSON: {"search":true,"query":"поисковый запрос на русском, 3–10 слов, без имён, телефонов и названия заведения"} или {"search":false}.',
+        ].join("\n") },
+        { role: "user", content: clip(scrubPii(question), 800) },
+      ], { maxTokens: 120, temperature: 0 });
+      plan = looseJson(raw);
+    } catch (e) {
+      console.error(`support-bot: планировщик поиска #${t.no}: ${e.message}`);
+      return null;
+    }
+    if (!plan || !plan.search || !String(plan.query || "").trim()) return null;
+    const query = clip(scrubPii(String(plan.query)), 200);
+    try {
+      const found = await web.research(query, { limit: 5, pages: 2 });
+      if (!found.results.length) return null;
+      found.pages = found.pages.map((p) => ({ ...p, text: scrubPii(maskSecrets(p.text)) }));
+      await patch(t, { webSearches: (Number(t.webSearches) || 0) + 1 });
+      if (state.usage.day === day) state.usage.web = (Number(state.usage.web) || 0) + 1;
+      await toTopicHtml(t, `🌐 <b>Искал в интернете:</b> «${h(query)}»${found.pages.length ? ` — прочитал ${found.pages.map((p) => h(domainOf(p.url))).join(", ")}` : ""}`);
+      return found;
+    } catch (e) {
+      state.lastWebError = e.message;
+      console.error(`support-bot: поиск #${t.no}: ${e.message}`);
+      return null;
+    }
   }
 
   const memoryKey = (t) => (t.tenantId ? t.tenantId : t.tgUserId ? `tg:${t.tgUserId}` : "");
@@ -1465,7 +1583,21 @@ function createSupportBot(deps) {
     const rows = DOCS.map((d) => [{ text: `📄 ${d.title}`, callback_data: `sb:doc:${d.id}` }]);
     const note = client.tenantId ? "Реквизиты подставлю из «Профиля заведения» (Касса · Админ · «Профиль заведения» → «Реквизиты продавца»)."
       : "Заведение не привязано — реквизиты останутся пустыми строками. Чтобы подставить их, откройте бота из кабинета: «Поддержка» → «Написать в Telegram».";
-    return send(chatId, `📄 <b>Документы для заведения</b>\nФайлы Word, готовые к подписи.\n\n${h(note)}\n\nВыберите документ 👇`, { ...HTML, reply_markup: { inline_keyboard: rows } });
+    return send(chatId, [
+      "📄 <b>Документы для заведения</b>",
+      "",
+      "Это <b>внутренние бумаги</b> заведения-работодателя: их никуда не подают — подписывают и хранят у себя на случай проверки. Нужны, потому что заведение обрабатывает данные своих сотрудников (152-ФЗ).",
+      "",
+      "• Приказ, политика, согласия, обязательства и лист ознакомления — подписать и хранить в папке.",
+      "• «Уголок потребителя» — распечатать и повесить в зале.",
+      "• Подать нужно только уведомление в Роскомнадзор — онлайн на pd.rkn.gov.ru, один раз (памятка — в списке).",
+      "",
+      "Для работы в ZalPOS подписка и настройка — всё, что нужно; бумаги — требование закона к любому работодателю, а не к программе.",
+      "",
+      `<i>${h(note)}</i>`,
+      "",
+      "Выберите документ 👇",
+    ].join("\n"), { ...HTML, reply_markup: { inline_keyboard: rows } });
   }
 
   /** Telegram: отправка файла (multipart). */
@@ -1542,10 +1674,11 @@ function createSupportBot(deps) {
         `🕘 Часы работы: ${h(c.workHours || "не указаны")}`,
         `👥 Сотрудников: ${(c.staff || []).length} · группа: ${c.groupChatId ? `✅ ${h(c.groupTitle || "подключена")}` : "❌ не подключена"}`,
         `📚 База решений: ${state.learned.length} · автообучение ${c.autoLearn === false ? "выключено" : "включено"} · знаний: ${state.guide.length} статей, ${state.code.length} файлов кода`,
+        `🌐 Поиск в интернете: ${webOn() ? `включён · ${(SEARCH_PROVIDERS[(c.web || {}).provider] || SEARCH_PROVIDERS.auto).title}` : "выключен"}`,
       ].join("\n");
       return { text, rows: [
         [btn(c.aiEnabled === false ? "🤖 Включить ИИ" : "🔕 Выключить ИИ", "ai"), btn("🔑 Модели и ключи", "keys")],
-        [btn(c.autoLearn === false ? "📚 Включить автообучение" : "📚 Автообучение: вкл ✓", "al")],
+        [btn(c.autoLearn === false ? "📚 Автообучение: выкл" : "📚 Автообучение: вкл ✓", "al"), btn(webOn() ? "🌐 Интернет: вкл ✓" : "🌐 Интернет: выкл", "web")],
         [btn("⚖️ Режим ИИ", "mode"), btn("📈 Лимит в сутки", "limit")],
         [btn("⏸ Пауза после человека", "pause"), btn("🕘 Часы работы", "hours")],
         [btn("👥 Сотрудники", "staff"), btn("✏️ Приветствие", "greet")],
@@ -1677,6 +1810,11 @@ function createSupportBot(deps) {
     if (act === "ai") {
       await saveCfg({ aiEnabled: c.aiEnabled === false });
       await answer(c.aiEnabled === false ? "ИИ включён" : "ИИ выключен — отвечают люди");
+      return adminEdit(chatId, mid, "main");
+    }
+    if (act === "web") {
+      await saveCfg({ web: { ...(c.web || {}), enabled: !webOn() } });
+      await answer(webOn() ? "Поиск в интернете включён" : "Поиск в интернете выключен");
       return adminEdit(chatId, mid, "main");
     }
     if (act === "al") {
@@ -2586,6 +2724,15 @@ function createSupportBot(deps) {
     if (body.policyUrl !== undefined) upd.policyUrl = /^https:\/\//.test(String(body.policyUrl || "")) ? clip(String(body.policyUrl), 200) : "";
     if (body.aiEnabled !== undefined) upd.aiEnabled = body.aiEnabled !== false;
     if (body.autoLearn !== undefined) upd.autoLearn = body.autoLearn !== false;
+    if (body.web && typeof body.web === "object") {
+      const w = { ...(prev.web || {}) };
+      if (body.web.enabled !== undefined) w.enabled = body.web.enabled !== false;
+      if (body.web.provider !== undefined) w.provider = SEARCH_PROVIDERS[body.web.provider] ? body.web.provider : "auto";
+      const wkey = String(body.web.key || "").trim();
+      if (wkey) w.keyEnc = encrypt(key, wkey);
+      if (body.web.clearKey) delete w.keyEnc;
+      upd.web = w;
+    }
     if (body.enabled !== undefined) upd.enabled = body.enabled !== false;
     // providers — массив: при merge Firestore заменяет его целиком, удалённые
     // из формы провайдеры не остаются.
@@ -2645,6 +2792,11 @@ function createSupportBot(deps) {
       dailyAiLimit: Number(c.dailyAiLimit) || DEFAULT_DAILY_LIMIT, workHours: c.workHours || "", policyUrl: c.policyUrl || "",
       usage: state.usage.day === today() ? state.usage : { day: today(), calls: 0, tokens: 0 },
       knowledge: state.learned.length, guideArticles: state.guide.length, codeFiles: state.code.length, autoLearn: c.autoLearn !== false, lastError: state.lastError || "",
+      web: {
+        enabled: webOn(), provider: (c.web || {}).provider || "auto", hasKey: !!(c.web || {}).keyEnc, lastError: state.lastWebError || "",
+        providers: Object.entries(SEARCH_PROVIDERS).map(([id, v]) => ({ id, ...v })),
+        today: state.usage.day === today() ? Number(state.usage.web) || 0 : 0,
+      },
     };
   }
 

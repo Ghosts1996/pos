@@ -4498,6 +4498,12 @@ function watchDashboardData(tenantId) {
               ${attachmentsHtml(selectedTicket.id, m.attachments)}
             </div>
           `).join('') : '<p class="small muted">Сообщений пока нет.</p>')}
+          ${(() => {
+            // Сервер ставит aiTypingAt, пока ассистент готовит ответ.
+            const at = selectedTicket.aiTypingAt && selectedTicket.aiTypingAt.toMillis ? selectedTicket.aiTypingAt.toMillis() : 0;
+            return at && Date.now() - at < 3 * 60 * 1000 && selectedTicket.status !== 'closed'
+              ? '<div class="typing-bubble small muted">🤖 Ассистент печатает<span class="typing-dots"><i></i><i></i><i></i></span></div>' : '';
+          })()}
         </div>
         <textarea id="f-ticket-reply" rows="3" placeholder="Ваш ответ… Скриншот можно вставить сюда (Ctrl+V)" style="width:100%;resize:vertical;margin-top:10px"></textarea>
         ${pendingFilesHtml(replyDraftFiles, 'f-reply-rm')}
@@ -6429,6 +6435,22 @@ function watchSupportBotAdmin() {
           <input type="checkbox" id="f-sb-autolearn" style="width:auto" ${s.autoLearn === false ? '' : 'checked'}>
           <span class="small">Автообучение: бот сам запоминает решения из диалогов — прежде всего ваши ответы и ответы сотрудников</span>
         </label>
+        <label class="row" style="gap:8px;align-items:center;margin:6px 0">
+          <input type="checkbox" id="f-sb-web-on" style="width:auto" ${s.web && s.web.enabled === false ? '' : 'checked'}>
+          <span class="small">Поиск в интернете: по внешним вопросам (законы, банки, ОФД, оборудование, где купить) бот сам ищет, читает страницы и отвечает со ссылкой на источник</span>
+        </label>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin:0 0 6px">
+          <label class="field" style="flex:1 1 200px;margin:0"><span>Поисковик</span>
+            <select id="f-sb-web-provider">
+              ${((s.web && s.web.providers) || [{ id: 'auto', title: 'Без ключа (DuckDuckGo)' }]).map((p) => `<option value="${esc(p.id)}" ${((s.web && s.web.provider) || 'auto') === p.id ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field" style="flex:1 1 200px;margin:0"><span>Ключ поисковика${s.web && s.web.hasKey ? ' · ✓ сохранён' : ''}</span>
+            <input type="password" id="f-sb-web-key" autocomplete="off" placeholder="${s.web && s.web.hasKey ? 'сохранён — оставьте пустым' : 'не нужен для «Без ключа»'}">
+          </label>
+        </div>
+        ${s.web && s.web.lastError ? `<p class="small" style="color:var(--danger);margin:0 0 6px">Поиск: ${esc(s.web.lastError)}</p>` : ''}
+        ${s.web ? `<p class="small muted" style="margin:0 0 8px">Сегодня поисков: ${Number(s.web.today) || 0}. Brave, Tavily и Serper надёжнее бесплатного варианта — ключ берётся на их сайтах.</p>` : ''}
         <label class="field"><span>Какой моделью отвечать</span>
           <select id="f-sb-routing">
             ${[['auto', 'Авто — сам выбирает (рекомендуем)'], ['light', 'Всегда лёгкая — дешевле'], ['heavy', 'Всегда сильная — точнее']]
@@ -6574,6 +6596,7 @@ function watchSupportBotAdmin() {
         admins: $('f-sb-admins').value,
         aiEnabled: $('f-sb-ai-on').checked,
         autoLearn: $('f-sb-autolearn').checked,
+        web: { enabled: $('f-sb-web-on').checked, provider: $('f-sb-web-provider').value, key: $('f-sb-web-key').value.trim() },
         ai: {
           routing: $('f-sb-routing').value,
           providers: provDraft.map((p) => ({
