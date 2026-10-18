@@ -7207,7 +7207,7 @@ async function supportVenueStatus(tenantId) {
   if (!tenant) return { missing: true, id: tenantId };
   const billingId = tenant.chainId || tenantId;
   const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
-  const [subDoc, devSnap, jobsSnap, botDoc, aiDoc, integDoc, profileDoc, menuCount, tablesCount] = await Promise.all([
+  const [subDoc, devSnap, jobsSnap, botDoc, aiDoc, integDoc, profileDoc, menuCount, tablesCount, staffCount] = await Promise.all([
     firestore.collection("subscriptions").doc(billingId).get().catch(() => null),
     tenantRef.collection("devices").limit(60).get().catch(() => null),
     firestore.collection("buildJobs").where("tenantId", "==", tenantId).orderBy("createdAt", "desc").limit(30).get().catch(() => null),
@@ -7217,6 +7217,7 @@ async function supportVenueStatus(tenantId) {
     tenantRef.collection("meta").doc("venueProfile").get().catch(() => null),
     tenantRef.collection("menuItems").count().get().then((c) => c.data().count).catch(() => null),
     tenantRef.collection("tables").select().limit(300).get().then((q) => q.docs.filter((d) => d.id !== "takeaway").length).catch(() => null),
+    tenantRef.collection("employees").count().get().then((c) => c.data().count).catch(() => null),
   ]);
   const sub = (subDoc && subDoc.data()) || null;
   const planId = (sub && sub.planId) || tenant.planId || "";
@@ -7246,7 +7247,9 @@ async function supportVenueStatus(tenantId) {
     sub: sub ? {
       plan: plan.name || plan.title || planId || "", status: sub.status || "",
       until: ms(sub.status === "trial" ? sub.trialEndsAt : sub.currentPeriodEnd), cancelAtPeriodEnd: !!sub.cancelAtPeriodEnd,
+      maxEmployees: Math.max(0, Math.floor(Number(plan.maxEmployees) || 0)),
     } : null,
+    staff: staffCount,
     devices: {
       active: activeDev.length, disabled: devices.length - activeDev.length,
       platforms: [...new Set(activeDev.map((d) => d.platform || "?"))],

@@ -284,6 +284,12 @@ function harness() {
       : JSON.parse(opts.body || "{}");
     if (url.endsWith("/chat/completions")) {
       aiCalls.push(body);
+      // Клиент дописывает, пока ИИ думает.
+      if (flags.onAi) {
+        const f = flags.onAi;
+        flags.onAi = null;
+        await f();
+      }
       if (flags.failVision && JSON.stringify(body.messages || []).includes("image_url")) {
         return { ok: false, status: 400, json: async () => ({ error: { message: "model does not support images" } }) };
       }
@@ -305,7 +311,7 @@ function harness() {
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
   };
-  const flags = { failHtml: false, failVision: false };
+  const flags = { failHtml: false, failVision: false, onAi: null };
   const key = crypto.randomBytes(32);
   const sent = {};
   const bot = sb.createSupportBot({
@@ -1294,6 +1300,110 @@ test("знания: 4 принтера (зал, кухня, бар, кальян
   assert.ok(top.some((d) => d.id === "kb:printers-stations"), top.map((d) => d.id).join(", "));
   const doc = h.bot._state.guide.find((d) => d.id === "kb:printers-stations");
   assert.ok(/Принтер кальянщика/.test(doc.text) && /Проверить принтеры цехов/.test(doc.text));
+});
+
+test("шум без ИИ: повторы, «ты тут?», «бот помоги», набор букв; термины — не мусор", () => {
+  for (const x of ["hdbdbdbd", "ыввфыв", "asdasd", "кококо"]) assert.strictEqual(sb.noiseKind(x), "junk", x);
+  for (const x of ["html", "ЕГАИС", "сбп", "привет", "Склад", "отчёт"]) assert.ok(!sb.gibberish(x), x);
+  assert.strictEqual(sb.noiseKind("Ты тут?"), "ping");
+  assert.strictEqual(sb.noiseKind("Бот помоги"), "ping");
+  assert.strictEqual(sb.noiseKind("ок"), "ack");
+  assert.strictEqual(sb.noiseKind("Как подключить 4 принтера?", ["как подключить 4 принтера"]), "dup");
+  assert.strictEqual(sb.noiseKind("Как подключить 4 принтера?"), "");
+  assert.strictEqual(sb.noiseKind("hdbdbdbd", [], true), "", "файл — всегда вопрос");
+});
+
+test("клиент дописал «Ты тут?» и повтор, пока ИИ думал, — ответ не выбрасывается, второй вызов ИИ не нужен", async () => {
+  const h = harness();
+  await setup(h);
+  h.flags.onAi = async () => {
+    await h.bot.handleUpdate(pm("Не собирается APK"));
+    await h.bot.handleUpdate(pm("Ты тут?"));
+  };
+  await h.bot.handleUpdate(pm("Не собирается APK"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  assert.strictEqual(h.aiCalls.length, 1, "ИИ вызван повторно");
+  const roles = messagesOf(h.store, t.id).map((m) => m.authorRole);
+  assert.deepStrictEqual(roles, ["owner", "owner", "owner", "ai"]);
+});
+
+test("новое настоящее сообщение, пока ИИ думал, — ответ пересобирается с учётом всего", async () => {
+  const h = harness();
+  await setup(h);
+  h.flags.onAi = async () => { await h.bot.handleUpdate(pm("И ещё: на Windows не открывается касса")); };
+  await h.bot.handleUpdate(pm("Не собирается APK"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 2);
+  const last = JSON.stringify(h.aiCalls[1].messages);
+  assert.ok(last.includes("Не собирается APK") && last.includes("на Windows"));
+});
+
+test("набор букв — одна подсказка без ИИ, дальше тишина; «ты тут?» сразу после ответа — без ИИ", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("hdbdbdbd"));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("ыввфыв"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 0);
+  assert.strictEqual(sends(h.calls, 42).filter((c) => /Не разобрал сообщение/.test(c.body.text)).length, 1);
+
+  await h.bot.handleUpdate(pm("Не собирается APK"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 1);
+  await h.bot.handleUpdate(pm("Ты тут?"));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("Не собирается APK"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 1, "пинг и повтор потратили токены");
+  assert.strictEqual(sends(h.calls, 42).filter((c) => /Ответ — в сообщении выше/.test(c.body.text)).length, 1);
+});
+
+test("ИИ позвал специалиста («не знаю») — на новый вопрос отвечает сам, на «ты тут?» — коротко без ИИ", async () => {
+  const h = harness();
+  await setup(h);
+  h.aiReplies.push("Точно не знаю, подключаю специалиста.\n[[ОПЕРАТОР: нет ответа в знаниях]]");
+  await h.bot.handleUpdate(pm("Как подключить весы Масса-К к кассе?"));
+  await h.bot.idle();
+  let [t] = tickets(h.store);
+  assert.strictEqual(t.escalated, true);
+  assert.strictEqual(t.escalatedBy, "ai");
+  assert.strictEqual(h.aiCalls.length, 1);
+
+  await h.bot.handleUpdate(pm("Ты тут?"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 1);
+  assert.ok(sends(h.calls, 42).some((c) => /Специалист уже видит ваш вопрос/.test(c.body.text)));
+
+  await h.bot.handleUpdate(pm("А как собрать APK для кассы?"));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 2, "новый вопрос остался без ответа");
+  assert.ok(JSON.stringify(h.aiCalls[1].messages).includes("уже позван специалист"));
+  [t] = tickets(h.store);
+  assert.strictEqual(t.escalated, true, "специалист всё ещё нужен по первому вопросу");
+
+  // Клиент сам позвал оператора — новые вопросы ждут человека.
+  const h2 = harness();
+  await setup(h2);
+  await h2.bot.handleUpdate(pm("Позовите оператора"));
+  await h2.bot.idle();
+  await h2.bot.handleUpdate(pm("А как собрать APK?"));
+  await h2.bot.idle();
+  assert.strictEqual(h2.aiCalls.length, 0);
+});
+
+test("тарифы: подбор и смена тарифа — в знаниях, ИИ отвечает сам; в состоянии — сотрудники и лимит", async () => {
+  const h = harness();
+  await setup(h);
+  const top = (q) => sb.rankDocs(q, h.bot._state.guide, 3).map((d) => d.id);
+  assert.ok(top("А какой тариф взять у меня в общем только 7 сотрудников").includes("kb:plan-advice"));
+  assert.ok(top("А если не сеть хочу на другой перейти тариф у меня сохранятся дни?").includes("kb:plan-change"));
+  const doc = h.bot._state.guide.find((d) => d.id === "kb:plan-change");
+  assert.ok(/не сгорают/.test(doc.text) && /пересчитает/.test(doc.text));
+  assert.ok(sb.SYSTEM_PROMPT.includes("Тарифы — ты консультант"));
+  const card = sb.venueBrief({ id: "t1", name: "Колибри", sub: { plan: "Бизнес", status: "active", until: 0, maxEmployees: 10 }, staff: 7, devices: { active: 1, platforms: [] }, builds: [], setup: {} });
+  assert.ok(/Сотрудников 7 из 10 по тарифу/.test(card), card);
 });
 
 (async () => {

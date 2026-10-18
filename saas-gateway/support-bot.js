@@ -56,6 +56,10 @@ const REOPEN_WINDOW_MS = 24 * 3600 * 1000;
 const DEFAULT_PAUSE_HOURS = 12;
 const DEFAULT_DAILY_LIMIT = 300;
 const TICKET_AI_LIMIT = 30;
+// «Ты тут?» и повторы: короткий ответ без ИИ не чаще раза в 10 минут.
+const WAIT_PING_MS = 10 * 60e3;
+// Больше ответов ИИ за 10 минут — шквал сообщений, зовём человека.
+const AI_BURST = 8;
 const HISTORY_TAIL = 8;
 const SUMMARIZE_AFTER = 14;
 const KB_RELOAD_MS = 10 * 60 * 1000;
@@ -178,6 +182,9 @@ const isUrgent = (text) => URGENT.test(norm(text));
 const PING = /^(?:вы|ты)?\s*(?:тут|здесь|где)\s*\??!*$|^(?:алло|ау+|эй|ну|ну что|ну и|и что|и\?|что там|у что|ответьте|есть кто|кто-нибудь|\?+)[?!. ]*$/;
 // Недоволен ответом — нужна модель посильнее.
 const UNHAPPY = /(не то|не так|не понял|не поняла|непонятно|не понятно|не работает|не получается|не выходит|опять|снова|вс[её] ещ[её]|ещ[её] раз|не помогает|бесполезн|ерунд|чушь)/;
+// Законы, штрафы, сроки и новости — их проверяем в интернете, даже когда
+// во внутренних знаниях есть ответ: правила меняются.
+const NEWSY = /(закон|фз|постановлени|штраф|налог|фнс|роскомнадзор|роспотреб|санпин|лицензи|нов(ые|ое|ая) правил|с 20\d\d|изменени|актуальн|сколько стоит|цен[аы] |где купить)/;
 // Вопрос про внешний мир — повод заглянуть в интернет.
 const EXTERNAL = /(закон|фз|постановлени|штраф|налог|фнс|налогов|nalog|офд|егаис|честн|маркировк|роскомнадзор|роспотреб|санпин|меркурий|лицензи|банк|сбер|т-банк|тинькофф|альфа|втб|эквайринг|терминал|атол|orangedata|ferma|эвотор|evotor|штрих|принтер|сканер|драйвер|модел[ья]|цен[аы]|стоимост|сколько стоит|где купить|купить|сайт|ссылк|актуальн|нов(ые|ое) правил|с 20\d\d|изменени|код ошибки|ошибка \d|error|госуслуг|кэп|эцп|рутокен|окв[эе]д|ип |ооо )/;
 
@@ -196,6 +203,39 @@ const aiCall = (text) => {
   const t = norm(text);
   return !!t && AI_CALL.some((re) => re.test(t));
 };
+
+// Набор букв без смысла: «hdbdbdbd», «ыввфыв», «кококо». Короткие термины
+// без гласных (html, pdf, crm) — не мусор.
+const JUNK_OK = /^(html?|https?|pdf|xml|json|crm|sms|png|jpe?g|gtin|ntp|wifi|lan|wlan|mrc|ккт|сбп|офд|утм|нпд|ндфл|рсв|ндс|чз)$/;
+function gibberish(text) {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length > 60) return false;
+  const t = norm(raw).replace(/[^a-zа-яё\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return raw.length >= 3 && !/[?]/.test(raw) && !/\p{Extended_Pictographic}/u.test(raw);
+  const words = t.split(" ");
+  if (words.length > 2) return false;
+  return words.every((w) => {
+    if (w.length < 4 || JUNK_OK.test(w)) return false;
+    const vowels = (w.match(/[аеёиоуыэюяaeiouy]/g) || []).length;
+    return vowels / w.length < 0.2 || /(.{2,3})\1{2,}/.test(w) || /(фыв|ыва|вап|йцу|цук|ячс|чсм|вфы|ывф|qwe|wer|asd|sdf|zxc|xcv)/.test(w) || /[бвгджзйклмнпрстфхцчшщ]{5,}|[bcdfghjklmnpqrstvwxz]{5,}/.test(w);
+  });
+}
+
+/** Сообщение без нового смысла — на него не нужен отдельный вызов ИИ:
+ *  "ping" — «ты тут?», «бот, помоги»; "ack" — «ок»; "dup" — повтор уже
+ *  написанного; "junk" — набор букв; "" — настоящий вопрос. Сообщения с
+ *  файлами — всегда вопрос. */
+function noiseKind(text, earlier = [], hasFiles = false) {
+  if (hasFiles) return "";
+  const t = norm(text).replace(/[\s.!?…]+$/u, "");
+  if (!t) return "ack";
+  if (earlier.some((e) => norm(e).replace(/[\s.!?…]+$/u, "") === t)) return "dup";
+  if (PING.test(norm(text))) return "ping";
+  if (smallTalk(text) === "ack") return "ack";
+  if (t.length <= 40 && aiCall(text)) return "ping";
+  if (gibberish(text)) return "junk";
+  return "";
+}
 
 /** Короткие «спасибо», «ок», «привет» — ответ без ИИ (экономия токенов). */
 function smallTalk(text) {
@@ -568,8 +608,13 @@ const SYSTEM_PROMPT = [
   "- Если спрашивают, человек ли ты, — честно: ты ИИ-ассистент, а живой специалист подключится по слову «оператор».",
   "- Не обвиняй клиента в обмане: возможно, он просто ошибся. Спокойно, вежливо, коротко — и сразу к законному решению его задачи.",
   "",
+  "## 5б. Тарифы — ты консультант",
+  "- Вопросы «какой тариф взять», «что входит», «что будет с днями при смене тарифа», «как перейти» — отвечай сам по статьям о тарифах и блоку «Тарифы сейчас». Это правила сервиса, а не обещания: специалиста не зови.",
+  "- Подбирай тариф по заведению: сколько точек и сотрудников (из «Состояния» или спроси одним вопросом), нужен ли ИИ. Советуй один тариф и коротко почему; назови цену за месяц и выгоду оплаты на 6 месяцев или год. Видишь, что заведение упирается в лимит или ему подойдёт тариф выше, — предложи его, без навязывания.",
+  "- Смену тарифа объясняй так: оплаченные дни не сгорают, система пересчитает их по цене нового тарифа. Пиши «пересчитаются», а не «мы продлим» или «вернём».",
+  "",
   "## 6. Когда звать человека",
-  "- Одной фразой скажи, что подключаешь специалиста, и в самом конце отдельной строкой добавь [[ОПЕРАТОР: короткая причина]], — если: ответа нет в источниках и ты не уверен; возврат денег или спор об оплате подписки; претензия или жалоба на ZalPOS; удаление аккаунта или заведения; похоже на сбой у всех; нужно что-то изменить в данных заведения; ошибка повторяется после твоих шагов; ты дважды не смог помочь.",
+  "- Одной фразой скажи, что подключаешь специалиста, и в самом конце отдельной строкой добавь [[ОПЕРАТОР: короткая причина]], — если: ответа нет в источниках и ты не уверен; возврат денег или спор об оплате (вопросы о тарифах и смене тарифа — не спор, отвечай сам); претензия или жалоба на ZalPOS; удаление аккаунта или заведения; похоже на сбой у всех; нужно что-то изменить в данных заведения; ошибка повторяется после твоих шагов; ты дважды не смог помочь.",
   "",
   "## 7. Оформление (читают в Telegram с телефона)",
   "- По-русски, на «вы», как опытный специалист поддержки в живом чате: просто, коротко, грамотно. Без вводных («Конечно!», «Отличный вопрос», «Я помогу вам»), без эмодзи, без повтора вопроса, без подписи.",
@@ -726,6 +771,10 @@ function venueCard(v, { staff = false, now = Date.now() } = {}) {
     const until = v.sub.until ? ` до ${fmtDate(v.sub.until, now)}` : "";
     L.push(`Тариф «${h(v.sub.plan || "—")}» · ${h(SUB_STATUS[v.sub.status] || v.sub.status)}${until}`);
     if (v.sub.cancelAtPeriodEnd) L.push("Автопродление выключено");
+    if (typeof v.staff === "number") {
+      const max = Number(v.sub.maxEmployees) || 0;
+      L.push(`Сотрудников ${v.staff}${max ? ` из ${max} по тарифу${v.chain ? " (на точку)" : ""}${v.staff >= max ? " — лимит исчерпан" : ""}` : " · без ограничения по тарифу"}`);
+    }
   } else L.push("Нет данных");
   const d = v.devices || {};
   L.push("", "📱 <b>Устройства</b>");
@@ -942,6 +991,7 @@ function createSupportBot(deps) {
       } catch (_) {}
     }
     state.guide = [...guide, ...kbDocs(), ...faq];
+    state.knowledgeAt = now();
     await loadCode();
     return state.guide.length;
   }
@@ -1275,9 +1325,10 @@ function createSupportBot(deps) {
     await addMessage(t, { text: stored, authorRole: role, authorUid: authorUid || (role === "ai" ? "support-bot" : ""), authorName });
   }
 
-  async function escalate(t, reason, { tellClient = true } = {}) {
+  async function escalate(t, reason, { tellClient = true, byAi = false } = {}) {
     if (t.escalated) return;
-    await patch(t, { escalated: true, escalatedReason: reason, escalatedAt: ts(now()) });
+    await patch(t, { escalated: true, escalatedReason: reason, escalatedAt: ts(now()), escalatedBy: byAi ? "ai" : "" });
+    Object.assign(t, { escalated: true, escalatedAt: ts(now()), escalatedBy: byAi ? "ai" : "" });
     await renameTopic(t);
     // Обращение ведёт один сотрудник: назначаем по очереди, остальные — на подхвате.
     const who = Number(t.assigneeId) || nextStaff([]);
@@ -1376,8 +1427,12 @@ function createSupportBot(deps) {
     // Все сообщения клиента после последнего ответа — как один вопрос.
     let i = history.length - 1;
     while (i > 0 && history[i - 1].authorRole === "owner") i--;
-    const question = history.slice(i).map((m) => m.text || "").join("\n").trim();
     const fresh = history.slice(i);
+    // Один и тот же текст, присланный дважды подряд, — один вопрос.
+    const question = [...new Set(fresh.map((m) => String(m.text || "").trim()).filter(Boolean))].join("\n").trim();
+    const priorOwner = history.slice(0, i).filter((m) => m.authorRole === "owner").map((m) => m.text || "");
+    const kinds = fresh.map((m) => noiseKind(m.text || "", priorOwner, supportFiles.listOf(m).length > 0));
+    const substantive = kinds.some((k) => !k);
     const imagesNow = fresh.some((m) => supportFiles.listOf(m).some((f) => supportFiles.isImage(f.type)));
     if (!question && fresh.some((m) => supportFiles.listOf(m).length) && !imagesNow) {
       // Прислали только документ без текста — просим пару слов, специалист увидит файл в теме.
@@ -1402,7 +1457,40 @@ function createSupportBot(deps) {
     // «Спасибо, помогло» — знак, что решение рабочее: пора его запомнить (и
     // когда отвечал человек, а ИИ на паузе).
     if (smallTalk(question) === "thanks" && (t.humanReplies || t.aiReplies)) learnSoon(t, "клиент поблагодарил за ответ");
-    if (aiPaused(t, now())) return;
+    // ИИ сам позвал специалиста («не знаю»), а человек ещё не ответил: на
+    // новый вопрос ИИ отвечает сам, повтор старого — снова, только если с тех
+    // пор обновились знания. «Ты тут?» и повторы — короткий ответ без ИИ.
+    const softPause = t.escalated === true && t.escalatedBy === "ai" && t.aiMode !== "off" && toMs(t.aiPausedUntil) <= now();
+    const retryKnown = softPause && !substantive && kinds.includes("dup") && state.knowledgeAt > toMs(t.escalatedAt);
+    let afterSoft = false;
+    if (aiPaused(t, now())) {
+      if (softPause && (substantive || retryKnown)) {
+        afterSoft = true;
+      } else {
+        if (t.escalated === true && t.aiMode !== "off" && now() - toMs(t.waitPingAt) > WAIT_PING_MS) {
+          await patch(t, { waitPingAt: ts(now()) });
+          return deliver(t, "Специалист уже видит ваш вопрос и ответит здесь. Если ждать некогда — напишите «бот, помоги», отвечу сам.");
+        }
+        return;
+      }
+    }
+    // Набор букв без смысла — ИИ не зовём; подскажем один раз, дальше молчим.
+    if (kinds.every((k) => k === "junk" || k === "ack") && kinds.includes("junk")) {
+      if (now() - toMs(t.junkAt) <= WAIT_PING_MS) return;
+      await patch(t, { junkAt: ts(now()) });
+      return deliver(t, "Не разобрал сообщение. Напишите словами, что нужно сделать или что не работает, — помогу.");
+    }
+    // Только «ты тут?» и повторы сразу после ответа — ответ уже выше, ИИ не нужен.
+    const lastBotAt = toMs((history.slice(0, i).reverse().find((m) => m.authorRole === "ai" || m.authorRole === "staff") || {}).createdAt);
+    if (!substantive && kinds.every((k) => k === "ping" || k === "dup") && lastBotAt && now() - lastBotAt < WAIT_PING_MS && !calledAi) {
+      if (now() - toMs(t.waitPingAt) <= WAIT_PING_MS) return;
+      await patch(t, { waitPingAt: ts(now()) });
+      return deliver(t, "Да, я здесь. Ответ — в сообщении выше. Если что-то не получилось, напишите, на каком шаге, — разберём.");
+    }
+    // Шквал сообщений: не больше AI_BURST ответов ИИ за 10 минут, дальше — человек.
+    const burstFrom = toMs(t.aiBurstAt);
+    const burst = now() - burstFrom < 10 * 60e3 ? (Number(t.aiBurst) || 0) : 0;
+    if (burst >= AI_BURST) return escalate(t, "очень много сообщений подряд — нужен человек");
     if (isUrgent(question) && !t.urgentAt) {
       await patch(t, { urgentAt: ts(now()) });
       await toTopic(t, "⚡ Похоже, у клиента всё стоит — ИИ отвечает, но гляньте, пожалуйста.");
@@ -1460,7 +1548,7 @@ function createSupportBot(deps) {
     const sure = (guide[0] && guide[0].score >= 8) || learned.length > 0;
     const code = question.length >= 25 && !sure ? strong(rankDocs(query, state.code, 2, 5), 0.6) : [];
     // Внешний вопрос (закон, банк, оборудование, сторонний сервис) или знаний мало — ищем в интернете.
-    const webData = talk || pinged ? null : await maybeResearch(t, { question: `${earlier}\n${question}`.trim(), guide, learned });
+    const webData = talk || pinged ? null : await maybeResearch(t, { question: `${earlier}\n${question}`.trim(), guide, learned, sure });
     const [venue, platform, memory] = await Promise.all([
       t.tenantId ? venueStatus(t.tenantId).then((v) => venueBrief(v, now())).catch(() => "") : "",
       platformStatus().catch(() => ""),
@@ -1475,6 +1563,9 @@ function createSupportBot(deps) {
     }
     if (imagesNow && !question) {
       messages.push({ role: "system", content: "Клиент прислал скриншот без текста. По описанию скриншота пойми, что у него на экране и что не так, и помоги по шагам. Не уверен, в чём вопрос, — спроси одним коротким вопросом." });
+    }
+    if (afterSoft) {
+      messages.push({ role: "system", content: "По прошлому вопросу клиента уже позван специалист. Ответь на новое сообщение клиента. Если это тот же вопрос и уверенного ответа в знаниях нет — одной фразой скажи, что специалист уже подключён и ответит здесь." });
     }
     if (calledAi) {
       messages.push({ role: "system", content: "Клиент позвал тебя (ИИ-ассистента), чтобы ответил ты, а не специалист. Не здоровайся и не переспрашивай, что случилось: найди в переписке его последний нерешённый вопрос и ответь на него по шагам. Если ответ уже давал специалист — продолжи с того места." });
@@ -1510,11 +1601,19 @@ function createSupportBot(deps) {
       await doneTyping();
       return escalate(t, "ИИ не ответил");
     }
-    // Пока думали, клиент дописал — этот ответ устарел, следующий учтёт всё сразу.
+    // Пока думали, клиент дописал что-то новое — этот ответ устарел, следующий
+    // учтёт всё сразу. «Ты тут?», «бот, помоги» и повтор вопроса ответ не
+    // отменяют: иначе ИИ отвечал бы дважды и клиент ждал вдвое дольше.
     const after = await messagesOf(t);
-    if (after.length > history.length && after.slice(history.length).some((m) => m.authorRole === "owner")) return;
+    const seen = [...priorOwner, ...fresh.map((m) => m.text || "")];
+    const addedReal = after.slice(history.length).filter((m) => m.authorRole === "owner")
+      .some((m) => !noiseKind(m.text || "", seen, supportFiles.listOf(m).length > 0));
+    if (addedReal) {
+      await doneTyping();
+      return;
+    }
     await doneTyping();
-    if (!reply.text) return escalate(t, reply.reason || "ИИ не нашёл ответа");
+    if (!reply.text) return escalate(t, reply.reason || "ИИ не нашёл ответа", { byAi: true });
     // Обещать деньги, скидки, бесплатный период и сроки может только человек —
     // даже если ИИ уговорили, такой ответ клиенту не уходит.
     if (promisesSomething(reply.text)) {
@@ -1526,11 +1625,14 @@ function createSupportBot(deps) {
     const docNote = t.channel !== "telegram" && reply.docs.length
       ? `\n\n📄 Документы для скачивания (Word, ссылки действуют 7 дней):\n${reply.docs.map((id) => `• ${DOCS.find((d) => d.id === id).title}: ${docLink(t, id)}`).join("\n")}` : "";
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md), md: `${reply.md}${docNote}` });
-    await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id), lastTier: used.tier || "" });
+    await patch(t, {
+      aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id), lastTier: used.tier || "",
+      aiBurst: burst + 1, aiBurstAt: burst ? t.aiBurstAt : ts(now()),
+    });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
     const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${TIER_LABEL[used.tier] ? ` · ${TIER_LABEL[used.tier]}` : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
     await movePanel(t, aiNote);
-    if (reply.escalate) await escalate(t, reply.reason, { tellClient: false });
+    if (reply.escalate) await escalate(t, reply.reason, { tellClient: false, byAi: true });
     else if (deceit >= DECEIT_LIMIT && wary) await escalate(t, "несколько попыток обойти правила — нужен человек", { tellClient: false });
   }
 
@@ -1554,9 +1656,13 @@ function createSupportBot(deps) {
 
   /** Нужен ли интернет: ИИ сам решает по вопросу (планировщик на лёгкой
    *  модели), только для внешних тем или когда знаний не хватает. */
-  async function maybeResearch(t, { question, guide, learned }) {
+  async function maybeResearch(t, { question, guide, learned, sure = false }) {
     if (!webOn() || !aiReady() || !question) return null;
     const q = norm(question);
+    // Ответ уже есть во внутренних знаниях (настройка принтера, банка, модуля) —
+    // в интернет не ходим: это лишний вызов ИИ и десятки секунд ожидания.
+    // Законы, штрафы и новости проверяем всегда.
+    if (sure && !NEWSY.test(q)) return null;
     const thin = !learned.length && (!guide.length || guide[0].score < 5);
     if (!EXTERNAL.test(q) && !thin) return null;
     if ((Number(t.webSearches) || 0) >= 8) return null;
@@ -3320,6 +3426,6 @@ function createSupportBot(deps) {
 }
 
 module.exports = {
-  createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
+  createSupportBot, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
   boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, splitText, HOOK_ID, SYSTEM_PROMPT,
 };
