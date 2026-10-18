@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../services/background_reliability.dart';
 
 import '../../services/app_scope.dart';
 import '../../services/notification_service.dart';
@@ -183,6 +184,8 @@ class _SignalsSettingsScreenState extends State<SignalsSettingsScreen> {
           const SizedBox(height: 6),
           const _Hint('Часы Huawei и Honor получают уведомления, только когда экран телефона выключен. '
               '«Проверить часы» пришлёт три уведомления через 10 секунд — заблокируйте телефон и смотрите на часы.'),
+          const SizedBox(height: 10),
+          const _BackgroundCheck(),
         ],
       );
 
@@ -589,6 +592,89 @@ class _RelayDialogState extends State<_RelayDialog> {
           child: const Text('Готово'),
         ),
       ],
+    );
+  }
+}
+
+/// Работает ли касса в фоне без ограничений батареи. Без этого Android
+/// через несколько минут после выключения экрана обрывает ей сеть, и
+/// уведомления («Готово», вызовы гостей) перестают приходить на телефон и часы.
+class _BackgroundCheck extends StatefulWidget {
+  const _BackgroundCheck();
+
+  @override
+  State<_BackgroundCheck> createState() => _BackgroundCheckState();
+}
+
+class _BackgroundCheckState extends State<_BackgroundCheck> with WidgetsBindingObserver {
+  bool? _restricted;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Вернулись из системных настроек — проверяем снова.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  Future<void> _check() async {
+    final r = await BackgroundReliability.isRestricted();
+    if (mounted) setState(() => _restricted = r);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!BackgroundReliability.supported || _restricted == null) return const SizedBox.shrink();
+    final ok = _restricted == false;
+    final color = ok ? AppColors.success : AppColors.warning;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(ok ? Icons.battery_charging_full : Icons.battery_alert_outlined, color: color, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(ok ? 'Работа в фоне без ограничений' : 'Телефон может усыплять кассу в фоне',
+                    style: TextStyle(fontWeight: FontWeight.w700, color: color)),
+              ),
+            ],
+          ),
+          if (!ok) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Из-за экономии батареи уведомления сначала приходят, а через несколько минут перестают — и часы молчат. '
+              'Нажмите «Разрешить» и выберите для ZalPOS «Без ограничений» («Не оптимизировать»). На Huawei и Honor '
+              'ещё: Настройки → Батарея → Запуск приложений → ZalPOS → вручную, включить все три переключателя.',
+              style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: BackgroundReliability.openSettings,
+              icon: const Icon(Icons.settings_outlined, size: 18),
+              label: const Text('Разрешить'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

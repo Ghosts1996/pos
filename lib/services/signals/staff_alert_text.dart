@@ -34,6 +34,10 @@ StaffAlert callAlert(GuestCallType type, String table, {String comment = ''}) {
 StaffAlert readyAlert(String table, String summary) =>
     StaffAlert('✅ Готово · ${_table(table)}', summary.isEmpty ? 'Можно выносить' : 'Можно выносить: $summary');
 
+/// Готово стоит на раздаче и не отмечено поданным — напоминание официанту.
+StaffAlert coldAlert(String table, String dish, {required int minutes}) =>
+    StaffAlert('⏳ Остывает · ${_table(table)}', '$dish ждёт на раздаче $minutes мин — заберите или отметьте «Подано»');
+
 StaffAlert guestOrderAlert(String table, String items) =>
     StaffAlert('📱 Заказ из приложения · ${_table(table)}', items);
 

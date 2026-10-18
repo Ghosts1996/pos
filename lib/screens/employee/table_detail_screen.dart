@@ -895,7 +895,43 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         ),
       );
 
+  /// Где позиция: ждёт кухню → готовится → готово, заберите → подано.
+  /// [kds] — по чеку уже работали на экране «Кухня и бар»; без него «ждёт
+  /// кухню» не пишем: в заведении без экрана кухни это было бы неправдой.
+  Widget _kitchenState(OrderItem i, {required bool kds}) {
+    Widget tag(IconData icon, String text, Color color) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 3),
+            Flexible(
+              child: Text(text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color, fontSize: 12.5, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        );
+    if (i.toServe > 0) {
+      return tag(Icons.check_circle, i.toServe < i.qty ? 'готово ${i.toServe} из ${i.qty} — заберите' : 'готово — заберите', AppColors.success);
+    }
+    if (i.cooking > 0) return tag(Icons.local_fire_department, 'готовится', AppColors.warning);
+    if (kds && i.pending > 0 && i.since != null && !i.hold) return tag(Icons.schedule, 'ждёт кухню', AppColors.textMuted);
+    if (i.ready > 0 && i.ready == i.qty && i.readyAt != null) return tag(Icons.done_all, 'подано', AppColors.textMuted);
+    if (i.ready > 0) return tag(Icons.check_circle, i.pending > 0 ? 'готово ${i.ready} из ${i.qty}' : 'готово', AppColors.success);
+    return const SizedBox.shrink();
+  }
+
+  Future<void> _markServed(SessionModel session, OrderItem i) async {
+    try {
+      await _fs.markItemsServed(session.id, {i.lineId});
+    } catch (e) {
+      _showError('Не удалось отметить: ${humanError(e, lower: true)}');
+    }
+  }
+
   Widget _orderList(SessionModel session) {
+    final kds = session.orderItems.any((x) => x.accepted > 0 || x.readyAt != null);
     final rows = <Widget>[];
     for (var k = 0; k < session.orderItems.length; k++) {
       final i = session.orderItems[k];
@@ -922,16 +958,27 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     children: [
                       Text('${_money(i.price)} × ${i.qty}',
                           style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
-                      // Отметка с экрана «Кухня и бар»: можно выносить.
-                      if (i.ready > 0) ...[
-                        const SizedBox(width: 8),
-                        const Icon(Icons.check_circle, size: 14, color: AppColors.success),
-                        const SizedBox(width: 3),
-                        Text(i.pending > 0 ? 'готово ${i.ready} из ${i.qty}' : 'готово',
-                            style: const TextStyle(color: AppColors.success, fontSize: 12.5, fontWeight: FontWeight.w600)),
-                      ],
+                      const SizedBox(width: 8),
+                      Flexible(child: _kitchenState(i, kds: kds)),
                     ],
                   ),
+                  // Готово на раздаче — официант забрал и отдал гостю.
+                  if (i.toServe > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.success,
+                          side: BorderSide(color: AppColors.success.withValues(alpha: 0.6)),
+                          visualDensity: VisualDensity.compact,
+                          minimumSize: const Size(0, 34),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        onPressed: () => _markServed(session, i),
+                        icon: const Icon(Icons.room_service_outlined, size: 16),
+                        label: Text(i.toServe > 1 ? 'Подано ×${i.toServe}' : 'Подано'),
+                      ),
+                    ),
                   if (i.menuItemId.isNotEmpty)
                     Wrap(
                       spacing: 14,

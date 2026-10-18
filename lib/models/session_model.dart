@@ -60,6 +60,19 @@ class OrderItem {
   /// уходит бегунком и не видна на экране кухни, пока её не «подали».
   final bool hold;
 
+  /// Сколько штук кухня (бар, кальянщик) приняла в работу — «Принять» на
+  /// экране «Кухня и бар». Принятые, но не готовые — «готовится».
+  final int accepted;
+
+  /// Сколько готовых штук уже отдали гостю — «Подано» у официанта или
+  /// «Выдано» на кухне. Готовые, но не поданные ждут на раздаче.
+  final int served;
+
+  /// Когда последние штуки стали готовыми — для «ждёт выдачи 4 мин» и
+  /// напоминания официанту. Пусто у строк, отмеченных до этой версии:
+  /// их давно вынесли, на раздаче они не висят.
+  final DateTime? readyAt;
+
   OrderItem({
     this.menuItemId = '',
     required this.name,
@@ -74,13 +87,27 @@ class OrderItem {
     int sent = 0,
     this.mods = const [],
     this.hold = false,
+    int accepted = 0,
+    int served = 0,
+    this.readyAt,
   })  : ready = _clampQty(ready, qty),
-        sent = _clampQty(sent, qty);
+        sent = _clampQty(sent, qty),
+        accepted = _clampQty(accepted, qty),
+        served = _clampQty(served, _clampQty(ready, qty));
 
   static int _clampQty(int v, int qty) => v < 0 ? 0 : (v > qty ? (qty < 0 ? 0 : qty) : v);
 
   /// Штук ещё не готово.
   int get pending => qty - ready;
+
+  /// Ещё не приняты кухней — новые.
+  int get fresh => qty - (accepted > ready ? accepted : ready);
+
+  /// Приняты, но ещё не готовы — готовятся.
+  int get cooking => accepted > ready ? accepted - ready : 0;
+
+  /// Готовы и ждут, пока их отдадут гостю.
+  int get toServe => readyAt == null || ready <= served ? 0 : ready - served;
 
   /// Ключ строки в счёте: позиция меню + её модификаторы.
   String get lineId => lineIdOf(menuItemId, mods);
@@ -122,6 +149,9 @@ class OrderItem {
       since: m['since'] is num ? DateTime.fromMillisecondsSinceEpoch((m['since'] as num).toInt()) : null,
       sent: m['sent'] is num ? (m['sent'] as num).toInt() : 0,
       hold: m['hold'] == true,
+      accepted: m['accepted'] is num ? (m['accepted'] as num).toInt() : 0,
+      served: m['served'] is num ? (m['served'] as num).toInt() : 0,
+      readyAt: m['readyAt'] is num ? DateTime.fromMillisecondsSinceEpoch((m['readyAt'] as num).toInt()) : null,
       mods: m['mods'] is List
           ? [for (final v in m['mods'] as List) if (v != null && v.toString().trim().isNotEmpty) v.toString().trim()]
           : const [],
@@ -142,10 +172,19 @@ class OrderItem {
         if (sent > 0) 'sent': sent,
         if (mods.isNotEmpty) 'mods': mods,
         if (hold) 'hold': true,
+        if (accepted > 0) 'accepted': accepted,
+        if (served > 0) 'served': served,
+        if (readyAt != null) 'readyAt': readyAt!.millisecondsSinceEpoch,
       };
 
-  /// Всё готово: [ready] = [qty].
-  OrderItem markReady() => _with(ready: qty);
+  /// Всё готово: [ready] = [qty]; заодно и принято.
+  OrderItem markReady() => pending <= 0 ? this : _with(ready: qty, accepted: qty, readyAt: DateTime.now());
+
+  /// Кухня приняла все новые штуки в работу.
+  OrderItem markAccepted() => fresh <= 0 ? this : _with(accepted: qty);
+
+  /// Все готовые штуки отдали гостю.
+  OrderItem markServed() => toServe <= 0 ? this : _with(served: ready);
 
   /// Бегунок напечатан: на кухню ушло [count] штук (сколько было в строке
   /// на момент печати — добавленное за это время уйдёт следующим).
@@ -159,11 +198,13 @@ class OrderItem {
       ? this
       : OrderItem(
           menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
-          note: note, ready: ready, since: value ? since : DateTime.now(), sent: sent, mods: mods, hold: value);
+          note: note, ready: ready, since: value ? since : DateTime.now(), sent: sent, mods: mods, hold: value,
+          accepted: accepted, served: served, readyAt: readyAt);
 
-  OrderItem _with({String? note, int? ready, int? sent}) => OrderItem(
+  OrderItem _with({String? note, int? ready, int? sent, int? accepted, int? served, DateTime? readyAt}) => OrderItem(
       menuItemId: menuItemId, name: name, price: price, qty: qty, noPromo: noPromo, kind: kind, by: by,
-      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent, mods: mods, hold: hold);
+      note: note ?? this.note, ready: ready ?? this.ready, since: since, sent: sent ?? this.sent, mods: mods, hold: hold,
+      accepted: accepted ?? this.accepted, served: served ?? this.served, readyAt: readyAt ?? this.readyAt);
 
   /// Новое количество. Если штук стало меньше, учёт авторов урезается с
   /// самых крупных долей — сумма никогда не больше [qty].
@@ -183,6 +224,9 @@ class OrderItem {
       sent: sent,
       mods: mods,
       hold: hold,
+      accepted: accepted,
+      served: served,
+      readyAt: readyAt,
     );
   }
 
@@ -205,6 +249,9 @@ class OrderItem {
       sent: sent,
       mods: mods,
       hold: hold,
+      accepted: accepted,
+      served: served,
+      readyAt: readyAt,
     );
   }
 
@@ -239,6 +286,9 @@ class OrderItem {
       sent: sent,
       mods: mods,
       hold: hold,
+      accepted: accepted,
+      served: served,
+      readyAt: readyAt,
     );
   }
 
@@ -267,10 +317,15 @@ class OrderItem {
     // отправленные бегунком: их уже готовят.
     final readyOut = ready < n ? ready : n;
     final sentOut = sent < n ? sent : n;
-    OrderItem part(int q, Map<String, int> b, int r, int sn) => OrderItem(
+    final acceptedOut = accepted < n ? accepted : n;
+    final servedOut = served < readyOut ? served : readyOut;
+    OrderItem part(int q, Map<String, int> b, int r, int sn, int a, int sv) => OrderItem(
         menuItemId: menuItemId, name: name, price: price, qty: q, noPromo: noPromo, kind: kind, by: b, note: note,
-        ready: r, since: since, sent: sn, mods: mods, hold: hold);
-    return (part(n, taken, readyOut, sentOut), part(qty - n, kept, ready - readyOut, sent - sentOut));
+        ready: r, since: since, sent: sn, mods: mods, hold: hold, accepted: a, served: sv, readyAt: readyAt);
+    return (
+      part(n, taken, readyOut, sentOut, acceptedOut, servedOut),
+      part(qty - n, kept, ready - readyOut, sent - sentOut, accepted - acceptedOut, served - servedOut),
+    );
   }
 
   /// Вид продажи: записанный при добавлении, а у старых строк — по

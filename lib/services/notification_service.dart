@@ -211,11 +211,22 @@ class NotificationService {
   Future<void> showUrgent({required int id, required String title, required String body}) async {
     await init();
     if (kIsWeb || isWindowsApp) return;
-    await _plugin.show(
-      id,
-      title,
-      body,
-      NotificationDetails(
+    await _plugin.show(id, title, body, _urgentDetails(id, body));
+  }
+
+  /// Срочное в назначенное время — «блюдо остывает на раздаче».
+  Future<void> scheduleUrgentAt({required int id, required DateTime when, required String title, required String body}) async {
+    await init();
+    if (kIsWeb || isWindowsApp) return;
+    if (when.isBefore(DateTime.now().add(const Duration(seconds: 30)))) return;
+    await _schedule(id: id, when: when, title: title, body: body, details: _urgentDetails(id, body));
+  }
+
+  /// Каждое срочное уведомление — в своей группе: иначе с четвёртого Android
+  /// складывает их в общую пачку, и дальше они приходят без звука и
+  /// вибрации, а часы Huawei, Honor и Xiaomi показывают только пачку.
+  /// Через 30 минут уведомление снимается само — шторка не копит старое.
+  NotificationDetails _urgentDetails(int id, String body) => NotificationDetails(
         android: AndroidNotificationDetails(
           _channelUrgent.id,
           _channelUrgent.name,
@@ -223,13 +234,16 @@ class NotificationService {
           priority: Priority.max,
           icon: _icon,
           category: AndroidNotificationCategory.message,
+          visibility: NotificationVisibility.public,
           enableVibration: true,
           vibrationPattern: urgentVibration,
+          groupKey: 'zalpos_urgent_$id',
+          groupAlertBehavior: GroupAlertBehavior.all,
+          timeoutAfter: 30 * 60 * 1000,
+          ticker: body,
           styleInformation: BigTextStyleInformation(body),
         ),
-      ),
-    );
-  }
+      );
 
   /// Сигнал кухни: громкость будильника, звук повторяется, пока
   /// уведомление не снимут ([cancel]) — на экране кухни это кнопка

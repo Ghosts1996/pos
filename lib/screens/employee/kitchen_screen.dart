@@ -22,10 +22,12 @@ import '../../utils/sale_kind.dart';
 import '../../widgets/clock_ticker.dart';
 
 /// Что готовить: позиции открытых чеков всех столов по цехам — кухня, бар,
-/// кальяны. Повар, бармен и кальянщик видят свои, отмечают «Готово», а
-/// официант в счёте стола видит, что можно выносить.
+/// кальяны. Путь позиции: новая → «Принять» (готовится) → «Готово» (ждёт
+/// официанта) → «Выдано» на раздаче или «Подано» у официанта. Официант в
+/// счёте стола видит каждый шаг, «Готово» приходит ему уведомлением.
 ///
-/// Билет — один стол (чек): сверху те, что ждут дольше всех.
+/// Билет — один стол (чек): сверху те, что ждут дольше всех. Готовое, но не
+/// отданное — в полосе «Ждут выдачи» с таймером.
 class KitchenScreen extends StatefulWidget {
   final Employee employee;
   const KitchenScreen({super.key, required this.employee});
@@ -53,6 +55,23 @@ class KitchenScreen extends StatefulWidget {
       final lines = s.orderItems.where((i) => i.pending > 0 && i.since != null && !i.hold && i.effectiveKind == station).toList();
       if (lines.isEmpty) continue;
       final oldest = lines.map((i) => i.since!).reduce((a, b) => a.isBefore(b) ? a : b);
+      out.add(KitchenTicket(session: s, lines: lines, since: oldest));
+    }
+    out.sort((a, b) => a.since.compareTo(b.since));
+    return out;
+  }
+
+  /// Готовое, но ещё не отданное гостю: столы цеха [station], сверху то,
+  /// что стоит дольше. Старше трёх часов не показываем — забыли отметить.
+  static List<KitchenTicket> servingFor(List<SessionModel> checks, String station, {DateTime? now}) {
+    final t = now ?? DateTime.now();
+    final out = <KitchenTicket>[];
+    for (final s in checks) {
+      final lines = s.orderItems
+          .where((i) => i.toServe > 0 && i.effectiveKind == station && t.difference(i.readyAt!).inHours < 3)
+          .toList();
+      if (lines.isEmpty) continue;
+      final oldest = lines.map((i) => i.readyAt!).reduce((a, b) => a.isBefore(b) ? a : b);
       out.add(KitchenTicket(session: s, lines: lines, since: oldest));
     }
     out.sort((a, b) => a.since.compareTo(b.since));
@@ -113,7 +132,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
     super.dispose();
   }
 
+  List<SessionModel> _lastChecks = const [];
+
   void _checkNew(List<SessionModel> checks) {
+    _lastChecks = checks;
     final lines = <String>{};
     final fresh = <String, (SessionModel, List<OrderItem>)>{};
     final open = <String>{};
@@ -182,6 +204,40 @@ class _KitchenScreenState extends State<KitchenScreen> {
     } catch (_) {}
   }
 
+  /// «Принял» на красной плашке: звонок снимаем и новые позиции этих
+  /// столов — в работу, официант увидит «готовится».
+  void _acceptAllCalls() {
+    final ids = _alarm.pending.map((c) => c.sessionId).toSet();
+    _alarm.acceptAll();
+    for (final t in KitchenScreen.ticketsFor(_lastChecks, _station)) {
+      if (!ids.contains(t.session.id)) continue;
+      final fresh = t.lines.where((i) => i.fresh > 0).map((i) => i.lineId).toSet();
+      if (fresh.isNotEmpty) unawaited(_fs.markItemsAccepted(t.session.id, fresh).catchError((Object _) {}));
+    }
+  }
+
+  Future<void> _accept(SessionModel s, Set<String> ids) => _run('accept:${s.id}', () async {
+        _alarm.accept(s.id);
+        await _fs.markItemsAccepted(s.id, ids);
+      });
+
+  Future<void> _served(SessionModel s, Set<String> ids) => _run('served:${s.id}', () => _fs.markItemsServed(s.id, ids));
+
+  Future<void> _run(String key, Future<void> Function() job) async {
+    if (_busy.contains(key)) return;
+    setState(() => _busy.add(key));
+    try {
+      await job();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось отметить: ${humanError(e, lower: true)}')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy.remove(key));
+    }
+  }
+
   Future<void> _ready(SessionModel s, Set<String> ids) async {
     final key = '${s.id}:${ids.join(',')}';
     if (_busy.contains(key)) return;
@@ -224,6 +280,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final checks = snap.data!;
           final tickets = KitchenScreen.ticketsFor(checks, _station);
+          final serving = KitchenScreen.servingFor(checks, _station);
           return Column(
             children: [
               ListenableBuilder(listenable: _alarm, builder: (context, _) => _alarmBanner()),
@@ -250,6 +307,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                   ),
                 ),
               ),
+              if (serving.isNotEmpty) _servingStrip(serving),
               Expanded(
                 child: tickets.isEmpty
                     ? _empty()
@@ -315,7 +373,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                 minimumSize: const Size(132, 56),
                 textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
               ),
-              onPressed: _alarm.acceptAll,
+              onPressed: _acceptAllCalls,
               child: const Text('Принял'),
             ),
           ],
@@ -327,6 +385,92 @@ class _KitchenScreenState extends State<KitchenScreen> {
   String _stationTitle(String st, int n) {
     final name = switch (st) { SaleKind.bar => 'Бар', SaleKind.hookah => 'Кальяны', _ => 'Кухня' };
     return n > 0 ? '$name · $n' : name;
+  }
+
+  /// Полоса «Ждут выдачи»: готовое, которое ещё не унесли. Таймер краснеет —
+  /// блюдо остывает; «Выдано» — когда отдали официанту или гостю.
+  Widget _servingStrip(List<KitchenTicket> list) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+              child: Text('Ждут выдачи · ${list.length}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success)),
+            ),
+            SizedBox(
+              height: context.scaledExtent(112, textPart: 40),
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: list.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, i) {
+                  final t = list[i];
+                  final ids = t.lines.map((l) => l.lineId).toSet();
+                  return Container(
+                    width: 250,
+                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.success.withValues(alpha: 0.55)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(t.session.tableName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
+                            ),
+                            TickerBuilder(builder: (context, now) => _minutesChip(now.difference(t.since).inMinutes, warn: 5, danger: 10)),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Expanded(
+                          child: Text(
+                            t.lines.map((l) => l.toServe > 1 ? '${l.displayName} ×${l.toServe}' : l.displayName).join(', '),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.success,
+                              visualDensity: VisualDensity.compact,
+                              textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            onPressed: _busy.contains('served:${t.session.id}') ? null : () => _served(t.session, ids),
+                            icon: const Icon(Icons.room_service_outlined, size: 18),
+                            label: const Text('Выдано'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+
+  /// «12 мин» — серым, жёлтым после [warn], красным после [danger].
+  Widget _minutesChip(int minutes, {required int warn, required int danger}) {
+    final min = minutes.clamp(0, 999);
+    final color = min >= danger ? AppColors.danger : (min >= warn ? AppColors.warning : AppColors.textMuted);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
+      child: Text('$min мин', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
+    );
   }
 
   Widget _empty() => const Center(
@@ -349,6 +493,8 @@ class _KitchenScreenState extends State<KitchenScreen> {
   Widget _ticket(KitchenTicket t) {
     final s = t.session;
     final allIds = t.lines.map((i) => i.lineId).toSet();
+    final freshIds = t.lines.where((i) => i.fresh > 0).map((i) => i.lineId).toSet();
+    final hasFresh = freshIds.isNotEmpty;
     final unaccepted = _alarm.pending.any((c) => c.sessionId == s.id);
     return Container(
       decoration: BoxDecoration(
@@ -376,18 +522,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
                   ],
                 ),
               ),
-              TickerBuilder(builder: (context, now) {
-                final min = now.difference(t.since).inMinutes.clamp(0, 999);
-                final color = min >= 25 ? AppColors.danger : (min >= 15 ? AppColors.warning : AppColors.textMuted);
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text('$min мин', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
-                );
-              }),
+              _stateChip(hasFresh ? 'Новый' : 'Готовится', hasFresh ? AppColors.danger : AppColors.warning),
+              const SizedBox(width: 6),
+              TickerBuilder(builder: (context, now) => _minutesChip(now.difference(t.since).inMinutes, warn: 15, danger: 25)),
             ],
           ),
           const Divider(height: 18, color: AppColors.border),
@@ -424,6 +561,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
                               ],
                             ),
                           ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2, right: 6),
+                            child: _lineState(i),
+                          ),
                           const Icon(Icons.check_circle_outline, size: 22, color: AppColors.textMuted),
                         ],
                       ),
@@ -433,14 +574,51 @@ class _KitchenScreenState extends State<KitchenScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.success),
-            onPressed: () => _ready(s, allIds),
-            icon: const Icon(Icons.done_all, size: 18),
-            label: Text(t.lines.length == 1 ? 'Готово' : 'Всё готово'),
+          Row(
+            children: [
+              if (hasFresh) ...[
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.warning,
+                      side: BorderSide(color: AppColors.warning.withValues(alpha: 0.7)),
+                      minimumSize: const Size(0, 44),
+                    ),
+                    onPressed: _busy.contains('accept:${s.id}') ? null : () => _accept(s, freshIds),
+                    icon: const Icon(Icons.local_fire_department_outlined, size: 18),
+                    label: const Text('Принять'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                flex: hasFresh ? 1 : 2,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: AppColors.success, minimumSize: const Size(0, 44)),
+                  onPressed: () => _ready(s, allIds),
+                  icon: const Icon(Icons.done_all, size: 18),
+                  label: Text(t.lines.length == 1 ? 'Готово' : 'Всё готово', maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  Widget _stateChip(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
+        child: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12.5)),
+      );
+
+  /// Новая — красная точка, принятая — «готовится».
+  Widget _lineState(OrderItem i) {
+    if (i.fresh > 0 && i.cooking == 0) {
+      return Container(width: 9, height: 9, decoration: const BoxDecoration(color: AppColors.danger, shape: BoxShape.circle));
+    }
+    return Text(i.fresh > 0 ? '${i.cooking} готовится' : 'готовится',
+        style: const TextStyle(fontSize: 11.5, color: AppColors.warning, fontWeight: FontWeight.w600));
   }
 }

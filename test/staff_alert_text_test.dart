@@ -11,6 +11,8 @@ void main() {
     expect(callAlert(GuestCallType.callWaiter, 'Стол 1', comment: 'воды').body, 'Гость ждёт за столом · «воды»');
     expect(readyAlert('Стол 5', 'Цезарь ×2').title, '✅ Готово · Стол 5');
     expect(readyAlert('Стол 5', 'Цезарь ×2').body, 'Можно выносить: Цезарь ×2');
+    expect(coldAlert('Стол 5', 'Цезарь', minutes: 5).title, '⏳ Остывает · Стол 5');
+    expect(coldAlert('Стол 5', 'Цезарь', minutes: 5).body, 'Цезарь ждёт на раздаче 5 мин — заберите или отметьте «Подано»');
     expect(guestOrderAlert('Стол 2', 'Чай ×1').title, '📱 Заказ из приложения · Стол 2');
     expect(takeawayAlert(delivery: true, guest: 'Анна', items: 'Пицца ×1').title, '🛵 Доставка из приложения');
     expect(reservationAlert(guest: 'Анна', people: 4, at: DateTime(2026, 10, 17, 19, 5)).title, '📅 Новая бронь · 19:05');

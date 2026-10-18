@@ -36,6 +36,12 @@ class SessionAlertsService {
   /// За сколько до конца сеанса предупредить.
   static const warnBefore = Duration(minutes: 10);
 
+  /// Готовое стоит на раздаче дольше — напомнить официанту.
+  static const coldAfter = Duration(minutes: 5);
+
+  /// Запланированные «остывает»: чек|строка → когда стало готово (мс).
+  final _coldPlanned = <String, int>{};
+
   final _notify = NotificationService.instance;
 
   /// Кто вошёл на этом устройстве и кто открыл смену: уведомления получает
@@ -338,6 +344,11 @@ class SessionAlertsService {
       }
 
       _readySeen.removeWhere((id, _) => !alive.contains(id));
+      // Чек закрыли — его «остывает» больше не нужно.
+      for (final key in _coldPlanned.keys.where((k) => !alive.contains(k.split('|').first)).toList()) {
+        _coldPlanned.remove(key);
+        unawaited(_notify.cancel(NotificationService.idFor('cold_$key')).catchError((Object _) {}));
+      }
       // Чек закрыли или перенесли — снимаем его будильники.
       for (final id in _planned.keys.toList()) {
         if (alive.contains(id)) continue;
@@ -352,6 +363,7 @@ class SessionAlertsService {
 
   /// Кухня отметила блюда готовыми — звеним официанту чека.
   void _checkReady(SessionModel s) {
+    _planCold(s);
     final before = _readySeen[s.id];
     _readySeen[s.id] = readyByLine(s.orderItems);
     final up = readyIncreases(before, s.orderItems);
@@ -363,6 +375,31 @@ class SessionAlertsService {
       lines: {for (final i in up) i.lineId: i.ready},
       summary: readySummary(up),
     );
+  }
+
+  /// Готовое не отдали за [coldAfter] — напомнить тому, кто выносит.
+  /// Отметили «Подано» или «Выдано» — напоминание снимается.
+  void _planCold(SessionModel s) {
+    final mine = readyIsMine(
+      checkWaiterId: s.employeeId,
+      myId: _myEmployeeId,
+      onShift: _onShift,
+      mine: _mine,
+      myPosition: _myPosition,
+    );
+    for (final i in s.orderItems) {
+      final key = '${s.id}|${i.lineId}';
+      final id = NotificationService.idFor('cold_$key');
+      if (mine && i.toServe > 0) {
+        final at = i.readyAt!.millisecondsSinceEpoch;
+        if (_coldPlanned[key] == at) continue;
+        _coldPlanned[key] = at;
+        final a = coldAlert(s.tableName, i.displayName, minutes: coldAfter.inMinutes);
+        unawaited(_notify.scheduleUrgentAt(id: id, when: i.readyAt!.add(coldAfter), title: a.title, body: a.body).catchError((Object _) {}));
+      } else if (_coldPlanned.remove(key) != null) {
+        unawaited(_notify.cancel(id).catchError((Object _) {}));
+      }
+    }
   }
 
   /// То же «готово», но по Wi‑Fi заведения — доходит и без интернета.

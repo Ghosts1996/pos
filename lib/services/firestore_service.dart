@@ -880,6 +880,31 @@ class FirestoreService {
     if (changed) unawaited(SignalHub.instance.dishReady(sessionId, lineIds).catchError((Object _) {}));
   }
 
+  /// Кухня (бар, кальянщик) приняла новые штуки в работу — у официанта
+  /// они становятся «готовится».
+  Future<void> markItemsAccepted(String sessionId, Set<String> lineIds) => _editCheckItems(sessionId, (items) {
+        var changed = false;
+        for (var k = 0; k < items.length; k++) {
+          if (lineIds.contains(items[k].lineId) && items[k].fresh > 0) {
+            items[k] = items[k].markAccepted();
+            changed = true;
+          }
+        }
+        return changed;
+      });
+
+  /// Готовое отдали гостю: «Подано» у официанта или «Выдано» на раздаче.
+  Future<void> markItemsServed(String sessionId, Set<String> lineIds) => _editCheckItems(sessionId, (items) {
+        var changed = false;
+        for (var k = 0; k < items.length; k++) {
+          if (lineIds.contains(items[k].lineId) && items[k].toServe > 0) {
+            items[k] = items[k].markServed();
+            changed = true;
+          }
+        }
+        return changed;
+      });
+
   /// Бегунок напечатан: [sentQty] — сколько штук каждой строки (lineId →
   /// количество) было в строке на момент печати. Добавленное за это время
   /// останется неотправленным и уйдёт следующим бегунком.
