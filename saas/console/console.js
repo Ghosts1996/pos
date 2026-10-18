@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  collection, query, where, orderBy, limit, Timestamp, deleteField,
+  collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
@@ -3469,6 +3469,7 @@ const NAV_ICON_PATHS = {
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.4"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><circle class="ac-f" cx="12" cy="14.6" r="1.25"/><path class="ac" d="M12 15.6v1.8"/>',
   plus: '<path d="M12 20.5s6.5-5.6 6.5-10.7a6.5 6.5 0 0 0-13 0c0 5.1 6.5 10.7 6.5 10.7Z"/><path class="ac" d="M12 7v5.6M9.2 9.8h5.6"/>',
   back: '<path d="M19.5 12h-14"/><path class="ac" d="M10.5 6.5 5 12l5.5 5.5"/>',
+  upload: '<path d="M4.5 14.5v3.3a2.2 2.2 0 0 0 2.2 2.2h10.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/><path d="M7.5 9 12 4.5 16.5 9"/><path class="ac" d="M12 4.8v10"/>',
 };
 
 function navIconHtml(name, color) {
@@ -3523,6 +3524,7 @@ const DASHBOARD_NAV = [
   { id: 'ai', icon: 'spark', color: '#A855F7', label: 'ИИ' },
   { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль' },
   { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки' },
+  { id: 'import', icon: 'upload', color: '#14B8A6', label: 'Перенос данных' },
   { id: 'faq', icon: 'question', color: '#EF4444', label: 'FAQ' },
   { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
 ];
@@ -3663,6 +3665,192 @@ function watchDashboardData(tenantId) {
   // Счета для ИП и организаций и черновик формы плательщика — по той же
   // причине, что aiDraft.
   let bankInvoices = null;
+  // Перенос данных из другой кассы (import-core.js — разбор выгрузок).
+  // Шаги: pick → map → preview → done. Файл живёт только в браузере.
+  let imp = { step: 'pick' };
+  let importCore = null;
+  const IMPORT_LOG_KEY = `zalposImports_${tenantId}`;
+  const importLog = () => { try { return JSON.parse(window.localStorage.getItem(IMPORT_LOG_KEY) || '[]'); } catch (_) { return []; } };
+  const saveImportLog = (list) => { try { window.localStorage.setItem(IMPORT_LOG_KEY, JSON.stringify(list.slice(0, 20))); } catch (_) {} };
+  const loadImportCore = async () => (importCore = importCore || await import('./import-core.js'));
+  const tcol = (name) => collection(state.db, 'tenants', tenantId, name);
+
+  /** Что уже есть в заведении — чтобы не плодить дубли. */
+  async function importExisting() {
+    const [cats, menu, stock, cards] = await Promise.all(['menuCategories', 'menuItems', 'inventoryItems', 'discountCards'].map((c) => getDocs(tcol(c))));
+    const rows = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return {
+      categories: rows(cats), menu: rows(menu), stock: rows(stock), cards: rows(cards),
+      staffNames: (employees || []).map((e) => empName(e)).filter(Boolean),
+    };
+  }
+
+  /** Записи пачками: в одной пачке Firestore — до 500 операций. */
+  async function commitOps(ops, onProgress) {
+    for (let i = 0; i < ops.length; i += 400) {
+      const batch = writeBatch(state.db);
+      for (const op of ops.slice(i, i + 400)) {
+        if (op.type === 'set') batch.set(op.ref, op.data);
+        else if (op.type === 'update') batch.update(op.ref, op.data);
+        else batch.delete(op.ref);
+      }
+      await batch.commit();
+      if (onProgress) onProgress(Math.min(ops.length, i + 400), ops.length);
+    }
+  }
+
+  /** Выполнить план переноса. Каждая созданная запись помечена importId —
+   *  так перенос можно отменить целиком. */
+  async function runImport(plan, existing) {
+    const I = importCore;
+    const importId = `imp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const now = Timestamp.now();
+    const ops = [];
+    const result = { importId, created: 0, updated: 0, pins: [], warnings: [] };
+    const progress = (done, all) => { imp.progress = `Записываю: ${done} из ${all}`; draw(); };
+    if (plan.kind === 'menu') {
+      const catId = new Map(existing.categories.map((c) => [I.nameKey(c.name), c.id]));
+      let order = Math.max(0, ...existing.categories.map((c) => Number(c.order) || 0));
+      for (const name of plan.newCategories) {
+        const ref = doc(tcol('menuCategories'));
+        catId.set(I.nameKey(name), ref.id);
+        ops.push({ type: 'set', ref, data: { name, order: ++order, imageUrl: '', kind: '', importId } });
+      }
+      for (const it of plan.create) {
+        ops.push({ type: 'set', ref: doc(tcol('menuItems')), data: {
+          categoryId: catId.get(I.nameKey(it.category)), name: it.name, price: it.price, description: it.description || '',
+          available: true, imageUrl: '', weight: 0, weightUnit: 'g', inventoryItemId: '', components: [], recipePortions: 1,
+          modifierGroups: [], staffBonus: 0, tobacco: false, vat: '', fiscalSubject: 'commodity', importId,
+        } });
+        result.created++;
+      }
+      for (const it of plan.update) {
+        ops.push({ type: 'update', ref: doc(tcol('menuItems'), it.id), data: {
+          price: it.price, categoryId: catId.get(I.nameKey(it.category)), ...(it.description ? { description: it.description } : {}),
+        } });
+        result.updated++;
+      }
+    } else if (plan.kind === 'stock' || plan.kind === 'recipes') {
+      const stockId = new Map(existing.stock.map((x) => [I.nameKey(x.name), x.id]));
+      const newItem = (it) => {
+        const ref = doc(tcol('inventoryItems'));
+        stockId.set(I.nameKey(it.name), ref.id);
+        ops.push({ type: 'set', ref, data: {
+          name: it.name, category: it.category || '', unit: it.unit, quantity: it.quantity || 0, minQuantity: it.min || 0,
+          active: true, note: '', updatedAt: now, isMarked: false, gtin: '', costPrice: it.cost || 0, recipe: [], recipeOutput: 0, importId,
+        } });
+        if (it.quantity > 0) {
+          ops.push({ type: 'set', ref: doc(tcol('inventoryMovements')), data: {
+            itemId: ref.id, itemName: it.name, unit: it.unit, type: 'receipt', delta: it.quantity, resultingQty: it.quantity,
+            reason: 'Начальный остаток — перенос из прежней системы', createdAt: now, importId,
+          } });
+        }
+      };
+      if (plan.kind === 'stock') {
+        for (const it of plan.create) { newItem(it); result.created++; }
+        for (const it of plan.update) {
+          const data = { updatedAt: now, ...(it.cost > 0 ? { costPrice: it.cost } : {}), ...(it.min > 0 ? { minQuantity: it.min } : {}) };
+          if (it.quantity != null && Math.abs(it.quantity - it.was) > 1e-9) {
+            data.quantity = it.quantity;
+            ops.push({ type: 'set', ref: doc(tcol('inventoryMovements')), data: {
+              itemId: it.id, itemName: it.name, unit: it.unit, type: 'correction', delta: it.quantity - it.was, resultingQty: it.quantity,
+              reason: 'Остаток по переносу из прежней системы', createdAt: now, importId,
+            } });
+          }
+          ops.push({ type: 'update', ref: doc(tcol('inventoryItems'), it.id), data });
+          result.updated++;
+        }
+      } else {
+        for (const s of plan.newStock) newItem({ name: s.name, unit: s.unit, quantity: 0, category: 'Продукты' });
+        for (const d of [...plan.create, ...plan.update]) {
+          ops.push({ type: 'update', ref: doc(tcol('menuItems'), d.id), data: {
+            components: d.lines.map((l) => ({ inventoryItemId: stockId.get(I.nameKey(l.ingredient)), weight: l.amount, weightUnit: l.unit, ...(l.loss > 0 ? { lossPercent: l.loss } : {}) })),
+            recipePortions: d.portions, inventoryItemId: '', weight: 0, recipeImportId: importId,
+          } });
+          if (d.hadRecipe) result.updated++; else result.created++;
+        }
+        if (plan.newStock.length) result.warnings.push(`Новые продукты на складе: ${plan.newStock.length} — с нулевым остатком. Перенесите остатки или проведите приход.`);
+      }
+    } else if (plan.kind === 'staff') {
+      const sub = subscription || {};
+      const max = planCaps((plans || []).find((x) => x.id === sub.planId)).maxEmployees;
+      let list = plan.create;
+      if (max && (employees || []).length + list.length > max) {
+        const room = Math.max(0, max - (employees || []).length);
+        result.warnings.push(`По тарифу — до ${max} сотрудников: перенесены первые ${room}, остальные — после смены тарифа.`);
+        list = list.slice(0, room);
+      }
+      const takenHashes = new Set((employees || []).map((e) => e.pinHash).filter(Boolean));
+      const taken = new Set();
+      const people = [];
+      for (const it of list) {
+        let pin;
+        let hash;
+        do {
+          pin = I.newPin(it.role, taken);
+          hash = await hashEmployeePin(pin, tenantId);
+        } while (takenHashes.has(hash));
+        takenHashes.add(hash);
+        people.push({ ...it, ref: doc(tcol('employees')), pin, hash });
+      }
+      // Имена — сначала в справочник в РФ (как при добавлении в «Команде»).
+      for (let i = 0; i < people.length; i += 200) {
+        await piiCall({ tenantId, kind: 'pii_put', items: people.slice(i, i + 200).map((x) => ({ k: 'staff', id: x.ref.id, fields: { name: x.name } })) });
+      }
+      for (const x of people) {
+        staffNames.set(x.ref.id, x.name);
+        ops.push({ type: 'set', ref: x.ref, data: {
+          role: x.role, pinHash: x.hash, position: x.position, hourlyRateEnabled: false, hourlyRate: 0,
+          overtimeEnabled: false, overtimeThresholdHours: 8, overtimeMultiplier: 1.5, salesPercentEnabled: false, salesPercentRate: 0, importId,
+        } });
+        result.pins.push({ name: x.name, role: x.role, pin: x.pin });
+        result.created++;
+      }
+    } else if (plan.kind === 'cards') {
+      for (const it of plan.create) {
+        ops.push({ type: 'set', ref: doc(tcol('discountCards')), data: { cardNumber: it.number, discountPercent: it.percent, active: true, importId } });
+        result.created++;
+      }
+      for (const it of plan.update) {
+        ops.push({ type: 'update', ref: doc(tcol('discountCards'), it.id), data: { discountPercent: it.percent } });
+        result.updated++;
+      }
+    }
+    await commitOps(ops, progress);
+    // Касса берёт меню из кеша сервера — сбросим его, чтобы перенос был виден сразу.
+    callSaasGateway('invalidateTenantCache', { tenantId }).catch(() => {});
+    saveImportLog([{ id: importId, at: Date.now(), kind: plan.kind, file: imp.fileName || '', created: result.created, updated: result.updated }, ...importLog()]);
+    return result;
+  }
+
+  /** Отменить перенос: удалить созданное им, снять перенесённые рецепты. */
+  async function undoImport(importId) {
+    const ops = [];
+    const created = {};
+    for (const c of ['menuItems', 'inventoryMovements', 'inventoryItems', 'employees', 'discountCards', 'menuCategories']) {
+      const snap = await getDocs(query(tcol(c), where('importId', '==', importId)));
+      created[c] = snap.docs;
+    }
+    // Категорию, в которую потом добавили свои позиции, не удаляем.
+    const keepCats = new Set();
+    if (created.menuCategories.length) {
+      const all = await getDocs(tcol('menuItems'));
+      const gone = new Set(created.menuItems.map((d) => d.id));
+      for (const d of all.docs) if (!gone.has(d.id)) keepCats.add(d.data().categoryId);
+    }
+    for (const [c, docs] of Object.entries(created)) {
+      for (const d of docs) if (!(c === 'menuCategories' && keepCats.has(d.id))) ops.push({ type: 'delete', ref: d.ref });
+    }
+    const recipes = await getDocs(query(tcol('menuItems'), where('recipeImportId', '==', importId)));
+    for (const d of recipes.docs) {
+      if (!created.menuItems.some((x) => x.id === d.id)) ops.push({ type: 'update', ref: d.ref, data: { components: [], recipePortions: 1, recipeImportId: deleteField() } });
+    }
+    await commitOps(ops);
+    for (const d of created.employees) await piiCall({ tenantId, kind: 'pii_erase', k: 'staff', id: d.id }).catch(() => {});
+    callSaasGateway('invalidateTenantCache', { tenantId }).catch(() => {});
+    saveImportLog(importLog().filter((x) => x.id !== importId));
+    return ops.length;
+  }
   const payerDraft = { mode: 'individual', type: 'ip', name: '', inn: '', kpp: '' };
   // Объявления платформы. Скрытые запоминаем в localStorage: синхронизировать
   // «прочитано» между устройствами ради баннера незачем.
@@ -4791,10 +4979,123 @@ function watchDashboardData(tenantId) {
       `;
     };
 
+    const importHtml = () => {
+      const I = importCore;
+      const kinds = I ? I.KINDS : null;
+      const log = importLog();
+      const KIND_ORDER = ['menu', 'stock', 'recipes', 'staff', 'cards'];
+      const LABEL = { menu: 'Меню', stock: 'Склад', recipes: 'Техкарты', staff: 'Сотрудники', cards: 'Скидочные карты' };
+      const intro = `
+        <h2>Перенос данных</h2>
+        <div class="card">
+          <p class="small" style="margin-top:0">Перенесите данные из прежней кассы — и касса ZalPOS сразу готова к работе:
+          меню с ценами и категориями, склад с остатками и ценами закупки, техкарты, сотрудники с новыми PIN-кодами, скидочные карты.</p>
+          <ol class="small muted" style="padding-left:18px;margin:8px 0">
+            <li>В прежней системе выгрузите данные в Excel или CSV её штатной функцией «Экспорт» / «Выгрузить в Excel»: номенклатуру (меню), остатки склада, техкарты, сотрудников, дисконтные карты.</li>
+            <li>Загрузите файлы сюда по одному — лучше в таком порядке: меню → склад → техкарты → сотрудники → карты.</li>
+            <li>Проверьте, какие столбцы мы узнали, посмотрите предпросмотр и нажмите «Перенести». Ошибся — «Отменить перенос».</li>
+          </ol>
+          <p class="small muted" style="margin:0">Формат своей системы не подошёл — скачайте шаблон, вставьте в него столбцы из выгрузки и загрузите:
+            ${KIND_ORDER.map((k) => `<a href="#" class="f-imp-template" data-kind="${k}">${LABEL[k]}</a>`).join(' · ')}</p>
+        </div>
+        <div class="card" style="margin-top:10px">
+          <p class="small muted" style="margin:0"><b>Что не переносится и почему.</b> Телефоны, имена и бонусы гостей: согласие на обработку
+          данных гости давали вашей прежней системе, а в ZalPOS гость подтверждает его сам, когда входит в приложение (152-ФЗ).
+          История чеков остаётся в прежней системе и у вашего ОФД, отчёты ZalPOS начнутся с первого дня работы. PIN-коды не переносятся —
+          создадим новые. Файл обрабатывается в вашем браузере; имена сотрудников сохраняются только на сервере в России.</p>
+        </div>`;
+      const history = log.length ? `
+        <h2>Прошлые переносы</h2>
+        <div class="card">
+          ${log.map((x) => `
+            <div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);flex-wrap:wrap">
+              <div class="grow small">${esc(LABEL[x.kind] || x.kind)} · ${fmtDateTime(Timestamp.fromMillis(x.at))}${x.file ? ` · ${esc(x.file)}` : ''}
+                <div class="muted">создано ${x.created}${x.updated ? `, обновлено ${x.updated}` : ''}</div></div>
+              ${canManage ? `<button class="btn-link f-imp-undo" data-id="${esc(x.id)}" style="width:auto">Отменить перенос</button>` : ''}
+            </div>`).join('')}
+        </div>` : '';
+      if (!canManage) return `${intro}<p class="small muted">Переносить данные может владелец или администратор.</p>`;
+      if (imp.step === 'pick' || !kinds) {
+        return `${intro}
+          <div class="card" style="margin-top:10px">
+            <label class="field"><span>Файл выгрузки (.xlsx или .csv)</span>
+              <input type="file" id="f-imp-file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+            ${imp.busy ? '<p class="small muted">Читаю файл…</p>' : ''}
+            ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+          </div>${history}`;
+      }
+      const sheet = imp.sheets[imp.sheetIdx];
+      const headers = sheet.rows[imp.headerIdx] || [];
+      const def = kinds[imp.kind];
+      const colOpts = (sel) => `<option value="">— нет —</option>${headers.map((h, i) => `<option value="${i}" ${String(sel) === String(i) ? 'selected' : ''}>${esc(h || `Столбец ${i + 1}`)}</option>`).join('')}`;
+      if (imp.step === 'map') {
+        return `${intro}
+          <div class="card" style="margin-top:10px">
+            <div class="small" style="font-weight:600;margin-bottom:8px">${esc(imp.fileName)}</div>
+            ${imp.sheets.length > 1 ? `<label class="field"><span>Лист</span><select id="f-imp-sheet">${imp.sheets.map((sh, i) => `<option value="${i}" ${i === imp.sheetIdx ? 'selected' : ''}>${esc(sh.name)} (${sh.rows.length} строк)</option>`).join('')}</select></label>` : ''}
+            <label class="field"><span>Что в файле</span><select id="f-imp-kind">${KIND_ORDER.map((k) => `<option value="${k}" ${k === imp.kind ? 'selected' : ''}>${LABEL[k]}</option>`).join('')}</select></label>
+            <p class="small muted" style="margin-top:-4px">${esc(def.hint)}</p>
+            <label class="field"><span>Строка с названиями столбцов</span><input type="number" id="f-imp-header" min="1" max="${sheet.rows.length}" value="${imp.headerIdx + 1}"></label>
+            <div class="small" style="font-weight:600;margin:10px 0 6px">Какой столбец что значит</div>
+            ${def.fields.map((f) => `<label class="field"><span>${esc(f.label)}${f.required ? ' *' : ''}</span><select class="f-imp-map" data-field="${f.key}">${colOpts(imp.map[f.key])}</select></label>`).join('')}
+            ${imp.kind !== 'staff' ? `<label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-top:8px">
+              <input type="checkbox" id="f-imp-update" ${imp.update ? 'checked' : ''} style="width:auto;margin-top:2px">
+              <span>${{ menu: 'Позиции с тем же названием обновить: цена, категория, описание', stock: 'Продукты с тем же названием обновить: остаток, цена закупки, минимум', recipes: 'Заменить рецепт у блюд, где он уже есть', cards: 'У карт с тем же номером обновить скидку' }[imp.kind]}. Иначе — пропустить.</span></label>` : ''}
+            ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+            <div class="row" style="gap:8px;margin-top:12px">
+              <button class="btn btn-ghost" id="f-imp-back" style="width:auto">Другой файл</button>
+              <button class="btn btn-primary" id="f-imp-preview" style="width:auto">Предпросмотр</button>
+            </div>
+          </div>${history}`;
+      }
+      const plan = imp.plan;
+      if (imp.step === 'preview') {
+        const sample = plan.create.slice(0, 8);
+        const line = (x) => ({
+          menu: () => `${esc(x.name)} — ${rub(x.price)} · ${esc(x.category)}`,
+          stock: () => `${esc(x.name)} — ${x.quantity} ${x.unit}${x.cost ? ` · ${rub(x.cost)} за ${{ g: 'кг', ml: 'л' }[x.unit] || x.unit}` : ''}`,
+          recipes: () => `${esc(x.dish)}: ${x.lines.map((l) => `${esc(l.ingredient)} ${l.amount} ${l.unit}`).join(', ')}${x.portions > 1 ? ` · на ${x.portions} порц.` : ''}`,
+          staff: () => `${esc(x.name)} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'}`,
+          cards: () => `Карта ${esc(x.number)} — ${x.percent} %`,
+        }[plan.kind])();
+        const errs = [...imp.rowErrors.map((e) => `Строка ${e.row}: ${e.msg}`), ...plan.errors.map((e) => e.msg)];
+        return `${intro}
+          <div class="card" style="margin-top:10px">
+            <div class="small" style="font-weight:600">${esc(LABEL[plan.kind])} · ${esc(imp.fileName)}</div>
+            <p class="small" style="margin:8px 0">Создадим: <b>${plan.create.length}</b>${plan.newCategories.length ? ` (новых категорий: ${plan.newCategories.length})` : ''}${plan.newStock.length ? ` · новых продуктов на складе: ${plan.newStock.length}` : ''}
+              · обновим: <b>${plan.update.length}</b> · пропустим: <b>${plan.skip.length}</b>${errs.length ? ` · с ошибками: <b>${errs.length}</b>` : ''}</p>
+            ${sample.length ? `<ul class="small" style="padding-left:18px;margin:6px 0">${sample.map((x) => `<li>${line(x)}</li>`).join('')}${plan.create.length > sample.length ? `<li class="muted">и ещё ${plan.create.length - sample.length}</li>` : ''}</ul>` : ''}
+            ${plan.skip.length ? `<details class="small muted"><summary>Что пропустим</summary>${plan.skip.slice(0, 50).map((x) => `<div>${esc(x.name || x.dish || x.number)} — ${esc(x.why)}</div>`).join('')}</details>` : ''}
+            ${errs.length ? `<details class="small" style="color:var(--danger)" open><summary>Ошибки — эти строки не перенесём</summary>${errs.slice(0, 50).map((m) => `<div>${esc(m)}</div>`).join('')}${errs.length > 50 ? `<div>и ещё ${errs.length - 50}</div>` : ''}</details>` : ''}
+            ${plan.kind === 'staff' ? '<p class="small muted">Каждому создадим новый PIN: сотруднику — 4 цифры, администратору — 6. Список покажем один раз — сохраните его и раздайте лично.</p>' : ''}
+            ${imp.progress ? `<p class="small muted">${esc(imp.progress)}</p>` : ''}
+            ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+            <div class="row" style="gap:8px;margin-top:12px">
+              <button class="btn btn-ghost" id="f-imp-edit" style="width:auto" ${imp.busy ? 'disabled' : ''}>Назад</button>
+              <button class="btn btn-primary" id="f-imp-run" style="width:auto" ${imp.busy || !(plan.create.length + plan.update.length) ? 'disabled' : ''}>${imp.busy ? 'Переношу…' : 'Перенести'}</button>
+            </div>
+          </div>${history}`;
+      }
+      const r = imp.result;
+      return `${intro}
+        <div class="card" style="margin-top:10px">
+          <div class="small" style="font-weight:600">Готово: ${esc(LABEL[plan.kind])}</div>
+          <p class="small" style="margin:8px 0">Создано: <b>${r.created}</b>${r.updated ? ` · обновлено: <b>${r.updated}</b>` : ''}. Касса подхватит изменения в течение нескольких минут — или перезапустите её.</p>
+          ${r.warnings.map((w) => `<p class="small" style="color:var(--warning);margin:4px 0">${esc(w)}</p>`).join('')}
+          ${r.pins.length ? `
+            <div class="small" style="font-weight:600;margin-top:10px">PIN-коды для входа в кассу — сохраните сейчас, больше не покажем</div>
+            <div id="f-imp-pins" class="small" style="margin:6px 0;font-family:ui-monospace,monospace">${r.pins.map((x) => `<div>${esc(x.name)} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'} — ${x.pin}</div>`).join('')}</div>
+            <button class="btn btn-ghost" id="f-imp-copy-pins" style="width:auto">Скопировать список</button>` : ''}
+          <div class="row" style="gap:8px;margin-top:12px">
+            <button class="btn btn-primary" id="f-imp-next" style="width:auto">Перенести ещё файл</button>
+          </div>
+        </div>${history}`;
+    };
+
     const TAB_RENDERERS = {
       overview: overviewHtml, guide: guideTabHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
-      faq: faqHtml, support: supportHtml,
+      faq: faqHtml, support: supportHtml, import: importHtml,
     };
     renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
     // В кабинете кнопки чата нет: у него есть раздел «Поддержка».
@@ -4810,6 +5111,115 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'import') {
+      if (!importCore) loadImportCore().then(draw).catch((e) => { imp.error = `Не загрузился модуль переноса: ${e?.message || e}`; draw(); });
+      const I = importCore;
+      // Модуль мог догрузиться после этой отрисовки — берём актуальный.
+      const toMap = () => {
+        const core = importCore;
+        const sheet = imp.sheets[imp.sheetIdx];
+        imp.headerIdx = core.findHeader(sheet.rows);
+        imp.kind = core.guessKind(sheet.rows[imp.headerIdx]) || imp.kind || 'menu';
+        imp.map = core.guessMapping(imp.kind, sheet.rows[imp.headerIdx]);
+      };
+      document.querySelectorAll('.f-imp-template').forEach((el) => {
+        el.onclick = async (e) => {
+          e.preventDefault();
+          const core = await loadImportCore();
+          const blob = new Blob([core.templateCsv(el.dataset.kind)], { type: 'text/csv;charset=utf-8' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `zalpos-${el.dataset.kind}.csv`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        };
+      });
+      if ($('f-imp-file')) {
+        $('f-imp-file').onchange = async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          imp = { step: 'pick', busy: true };
+          draw();
+          try {
+            if (file.size > 15 * 1024 * 1024) throw new Error('файл больше 15 МБ — выгрузите данные частями');
+            const core = await loadImportCore();
+            const sheets = await core.readTable(new Uint8Array(await file.arrayBuffer()), file.name);
+            imp = { step: 'map', fileName: file.name, sheets, sheetIdx: 0, update: false };
+            toMap();
+          } catch (err) {
+            imp = { step: 'pick', error: `Не получилось прочитать файл: ${err?.message || err}` };
+          }
+          draw();
+        };
+      }
+      if ($('f-imp-sheet')) $('f-imp-sheet').onchange = (e) => { imp.sheetIdx = Number(e.target.value) || 0; toMap(); draw(); };
+      if ($('f-imp-kind')) $('f-imp-kind').onchange = (e) => { imp.kind = e.target.value; imp.map = I.guessMapping(imp.kind, imp.sheets[imp.sheetIdx].rows[imp.headerIdx] || []); draw(); };
+      if ($('f-imp-header')) $('f-imp-header').onchange = (e) => {
+        const rows = imp.sheets[imp.sheetIdx].rows;
+        imp.headerIdx = Math.min(rows.length - 1, Math.max(0, (Number(e.target.value) || 1) - 1));
+        imp.map = I.guessMapping(imp.kind, rows[imp.headerIdx]);
+        draw();
+      };
+      document.querySelectorAll('.f-imp-map').forEach((el) => {
+        el.onchange = () => {
+          if (el.value === '') delete imp.map[el.dataset.field];
+          else imp.map[el.dataset.field] = Number(el.value);
+        };
+      });
+      if ($('f-imp-update')) $('f-imp-update').onchange = (e) => { imp.update = e.target.checked; };
+      if ($('f-imp-back')) $('f-imp-back').onclick = () => { imp = { step: 'pick' }; draw(); };
+      if ($('f-imp-edit')) $('f-imp-edit').onclick = () => { imp.step = 'map'; imp.error = ''; draw(); };
+      if ($('f-imp-next')) $('f-imp-next').onclick = () => { imp = { step: 'pick' }; draw(); };
+      if ($('f-imp-preview')) {
+        $('f-imp-preview').onclick = async () => {
+          imp.error = '';
+          const missing = I.KINDS[imp.kind].fields.filter((f) => f.required && imp.map[f.key] == null);
+          if (missing.length) { imp.error = `Выберите столбец: ${missing.map((f) => f.label).join(', ')}`; draw(); return; }
+          const rows = imp.sheets[imp.sheetIdx].rows.slice(imp.headerIdx + 1);
+          const { items, errors } = I.buildRows(imp.kind, rows, imp.map, { headerIndex: imp.headerIdx });
+          if (!items.length) { imp.error = 'В файле не нашлось строк для переноса — проверьте столбцы и строку заголовков'; draw(); return; }
+          try {
+            imp.existing = await importExisting();
+            imp.plan = I.planImport(imp.kind, items, imp.existing, { update: imp.update });
+            imp.rowErrors = errors;
+            imp.step = 'preview';
+          } catch (err) {
+            imp.error = `Не получилось проверить данные заведения: ${err?.message || err}`;
+          }
+          draw();
+        };
+      }
+      if ($('f-imp-run')) {
+        $('f-imp-run').onclick = async () => {
+          imp.busy = true;
+          imp.error = '';
+          draw();
+          try {
+            imp.result = await runImport(imp.plan, imp.existing);
+            imp.step = 'done';
+          } catch (err) {
+            imp.error = `Перенос прервался: ${err?.message || err}. Уже записанное можно отменить в «Прошлых переносах».`;
+          }
+          imp.busy = false;
+          imp.progress = '';
+          draw();
+        };
+      }
+      if ($('f-imp-copy-pins')) $('f-imp-copy-pins').onclick = () => copyToClipboard(imp.result.pins.map((x) => `${x.name} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'} — PIN ${x.pin}`).join('\n'));
+      document.querySelectorAll('.f-imp-undo').forEach((el) => {
+        el.onclick = async () => {
+          if (!confirm('Отменить перенос? Созданные им позиции, продукты, сотрудники и карты удалятся, перенесённые рецепты снимутся. Обновлённые цены и остатки не вернутся.')) return;
+          el.disabled = true;
+          try {
+            const n = await undoImport(el.dataset.id);
+            toast(`Перенос отменён: изменений — ${n}`);
+          } catch (err) {
+            toast(`Не удалось отменить: ${err?.message || err}`);
+          }
+          draw();
+        };
+      });
+    }
     if (activeTab === 'guide' && guideData) {
       bindGuide(body, guideOpen);
       if ($('f-guide-copy')) $('f-guide-copy').onclick = () => copyToClipboard(GUIDE_PUBLIC_URL);

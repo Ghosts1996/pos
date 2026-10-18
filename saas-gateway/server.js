@@ -7367,6 +7367,17 @@ function invalidateTenantStaticCache(tenantId) {
   if (tenantId) _staticDataCache.delete(tenantId);
 }
 
+/** Кабинет перенёс меню или сотрудников (перенос данных) — кассы должны
+ *  увидеть их при следующем обновлении, не ждать конца кеша. */
+async function handleInvalidateTenantCache(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  invalidateTenantStaticCache(tenantId);
+  sendJson(res, 200, { ok: true });
+}
+
 /**
  * GET /tenantStaticData?tenantId=...
  * Возвращает menuCategories, menuItems, employees, venueProfile — данные,
@@ -7446,6 +7457,7 @@ const ROUTES = {
   "/supportSend": supportBot.handleCabinetSend,
   "/supportSiteSend": supportBot.handleSiteSend,
   "/supportCabinetMessages": supportBot.handleCabinetMessages,
+  "/invalidateTenantCache": handleInvalidateTenantCache,
   "/supportSiteMessages": supportBot.handleSiteMessages,
   "/supportBotPurgeForeign": supportBot.handlePurgeForeign,
   "/supportBotAiCheck": supportBot.handleAiCheck,
