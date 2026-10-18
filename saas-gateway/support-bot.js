@@ -61,6 +61,8 @@ const SUMMARIZE_AFTER = 14;
 const KB_RELOAD_MS = 10 * 60 * 1000;
 // Специалист ответил и 15 минут тишины — бот сам решает, что запомнить.
 const LEARN_AFTER_HUMAN_MS = 15 * 60 * 1000;
+// Клиент ждёт ответа человека дольше — обращение следующему сотруднику.
+const SLA_MS = 15 * 60 * 1000;
 const LEARN_SWEEP_MS = 5 * 60 * 1000;
 const CLIENT_RATE = { max: 20, windowMs: 60 * 1000 };
 const DEFAULT_POLICY_URL = "https://zalpos.ru/#/legal/privacy";
@@ -689,7 +691,7 @@ function createSupportBot(deps) {
   const hookUrl = () => (HOOK_BASE ? `${HOOK_BASE}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`);
 
   const state = {
-    cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), guide: [], code: [], learned: [], topicToTicket: new Map(),
+    cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(),
     usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "",
   };
   const timers = new Map();
@@ -991,6 +993,7 @@ function createSupportBot(deps) {
     await ticketRef(t.id).collection("messages").add({ ...m, viaBot: true, createdAt: ts(at) });
     const upd = { updatedAt: ts(at), syncedAt: at };
     if (m.authorRole !== "note") upd.lastAuthorRole = m.authorRole;
+    if (m.authorRole === "owner") upd.clientAt = ts(at);
     await patch(t, upd);
   }
 
@@ -1116,8 +1119,11 @@ function createSupportBot(deps) {
     if (t.escalated) return;
     await patch(t, { escalated: true, escalatedReason: reason, escalatedAt: ts(now()) });
     await renameTopic(t);
-    await movePanel(t, await toTopicHtml(t, `🔴 <b>Нужен человек</b> — ${h(reason)}\nКлиент ждёт. Ответьте в этой теме — ИИ молчит, пока вы ведёте диалог.`, { reply_markup: topicKeyboard(t) }));
-    notifyStaff(t, reason);
+    // Обращение ведёт один сотрудник: назначаем по очереди, остальные — на подхвате.
+    const who = Number(t.assigneeId) || nextStaff([]);
+    if (who) await assignTo(t, who, { silent: true });
+    await movePanel(t, await toTopicHtml(t, `🔴 <b>Нужен человек</b> — ${h(reason)}\n${who ? `👤 Ведёт: ${mention(who)} — ответьте клиенту в этой теме.` : "Клиент ждёт. Ответьте в этой теме — ИИ молчит, пока вы ведёте диалог."}`, { reply_markup: topicKeyboard(t) }));
+    notifyStaff(t, reason, who);
     if (tellClient) {
       const hours = state.cfg.workHours ? ` Мы на связи ${state.cfg.workHours}.` : "";
       await deliver(t, `Позвал специалиста поддержки — он ответит здесь же.${hours} Пока он подключается, я не буду вмешиваться.`,
@@ -1127,13 +1133,79 @@ function createSupportBot(deps) {
 
   /** Сотрудникам из списка панели — в личку, с кнопкой на тему. Кто ещё не
    *  нажал у бота «Старт», сообщение не получит — Telegram не даёт писать первым. */
-  function notifyStaff(t, reason) {
+  function notifyStaff(t, reason, assigneeId = 0, head = "🔴 Нужен человек") {
     const staff = (state.cfg && state.cfg.staff) || [];
     if (!staff.length) return;
     const link = topicLink(state.cfg.groupChatId, t.topicId);
-    const text = `🔴 <b>Нужен человек · #${t.no || "?"}</b>${t.tgName ? ` · ${h(t.tgName)}` : ""}\n${h(reason)}\n💬 <i>${h(t.subject || "—")}</i>`;
-    const extra = { ...HTML, ...(link ? { reply_markup: { inline_keyboard: [[{ text: "💬 Открыть обращение", url: link }]] } } : {}) };
-    for (const s of staff) send(s.id, text, extra).catch(() => {});
+    for (const s of staff) {
+      const mine = Number(s.id) === Number(assigneeId);
+      const text = [
+        `${head} · #${t.no || "?"}${t.tgName ? ` · ${h(t.tgName)}` : ""}`.replace(/^(\S+) (.*)$/, "$1 <b>$2</b>"),
+        h(reason),
+        `💬 <i>${h(t.subject || "—")}</i>`,
+        assigneeId ? (mine ? "👉 <b>Назначено вам</b> — ответьте клиенту в теме." : `👤 Ведёт: ${mention(assigneeId)} · вы — на подхвате`) : "",
+      ].filter(Boolean).join("\n");
+      const extra = { ...HTML, ...(link ? { reply_markup: { inline_keyboard: [[{ text: mine ? "💬 Ответить клиенту" : "💬 Открыть обращение", url: link }]] } } : {}) };
+      send(s.id, text, extra).catch(() => {});
+    }
+  }
+
+  // ---- сотрудники: юзернеймы, очередь, один исполнитель на обращение
+
+  /** Кто есть кто: id → { username, name } — запоминаем, когда сотрудник пишет. */
+  function rememberPerson(from) {
+    if (!from || !from.id || from.is_bot) return;
+    const cur = state.staffDir[from.id] || {};
+    const next = { username: from.username || "", name: clip(from.first_name || cur.name || "", 40) };
+    if (cur.username === next.username && cur.name === next.name) return;
+    state.staffDir[from.id] = next;
+    quiet(db().collection("supportBot").doc("staffDir").set({ [String(from.id)]: { ...next, seenAt: ts(now()) } }, { merge: true }), "сотрудники");
+  }
+  const staffName = (id) => {
+    const s = ((state.cfg && state.cfg.staff) || []).find((x) => Number(x.id) === Number(id));
+    return (state.staffDir[id] && state.staffDir[id].name) || (s && s.name) || "сотрудник";
+  };
+  /** @юзернейм, если он есть, иначе упоминание по ссылке на профиль. */
+  const mention = (id) => {
+    const u = state.staffDir[id] && state.staffDir[id].username;
+    return u ? `@${h(u)}` : `<a href="tg://user?id=${Number(id)}">${h(staffName(id))}</a>`;
+  };
+  /** Следующий по очереди сотрудник, кроме перечисленных. */
+  function nextStaff(exclude = []) {
+    const list = ((state.cfg && state.cfg.staff) || []).map((x) => Number(x.id)).filter((id) => !exclude.map(Number).includes(id));
+    if (!list.length) return 0;
+    state.rr = ((Number(state.rr) || 0) + 1) % list.length;
+    return list[state.rr];
+  }
+  async function assignTo(t, id, { silent = false, note = "" } = {}) {
+    const prev = Number(t.assigneeId) || 0;
+    Object.assign(t, { assigneeId: Number(id), assignee: staffName(id), assignedAt: ts(now()) });
+    await patch(t, { assigneeId: Number(id), assignee: staffName(id), assignedAt: ts(now()) });
+    if (!silent) await toTopicHtml(t, `👤 <b>Ведёт:</b> ${mention(id)}${prev && prev !== Number(id) ? ` <i>(было: ${h(staffName(prev))})</i>` : ""}${note ? ` · ${h(note)}` : ""}`);
+  }
+
+  /** Клиент ждёт ответа человека 15 минут — обращение следующему, напоминание всем. */
+  async function sweepSla() {
+    if (!active()) return;
+    const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
+    for (const d of snap.docs) {
+      const t = { id: d.id, ...d.data() };
+      if (t.lastAuthorRole !== "owner" || !(t.escalated || aiPaused(t, now()))) continue;
+      const waitFrom = Math.max(toMs(t.clientAt) || toMs(t.updatedAt), toMs(t.assignedAt));
+      if (toMs(t.humanAt) > toMs(t.clientAt) || now() - waitFrom < SLA_MS || now() - toMs(t.slaPingAt) < SLA_MS) continue;
+      const rounds = (Number(t.slaRounds) || 0) + 1;
+      const mins = Math.round((now() - (toMs(t.clientAt) || waitFrom)) / 60000);
+      const prev = Number(t.assigneeId) || 0;
+      const next = nextStaff(prev ? [prev] : []) || prev;
+      await patch(t, { slaPingAt: ts(now()), slaRounds: rounds });
+      if (next && next !== prev) {
+        await assignTo(t, next, { silent: true });
+        await toTopicHtml(t, `⏰ <b>Клиент ждёт ${mins} мин</b>${prev ? ` — ${mention(prev)} не ответил, передаю` : " — назначаю"} ${mention(next)}`);
+      } else {
+        await toTopicHtml(t, `⏰ <b>Клиент ждёт ${mins} мин</b> — ${next ? mention(next) : "ответьте"}, пожалуйста`);
+      }
+      notifyStaff(t, `клиент ждёт ответа ${mins} мин`, next, "⏰ Клиент ждёт");
+    }
   }
 
   /** Главный разбор нового сообщения клиента (Telegram или кабинет). */
@@ -1362,6 +1434,7 @@ function createSupportBot(deps) {
     const from = msg.from || {};
     if (from.is_bot) return;
     const userId = from.id;
+    if (isStaffId(userId) || isAdminId(userId)) rememberPerson(from);
     if (!rateOk(userId)) return;
     const chatId = msg.chat.id;
     const raw = String(msg.text || msg.caption || "");
@@ -1949,6 +2022,7 @@ function createSupportBot(deps) {
   async function onGroupMessage(msg) {
     const from = msg.from || {};
     if (from.is_bot) return;
+    rememberPerson(from);
     if (msg.migrate_to_chat_id) {
       await cfgRef().set({ groupChatId: msg.migrate_to_chat_id }, { merge: true });
       return reload();
@@ -1974,6 +2048,15 @@ function createSupportBot(deps) {
     if (msg.forum_topic_created || msg.forum_topic_edited || msg.forum_topic_closed || msg.forum_topic_reopened) return;
     const media = !!(msg.photo || msg.document || msg.video || msg.voice || msg.audio || msg.video_note || msg.sticker || msg.animation);
     if (!raw.trim() && !media) return;
+    // Обращение ведёт другой сотрудник — второй ответ клиенту не уходит.
+    if (t.assigneeId && Number(t.assigneeId) !== Number(from.id) && t.status !== "closed") {
+      await toTopicHtml(t, `✋ ${h(clip(from.first_name || "Коллега", 40))}, обращение ведёт ${mention(t.assigneeId)} — ваш ответ клиенту не отправлен, чтобы не писать вдвоём.\nБерёте сами — нажмите «Перехватить» и отправьте ответ ещё раз.`, {
+        reply_markup: { inline_keyboard: [[{ text: "🙋 Перехватить", callback_data: `sb:g:take:${t.id}` }]] },
+        reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
+      });
+      return;
+    }
+    if (!t.assigneeId) await assignTo(t, from.id, { silent: true });
     if (t.status === "closed") {
       await patch(t, { status: "open", closedAt: null });
       await quiet(tg("reopenForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "переоткрыть тему");
@@ -2027,6 +2110,7 @@ function createSupportBot(deps) {
       "",
       `✍️ Пишите прямо в теме — ответ уйдёт клиенту, а ИИ замолчит на ${Number(state.cfg.humanPauseHours) || DEFAULT_PAUSE_HOURS} ч.`,
       "🤖 Клиент пишет «бот, помоги» — ИИ снова отвечает (если не выключен в теме).",
+      "👤 Обращение ведёт один сотрудник: бот назначает по очереди или того, кто ответил первым. Второй не сможет написать клиенту — «🙋 Беру» перехватывает. Клиент ждёт 15 минут — обращение уходит следующему, всем — напоминание в личку.",
       "",
       "<b>Кнопки под карточкой</b>",
       "🙋 Беру — обращение ваше",
@@ -2048,11 +2132,14 @@ function createSupportBot(deps) {
 
   const GROUP_COMMANDS = {
     take: async (t, arg, from) => {
+      rememberPerson(from);
       const name = clip(from.first_name || "Специалист", 40);
-      if (t.assignee === name && !t.escalated) return toTopic(t, `Обращение уже ведёт ${name}.`);
-      await patch(t, { assignee: name, escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()) });
+      if (Number(t.assigneeId) === Number(from.id) && !t.escalated) return toTopicHtml(t, `Обращение уже ведёте вы, ${mention(from.id)}.`);
+      const prev = Number(t.assigneeId) || 0;
+      await assignTo(t, from.id, { silent: true });
+      await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), slaRounds: 0 });
       await renameTopic(t);
-      await toTopicHtml(t, `🙋 <b>${h(name)}</b> ведёт обращение · ИИ молчит`);
+      await toTopicHtml(t, `🙋 ${mention(from.id)} ведёт обращение · ИИ молчит${prev && prev !== Number(from.id) ? ` <i>(перехватил у ${h(staffName(prev))})</i>` : ""}`);
       if (t.status !== "closed") {
         await deliver(t, `👨‍💼 ${name} из поддержки ZalPOS подключился к вашему вопросу и скоро ответит.`,
           { role: "ai", bare: true, html: `👨‍💼 <b>${h(name)}</b> из поддержки ZalPOS подключился к вашему вопросу и скоро ответит.` });
@@ -2318,6 +2405,7 @@ function createSupportBot(deps) {
     const answer = (text = "") => quiet(tg("answerCallbackQuery", { callback_query_id: q.id, text }), "кнопка");
     const chatId = q.message && q.message.chat && q.message.chat.id;
     const from = q.from || {};
+    if (isGroup(chatId) || isStaffId(from.id)) rememberPerson(from);
     if (data.startsWith("sb:a:")) {
       if (!chatId || isGroup(chatId) || !isAdminId(from.id)) return answer("Нет доступа");
       return onAdminCallback(q, data, answer);
@@ -2498,6 +2586,7 @@ function createSupportBot(deps) {
         await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), ...(t.firstResponseAt ? {} : { firstResponseAt: ts(now()) }) });
       } else {
         if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
+        await patch(t, { clientAt: m.createdAt || ts(now()) });
         if (m.text) await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
         await filesToTopic(t, m, "💬 Клиент · кабинет");
       }
@@ -2880,6 +2969,9 @@ function createSupportBot(deps) {
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
     if (active()) setGroupCommands().catch(() => {});
+    const dir = await db().collection("supportBot").doc("staffDir").get().catch(() => null);
+    for (const [id, v] of Object.entries((dir && dir.data && dir.data()) || {})) state.staffDir[id] = { username: v.username || "", name: v.name || "" };
+    setInterval(() => sweepSla().catch((e) => console.error(`support-bot: очередь сотрудников: ${e.message || e}`)), 60 * 1000).unref();
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
     }, LEARN_SWEEP_MS).unref();
@@ -2892,7 +2984,7 @@ function createSupportBot(deps) {
 
   return {
     start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleAiCheck, handleDocDownload, router,
-    onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, HOOK_ID, _state: state,
+    onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
   };
 }
 

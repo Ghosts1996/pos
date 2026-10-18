@@ -915,6 +915,49 @@ test("поиск в интернете: внешний вопрос — бот �
   assert.strictEqual(h.calls.filter((c) => c.method === "web:search").length, 1, "искал без нужды");
 });
 
+test("сотрудники: обращение ведёт один, второму не даёт писать клиенту; 15 минут без ответа — следующему и напоминание всем", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleSetup({ body: { staff: "555000111 Константин\n555000222 Мария" } }, {});
+  await h.bot.handleUpdate(pm("Позовите оператора, касса не работает"));
+  await h.bot.idle();
+  let [t] = tickets(h.store);
+  assert.ok(t.escalated && t.assigneeId, "не назначен сотрудник");
+  const first = t.assigneeId;
+  const dms = h.calls.filter((c) => c.method === "sendMessage" && [555000111, 555000222].includes(Number(c.body.chat_id)));
+  assert.strictEqual(dms.length, 2, "в личку — всем сотрудникам");
+  assert.ok(dms.some((c) => /Назначено вам/.test(c.body.text)) && dms.some((c) => /на подхвате/.test(c.body.text)));
+  // Пишет не назначенный — клиенту не уходит.
+  const other = first === 555000111 ? { id: 555000222, first_name: "Мария", username: "masha_sup" } : { id: 555000111, first_name: "Константин", username: "kostya_sup" };
+  const before = sends(h.calls, 42).length;
+  await h.bot.handleUpdate(inTopic("Сейчас помогу", t.topicId, other));
+  await h.bot.idle();
+  assert.strictEqual(sends(h.calls, 42).length, before, "второй сотрудник написал клиенту");
+  assert.ok(sends(h.calls, GROUP).some((c) => /обращение ведёт/.test(c.body.text) && /Перехватить/.test(JSON.stringify(c.body.reply_markup || {}))));
+  // Перехватил — теперь его ответ уходит, в теме — @юзернейм.
+  await h.bot.handleUpdate(inTopic("/take", t.topicId, other));
+  await h.bot.handleUpdate(inTopic("Сейчас помогу", t.topicId, other));
+  await h.bot.idle();
+  assert.ok(sends(h.calls, 42).length > before, "после перехвата ответ не ушёл");
+  assert.ok(sends(h.calls, GROUP).some((c) => new RegExp(`@${other.username}`).test(c.body.text)), "нет @юзернейма");
+  // Клиент написал и ждёт 16 минут — передаём следующему.
+  await h.bot.handleUpdate(pm("Ну что там?"));
+  await h.bot.idle();
+  t = tickets(h.store)[0];
+  const T = admin.firestore.Timestamp.fromMillis;
+  h.store.set(`supportTickets/${t.id}`, { ...h.store.get(`supportTickets/${t.id}`), clientAt: T(Date.now() - 16 * 60 * 1000), humanAt: T(Date.now() - 18 * 60 * 1000), assignedAt: T(Date.now() - 20 * 60 * 1000), lastAuthorRole: "owner" });
+  await h.bot.sweepSla();
+  await h.bot.idle();
+  t = tickets(h.store)[0];
+  assert.notStrictEqual(t.assigneeId, other.id, "не передал другому");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Клиент ждёт \d+ мин/.test(c.body.text) && /передаю/.test(c.body.text)));
+  assert.ok(h.calls.some((c) => c.method === "sendMessage" && Number(c.body.chat_id) === Number(t.assigneeId) && /Клиент ждёт/.test(c.body.text)));
+  // Сразу повторно не дёргает.
+  const n = h.calls.length;
+  await h.bot.sweepSla();
+  assert.strictEqual(h.calls.length, n);
+});
+
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {
   const h = harness();
   await setup(h);
