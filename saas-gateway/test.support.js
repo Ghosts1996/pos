@@ -766,6 +766,22 @@ test("вложения: скриншот из кабинета — в тему �
   assert.ok(await supportFiles.read({ tenantId: "t1", ticketId: "c5", id: staff.attachments[0].id }), "файл не сохранён");
 });
 
+test("знания: онлайн-касса — где купить, как зарегистрировать и подключить; «где её купить» понимается по прошлому вопросу", async () => {
+  const h = harness();
+  await setup(h);
+  h.aiReplies.push("Вы хотите подключить онлайн-кассу в ZalPOS или узнать, где её приобрести?");
+  await h.bot.handleUpdate(pm("Как полючить онлайн кассу и звонок"));
+  await h.bot.idle();
+  await h.bot.handleUpdate(pm("Где ее купит и как подключить"));
+  await h.bot.idle();
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Где купить регистратор АТОЛ") || prompt.includes("Подключить онлайн-кассу к ZalPOS"), "нет статей про кассу");
+  const { KB } = require("./support-kb");
+  for (const id of ["kassa-choose", "kassa-buy-atol", "kassa-cloud", "kep", "ofd", "kassa-register-fns", "kassa-connect", "kassa-errors", "acquiring", "egais-howto", "marking-howto", "bell-howto"]) {
+    assert.ok(KB.some((d) => d.id === `kb:${id}`), id);
+  }
+});
+
 test("одна тема на клиента: новое обращение — в ту же тему, ответ уходит в текущее", async () => {
   const h = harness();
   await setup(h);

@@ -1121,8 +1121,10 @@ function createSupportBot(deps) {
         console.error(`support-bot: сжатие #${t.no}: ${e.message}`);
       }
     }
-    const query = `${t.subject || ""}\n${question}`;
-    const guide = rankDocs(query, state.guide, 4);
+    // «Где её купить?» без слова «касса» — ищем и по прошлым сообщениям клиента.
+    const earlier = history.slice(0, i).filter((m) => m.authorRole === "owner").slice(-3).map((m) => m.text || "").join("\n");
+    const query = `${t.subject || ""}\n${earlier}\n${question}\n${question}`;
+    const guide = rankDocs(query, state.guide, 5);
     const learned = rankDocs(query, state.learned, 3, 1.5);
     const code = rankDocs(query, state.code, 2, 4);
     const [venue, platform, memory] = await Promise.all([
