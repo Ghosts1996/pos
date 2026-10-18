@@ -642,17 +642,33 @@ const SYSTEM_PROMPT = [
  * ограничена: инструкция до 3 статей, база — до 3 решений, переписка —
  * краткое содержание и последние HISTORY_TAIL сообщений.
  */
+// Кто пишет — от этого зависит, что и как отвечать.
+const SITE_ACCOUNT_STATE = [
+  "Пишет из чата на сайте zalpos.ru человек, который вошёл в аккаунт, но заведения у него ещё нет (или он его не выбрал).",
+  "Помоги создать заведение и пройти первые шаги: кабинет → создание заведения → «Брендинг» → «Команда» → «Устройства» → «Собрать APK». Тарифы и пробный период объясняй по «Тарифы сейчас».",
+  "Данных заведения ты не видишь. Контакты в чате не нужны.",
+].join("\n");
+// Вошёл менеджером или сотрудником: кабинет заведения он видит частично.
+const SITE_MEMBER_STATE = (role) => [
+  `Пишет человек, который вошёл в кабинет zalpos.ru как ${role === "manager" ? "менеджер" : "сотрудник"} заведения. Данных заведения ты не видишь.`,
+  "Помогай по знаниям с работой в кассе и кабинете. Оплату, тариф, брендинг и устройства меняет только владелец — если вопрос об этом, скажи, что это сделает владелец, и как именно.",
+].join("\n");
+const CABINET_STATE = "Пишет владелец или администратор заведения из личного кабинета zalpos.ru (вход выполнен, заведение — ниже в «Состоянии»). Главное — довести настройку до результата: точные шаги по его ситуации, с учётом того, что уже настроено и чего не хватает. Продавать не нужно; тариф выше предлагай, только если он упирается в лимит или прямо спрашивает.";
+const PAGE_HINT = (page, site) => (page ? `\nСейчас у него открыт ${site ? "раздел сайта" : "раздел кабинета"}: «${page}». Вопрос, скорее всего, про него.` : "");
+
 // Посетитель сайта: заведения нет — бот помогает выбрать и начать.
 const SITE_STATE = [
   "Пишет посетитель сайта zalpos.ru из чата на сайте — скорее всего, ещё не клиент или не вошёл в кабинет. Состояния заведения нет.",
-  "Ты консультант: помоги понять, подходит ли ZalPOS, выбрать тариф, попробовать демо, зарегистрироваться, скачать кассу и настроить первое. Веди к следующему шагу: «Попробовать бесплатно» на zalpos.ru (7 дней, карта не нужна) или демо-касса без регистрации.",
+  "Ты консультант по продукту: помоги понять, подходит ли ZalPOS его заведению, выбрать тариф (цены — из «Тарифы сейчас»), попробовать демо, зарегистрироваться, скачать кассу и настроить первое. Где что на сайте — по статье «Сайт zalpos.ru».",
+  "Отвечай коротко: 2–4 пункта по его вопросу и один следующий шаг — «Попробовать бесплатно» на zalpos.ru (7 дней, карта не нужна), демо-касса без регистрации или раздел сайта. Спроси о заведении (формат, сколько точек и сотрудников), только когда это нужно для совета.",
   "Вопрос о его работающем заведении (данные, ошибки, оплата) — ответь по знаниям и предложи написать из кабинета: zalpos.ru → войти → «Поддержка», там видно его заведение.",
   "Контакты в этом чате не нужны и не запрашивай их: для связи — регистрация на сайте или кабинет.",
 ].join("\n");
 
-function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null, site = false }) {
+function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null, site = false, account = false, member = "", cabinet = false, page = "" }) {
   const ctx = [];
-  ctx.push(`# Состояние заведения\n${site ? SITE_STATE : linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
+  ctx.push(`# Кто пишет\n${site ? (member ? SITE_MEMBER_STATE(member) : account ? SITE_ACCOUNT_STATE : SITE_STATE) : cabinet && linked ? CABINET_STATE : linked ? "Пишет из Telegram, привязан к заведению (оно ниже)." : "Пишет из Telegram без привязки к заведению."}${PAGE_HINT(page, site)}`);
+  ctx.push(`# Состояние заведения\n${site ? "Нет: человек пишет с сайта, данных заведения ты не видишь и не называешь." : linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
   if (platform) ctx.push(`# Платформа\n${platform}`);
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
   if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
@@ -1580,7 +1596,11 @@ function createSupportBot(deps) {
       memoryOf(t).catch(() => ""),
     ]);
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
-    const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData, site: t.channel === "site" });
+    const page = clip(String([...fresh].reverse().find((m) => m.page)?.page || ""), 60);
+    const messages = buildMessages({
+      venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData,
+      site: t.channel === "site", account: t.channel === "site" && !!t.siteUid, member: t.channel === "site" && t.siteUid ? t.siteRole || "" : "", cabinet: t.channel !== "telegram" && t.channel !== "site", page,
+    });
     if (askedBack && (talk === "ack" || pinged || question.length < 25)) {
       messages.push({ role: "system", content: `Твой прошлый вопрос клиенту: «${clip(prevBot.text, 300)}». Клиент ответил коротко («${clip(question, 80)}»). Не повторяй вопрос: выбери самый вероятный вариант по переписке, скажи, что выбрал, и сразу помоги по шагам.` });
     } else if (pinged) {
@@ -3383,7 +3403,7 @@ function createSupportBot(deps) {
       const tenantId = String(body.tenantId || "");
       if (!/^[\w-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
       await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
-      const subject = clip(maskSecrets(scrubPii(String(body.subject || "").trim())), 200);
+      const subject = clip(maskSecrets(scrubPii(String(body.subject || (body.source === "widget" ? rawText : "")).trim())), 200);
       if (!subject) throw new HttpError(400, "Укажите тему обращения");
       if (body.consent !== true) throw new HttpError(400, "Нужно согласие на обработку данных обращения");
       const ref = ticketsCol().doc();
@@ -3396,10 +3416,13 @@ function createSupportBot(deps) {
       await ref.set(t);
     }
     if (text || attachments.length) {
+      const page = cleanPage(body.page);
       await ticketRef(id).collection("messages").add({
-        text, authorUid: decoded.uid, authorRole: "owner", createdAt: at, ...(attachments.length ? { attachments } : {}),
+        text, authorUid: decoded.uid, authorRole: "owner", createdAt: at, ...(attachments.length ? { attachments } : {}), ...(page ? { page } : {}),
       });
       await ticketRef(id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}) }, { merge: true });
+      // Не ждём слежения за базой — разбираем сразу (повтор от слежения склеится).
+      onTicketDoc(id, { updatedAt: at, syncedAt: t.syncedAt || 0 });
     }
     sendJson(res, 200, { ticketId: id, masked: text !== rawText });
   }
@@ -3418,6 +3441,8 @@ function createSupportBot(deps) {
     }
     return ++r.n <= max;
   }
+  // Название раздела, где человек сейчас: «Тарифы», «Устройства».
+  const cleanPage = (v) => clip(String(v || "").replace(/[^\p{L}\p{N} .,«»·()-]/gu, "").trim(), 60);
   const siteHash = (token) => crypto.createHash("sha256").update(`zalpos-site:${token}`).digest("hex");
   const siteOn = () => active() && aiReady() && !(state.cfg && state.cfg.siteChat === false);
 
@@ -3443,6 +3468,9 @@ function createSupportBot(deps) {
     if (rawText.length > SITE_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${SITE_TEXT_MAX} символов — разделите его на части`);
     const text = maskSecrets(scrubPii(rawText));
     const at = ts(now());
+    const page = cleanPage(body.page);
+    // Вошёл в аккаунт (заведения ещё нет) — бот подскажет, как его создать.
+    const uid = req.headers && req.headers.authorization ? await verifyAuth(req).then((d) => d.uid).catch(() => "") : "";
     let t = body.ticketId ? await siteTicket(body.ticketId, body.token) : null;
     let token = "";
     if (!t) {
@@ -3452,14 +3480,15 @@ function createSupportBot(deps) {
       const ref = ticketsCol().doc();
       t = {
         id: ref.id, channel: "site", siteKeyHash: siteHash(token), subject: clip(text, 120), status: "open",
+        ...(uid ? { siteUid: uid, ...(["manager", "employee"].includes(body.role) ? { siteRole: body.role } : {}) } : {}),
         createdBy: "site", createdAt: at, updatedAt: at, lastAuthorRole: "owner",
         pdConsent: true, pdConsentAt: at, pdConsentEdition: clip(String(body.consentEdition || ""), 80),
       };
       const { id: _, ...doc } = t;
       await ref.set(doc);
     }
-    await ticketRef(t.id).collection("messages").add({ text, authorUid: "site", authorRole: "owner", createdAt: at });
-    await ticketRef(t.id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}) }, { merge: true });
+    await ticketRef(t.id).collection("messages").add({ text, authorUid: "site", authorRole: "owner", createdAt: at, ...(page ? { page } : {}) });
+    await ticketRef(t.id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}), ...(uid && !t.siteUid ? { siteUid: uid } : {}) }, { merge: true });
     // Без слежения за базой (тесты, перезапуск) — разбираем сразу.
     onTicketDoc(t.id, { updatedAt: at, syncedAt: t.syncedAt || 0 });
     sendJson(res, 200, { ticketId: t.id, ...(token ? { token } : {}), masked: text !== rawText });
@@ -3483,6 +3512,45 @@ function createSupportBot(deps) {
       }));
     const typing = toMs(t.aiTypingAt) > now() - 90 * 1000;
     sendJson(res, 200, { enabled: siteOn(), messages: list, typing, waitingHuman: t.escalated === true });
+  }
+
+  /** Кабинет (окно чата в углу): что нового в обращении заведения. */
+  async function handleCabinetMessages(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    const id = String(body.ticketId || "");
+    if (!id) return sendJson(res, 200, { enabled: active() && aiReady() });
+    if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указано обращение");
+    const snap = await ticketRef(id).get();
+    if (!snap.exists) return sendJson(res, 200, { enabled: true, gone: true, messages: [] });
+    const t = { id: snap.id, ...snap.data() };
+    if (!t.tenantId) throw new HttpError(404, "Обращение не найдено");
+    await requireTenantRole(t.tenantId, decoded.uid, ["owner", "admin"]);
+    const after = Number(body.after) || 0;
+    const list = (await messagesOf(t))
+      .filter((m) => ["owner", "ai", "super_admin"].includes(m.authorRole) && toMs(m.createdAt) > after)
+      .slice(-60)
+      .map((m) => ({ role: m.authorRole === "owner" ? "you" : m.authorRole === "ai" ? "ai" : "staff", text: String(m.text || ""), at: toMs(m.createdAt) }));
+    sendJson(res, 200, {
+      enabled: active() && aiReady(), messages: list, typing: toMs(t.aiTypingAt) > now() - 90 * 1000,
+      waitingHuman: t.escalated === true, closed: t.status === "closed",
+    });
+  }
+
+  /** Диалоги чата на сайте старше 30 дней удаляем целиком (152-ФЗ: храним
+   *  не дольше, чем нужно). Темы в Telegram остаются — там текст обезличен. */
+  async function sweepSite() {
+    // Только равенство — без составного индекса; старые отбираем здесь.
+    const snap = await ticketsCol().where("channel", "==", "site").limit(1000).get();
+    let n = 0;
+    for (const d of snap.docs.filter((x) => now() - toMs(x.data().createdAt) > SITE_TTL_MS)) {
+      const msgs = await d.ref.collection("messages").limit(500).get();
+      for (const m of msgs.docs) await m.ref.delete();
+      await d.ref.delete();
+      n++;
+    }
+    if (n) console.log(`support-bot: удалено диалогов с сайта старше 30 дней: ${n}`);
+    return n;
   }
 
   /** Кабинет: «Написать в Telegram» — одноразовая ссылка, привязывающая
@@ -3517,6 +3585,8 @@ function createSupportBot(deps) {
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
     }, LEARN_SWEEP_MS).unref();
+    setInterval(() => sweepSite().catch((e) => console.error(`support-bot: очистка чата сайта: ${e.message || e}`)), 6 * 3600 * 1000).unref();
+    sweepSite().catch(() => {});
     setInterval(() => {
       loadKnowledge().catch(() => {});
       reload().catch(() => {});
@@ -3525,7 +3595,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleSiteSend, handleSiteMessages, handlePurgeForeign, handleAiCheck, handleDocDownload, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend, handleSiteMessages, handlePurgeForeign, sweepSite, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),

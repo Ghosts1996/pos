@@ -7445,6 +7445,7 @@ const ROUTES = {
   "/supportBotLink": supportBot.handleClientLink,
   "/supportSend": supportBot.handleCabinetSend,
   "/supportSiteSend": supportBot.handleSiteSend,
+  "/supportCabinetMessages": supportBot.handleCabinetMessages,
   "/supportSiteMessages": supportBot.handleSiteMessages,
   "/supportBotPurgeForeign": supportBot.handlePurgeForeign,
   "/supportBotAiCheck": supportBot.handleAiCheck,

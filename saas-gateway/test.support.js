@@ -1487,6 +1487,70 @@ test("продажи по закону: «почему вы» — факты о 
   assert.ok(P.includes("Специалиста зови только когда сам точно не поможешь"));
 });
 
+test("окно чата в кабинете: обращение заведения без темы, раздел страницы в подсказке, ответы — опросом", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  const req = (body) => ({ uid: "owner1", headers: { authorization: "Bearer x" }, body });
+  await h.bot.handleCabinetMessages(req({}), {});
+  assert.strictEqual(h.sent.body.enabled, true);
+  await h.bot.handleCabinetSend(req({ tenantId: "t1", text: "Как поставить кассу на планшет?", source: "widget", consent: true, page: "Устройства" }), {});
+  const { ticketId } = h.sent.body;
+  await h.bot.idle();
+  const t = h.store.get(`supportTickets/${ticketId}`);
+  assert.strictEqual(t.subject, "Как поставить кассу на планшет?");
+  assert.strictEqual(t.channel, "cabinet");
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("Пишет владелец или администратор заведения из личного кабинета"), "нет режима кабинета");
+  assert.ok(prompt.includes("раздел кабинета: «Устройства»"), "нет раздела");
+  assert.ok(prompt.includes("Заведение t1"), "нет состояния заведения");
+  await h.bot.handleCabinetMessages(req({ ticketId, after: 0 }), {});
+  assert.deepStrictEqual(h.sent.body.messages.map((m) => m.role), ["you", "ai"]);
+  // Чужое заведение — нет доступа.
+  await assert.rejects(h.bot.handleCabinetMessages({ uid: "other", body: { ticketId } }, {}), /нет/);
+});
+
+test("чат сайта: вошёл без заведения, менеджер или гость — бот знает, кто пишет; старые диалоги удаляются", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  const send = async (body, auth) => {
+    await h.bot.handleSiteSend({ uid: auth || undefined, headers: { "x-real-ip": `10.1.${Math.random()}`, ...(auth ? { authorization: "Bearer x" } : {}) }, body }, {});
+    await h.bot.idle();
+    return JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  };
+  let p = await send({ text: "Как создать заведение?", consent: true, page: "Создание заведения", role: "account" }, "u1");
+  assert.ok(p.includes("вошёл в аккаунт, но заведения у него ещё нет"), "аккаунт без заведения");
+  assert.ok(p.includes("раздел сайта: «Создание заведения»"));
+  p = await send({ text: "Как закрыть смену?", consent: true, role: "manager" }, "u2");
+  assert.ok(p.includes("как менеджер заведения"), "менеджер");
+  p = await send({ text: "Сколько стоит?", consent: true, role: "manager" });
+  assert.ok(p.includes("Пишет посетитель сайта") && !p.includes("как менеджер"), "без входа роль из браузера не верим");
+  assert.ok(p.includes("Нет: человек пишет с сайта"), "сайт не видит заведение");
+
+  const old = tickets(h.store).filter((x) => x.channel === "site");
+  assert.strictEqual(old.length, 3);
+  const T = admin.firestore.Timestamp.fromMillis;
+  h.store.set(`supportTickets/${old[0].id}`, { ...h.store.get(`supportTickets/${old[0].id}`), createdAt: T(Date.now() - 31 * 24 * 3600 * 1000) });
+  assert.strictEqual(await h.bot.sweepSite(), 1);
+  assert.strictEqual(tickets(h.store).filter((x) => x.channel === "site").length, 2);
+  assert.ok(![...h.store.keys()].some((k) => k.startsWith(`supportTickets/${old[0].id}/`)), "сообщения остались");
+});
+
+test("знания: карта сайта, курсы, стоп-лист, модификаторы, отчёты, аккаунт, чего нет", async () => {
+  const h = harness();
+  await setup(h);
+  const top = (q) => sb.rankDocs(q, h.bot._state.guide, 3).map((d) => d.id);
+  const cases = [
+    ["Где на сайте посмотреть тарифы и демо?", "kb:site-map"],
+    ["Как сделать чтобы горячее подавали позже закусок", "kb:course-hold"],
+    ["Блюдо закончилось как убрать из меню временно", "kb:stop-list"],
+    ["Как добавить сиропы и молоко к кофе и бизнес-ланч", "kb:modifiers-combo"],
+    ["Где посмотреть продажи по сотрудникам и выгрузить в Excel", "kb:reports-detail"],
+    ["Как удалить аккаунт или сменить почту владельца", "kb:account-access"],
+    ["Можно ли поставить кассу на iPad или загрузить меню из файла", "kb:limits"],
+  ];
+  for (const [q, id] of cases) assert.ok(top(q).includes(id), `${q} → ${top(q).join(", ")}`);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {
