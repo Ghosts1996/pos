@@ -4075,7 +4075,10 @@ function watchDashboardData(tenantId) {
           <div class="small" style="color:var(--warning);margin-top:6px">Автопродление отключено — доступ работает до конца оплаченного периода, новых списаний не будет.</div>
         ` : ''}
         ${canManage ? `<button class="btn btn-primary f-dash-tab" data-tab="plans" style="margin-top:14px">Перейти к тарифам</button>` : ''}
-        ${canManage && subscription?.status === 'active' ? `
+        ${canManage && subscription?.status === 'active' && subscription?.cancelAtPeriodEnd && subscription?.provider === 'robokassa' && !subscription?.robokassaParentInvId ? `
+          <p class="small muted" style="margin:10px 0 0">Автопродление не подключено: прошлую оплату сделали без него. Чтобы
+          продлевалось само, в «Тарифах» отметьте «Автопродление» и оплатите следующий период — он добавится к текущему сроку.</p>
+        ` : canManage && subscription?.status === 'active' ? `
           <button class="btn btn-ghost" id="f-toggle-autorenew" style="margin-top:10px">
             ${subscription?.cancelAtPeriodEnd ? 'Возобновить автопродление' : 'Отключить автопродление'}
           </button>
@@ -4157,10 +4160,10 @@ function watchDashboardData(tenantId) {
                 ${inTrial && !isCurrent && p.archived !== true ? `
                   <button class="btn btn-ghost f-plan-trial-switch" data-plan="${esc(p.id)}" style="margin-bottom:8px">Перейти на этот тариф — бесплатно до конца пробного периода</button>
                 ` : ''}
-                <button class="btn ${subscription?.status === 'past_due' || (inTrial && isCurrent) ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}"
-                  ${paidCurrent ? 'disabled' : ''}>
-                  ${paidCurrent ? 'Оплачен' : isCurrent ? 'Оплатить' : inTrial ? 'Оплатить этот тариф' : 'Перейти и оплатить'}
+                <button class="btn ${subscription?.status === 'past_due' || (inTrial && isCurrent) ? 'btn-primary' : 'btn-ghost'} f-plan-checkout" data-plan="${esc(p.id)}">
+                  ${paidCurrent ? 'Продлить' : isCurrent ? 'Оплатить' : inTrial ? 'Оплатить этот тариф' : 'Перейти и оплатить'}
                 </button>
+                ${paidCurrent && subscription?.currentPeriodEnd ? `<div class="small muted" style="margin-top:6px">Оплачено до ${fmtDate(subscription.currentPeriodEnd)}. Продлите заранее — новый срок добавится к этой дате.</div>` : ''}
               </div>
             `;
             }).join('')}</div>`;
