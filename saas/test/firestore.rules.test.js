@@ -714,21 +714,20 @@ describe("Тарифы (plans): управляет только супер-ад�
 describe("supportTickets: обращения в поддержку — видит своё заведение и супер-админ", () => {
   beforeEach(seedTwoTenants);
 
-  it("владелец может создать тикет по своему заведению от своего имени", async () => {
-    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
+  // Владелец создаёт обращение через сервер в РФ (/supportSend): там текст
+  // обезличивается до записи в базу. Напрямую — нельзя.
+  it("владелец не создаёт тикет напрямую — только через сервер в РФ", async () => {
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
       tenantId: "tenantA", subject: "Не открывается смена", status: "open", createdBy: "ownerA",
     }));
   });
 
-  it("владелец не может создать тикет от имени другого пользователя", async () => {
-    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
-      tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerB",
+  it("супер-админ может создать тикет, но не сразу закрытым", async () => {
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1"), {
+      tenantId: "tenantA", subject: "x", status: "open", createdBy: "root",
     }));
-  });
-
-  it("владелец не может создать тикет сразу закрытым", async () => {
-    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1"), {
-      tenantId: "tenantA", subject: "x", status: "closed", createdBy: "ownerA",
+    await assertFails(setDoc(doc(ctxFor("root"), "supportTickets/t2"), {
+      tenantId: "tenantA", subject: "x", status: "closed", createdBy: "root",
     }));
   });
 
@@ -747,19 +746,20 @@ describe("supportTickets: обращения в поддержку — види�
     await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1"), { status: "closed" }, { merge: true }));
   });
 
-  it("владелец может писать сообщения в свой тикет от своего имени", async () => {
+  it("владелец пишет в свой тикет только через сервер в РФ; вложений у ответа — не больше 5", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("supportTickets/t1"), { tenantId: "tenantA", subject: "x", status: "open", createdBy: "ownerA" });
     });
-    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m1"), {
-      text: "Помогите", authorUid: "ownerA",
+    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m1"), {
+      text: "Помогите, мой телефон +7 999 123-45-67", authorUid: "ownerA",
     }));
+    await assertSucceeds(getDoc(doc(ctxFor("ownerA"), "supportTickets/t1")));
     const file = (i) => ({ id: `${"a".repeat(24)}.png`, name: `скрин${i}.png`, type: "image/png", size: 1000 });
-    await assertSucceeds(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m2"), {
-      text: "", authorUid: "ownerA", attachments: [file(1), file(2)],
+    await assertSucceeds(setDoc(doc(ctxFor("root"), "supportTickets/t1/messages/m2"), {
+      text: "", authorUid: "root", attachments: [file(1), file(2)],
     }));
-    await assertFails(setDoc(doc(ctxFor("ownerA"), "supportTickets/t1/messages/m3"), {
-      text: "", authorUid: "ownerA", attachments: [1, 2, 3, 4, 5, 6].map(file),
+    await assertFails(setDoc(doc(ctxFor("root"), "supportTickets/t1/messages/m3"), {
+      text: "", authorUid: "root", attachments: [1, 2, 3, 4, 5, 6].map(file),
     }));
   });
 

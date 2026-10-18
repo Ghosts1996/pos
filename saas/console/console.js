@@ -2684,6 +2684,7 @@ function screenLegalPrivacy() {
         'Имена, телефоны и адреса Гостей, имена работников заведений, email пользователей личного кабинета, сведения о согласиях и реквизиты плательщиков по счёту первично записываются в базу данных на сервере Оператора, расположенном на территории Российской Федерации (ч. 5 ст. 18 Федерального закона № 152-ФЗ).',
         'Персональные данные Гостей и работников заведений хранятся только на этом сервере и за пределы РФ не передаются — у всех заведений на Платформе.',
         'Для синхронизации данных между устройствами, резервного копирования, авторизации пользователей и push-уведомлений используется облачная инфраструктура Google LLC: авторизация и push-уведомления — на серверах в США, хранение и синхронизация данных — в центрах обработки данных Google Cloud в Бельгии и Нидерландах. Данные заведений передаются туда только обезличенными — меню, заказы, суммы и идентификаторы без имён, телефонов и адресов.',
+        'Обращения в техническую поддержку принимаются в личном кабинете и проходят через сервер Оператора в РФ: до записи в облачную инфраструктуру, передачи сотрудникам поддержки (мессенджер Telegram) и ИИ-ассистенту поддержки из темы и текста обращения автоматически удаляются номера телефонов, адреса электронной почты, ИНН и другие номера, номера банковских карт, имена пользователей и фамилии, имена и отчества — дальше обрабатывается только обезличенный текст. Скриншоты и файлы обращений хранятся только на сервере в РФ и за её пределы не передаются. Обращения в Telegram-бот поддержки не принимаются.',
         'Трансграничная передача касается только пользователей личного кабинета: адрес электронной почты используется для входа через сервис авторизации Google LLC. Она осуществляется с согласия пользователя, данного при регистрации, и после уведомления Роскомнадзора в порядке ст. 12 Федерального закона № 152-ФЗ; получатель обеспечивает защиту данных (шифрование при хранении и передаче, сертификация ISO/IEC 27001, 27017, 27018).',
       ])}
       ${legalSection('7. Сроки обработки и хранения', [
@@ -4538,7 +4539,7 @@ function watchDashboardData(tenantId) {
           <input type="checkbox" id="f-ticket-consent" ${supportConsentGiven() ? 'checked' : ''}>
           <span class="consent-text">
             <span>Согласен на обработку данных обращения</span>
-            <span class="small muted">Ответит поддержка или ИИ&#8209;ассистент — ему текст уходит без телефонов и почт. Не пишите пароли, коды из СМС и данные гостей.
+            <span class="small muted">Обращение проходит через сервер в России: телефоны, почты, ИНН, номера карт и ФИО в тексте скрываются автоматически, скриншоты остаются в России. Не пишите пароли, коды из СМС и данные гостей.
               <a href="#/legal/privacy" target="_blank" rel="noopener" class="nowrap">Политика конфиденциальности</a></span>
           </span>
         </label>
@@ -5023,32 +5024,30 @@ function watchDashboardData(tenantId) {
         const btn = $('f-ticket-create');
         btn.disabled = true;
         try {
-          const now = Timestamp.fromDate(new Date());
-          const ticketRef = await addDoc(collection(state.db, 'supportTickets'), {
-            tenantId, subject, status: 'open', createdBy: state.uid, createdAt: now, updatedAt: now,
-            lastAuthorRole: 'owner',
-            // Согласие на обработку данных обращения (ч. 1 ст. 9 152-ФЗ): когда и по какой редакции.
-            pdConsent: true, pdConsentAt: now, pdConsentEdition: LEGAL_EDITION,
+          // Через сервер в РФ: тема и текст обезличиваются до записи в базу
+          // (согласие по ч. 1 ст. 9 152-ФЗ — с редакцией текста).
+          const withFiles = ticketDraftFiles.length > 0;
+          const created = await callSaasGateway('supportSend', {
+            tenantId, subject, consent: true, consentEdition: LEGAL_EDITION, ...(withFiles ? {} : { text }),
           });
-          let attachments = [];
+          const ticketId = created.data.ticketId;
+          let masked = created.data.masked;
           let uploadError = '';
-          if (ticketDraftFiles.length) {
+          if (withFiles) {
             btn.textContent = 'Загружаю файлы…';
-            attachments = await uploadSupportFiles(ticketRef.id, ticketDraftFiles).catch((e) => { uploadError = e?.message || String(e); return []; });
+            const attachments = await uploadSupportFiles(ticketId, ticketDraftFiles).catch((e) => { uploadError = e?.message || String(e); return []; });
+            if (text || attachments.length) {
+              const sent = await callSaasGateway('supportSend', { ticketId, text, attachments });
+              masked = masked || sent.data.masked;
+            }
           }
-          // Пока грузились файлы, сервер мог уже увидеть пустое обращение —
-          // сообщение с отметкой «позже» и свежий updatedAt, чтобы его не пропустить.
-          const at = attachments.length || uploadError ? Timestamp.fromDate(new Date()) : now;
-          await addDoc(collection(state.db, 'supportTickets', ticketRef.id, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'owner', createdAt: at, ...(attachments.length ? { attachments } : {}),
-          });
-          if (at !== now) await setDoc(doc(state.db, 'supportTickets', ticketRef.id), { updatedAt: at, lastAuthorRole: 'owner' }, { merge: true });
           if (!uploadError) dropPreviews(ticketDraftFiles);
           ticketDraftFiles.splice(0);
           if ($('f-ticket-subject')) $('f-ticket-subject').value = '';
           if ($('f-ticket-message')) $('f-ticket-message').value = '';
-          toast(uploadError ? `Обращение создано, но файл не загрузился: ${uploadError}` : 'Обращение создано');
-          selectTicket(ticketRef.id);
+          toast(uploadError ? `Обращение создано, но файл не загрузился: ${uploadError}`
+            : masked ? 'Обращение создано. Личные данные в тексте скрыты — они не нужны поддержке' : 'Обращение создано');
+          selectTicket(ticketId);
         } catch (e) {
           toast(`Не удалось создать обращение: ${e?.message || e}`);
         } finally {
@@ -5070,15 +5069,9 @@ function watchDashboardData(tenantId) {
         draw();
         try {
           const attachments = files.length ? await uploadSupportFiles(ticket.id, files) : [];
-          const now = Timestamp.fromDate(new Date());
-          await addDoc(collection(state.db, 'supportTickets', ticket.id, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'owner', createdAt: now, ...(attachments.length ? { attachments } : {}),
-          });
-          await setDoc(doc(state.db, 'supportTickets', ticket.id), {
-            updatedAt: now,
-            lastAuthorRole: 'owner',
-            status: ticket.status === 'closed' ? 'open' : ticket.status,
-          }, { merge: true });
+          // Через сервер в РФ: текст обезличивается до записи в базу.
+          const sent = await callSaasGateway('supportSend', { ticketId: ticket.id, text, attachments });
+          if (sent.data.masked) toast('Личные данные в тексте скрыты — они не нужны поддержке');
           dropPreviews(files);
         } catch (e) {
           replyDraftFiles.unshift(...files);
@@ -6440,6 +6433,14 @@ function watchSupportBotAdmin() {
           <span class="small">Автообучение: бот сам запоминает решения из диалогов — прежде всего ваши ответы и ответы сотрудников</span>
         </label>
         <label class="row" style="gap:8px;align-items:center;margin:6px 0">
+          <input type="checkbox" id="f-sb-ru-only" style="width:auto" ${s.ruOnly === false ? '' : 'checked'}>
+          <span class="small"><b>Данные только в России</b>: обращения — в кабинете, текст обезличивается на сервере в РФ до облака, Telegram и ИИ, файлы остаются в РФ, клиентам в личке Telegram бот отвечает ссылкой на кабинет. Уведомлять Роскомнадзор о передаче за рубеж не нужно. Выключайте, только если такое уведомление подано</span>
+        </label>
+        <label class="row" style="gap:8px;align-items:center;margin:6px 0">
+          <input type="checkbox" id="f-sb-ai-ru" style="width:auto" ${s.aiRu ? 'checked' : ''}>
+          <span class="small">ИИ-провайдер с серверами в России (например, GigaChat или YandexGPT) — тогда ИИ смотрит и скриншоты</span>
+        </label>
+        <label class="row" style="gap:8px;align-items:center;margin:6px 0">
           <input type="checkbox" id="f-sb-web-on" style="width:auto" ${s.web && s.web.enabled === false ? '' : 'checked'}>
           <span class="small">Поиск в интернете: по внешним вопросам (законы, банки, ОФД, оборудование, где купить) бот сам ищет, читает страницы и отвечает со ссылкой на источник</span>
         </label>
@@ -6600,6 +6601,8 @@ function watchSupportBotAdmin() {
         admins: $('f-sb-admins').value,
         aiEnabled: $('f-sb-ai-on').checked,
         autoLearn: $('f-sb-autolearn').checked,
+        ruOnly: $('f-sb-ru-only').checked,
+        aiRu: $('f-sb-ai-ru').checked,
         web: { enabled: $('f-sb-web-on').checked, provider: $('f-sb-web-provider').value, key: $('f-sb-web-key').value.trim() },
         ai: {
           routing: $('f-sb-routing').value,

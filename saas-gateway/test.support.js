@@ -332,13 +332,15 @@ const sends = (calls, chatId) => calls.filter((c) => c.method === "sendMessage" 
 
 // Поиск в интернете в тестах по умолчанию выключен (он добавляет вызовы ИИ);
 // отдельные тесты включают его — setup(h, { web: true }).
-async function setup(h, { web = false } = {}) {
+// Режим «данные только в России» в старых тестах выключен — они проверяют
+// клиентов в Telegram; новые тесты включают его — setup(h, { ruOnly: true }).
+async function setup(h, { web = false, ruOnly = false } = {}) {
   await h.bot.start();
   await h.bot.handleSetup({ body: {
     token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll",
     ai: { vendor: "tooken", apiKey: "sk-test-key-1234567890abcdef" },
     groupChatId: String(GROUP), staff: "555000111 Константин", workHours: "с 10 до 22 МСК",
-    web: { enabled: web },
+    web: { enabled: web }, ruOnly,
   } }, {});
   assert.strictEqual(h.sent.code, 200, JSON.stringify(h.sent.body));
 }
@@ -1130,6 +1132,68 @@ test("обман: три попытки — ИИ уступает человек
   assert.ok(prompt.includes("Подозрительная ссылка") && prompt.includes("zalpos-pay.ru"), "ИИ не знает о фишинге");
   assert.ok(sends(h2.calls, GROUP).some((c) => /Подозрительная ссылка/.test(c.body.text)));
   assert.ok(!tickets(h2.store)[0].escalated);
+});
+
+test("обезличивание: ФИО, «меня зовут», ИП с фамилией — скрываются; названия кнопок и программ — нет", () => {
+  assert.strictEqual(sb.scrubPii("Меня зовут Анна, телефон +7 999 123-45-67"), "Меня зовут [имя], телефон [телефон]");
+  assert.strictEqual(sb.scrubPii("Петров Иван Сергеевич, ИНН 151211052290"), "[ФИО], ИНН [ИНН/номер]");
+  assert.strictEqual(sb.scrubPii("ИП Бикоев Константин Николаевич оплатил"), "ИП [ФИО] оплатил");
+  assert.strictEqual(sb.scrubPii("Иванов И.И. директор"), "[ФИО] директор");
+  for (const t of ["Не печатает Касса Атол", "Откройте Кабинет → Поддержка", "Сбер Бизнес не видит терминал"]) assert.strictEqual(sb.scrubPii(t), t);
+});
+
+test("только Россия: клиента в Telegram бот отправляет в кабинет и ничего не хранит; админка работает", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  await h.bot.handleUpdate(pm("/start"));
+  await h.bot.handleUpdate(pm("Не печатает чек, мой телефон +7 999 123-45-67"));
+  await h.bot.idle();
+  assert.strictEqual(tickets(h.store).length, 0, "обращение из Telegram сохранилось");
+  assert.strictEqual(h.aiCalls.length, 0);
+  assert.ok(!JSON.stringify([...h.store.values()]).includes("123-45-67"));
+  assert.ok(sends(h.calls, 42).every((c) => /в личном кабинете/.test(c.body.text)));
+  // Админ бота по-прежнему открывает админку.
+  await h.bot.handleUpdate(pm("/admin", 555000111));
+  await h.bot.idle();
+  assert.ok(sends(h.calls, 555000111).some((c) => !/в личном кабинете/.test(c.body.text)), "админка не открылась");
+  // Ссылка «Написать в Telegram» из кабинета не выдаётся.
+  await h.bot.handleClientLink({ uid: "owner1", body: { tenantId: "t1" } }, {});
+  assert.strictEqual(h.sent.body.enabled, false);
+  assert.strictEqual((await h.bot.statusOf()).ruOnly, true);
+});
+
+test("только Россия: обращение из кабинета обезличивается на сервере — в базе, теме и у ИИ нет телефона и ФИО; файлы не уходят в Telegram", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "Касса — Петров Иван Сергеевич", consent: true, consentEdition: "Редакция от 18 октября 2026 г.", text: "Меня зовут Анна, телефон +7 999 123-45-67, не собирается APK" } }, {});
+  assert.strictEqual(h.sent.code, 200, JSON.stringify(h.sent.body));
+  const id = h.sent.body.ticketId;
+  assert.ok(id && h.sent.body.masked);
+  const t0 = h.store.get(`supportTickets/${id}`);
+  assert.strictEqual(t0.subject, "Касса — [ФИО]");
+  assert.ok(t0.pdConsent && t0.createdBy === "owner1");
+  h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  await h.bot.idle();
+  const all = JSON.stringify([...h.store.values()]) + JSON.stringify(h.calls) + JSON.stringify(h.aiCalls);
+  assert.ok(!all.includes("123-45-67") && !all.includes("Анна") && !all.includes("Петров"), "персональные данные ушли");
+  assert.ok(sends(h.calls, GROUP).some((c) => /\[телефон\]/.test(c.body.text)), "текст клиента не дошёл до темы");
+  assert.strictEqual(h.aiCalls.length, 1);
+
+  // Скриншот: файл остаётся в РФ, в теме — только название, ИИ его не смотрит.
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const file = await supportFiles.save({ tenantId: "t1", ticketId: id, buffer: png, type: "image/png", name: "screen.png" });
+  const n = h.aiCalls.length;
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { ticketId: id, text: "", attachments: [file] } }, {});
+  h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  await h.bot.idle();
+  assert.ok(!h.calls.some((c) => c.method === "sendPhoto" || c.method === "sendDocument"), "файл ушёл в Telegram");
+  assert.ok(sends(h.calls, GROUP).some((c) => /screen\.png/.test(c.body.text) && /сервере в РФ/.test(c.body.text)));
+  assert.ok(!h.aiCalls.slice(n).some((c) => JSON.stringify(c.messages).includes("image_url")), "скриншот ушёл ИИ");
+  assert.ok(messagesOf(h.store, id).some((m) => m.authorRole === "ai" && /специалист его видит/.test(m.text)));
+
+  // Чужое заведение и без согласия — отказ.
+  await assert.rejects(h.bot.handleCabinetSend({ uid: "stranger", body: { tenantId: "t1", subject: "x", consent: true, text: "y" } }, {}));
+  await assert.rejects(h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "x", text: "y" } }, {}), /согласие/);
 });
 
 (async () => {

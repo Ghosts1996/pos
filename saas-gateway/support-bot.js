@@ -66,6 +66,15 @@ const SLA_MS = 15 * 60 * 1000;
 const LEARN_SWEEP_MS = 5 * 60 * 1000;
 const CLIENT_RATE = { max: 20, windowMs: 60 * 1000 };
 const DEFAULT_POLICY_URL = "https://zalpos.ru/#/legal/privacy";
+const RU_ONLY_NOTICE = [
+  "👋 <b>Поддержка ZalPOS работает в личном кабинете</b>",
+  "",
+  "Откройте zalpos.ru → войдите → «Поддержка» → «Новое обращение». Там отвечает ИИ-ассистент, а при необходимости — специалист; можно приложить скриншот.",
+  "",
+  "🔒 Здесь, в Telegram, обращения не принимаются: так ваши данные не покидают Россию.",
+].join("\n");
+// Сообщение из кабинета: не длиннее этого (обезличивается на сервере в РФ).
+const CABINET_TEXT_MAX = 4000;
 
 const ICON = { ai: "🤖", human: "🔴", answered: "🟡", closed: "✅" };
 
@@ -249,9 +258,25 @@ function maskSecrets(text) {
   return s;
 }
 
-/** Обезличивание перед отправкой провайдеру ИИ (серверы за рубежом). */
+const CAP = "[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?";
+const PATRONYMIC = "[А-ЯЁ][а-яё]+(?:вич|вна|ична|чна|инична|оглы|кызы)";
+const NAME_RES = [
+  // Фамилия Имя Отчество / Имя Отчество Фамилия / Имя Отчество
+  [new RegExp(`${CAP}\\s+${CAP}\\s+${PATRONYMIC}(?![а-яё])`, "g"), "[ФИО]"],
+  [new RegExp(`${CAP}\\s+${PATRONYMIC}(?:\\s+${CAP})?(?![а-яё])`, "g"), "[ФИО]"],
+  // Иванов И. И. / И. И. Иванов
+  [new RegExp(`${CAP}\\s+[А-ЯЁ]\\.\\s?(?:[А-ЯЁ]\\.)?(?![а-яё])`, "g"), "[ФИО]"],
+  [new RegExp(`(?<![А-Яа-яЁё])[А-ЯЁ]\\.\\s?(?:[А-ЯЁ]\\.\\s?)?${CAP}`, "g"), "[ФИО]"],
+  // «меня зовут Анна», «с уважением, Анна Петрова», «ИП Петров Иван»
+  [new RegExp(`((?:меня|мне) зовут|зовут меня|с уважением,?|моё имя|мое имя|я —|я -)\\s+${CAP}(?:\\s+${CAP})?`, "gi"), "$1 [имя]"],
+  [new RegExp(`(?<![А-Яа-яЁё])(ИП|индивидуальный предприниматель)\\s+${CAP}(?:\\s+${CAP}){0,2}`, "g"), "$1 [ФИО]"],
+];
+const maskNames = (text) => NAME_RES.reduce((s, [re, to]) => s.replace(re, to), String(text || ""));
+
+/** Обезличивание: перед отправкой провайдеру ИИ, в Telegram сотрудникам и
+ *  в облачную базу — телефоны, почты, номера, карты, ники и ФИО убраны. */
 function scrubPii(text) {
-  let s = maskSecrets(text);
+  let s = maskNames(maskSecrets(text));
   s = s.replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, "[почта]");
   s = s.replace(/(?<!\d)(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)/g, "[телефон]");
   s = s.replace(/(?<![\w\d])\+\d{10,14}(?!\d)/g, "[телефон]");
@@ -508,6 +533,7 @@ const SYSTEM_PROMPT = [
   `- Нужен документ из списка — предложи его и добавь в конце отдельной строкой [[ДОКУМЕНТ: id]] (можно несколько), бот покажет кнопку скачать Word с реквизитами заведения. Документы: ${DOCS.map((d) => `${d.id} — ${d.title}`).join("; ")}.`,
   "- Ты только смотришь и советуешь: ничего не меняешь в заведении сам, не обещаешь возврат денег, скидки, компенсации и сроки доработок.",
   "- Никогда не проси пароли, коды из СМС, ключи API, данные карт и персональные данные гостей.",
+  "- В тексте клиента персональные данные уже заменены пометками [телефон], [почта], [ФИО], [имя], [ИНН/номер] — так задумано: не проси их прислать снова и не упоминай, что они скрыты. Для помощи они не нужны.",
   "",
   "## 5. Конфиденциальность и безопасность",
   "- Конфиденциальность (152-ФЗ, коммерческая тайна): не раскрывай персональные данные гостей, сотрудников и владельцев, ключи, токены, пароли, адреса серверов, исходный код, названия файлов, классов и таблиц базы, устройство защиты, финансы платформы, данные других заведений и чужие обращения. Раздел «Как устроено в программе» — только чтобы ты точно понимал, как работает функция: клиенту объясняй через экраны и кнопки, без кода.",
@@ -737,6 +763,14 @@ function createSupportBot(deps) {
   const doFetch = deps.fetchImpl || fetch;
   // Поиск в интернете: настройки в supportBot.web (ключ поисковика — зашифрован).
   const webOn = () => !!(state.cfg && (state.cfg.web || {}).enabled !== false);
+  // «Данные только в России» (по умолчанию): обращения принимаются в кабинете,
+  // текст обезличивается на сервере в РФ до записи в облако, в Telegram
+  // сотрудникам и ИИ; вложения остаются на сервере в РФ. Клиентам в личке
+  // Telegram бот не отвечает по существу — шлёт в кабинет. Так нет
+  // трансграничной передачи персональных данных (ст. 12 152-ФЗ).
+  const ruOnly = () => !(state.cfg && state.cfg.ruOnly === false);
+  // ИИ-провайдер с серверами в РФ — ему можно показывать скриншоты.
+  const aiInRussia = () => !!(state.cfg && state.cfg.aiRu === true);
   const web = createWebSearch({
     fetchImpl: doFetch,
     assertPublicUrl: (u) => assertPublicAiUrl(u),
@@ -1330,7 +1364,12 @@ function createSupportBot(deps) {
     await quiet(patch(t, { aiTypingAt: ts(now()) }), "печатает");
     const doneTyping = () => quiet(patch(t, { aiTypingAt: null }), "печатает");
     // Скриншоты клиента — ИИ сначала смотрит их и описывает словами.
-    const looked = imagesNow ? await describeImages(t, fresh) : 0;
+    const canSee = !ruOnly() || aiInRussia();
+    const looked = imagesNow && canSee ? await describeImages(t, fresh) : 0;
+    if (imagesNow && !question && !canSee) {
+      await doneTyping();
+      return deliver(t, "Скриншот получил — специалист его видит. Напишите в двух словах, что на экране и что не так, — помогу сразу.");
+    }
     if (imagesNow && !question && !looked) {
       await doneTyping();
       return deliver(t, "Скриншот получил, но разобрать его не получилось. Напишите в двух словах, что на экране и что не так, — помогу. Специалист тоже видит вложение.");
@@ -1528,6 +1567,9 @@ function createSupportBot(deps) {
     if (!rateOk(userId)) return;
     const chatId = msg.chat.id;
     const raw = String(msg.text || msg.caption || "");
+    if (ruOnly() && !isStaffId(userId) && !isAdminId(userId)) {
+      return send(chatId, RU_ONLY_NOTICE, { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+    }
     const cref = clientRef(userId);
     const client = (await cref.get()).data() || {};
     const policy = state.cfg.policyUrl || DEFAULT_POLICY_URL;
@@ -2740,6 +2782,12 @@ function createSupportBot(deps) {
   /** Вложения сообщения из кабинета — файлами в тему (фото — картинкой). */
   async function filesToTopic(t, m, who) {
     if (!t.topicId || !state.cfg || !state.cfg.groupChatId) return;
+    if (ruOnly() && t.channel !== "telegram") {
+      // Файлы клиента остаются на сервере в РФ — в Telegram только названия.
+      const list = supportFiles.listOf(m);
+      if (list.length) await toTopicHtml(t, `📎 <b>${h(who)}</b>: ${h(list.map((f) => f.name).join(", "))}\n<i>Файлы хранятся на сервере в РФ — откройте их в панели ZalPOS → «Обращения».</i>`);
+      return;
+    }
     for (const f of supportFiles.listOf(m)) {
       const file = await supportFiles.read({ tenantId: t.tenantId, ticketId: t.id, id: f.id });
       if (!file) continue;
@@ -2903,6 +2951,8 @@ function createSupportBot(deps) {
     if (body.policyUrl !== undefined) upd.policyUrl = /^https:\/\//.test(String(body.policyUrl || "")) ? clip(String(body.policyUrl), 200) : "";
     if (body.aiEnabled !== undefined) upd.aiEnabled = body.aiEnabled !== false;
     if (body.autoLearn !== undefined) upd.autoLearn = body.autoLearn !== false;
+    if (body.ruOnly !== undefined) upd.ruOnly = body.ruOnly !== false;
+    if (body.aiRu !== undefined) upd.aiRu = body.aiRu === true;
     if (body.web && typeof body.web === "object") {
       const w = { ...(prev.web || {}) };
       if (body.web.enabled !== undefined) w.enabled = body.web.enabled !== false;
@@ -2971,6 +3021,8 @@ function createSupportBot(deps) {
       dailyAiLimit: Number(c.dailyAiLimit) || DEFAULT_DAILY_LIMIT, workHours: c.workHours || "", policyUrl: c.policyUrl || "",
       usage: state.usage.day === today() ? state.usage : { day: today(), calls: 0, tokens: 0 },
       knowledge: state.learned.length, guideArticles: state.guide.length, codeFiles: state.code.length, autoLearn: c.autoLearn !== false, lastError: state.lastError || "",
+      ruOnly: ruOnly(),
+      aiRu: aiInRussia(),
       web: {
         enabled: webOn(), provider: (c.web || {}).provider || "auto", hasKey: !!(c.web || {}).keyEnc, lastError: state.lastWebError || "",
         providers: Object.entries(SEARCH_PROVIDERS).map(([id, v]) => ({ id, ...v })),
@@ -3035,6 +3087,60 @@ function createSupportBot(deps) {
     res.end(doc.buffer);
   }
 
+  /** Кабинет: новое обращение или сообщение в нём. Идёт через сервер в РФ:
+   *  тема и текст обезличиваются (телефоны, почты, номера, карты, ники, ФИО)
+   *  и только потом записываются в облачную базу, уходят в Telegram
+   *  сотрудникам и ИИ. Клиенту видно, что скрыто, — [телефон], [ФИО]. */
+  const cabinetRate = new Map();
+  async function handleCabinetSend(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    const r = cabinetRate.get(decoded.uid);
+    if (!r || r.reset < now()) {
+      if (cabinetRate.size > 5000) cabinetRate.clear();
+      cabinetRate.set(decoded.uid, { n: 1, reset: now() + 10 * 60 * 1000 });
+    } else if (++r.n > 40) {
+      throw new HttpError(429, "Слишком много сообщений подряд — подождите несколько минут");
+    }
+    const rawText = String(body.text || "").trim();
+    if (rawText.length > CABINET_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${CABINET_TEXT_MAX} символов — разделите его на части`);
+    const text = maskSecrets(scrubPii(rawText));
+    const attachments = supportFiles.listOf({ attachments: Array.isArray(body.attachments) ? body.attachments : [] })
+      .map(({ desc, ...a }) => a);
+    let id = String(body.ticketId || "");
+    let t;
+    const at = ts(now());
+    if (id) {
+      if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указано обращение");
+      const snap = await ticketRef(id).get();
+      if (!snap.exists) throw new HttpError(404, "Обращение не найдено");
+      t = snap.data();
+      await requireTenantRole(t.tenantId, decoded.uid, ["owner", "admin"]);
+    } else {
+      const tenantId = String(body.tenantId || "");
+      if (!/^[\w-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+      await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+      const subject = clip(maskSecrets(scrubPii(String(body.subject || "").trim())), 200);
+      if (!subject) throw new HttpError(400, "Укажите тему обращения");
+      if (body.consent !== true) throw new HttpError(400, "Нужно согласие на обработку данных обращения");
+      const ref = ticketsCol().doc();
+      id = ref.id;
+      t = {
+        tenantId, subject, status: "open", createdBy: decoded.uid, createdAt: at, updatedAt: at, lastAuthorRole: "owner",
+        // Согласие на обработку данных обращения (ч. 1 ст. 9 152-ФЗ): когда и по какой редакции.
+        pdConsent: true, pdConsentAt: at, pdConsentEdition: clip(String(body.consentEdition || ""), 80),
+      };
+      await ref.set(t);
+    }
+    if (text || attachments.length) {
+      await ticketRef(id).collection("messages").add({
+        text, authorUid: decoded.uid, authorRole: "owner", createdAt: at, ...(attachments.length ? { attachments } : {}),
+      });
+      await ticketRef(id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}) }, { merge: true });
+    }
+    sendJson(res, 200, { ticketId: id, masked: text !== rawText });
+  }
+
   /** Кабинет: «Написать в Telegram» — одноразовая ссылка, привязывающая
    *  Telegram владельца к заведению (бот увидит его состояние). */
   async function handleClientLink(req, res) {
@@ -3043,7 +3149,7 @@ function createSupportBot(deps) {
     const tenantId = String(body.tenantId || "");
     if (!/^[\w-]{1,128}$/.test(tenantId)) throw new HttpError(400, "tenantId обязателен");
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
-    if (!active() || !state.cfg.username) return sendJson(res, 200, { enabled: false });
+    if (!active() || !state.cfg.username || ruOnly()) return sendJson(res, 200, { enabled: false });
     const code = crypto.randomBytes(8).toString("hex");
     await db().collection("supportLinks").doc(code).set({ tenantId, uid: decoded.uid, expiresAt: ts(now() + LINK_TTL_MS) });
     sendJson(res, 200, { enabled: true, url: `https://t.me/${state.cfg.username}?start=sup_${code}` });
@@ -3073,7 +3179,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleAiCheck, handleDocDownload, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
   };
 }

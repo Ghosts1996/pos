@@ -964,12 +964,12 @@ service cloud.firestore {
     //      Подпись «Платформа» (super_admin) ставит только супер-админ, и
     //      обращение нельзя перевесить на чужое заведение: иначе в чужом
     //      кабинете появился бы «ответ поддержки» с чужими реквизитами. ----
+    //      Обращение и сообщения владелец создаёт через сервер в РФ
+    //      (/supportSend): там текст обезличивается до записи сюда, поэтому
+    //      напрямую писать может только супер-админ (ответы из панели).
     match /supportTickets/{ticketId} {
       allow read: if hasRole(resource.data.tenantId, ['owner', 'admin']);
-      allow create: if hasRole(request.resource.data.tenantId, ['owner', 'admin']) &&
-        request.resource.data.createdBy == request.auth.uid &&
-        request.resource.data.status == 'open' &&
-        (isSuperAdmin() || request.resource.data.get('lastAuthorRole', '') != 'super_admin');
+      allow create: if isSuperAdmin() && request.resource.data.status == 'open';
       allow update: if isSuperAdmin() ||
         (hasRole(resource.data.tenantId, ['owner', 'admin']) &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'lastAuthorRole']) &&
@@ -979,10 +979,7 @@ service cloud.firestore {
         allow read: if hasRole(
           get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.tenantId,
           ['owner', 'admin']);
-        allow create: if hasRole(
-          get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.tenantId,
-          ['owner', 'admin']) && request.resource.data.authorUid == request.auth.uid &&
-          (isSuperAdmin() || !(request.resource.data.get('authorRole', '') in ['super_admin', 'ai'])) &&
+        allow create: if isSuperAdmin() && request.resource.data.authorUid == request.auth.uid &&
           // Вложения: описания файлов, загруженных через /supportUpload (до 5).
           (!('attachments' in request.resource.data) ||
             (request.resource.data.attachments is list && request.resource.data.attachments.size() <= 5));
