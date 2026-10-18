@@ -539,16 +539,6 @@ a:hover { color: var(--primary-2); }
 .compare-card.good { border-color: var(--ink); }
 @media (min-width: 640px) { .compare-grid { grid-template-columns: 1fr 1fr; } }
 
-/* Липкая кнопка снизу на телефоне — включается из console.js, когда форма
-   email ушла за верх экрана. */
-.sticky-cta {
-  position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 460px; margin: 0 auto;
-  z-index: 15; opacity: 0; transform: translateY(14px); pointer-events: none; transition: .25s ease;
-}
-.sticky-cta .btn { box-shadow: 0 16px 36px -14px rgba(29, 26, 22, .6); }
-.sticky-cta.show { opacity: 1; transform: none; pointer-events: auto; }
-@media (min-width: 860px) { .sticky-cta { display: none; } }
-
 /* ================== ПУБЛИЧНЫЙ ЛЕНДИНГ ================== */
 .wrap.landing { max-width: none; margin: 0; padding: 0; background: var(--bg); }
 .landing-section { padding: 64px 20px; position: relative; }

@@ -7350,6 +7350,7 @@ const supportBot = createSupportBot({
   platformStatus: supportPlatformStatus,
   recentErrors: supportRecentErrors,
   docData: supportDocData,
+  clientIp,
 });
 
 // ------------------------------------------------ кеш статических данных
@@ -7443,6 +7444,8 @@ const ROUTES = {
   "/supportBotGroupCode": supportBot.handleGroupCode,
   "/supportBotLink": supportBot.handleClientLink,
   "/supportSend": supportBot.handleCabinetSend,
+  "/supportSiteSend": supportBot.handleSiteSend,
+  "/supportSiteMessages": supportBot.handleSiteMessages,
   "/supportBotPurgeForeign": supportBot.handlePurgeForeign,
   "/supportBotAiCheck": supportBot.handleAiCheck,
   // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.

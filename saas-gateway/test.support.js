@@ -1424,6 +1424,69 @@ test("склад: рецепты, заготовки, списания, инве
   assert.ok(/Отход при обработке/.test(doc.text) && /Рецепт на сколько порций/.test(doc.text));
 });
 
+test("чат на сайте: согласие, токен посетителя, ответ ИИ без телефона, чужой токен не читает, лимит", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  const req = (body, ip = "10.0.0.1") => ({ body, headers: { "x-real-ip": ip } });
+  await h.bot.handleSiteMessages(req({}), {});
+  assert.strictEqual(h.sent.body.enabled, true);
+
+  await assert.rejects(h.bot.handleSiteSend(req({ text: "Сколько стоит касса?" }), {}), /согласие/);
+  await h.bot.handleSiteSend(req({ text: "Сколько стоит касса? Мой телефон +7 999 123-45-67", consent: true }), {});
+  const { ticketId, token } = h.sent.body;
+  assert.ok(ticketId && token && token.length >= 30, JSON.stringify(h.sent.body));
+  assert.strictEqual(h.sent.body.masked, true);
+  await h.bot.idle();
+  const t = tickets(h.store).find((x) => x.id === ticketId);
+  assert.strictEqual(t.channel, "site");
+  assert.ok(!JSON.stringify(t).includes(token), "токен хранится в открытом виде");
+  assert.ok(!JSON.stringify([...h.store.values()]).includes("123-45-67"), "телефон сохранился");
+  const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(prompt.includes("посетитель сайта") && prompt.includes("Почему ZalPOS"), "нет режима сайта");
+  assert.ok(h.calls.some((c) => c.method === "createForumTopic" && /Сайт/.test(c.body.name)));
+
+  await h.bot.handleSiteMessages(req({ ticketId, token, after: 0 }), {});
+  assert.deepStrictEqual(h.sent.body.messages.map((m) => m.role), ["you", "ai"]);
+  assert.ok(/Собрать APK/.test(h.sent.body.messages[1].text));
+  const last = h.sent.body.messages[1].at;
+
+  await h.bot.handleSiteMessages(req({ ticketId, token: "x".repeat(32), after: 0 }), {});
+  assert.strictEqual(h.sent.body.gone, true);
+  assert.strictEqual(h.sent.body.messages.length, 0);
+
+  // Специалист ответил в теме — посетитель видит ответ.
+  await h.bot.handleUpdate(inTopic("Здравствуйте! Подскажу по тарифам", t.topicId || tickets(h.store).find((x) => x.id === ticketId).topicId));
+  await h.bot.idle();
+  await h.bot.handleSiteMessages(req({ ticketId, token, after: last }), {});
+  assert.deepStrictEqual(h.sent.body.messages.map((m) => m.role), ["staff"]);
+
+  // Продолжение диалога по токену — тот же диалог, без нового согласия.
+  await h.bot.handleSiteSend(req({ ticketId, token, text: "А приложение гостя входит?" }), {});
+  assert.strictEqual(h.sent.body.ticketId, ticketId);
+  assert.ok(!h.sent.body.token);
+
+  // 20 сообщений за 10 минут: уже 3 (одно без согласия тоже считается).
+  for (let i = 0; i < 17; i++) await h.bot.handleSiteSend(req({ ticketId, token, text: `вопрос ${i}` }), {});
+  await assert.rejects(h.bot.handleSiteSend(req({ ticketId, token, text: "ещё" }), {}), /Слишком много/);
+  await h.bot.idle();
+});
+
+test("продажи по закону: «почему вы» — факты о ZalPOS без конкурентов и превосходных степеней; человек — только в крайнем случае", async () => {
+  const h = harness();
+  await setup(h);
+  const top = (q) => sb.rankDocs(q, h.bot._state.guide, 3).map((d) => d.id);
+  assert.ok(top("Почему мне купить подписку именно у вас а не у конкурентов").includes("kb:why-zalpos"));
+  assert.ok(top("Как поменять логотип и цвета в приложении гостя").includes("kb:branding-howto"));
+  assert.ok(top("Как купить и начать пользоваться, с чего начать").includes("kb:start-buy"));
+  assert.ok(top("Как гостям открыть меню на айфоне и андроиде").includes("kb:guest-app-howto"));
+  const why = h.bot._state.guide.find((d) => d.id === "kb:why-zalpos").text;
+  assert.ok(!/(лучш|сам(ый|ая|ое) (дешёв|выгодн)|№\s?1|единственн)/i.test(why), "превосходные степени в статье");
+  for (const name of ["iiko", "r_keeper", "Poster", "Эвотор", "Frontpad", "Quick Resto"]) assert.ok(!why.includes(name), name);
+  const P = sb.SYSTEM_PROMPT;
+  assert.ok(P.includes("Не называй и не упоминай другие компании") && P.includes("38-ФЗ") && P.includes("135-ФЗ"));
+  assert.ok(P.includes("Специалиста зови только когда сам точно не поможешь"));
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

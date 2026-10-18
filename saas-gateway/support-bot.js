@@ -80,6 +80,12 @@ const RU_ONLY_NOTICE = [
 ].join("\n");
 // Сообщение из кабинета: не длиннее этого (обезличивается на сервере в РФ).
 const CABINET_TEXT_MAX = 4000;
+// Чат на сайте: короче сообщения, строже лимиты — пишет кто угодно.
+const SITE_TEXT_MAX = 1000;
+const SITE_MSG_PER_10MIN = 20;   // сообщений с одного адреса за 10 минут
+const SITE_NEW_PER_DAY = 6;      // новых диалогов с одного адреса за сутки
+const SITE_POLL_PER_MIN = 90;    // опросов «есть ли ответ» в минуту
+const SITE_TTL_MS = 30 * 24 * 3600 * 1000; // диалог на сайте живёт 30 дней
 
 const ICON = { ai: "🤖", human: "🔴", answered: "🟡", closed: "✅" };
 
@@ -557,8 +563,8 @@ const SYSTEM_PROMPT = [
   "",
   "## 2. Пиши только то, в чём уверен",
   "- Источники правды: «О продукте», разделы «Знания», «База решений» (проверено поддержкой — у неё приоритет) и «Состояние». Названия кнопок, разделов, пути, цены, тарифы, сроки и возможности бери только оттуда, дословно.",
-  "- Чего нет в источниках — не придумывай и не достраивай по аналогии: ни кнопок, ни путей, ни интеграций, ни цифр. Не пиши «возможно», «скорее всего», «попробуйте поискать в настройках». Честно скажи «точно не знаю» и позови специалиста (маркер ниже).",
-  "- Если в контексте есть пометка «нет проверенных знаний по вопросу» — не отвечай по памяти: уточни вопрос, а если он понятен — позови специалиста.",
+  "- Чего нет в источниках — не придумывай и не достраивай по аналогии: ни кнопок, ни путей, ни интеграций, ни цифр. Не пиши «возможно», «скорее всего», «попробуйте поискать в настройках». Скажи, что именно знаешь точно, и дай это; чего нет — честно назови и предложи, как проверить (уточняющий вопрос, инструкция, демо). Специалиста — по правилам раздела 6.",
+  "- Если в контексте есть пометка «нет проверенных знаний по вопросу» — не отвечай по памяти: уточни вопрос одним вопросом; понятен, но ответа нет — по разделу 6.",
   "- Не знаешь причину ошибки — не перечисляй догадки. Попроси точный текст ошибки или снимок экрана либо позови специалиста.",
   "",
   "## 3. Веди к результату",
@@ -613,8 +619,15 @@ const SYSTEM_PROMPT = [
   "- Подбирай тариф по заведению: сколько точек и сотрудников (из «Состояния» или спроси одним вопросом), нужен ли ИИ. Советуй один тариф и коротко почему; назови цену за месяц и выгоду оплаты на 6 месяцев или год. Видишь, что заведение упирается в лимит или ему подойдёт тариф выше, — предложи его, без навязывания.",
   "- Смену тарифа объясняй так: оплаченные дни не сгорают, система пересчитает их по цене нового тарифа. Пиши «пересчитаются», а не «мы продлим» или «вернём».",
   "",
+  "## 5в. «Почему ZalPOS» — только законно",
+  "- На «почему вы», «чем вы лучше», «почему не другие» отвечай фактами о ZalPOS из статьи «Почему ZalPOS» и тарифов: что входит, сколько стоит, что не берём, как начать. 3–5 пунктов под вопрос клиента, затем предложи пробный период или демо.",
+  "- Не называй и не упоминай другие компании и программы, не сравнивай с ними и не оценивай их («у других дороже», «у них нет»). Клиент сам назвал конкурента — не обсуждай его: скажи, что рассказываешь только о ZalPOS, и дай факты. Так требуют закон «О рекламе» (ст. 5 38-ФЗ: некорректное сравнение, недостоверное превосходство) и закон «О защите конкуренции» (ст. 14.1, 14.3 135-ФЗ).",
+  "- Без превосходных степеней и обещаний без подтверждения: нельзя «лучший», «самый дешёвый», «№1», «единственный», «гарантируем рост выручки». Можно проверяемое: «процент с продаж не берём», «приложение гостя входит в тариф», «устройства не ограничены», «7 дней бесплатно без карты».",
+  "- Не дави и не торопи. Не знаешь, подойдёт ли, — честно скажи, что проверить проще всего в демо или пробном периоде.",
+  "",
   "## 6. Когда звать человека",
-  "- Одной фразой скажи, что подключаешь специалиста, и в самом конце отдельной строкой добавь [[ОПЕРАТОР: короткая причина]], — если: ответа нет в источниках и ты не уверен; возврат денег или спор об оплате (вопросы о тарифах и смене тарифа — не спор, отвечай сам); претензия или жалоба на ZalPOS; удаление аккаунта или заведения; похоже на сбой у всех; нужно что-то изменить в данных заведения; ошибка повторяется после твоих шагов; ты дважды не смог помочь.",
+  "- Сначала помогай сам по максимуму: человек ждёт решения, а не передачи. Знаешь часть ответа — дай её и шаги, которые точно верны. Вопрос неясен — уточни одним вопросом. Нет точного ответа о функции — предложи проверенный путь (инструкция в кабинете, демо, где посмотреть настройку) вместо «не знаю».",
+  "- Специалиста зови только когда сам точно не поможешь: возврат денег или спор об оплате (вопросы о тарифах и смене тарифа — не спор, отвечай сам); претензия или жалоба на ZalPOS; удаление аккаунта или заведения; похоже на сбой у всех; нужно что-то изменить в данных заведения на стороне ZalPOS; ошибка повторяется после двух разных вариантов твоих шагов; клиент сам просит человека. Тогда одной фразой скажи, что подключаешь специалиста, и в самом конце отдельной строкой добавь [[ОПЕРАТОР: короткая причина]].",
   "",
   "## 7. Оформление (читают в Telegram с телефона)",
   "- По-русски, на «вы», как опытный специалист поддержки в живом чате: просто, коротко, грамотно. Без вводных («Конечно!», «Отличный вопрос», «Я помогу вам»), без эмодзи, без повтора вопроса, без подписи.",
@@ -629,9 +642,17 @@ const SYSTEM_PROMPT = [
  * ограничена: инструкция до 3 статей, база — до 3 решений, переписка —
  * краткое содержание и последние HISTORY_TAIL сообщений.
  */
-function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null }) {
+// Посетитель сайта: заведения нет — бот помогает выбрать и начать.
+const SITE_STATE = [
+  "Пишет посетитель сайта zalpos.ru из чата на сайте — скорее всего, ещё не клиент или не вошёл в кабинет. Состояния заведения нет.",
+  "Ты консультант: помоги понять, подходит ли ZalPOS, выбрать тариф, попробовать демо, зарегистрироваться, скачать кассу и настроить первое. Веди к следующему шагу: «Попробовать бесплатно» на zalpos.ru (7 дней, карта не нужна) или демо-касса без регистрации.",
+  "Вопрос о его работающем заведении (данные, ошибки, оплата) — ответь по знаниям и предложи написать из кабинета: zalpos.ru → войти → «Поддержка», там видно его заведение.",
+  "Контакты в этом чате не нужны и не запрашивай их: для связи — регистрация на сайте или кабинет.",
+].join("\n");
+
+function buildMessages({ venue = "", platform = "", errors = [], guide = [], learned = [], code = [], memory = "", summary = "", history = [], linked = true, web = null, site = false }) {
   const ctx = [];
-  ctx.push(`# Состояние заведения\n${linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
+  ctx.push(`# Состояние заведения\n${site ? SITE_STATE : linked ? (venue || "нет данных") : "Клиент не привязан к заведению (написал в Telegram без входа из кабинета). Если вопрос о его заведении — попроси открыть кабинет → «Поддержка» → «Написать в Telegram», тогда ты увидишь состояние."}`);
   if (platform) ctx.push(`# Платформа\n${platform}`);
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
   if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
@@ -682,7 +703,7 @@ function aiPaused(t, now = Date.now()) {
 
 function topicTitle(t, venueName = "") {
   const icon = t.status === "closed" ? ICON.closed : t.escalated ? ICON.human : t.humanAt && toMs(t.aiPausedUntil) > Date.now() ? ICON.answered : ICON.ai;
-  const who = venueName || t.tgName || (t.channel === "telegram" ? "Telegram" : "Кабинет");
+  const who = venueName || t.tgName || (t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "Сайт" : "Кабинет");
   return clip(`${icon} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
 }
 
@@ -827,6 +848,7 @@ function createSupportBot(deps) {
     docData = async () => ({}),
   } = deps;
   const doFetch = deps.fetchImpl || fetch;
+  const clientIpOf = deps.clientIp || ((req) => String((req.headers && (req.headers["x-real-ip"] || req.headers["x-forwarded-for"])) || (req.socket && req.socket.remoteAddress) || "?").split(",").pop().trim());
   // Поиск в интернете: настройки в supportBot.web (ключ поисковика — зашифрован).
   const webOn = () => !!(state.cfg && (state.cfg.web || {}).enabled !== false);
   // «Данные только в России» (по умолчанию): обращения принимаются в кабинете,
@@ -1228,7 +1250,7 @@ function createSupportBot(deps) {
 
   /** Тема в группе поддержки под обращение; карточка — что за клиент и что у него. */
   /** Ключ клиента для общей темы: заведение, иначе человек в Telegram или кабинете. */
-  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}` : t.createdBy ? `o_${t.createdBy}` : "");
+  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}` : t.siteKeyHash ? `s_${String(t.siteKeyHash).slice(0, 24)}` : t.createdBy && t.createdBy !== "site" ? `o_${t.createdBy}` : "");
 
   /** Тема, где уже шла переписка с этим клиентом (в том числе до общих тем). */
   async function clientTopic(t) {
@@ -1236,7 +1258,7 @@ function createSupportBot(deps) {
     if (!key) return null;
     const saved = (await topicsCol().doc(key).get()).data();
     if (saved && saved.topicId) return { key, topicId: saved.topicId };
-    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : ["createdBy", t.createdBy];
+    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : t.siteKeyHash ? ["siteKeyHash", t.siteKeyHash] : ["createdBy", t.createdBy];
     const snap = await ticketsCol().where(field[0], "==", field[1]).limit(100).get();
     const prev = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.id !== t.id && x.topicId)
       .sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt))[0];
@@ -1279,12 +1301,14 @@ function createSupportBot(deps) {
     await patch(t, { topicId: t.topicId, ...(reused ? {} : { topicName: t.topicName }) });
     if (known && known.key) await quiet(topicsCol().doc(known.key).set({ topicId: t.topicId, ticketId: t.id, updatedAt: ts(now()) }, { merge: true }), "тема клиента");
     if (reused) await renameTopic(t);
-    const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : "из кабинета"}`];
+    const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "чат на сайте" : "из кабинета"}`];
     if (t.channel === "telegram") lines.push(`👤 ${h(t.tgName || "Клиент")}${t.tgUsername ? ` (@${h(t.tgUsername)})` : ""} · ID <code>${h(t.tgUserId)}</code>`);
     lines.push(`💬 Тема: <i>${h(t.subject || "—")}</i>`, "");
     if (t.tenantId) {
       const info = await venueStatus(t.tenantId).catch(() => null);
       lines.push(info ? venueCard(info, { staff: true, now: now() }) : `🏪 ${h(vname || t.tenantId)}`);
+    } else if (t.channel === "site") {
+      lines.push("🌐 Посетитель сайта zalpos.ru — пока не клиент или не вошёл в кабинет. Помогите выбрать тариф и начать; контактов в чате нет — данные обезличены.");
     } else {
       lines.push("🏪 Заведение не привязано — попросите клиента открыть кабинет → «Поддержка» → «Написать в Telegram».");
     }
@@ -1336,7 +1360,8 @@ function createSupportBot(deps) {
     await movePanel(t, await toTopicHtml(t, `🔴 <b>Нужен человек</b> — ${h(reason)}\n${who ? `👤 Ведёт: ${mention(who)} — ответьте клиенту в этой теме.` : "Клиент ждёт. Ответьте в этой теме — ИИ молчит, пока вы ведёте диалог."}`, { reply_markup: topicKeyboard(t) }));
     notifyStaff(t, reason, who);
     if (tellClient) {
-      const hours = state.cfg.workHours ? ` Мы на связи ${state.cfg.workHours}.` : "";
+      const hours = (state.cfg.workHours ? ` Мы на связи ${state.cfg.workHours}.` : "")
+        + (t.channel === "site" ? " Диалог сохранится в этом браузере: закроете страницу — откройте чат на сайте позже, ответ будет здесь." : "");
       await deliver(t, `Позвал специалиста поддержки — он ответит здесь же.${hours} Пока он подключается, я не буду вмешиваться.`,
         { html: `👨‍💼 <b>Позвал специалиста поддержки</b> — он ответит здесь же.${h(hours)}\nПока он подключается, я не буду вмешиваться.`, bare: true });
     }
@@ -1555,7 +1580,7 @@ function createSupportBot(deps) {
       memoryOf(t).catch(() => ""),
     ]);
     const errors = t.tenantId ? (recentErrors(t.tenantId) || []).slice(-5).map(scrubPii) : [];
-    const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData });
+    const messages = buildMessages({ venue, platform, errors, guide, learned, code, memory, summary, history, linked: !!t.tenantId, web: webData, site: t.channel === "site" });
     if (askedBack && (talk === "ack" || pinged || question.length < 25)) {
       messages.push({ role: "system", content: `Твой прошлый вопрос клиенту: «${clip(prevBot.text, 300)}». Клиент ответил коротко («${clip(question, 80)}»). Не повторяй вопрос: выбери самый вероятный вариант по переписке, скажи, что выбрал, и сразу помоги по шагам.` });
     } else if (pinged) {
@@ -2895,8 +2920,9 @@ function createSupportBot(deps) {
       } else {
         if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
         await patch(t, { clientAt: m.createdAt || ts(now()) });
-        if (m.text) await toTopicHtml(t, `💬 <b>Клиент · кабинет</b>\n<blockquote>${h(m.text)}</blockquote>`);
-        await filesToTopic(t, m, "💬 Клиент · кабинет");
+        const from = t.channel === "site" ? "Посетитель · сайт" : "Клиент · кабинет";
+        if (m.text) await toTopicHtml(t, `💬 <b>${from}</b>\n<blockquote>${h(m.text)}</blockquote>`);
+        await filesToTopic(t, m, `💬 ${from}`);
       }
     }
     if (t.status === "closed" && t.topicStatus !== "closed") {
@@ -3378,6 +3404,87 @@ function createSupportBot(deps) {
     sendJson(res, 200, { ticketId: id, masked: text !== rawText });
   }
 
+  // ---- чат на сайте (посетитель без входа)
+
+  const siteRate = new Map();
+  /** Лимит по адресу посетителя: true — можно. */
+  function siteAllow(kind, ip, max, windowMs) {
+    const key = `${kind}:${ip}`;
+    const r = siteRate.get(key);
+    if (!r || r.reset < now()) {
+      if (siteRate.size > 20000) siteRate.clear();
+      siteRate.set(key, { n: 1, reset: now() + windowMs });
+      return true;
+    }
+    return ++r.n <= max;
+  }
+  const siteHash = (token) => crypto.createHash("sha256").update(`zalpos-site:${token}`).digest("hex");
+  const siteOn = () => active() && aiReady() && !(state.cfg && state.cfg.siteChat === false);
+
+  /** Диалог посетителя по его токену (токен знает только его браузер). */
+  async function siteTicket(ticketId, token) {
+    if (!/^[\w-]{1,64}$/.test(String(ticketId || "")) || !/^[\w-]{20,80}$/.test(String(token || ""))) return null;
+    const snap = await ticketRef(ticketId).get();
+    const t = snap.exists ? { id: snap.id, ...snap.data() } : null;
+    if (!t || t.channel !== "site" || t.siteKeyHash !== siteHash(token)) return null;
+    if (now() - toMs(t.createdAt) > SITE_TTL_MS) return null;
+    return t;
+  }
+
+  /** Сайт: сообщение посетителя. Текст обезличивается до записи (152-ФЗ),
+   *  как в кабинете; ответ ИИ приходит через /supportSiteMessages. */
+  async function handleSiteSend(req, res) {
+    if (!siteOn()) throw new HttpError(503, "Чат сейчас недоступен — напишите нам на почту, указанную внизу сайта");
+    const ip = clientIpOf(req);
+    if (!siteAllow("msg", ip, SITE_MSG_PER_10MIN, 10 * 60 * 1000)) throw new HttpError(429, "Слишком много сообщений подряд — подождите несколько минут");
+    const body = await parseJsonBody(req);
+    const rawText = String(body.text || "").trim();
+    if (!rawText) throw new HttpError(400, "Напишите сообщение");
+    if (rawText.length > SITE_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${SITE_TEXT_MAX} символов — разделите его на части`);
+    const text = maskSecrets(scrubPii(rawText));
+    const at = ts(now());
+    let t = body.ticketId ? await siteTicket(body.ticketId, body.token) : null;
+    let token = "";
+    if (!t) {
+      if (body.consent !== true) throw new HttpError(400, "Нужно согласие на обработку данных обращения");
+      if (!siteAllow("new", ip, SITE_NEW_PER_DAY, 24 * 3600 * 1000)) throw new HttpError(429, "Слишком много новых диалогов — продолжите прежний или напишите позже");
+      token = crypto.randomBytes(24).toString("base64url");
+      const ref = ticketsCol().doc();
+      t = {
+        id: ref.id, channel: "site", siteKeyHash: siteHash(token), subject: clip(text, 120), status: "open",
+        createdBy: "site", createdAt: at, updatedAt: at, lastAuthorRole: "owner",
+        pdConsent: true, pdConsentAt: at, pdConsentEdition: clip(String(body.consentEdition || ""), 80),
+      };
+      const { id: _, ...doc } = t;
+      await ref.set(doc);
+    }
+    await ticketRef(t.id).collection("messages").add({ text, authorUid: "site", authorRole: "owner", createdAt: at });
+    await ticketRef(t.id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}) }, { merge: true });
+    // Без слежения за базой (тесты, перезапуск) — разбираем сразу.
+    onTicketDoc(t.id, { updatedAt: at, syncedAt: t.syncedAt || 0 });
+    sendJson(res, 200, { ticketId: t.id, ...(token ? { token } : {}), masked: text !== rawText });
+  }
+
+  /** Сайт: что нового в диалоге после [after] — ответы ИИ и специалиста. */
+  async function handleSiteMessages(req, res) {
+    const body = await parseJsonBody(req);
+    if (!body.ticketId) return sendJson(res, 200, { enabled: siteOn(), hours: (state.cfg && state.cfg.workHours) || "" });
+    if (!siteAllow("poll", clientIpOf(req), SITE_POLL_PER_MIN, 60 * 1000)) throw new HttpError(429, "Подождите немного");
+    const t = await siteTicket(body.ticketId, body.token);
+    if (!t) return sendJson(res, 200, { enabled: siteOn(), gone: true, messages: [] });
+    const after = Number(body.after) || 0;
+    const list = (await messagesOf(t))
+      .filter((m) => ["owner", "ai", "super_admin"].includes(m.authorRole) && toMs(m.createdAt) > after)
+      .slice(-60)
+      .map((m) => ({
+        role: m.authorRole === "owner" ? "you" : m.authorRole === "ai" ? "ai" : "staff",
+        text: String(m.text || ""),
+        at: toMs(m.createdAt),
+      }));
+    const typing = toMs(t.aiTypingAt) > now() - 90 * 1000;
+    sendJson(res, 200, { enabled: siteOn(), messages: list, typing, waitingHuman: t.escalated === true });
+  }
+
   /** Кабинет: «Написать в Telegram» — одноразовая ссылка, привязывающая
    *  Telegram владельца к заведению (бот увидит его состояние). */
   async function handleClientLink(req, res) {
@@ -3418,7 +3525,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handlePurgeForeign, handleAiCheck, handleDocDownload, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleSiteSend, handleSiteMessages, handlePurgeForeign, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),

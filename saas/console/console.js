@@ -2152,9 +2152,6 @@ function screenLanding() {
       </div>
     </footer>
 
-    <div class="sticky-cta" id="landing-sticky">
-      <button class="btn btn-primary" id="f-landing-sticky-btn">Попробовать бесплатно</button>
-    </div>
   `;
 
   document.querySelectorAll('.landing-nav-links [data-scroll]').forEach((el) => {
@@ -2221,21 +2218,20 @@ function screenLanding() {
 
   startHallDemo();
   document.querySelectorAll('.wrap.landing .feature-grid.m-swipe, .wrap.landing .why-grid.m-swipe').forEach(bindSwipeDots);
-  if ($('f-landing-sticky-btn')) $('f-landing-sticky-btn').onclick = scrollToEmail;
   if ($('f-landing-nav-cta')) $('f-landing-nav-cta').onclick = scrollToEmail;
 
   document.querySelectorAll('.faq-item').forEach((el) => {
     el.querySelector('.faq-question')?.addEventListener('click', () => el.classList.toggle('open'));
   });
 
-  // Липкая кнопка появляется, когда форма email ушла за верх экрана.
-  const onLandingScroll = () => {
-    const heroCard = $('f-landing-email');
-    if (!heroCard) return;
-    $('landing-sticky')?.classList.toggle('show', heroCard.getBoundingClientRect().bottom < 0);
-  };
-  window.addEventListener('scroll', onLandingScroll, { passive: true });
-  sub(() => window.removeEventListener('scroll', onLandingScroll));
+  // Чат поддержки с ИИ-ассистентом — круглая кнопка в углу. Модуль
+  // грузится отдельно и не задерживает первый экран.
+  let chatAlive = true;
+  let chatOff = null;
+  sub(() => { chatAlive = false; if (chatOff) chatOff(); });
+  import('./support-chat.js')
+    .then((m) => { if (chatAlive) chatOff = m.mountSupportChat({ gatewayUrl: SAAS_GATEWAY_URL }); })
+    .catch(() => {});
 
   // Период оплаты и выбранный тариф переживают перезагрузку страницы.
   let landingPeriod = ['monthly', 'semiannual', 'yearly'].includes(window.localStorage.getItem('selectedBillingPeriod'))
@@ -4230,9 +4226,9 @@ function watchDashboardData(tenantId) {
         ` : ''}
 
         <div class="small muted" style="margin-bottom:8px">Цвета</div>
-        <p class="small muted" style="margin:-4px 0 10px">Касса всегда остаётся в тёмной теме —
-        от бренда она берёт акцентные цвета. Светлый фон применяется только в приложении
-        и веб-версии для гостей.</p>
+        <p class="small muted" style="margin:-4px 0 10px">Цвета бренда — для приложения и веб-версии
+        для гостей. Касса для персонала — в стиле ZalPOS: тёмная или светлая тема
+        переключается в самой кассе (меню ☰ → «Тема»).</p>
         ${colorFieldHtml('f-color-primary', 'Основной', primaryColor, canManage)}
         ${colorFieldHtml('f-color-secondary', 'Вторичный', secondaryColor, canManage)}
         ${colorFieldHtml('f-color-button', 'Кнопки', buttonColor, canManage)}
