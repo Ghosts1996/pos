@@ -5004,6 +5004,8 @@ function watchDashboardData(tenantId) {
           История чеков остаётся в прежней системе и у вашего ОФД, отчёты ZalPOS начнутся с первого дня работы. PIN-коды не переносятся —
           создадим новые. Файл обрабатывается в вашем браузере; имена сотрудников сохраняются только на сервере в России.</p>
         </div>`;
+      // На шагах проверки и итога — без вступления: кнопки ближе.
+      const head = '<h2>Перенос данных</h2>';
       const history = log.length ? `
         <h2>Прошлые переносы</h2>
         <div class="card">
@@ -5029,7 +5031,7 @@ function watchDashboardData(tenantId) {
       const def = kinds[imp.kind];
       const colOpts = (sel) => `<option value="">— нет —</option>${headers.map((h, i) => `<option value="${i}" ${String(sel) === String(i) ? 'selected' : ''}>${esc(h || `Столбец ${i + 1}`)}</option>`).join('')}`;
       if (imp.step === 'map') {
-        return `${intro}
+        return `${head}
           <div class="card" style="margin-top:10px">
             <div class="small" style="font-weight:600;margin-bottom:8px">${esc(imp.fileName)}</div>
             ${imp.sheets.length > 1 ? `<label class="field"><span>Лист</span><select id="f-imp-sheet">${imp.sheets.map((sh, i) => `<option value="${i}" ${i === imp.sheetIdx ? 'selected' : ''}>${esc(sh.name)} (${sh.rows.length} строк)</option>`).join('')}</select></label>` : ''}
@@ -5059,7 +5061,7 @@ function watchDashboardData(tenantId) {
           cards: () => `Карта ${esc(x.number)} — ${x.percent} %`,
         }[plan.kind])();
         const errs = [...imp.rowErrors.map((e) => `Строка ${e.row}: ${e.msg}`), ...plan.errors.map((e) => e.msg)];
-        return `${intro}
+        return `${head}
           <div class="card" style="margin-top:10px">
             <div class="small" style="font-weight:600">${esc(LABEL[plan.kind])} · ${esc(imp.fileName)}</div>
             <p class="small" style="margin:8px 0">Создадим: <b>${plan.create.length}</b>${plan.newCategories.length ? ` (новых категорий: ${plan.newCategories.length})` : ''}${plan.newStock.length ? ` · новых продуктов на складе: ${plan.newStock.length}` : ''}
@@ -5077,7 +5079,7 @@ function watchDashboardData(tenantId) {
           </div>${history}`;
       }
       const r = imp.result;
-      return `${intro}
+      return `${head}
         <div class="card" style="margin-top:10px">
           <div class="small" style="font-weight:600">Готово: ${esc(LABEL[plan.kind])}</div>
           <p class="small" style="margin:8px 0">Создано: <b>${r.created}</b>${r.updated ? ` · обновлено: <b>${r.updated}</b>` : ''}. Касса подхватит изменения в течение нескольких минут — или перезапустите её.</p>
