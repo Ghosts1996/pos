@@ -648,6 +648,55 @@ test("автообучение: ответ специалиста + «спаси
   assert.ok(/Wi-Fi/.test(kb[0][1].a));
 });
 
+test("научить бота: «запомни: текст» и reply /learn сохраняют как есть и клиенту не уходят; после закрытия — кнопки", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Как мне настроить ИИ в кассе?"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  const toClientBefore = sends(h.calls, 42).length;
+  await h.bot.handleUpdate(inTopic("Запомни: Кабинет → ИИ → включить, вставить ключ Tooken Club, «Сохранить». Звонить +79991234567", t.topicId));
+  await h.bot.idle();
+  let kb = [...h.store.entries()].filter(([k]) => k.startsWith("supportKnowledge/")).map(([, v]) => v);
+  assert.strictEqual(kb.length, 1, "не запомнил");
+  assert.strictEqual(kb[0].source, "manual");
+  assert.ok(/Кабинет → ИИ/.test(kb[0].a) && !kb[0].a.includes("9991234567"), kb[0].a);
+  assert.ok(/настроить ИИ/.test(kb[0].q), kb[0].q);
+  assert.strictEqual(sends(h.calls, 42).length, toClientBefore, "«запомни» ушло клиенту");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Запомнил в базу решений/.test(c.body.text)));
+  // Ответ (reply) на своё сообщение командой /learn — сохраняется оно.
+  const reply = inTopic("/learn", t.topicId);
+  reply.message.reply_to_message = { message_id: 5, from: { id: 7, first_name: "Мария" }, text: "Модель выбирайте gpt-4o-mini — дёшево и быстро" };
+  await h.bot.handleUpdate(reply);
+  await h.bot.idle();
+  kb = [...h.store.entries()].filter(([k]) => k.startsWith("supportKnowledge/")).map(([, v]) => v);
+  assert.ok(kb.some((k) => /gpt-4o-mini/.test(k.a)), "reply не сохранился");
+  // Закрыли — под отметкой «Запомнить» и «Открыть снова».
+  await h.bot.handleUpdate(inTopic("/close", t.topicId));
+  await h.bot.idle();
+  const closed = sends(h.calls, GROUP).find((c) => /Обращение закрыто/.test(c.body.text));
+  const btns = closed.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(btns.includes(`sb:learn:${t.id}`) && btns.includes(`sb:g:reopen:${t.id}`), JSON.stringify(btns));
+  await h.bot.handleUpdate({ callback_query: { id: "q1", from: { id: 7, first_name: "Мария" }, data: `sb:g:reopen:${t.id}`, message: { message_id: 99, chat: { id: GROUP } } } });
+  await h.bot.idle();
+  assert.strictEqual(tickets(h.store)[0].status, "open");
+});
+
+test("автообучение: не стал запоминать — пишет почему и даёт кнопку «Всё равно запомнить»", async () => {
+  const h = harness();
+  await setup(h);
+  await h.bot.handleUpdate(pm("Где купить ключ ИИ?"));
+  await h.bot.idle();
+  const [t] = tickets(h.store);
+  await h.bot.handleUpdate(inTopic("Вот реферальная ссылка, при подключении получите бонус", t.topicId));
+  h.aiReplies.push('{"save":false,"why":"реферальная ссылка, не инструкция"}');
+  await h.bot.handleUpdate(pm("Понятно спасибо"));
+  await h.bot.idle();
+  const note = sends(h.calls, GROUP).find((c) => /Не стал запоминать/.test(c.body.text));
+  assert.ok(note && /реферальная/.test(note.body.text), "нет пояснения");
+  assert.ok(note.body.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `sb:learn:${t.id}`));
+});
+
 test("автообучение: без ответа человека и без «помогло» ничего не сохраняет и не тратит ИИ", async () => {
   const h = harness();
   await setup(h);

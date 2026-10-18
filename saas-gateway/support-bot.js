@@ -167,6 +167,8 @@ function smallTalk(text) {
   const t = norm(text).replace(/[!.,?)(👍🙏❤️☺️😊🤝✅\s]+$/u, "").replace(/^[\s👍🙏]+/u, "");
   if (!t) return "ack";
   if (/^(спасибо|спс|благодарю|большое спасибо|спасибо большое|спасибо,? помогло|помогло|супер|отлично|класс|понял,? спасибо|все понятно,? спасибо|thanks|thank you)$/.test(t)) return "thanks";
+  // «Понятно спасибо», «ок, спасибо большое», «ясно, благодарю за помощь».
+  if (/^((ок|окей|ага|понятно|ясно|понял|поняла|все понятно|хорошо|отлично|супер|класс)[,!]?\s*)?(спасибо|спс|благодарю|thanks|thank you)(\s*(большое|огромное|за помощь|за ответ|помогло))?$/.test(t)) return "thanks";
   if (/^(ок|окей|ok|ага|понял|поняла|понятно|ясно|хорошо|угу|да|ладно)$/.test(t)) return "ack";
   if (/^(привет|здравствуйте|здравствуй|добрый (день|вечер|утро)|доброе утро|добрый|здрасте|hello|hi)$/.test(t)) return "hello";
   return "";
@@ -1453,9 +1455,9 @@ function createSupportBot(deps) {
       const all = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
       const items = all.slice(page * 5, page * 5 + 5);
       const nav = [...(page > 0 ? [btn("◀️", `kb:${page - 1}`)] : []), ...((page + 1) * 5 < all.length ? [btn("▶️", `kb:${page + 1}`)] : [])];
-      return { text: ["📚 <b>База решений</b>", `Всего: ${all.length}. Бот сам запоминает решения из диалогов — прежде всего ваши ответы; вручную — «📚 Запомнить» в теме.`, "",
+      return { text: ["📚 <b>База решений</b>", `Всего: ${all.length}. Бот сам запоминает решения из диалогов — прежде всего ваши ответы. Вручную: «➕ Добавить» здесь, в теме — «📚 Запомнить» или сообщение «запомни: текст».`, "",
         items.length ? items.map((k, i) => `<b>${page * 5 + i + 1}. ${h(clip(k.q || "", 120))}</b>\n${h(clip(k.a || "", 220))}\n<i>использован ${Number(k.uses) || 0} · помог ${Number(k.helpful) || 0}</i>`).join("\n\n") : "Пока пусто."].join("\n"),
-        rows: [...(items.length ? [items.map((k, i) => btn(`🗑 ${page * 5 + i + 1}`, `kd:${k.id}:${page}`))] : []), ...(nav.length ? [nav] : []), back()] };
+        rows: [...(items.length ? [items.map((k, i) => btn(`🗑 ${page * 5 + i + 1}`, `kd:${k.id}:${page}`))] : []), ...(nav.length ? [nav] : []), [btn("➕ Добавить вручную", "in:kbadd")], back()] };
     }
     if (screen === "wait") {
       const open = (await ticketsCol().where("status", "==", "open").limit(300).get()).docs.map((d) => ({ id: d.id, ...d.data() }))
@@ -1516,6 +1518,7 @@ function createSupportBot(deps) {
     hours: "🕘 Напишите часы работы одним сообщением, например: <i>ежедневно с 10:00 до 22:00 МСК</i>",
     staff: "👥 Пришлите Telegram ID сотрудника и имя, например: <code>123456789 Мария</code>\nУзнать ID — @userinfobot. Можно несколько, каждый с новой строки.",
     greet: "✏️ Пришлите новый текст приветствия (до 600 символов).",
+    kbadd: "📚 Пришлите запись одним сообщением: <b>первая строка — вопрос клиента</b>, дальше — ответ.\nНапример:\n<code>Как включить ИИ в кассе?\nКабинет → ИИ → включить → ключ провайдера → Сохранить.</code>",
   };
 
   async function onAdminCallback(q, data, answer) {
@@ -1610,6 +1613,19 @@ function createSupportBot(deps) {
       await send(chatId, "✅ Приветствие сохранено.");
       return adminOpen(chatId, "greet");
     }
+    if (w.kind === "kbadd") {
+      const [first, ...rest] = String(text).trim().split("\n");
+      const q = clip(scrubPii(first.trim()), 300);
+      const a = clip(scrubPii(maskSecrets(rest.join("\n").trim())), 1200);
+      if (!q || !a) {
+        state.awaiting.set(userId, w);
+        return send(chatId, "Нужно две части: первая строка — вопрос, со второй — ответ. Пришлите ещё раз.");
+      }
+      await knowledgeCol().doc().set({ q, a, tags: [], uses: 0, helpful: 0, source: "manual", ticketNo: null, createdBy: "админка", createdAt: ts(now()) });
+      await loadKnowledge().catch(() => {});
+      await send(chatId, "✅ Запомнил — теперь ИИ ответит так похожим клиентам.");
+      return adminOpen(chatId, "kb");
+    }
     if (w.kind === "staff") {
       const add = parseStaff(text);
       if (!add.length) {
@@ -1639,6 +1655,9 @@ function createSupportBot(deps) {
 
   // ---- Telegram: рабочая группа
 
+  // «Запомни», «запомнить: …», «📚 …» в начале сообщения сотрудника.
+  const LEARN_WORD = /^\s*(?:запомни|запомнить|📚)(?![а-яё])\s*[:,.!—-]?\s*([\s\S]*)$/i;
+
   const isGroup = (chatId) => !!(state.cfg && state.cfg.groupChatId && Number(chatId) === Number(state.cfg.groupChatId));
 
   async function onGroupMessage(msg) {
@@ -1661,8 +1680,11 @@ function createSupportBot(deps) {
     if (cmd) {
       const [, name, arg] = cmd;
       const handler = GROUP_COMMANDS[name];
-      if (handler) return handler(t, arg.trim(), from);
+      if (handler) return handler(t, arg.trim(), from, msg);
     }
+    // «запомни» / «запомни: текст» — команда боту, клиенту не уходит.
+    const remember = raw.match(LEARN_WORD);
+    if (remember) return GROUP_COMMANDS.learn(t, remember[1].trim(), from, msg);
     if (msg.forum_topic_created || msg.forum_topic_edited || msg.forum_topic_closed || msg.forum_topic_reopened) return;
     const media = !!(msg.photo || msg.document || msg.video || msg.voice || msg.audio || msg.video_note || msg.sticker || msg.animation);
     if (!raw.trim() && !media) return;
@@ -1721,9 +1743,14 @@ function createSupportBot(deps) {
       "🤖/🔕 ИИ — включить или выключить ИИ в теме",
       "✍️ Черновик — ИИ подскажет ответ (клиенту не уходит)",
       "ℹ️ Состояние — свежая карточка заведения и ошибки",
-      "📚 Запомнить — решение попадёт в базу ИИ (обычно не нужно: бот сам учится на ваших ответах)",
+      "📚 Запомнить — ИИ соберёт решение из переписки в базу",
       "",
-      "Команды: /take /close /ai /mute /draft /info /learn · <code>/note текст</code> — заметка для своих",
+      "<b>Научить бота своими словами</b> — напишите в теме:",
+      "<code>запомни: в кассе ИИ включается в Админ → Настройки ИИ…</code>",
+      "или ответьте (reply) на своё сообщение словом <code>запомни</code>. Клиенту это не уходит.",
+      "Бот и сам учится на ваших ответах и пишет в теме, что запомнил.",
+      "",
+      "Команды: /take /close /reopen /ai /mute /draft /info /learn · <code>/note текст</code> — заметка для своих",
       "/stats — сводка (в общей теме) · /staff — меню в личке бота",
     ].join("\n");
   }
@@ -1751,11 +1778,19 @@ function createSupportBot(deps) {
     },
     close: async (t, arg, from) => closeTicket(t, { by: clip(from.first_name || "поддержка", 40) }),
     reopen: async (t) => {
+      if (t.status !== "closed") return toTopic(t, "Обращение и так открыто.");
       await patch(t, { status: "open", closedAt: null });
       await quiet(tg("reopenForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "переоткрыть");
       await renameTopic(t);
+      await movePanel(t, await toTopicHtml(t, "↩️ <b>Обращение снова открыто</b>", { reply_markup: topicKeyboard({ ...t, status: "open" }) }));
     },
-    learn: async (t, arg, from) => learn(t, clip(from.first_name || "", 40)),
+    // /learn — ИИ соберёт решение из переписки; /learn текст или ответ
+    // (reply) на своё сообщение — сохранить именно этот текст.
+    learn: async (t, arg, from, msg) => {
+      const rt = msg && msg.reply_to_message;
+      const quoted = rt && !rt.forum_topic_created && !(rt.from && rt.from.is_bot) ? String(rt.text || rt.caption || "").trim() : "";
+      return learn(t, clip((from && from.first_name) || "", 40), { text: arg || quoted });
+    },
     note: async () => {}, // заметка остаётся только в теме
     info: async (t) => {
       const info = t.tenantId ? await venueStatus(t.tenantId).catch((e) => `не получилось: ${e.message}`) : "Заведение не привязано.";
@@ -1782,8 +1817,11 @@ function createSupportBot(deps) {
     if (t.status === "closed") return;
     await patch(t, { status: "closed", closedAt: ts(now()), escalated: false, updatedAt: ts(now()), syncedAt: now() });
     await renameTopic(t);
-    const closedNote = await toTopicHtml(t, `✅ <b>Обращение закрыто</b>${by ? ` · ${h(by)}` : ""}`, t.humanReplies && aiReady() && !autoLearnOn()
-      ? { reply_markup: { inline_keyboard: [[{ text: "📚 Запомнить решение для ИИ", callback_data: `sb:learn:${t.id}` }]] } } : {});
+    const closedNote = await toTopicHtml(t, `✅ <b>Обращение закрыто</b>${by ? ` · ${h(by)}` : ""}\n<i>Научить бота: «📚 Запомнить» или сообщение <code>запомни: текст</code></i>`, {
+      reply_markup: { inline_keyboard: [[
+        { text: "📚 Запомнить", callback_data: `sb:learn:${t.id}` }, { text: "↩️ Открыть снова", callback_data: `sb:g:reopen:${t.id}` },
+      ]] },
+    });
     await movePanel(t, closedNote);
     if (t.topicId) await quiet(tg("closeForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId }), "закрыть тему");
     if (rate && t.channel === "telegram" && t.tgChatId) {
@@ -1819,32 +1857,59 @@ function createSupportBot(deps) {
   }
 
   /** Решение из диалога → обобщённая запись базы знаний. */
-  async function learn(t, who = "") {
-    if (!aiReady()) return toTopic(t, "ИИ не настроен — запомнить не получится.");
+  async function learn(t, who = "", { text = "" } = {}) {
     const history = await messagesOf(t);
-    if (history.length < 2) return toTopic(t, "Нечего запоминать: в переписке нет решения.");
+    if (text) {
+      // Своими словами специалиста — сохраняем как есть: это проверенный ответ.
+      const firstQ = (history.find((m) => m.authorRole === "owner") || {}).text || "";
+      return saveLearned(t, {
+        q: clip(scrubPii(t.subject || firstQ || "Вопрос клиента"), 300),
+        a: clip(scrubPii(maskSecrets(text)), 1200),
+        tags: [], source: "manual", who,
+      });
+    }
+    if (!aiReady()) return toTopic(t, "ИИ не настроен — напишите «запомни: текст решения», сохраню как есть.");
+    if (history.length < 2) return toTopicHtml(t, "Нечего запоминать: в переписке нет решения.\nНапишите <code>запомни: текст решения</code> — сохраню своими словами.");
     let entry;
     try {
       const raw = await ai([
         { role: "system", content: "Из переписки техподдержки ZalPOS сделай запись базы знаний для похожих вопросов в будущем. Обобщи: без имён, телефонов, почт, названий заведений, номеров обращений и сумм. Ответ строго JSON без пояснений: {\"q\":\"вопрос клиента в общем виде\",\"a\":\"решение по шагам, до 900 символов\",\"tags\":[\"3–6 ключевых слов\"]}. Если решения в переписке нет — {\"skip\":true}." },
         { role: "user", content: history.slice(-20).map((m) => `${m.authorRole === "owner" ? "Клиент" : m.authorRole === "ai" ? "ИИ" : "Специалист"}: ${clip(scrubPii(m.text), 700)}`).join("\n") },
-      ], { maxTokens: 500, temperature: 0.2 });
-      const json = raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
-      entry = JSON.parse(json);
+      ], { maxTokens: 700, temperature: 0.2 });
+      entry = looseJson(raw);
     } catch (e) {
-      return toTopic(t, `Не получилось составить запись: ${e.message}`);
+      return toTopicHtml(t, `Не получилось составить запись: ${h(e.message)}\nНапишите <code>запомни: текст решения</code> — сохраню своими словами.`);
     }
-    if (entry.skip || !entry.q || !entry.a) return toTopic(t, "ИИ не нашёл в переписке готового решения — допишите ответ и повторите /learn.");
-    const doc = {
+    if (!entry || entry.skip || !entry.q || !entry.a) {
+      return toTopicHtml(t, "ИИ не нашёл в переписке готового решения.\nНапишите <code>запомни: текст решения</code> — сохраню своими словами.");
+    }
+    return saveLearned(t, {
       q: clip(scrubPii(entry.q), 300), a: clip(scrubPii(entry.a), 1200),
       tags: (Array.isArray(entry.tags) ? entry.tags : []).slice(0, 8).map((x) => clip(String(x), 30)),
-      uses: 0, helpful: 0, source: "ticket", ticketNo: t.no || null, createdBy: who, createdAt: ts(now()),
-    };
+      source: "ticket", who,
+    });
+  }
+
+  /** JSON из ответа модели: бывает в ```-блоке, с текстом вокруг или пустой. */
+  function looseJson(raw) {
+    const s = String(raw || "");
+    const a = s.indexOf("{");
+    const b = s.lastIndexOf("}");
+    if (a < 0 || b <= a) return null;
+    try {
+      return JSON.parse(s.slice(a, b + 1));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function saveLearned(t, { q, a, tags, source, who }) {
     const ref = knowledgeCol().doc();
-    await ref.set(doc);
+    await ref.set({ q, a, tags, uses: 0, helpful: 0, source, ticketNo: t.no || null, createdBy: who || "", createdAt: ts(now()) });
     await patch(t, { learnedId: ref.id });
     await loadKnowledge().catch(() => {});
-    await toTopicHtml(t, `📚 <b>Запомнил в базу решений</b>\n\n<b>Вопрос:</b> ${h(doc.q)}\n<b>Решение:</b> ${h(doc.a)}`, { reply_markup: { inline_keyboard: [[{ text: "🗑 Удалить из базы", callback_data: `sb:kdel:${ref.id}` }]] } });
+    return toTopicHtml(t, `📚 <b>Запомнил в базу решений</b>${who ? ` · ${h(who)}` : ""}\n\n<b>Вопрос:</b> ${h(q)}\n<b>Решение:</b> ${h(a)}\n\n<i>Теперь ИИ ответит так похожим клиентам.</i>`,
+      { reply_markup: { inline_keyboard: [[{ text: "🗑 Удалить из базы", callback_data: `sb:kdel:${ref.id}` }]] } });
   }
 
   // ---- автообучение: бот сам решает, что из диалога сохранить в базу
@@ -1882,14 +1947,20 @@ function createSupportBot(deps) {
           'Ответ строго JSON без пояснений: {"save":true,"merge":false,"q":"вопрос в общем виде","a":"решение по шагам, до 900 символов","tags":["3–6 ключевых слов"],"why":"почему это стоит запомнить, коротко"} или {"save":false,"why":"коротко почему нет"}.',
         ].filter(Boolean).join("\n") },
         { role: "user", content: history.slice(-24).map((m) => `${m.authorRole === "owner" ? "Клиент" : m.authorRole === "ai" ? "ИИ" : "Специалист"}: ${clip(scrubPii(m.text), 700)}`).join("\n") },
-      ], { maxTokens: 600, temperature: 0.1 });
-      r = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+      ], { maxTokens: 700, temperature: 0.1 });
+      r = looseJson(raw);
+      if (!r) throw new Error("ИИ ответил не по формату");
     } catch (e) {
       console.error(`support-bot: автообучение #${t.no}: ${e.message}`);
+      if (people) await quiet(learnNote(t, "📚 Не получилось разобрать переписку для базы решений."), "автообучение");
       return null;
     }
     await patch(t, { learnCheckedAt: ts(now()) });
-    if (!r || !r.save || !r.q || !r.a) return null;
+    if (!r || !r.save || !r.q || !r.a) {
+      // Отвечал специалист — покажем, почему не запомнил, и как запомнить вручную.
+      if (people) await quiet(learnNote(t, `📚 Не стал запоминать${r && r.why ? ` — <i>${h(clip(r.why, 160))}</i>` : ""}.`), "автообучение");
+      return null;
+    }
     const fields = {
       q: clip(guardReply(scrubPii(r.q)), 300), a: clip(guardReply(scrubPii(r.a)), 1200),
       tags: (Array.isArray(r.tags) ? r.tags : []).slice(0, 8).map((x) => clip(String(x), 30)),
@@ -1908,6 +1979,11 @@ function createSupportBot(deps) {
     await toTopicHtml(t, `📚 <b>${r.merge && existing ? "Дополнил запись в базе решений" : "Сам запомнил решение"}</b>${r.why ? ` · <i>${h(clip(r.why, 160))}</i>` : ""}\n\n<b>Вопрос:</b> ${h(fields.q)}\n<b>Решение:</b> ${h(fields.a)}`,
       { reply_markup: { inline_keyboard: [[{ text: "🗑 Удалить из базы", callback_data: `sb:kdel:${id}` }]] } });
     return id;
+  }
+
+  function learnNote(t, head) {
+    return toTopicHtml(t, `${head}\nНужно сохранить — нажмите кнопку или напишите <code>запомни: текст решения</code>.`,
+      { reply_markup: { inline_keyboard: [[{ text: "📚 Всё равно запомнить", callback_data: `sb:learn:${t.id}` }]] } });
   }
 
   /** Похожая запись базы: доля общих основ слов в вопросе (не меньше 40 %). */
@@ -1947,12 +2023,12 @@ function createSupportBot(deps) {
     }
 
     // Кнопки под карточкой обращения в теме сотрудников.
-    const g = data.match(/^sb:g:(take|close|ai|mute|draft|info|learn):([\w-]+)$/);
+    const g = data.match(/^sb:g:(take|close|ai|mute|draft|info|learn|reopen):([\w-]+)$/);
     if (g) {
       if (!isGroup(chatId)) return answer();
       const t = await loadTicket(g[2]);
       if (!t) return answer("Обращение не найдено");
-      const done = { take: "Обращение ваше", close: "Закрыто", ai: "ИИ включён", mute: "ИИ выключен", draft: "Пишу черновик…", info: "Смотрю состояние…", learn: "Составляю запись…" };
+      const done = { take: "Обращение ваше", close: "Закрыто", ai: "ИИ включён", mute: "ИИ выключен", draft: "Пишу черновик…", info: "Смотрю состояние…", learn: "Составляю запись…", reopen: "Открыто снова" };
       await answer(done[g[1]]);
       await GROUP_COMMANDS[g[1]](t, "", from);
       if (["take", "ai", "mute"].includes(g[1])) {
@@ -1993,7 +2069,9 @@ function createSupportBot(deps) {
       const t = await loadTicket(id);
       if (!t) return answer();
       await answer("Составляю запись…");
-      await quiet(tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }), "кнопка");
+      // Убираем только нажатую кнопку — «Открыть снова» рядом остаётся.
+      const rest = ((q.message.reply_markup || {}).inline_keyboard || []).map((row) => row.filter((b) => b.callback_data !== data)).filter((row) => row.length);
+      await quiet(tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: rest } }), "кнопка");
       return learn(t, clip((q.from || {}).first_name || "", 40));
     }
     const t = await loadTicket(id);
@@ -2072,7 +2150,22 @@ function createSupportBot(deps) {
     }
     await cfgRef().set({ groupChatId: msg.chat.id, groupTitle: clip(msg.chat.title || "", 80), groupCode: null, groupCodeExp: null, updatedAt: ts(now()) }, { merge: true });
     await reload();
+    await setGroupCommands();
     await quiet(send(msg.chat.id, `✅ <b>Группа подключена к поддержке ZalPOS</b>\n\n${groupHelp()}`, HTML), "группа");
+  }
+
+  /** Меню «/» в рабочей группе — чтобы команды не нужно было помнить. */
+  const GROUP_MENU = [
+    ["learn", "📚 Запомнить решение (можно: /learn текст)"], ["take", "🙋 Беру обращение"], ["close", "✅ Закрыть обращение"],
+    ["reopen", "↩️ Открыть снова"], ["draft", "✍️ Черновик ответа от ИИ"], ["info", "ℹ️ Состояние заведения"],
+    ["ai", "🤖 Включить ИИ в теме"], ["mute", "🔕 Выключить ИИ в теме"], ["note", "📝 Заметка для своих"],
+    ["stats", "📊 Сводка поддержки"], ["help", "🧭 Как работать с обращениями"],
+  ];
+  async function setGroupCommands() {
+    const chatId = state.cfg && state.cfg.groupChatId;
+    if (!active() || !chatId) return;
+    await quiet(tg("setMyCommands", { commands: GROUP_MENU.map(([command, description]) => ({ command, description })), scope: { type: "chat", chat_id: chatId } }), "команды группы");
+    state.groupMenuFor = chatId;
   }
 
   // ---- кабинет: обращения из «Поддержки» и ответы из панели
@@ -2399,6 +2492,7 @@ function createSupportBot(deps) {
     const u = (await db().collection("supportBot").doc("usage").get().catch(() => null));
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
+    if (active()) setGroupCommands().catch(() => {});
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
       loadKnowledge().catch(() => {});
