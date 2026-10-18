@@ -65,27 +65,27 @@ class _DemoResetScreenState extends State<DemoResetScreen> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.auto_awesome, color: AppColors.primary, size: 52),
+                Icon(Icons.auto_awesome, color: AppColors.primary, size: 52),
                 const SizedBox(height: 14),
-                const Text(
+                Text(
                   'Демо обновляется',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   'Демо-заведение живёт 3 дня: всё, что в нём ввели, стирается, и оно открывается '
                   'заново в исходном виде — залы, меню, брони и гости. Для настоящей работы '
                   'подключите своё заведение из личного кабинета.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 14, height: 1.4),
                 ),
                 const SizedBox(height: 22),
                 if (_busy)
-                  const CircularProgressIndicator(color: Colors.white70)
+                  CircularProgressIndicator(color: AppColors.textMuted)
                 else ...[
                   Text('Не получилось открыть новое демо: $_error',
-                      textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
+                      textAlign: TextAlign.center, style: TextStyle(color: AppColors.danger)),
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,

@@ -139,10 +139,10 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.call, size: 18, color: AppColors.primary),
+                    Icon(Icons.call, size: 18, color: AppColors.primary),
                     const SizedBox(width: 6),
                     Text(formatPhone(s.customerPhone),
-                        style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.primary)),
+                        style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.primary)),
                   ],
                 ),
               ),

@@ -92,7 +92,7 @@ class _NotesTabState extends State<_NotesTab> {
                     'гостей, телефоны и адреса в ИИ не уходят, сотрудники — под номерами.'
                 : 'ИИ не подключён, поэтому сводки не собираются. Добавьте ключ: '
                     'раздел «Настройки ИИ» в этом же меню.',
-            style: const TextStyle(color: AppColors.textMuted, height: 1.4),
+            style: TextStyle(color: AppColors.textMuted, height: 1.4),
           ),
           if (ready) ...[
             const SizedBox(height: 10),
@@ -120,8 +120,8 @@ class _NotesTabState extends State<_NotesTab> {
         if (docs.isEmpty) {
           return ListView(children: [
             _header(),
-            const Padding(
-              padding: EdgeInsets.all(24),
+            Padding(
+              padding: const EdgeInsets.all(24),
               child: Text('Сводок пока нет',
                   textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
             ),
@@ -156,16 +156,16 @@ class _NotesTabState extends State<_NotesTab> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(d['title']?.toString() ?? 'Сводка',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
                       ),
                       Text(_fmt(date),
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                     ],
                   ),
                   const SizedBox(height: 8),
                   SelectableText(d['text']?.toString() ?? '',
-                      style: const TextStyle(color: AppColors.textPrimary, height: 1.4)),
+                      style: TextStyle(color: AppColors.textPrimary, height: 1.4)),
                 ],
               ),
             );
@@ -190,9 +190,9 @@ class _AiActionsTab extends StatelessWidget {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snap.data!.docs;
         if (docs.isEmpty) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(24),
+              padding: const EdgeInsets.all(24),
               child: Text(
                 'Здесь появится то, что ИИ-помощник изменил по просьбе сотрудника: '
                 'поставил позицию в стоп-лист, создал бронь, отправил уведомление.\n\n'
@@ -212,13 +212,13 @@ class _AiActionsTab extends StatelessWidget {
             final ts = d['createdAt'];
             final date = ts is Timestamp ? ts.toDate() : DateTime.now();
             return ListTile(
-              leading: const Icon(Icons.smart_toy, color: AppColors.primary),
+              leading: Icon(Icons.smart_toy, color: AppColors.primary),
               title: Text(d['tool']?.toString() ?? '',
-                  style: const TextStyle(color: AppColors.textPrimary)),
+                  style: TextStyle(color: AppColors.textPrimary)),
               subtitle: Text(
                 '${d['scope'] == 'guest' ? 'гость' : Pd.whoName('${d['employeeName'] ?? ''}').isEmpty ? 'сотрудник' : Pd.whoName('${d['employeeName']}')} · '
                 '${_fmt(date)}\n${d['args'] ?? ''}',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               isThreeLine: true,
             );
@@ -261,7 +261,7 @@ class _AuditTabState extends State<_AuditTab> {
               Expanded(
                 child: Text(
                   _aiResult ?? 'ИИ-контролёр найдёт аномалии в журнале за неделю',
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                 ),
               ),
               const SizedBox(width: 10),
@@ -298,7 +298,7 @@ class _AuditTabState extends State<_AuditTab> {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
               final docs = snap.data!.docs;
               if (docs.isEmpty) {
-                return const Center(
+                return Center(
                   child: Text('Журнал пуст', style: TextStyle(color: AppColors.textMuted)),
                 );
               }
@@ -318,21 +318,21 @@ class _AuditTabState extends State<_AuditTab> {
                       : '';
                   return ListTile(
                     dense: true,
-                    leading: const Icon(Icons.receipt_long, color: AppColors.textMuted),
+                    leading: Icon(Icons.receipt_long, color: AppColors.textMuted),
                     title: Text(
                       _labels[d['action']] ?? d['action']?.toString() ?? '',
-                      style: const TextStyle(color: AppColors.textPrimary),
+                      style: TextStyle(color: AppColors.textPrimary),
                     ),
                     subtitle: Text(
                       '${Pd.whoName('${d['employeeName'] ?? ''}')} · ${_fmt(date)}'
                       '${d['tableName'] != null && d['tableName'].toString().isNotEmpty ? ' · ${d['tableName']}' : ''}'
                       '$voidInfo',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                     ),
                     trailing: amount == 0
                         ? null
                         : Text(rub(amount),
-                            style: const TextStyle(color: AppColors.textMuted)),
+                            style: TextStyle(color: AppColors.textMuted)),
                   );
                 },
               );

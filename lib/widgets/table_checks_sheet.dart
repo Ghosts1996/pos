@@ -57,14 +57,14 @@ class TableChecksSheet extends StatelessWidget {
                         snap.hasData
                             ? 'Открыто чеков: ${sessions.length} из ${table.maxOpenSessions} · выберите чек'
                             : 'Загружаем чеки…',
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                       ),
                     ],
                   ),
                 ),
                 if (snap.hasError)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(20, 8, 20, 24),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                     child: Text('Не удалось загрузить чеки — проверьте интернет.',
                         style: TextStyle(color: AppColors.danger)),
                   )
@@ -103,7 +103,7 @@ class TableChecksSheet extends StatelessWidget {
                         : Text(
                             'На этом столе уже максимум чеков — ${table.maxOpenSessions}.',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                           ),
                   ),
               ],
@@ -157,7 +157,7 @@ class _CheckCard extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Text('$number',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
                         color: AppColors.textPrimary)),
@@ -178,7 +178,7 @@ class _CheckCard extends StatelessWidget {
                       ),
                       if (current) ...[
                         const SizedBox(width: 8),
-                        const Text('сейчас открыт',
+                        Text('сейчас открыт',
                             style: TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
                       ],
                     ]),
@@ -186,7 +186,7 @@ class _CheckCard extends StatelessWidget {
                     Text(details,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                   ],
                 ),
               ),

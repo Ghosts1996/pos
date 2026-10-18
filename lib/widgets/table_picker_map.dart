@@ -57,9 +57,9 @@ class TablePickerMap extends StatefulWidget {
     this.selectedTableId,
   });
 
-  static const _freeColor = Color(0xFF7FB894);
-  static const _busyColor = AppColors.danger;
-  static const _selectedColor = AppColors.primary;
+  static Color get _freeColor => AppColors.palette.tableFree;
+  static Color get _busyColor => AppColors.danger;
+  static Color get _selectedColor => AppColors.primary;
 
   @override
   State<TablePickerMap> createState() => _TablePickerMapState();
@@ -72,7 +72,7 @@ class _TablePickerMapState extends State<TablePickerMap> {
   List<TableModel> get tables => widget.tables;
   List<TableBusyInterval> get busyIntervals => widget.busyIntervals;
   ValueChanged<TableModel> get onSelect => widget.onSelect;
-  static const _busyColor = TablePickerMap._busyColor;
+  static Color get _busyColor => TablePickerMap._busyColor;
 
   @override
   Widget build(BuildContext context) {
@@ -200,7 +200,7 @@ class _TablePickerMapState extends State<TablePickerMap> {
                   ),
                 )
               else
-                const Text('Занят на выбранное время',
+                Text('Занят на выбранное время',
                     style: TextStyle(color: _busyColor, fontWeight: FontWeight.w600)),
             ],
           ),

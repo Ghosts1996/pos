@@ -42,19 +42,19 @@ class SetupRequiredScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 12),
-              const Icon(Icons.cloud_off, color: AppColors.warning, size: 48),
+              Icon(Icons.cloud_off, color: AppColors.warning, size: 48),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Firebase ещё не настроен',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Приложение собралось и запустилось нормально — не хватает только '
                 'подключения к базе данных. Это разовая настройка, займёт 5–10 минут.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 14),
               ),
               const SizedBox(height: 24),
               ..._steps.asMap().entries.map((e) => Padding(
@@ -66,12 +66,12 @@ class SetupRequiredScreen extends StatelessWidget {
                           radius: 12,
                           backgroundColor: AppColors.brass.withValues(alpha: 0.25),
                           child: Text('${e.key + 1}',
-                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 12)),
+                              style: TextStyle(color: AppColors.textPrimary, fontSize: 12)),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(e.value,
-                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.3)),
+                              style: TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.3)),
                         ),
                       ],
                     ),
@@ -88,18 +88,18 @@ class SetupRequiredScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Техническая информация об ошибке:',
+                      Text('Техническая информация об ошибке:',
                           style: TextStyle(color: AppColors.danger, fontSize: 12, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 4),
                       SelectableText(errorDetails!,
-                          style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace')),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontFamily: 'monospace')),
                     ],
                   ),
                 ),
               ],
               const SizedBox(height: 20),
               OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                style: OutlinedButton.styleFrom(foregroundColor: AppColors.textMuted),
                 onPressed: () {
                   Clipboard.setData(const ClipboardData(
                       text: 'dart pub global activate flutterfire_cli\nflutterfire configure'));
@@ -127,19 +127,19 @@ class SetupRequiredScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 12),
-              const Icon(Icons.error_outline, color: AppColors.warning, size: 48),
+              Icon(Icons.error_outline, color: AppColors.warning, size: 48),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Касса не запустилась',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Закройте приложение и откройте снова. Не помогло — скачайте свежую версию '
                 'на zalpos.ru или напишите в поддержку и приложите текст ошибки ниже.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 14, height: 1.4),
               ),
               const SizedBox(height: 18),
               if (errorDetails != null)
@@ -151,11 +151,11 @@ class SetupRequiredScreen extends StatelessWidget {
                     border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
                   ),
                   child: SelectableText(errorDetails!,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace')),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontFamily: 'monospace')),
                 ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                style: OutlinedButton.styleFrom(foregroundColor: AppColors.textMuted),
                 onPressed: () {
                   Clipboard.setData(ClipboardData(text: errorDetails ?? 'нет текста ошибки'));
                   ScaffoldMessenger.of(context)

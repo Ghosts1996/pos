@@ -1542,7 +1542,7 @@ class _SectionState extends State<_Section> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(widget.title,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 3),
                         Row(
@@ -1573,7 +1573,7 @@ class _SectionState extends State<_Section> {
                   AnimatedRotation(
                     turns: _open ? 0.5 : 0,
                     duration: const Duration(milliseconds: 200),
-                    child: const Icon(Icons.expand_more, color: AppColors.textMuted),
+                    child: Icon(Icons.expand_more, color: AppColors.textMuted),
                   ),
                 ],
               ),
@@ -1673,7 +1673,7 @@ class _Choice<T> extends StatelessWidget {
                     if (o.subtitle.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(o.subtitle,
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.3)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.3)),
                     ],
                   ],
                 ),
@@ -1714,7 +1714,7 @@ class _Hint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      Text(text, style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4));
+      Text(text, style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4));
 }
 
 class _Label extends StatelessWidget {
@@ -1723,7 +1723,7 @@ class _Label extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(text,
-      style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600));
+      style: TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600));
 }
 
 /// Адреса и значения, которые переписывают в кабинет банка, — моноширинно
@@ -1741,7 +1741,7 @@ class _CodeBox extends StatelessWidget {
           border: Border.all(color: AppColors.border),
         ),
         child: SelectableText(text,
-            style: const TextStyle(
+            style: TextStyle(
                 color: AppColors.textPrimary, fontSize: 12.5, height: 1.5, fontFamily: 'monospace')),
       );
 }
@@ -1762,7 +1762,7 @@ class _Result extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: bad ? AppColors.danger : good ? AppColors.success : AppColors.border),
       ),
-      child: SelectableText(text, style: const TextStyle(color: AppColors.textPrimary, height: 1.4)),
+      child: SelectableText(text, style: TextStyle(color: AppColors.textPrimary, height: 1.4)),
     );
   }
 }

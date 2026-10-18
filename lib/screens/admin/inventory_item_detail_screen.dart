@@ -63,14 +63,14 @@ class InventoryItemDetailScreen extends StatelessWidget {
                                     Expanded(
                                       child: Text(
                                         item.category.isEmpty ? 'Без категории' : item.category,
-                                        style: const TextStyle(color: AppColors.textMuted),
+                                        style: TextStyle(color: AppColors.textMuted),
                                       ),
                                     ),
                                     Row(
                                       children: [
                                         Text(
                                           item.active ? 'Отслеживается' : 'Отключена',
-                                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                                          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                                         ),
                                         Switch(
                                           value: item.active,
@@ -94,16 +94,16 @@ class InventoryItemDetailScreen extends StatelessWidget {
                                     padding: const EdgeInsets.only(top: 4),
                                     child: Row(
                                       children: [
-                                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                                        Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
                                         const SizedBox(width: 6),
                                         Text('Мало на складе (порог ${item.unit.formatWithLabel(item.minQuantity)})',
-                                            style: const TextStyle(color: AppColors.warning, fontSize: 13)),
+                                            style: TextStyle(color: AppColors.warning, fontSize: 13)),
                                       ],
                                     ),
                                   ),
                                 if (item.note.isNotEmpty) ...[
                                   const SizedBox(height: 12),
-                                  Text(item.note, style: const TextStyle(color: AppColors.textMuted)),
+                                  Text(item.note, style: TextStyle(color: AppColors.textMuted)),
                                 ],
                               ],
                             ),
@@ -114,7 +114,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
                           children: [
                             Expanded(
                               child: OutlinedButton.icon(
-                                icon: const Icon(Icons.add, color: AppColors.success),
+                                icon: Icon(Icons.add, color: AppColors.success),
                                 label: const Text('Приход'),
                                 onPressed: () => _adjustDialog(context, fs, item, type: 'receipt'),
                               ),
@@ -122,7 +122,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
                             const SizedBox(width: 12),
                             Expanded(
                               child: OutlinedButton.icon(
-                                icon: const Icon(Icons.remove, color: AppColors.danger),
+                                icon: Icon(Icons.remove, color: AppColors.danger),
                                 label: const Text('Списание'),
                                 onPressed: () => _adjustDialog(context, fs, item, type: 'writeoff'),
                               ),
@@ -139,7 +139,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 24),
-                        const Text('История движений',
+                        Text('История движений',
                             style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
                       ],
                     ),
@@ -158,9 +158,9 @@ class InventoryItemDetailScreen extends StatelessWidget {
                       );
                     }
                     if (moves.isEmpty) {
-                      return const SliverToBoxAdapter(
+                      return SliverToBoxAdapter(
                         child: Padding(
-                          padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                           child: Text('Движений пока не было', style: TextStyle(color: AppColors.textMuted)),
                         ),
                       );
@@ -255,7 +255,7 @@ class InventoryItemDetailScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Сейчас: ${item.unit.formatWithLabel(item.quantity)}',
-                style: const TextStyle(color: AppColors.textMuted)),
+                style: TextStyle(color: AppColors.textMuted)),
             const SizedBox(height: 12),
             TextField(
               controller: valueCtrl,
@@ -425,7 +425,7 @@ class _MovementTile extends StatelessWidget {
         ].join(' · '),
       ),
       trailing: Text('= ${move.unit.formatWithLabel(move.resultingQty)}',
-          style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
     );
   }
 

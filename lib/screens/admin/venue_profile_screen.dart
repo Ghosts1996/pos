@@ -273,7 +273,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               ],
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Координаты заведения — по ним ИИ-помощник гостя смотрит погоду и '
               'учитывает её в советах. Найдите точку на Яндекс.Картах или Google '
               'Maps: координаты показаны при долгом нажатии на точку.',
@@ -287,7 +287,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               value: _tipsEnabled,
               onChanged: (v) => setState(() => _tipsEnabled = v),
               title: const Text('Гости оставляют чаевые в приложении'),
-              subtitle: const Text(
+              subtitle: Text(
                 'Гость выбирает, кому из смены оставить чаевые, и добавляет их к '
                 'счёту — касса возьмёт их вместе с оплатой. В выручку и чек они не '
                 'входят, а в «Зарплате» видны у каждого сотрудника. Список смены — '
@@ -301,7 +301,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 value: _tipsTeamEnabled,
                 onChanged: (v) => setState(() => _tipsTeamEnabled = v),
                 title: const Text('Вариант «Всей смене»'),
-                subtitle: const Text(
+                subtitle: Text(
                   'Сумма делится поровну между всеми, кто был на смене, — включая '
                   'кухню и бар.',
                   style: TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -312,7 +312,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               value: _deliveryEnabled,
               onChanged: (v) => setState(() => _deliveryEnabled = v),
               title: const Text('Заказы с собой и доставка'),
-              subtitle: const Text(
+              subtitle: Text(
                 'Кнопка в шапке зала: заказ без стола, статусы «Принят → Готовится → У курьера → Доставлен». '
                 'Включение и выключение сразу видно на всех кассах.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -331,13 +331,13 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 'Кнопка оплаты появится у гостей, только когда банк '
                 'подтвердит реквизиты («Сохранить и проверить подключение») и ниже заполнены реквизиты продавца.'
                 '${_guestSbpPay && VenueService.instance.cached.onlinePay.isEmpty ? '\n⚠ Банк ещё не подключён или не проверен — гости не увидят кнопку оплаты.' : ''}',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             ),
             const SizedBox(height: 12),
             const Text('Реквизиты продавца', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Их видит гость перед заказом и оплатой из приложения — так требует закон «О защите прав '
               'потребителей». Без них заказ доставки и онлайн-оплата у гостей недоступны.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -417,7 +417,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 value: _cloudFunctions,
                 onChanged: (v) => setState(() => _cloudFunctions = v),
                 title: const Text('Cloud Functions подключены (тариф Blaze)'),
-                subtitle: const Text(
+                subtitle: Text(
                   'Выключено — приложение работает полностью само: POS ведёт '
                   'фоновые задания (снимает брони без гостя, поздравляет '
                   'именинников), а гость получает локальные уведомления вместо '
@@ -432,7 +432,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
             const Divider(height: 32),
             const Text('Часы работы', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            const Text('Формат 14:00-02:00, пусто — выходной',
+            Text('Формат 14:00-02:00, пусто — выходной',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             const SizedBox(height: 12),
             for (var i = 1; i <= 7; i++)
@@ -467,7 +467,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               ],
             ),
             if (_profile.faq.isEmpty)
-              const Text('Пока пусто — ИИ-консьерж будет отвечать только по меню',
+              Text('Пока пусто — ИИ-консьерж будет отвечать только по меню',
                   style: TextStyle(color: AppColors.textMuted, fontSize: 13))
             else
               ..._profile.faq.map((f) => ListTile(
@@ -475,7 +475,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                     title: Text(f.question),
                     subtitle: Text(f.answer, style: const TextStyle(fontSize: 13)),
                     trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                      icon: Icon(Icons.delete_outline, color: AppColors.danger),
                       onPressed: () async {
                         final faq = List<VenueFaq>.from(_profile.faq)..remove(f);
                         _profile = _profile.copyWith(faq: faq);
@@ -500,7 +500,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                 ),
               ],
             ),
-            const Text('Скидка действует автоматически при открытии чека в это время',
+            Text('Скидка действует автоматически при открытии чека в это время',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             const SizedBox(height: 8),
             StreamBuilder<List<HappyHour>>(
@@ -508,7 +508,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
               builder: (context, snap) {
                 final list = snap.data ?? const <HappyHour>[];
                 if (list.isEmpty) {
-                  return const Text('Акций нет',
+                  return Text('Акций нет',
                       style: TextStyle(color: AppColors.textMuted, fontSize: 13));
                 }
                 return Column(
@@ -523,7 +523,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                               style: const TextStyle(fontSize: 12),
                             ),
                             trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                              icon: Icon(Icons.delete_outline, color: AppColors.danger),
                               onPressed: () => _service.deleteHappyHour(h.id),
                             ),
                           ))

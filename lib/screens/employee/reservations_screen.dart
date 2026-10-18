@@ -142,7 +142,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('Брони'),
-            Text(_fmtDay(_day), style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+            Text(_fmtDay(_day), style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
           ],
         ),
         actions: [
@@ -184,13 +184,13 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             if (_hoursMissing)
               Material(
                 color: AppColors.danger.withValues(alpha: 0.12),
-                child: const Padding(
-                  padding: EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                   child: Row(
                     children: [
                       Icon(Icons.schedule, color: AppColors.danger, size: 20),
-                      SizedBox(width: 10),
-                      Expanded(
+                      const SizedBox(width: 10),
+                      const Expanded(
                         child: Text(
                           'Не заполнены часы работы — гости не могут забронировать стол '
                           'в приложении. Админ → Профиль заведения → Часы работы.',
@@ -208,7 +208,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                   child: Row(
                     children: [
-                      const Icon(Icons.badge_outlined,
+                      Icon(Icons.badge_outlined,
                           color: AppColors.primary, size: 20),
                       const SizedBox(width: 10),
                       Expanded(
@@ -229,7 +229,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                   child: Row(
                     children: [
-                      const Icon(Icons.notifications_off,
+                      Icon(Icons.notifications_off,
                           color: AppColors.warning, size: 20),
                       const SizedBox(width: 10),
                       const Expanded(
@@ -268,7 +268,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           }
           final list = snap.data!;
           if (list.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('На этот день броней нет',
                   style: TextStyle(color: AppColors.textMuted)),
             );
@@ -319,7 +319,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${r.guestName} · ${r.guestsCount} чел.',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.w600)),
@@ -328,14 +328,14 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                       '${r.durationMinutes} мин · ${r.status.label}'
                       '${r.source == 'kolibri' ? ' · из приложения' : ''}'
                       '${r.guestConfirmed ? ' · гость подтвердил' : ''}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
                   ],
                 ),
               ),
               if (r.phone.isNotEmpty)
                 IconButton(
-                  icon: const Icon(Icons.phone, color: AppColors.textMuted),
+                  icon: Icon(Icons.phone, color: AppColors.textMuted),
                   onPressed: () => callGuest(context, r.phone),
                 ),
             ],
@@ -343,14 +343,14 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           if (r.comment.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('«${r.comment}»',
-                style: const TextStyle(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
+                style: TextStyle(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
           ],
           if (r.preOrder.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               'Предзаказ: ${r.preOrder.map((i) => '${i.name} ×${i.qty}').join(', ')} '
               '— ${rub(r.preOrderTotal)}',
-              style: const TextStyle(color: AppColors.success, fontSize: 13),
+              style: TextStyle(color: AppColors.success, fontSize: 13),
             ),
           ],
           if (r.aiNote.isNotEmpty) ...[
@@ -358,11 +358,11 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
+                Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(r.aiNote,
-                      style: const TextStyle(color: AppColors.primary, fontSize: 12)),
+                      style: TextStyle(color: AppColors.primary, fontSize: 12)),
                 ),
               ],
             ),
@@ -399,7 +399,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                 ),
                 TextButton(
                   onPressed: () => _guard(() => _service.cancel(r.id, by: widget.employee.name)),
-                  child: const Text('Отменить',
+                  child: Text('Отменить',
                       style: TextStyle(color: AppColors.danger)),
                 ),
               ],

@@ -182,19 +182,19 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const CircularProgressIndicator(color: AppColors.brass, strokeWidth: 2),
+                CircularProgressIndicator(color: AppColors.brass, strokeWidth: 2),
                 const SizedBox(height: 16),
                 Text(
                   _resettingDemo ? 'Демо обновляется — возвращаем исходный вид…' : 'Подключаем ваше заведение…',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 16),
+                  style: TextStyle(color: AppColors.textPrimary, fontSize: 16),
                 ),
                 if (_resettingDemo) ...[
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Демо-заведение живёт 3 дня, потом всё введённое стирается.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 13),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                   ),
                 ],
               ],
@@ -227,13 +227,13 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   Text(
                     _intro,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 14),
                   ),
                   const SizedBox(height: 24),
                   TextField(
                     controller: _slug,
                     autofocus: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Код заведения',
                       hintText: 'kafe-leto',
@@ -243,7 +243,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _code,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Код приглашения устройства',
                     ),
@@ -252,7 +252,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _label,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Название устройства (необязательно)',
                       hintText: 'Планшет у бара',
@@ -260,7 +260,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
-                    Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+                    Text(_error!, style: TextStyle(color: AppColors.danger, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
                   SizedBox(
@@ -274,13 +274,13 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Row(children: [
-                    Expanded(child: Divider(color: Colors.white24)),
+                  Row(children: [
+                    Expanded(child: Divider(color: AppColors.border)),
                     Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Text('или', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                     ),
-                    Expanded(child: Divider(color: Colors.white24)),
+                    Expanded(child: Divider(color: AppColors.border)),
                   ]),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -291,7 +291,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Демо-сеть из двух заведений: залы со столами, меню с фото, брони, гости '
                     'и отчёты, у каждой точки свои сотрудники — без регистрации, сбрасывается через 3 дня.',
                     textAlign: TextAlign.center,

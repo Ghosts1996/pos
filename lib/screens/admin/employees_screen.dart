@@ -60,9 +60,9 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                 return r != 0 ? r : a.name.toLowerCase().compareTo(b.name.toLowerCase());
               });
             if (employees.isEmpty) {
-              return const Center(
+              return Center(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(32),
                   child: Text(
                     'Сотрудников пока нет.\nДобавьте первого — он будет входить по своему PIN-коду.',
                     textAlign: TextAlign.center,
@@ -135,10 +135,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
+                  Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
                   const SizedBox(width: 4),
                   Text('•' * AppConstants.pinLengthForRole(e.role),
-                      style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()], color: AppColors.textMuted)),
+                      style: TextStyle(fontFeatures: const [FontFeature.tabularFigures()], color: AppColors.textMuted)),
                 ]),
               ),
               PopupMenuButton<String>(
@@ -147,8 +147,8 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                   if (v == 'edit') _edit(e);
                   if (v == 'delete') _delete(e);
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('Изменить')),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit', child: Text('Изменить')),
                   PopupMenuItem(value: 'delete', child: Text('Удалить', style: TextStyle(color: AppColors.danger))),
                 ],
               ),

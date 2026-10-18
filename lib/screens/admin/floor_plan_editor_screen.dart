@@ -361,7 +361,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                     : inZone.isEmpty && wallCount > 0
                         ? 'Столов в зоне нет. «Удалить» уберёт зону вместе с её стенами и подписями.'
                         : 'Новое имя получат все столы этой зоны (${inZone.length}). Если такая зона уже есть — столы переедут в неё.',
-                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ]),
           ),
@@ -369,7 +369,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             if (!isNew && inZone.isEmpty)
               TextButton(
                 onPressed: () => Navigator.pop(ctx, _deleteZone),
-                child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+                child: Text('Удалить', style: TextStyle(color: AppColors.danger)),
               ),
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
             FilledButton(onPressed: save, child: Text(isNew ? 'Добавить' : 'Сохранить')),
@@ -483,12 +483,12 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   const SizedBox(height: 8),
                   stepper('Мест за столом', seats, 1, 99, (v) => seats = v),
                   stepper('Чеков одновременно', maxOpenSessions, 1, 6, (v) => maxOpenSessions = v),
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: Text('Несколько чеков — когда компания платит раздельно.',
                         style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
                   ),
-                  const Text('Форма', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                  Text('Форма', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
                   const SizedBox(height: 6),
                   Wrap(spacing: 6, runSpacing: 6, children: [
                     for (final s in kTableShapes)
@@ -512,8 +512,8 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                         ),
                       ),
                     ]),
-                    const Padding(
-                      padding: EdgeInsets.only(top: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
                       child: Text(
                           'Повернуть можно и прямо на схеме кнопкой ⟳. Ставьте столы вплотную — '
                           'из длинных и угловых собираются столы буквой Г и П.',
@@ -553,7 +553,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             if (existing != null)
               TextButton(
                 onPressed: () => Navigator.pop(ctx, const _TableForm.delete()),
-                child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+                child: Text('Удалить', style: TextStyle(color: AppColors.danger)),
               ),
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
             FilledButton(
@@ -1074,7 +1074,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   ActionChip(label: Text(t), onPressed: () => setSt(() => ctrl.text = t)),
               ]),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 'Подпись видна на схеме в зале, у гостя в приложении и на сайте — заглавными, как на чертеже. '
                 'Её можно перетащить пальцем.',
                 style: TextStyle(fontSize: 12, color: AppColors.textMuted),
@@ -1085,7 +1085,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
             if (existing != null)
               TextButton(
                 onPressed: () => Navigator.pop(ctx, _deleteLabel),
-                child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+                child: Text('Удалить', style: TextStyle(color: AppColors.danger)),
               ),
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
             FilledButton(onPressed: save, child: Text(existing == null ? 'Добавить' : 'Сохранить')),
@@ -1195,13 +1195,13 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
                 child: Icon(Icons.architecture, color: AppColors.primary, size: 20),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(hint, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+                child: Text(hint, style: TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
               ),
             ]),
             const SizedBox(height: 8),
@@ -1417,7 +1417,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Row(children: [
-                  const Icon(Icons.pan_tool_alt_outlined, size: 16, color: AppColors.textMuted),
+                  Icon(Icons.pan_tool_alt_outlined, size: 16, color: AppColors.textMuted),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -1431,7 +1431,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                                       '${narrow ? 'Или удерживайте' : 'Или перетащите'} его: зелёная рамка покажет, куда он встанет. '
                                       'Контур помещения и подписи (вход, кухня, заметки) — кнопкой «Стены». '
                                       'Зоны — вкладки сверху: «+ Зона» добавит новую, нажмите на выбранную — переименовать.',
-                      style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                      style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
                     ),
                   ),
                 ]),
@@ -1499,7 +1499,7 @@ class _FloorPlanEditorScreenState extends State<FloorPlanEditorScreen> {
                   child: Text(
                     '${_inZone.length} ${pluralRu(_inZone.length, 'стол', 'стола', 'столов')} · '
                     '${seatsLabel(_inZone.fold<int>(0, (a, t) => a + t.seats))}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                   ),
                 ),
             ],

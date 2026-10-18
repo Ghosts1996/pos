@@ -212,7 +212,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               }).toList(),
             ),
             const SizedBox(height: 6),
-            const Text('✓ — ключ сохранён. Ключ каждого провайдера хранится отдельно.',
+            Text('✓ — ключ сохранён. Ключ каждого провайдера хранится отдельно.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             const SizedBox(height: 14),
             TextField(
@@ -266,7 +266,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
                 ),
-                child: Text(vendor.note, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                child: Text(vendor.note, style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
               ),
             ],
             const SizedBox(height: 12),
@@ -295,7 +295,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             ),
             if (suggested.isNotEmpty) ...[
               const SizedBox(height: 12),
-              const Text('Нажмите — подставится в «Основная модель», долгое нажатие — в «Модель для аналитики»:',
+              Text('Нажмите — подставится в «Основная модель», долгое нажатие — в «Модель для аналитики»:',
                   style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
               const SizedBox(height: 6),
               Wrap(
@@ -380,7 +380,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
                         'в кабинете zalpos.ru → ИИ → «Дополнительные ключи».'
                     : 'Дополнительные ключи: работают ${_settings.extras.length} из ${_settings.extraKeys.length}, '
                         'идут после резервного. Меняются в кабинете zalpos.ru → ИИ.',
-                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ],
             const Divider(height: 32),
@@ -401,7 +401,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               divisions: 38,
               labelFormat: (v) => v.round().toString(),
             ),
-            const Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
+            Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             const Divider(height: 32),
             _section('Агенты'),
@@ -438,7 +438,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
   Widget _section(String title) => Padding(
         padding: const EdgeInsets.only(bottom: 12, top: 4),
         child: Text(title,
-            style: const TextStyle(
+            style: TextStyle(
                 color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
       );
 
@@ -455,7 +455,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('$label: ${labelFormat?.call(value) ?? value.toStringAsFixed(2)}',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           Slider(
             value: value.clamp(min, max),
             min: min,
@@ -488,7 +488,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
           total += t;
         }
         if (total == 0) {
-          return const Text('За 30 дней запросов не было.',
+          return Text('За 30 дней запросов не было.',
               style: TextStyle(color: AppColors.textMuted));
         }
         final sorted = byAgent.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
@@ -496,11 +496,11 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Всего за 30 дней: $total токенов',
-                style: const TextStyle(color: AppColors.textPrimary)),
+                style: TextStyle(color: AppColors.textPrimary)),
             if (byVendor.length > 1)
               Text(
                 byVendor.entries.map((e) => '${AiVendors.byId(e.key).title}: ${e.value}').join(' · '),
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             const SizedBox(height: 8),
             ...sorted.map((e) => Padding(
@@ -509,9 +509,9 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(AiAgents.byId(e.key).title,
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                       Text('${e.value}',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                     ],
                   ),
                 )),

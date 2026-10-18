@@ -90,7 +90,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
                 width: double.infinity,
                 color: AppColors.warning.withValues(alpha: 0.15),
                 padding: const EdgeInsets.all(12),
-                child: const Text('ИИ не подключён — откройте «Настройки ИИ» и введите API-ключ.',
+                child: Text('ИИ не подключён — откройте «Настройки ИИ» и введите API-ключ.',
                     style: TextStyle(color: AppColors.warning)),
               ),
             // Ширина задаётся явно: без этого в некоторых сборках текст
@@ -107,7 +107,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
                         'Период: ${_fmt(_range.start)} — ${_fmt(_range.end)}',
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: AppColors.textMuted),
+                        style: TextStyle(color: AppColors.textMuted),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -174,7 +174,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
               children: [
                 Icon(icon, color: color),
                 Text(title,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
               ],
             ),
@@ -184,12 +184,12 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
 
   Widget _resultView() {
     if (_busy) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 12),
             Text('Считаю и анализирую…', style: TextStyle(color: AppColors.textMuted)),
           ],
         ),
@@ -199,12 +199,12 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!, style: const TextStyle(color: AppColors.danger)),
+          child: Text(_error!, style: TextStyle(color: AppColors.danger)),
         ),
       );
     }
     if (_result.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('Выберите разбор выше', style: TextStyle(color: AppColors.textMuted)),
       );
     }
@@ -212,11 +212,11 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         Text(_title ?? '',
-            style: const TextStyle(
+            style: TextStyle(
                 color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 12),
         SelectableText(_result,
-            style: const TextStyle(color: AppColors.textPrimary, height: 1.45)),
+            style: TextStyle(color: AppColors.textPrimary, height: 1.45)),
         const SizedBox(height: 32),
       ],
     );

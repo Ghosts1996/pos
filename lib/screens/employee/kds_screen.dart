@@ -33,7 +33,7 @@ class KdsScreen extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Center(
-                child: Text(employee.name, style: const TextStyle(color: AppColors.textMuted)),
+                child: Text(employee.name, style: TextStyle(color: AppColors.textMuted)),
               ),
             ),
         ],
@@ -48,12 +48,12 @@ class KdsScreen extends StatelessWidget {
               final calls = callSnap.data ?? const <WaiterCall>[];
 
               if (orders.isEmpty && calls.isEmpty) {
-                return const Center(
+                return Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.check_circle_outline, size: 56, color: AppColors.success),
-                      SizedBox(height: 12),
+                      const SizedBox(height: 12),
                       Text('Очередь пуста', style: TextStyle(color: AppColors.textMuted)),
                     ],
                   ),
@@ -156,7 +156,7 @@ class KdsScreen extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                 ),
               ),
@@ -175,12 +175,12 @@ class KdsScreen extends StatelessWidget {
           Text(subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           const SizedBox(height: 10),
           Expanded(
             child: SingleChildScrollView(
               child: Text(body,
-                  style: const TextStyle(color: AppColors.textPrimary, height: 1.35)),
+                  style: TextStyle(color: AppColors.textPrimary, height: 1.35)),
             ),
           ),
           Row(
@@ -198,7 +198,7 @@ class KdsScreen extends StatelessWidget {
                   style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: onSecondary,
                   child: Text(secondaryLabel,
-                      style: const TextStyle(color: AppColors.textMuted)),
+                      style: TextStyle(color: AppColors.textMuted)),
                 ),
               ],
             ],

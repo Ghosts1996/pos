@@ -88,7 +88,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
         _card(
           child: Column(
             children: [
-              const Text('Сколько человек платят', style: TextStyle(color: AppColors.textMuted)),
+              Text('Сколько человек платят', style: TextStyle(color: AppColors.textMuted)),
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -111,16 +111,16 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
           child: Column(
             children: [
               Text(totalK <= 0 ? 'Счёт пока пустой' : 'С каждого',
-                  style: const TextStyle(color: AppColors.textMuted)),
+                  style: TextStyle(color: AppColors.textMuted)),
               const SizedBox(height: 4),
               if (totalK > 0)
                 Text(
                   equal ? formatKopecks(shares.first) : '${formatKopecks(shares.last)} – ${formatKopecks(shares.first)}',
-                  style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w700, color: AppColors.success),
+                  style: TextStyle(fontSize: 36, fontWeight: FontWeight.w700, color: AppColors.success),
                 ),
               const SizedBox(height: 6),
               Text('Счёт ${formatKopecks(totalK)}${s.discountPercent > 0 ? ' (со скидкой ${s.discountPercent.toStringAsFixed(0)}%)' : ''}',
-                  style: const TextStyle(color: AppColors.textMuted)),
+                  style: TextStyle(color: AppColors.textMuted)),
               if (!equal) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -135,7 +135,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           'Оплату принимайте на экране «Закрыть стол» — по частям: наличными, '
           'картой, с терминала. Если каждый платит за своё, выберите «По позициям».',
           style: TextStyle(color: AppColors.textMuted, fontSize: 13),
@@ -165,7 +165,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
           child: ListView(
             padding: EdgeInsets.fromLTRB(side, 16, side, 16),
             children: [
-              const Text('Отметьте, что уходит в отдельный чек',
+              Text('Отметьте, что уходит в отдельный чек',
                   style: TextStyle(color: AppColors.textMuted)),
               const SizedBox(height: 10),
               Container(
@@ -177,7 +177,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
                 child: Column(
                   children: [
                     for (var i = 0; i < items.length; i++) ...[
-                      if (i > 0) const Divider(height: 1, color: AppColors.border),
+                      if (i > 0) Divider(height: 1, color: AppColors.border),
                       _itemRow(i),
                     ],
                   ],
@@ -197,10 +197,10 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
                   'За столом уже ${widget.table.activeSessionIds.length} из ${widget.table.maxOpenSessions} '
                   '${pluralRu(widget.table.maxOpenSessions, 'чека', 'чеков', 'чеков')} — '
                   'сначала закройте один или увеличьте лимит стола в «Карте зала».',
-                  style: const TextStyle(color: AppColors.warning),
+                  style: TextStyle(color: AppColors.warning),
                 ),
               if (everything)
-                const Text(
+                Text(
                   'Все позиции уходят в новый чек — тогда проще не делить, а оплатить этот.',
                   style: TextStyle(color: AppColors.warning),
                 ),
@@ -208,7 +208,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
           ),
         ),
         Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surfaceElevated,
             border: Border(top: BorderSide(color: AppColors.border)),
           ),
@@ -262,7 +262,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
                         fontWeight: FontWeight.w600,
                         color: m > 0 ? AppColors.success : AppColors.textPrimary)),
                 Text('${rub(item.price)} · в чеке ${item.qty}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
               ],
             ),
           ),
@@ -329,7 +329,7 @@ class _SplitBillScreenState extends State<SplitBillScreen> {
   Widget _sum(String label, double v, Color color) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          Text(label, style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           Text(formatKopecks((v * 100).round()),
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: color)),
         ],

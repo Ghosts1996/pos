@@ -29,7 +29,9 @@ import 'screens/saas/demo_reset_screen.dart';
 import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
 import 'screens/setup_required_screen.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
+import 'theme/theme_controller.dart';
 import 'utils/adaptive.dart';
 import 'utils/release_error_widget.dart';
 import 'utils/startup_log.dart';
@@ -51,6 +53,9 @@ void main() async {
   // Свернули кассу — при возвращении PIN (AppLock). До runApp: «Назад» под
   // блокировкой должен достаться ему раньше, чем навигатору.
   AppLock.instance.start();
+  // Тема этого устройства (тёмная, светлая или как в системе) — до первого
+  // кадра, чтобы экран не мигал другой палитрой.
+  await ThemeController.instance.load();
 
   String? startupError;
   var ready = false;
@@ -201,6 +206,14 @@ class HookahPosApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Смена темы (тёмная/светлая) — новый ThemeData, навигатор остаётся.
+    return ValueListenableBuilder<int>(
+      valueListenable: ThemeController.instance.revision,
+      builder: (context, _, __) => _app(),
+    );
+  }
+
+  Widget _app() {
     return MaterialApp(
       title: 'ZalPOS',
       navigatorKey: appNavigatorKey,
@@ -212,17 +225,17 @@ class HookahPosApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
       locale: const Locale('ru', 'RU'),
-      // POS-система работает на планшетах в зале с переменным освещением —
-      // фиксируем тёмную тему «Графит и медь» как единственную, без
-      // системного light/dark переключения, чтобы кассир не терял привычную
-      // контрастность в течение смены.
+      // Тема — выбор этого устройства (ThemeController): по умолчанию тёмная
+      // «Графит и медь» для вечернего зала, по желанию светлая «Слоновая
+      // кость и медь» или как в системе. Палитру уже поставил контроллер,
+      // поэтому обе темы здесь — одна и та же, текущая.
       //
       // Касса у всех заведений в фирменном стиле ZalPOS: это рабочий
       // инструмент персонала, гости её не видят. Брендинг заведения (цвета,
       // логотип, название) — только для приложения гостя и веб-меню.
-      theme: AppTheme.dark,
-      darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.dark,
+      theme: AppTheme.current,
+      darkTheme: AppTheme.current,
+      themeMode: AppColors.isLight ? ThemeMode.light : ThemeMode.dark,
       // Перед экраном входа — прогрев дискового кэша фото меню (см.
       // ImagePreloadScreen), чтобы дальше открытие меню не грузило фото по
       // сети и не подвисало на слабых POS-планшетах.

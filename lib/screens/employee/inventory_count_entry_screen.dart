@@ -40,11 +40,11 @@ class InventoryCountEntryScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Row(
+                          Row(
                             children: [
                               Icon(Icons.fact_check_outlined, color: AppColors.primary),
-                              SizedBox(width: 12),
-                              Expanded(
+                              const SizedBox(width: 12),
+                              const Expanded(
                                 child: Text('Инвентаризация в процессе',
                                     style: TextStyle(fontWeight: FontWeight.w600)),
                               ),
@@ -54,7 +54,7 @@ class InventoryCountEntryScreen extends StatelessWidget {
                           Text(
                             'Посчитано ${open.countedCount} из ${open.totalCount} · '
                             'начата ${_fmtDate(open.startedAt)} · ${open.startedBy}',
-                            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                           ),
                           const SizedBox(height: 12),
                           SizedBox(
@@ -79,7 +79,7 @@ class InventoryCountEntryScreen extends StatelessWidget {
                         children: [
                           const Text('Новая инвентаризация', style: TextStyle(fontWeight: FontWeight.w700)),
                           const SizedBox(height: 6),
-                          const Text(
+                          Text(
                             'Зафиксирует текущие системные остатки всех активных позиций склада, '
                             'а дальше вы вводите фактически посчитанное количество по каждой — '
                             'расхождения применятся к остаткам после завершения.',
@@ -102,8 +102,8 @@ class InventoryCountEntryScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(4, 24, 4, 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 24, 4, 8),
                   child: Text('История', style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
                 ),
                 FutureBuilder<List<InventoryCount>>(
@@ -117,8 +117,8 @@ class InventoryCountEntryScreen extends StatelessWidget {
                     }
                     final history = histSnap.data!.where((c) => c.status != 'in_progress').toList();
                     if (history.isEmpty) {
-                      return const Padding(
-                        padding: EdgeInsets.all(8),
+                      return Padding(
+                        padding: const EdgeInsets.all(8),
                         child: Text('Завершённых инвентаризаций пока нет', style: TextStyle(color: AppColors.textMuted)),
                       );
                     }

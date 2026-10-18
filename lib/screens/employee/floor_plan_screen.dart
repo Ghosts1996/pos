@@ -32,7 +32,9 @@ import 'table_detail_screen.dart';
 enum _HallFilter { all, free, busy, ending, reserved }
 
 /// Зал для сотрудника: сводка по столам, фильтры, зоны и два вида —
-/// «Список» (удобно на телефоне) и «Схема» (как расставил администратор).
+/// «Схема» (как расставил администратор, открывается по умолчанию) и
+/// «Список». На схеме список столов спрятан: на телефоне он выезжает
+/// шторкой снизу, на широком экране — панелью справа.
 ///
 /// Сверху — полоса обращений гостей (вызовы и заказы из приложения гостя).
 class FloorPlanScreen extends StatefulWidget {
@@ -45,8 +47,8 @@ class FloorPlanScreen extends StatefulWidget {
 
 class _FloorPlanScreenState extends State<FloorPlanScreen> {
   static const _viewKey = 'hall_view_mode_v1';
-  static const _listKey = 'hall_plan_list_open_v1';
-  bool _listOpen = true;
+  bool _listOpen = false;
+  double _sheetDrag = 0; // насколько шторку утянули вниз пальцем
   final _fs = FirestoreService();
 
   // Стримы создаются один раз: StreamBuilder сравнивает стримы по ссылке, и
@@ -93,24 +95,14 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final v = prefs.getString(_viewKey);
-      final list = prefs.getBool(_listKey);
-      if (mounted) {
-        setState(() {
-          if (v != null) _planMode = v == 'plan';
-          if (list != null) _listOpen = list;
-        });
-      }
+      if (mounted && v != null) setState(() => _planMode = v == 'plan');
     } catch (_) {}
   }
 
-  /// Список столов под картой можно спрятать — карта займёт весь экран.
-  Future<void> _setListOpen(bool open) async {
-    setState(() => _listOpen = open);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_listKey, open);
-    } catch (_) {}
-  }
+  void _setListOpen(bool open) => setState(() {
+        _listOpen = open;
+        _sheetDrag = 0;
+      });
 
   Future<void> _setPlanMode(bool plan) async {
     setState(() => _planMode = plan);
@@ -165,7 +157,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
             Text(widget.employee.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted, fontWeight: FontWeight.w400)),
+                style: TextStyle(fontSize: 12.5, color: AppColors.textMuted, fontWeight: FontWeight.w400)),
           ],
         ),
         actions: [
@@ -177,7 +169,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
                 venue.deliveryEnabled ? TakeawayButton(employee: widget.employee) : const SizedBox.shrink(),
           ),
           LayoutBuilder(builder: (context, _) {
-            final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
+            final plan = _planMode ?? true;
             return IconButton(
               tooltip: plan ? 'Показать списком' : 'Показать схемой',
               icon: Icon(plan ? Icons.grid_view_rounded : Icons.map_outlined),
@@ -253,7 +245,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
   }
 
   Widget _hall(List<TableModel> all, {required Set<String> callTables, required Map<String, ReservationModel> reservations}) {
-    final plan = _planMode ?? MediaQuery.sizeOf(context).width >= 600;
+    final plan = _planMode ?? true;
     final zones = hallZones(all);
     final hasNoZone = zones.isNotEmpty && all.any((t) => t.zone.isEmpty);
     final zoneKeys = [...zones, if (hasNoZone) ''];
@@ -310,34 +302,15 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
             alignment: Alignment.centerLeft,
             child: Text(
               free == 0 ? 'Свободных столов нет' : 'Свободно $free из ${inZone.length}',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
             ),
           ),
         ),
-        // «Схема»: карта зала сверху, под ней список тех же столов — и
+        // «Схема»: карта на весь экран, список тех же столов — по кнопке
+        // (шторка снизу на телефоне, панель справа на широком экране):
         // видно расстановку, и до стола дотянуться одним касанием.
-        // Список можно свернуть: карта плавно растягивается до низа, а
-        // кнопка «Показать список» остаётся под ней.
         if (plan)
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, box) {
-                final listHeight = _listOpen ? box.maxHeight * 0.4 : 0.0;
-                return Column(
-                  children: [
-                    Expanded(child: _plan(inZone, zone ?? '', states, callTables, reservations)),
-                    _listToggle(inZone.length),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 280),
-                      curve: Curves.easeOutCubic,
-                      height: listHeight,
-                      child: ClipRect(child: _grid(inZone, states, callTables, reservations, showZone: false)),
-                    ),
-                  ],
-                );
-              },
-            ),
-          )
+          Expanded(child: _planWithList(inZone, zone ?? '', states, callTables, reservations))
         else
           Expanded(child: _grid(inZone, states, callTables, reservations, showZone: zone == null && zones.isNotEmpty)),
       ],
@@ -389,41 +362,168 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         mainAxisSpacing: 10,
       );
 
-  /// Кнопка под картой: свернуть или развернуть список столов.
-  Widget _listToggle(int count) {
-    final open = _listOpen;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Center(
-        child: Material(
-          color: AppColors.surface,
-          shape: const StadiumBorder(side: BorderSide(color: AppColors.border)),
-          child: InkWell(
-            customBorder: const StadiumBorder(),
-            onTap: () => _setListOpen(!open),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 7, 18, 7),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedRotation(
-                    turns: open ? 0 : 0.5,
-                    duration: const Duration(milliseconds: 280),
-                    child: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textMuted),
+  /// Карта и список столов к ней. Ширина от 1000 — панель справа, иначе —
+  /// шторка снизу поверх карты. Обе живые: столы обновляются, пока открыты.
+  Widget _planWithList(List<TableModel> tables, String zone, Map<String, TableState> states, Set<String> calls,
+      Map<String, ReservationModel> reservations) {
+    final map = _plan(tables, zone, states, calls, reservations);
+    Widget list() => _grid(tables, states, calls, reservations, showZone: false);
+    return LayoutBuilder(builder: (context, box) {
+      final bottomInset = MediaQuery.paddingOf(context).bottom;
+      if (box.maxWidth >= 1000) {
+        const panel = 380.0;
+        return Row(
+          children: [
+            Expanded(
+              child: Stack(children: [
+                Positioned.fill(child: map),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 18 + bottomInset,
+                  child: Center(child: _listButton(tables.length, open: _listOpen)),
+                ),
+              ]),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              width: _listOpen ? panel : 0,
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.centerLeft,
+                  minWidth: panel,
+                  maxWidth: panel,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 4, 8, 8),
+                    child: _listPanel(tables.length, list(), radius: BorderRadius.circular(22)),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    open ? 'Скрыть список' : 'Показать список · $count',
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.textMuted),
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+      final sheet = (box.maxHeight * 0.62).clamp(260.0, box.maxHeight - 40).toDouble();
+      final shown = _listOpen ? (sheet - _sheetDrag).clamp(0.0, sheet).toDouble() : 0.0;
+      return Stack(
+        children: [
+          Positioned.fill(child: map),
+          // Затемнение под шторкой: касание по карте закрывает список.
+          IgnorePointer(
+            ignoring: !_listOpen,
+            child: GestureDetector(
+              onTap: () => _setListOpen(false),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 240),
+                opacity: _listOpen ? (shown / sheet) : 0,
+                child: Container(color: Colors.black.withValues(alpha: 0.28)),
+              ),
+            ),
+          ),
+          AnimatedPositioned(
+            duration: _sheetDrag == 0 ? const Duration(milliseconds: 300) : Duration.zero,
+            curve: Curves.easeOutCubic,
+            left: 0,
+            right: 0,
+            height: sheet,
+            bottom: shown - sheet,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragUpdate: (d) => setState(() => _sheetDrag = (_sheetDrag + d.delta.dy).clamp(0.0, sheet)),
+              onVerticalDragEnd: (d) {
+                final close = _sheetDrag > sheet * 0.25 || (d.primaryVelocity ?? 0) > 700;
+                _setListOpen(!close);
+              },
+              child: _listPanel(tables.length, list(),
+                  radius: const BorderRadius.vertical(top: Radius.circular(24)), handle: true, bottomInset: bottomInset),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16 + bottomInset,
+            child: IgnorePointer(
+              ignoring: _listOpen,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _listOpen ? 0 : 1,
+                child: Center(child: _listButton(tables.length, open: false)),
+              ),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  /// Кнопка поверх карты: открыть или спрятать список столов.
+  Widget _listButton(int count, {required bool open}) => Material(
+        color: AppColors.surfaceElevated,
+        elevation: 6,
+        shadowColor: Colors.black.withValues(alpha: 0.35),
+        shape: StadiumBorder(side: BorderSide(color: AppColors.border)),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: () => _setListOpen(!open),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 11, 20, 11),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(open ? Icons.close_rounded : Icons.view_list_rounded, size: 20, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Text(
+                  open ? 'Скрыть список' : 'Показать список · $count',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  /// Шторка или панель со списком столов: заголовок и сетка карточек.
+  Widget _listPanel(int count, Widget list, {required BorderRadius radius, bool handle = false, double bottomInset = 0}) =>
+      Material(
+        color: AppColors.surfaceElevated,
+        elevation: handle ? 12 : 0,
+        shadowColor: Colors.black.withValues(alpha: 0.4),
+        shape: RoundedRectangleBorder(borderRadius: radius, side: BorderSide(color: AppColors.border)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            if (handle)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 6, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('Столы · $count',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                  ),
+                  IconButton(
+                    tooltip: 'Скрыть список',
+                    icon: Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    onPressed: () => _setListOpen(false),
                   ),
                 ],
               ),
             ),
-          ),
+            Expanded(
+              child: Padding(padding: EdgeInsets.only(bottom: bottomInset), child: list),
+            ),
+          ],
         ),
-      ),
-    );
-  }
+      );
 
   /// Схема в рамке: скруглённая «площадка» зала.
   Widget _mapFrame(Widget map) => DecoratedBox(
@@ -489,7 +589,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
               sliver: SliverToBoxAdapter(
                 child: Text(
                   '${e.key.isEmpty ? kNoZoneLabel : e.key} · ${e.value.length}',
-                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 0.2),
+                  style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 0.2),
                 ),
               ),
             ),
@@ -536,7 +636,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
             const SizedBox(height: 12),
             Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
-            Text(text, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textMuted)),
+            Text(text, textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
           ]),
         ),
       );

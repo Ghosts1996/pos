@@ -61,15 +61,15 @@ class GuestRequestsBanner extends StatelessWidget {
                           '${oldest > 0 ? ' · ждут $oldest мин' : ''}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: AppColors.textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
-                      const Text('Показать',
+                      Text('Показать',
                           style: TextStyle(color: AppColors.primary, fontSize: 13)),
-                      const Icon(Icons.chevron_right, size: 18, color: AppColors.primary),
+                      Icon(Icons.chevron_right, size: 18, color: AppColors.primary),
                     ],
                   ),
                 ),
@@ -116,8 +116,8 @@ class GuestRequestsBanner extends StatelessWidget {
                 });
 
               if (c.isEmpty && o.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(32),
+                return Padding(
+                  padding: const EdgeInsets.all(32),
                   child: Center(
                     child: Text('Все обращения закрыты',
                         style: TextStyle(color: AppColors.textMuted)),
@@ -129,7 +129,7 @@ class GuestRequestsBanner extends StatelessWidget {
                 shrinkWrap: true,
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 children: [
-                  const Text('Обращения гостей',
+                  Text('Обращения гостей',
                       style: TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 17,
@@ -176,7 +176,7 @@ class GuestRequestsBanner extends StatelessWidget {
                   c.type.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                 ),
                 Text(
@@ -195,7 +195,7 @@ class GuestRequestsBanner extends StatelessWidget {
           if (c.tableId.isNotEmpty)
             IconButton(
               tooltip: 'Открыть стол',
-              icon: const Icon(Icons.open_in_new, size: 20, color: AppColors.textMuted),
+              icon: Icon(Icons.open_in_new, size: 20, color: AppColors.textMuted),
               onPressed: () {
                 Navigator.pop(context);
                 onOpenTable?.call(c.tableId, c.sessionId);
@@ -203,7 +203,7 @@ class GuestRequestsBanner extends StatelessWidget {
             ),
           IconButton(
             tooltip: 'Выполнено',
-            icon: const Icon(Icons.check_circle, size: 26, color: AppColors.success),
+            icon: Icon(Icons.check_circle, size: 26, color: AppColors.success),
             onPressed: () => service.closeCall(c.id, employee.name),
           ),
         ],
@@ -224,7 +224,7 @@ class GuestRequestsBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.receipt_long, size: 20, color: AppColors.success),
+          Icon(Icons.receipt_long, size: 20, color: AppColors.success),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -236,7 +236,7 @@ class GuestRequestsBanner extends StatelessWidget {
                   '${o.targetPosition.isEmpty ? '' : ' · ${AppConstants.orderTargetDat(o.targetPosition)}'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                 ),
                 Text(
@@ -245,7 +245,7 @@ class GuestRequestsBanner extends StatelessWidget {
                   '${rub(o.total)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
               ],
             ),
@@ -253,7 +253,7 @@ class GuestRequestsBanner extends StatelessWidget {
           if (!preparing)
             IconButton(
               tooltip: 'Отклонить',
-              icon: const Icon(Icons.close, size: 20, color: AppColors.textMuted),
+              icon: Icon(Icons.close, size: 20, color: AppColors.textMuted),
               onPressed: () =>
                   service.rejectGuestOrder(o.id, employee.name, 'Нет в наличии'),
             ),

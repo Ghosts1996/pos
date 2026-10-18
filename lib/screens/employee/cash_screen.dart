@@ -149,16 +149,16 @@ class _CashScreenState extends State<CashScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Row(children: [
+            Row(children: [
               Icon(Icons.lock_outline, color: AppColors.textMuted),
-              SizedBox(width: 10),
-              Expanded(
+              const SizedBox(width: 10),
+              const Expanded(
                 child: Text('Смена заведения закрыта',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
               ),
             ]),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Касса работает в открытой смене: откройте её — размен, оставленный при закрытии прошлой смены, '
               'станет разменом на начало.',
               style: TextStyle(color: AppColors.textMuted),
@@ -178,7 +178,7 @@ class _CashScreenState extends State<CashScreen> {
         builder: (context, sessSnap) {
           if (sessSnap.hasError) {
             return Text('Не удалось посчитать наличные: ${humanError(sessSnap.error, lower: true)}',
-                style: const TextStyle(color: AppColors.danger));
+                style: TextStyle(color: AppColors.danger));
           }
           final sessions = sessSnap.data;
           return StreamBuilder<List<CashOp>>(
@@ -199,7 +199,7 @@ class _CashScreenState extends State<CashScreen> {
                     child: Text(
                       'Смена заведения открыта ${_dt(shift.openedAt)}'
                       '${shift.openedBy.isNotEmpty ? ' · ${shift.openedBy}' : ''}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
                   ),
                   CashDrawerCard(
@@ -241,9 +241,9 @@ class _CashScreenState extends State<CashScreen> {
                 const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
               else if (snap.hasError)
                 Text('Не удалось загрузить: ${humanError(snap.error, lower: true)}',
-                    style: const TextStyle(color: AppColors.danger))
+                    style: TextStyle(color: AppColors.danger))
               else if (shifts.isEmpty)
-                const Text('Закрытых смен пока нет.', style: TextStyle(color: AppColors.textMuted))
+                Text('Закрытых смен пока нет.', style: TextStyle(color: AppColors.textMuted))
               else
                 for (final s in shifts) _historyTile(s),
             ],
@@ -297,7 +297,7 @@ class _CashScreenState extends State<CashScreen> {
               return Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text('Не удалось загрузить: ${humanError(snap.error, lower: true)}',
-                    style: const TextStyle(color: AppColors.danger)),
+                    style: TextStyle(color: AppColors.danger)),
               );
             }
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());

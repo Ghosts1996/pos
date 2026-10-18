@@ -67,7 +67,7 @@ class _AboutAppDialogState extends State<_AboutAppDialog> {
                       'из кабинета владельца (раздел «Устройства») — дальше обновления будут приходить сами.'
                   : 'Новая версия появляется после «Собрать APK» в кабинете владельца. Приложение проверяет '
                       'обновления само при запуске и раз в полчаса — или нажмите «Проверить».',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
             ),
             if (_checking) ...[
               const SizedBox(height: 16),

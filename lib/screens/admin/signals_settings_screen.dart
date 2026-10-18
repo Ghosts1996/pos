@@ -358,7 +358,7 @@ class _SignalsSettingsScreenState extends State<SignalsSettingsScreen> {
                   : !LanSignals.instance.supported
                       ? 'В браузере сигналы по Wi‑Fi не работают — только в приложении для Android и Windows.'
                       : 'Ключ заведения создан: чужие устройства в той же сети сигнал не подделают.',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -427,7 +427,7 @@ class _Hint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      Text(text, style: const TextStyle(color: AppColors.textMuted, fontSize: 13.5, height: 1.4));
+      Text(text, style: TextStyle(color: AppColors.textMuted, fontSize: 13.5, height: 1.4));
 }
 
 class _RelayEdit {
@@ -660,7 +660,7 @@ class _BackgroundCheckState extends State<_BackgroundCheck> with WidgetsBindingO
           ),
           if (!ok) ...[
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'Из-за экономии батареи уведомления сначала приходят, а через несколько минут перестают — и часы молчат. '
               'Нажмите «Разрешить» и выберите для ZalPOS «Без ограничений» («Не оптимизировать»). На Huawei и Honor '
               'ещё: Настройки → Батарея → Запуск приложений → ZalPOS → вручную, включить все три переключателя.',

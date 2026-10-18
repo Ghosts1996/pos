@@ -20,6 +20,7 @@ import '../services/tenant_join_flow.dart';
 import '../utils/human_error.dart';
 import '../utils/constants.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_colors.dart';
 import '../widgets/pin_pad.dart';
 import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
@@ -319,7 +320,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _content(BuildContext context) {
     if (_restoring) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: BrandPalette.ink,
         body: BrandBackdrop(child: Center(child: CircularProgressIndicator(color: BrandPalette.brass))),
       );
@@ -400,7 +401,7 @@ class _LoginScreenState extends State<LoginScreen> {
           Text(
             _adminMode ? AppScope.demoPins.adminHint : AppScope.demoPins.staffHint,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: BrandPalette.muted, fontSize: 12),
+            style: TextStyle(color: BrandPalette.muted, fontSize: 12),
           ),
           // Демо-сеть открывается и в демо-приложении гостя — по этому коду.
           if (AppScope.demoCode.isNotEmpty)
@@ -420,10 +421,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     Text(
                       'Код демо для приложения гостя: ${AppScope.demoCode}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
+                      style: TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(Icons.copy, size: 13, color: BrandPalette.brass),
+                    Icon(Icons.copy, size: 13, color: BrandPalette.brass),
                   ],
                 ),
               ),
@@ -435,7 +436,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Text(
                 'Демо сбросится в исходный вид $left',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+                style: TextStyle(color: AppColors.disabledText, fontSize: 11.5),
               ),
             ),
         ],
@@ -454,8 +455,8 @@ class _LoginScreenState extends State<LoginScreen> {
             final side = box.maxWidth > box.maxHeight && box.maxHeight < 600;
             final keypadWidth = pinKeypadWidth(box, side: side, headerHeight: AppScope.isDemo ? 340 : 300);
             final keypad = _loading
-                ? const Padding(
-                    padding: EdgeInsets.all(24),
+                ? Padding(
+                    padding: const EdgeInsets.all(24),
                     child: CircularProgressIndicator(color: BrandPalette.brass),
                   )
                 : PinKeypad(width: keypadWidth, onDigit: _tap, onBackspace: _backspace);
@@ -507,7 +508,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       style: AppFonts.display(30, color: BrandPalette.ivory),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
+                    Text(
                       'У каждой точки свои столы, чеки, сотрудники и PIN-коды. Сменить точку можно на экране входа.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: BrandPalette.muted, fontSize: 13.5),
@@ -531,12 +532,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             style: const TextStyle(color: BrandPalette.error, fontSize: 13, fontWeight: FontWeight.w600)),
                       ),
                     if (AppScope.isDemo)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 6),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
                         child: Text(
                           'Демо-сеть из двух точек: у каждой свои сотрудники и PIN-коды — подсказка на экране входа.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white38, fontSize: 12),
+                          style: TextStyle(color: AppColors.disabledText, fontSize: 12),
                         ),
                       ),
                   ],
@@ -569,10 +570,10 @@ class _PointCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final suspended = point.status == 'suspended';
     return Material(
-      color: current ? const Color(0x1FB35C30) : Colors.transparent,
+      color: current ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: current ? const Color(0x99B35C30) : BrandPalette.hairline),
+        side: BorderSide(color: current ? AppColors.primary.withValues(alpha: 0.6) : BrandPalette.hairline),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -597,7 +598,7 @@ class _PointCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: enabled || current ? BrandPalette.ivory : Colors.white38,
+                        color: enabled || current ? BrandPalette.ivory : AppColors.disabledText,
                         fontSize: 16,
                         fontWeight: FontWeight.w600)),
                 if (current || suspended)
@@ -605,16 +606,16 @@ class _PointCard extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       suspended ? 'Точка приостановлена владельцем' : 'Эта касса сейчас здесь',
-                      style: const TextStyle(color: BrandPalette.muted, fontSize: 12),
+                      style: TextStyle(color: BrandPalette.muted, fontSize: 12),
                     ),
                   ),
               ]),
             ),
             if (busy)
-              const SizedBox(
+              SizedBox(
                   width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: BrandPalette.brass))
             else
-              Icon(Icons.chevron_right_rounded, color: enabled ? BrandPalette.brass : Colors.white24),
+              Icon(Icons.chevron_right_rounded, color: enabled ? BrandPalette.brass : AppColors.border),
           ]),
         ),
       ),

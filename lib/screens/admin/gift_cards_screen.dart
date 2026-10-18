@@ -42,8 +42,8 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
         maxWidth: 760,
         child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(
                 'Выпустите код, опубликуйте его в канале — и гости активируют '
                 'его в приложении. Каждому успевшему начисляется вся сумма.',
@@ -57,7 +57,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                   if (!snap.hasData) return const Center(child: CircularProgressIndicator());
                   final cards = snap.data!;
                   if (cards.isEmpty) {
-                    return const Center(
+                    return Center(
                       child: Text('Сертификатов нет',
                           style: TextStyle(color: AppColors.textMuted)),
                     );
@@ -83,7 +83,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
       leading: Icon(Icons.card_giftcard,
           color: c.isUsable ? AppColors.success : AppColors.disabled),
       title: Text(c.code,
-          style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+          style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
       subtitle: Text(
         '${c.bonusAmount.toStringAsFixed(0)} бонусов каждому · '
         '${left == null
@@ -109,7 +109,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
           ),
           IconButton(
             tooltip: 'Остановить',
-            icon: const Icon(Icons.block, size: 18, color: AppColors.danger),
+            icon: Icon(Icons.block, size: 18, color: AppColors.danger),
             onPressed: () => _confirmStop(c),
           ),
         ],
@@ -259,7 +259,7 @@ class _GiftCardsScreenState extends State<GiftCardsScreen> {
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
               const SizedBox(height: 12),
               SelectableText(post,
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
             ],
           ),
         ),

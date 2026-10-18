@@ -275,7 +275,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
                 _role == AppConstants.roleAdmin
                     ? 'Администратор открывает настройки, отчёты и зарплату.'
                     : 'Сотрудник работает с залом: столы, заказы, оплата.',
-                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
               const SizedBox(height: 14),
               TextField(
@@ -335,7 +335,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
                   border: Border.all(color: AppColors.danger.withValues(alpha: 0.5)),
                 ),
                 child: Row(children: [
-                  const Icon(Icons.error_outline, color: AppColors.danger),
+                  Icon(Icons.error_outline, color: AppColors.danger),
                   const SizedBox(width: 10),
                   Expanded(child: Text(_error!)),
                 ]),
@@ -384,7 +384,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
 
     final overtime = <Widget>[];
     if (_timePay != _TimePay.none) {
-      overtime.add(const Divider(height: 28, color: AppColors.border));
+      overtime.add(Divider(height: 28, color: AppColors.border));
       overtime.add(_switch(
         'Переработка',
         _timePay == _TimePay.shift
@@ -443,7 +443,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
       if (timeFields.isNotEmpty) const SizedBox(height: 14),
       ...timeFields,
       ...overtime,
-      const Divider(height: 28, color: AppColors.border),
+      Divider(height: 28, color: AppColors.border),
       _switch('Проценты с продаж', 'Только с денег, которые заведение реально получило', _salesPercentOn,
           (v) => setState(() {
                 _salesPercentOn = v;
@@ -479,15 +479,15 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
             'с остального бара смены. Какая категория меню считается баром — '
             'в «Меню» у категории.'),
       ],
-      const Divider(height: 28, color: AppColors.border),
+      Divider(height: 28, color: AppColors.border),
       Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Бонус за выручку заведения', style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text('Бонус за выручку заведения', style: TextStyle(fontWeight: FontWeight.w600)),
                 Text(
                   'Если выручка за период достигла порога — сотрудник получает бонус',
                   style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
@@ -585,12 +585,12 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         ),
         child: Text.rich(TextSpan(children: [
           TextSpan(
-              text: 'Пример: смена ${_num(hours.toDouble())} ч → ', style: const TextStyle(color: AppColors.textMuted)),
+              text: 'Пример: смена ${_num(hours.toDouble())} ч → ', style: TextStyle(color: AppColors.textMuted)),
           TextSpan(text: parts.join(' + ')),
           if (parts.length > 1)
             TextSpan(text: ' = ${_rub(r.wages)}', style: const TextStyle(fontWeight: FontWeight.w700)),
           if (_salesPercentOn)
-            const TextSpan(text: ' + проценты с продаж', style: TextStyle(color: AppColors.textMuted)),
+            TextSpan(text: ' + проценты с продаж', style: TextStyle(color: AppColors.textMuted)),
         ])),
       ),
     ];
@@ -625,7 +625,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         children: [
           Icon(icon, size: 16, color: AppColors.textMuted),
           const SizedBox(width: 6),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted, height: 1.3))),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 12.5, color: AppColors.textMuted, height: 1.3))),
         ],
       );
 
@@ -636,7 +636,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                Text(subtitle, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+                Text(subtitle, style: TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
               ],
             ),
           ),

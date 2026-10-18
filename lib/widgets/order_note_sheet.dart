@@ -76,7 +76,7 @@ class _OrderNoteSheetState extends State<_OrderNoteSheet> {
           const SizedBox(height: 4),
           Text(
             widget.item.qty > 1 ? '${widget.item.name} × ${widget.item.qty} — для всех штук' : widget.item.name,
-            style: const TextStyle(color: AppColors.textMuted),
+            style: TextStyle(color: AppColors.textMuted),
           ),
           const SizedBox(height: 14),
           Wrap(
@@ -108,7 +108,7 @@ class _OrderNoteSheetState extends State<_OrderNoteSheet> {
               if (widget.item.note.isNotEmpty)
                 TextButton(
                   onPressed: () => Navigator.pop(context, ''),
-                  child: const Text('Убрать пожелание', style: TextStyle(color: AppColors.danger)),
+                  child: Text('Убрать пожелание', style: TextStyle(color: AppColors.danger)),
                 ),
               const Spacer(),
               FilledButton(

@@ -24,6 +24,8 @@ import '../models/client_models.dart';
 import 'ai_assistant_sheet.dart';
 import '../utils/human_error.dart';
 import '../theme/app_colors.dart';
+import '../theme/theme_controller.dart';
+import 'theme_picker.dart';
 import '../theme/app_theme.dart';
 import '../utils/constants.dart';
 import '../utils/shift_crew.dart';
@@ -84,20 +86,20 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                 Text(
                   'Открыта ${shiftTimeLabel(shift.openedAt)}'
                   '${shift.openedBy.isNotEmpty ? ' · открыл(а) ${shift.openedBy}' : ''}',
-                  style: const TextStyle(color: AppColors.textMuted),
+                  style: TextStyle(color: AppColors.textMuted),
                 ),
                 const SizedBox(height: 16),
                 if (crew == null)
                   const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
                 else if (crew.isEmpty)
-                  const Text('Никто не отметил начало своей смены.', style: TextStyle(color: AppColors.textMuted))
+                  Text('Никто не отметил начало своей смены.', style: TextStyle(color: AppColors.textMuted))
                 else ...[
                   Text('Сейчас на смене · ${crew.count}', style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),
                   crewList(crew, crew.shifts),
                 ],
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'Уходите домой — нажмите «Моя смена» в меню: смена заведения продолжится у остальных. '
                   'Закрывает смену заведения последний, с пересчётом кассы.',
                   style: TextStyle(fontSize: 13, color: AppColors.textMuted),
@@ -250,7 +252,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                   : CircleAvatar(
                       radius: 12,
                       backgroundColor: AppColors.danger,
-                      child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+                      child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.onAccent)),
                     ),
               onTap: () => _go(KdsScreen(employee: widget.employee)),
             );
@@ -277,7 +279,8 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                 : CircleAvatar(
                     radius: 12,
                     backgroundColor: AppColors.warning,
-                    child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.background)),
+                    child: Text('$count',
+                        style: TextStyle(fontSize: 12, color: AppColors.isLight ? AppColors.onAccent : AppColors.background)),
                   ),
             onTap: () => _go(KitchenScreen(employee: widget.employee)),
           );
@@ -333,7 +336,7 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
       const Divider(height: 1),
 
       ListTile(
-        leading: const Icon(Icons.auto_awesome, color: AppColors.brass),
+        leading: Icon(Icons.auto_awesome, color: AppColors.brass),
         title: const Text('Ассистент зала'),
         subtitle: const Text('Спросить про столы, брони и остатки', style: TextStyle(fontSize: 11)),
         onTap: () {
@@ -355,6 +358,17 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
     ];
     final bottom = <Widget>[
       const Divider(height: 1),
+      // Тема этого устройства: тёмная, светлая или как в системе.
+      ValueListenableBuilder<AppThemeMode>(
+        valueListenable: ThemeController.instance.mode,
+        builder: (context, mode, _) => ListTile(
+          dense: true,
+          leading: Icon(AppColors.isLight ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
+          title: const Text('Тема'),
+          subtitle: Text(mode.title, style: const TextStyle(fontSize: 11)),
+          onTap: () => showThemePicker(context),
+        ),
+      ),
       ListTile(
         dense: true,
         leading: const Icon(Icons.system_update_alt),
@@ -437,7 +451,7 @@ class _StaffHeader extends StatelessWidget {
         : AppConstants.positionShortLabel(AppConstants.normalizePosition(employee.position));
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 22),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),

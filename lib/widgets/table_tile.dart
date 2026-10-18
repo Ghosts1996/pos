@@ -12,13 +12,12 @@ import 'timer_display.dart';
 
 /// Цвета состояний стола — общие для схемы, списка и сводки зала.
 class TableStateColors {
-  // Приглушённые тона одной светлоты: шалфей, сирень, васильковый —
-  // «занят» остаётся синим, как привыкли сотрудники.
-  static const free = Color(0xFF7FB894);
-  static const reserved = Color(0xFFAA9BCB);
-  static const occupied = Color(0xFF7FA2D1);
-  static const ending = AppColors.warning;
-  static const overdue = AppColors.danger;
+  // Тона — в палитре темы (AppPalette.tableFree и соседи).
+  static Color get free => AppColors.palette.tableFree;
+  static Color get reserved => AppColors.palette.tableReserved;
+  static Color get occupied => AppColors.palette.tableOccupied;
+  static Color get ending => AppColors.warning;
+  static Color get overdue => AppColors.danger;
 
   static Color of(TableState s) {
     switch (s) {
@@ -115,15 +114,15 @@ class TableTile extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16)),
+          style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16)),
     ];
     if (busy && guestTag != null && guestTag!.isNotEmpty) {
       lines.add(Text(guestTag!,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 11.5, fontStyle: FontStyle.italic)));
+          style: TextStyle(color: AppColors.textPrimary, fontSize: 11.5, fontStyle: FontStyle.italic)));
     } else {
-      lines.add(Text(seatsLabel(table.seats), style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5)));
+      lines.add(Text(seatsLabel(table.seats), style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)));
     }
     if (!editorMode) {
       lines.add(const SizedBox(height: 4));
@@ -141,7 +140,7 @@ class TableTile extends StatelessWidget {
       }
       if (busy && billTotal != null && billTotal! > 0) {
         lines.add(Text(formatKopecks((billTotal! * 100).round()),
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.w700)));
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.w700)));
       }
     }
 
@@ -153,7 +152,7 @@ class TableTile extends StatelessWidget {
       borderWidth: loud ? 2.5 : 1.6,
       shadows: [
         BoxShadow(
-          color: loud ? color.withValues(alpha: 0.45) : Colors.black.withValues(alpha: 0.35),
+          color: loud ? color.withValues(alpha: 0.45) : Colors.black.withValues(alpha: AppColors.isLight ? 0.08 : 0.35),
           blurRadius: loud ? 14 : 6,
           offset: const Offset(0, 2),
         ),
@@ -183,7 +182,7 @@ class TableTile extends StatelessWidget {
             children: [
               tile,
               if (hasCall)
-                const Positioned(right: -6, top: -6, child: _Badge(icon: Icons.notifications_active, color: AppColors.danger)),
+                Positioned(right: -6, top: -6, child: _Badge(icon: Icons.notifications_active, color: AppColors.danger)),
               if (checkCount > 1 && busy)
                 Positioned(
                   left: -6,
@@ -208,7 +207,7 @@ class TableTile extends StatelessWidget {
                               shape: BoxShape.circle,
                               border: Border.all(color: AppColors.border),
                             ),
-                            child: const Icon(Icons.rotate_right, size: 20, color: AppColors.textPrimary),
+                            child: Icon(Icons.rotate_right, size: 20, color: AppColors.textPrimary),
                           ),
                         ),
                       ),
@@ -340,19 +339,19 @@ class TableCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   ),
-                  if (hasCall) const Icon(Icons.notifications_active, color: AppColors.danger, size: 20),
+                  if (hasCall) Icon(Icons.notifications_active, color: AppColors.danger, size: 20),
                   if (checkCount > 1 && busy)
                     Padding(
                       padding: const EdgeInsets.only(left: 6),
                       child: Text('$checkCount ${pluralRu(checkCount, 'чек', 'чека', 'чеков')}',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                     ),
                 ]),
                 const SizedBox(height: 4),
                 Row(children: [
-                  const Icon(Icons.chair_outlined, size: 15, color: AppColors.textMuted),
+                  Icon(Icons.chair_outlined, size: 15, color: AppColors.textMuted),
                   const SizedBox(width: 4),
-                  Text('${table.seats}', style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                  Text('${table.seats}', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                   const Spacer(),
                   if (busy && billTotal != null && billTotal! > 0)
                     Text(formatKopecks((billTotal! * 100).round()),

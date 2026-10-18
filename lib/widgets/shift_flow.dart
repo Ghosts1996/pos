@@ -75,10 +75,10 @@ Widget crewList(ShiftCrew crew, List<StaffShiftModel> shifts) => Column(
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: Row(children: [
-              const Icon(Icons.person_outline, size: 18, color: AppColors.textMuted),
+              Icon(Icons.person_outline, size: 18, color: AppColors.textMuted),
               const SizedBox(width: 8),
               Expanded(child: Text(crew.labelOf(s), style: const TextStyle(fontWeight: FontWeight.w600))),
-              Text('с ${_hhmm(s.startedAt)}', style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              Text('с ${_hhmm(s.startedAt)}', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
             ]),
           ),
       ],
@@ -180,12 +180,12 @@ Future<void> endMyShift(BuildContext context, Employee me, StaffShiftModel mine)
               Text('Смена началась ${shiftTimeLabel(mine.startedAt)} · отработано $worked.'),
               const SizedBox(height: 12),
               if (others.isNotEmpty) ...[
-                const Text('Смена заведения продолжается — на смене остаются:',
+                Text('Смена заведения продолжается — на смене остаются:',
                     style: TextStyle(color: AppColors.textMuted)),
                 const SizedBox(height: 6),
                 crewList(crew, others),
                 const SizedBox(height: 8),
-                const Text('Их касса, X-отчёт и вызовы гостей не изменятся.',
+                Text('Их касса, X-отчёт и вызовы гостей не изменятся.',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
               ] else if (last)
                 const Text(
@@ -313,7 +313,7 @@ Future<bool> closeVenueShift(BuildContext context, {required ShiftModel shift, r
                   ),
                   if (mine != null) ...[
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'Если домой уходите только вы — закончите свою смену, а смену заведения закроет последний.',
                       style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                     ),
@@ -423,9 +423,9 @@ Future<bool> joinOpenVenueShift(BuildContext context, {required Employee me, req
             Text('Смена заведения открыта ${shiftTimeLabel(venue.openedAt)}.'),
             const SizedBox(height: 10),
             if (crew.isEmpty)
-              const Text('Пока никто не отметил начало смены.', style: TextStyle(color: AppColors.textMuted))
+              Text('Пока никто не отметил начало смены.', style: TextStyle(color: AppColors.textMuted))
             else ...[
-              const Text('Сейчас на смене:', style: TextStyle(color: AppColors.textMuted)),
+              Text('Сейчас на смене:', style: TextStyle(color: AppColors.textMuted)),
               const SizedBox(height: 4),
               crewList(crew, crew.shifts),
             ],

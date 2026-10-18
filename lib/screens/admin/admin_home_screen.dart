@@ -164,13 +164,13 @@ class AdminHomeScreen extends StatelessWidget {
                                     textAlign: TextAlign.center,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: locked ? const TextStyle(color: AppColors.textMuted) : null),
+                                    style: locked ? TextStyle(color: AppColors.textMuted) : null),
                               ),
                             ],
                           ),
                         ),
                         if (locked)
-                          const Positioned(
+                          Positioned(
                             top: 8,
                             right: 8,
                             child: Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
@@ -207,26 +207,26 @@ class _ReprintBanner extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TableQrScreen())),
-          child: const Padding(
-            padding: EdgeInsets.fromLTRB(16, 14, 10, 14),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
             child: Row(children: [
               Icon(Icons.qr_code_2, color: AppColors.warning, size: 28),
-              SizedBox(width: 14),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('Распечатайте новые QR-коды столов',
+                    const Text('Распечатайте новые QR-коды столов',
                         style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text('Старые наклейки больше не открывают счёт гостя: в новых есть секрет стола.',
                         style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
                   ],
                 ),
               ),
-              SizedBox(width: 6),
-              Icon(Icons.chevron_right),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right),
             ]),
           ),
         ),

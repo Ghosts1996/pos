@@ -72,17 +72,17 @@ class HallPlanView extends StatefulWidget {
   /// краем. Редактору важнее видеть, куда ставить.
   final bool fitWidth;
 
-  const HallPlanView({
+  HallPlanView({
     super.key,
     required this.tables,
     required this.tileBuilder,
     this.canvasKey,
     this.overlay,
-    this.floorColor = AppColors.surface,
-    this.lineColor = AppColors.border,
+    Color? floorColor,
+    Color? lineColor,
     this.walls = const [],
     this.labels = const [],
-    this.wallColor = HallPlanView.kHallWallColor,
+    Color? wallColor,
     this.highlightedWallId,
     this.panEnabled = true,
     this.fitToTables = false,
@@ -90,7 +90,9 @@ class HallPlanView extends StatefulWidget {
     this.transformationController,
     this.frameKey,
     this.fitWidth = false,
-  });
+  })  : wallColor = wallColor ?? HallPlanView.kHallWallColor,
+        floorColor = floorColor ?? AppColors.surface,
+        lineColor = lineColor ?? AppColors.border;
 
   /// Самый мелкий масштаб схемы «по столам»: плитка ~52 px — название и
   /// таймер ещё читаются, нажать пальцем удобно. Столы, которым и так не
@@ -109,8 +111,9 @@ class HallPlanView extends StatefulWidget {
   /// Масштаб, при котором схему удобно нажимать пальцем: плитка ≥ ~64 px.
   static const double comfortableScale = 0.62;
 
-  /// Цвет стен на кассе: тёплый светлый камень на тёмном полу.
-  static const Color kHallWallColor = Color(0xFFD8CFC2);
+  /// Цвет стен на кассе: тёплый светлый камень на тёмном полу, тёплый
+  /// графит — на светлом.
+  static Color get kHallWallColor => AppColors.isLight ? const Color(0xFF6E6154) : const Color(0xFFD8CFC2);
 
   @override
   State<HallPlanView> createState() => _HallPlanViewState();
@@ -324,7 +327,7 @@ class _HallPlanViewState extends State<HallPlanView> {
         children: [
           Positioned.fill(child: viewer),
           if (widget.showHint)
-            const Positioned(
+            Positioned(
               left: 0,
               right: 0,
               bottom: 12,
@@ -332,14 +335,14 @@ class _HallPlanViewState extends State<HallPlanView> {
                 child: Center(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Color(0xCC1E1A16),
-                      borderRadius: BorderRadius.all(Radius.circular(999)),
+                      color: AppColors.surfaceElevated.withValues(alpha: 0.85),
+                      borderRadius: const BorderRadius.all(Radius.circular(999)),
                     ),
                     child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(Icons.pinch_outlined, size: 16, color: AppColors.textMuted),
-                        SizedBox(width: 6),
+                        const SizedBox(width: 6),
                         Flexible(
                           child: Text('Схему можно двигать и приближать',
                               maxLines: 1,

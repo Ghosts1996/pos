@@ -30,6 +30,6 @@ void main() {
     expect(label.top, greaterThanOrEqualTo(field.top), reason: 'подпись торчит над полем: $label / $field');
   }
 
-  testWidgets('касса: подпись внутри поля', (t) => check(t, AppTheme.dark));
+  testWidgets('касса: подпись внутри поля', (t) => check(t, AppTheme.current));
   testWidgets('приложение гостя: подпись внутри поля', (t) => check(t, KolibriTheme.dark));
 }

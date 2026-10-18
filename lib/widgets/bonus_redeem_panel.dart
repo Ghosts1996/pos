@@ -200,14 +200,14 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
         children: [
           Row(
             children: [
-              const Icon(Icons.card_giftcard, color: AppColors.warning, size: 20),
+              Icon(Icons.card_giftcard, color: AppColors.warning, size: 20),
               const SizedBox(width: 8),
-              const Text('Бонусы гостя',
+              Text('Бонусы гостя',
                   style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
               const Spacer(),
               if (_applied > 0)
                 Text('Списано ${rub(_applied)}',
-                    style: const TextStyle(color: AppColors.success)),
+                    style: TextStyle(color: AppColors.success)),
             ],
           ),
           const SizedBox(height: 12),
@@ -218,7 +218,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                   child: TextField(
                     controller: _phone,
                     keyboardType: TextInputType.phone,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Телефон гостя',
                       isDense: true,
@@ -248,7 +248,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                         'уровень «${_profile!.tier}»',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: AppColors.textPrimary, fontSize: 13),
                       ),
                       Text(
@@ -256,7 +256,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                         '${_profile!.phone.isEmpty ? '' : ' · ${_profile!.phone}'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                       ),
                     ],
                   ),
@@ -273,7 +273,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
               Text(
                 'Можно списать до ${rub(_limit)} '
                 '(не более ${(widget.maxShare * 100).round()}% чека)',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 10),
               Wrap(
@@ -294,7 +294,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+              child: Text(_error!, style: TextStyle(color: AppColors.danger, fontSize: 13)),
             ),
         ],
       ),

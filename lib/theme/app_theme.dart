@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'app_colors.dart';
 import 'boxed_input_border.dart';
 
@@ -12,19 +13,19 @@ class AppFonts {
   static const String serif = 'CormorantGaramond';
 
   /// Крупный заголовок антиквой.
-  static TextStyle display(double size, {Color color = AppColors.textPrimary, FontStyle? style}) => TextStyle(
+  static TextStyle display(double size, {Color? color, FontStyle? style}) => TextStyle(
         fontFamily: serif,
         fontSize: size,
         fontWeight: FontWeight.w600,
         fontStyle: style,
         height: 1.08,
         letterSpacing: -0.2,
-        color: color,
+        color: color ?? AppColors.textPrimary,
         fontFeatures: const [FontFeature.liningFigures()],
       );
 
   /// Подпись капителью над блоком («ИТОГО», «ЗАЛ»).
-  static const TextStyle overline = TextStyle(
+  static TextStyle get overline => TextStyle(
     fontFamily: sans,
     fontSize: 11,
     fontWeight: FontWeight.w600,
@@ -49,21 +50,22 @@ class AppRadius {
 class AppShadows {
   AppShadows._();
 
-  static List<BoxShadow> primaryButton = [
-    const BoxShadow(
-      color: Color(0x40000000),
-      blurRadius: 10,
-      offset: Offset(0, 3),
-    ),
-  ];
+  // В светлой теме тени мягче: на бумажном фоне чёрная тень «грязнит».
+  static List<BoxShadow> get primaryButton => [
+        BoxShadow(
+          color: AppColors.isLight ? const Color(0x2E7A3A16) : const Color(0x40000000),
+          blurRadius: 10,
+          offset: const Offset(0, 3),
+        ),
+      ];
 
-  static List<BoxShadow> card = [
-    const BoxShadow(
-      color: Color(0x66000000),
-      blurRadius: 12,
-      offset: Offset(0, 4),
-    ),
-  ];
+  static List<BoxShadow> get card => [
+        BoxShadow(
+          color: AppColors.isLight ? const Color(0x14301E0E) : const Color(0x66000000),
+          blurRadius: 12,
+          offset: const Offset(0, 4),
+        ),
+      ];
 }
 
 /// Отступы и высоты тач-таргетов — эргономика для 12-часовой смены.
@@ -80,12 +82,14 @@ class AppSpacing {
 class AppTheme {
   AppTheme._();
 
-  static ThemeData get dark {
+  /// Тема по текущей палитре (AppColors.palette): тёмная или светлая.
+  static ThemeData get current {
+    final light = AppColors.isLight;
     final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: AppColors.palette.brightness,
       scaffoldBackgroundColor: AppColors.background,
-      colorScheme: const ColorScheme.dark(
+      colorScheme: ColorScheme.dark(
         surface: AppColors.surface,
         primary: AppColors.primary,
         // Без этого ColorScheme.dark берёт контейнером саму медь, и
@@ -104,7 +108,7 @@ class AppTheme {
         onSecondaryContainer: AppColors.textPrimary,
         error: AppColors.danger,
         onSurface: AppColors.textPrimary,
-        onPrimary: AppColors.textPrimary,
+        onPrimary: AppColors.onAccent,
         tertiary: AppColors.brass,
         outline: AppColors.border,
         outlineVariant: AppColors.border,
@@ -114,7 +118,11 @@ class AppTheme {
         surfaceContainerLow: AppColors.surface,
         surfaceContainerLowest: AppColors.background,
         onSurfaceVariant: AppColors.textMuted,
-      ),
+        onError: AppColors.onAccent,
+        inverseSurface: AppColors.textPrimary,
+        onInverseSurface: AppColors.background,
+        shadow: Colors.black,
+      ).copyWith(brightness: AppColors.palette.brightness),
       fontFamily: AppFonts.sans,
     );
 
@@ -130,7 +138,7 @@ class AppTheme {
         headlineLarge: AppFonts.display(32),
         headlineMedium: AppFonts.display(28),
         // Суммы в чеке, цена блюда — крупно, гротеском, цифры одной ширины.
-        headlineSmall: const TextStyle(
+        headlineSmall: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w700,
@@ -138,31 +146,31 @@ class AppTheme {
           letterSpacing: -0.3,
           fontFeatures: AppFonts.tabular,
         ),
-        titleLarge: const TextStyle(
+        titleLarge: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w600,
           fontSize: 20,
           letterSpacing: -0.2,
         ),
-        titleMedium: const TextStyle(
+        titleMedium: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w600,
           fontSize: 16,
         ),
-        bodyMedium: const TextStyle(
+        bodyMedium: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
           fontSize: 14,
         ),
         // Модификаторы, вес, таймстемпы.
-        bodySmall: const TextStyle(
+        bodySmall: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textMuted,
           fontSize: 12,
         ),
-        labelLarge: const TextStyle(
+        labelLarge: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textMuted,
           fontSize: 13,
@@ -170,13 +178,15 @@ class AppTheme {
         ),
       ),
 
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: AppColors.background,
         surfaceTintColor: Colors.transparent,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
+        // Значки строки состояния — тёмные на светлой шапке, светлые на тёмной.
+        systemOverlayStyle: light ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
         titleTextStyle: TextStyle(
           fontFamily: AppFonts.sans,
           color: AppColors.textPrimary,
@@ -193,11 +203,11 @@ class AppTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          side: const BorderSide(color: AppColors.border, width: 1),
+          side: BorderSide(color: AppColors.border, width: 1),
         ),
       ),
 
-      dividerTheme: const DividerThemeData(
+      dividerTheme: DividerThemeData(
         color: AppColors.border,
         thickness: 1,
         space: 1,
@@ -209,7 +219,7 @@ class AppTheme {
           backgroundColor: AppColors.primary,
           disabledBackgroundColor: AppColors.disabled,
           disabledForegroundColor: AppColors.disabledText,
-          foregroundColor: AppColors.textPrimary,
+          foregroundColor: AppColors.onAccent,
           minimumSize: const Size.fromHeight(AppSpacing.primaryButtonHeight),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -229,7 +239,7 @@ class AppTheme {
               return AppColors.primaryPressed.withValues(alpha: 0.6);
             }
             if (states.contains(WidgetState.hovered)) {
-              return Colors.white.withValues(alpha: 0.04);
+              return (light ? Colors.black : Colors.white).withValues(alpha: 0.04);
             }
             return null;
           }),
@@ -248,7 +258,7 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.textPrimary,
-          side: const BorderSide(color: AppColors.border, width: 1.2),
+          side: BorderSide(color: AppColors.border, width: 1.2),
           minimumSize: const Size(64, AppSpacing.minTouchTarget),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadius.md),
@@ -261,7 +271,7 @@ class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.textPrimary,
+          foregroundColor: AppColors.onAccent,
           disabledBackgroundColor: AppColors.disabled,
           disabledForegroundColor: AppColors.disabledText,
           minimumSize: const Size(64, 48),
@@ -283,53 +293,53 @@ class AppTheme {
         filled: true,
         fillColor: AppColors.surface,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        hintStyle: const TextStyle(color: AppColors.textMuted),
+        hintStyle: TextStyle(color: AppColors.textMuted),
         border: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: AppColors.border),
         ),
         enabledBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: AppColors.border),
         ),
         focusedBorder: BoxedInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+          borderSide: BorderSide(color: AppColors.primary, width: 1.6),
         ),
       ),
 
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: AppColors.primary,
-        foregroundColor: AppColors.textPrimary,
+        foregroundColor: AppColors.onAccent,
         elevation: 0,
         focusElevation: 0,
         hoverElevation: 0,
         highlightElevation: 0,
-        shape: StadiumBorder(),
+        shape: const StadiumBorder(),
       ),
 
       chipTheme: ChipThemeData(
         backgroundColor: AppColors.surface,
         selectedColor: AppColors.selectionStrong,
-        side: const BorderSide(color: AppColors.border),
-        labelStyle: const TextStyle(fontFamily: AppFonts.sans, color: AppColors.textPrimary, fontSize: 13.5),
+        side: BorderSide(color: AppColors.border),
+        labelStyle: TextStyle(fontFamily: AppFonts.sans, color: AppColors.textPrimary, fontSize: 13.5),
         checkmarkColor: AppColors.brass,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.pill)),
       ),
 
-      tabBarTheme: const TabBarThemeData(
+      tabBarTheme: TabBarThemeData(
         labelColor: AppColors.textPrimary,
         unselectedLabelColor: AppColors.textMuted,
         indicatorColor: AppColors.primary,
         dividerColor: AppColors.border,
         indicatorSize: TabBarIndicatorSize.label,
-        labelStyle: TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w600, fontSize: 14),
-        unselectedLabelStyle: TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w500, fontSize: 14),
+        labelStyle: const TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w600, fontSize: 14),
+        unselectedLabelStyle: const TextStyle(fontFamily: AppFonts.sans, fontWeight: FontWeight.w500, fontSize: 14),
       ),
 
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-            (s) => s.contains(WidgetState.selected) ? AppColors.textPrimary : AppColors.textMuted),
+            (s) => s.contains(WidgetState.selected) ? AppColors.onAccent : AppColors.textMuted),
         trackColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.selected) ? AppColors.primary : AppColors.surfaceElevated),
         trackOutlineColor: WidgetStateProperty.resolveWith(
@@ -339,8 +349,8 @@ class AppTheme {
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.selected) ? AppColors.primary : Colors.transparent),
-        checkColor: const WidgetStatePropertyAll(AppColors.textPrimary),
-        side: const BorderSide(color: AppColors.textMuted, width: 1.4),
+        checkColor: const WidgetStatePropertyAll(AppColors.onAccent),
+        side: BorderSide(color: AppColors.textMuted, width: 1.4),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       ),
 
@@ -349,13 +359,13 @@ class AppTheme {
             (s) => s.contains(WidgetState.selected) ? AppColors.primary : AppColors.textMuted),
       ),
 
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
+      progressIndicatorTheme: ProgressIndicatorThemeData(
         color: AppColors.brass,
         linearTrackColor: AppColors.border,
         circularTrackColor: Colors.transparent,
       ),
 
-      listTileTheme: const ListTileThemeData(
+      listTileTheme: ListTileThemeData(
         iconColor: AppColors.textMuted,
         textColor: AppColors.textPrimary,
         titleTextStyle: TextStyle(fontFamily: AppFonts.sans, fontSize: 15, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
@@ -367,15 +377,15 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: AppColors.border),
         ),
       ),
 
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: AppColors.surfaceElevated,
         surfaceTintColor: Colors.transparent,
         showDragHandle: false,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       ),
 
       tooltipTheme: TooltipThemeData(
@@ -383,12 +393,12 @@ class AppTheme {
           color: AppColors.textPrimary,
           borderRadius: BorderRadius.circular(6),
         ),
-        textStyle: const TextStyle(fontFamily: AppFonts.sans, color: AppColors.background, fontSize: 12),
+        textStyle: TextStyle(fontFamily: AppFonts.sans, color: AppColors.background, fontSize: 12),
       ),
 
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.surfaceElevated,
-        contentTextStyle: const TextStyle(color: AppColors.textPrimary),
+        contentTextStyle: TextStyle(color: AppColors.textPrimary),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
         ),
@@ -398,10 +408,10 @@ class AppTheme {
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.surfaceElevated,
         surfaceTintColor: Colors.transparent,
-        titleTextStyle: const TextStyle(fontFamily: AppFonts.sans, fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: AppColors.textPrimary),
+        titleTextStyle: TextStyle(fontFamily: AppFonts.sans, fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: AppColors.textPrimary),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: AppColors.border),
         ),
         // Поля по бокам 20 вместо 40: на узком телефоне (320–360 dp) окну
         // с формой не хватало ширины. Планшет не меняется — ширину диалога
@@ -409,16 +419,16 @@ class AppTheme {
         insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       ),
 
-      navigationDrawerTheme: const NavigationDrawerThemeData(
+      navigationDrawerTheme: NavigationDrawerThemeData(
         backgroundColor: AppColors.background,
         indicatorColor: AppColors.selection,
       ),
-      drawerTheme: const DrawerThemeData(
+      drawerTheme: DrawerThemeData(
         backgroundColor: AppColors.background,
         surfaceTintColor: Colors.transparent,
       ),
 
-      iconTheme: const IconThemeData(color: AppColors.textPrimary),
+      iconTheme: IconThemeData(color: AppColors.textPrimary),
 
       splashFactory: InkRipple.splashFactory,
     );

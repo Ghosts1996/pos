@@ -187,7 +187,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               Text(
                 '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const Divider(),
               Expanded(
@@ -217,7 +217,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                 '${s.terminalBank.isNotEmpty && s.paymentTerminal > 0 ? ' (${s.terminalBank})' : ''}'
                 '${s.paymentAggregator > 0 ? ' · ${s.aggregatorName.isEmpty ? 'Агрегатор' : s.aggregatorName} ${rub(s.paymentAggregator)}' : ''}'
                 ' · За счёт заведения ${rub(s.paymentComp)}',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),
               if (s.refunded)
@@ -303,7 +303,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                   if (snap.hasError) {
                     return Center(
                         child: Text('Ошибка загрузки: ${humanError(snap.error, lower: true)}',
-                            style: const TextStyle(color: AppColors.danger)));
+                            style: TextStyle(color: AppColors.danger)));
                   }
                   final sessions = snap.data ?? [];
                   if (sessions.isEmpty) {

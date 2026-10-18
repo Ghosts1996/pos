@@ -292,7 +292,7 @@ class _CheckoutBar extends StatelessWidget {
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.textPrimary,
+                foregroundColor: AppColors.onAccent,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
@@ -344,7 +344,7 @@ class _CategoryTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
                     color: AppColors.textPrimary,
@@ -478,7 +478,7 @@ class _MenuItemCard extends StatelessWidget {
                 item.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                   color: AppColors.textPrimary,
@@ -491,13 +491,13 @@ class _MenuItemCard extends StatelessWidget {
                 children: [
                   Text(
                     rub(item.price),
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                   ),
                   const Spacer(),
                   if (qty == 0)
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.add_circle, color: AppColors.primary),
+                      icon: Icon(Icons.add_circle, color: AppColors.primary),
                       onPressed: onAdd,
                     )
                   else
@@ -527,7 +527,7 @@ class _MenuItemCard extends StatelessWidget {
                         Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold)),
                         IconButton(
                           visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.add_circle, color: AppColors.primary),
+                          icon: Icon(Icons.add_circle, color: AppColors.primary),
                           onPressed: onAdd,
                         ),
                       ],

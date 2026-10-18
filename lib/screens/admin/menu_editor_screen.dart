@@ -172,8 +172,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                           onTap: () => _editItem(context, null, categoryId: cat.id),
                         ),
                         ListTile(
-                          leading: const Icon(Icons.delete_forever, color: AppColors.danger),
-                          title: const Text('Удалить категорию', style: TextStyle(color: AppColors.danger)),
+                          leading: Icon(Icons.delete_forever, color: AppColors.danger),
+                          title: Text('Удалить категорию', style: TextStyle(color: AppColors.danger)),
                           onTap: () => _confirmDelete(
                             context,
                             title: 'Удалить категорию?',

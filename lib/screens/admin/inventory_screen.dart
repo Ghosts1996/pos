@@ -119,9 +119,9 @@ class _StockTabState extends State<_StockTab> {
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
             final all = snap.data!;
             if (all.isEmpty) {
-              return const Center(
+              return Center(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   child: Text(
                     'Позиций склада пока нет.\nНажмите «+», чтобы добавить первую — '
                     'например, сорт табака в граммах или пиво в банках.',
@@ -157,7 +157,7 @@ class _StockTabState extends State<_StockTab> {
                             _showInactive
                                 ? 'Скрыть отключённые ($inactiveCount)'
                                 : 'Показать отключённые ($inactiveCount)',
-                            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                           ),
                         ],
                       ),
@@ -168,7 +168,7 @@ class _StockTabState extends State<_StockTab> {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                     child: Text(
                       cat.isEmpty ? 'Без категории' : cat,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -394,11 +394,11 @@ class _CountTab extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Row(
+                      Row(
                         children: [
                           Icon(Icons.fact_check_outlined, color: AppColors.primary),
-                          SizedBox(width: 12),
-                          Expanded(
+                          const SizedBox(width: 12),
+                          const Expanded(
                             child: Text('Инвентаризация в процессе',
                                 style: TextStyle(fontWeight: FontWeight.w600)),
                           ),
@@ -408,7 +408,7 @@ class _CountTab extends StatelessWidget {
                       Text(
                         'Посчитано ${open.countedCount} из ${open.totalCount} · '
                         'начата ${_fmtDate(open.startedAt)} · ${open.startedBy}',
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                       ),
                       const SizedBox(height: 12),
                       SizedBox(
@@ -433,7 +433,7 @@ class _CountTab extends StatelessWidget {
                     children: [
                       const Text('Новая инвентаризация', style: TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 6),
-                      const Text(
+                      Text(
                         'Закрываться не нужно: касса продаёт как обычно. Вводите фактическое '
                         'количество по каждой позиции — система запомнит остаток в момент подсчёта, '
                         'а продажи после него учтёт сама при завершении.',
@@ -456,8 +456,8 @@ class _CountTab extends StatelessWidget {
                   ),
                 ),
               ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(4, 24, 4, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 24, 4, 8),
               child: Text('История', style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
             ),
             FutureBuilder<List<InventoryCount>>(
@@ -471,8 +471,8 @@ class _CountTab extends StatelessWidget {
                 }
                 final history = histSnap.data!.where((c) => c.status != 'in_progress').toList();
                 if (history.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8),
+                  return Padding(
+                    padding: const EdgeInsets.all(8),
                     child: Text('Завершённых инвентаризаций пока нет', style: TextStyle(color: AppColors.textMuted)),
                   );
                 }

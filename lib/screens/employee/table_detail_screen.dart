@@ -404,14 +404,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.pause_circle_outline, size: 20, color: AppColors.warning),
+            Icon(Icons.pause_circle_outline, size: 20, color: AppColors.warning),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Ждут команды: $n шт.', style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const Text('следующий курс — кухня его пока не видит',
+                  Text('следующий курс — кухня его пока не видит',
                       style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                 ],
               ),
@@ -472,14 +472,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.receipt_long_outlined, size: 20, color: AppColors.brass),
+            Icon(Icons.receipt_long_outlined, size: 20, color: AppColors.brass),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Новое в заказе: $n шт.', style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const Text('бегунок ещё не печатали', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                  Text('бегунок ещё не печатали', style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                 ],
               ),
             ),
@@ -625,7 +625,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           if (tablesSnap.hasError) {
             return Center(
               child: Text('Ошибка соединения: ${humanError(tablesSnap.error, lower: true)}',
-                  style: const TextStyle(color: AppColors.danger)),
+                  style: TextStyle(color: AppColors.danger)),
             );
           }
           final t = tablesSnap.data ?? widget.table;
@@ -643,7 +643,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               if (sessSnap.hasError) {
                 return Center(
                   child: Text('Ошибка соединения: ${humanError(sessSnap.error, lower: true)}',
-                      style: const TextStyle(color: AppColors.danger)),
+                      style: TextStyle(color: AppColors.danger)),
                 );
               }
               final session = sessSnap.data;
@@ -700,13 +700,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(color: AppColors.border),
                 ),
-                child: const Icon(Icons.table_restaurant, size: 40, color: AppColors.success),
+                child: Icon(Icons.table_restaurant, size: 40, color: AppColors.success),
               ),
               const SizedBox(height: 16),
               const Text('Стол свободен', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Text('${seatsLabel(t.seats)} · $duration',
-                  textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textMuted)),
+                  textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -855,7 +855,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         const Text('Заказ', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
         if (count > 0)
           Text('  ·  $count ${pluralRu(count, 'позиция', 'позиции', 'позиций')}',
-              style: const TextStyle(color: AppColors.textMuted)),
+              style: TextStyle(color: AppColors.textMuted)),
         const Spacer(),
         FilledButton.icon(
           style: FilledButton.styleFrom(
@@ -882,12 +882,12 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: AppColors.border),
             ),
-            child: const Column(
+            child: Column(
               children: [
                 Icon(Icons.restaurant_menu, size: 34, color: AppColors.textMuted),
-                SizedBox(height: 10),
-                Text('Заказ пока пуст', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                SizedBox(height: 4),
+                const SizedBox(height: 10),
+                const Text('Заказ пока пуст', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
                 Text('Нажмите, чтобы открыть меню', style: TextStyle(color: AppColors.textMuted)),
               ],
             ),
@@ -935,7 +935,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final rows = <Widget>[];
     for (var k = 0; k < session.orderItems.length; k++) {
       final i = session.orderItems[k];
-      if (k > 0) rows.add(const Divider(height: 1, color: AppColors.border));
+      if (k > 0) rows.add(Divider(height: 1, color: AppColors.border));
       rows.add(Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
@@ -952,12 +952,12 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                     Text(i.mods.join(' · '),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13, color: AppColors.brass)),
+                        style: TextStyle(fontSize: 13, color: AppColors.brass)),
                   const SizedBox(height: 2),
                   Row(
                     children: [
                       Text('${_money(i.price)} × ${i.qty}',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                       const SizedBox(width: 8),
                       Flexible(child: _kitchenState(i, kds: kds)),
                     ],
@@ -1009,17 +1009,17 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
       ));
     }
     if (session.discountPercent > 0) {
-      rows.add(const Divider(height: 1, color: AppColors.border));
+      rows.add(Divider(height: 1, color: AppColors.border));
       rows.add(Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
             Expanded(
               child: Text('Скидка ${session.discountPercent.toStringAsFixed(0)}%',
-                  style: const TextStyle(color: AppColors.success)),
+                  style: TextStyle(color: AppColors.success)),
             ),
             Text('−${_money(session.orderTotal - session.totalWithDiscount)}',
-                style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600)),
+                style: TextStyle(color: AppColors.success, fontWeight: FontWeight.w600)),
           ],
         ),
       ));
@@ -1087,7 +1087,7 @@ class _SessionStatusCard extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(caption, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                Text(caption, style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                 const SizedBox(height: 2),
                 Text(big,
                     style: TextStyle(
@@ -1096,7 +1096,7 @@ class _SessionStatusCard extends StatelessWidget {
                       color: color,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     )),
-                Text(sub, style: const TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                Text(sub, style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
               ],
             );
           }),
@@ -1131,7 +1131,7 @@ class _InfoChip extends StatelessWidget {
   final IconData icon;
   final String text;
   final Color color;
-  const _InfoChip({required this.icon, required this.text, this.color = AppColors.textMuted});
+  _InfoChip({required this.icon, required this.text, Color? color}) : color = color ?? AppColors.textMuted;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1302,7 +1302,7 @@ class _TotalBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final discounted = session.discountPercent > 0;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surfaceElevated,
         border: Border(top: BorderSide(color: AppColors.border)),
       ),
@@ -1314,7 +1314,7 @@ class _TotalBar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Итого', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                Text('Итого', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                 // Крупная сумма на узком телефоне с крупным шрифтом
                 // уменьшается, а не вылезает под кнопку.
                 FittedBox(
@@ -1330,7 +1330,7 @@ class _TotalBar extends StatelessWidget {
                       if (discounted) ...[
                         const SizedBox(width: 8),
                         Text(_money(session.orderTotal),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: AppColors.textMuted,
                               decoration: TextDecoration.lineThrough,
                             )),
@@ -1371,7 +1371,7 @@ class _TotalBar extends StatelessWidget {
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.success,
-                foregroundColor: Colors.black,
+                foregroundColor: AppColors.isLight ? AppColors.onAccent : Colors.black,
                 padding: EdgeInsets.symmetric(horizontal: MediaQuery.sizeOf(context).width < 360 ? 14 : 22),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
@@ -1513,7 +1513,7 @@ class _TimeAdjustSheet extends StatelessWidget {
             const Text('Время стола', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
             Text('Сейчас до ${_hhmm(plannedEnd)} · $leftText',
-                style: const TextStyle(color: AppColors.textMuted)),
+                style: TextStyle(color: AppColors.textMuted)),
             const SizedBox(height: 20),
             row('Добавить', Icons.add_circle_outline, true),
             const SizedBox(height: 18),

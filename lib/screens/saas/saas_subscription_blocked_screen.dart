@@ -75,15 +75,15 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                         color: AppColors.danger.withValues(alpha: 0.14),
                         border: Border.all(color: AppColors.danger.withValues(alpha: 0.45)),
                       ),
-                      child: const Icon(Icons.credit_card_off_outlined, color: AppColors.danger, size: 34),
+                      child: Icon(Icons.credit_card_off_outlined, color: AppColors.danger, size: 34),
                     ),
                   ),
                   const SizedBox(height: 14),
                   Text(appName.toUpperCase(),
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: AppColors.brass, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 2)),
+                      style: TextStyle(color: AppColors.brass, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 2)),
                   const SizedBox(height: 10),
-                  const Text(
+                  Text(
                     'Вы не оплатили подписку',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -95,7 +95,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                     ),
                   ),
                   const SizedBox(height: 10),
-                  const Text(
+                  Text(
                     'Оплатите подписку, и касса снова заработает. После оплаты экран исчезнет сам, перезапускать ничего не нужно.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 15, height: 1.45),
@@ -117,7 +117,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                     ),
                   ),
                   const SizedBox(height: 10),
-                  const Text(
+                  Text(
                     'Откроется личный кабинет на zalpos.ru, раздел «Оплата». Оплачивает владелец заведения.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12.5, height: 1.4),
@@ -167,7 +167,7 @@ class _PurgeCountdown extends StatelessWidget {
           Text(
             over ? 'Срок хранения данных истёк' : 'Данные заведения удалятся через',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.textMuted, fontSize: 14, fontWeight: FontWeight.w500),
+            style: TextStyle(color: AppColors.textMuted, fontSize: 14, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 6),
           if (!over)
@@ -177,28 +177,28 @@ class _PurgeCountdown extends StatelessWidget {
               textBaseline: TextBaseline.alphabetic,
               children: [
                 Text('${c.days}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppColors.danger,
                       fontSize: 64,
                       fontWeight: FontWeight.w700,
                       height: 1,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     )),
                 const SizedBox(width: 8),
                 Text(_pluralDays(c.days),
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w600)),
+                    style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.w600)),
                 const SizedBox(width: 12),
                 Text(clock,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppColors.textPrimary,
                       fontSize: 22,
                       fontWeight: FontWeight.w500,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     )),
               ],
             )
           else
-            const Text(
+            Text(
               'Данные удалятся при ближайшей проверке. Если оплатить сейчас, они сохранятся.',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600, height: 1.4),
@@ -222,7 +222,7 @@ class _PurgeCountdown extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Меню, зал, чеки, сотрудники и бонусы гостей хранятся $gracePeriodDays дней после окончания подписки. '
             'Потом удаляются безвозвратно.',
             textAlign: TextAlign.center,
@@ -247,7 +247,7 @@ class _BlockedNote extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.border),
       ),
-      child: const Text(
+      child: Text(
         'Доступ к кассе приостановлен. Чтобы вернуть его, оплатите подписку в личном кабинете.',
         textAlign: TextAlign.center,
         style: TextStyle(color: AppColors.textPrimary, fontSize: 15, height: 1.4),

@@ -21,13 +21,13 @@ class AiVoiceInput extends StatefulWidget {
   final Color color;
   final String localeId;
 
-  const AiVoiceInput({
+  AiVoiceInput({
     super.key,
     required this.onResult,
     this.onPartial,
-    this.color = AppColors.primary,
+    Color? color,
     this.localeId = 'ru_RU',
-  });
+  }) : color = color ?? AppColors.primary;
 
   @override
   State<AiVoiceInput> createState() => _AiVoiceInputState();

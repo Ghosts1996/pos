@@ -112,7 +112,7 @@ class _TableQrScreenState extends State<TableQrScreen> {
               children: [
                 const Text('Распечатайте новые коды', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'В кодах теперь есть секрет стола — без него чужой счёт не открыть удалённо. '
                   'Старые наклейки больше не открывают счёт гостя: замените их на эти.',
                   style: TextStyle(color: AppColors.textMuted, fontSize: 13),
@@ -188,7 +188,7 @@ class _TableQrScreenState extends State<TableQrScreen> {
                         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
                         final tables = snap.data!..sort((a, b) => a.name.compareTo(b.name));
                         if (tables.isEmpty) {
-                          return const Center(
+                          return Center(
                             child: Text('Сначала добавьте столы в карту зала',
                                 style: TextStyle(color: AppColors.textMuted)),
                           );

@@ -350,7 +350,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.notifications_active, color: AppColors.danger, size: 30),
+            Icon(Icons.notifications_active, color: AppColors.danger, size: 30),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -362,7 +362,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                     Text('${c.tableName}: ${c.summary}',
                         maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14.5)),
                   if (!_alarm.enabled)
-                    const Text('Звук выключен', style: TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+                    Text('Звук выключен', style: TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
                 ],
               ),
             ),
@@ -397,7 +397,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
               child: Text('Ждут выдачи · ${list.length}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success)),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success)),
             ),
             SizedBox(
               height: context.scaledExtent(112, textPart: 40),
@@ -436,7 +436,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                             t.lines.map((l) => l.toServe > 1 ? '${l.displayName} ×${l.toServe}' : l.displayName).join(', '),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+                            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                           ),
                         ),
                         Align(
@@ -473,16 +473,16 @@ class _KitchenScreenState extends State<KitchenScreen> {
     );
   }
 
-  Widget _empty() => const Center(
+  Widget _empty() => Center(
         child: Padding(
-          padding: EdgeInsets.all(32),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.check_circle_outline, size: 44, color: AppColors.success),
-              SizedBox(height: 12),
-              Text('Всё готово', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              SizedBox(height: 6),
+              const SizedBox(height: 12),
+              const Text('Всё готово', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
               Text('Новые позиции появятся здесь сами, как только их добавят в счёт.',
                   textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
             ],
@@ -517,7 +517,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                       [if (s.guestTag.isNotEmpty) s.guestTag, s.employeeName].join(' · '),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
                     ),
                   ],
                 ),
@@ -527,7 +527,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
               TickerBuilder(builder: (context, now) => _minutesChip(now.difference(t.since).inMinutes, warn: 15, danger: 25)),
             ],
           ),
-          const Divider(height: 18, color: AppColors.border),
+          Divider(height: 18, color: AppColors.border),
           Expanded(
             child: ListView(
               padding: EdgeInsets.zero,
@@ -544,7 +544,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           SizedBox(
                             width: 34,
                             child: Text('${i.pending}×',
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.brass)),
+                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.brass)),
                           ),
                           Expanded(
                             child: Column(
@@ -556,7 +556,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                                       style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                                 if (i.note.isNotEmpty)
                                   Text(i.note,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           fontSize: 13.5, color: AppColors.brass, fontStyle: FontStyle.italic)),
                               ],
                             ),
@@ -565,7 +565,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                             padding: const EdgeInsets.only(top: 2, right: 6),
                             child: _lineState(i),
                           ),
-                          const Icon(Icons.check_circle_outline, size: 22, color: AppColors.textMuted),
+                          Icon(Icons.check_circle_outline, size: 22, color: AppColors.textMuted),
                         ],
                       ),
                     ),
@@ -616,9 +616,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
   /// Новая — красная точка, принятая — «готовится».
   Widget _lineState(OrderItem i) {
     if (i.fresh > 0 && i.cooking == 0) {
-      return Container(width: 9, height: 9, decoration: const BoxDecoration(color: AppColors.danger, shape: BoxShape.circle));
+      return Container(width: 9, height: 9, decoration: BoxDecoration(color: AppColors.danger, shape: BoxShape.circle));
     }
     return Text(i.fresh > 0 ? '${i.cooking} готовится' : 'готовится',
-        style: const TextStyle(fontSize: 11.5, color: AppColors.warning, fontWeight: FontWeight.w600));
+        style: TextStyle(fontSize: 11.5, color: AppColors.warning, fontWeight: FontWeight.w600));
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
+import '../theme/app_colors.dart';
 import '../utils/hall_layout.dart';
 
 /// Стены зала «как на чертеже»: мягкая тень под стеной, светлый контур и
@@ -124,7 +125,7 @@ class HallWallsPainter extends CustomPainter {
     }
 
     if (shadow) {
-      final soft = _stroke(Colors.black.withValues(alpha: 0.38), kHallWallWidth + 6)
+      final soft = _stroke(Colors.black.withValues(alpha: AppColors.isLight ? 0.12 : 0.38), kHallWallWidth + 6)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
       for (final p in paths.values) {
         canvas.drawPath(p.shift(const Offset(0, 5)), soft);

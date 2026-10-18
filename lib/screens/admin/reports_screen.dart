@@ -185,7 +185,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
-                            textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
+                            textAlign: TextAlign.center, style: TextStyle(color: AppColors.danger)),
                       ),
                     );
                   }
@@ -222,7 +222,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               title: const Text('Валовая прибыль по позициям с себестоимостью'),
                               subtitle: Text('выручка ${rub(gp.$1)} − себестоимость ${rub(gp.$2)}'),
                               trailing: Text(rub(gp.$1 - gp.$2),
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.success)),
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.success)),
                             ),
                           ),
                         if (stats.allItems.length >= 3) _abcCard(stats),
@@ -285,8 +285,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                     title: Text(e.key),
                                     trailing: Text(rub(e.value), style: const TextStyle(fontWeight: FontWeight.bold)),
                                   ),
-                                const Padding(
-                                  padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                                   child: Text('Сверяйте с поступлениями от каждого банка.',
                                       style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                                 ),
@@ -304,7 +304,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           _sectionTitle('Закрыто без оплаты'),
                           Card(
                             child: ListTile(
-                              leading: const Icon(Icons.money_off, color: AppColors.warning),
+                              leading: Icon(Icons.money_off, color: AppColors.warning),
                               title: Text('${stats.unpaidClosed} ${pluralRu(stats.unpaidClosed, 'чек', 'чека', 'чеков')}'),
                               subtitle: Text(
                                   'На сумму ${rub(stats.unpaidAmount)} (не входит в выручку)'),
@@ -316,7 +316,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           _sectionTitle('Возвраты'),
                           Card(
                             child: ListTile(
-                              leading: const Icon(Icons.undo, color: AppColors.warning),
+                              leading: Icon(Icons.undo, color: AppColors.warning),
                               title: Text('${stats.refunds} возвратов'),
                               subtitle: Text(
                                   'На сумму ${rub(stats.refundedAmount)} (не входит в выручку)'),
@@ -591,8 +591,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   : 'К выплате ${rub(e.value.payout)} (комиссия не указана в «Интеграциях»)'),
               trailing: Text(rub(e.value.sales), style: const TextStyle(fontWeight: FontWeight.bold)),
             ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: Text(
               'Входит в выручку. Деньги переводит агрегатор по своему графику — сверяйте с его актом.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),

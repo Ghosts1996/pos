@@ -6,6 +6,7 @@ import '../utils/pin_hash.dart';
 import '../models/employee.dart';
 import '../services/app_lock.dart';
 import '../services/app_scope.dart';
+import '../theme/app_colors.dart';
 import '../services/demo_gate.dart';
 import '../services/firestore_service.dart';
 import '../services/staff_session_store.dart';
@@ -108,7 +109,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
           shape: BoxShape.circle,
           border: Border.all(color: const Color(0x66CFA567)),
         ),
-        child: const Icon(Icons.lock_outline_rounded, color: BrandPalette.brass, size: 24),
+        child: Icon(Icons.lock_outline_rounded, color: BrandPalette.brass, size: 24),
       ),
       const SizedBox(height: 18),
       Text(
@@ -122,7 +123,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
         textAlign: TextAlign.center,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: BrandPalette.ivory, fontSize: 16, fontWeight: FontWeight.w600),
+        style: TextStyle(color: BrandPalette.ivory, fontSize: 16, fontWeight: FontWeight.w600),
       ),
       const SizedBox(height: 2),
       Text(
@@ -154,7 +155,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
         Text(
           _employee.role == AppConstants.roleAdmin ? AppScope.demoPins.adminHint : AppScope.demoPins.staffHint,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+          style: TextStyle(color: AppColors.disabledText, fontSize: 11.5),
         ),
     ]);
 
@@ -175,8 +176,8 @@ class _PinLockScreenState extends State<PinLockScreen> {
             final side = box.maxWidth > box.maxHeight && box.maxHeight < 600;
             final keypadWidth = pinKeypadWidth(box, side: side, headerHeight: 360);
             final keypad = _checking
-                ? const Padding(
-                    padding: EdgeInsets.all(24),
+                ? Padding(
+                    padding: const EdgeInsets.all(24),
                     child: CircularProgressIndicator(color: BrandPalette.brass),
                   )
                 : PinKeypad(width: keypadWidth, onDigit: _tap, onBackspace: _backspace);

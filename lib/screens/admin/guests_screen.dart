@@ -31,7 +31,13 @@ class _GuestsScreenState extends State<GuestsScreen> {
     super.dispose();
   }
 
+  /// Цвет уровня; в светлой теме — темнее, чтобы значок читался на бумаге.
   Color _tierColor(String tier) {
+    final c = _tierTone(tier);
+    return AppColors.isLight ? Color.lerp(c, Colors.black, 0.42)! : c;
+  }
+
+  Color _tierTone(String tier) {
     switch (tier) {
       case 'Алмаз':
         return const Color(0xFFA9C3DA);
@@ -269,8 +275,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                             if (v == 'phone') _changePhone(g);
                             if (v == 'delete') _deleteGuest(g);
                           },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
                               value: 'phone',
                               child: ListTile(
                                 leading: Icon(Icons.edit_outlined),

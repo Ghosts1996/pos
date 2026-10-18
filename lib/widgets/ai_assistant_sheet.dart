@@ -167,9 +167,9 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
     final ready = AiSettingsStore.instance.current.isReady;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         children: [
@@ -188,7 +188,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+              child: Text(_error!, style: TextStyle(color: AppColors.danger, fontSize: 13)),
             ),
           if (widget.quickPrompts.isNotEmpty) _quickPrompts(),
           _inputBar(ready),
@@ -199,16 +199,16 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
 
   Widget _header() => Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: AppColors.surfaceElevated,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Row(
           children: [
-            const CircleAvatar(
+            CircleAvatar(
               radius: 16,
               backgroundColor: AppColors.primary,
-              child: Icon(Icons.auto_awesome, size: 18, color: AppColors.textPrimary),
+              child: const Icon(Icons.auto_awesome, size: 18, color: AppColors.onAccent),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -216,18 +216,18 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(widget.agent.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w600)),
                   Text(widget.agent.description,
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ],
               ),
             ),
             IconButton(
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close, color: AppColors.textMuted),
+              icon: Icon(Icons.close, color: AppColors.textMuted),
             ),
           ],
         ),
@@ -237,15 +237,15 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
         width: double.infinity,
         color: AppColors.warning.withValues(alpha: 0.15),
         padding: const EdgeInsets.all(12),
-        child: const Text(
+        child: Text(
           'ИИ не подключён. Администратор → Настройки ИИ → ключ провайдера.',
           style: TextStyle(color: AppColors.warning, fontSize: 13),
         ),
       );
 
-  Widget _emptyState() => const Center(
+  Widget _emptyState() => Center(
         child: Padding(
-          padding: EdgeInsets.all(32),
+          padding: const EdgeInsets.all(32),
           child: Text(
             'Спросите что угодно по работе зала — ассистент видит актуальные данные.',
             textAlign: TextAlign.center,
@@ -275,8 +275,8 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
               )
             : SelectableText(
                 line.text,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
+                style: TextStyle(
+                  color: isMine ? AppColors.onAccent : AppColors.textPrimary,
                   fontSize: 14,
                   height: 1.35,
                 ),
@@ -294,9 +294,9 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (_, i) => ActionChip(
             backgroundColor: AppColors.selection,
-            side: const BorderSide(color: AppColors.border),
+            side: BorderSide(color: AppColors.border),
             label: Text(widget.quickPrompts[i],
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 12)),
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 12)),
             onPressed: _busy ? null : () => _send(widget.quickPrompts[i]),
           ),
         ),
@@ -304,7 +304,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
 
   Widget _inputBar(bool ready) => Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: AppColors.surfaceElevated,
           border: Border(top: BorderSide(color: AppColors.border)),
         ),
@@ -318,13 +318,13 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
                 onSubmitted: _send,
-                style: const TextStyle(color: AppColors.textPrimary),
-                decoration: const InputDecoration(
+                style: TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
                   hintText: 'Ваш вопрос…',
                   filled: true,
                   fillColor: AppColors.surface,
-                  border: OutlineInputBorder(borderSide: BorderSide.none),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: const OutlineInputBorder(borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 ),
               ),
             ),

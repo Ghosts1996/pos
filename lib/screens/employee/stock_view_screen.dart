@@ -32,9 +32,9 @@ class _StockViewScreenState extends State<StockViewScreen> {
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
             final all = snap.data!.where((i) => i.active).toList();
             if (all.isEmpty) {
-              return const Center(
+              return Center(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   child: Text(
                     'Позиций склада пока нет.',
                     textAlign: TextAlign.center,
@@ -56,11 +56,11 @@ class _StockViewScreenState extends State<StockViewScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                        Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
                         const SizedBox(width: 6),
                         Text(
                           'Мало на складе: $lowCount',
-                          style: const TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w600),
+                          style: TextStyle(color: AppColors.warning, fontSize: 13, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -70,7 +70,7 @@ class _StockViewScreenState extends State<StockViewScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                     child: Text(
                       cat.isEmpty ? 'Без категории' : cat,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,

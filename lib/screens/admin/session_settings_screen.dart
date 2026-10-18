@@ -119,7 +119,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  const Text(
+                  Text(
                     'Это время ставится таймером при нажатии «Начать сеанс» и '
                     'при «Перезабивке». Сотрудник в любой момент может вручную '
                     'продлить или сократить таймер конкретного стола — эта '
@@ -164,7 +164,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
                   ],
                   const SizedBox(height: 20),
                   if (_error != null) ...[
-                    Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                    Text(_error!, style: TextStyle(color: AppColors.danger)),
                     const SizedBox(height: 12),
                   ],
                   FilledButton(

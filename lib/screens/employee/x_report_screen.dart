@@ -260,7 +260,7 @@ class _XReportScreenState extends State<XReportScreen> {
                 children: [
                   Expanded(
                     child: Text(_formatSelectedRange(),
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                   ),
                   StreamBuilder<List<Employee>>(
                     stream: _employees,
@@ -299,7 +299,7 @@ class _XReportScreenState extends State<XReportScreen> {
                       child: Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text('Не удалось загрузить отчёт: ${humanError(snap.error, lower: true)}',
-                            textAlign: TextAlign.center, style: const TextStyle(color: AppColors.danger)),
+                            textAlign: TextAlign.center, style: TextStyle(color: AppColors.danger)),
                       ),
                     );
                   }
@@ -332,7 +332,7 @@ class _XReportScreenState extends State<XReportScreen> {
                           if (paid.isEmpty)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 12),
-                              child: Text(_emptyMessage(), style: const TextStyle(color: AppColors.textMuted)),
+                              child: Text(_emptyMessage(), style: TextStyle(color: AppColors.textMuted)),
                             ),
                           if (data.items.isNotEmpty) ..._itemsTable(data),
                           const Divider(height: 24),
@@ -469,8 +469,8 @@ class _XReportScreenState extends State<XReportScreen> {
   }
 
   List<Widget> _itemsTable(_XReportData data) => [
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Row(
             children: [
               Expanded(flex: 3, child: Text('Позиция', style: TextStyle(color: AppColors.textMuted, fontSize: 12))),
@@ -558,7 +558,7 @@ class _XReportScreenState extends State<XReportScreen> {
                                     crew.isEmpty
                                         ? 'Никто не отметил начало своей смены'
                                         : 'Сейчас на смене: ${crew.shifts.map(crew.labelOf).join(', ')}',
-                                    style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                                   ),
                                 ),
                         ),

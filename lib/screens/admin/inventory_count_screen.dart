@@ -173,7 +173,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
                 padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
                 child: Text(
                   cat.isEmpty ? 'Без категории' : cat,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: AppColors.textMuted,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -277,7 +277,7 @@ class _StatBlock extends StatelessWidget {
         Text(value,
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color ?? AppColors.textPrimary)),
         const SizedBox(height: 2),
-        Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+        Text(label, style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
       ],
     );
   }
@@ -330,7 +330,7 @@ class _CountRow extends StatelessWidget {
                   Text(entry.name, style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text('по системе: ${entry.unit.formatWithLabel(entry.systemQty)}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                   Text(diffText, style: TextStyle(color: diffColor, fontSize: 12, fontWeight: FontWeight.w600)),
                 ],
               ),

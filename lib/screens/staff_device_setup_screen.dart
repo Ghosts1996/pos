@@ -86,16 +86,16 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.tablet_android, color: Colors.white70, size: 48),
+                  Icon(Icons.tablet_android, color: AppColors.textMuted, size: 48),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'Рабочее устройство',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'Этот планшет ещё не отмечен как касса заведения, поэтому база '
                     'не отдаёт ему рабочие данные. Введите ключ заведения — он '
                     'вводится один раз на устройство.',
@@ -107,7 +107,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                     controller: _secret,
                     autofocus: true,
                     obscureText: true,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Ключ заведения',
                       helperText: 'Firebase → Firestore → meta/staffSecret → value',
@@ -118,7 +118,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _label,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
                       labelText: 'Название устройства (необязательно)',
                       hintText: 'Планшет у бара',
@@ -127,7 +127,7 @@ class _StaffDeviceSetupScreenState extends State<StaffDeviceSetupScreen> {
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Text(_error!,
-                        style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+                        style: TextStyle(color: AppColors.danger, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
                   SizedBox(

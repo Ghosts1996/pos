@@ -10,14 +10,14 @@ Future<void> showPlanUpsell(BuildContext context, {required String title, requir
     context: context,
     builder: (ctx) => AlertDialog(
       scrollable: true,
-      icon: const Icon(Icons.workspace_premium_outlined, color: AppColors.warning, size: 32),
+      icon: Icon(Icons.workspace_premium_outlined, color: AppColors.warning, size: 32),
       title: Text(title, textAlign: TextAlign.center),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(text),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             'Тариф меняет владелец в личном кабинете на zalpos.ru — раздел «Оплата». '
             'В пробный период — без оплаты.',
             style: TextStyle(color: AppColors.textMuted, fontSize: 13),

@@ -157,7 +157,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  const Text(
+                  Text(
                     'Уровень гостя считается по сумме ВСЕХ его закрытых чеков за всё '
                     'время. Процент кешбэка начисляется бонусами при оплате — '
                     '1 бонус = 1 ₽.',
@@ -205,7 +205,7 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
                     const SizedBox(height: 20),
                   ],
                   if (_error != null) ...[
-                    Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                    Text(_error!, style: TextStyle(color: AppColors.danger)),
                     const SizedBox(height: 12),
                   ],
                   FilledButton(

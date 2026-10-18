@@ -58,7 +58,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                 return byOrder != 0 ? byOrder : b.createdAt.compareTo(a.createdAt);
               });
             if (stories.isEmpty) {
-              return const Center(
+              return Center(
                 child: Text('Карточек нет — создайте вручную или попросите ИИ',
                     style: TextStyle(color: AppColors.textMuted)),
               );
@@ -109,12 +109,12 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                   child: Text(s.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 16)),
                 ),
                 if (s.byAi)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
                     child: Icon(Icons.auto_awesome, size: 16, color: AppColors.primary),
                   ),
                 IconButton(
@@ -142,7 +142,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
             Text(s.text,
                 maxLines: 4,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppColors.textMuted)),
+                style: TextStyle(color: AppColors.textMuted)),
             if (s.actionLabel.isNotEmpty) ...[
               const SizedBox(height: 8),
               Row(
@@ -163,7 +163,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                       '${s.action == 'booking' ? 'ведёт на бронь' : s.action == 'menu' ? 'ведёт в меню' : 'без перехода'}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.primary, fontSize: 13),
+                      style: TextStyle(color: AppColors.primary, fontSize: 13),
                     ),
                   ),
                 ],
@@ -175,7 +175,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                 TextButton(onPressed: () => _edit(s), child: const Text('Изменить')),
                 TextButton(
                   onPressed: () => AppScope.col('stories').doc(s.id).delete(),
-                  child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+                  child: Text('Удалить', style: TextStyle(color: AppColors.danger)),
                 ),
               ],
             ),

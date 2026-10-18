@@ -10,19 +10,19 @@ import '../theme/app_theme.dart';
 /// кабинета (saas/console/console.css): тёплый графит, медь и латунь.
 class BrandPalette {
   BrandPalette._();
-  static const Color ink = AppColors.background;
-  static const Color copper = AppColors.primary;
-  static const Color brass = AppColors.brass;
-  static const Color muted = AppColors.textMuted;
-  static const Color ivory = AppColors.textPrimary;
+  static Color get ink => AppColors.background;
+  static Color get copper => AppColors.primary;
+  static Color get brass => AppColors.brass;
+  static Color get muted => AppColors.textMuted;
+  static Color get ivory => AppColors.textPrimary;
   static const Color error = Color(0xFFE0715E);
-  static const Color hairline = Color(0x1FF2EADF);
+  static Color get hairline => AppColors.textPrimary.withValues(alpha: 0.12);
 
   /// Почти ровная медь — градиент лишь снимает «пластиковость» заливки.
-  static const LinearGradient accent = LinearGradient(
+  static LinearGradient get accent => LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
-    colors: [Color(0xFFBC6536), copper],
+    colors: [const Color(0xFFBC6536), copper],
   );
 }
 
@@ -143,7 +143,7 @@ class PinDots extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: error ? BrandPalette.error : (on ? BrandPalette.brass : Colors.transparent),
-              border: on || error ? null : Border.all(color: const Color(0x66A39A8E), width: 1.2),
+              border: on || error ? null : Border.all(color: AppColors.textMuted.withValues(alpha: 0.4), width: 1.2),
             ),
           );
         }),

@@ -41,13 +41,13 @@ class CashDrawerCard extends StatelessWidget {
     Widget line(String label, double v, {String sign = '', bool edit = false}) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 3),
           child: Row(children: [
-            Expanded(child: Text(label, style: const TextStyle(color: AppColors.textMuted))),
+            Expanded(child: Text(label, style: TextStyle(color: AppColors.textMuted))),
             if (edit && live)
               InkWell(
                 borderRadius: BorderRadius.circular(8),
                 onTap: () => _editOpening(context),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   child: Icon(Icons.edit_outlined, size: 16, color: AppColors.textMuted),
                 ),
               ),
@@ -69,7 +69,7 @@ class CashDrawerCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(children: [
-            const Icon(Icons.point_of_sale_rounded, color: AppColors.success),
+            Icon(Icons.point_of_sale_rounded, color: AppColors.success),
             const SizedBox(width: 8),
             const Expanded(
               child: Text('Наличные в кассе', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
@@ -81,8 +81,8 @@ class CashDrawerCard extends StatelessWidget {
                     color: expected < 0 ? AppColors.danger : AppColors.textPrimary)),
           ]),
           if (expected < 0)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
               child: Text('Забрали больше, чем было по учёту — проверьте операции ниже.',
                   style: TextStyle(color: AppColors.danger, fontSize: 12.5)),
             ),
@@ -155,7 +155,7 @@ class CashDrawerCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
-        SizedBox(width: 44, child: Text(_hhmm(op.createdAt), style: const TextStyle(color: AppColors.textMuted, fontSize: 13))),
+        SizedBox(width: 44, child: Text(_hhmm(op.createdAt), style: TextStyle(color: AppColors.textMuted, fontSize: 13))),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(op.type.label, style: style.copyWith(fontWeight: FontWeight.w600)),
@@ -165,7 +165,7 @@ class CashDrawerCard extends StatelessWidget {
                 if (op.comment.isNotEmpty) op.comment,
                 if (op.cancelled) 'отменена${op.cancelledBy.isNotEmpty ? ' · ${op.cancelledBy}' : ''}',
               ].join(' · '),
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
             ),
           ]),
         ),
@@ -357,7 +357,7 @@ class _CashOpDialogState extends State<_CashOpDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('В кассе по учёту: ${rub(widget.expected)}', style: const TextStyle(color: AppColors.textMuted)),
+            Text('В кассе по учёту: ${rub(widget.expected)}', style: TextStyle(color: AppColors.textMuted)),
             const SizedBox(height: 12),
             TextField(
               controller: _amount,

@@ -532,7 +532,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         scrollable: true,
-        icon: const Icon(Icons.inventory_2_outlined, color: AppColors.warning),
+        icon: Icon(Icons.inventory_2_outlined, color: AppColors.warning),
         title: const Text('На складе не хватает'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -544,7 +544,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 child: Text('• ${s.text}'),
               ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Если товар на самом деле есть — после оплаты поправьте остаток в «Склад» '
               '(приход или инвентаризация). Закрыть чек сейчас? Остаток уйдёт в минус.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 13),
@@ -963,7 +963,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   child: Text(
                     'Гость оплатил по СБП со стола: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
                     'сумма уже в «Оплате с терминала»',
-                    style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600),
+                    style: TextStyle(color: AppColors.success, fontWeight: FontWeight.w600),
                   ),
                 ),
               if (_tipsTotal > 0)
@@ -971,7 +971,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     'счёт ${_fmt(_total)} + чаевые ${_fmt(_tipsTotal)}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 14),
                   ),
                 ),
               if (_bonusPaid > 0)
@@ -981,7 +981,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     [
                       if (_bonusPaid > 0) 'бонусами ${_fmt(_bonusPaid)}',
                     ].join(', '),
-                    style: const TextStyle(color: AppColors.success, fontSize: 14),
+                    style: TextStyle(color: AppColors.success, fontSize: 14),
                   ),
                 ),
               const SizedBox(height: 16),
@@ -1028,7 +1028,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
                             shape: const StadiumBorder(),
-                            side: const BorderSide(color: AppColors.textMuted),
+                            side: BorderSide(color: AppColors.textMuted),
                           ),
                           onPressed: () => _applyQuick(v),
                           child: Text(_fmt(v)),
@@ -1060,7 +1060,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         ? 'Чаевые нельзя провести через агрегатор или «за счёт заведения» — '
                             'гость платит их наличными или картой'
                         : 'Чаевые нельзя провести «за счёт заведения» — их платит гость',
-                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
               if (_terminalShort)
@@ -1069,7 +1069,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   child: Text(
                     'Безналом уже получено ${_fmt(_terminalReceived)} ${AppConstants.currencySymbol} — '
                     'в «Оплате с терминала» не может быть меньше',
-                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
               if (_aggProblem != null)
@@ -1077,7 +1077,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
                   child: Text(
                     _aggProblem!,
-                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w500),
                   ),
                 ),
               // Быстрые суммы и «сдача» — сразу под полями оплаты, к которым
@@ -1121,12 +1121,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                   onPressed: _canPay && !_busy && !_terminalBusy ? _pay : null,
                   child: _busy
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 22,
                           height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.textPrimary),
                         )
-                      : const Text('Оплатить', style: TextStyle(fontSize: 18, color: AppColors.textPrimary)),
+                      : Text('Оплатить', style: TextStyle(fontSize: 18, color: AppColors.textPrimary)),
                 ),
               ),
               const SizedBox(height: 20),
@@ -1150,7 +1150,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
-                  const Icon(Icons.volunteer_activism, size: 18, color: AppColors.success),
+                  Icon(Icons.volunteer_activism, size: 18, color: AppColors.success),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -1289,15 +1289,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
         fillColor: enabled ? AppColors.surface : AppColors.surfaceElevated,
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
-          borderSide: const BorderSide(color: AppColors.textMuted),
+          borderSide: BorderSide(color: AppColors.textMuted),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+          borderSide: BorderSide(color: AppColors.primary, width: 1.6),
         ),
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: AppColors.border),
         ),
       ),
     );
@@ -1344,7 +1344,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               controller: _contactCtrl,
               textAlign: TextAlign.right,
               keyboardType: TextInputType.emailAddress,
-              style: const TextStyle(fontSize: 16, color: AppColors.textPrimary),
+              style: TextStyle(fontSize: 16, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 isDense: true,
                 // Не «0», как у сумм выше: поле необязательное и не денежное —
@@ -1355,11 +1355,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 fillColor: AppColors.surface,
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: AppColors.textMuted),
+                  borderSide: BorderSide(color: AppColors.textMuted),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+                  borderSide: BorderSide(color: AppColors.primary, width: 1.6),
                 ),
               ),
             ),
@@ -1388,7 +1388,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(label, style: const TextStyle(fontSize: 15)),
-                          Text(hint, style: const TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
+                          Text(hint, style: TextStyle(fontSize: 12.5, color: AppColors.textMuted)),
                         ],
                       ),
               ),

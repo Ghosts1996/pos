@@ -77,9 +77,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 : all.where((r) => r.rating < _onlyBelow).toList();
 
             if (all.isEmpty) {
-              return const Center(
+              return Center(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(32),
                   child: Text(
                     'Отзывов пока нет. Гость видит предложение оценить визит '
                     'сразу после того, как вы закроете его чек.',
@@ -96,8 +96,8 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 _summary(all),
                 const SizedBox(height: 16),
                 if (list.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text('Под фильтр ничего не попало — и хорошо.',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: AppColors.textMuted)),
@@ -132,7 +132,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
               Text(avg.toStringAsFixed(1),
                   style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
               Text('средняя из ${all.length}',
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ],
           ),
           const SizedBox(width: 20),
@@ -183,7 +183,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                   _stars(r.rating),
                   const Spacer(),
                   Text(_fmtDate(r.createdAt),
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ],
               ),
               const SizedBox(height: 10),
@@ -193,7 +193,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 2),
               if (phone.isEmpty)
-                const Text('Телефон не указан',
+                Text('Телефон не указан',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 13))
               else
                 // Позвонить прямо отсюда: с плохим отзывом это и нужно
@@ -205,10 +205,10 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.call, size: 15, color: AppColors.primary),
+                        Icon(Icons.call, size: 15, color: AppColors.primary),
                         const SizedBox(width: 6),
                         Text(formatPhone(phone),
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: AppColors.primary, fontSize: 13)),
                       ],
                     ),
@@ -216,18 +216,18 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 ),
               if (r.text.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                Text(r.text, style: const TextStyle(color: AppColors.textPrimary)),
+                Text(r.text, style: TextStyle(color: AppColors.textPrimary)),
               ],
               if (r.aiSummary.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
+                    Icon(Icons.auto_awesome, size: 14, color: AppColors.primary),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(r.aiSummary,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: AppColors.textMuted, fontSize: 12)),
                     ),
                   ],
@@ -251,7 +251,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
             ),
           const SizedBox(width: 8),
           Text('$rating из 5',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
         ],
       );
 

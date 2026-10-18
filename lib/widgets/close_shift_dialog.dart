@@ -211,7 +211,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                   ]),
                   if (error != null) ...[
                     const SizedBox(height: 8),
-                    Text(error, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+                    Text(error, style: TextStyle(color: AppColors.danger, fontSize: 13)),
                   ],
                 ],
               ),

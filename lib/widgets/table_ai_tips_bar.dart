@@ -102,7 +102,7 @@ class _TableAiTipsBarState extends State<TableAiTipsBar> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.auto_awesome, size: 18, color: AppColors.primary),
+          Icon(Icons.auto_awesome, size: 18, color: AppColors.primary),
           const SizedBox(width: 10),
           Expanded(
             child: SizedBox(
@@ -115,12 +115,12 @@ class _TableAiTipsBarState extends State<TableAiTipsBar> {
                   final t = _tips[i];
                   return ActionChip(
                     backgroundColor: AppColors.selection,
-                    side: const BorderSide(color: AppColors.border),
+                    side: BorderSide(color: AppColors.border),
                     onPressed: () => _add(t),
                     label: Text(
                       '${t.name}${t.price > 0 ? ' · ${rub(t.price)}' : ''}'
                       '${t.reason.isEmpty ? '' : ' — ${t.reason}'}',
-                      style: const TextStyle(color: AppColors.textPrimary, fontSize: 12),
+                      style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
                     ),
                   );
                 },
@@ -129,7 +129,7 @@ class _TableAiTipsBarState extends State<TableAiTipsBar> {
           ),
           IconButton(
             tooltip: 'Скрыть подсказки',
-            icon: const Icon(Icons.close, size: 18, color: AppColors.textMuted),
+            icon: Icon(Icons.close, size: 18, color: AppColors.textMuted),
             onPressed: () => setState(() => _dismissed = true),
           ),
         ],

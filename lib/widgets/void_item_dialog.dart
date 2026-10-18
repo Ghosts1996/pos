@@ -103,7 +103,7 @@ class _VoidDialogState extends State<_VoidDialog> {
           Text('${widget.line.displayName} · ${rub(widget.line.price)}',
               style: const TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          const Text('Её уже готовят — отмена попадёт в журнал кассы.',
+          Text('Её уже готовят — отмена попадёт в журнал кассы.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           const SizedBox(height: 12),
           Wrap(
@@ -141,7 +141,7 @@ class _VoidDialogState extends State<_VoidDialog> {
           if (_error.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(_error, style: const TextStyle(color: AppColors.danger)),
+              child: Text(_error, style: TextStyle(color: AppColors.danger)),
             ),
         ],
       ),

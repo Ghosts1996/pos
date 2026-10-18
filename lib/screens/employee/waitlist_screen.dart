@@ -40,7 +40,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
             final list = snap.data!;
             if (list.isEmpty) {
-              return const Center(
+              return Center(
                 child: Text('Очереди нет — столы есть',
                     style: TextStyle(color: AppColors.textMuted)),
               );
@@ -85,7 +85,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
               CircleAvatar(
                 radius: 16,
                 backgroundColor: AppColors.selection,
-                child: Text('$position', style: const TextStyle(color: AppColors.textPrimary)),
+                child: Text('$position', style: TextStyle(color: AppColors.textPrimary)),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -93,7 +93,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${e.guestName} · ${e.guestsCount} чел.',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.w600)),
@@ -115,7 +115,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
           if (e.comment.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('«${e.comment}»',
-                style: const TextStyle(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
+                style: TextStyle(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
           ],
           const SizedBox(height: 10),
           Wrap(
@@ -136,7 +136,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
               ),
               TextButton(
                 onPressed: () => _service.markLeft(e.id),
-                child: const Text('Ушёл', style: TextStyle(color: AppColors.danger)),
+                child: Text('Ушёл', style: TextStyle(color: AppColors.danger)),
               ),
             ],
           ),

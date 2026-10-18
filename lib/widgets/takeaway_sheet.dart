@@ -145,8 +145,8 @@ class TakeawaySheet extends StatelessWidget {
                     );
                   }
                   if (list.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 24),
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
                       child: Text('Открытых заказов нет',
                           textAlign: TextAlign.center, style: TextStyle(color: AppColors.textMuted)),
                     );
