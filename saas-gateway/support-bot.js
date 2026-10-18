@@ -66,6 +66,7 @@ const SLA_MS = 15 * 60 * 1000;
 const LEARN_SWEEP_MS = 5 * 60 * 1000;
 const CLIENT_RATE = { max: 20, windowMs: 60 * 1000 };
 const DEFAULT_POLICY_URL = "https://zalpos.ru/#/legal/privacy";
+const TIER_LABEL = { light: "лёгкая модель", medium: "обычная модель", heavy: "сильная модель", max: "самая сильная модель", vision: "модель с картинками" };
 const RU_ONLY_NOTICE = [
   "👋 <b>Поддержка ZalPOS работает в личном кабинете</b>",
   "",
@@ -1001,11 +1002,17 @@ function createSupportBot(deps) {
   // ---- учёт расхода ИИ (на сутки, по МСК)
 
   const today = () => new Date(now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-  function countUsage(tokens, p = null, heavy = false) {
+  function countUsage(tokens, p = null, heavy = false, { tier = "", cost = 0 } = {}) {
     const day = today();
     if (state.usage.day !== day) state.usage = { day, calls: 0, tokens: 0, heavy: 0, byProvider: {} };
     state.usage.calls += 1;
     state.usage.tokens += Number(tokens) || 0;
+    // С баланса Tooken списывается токены × коэффициент модели.
+    state.usage.balance = (Number(state.usage.balance) || 0) + (Number(cost) || Number(tokens) || 0);
+    if (tier) {
+      const bt = state.usage.byTier || (state.usage.byTier = {});
+      bt[tier] = (Number(bt[tier]) || 0) + 1;
+    }
     if (heavy) state.usage.heavy = (Number(state.usage.heavy) || 0) + 1;
     if (p) {
       const bp = state.usage.byProvider || (state.usage.byProvider = {});
@@ -1046,7 +1053,7 @@ function createSupportBot(deps) {
       }
     },
     onSwitch: (from, to) => alertAdmins(`sw:${from.id}:${to.id}`, `🔁 <b>ИИ переключился</b>: ${h(from.title)} → ${h(to.title)}. Клиенты ничего не заметили.`),
-    onUsage: (p, model, tokens, heavy) => countUsage(tokens, p, heavy),
+    onUsage: (p, model, tokens, heavy, extra = {}) => countUsage(tokens, p, heavy, extra),
   });
 
   /** Ответ ИИ целиком: текст, провайдер, модель. tier — light | heavy. */
@@ -1054,7 +1061,7 @@ function createSupportBot(deps) {
     const mode = routing();
     const t = mode === "heavy" ? "heavy" : mode === "light" ? "light" : tier;
     try {
-      return { ...(await router.complete(providers(), messages, { tier: t, maxTokens: t === "heavy" ? Math.max(maxTokens, 900) : maxTokens, temperature })), tier: t };
+      return { ...(await router.complete(providers(), messages, { tier: t, maxTokens: t === "heavy" || t === "max" ? Math.max(maxTokens, 900) : maxTokens, temperature })), tier: t };
     } catch (e) {
       if (e.all) alertAdmins("all-down", `🔴 <b>ИИ не отвечает</b> — все ключи недоступны.\n<i>${h(clip(e.message, 500))}</i>\nОбращения уходят людям.`, 3600 * 1000);
       throw e;
@@ -1063,10 +1070,13 @@ function createSupportBot(deps) {
   const ai = async (messages, opts) => (await aiFull(messages, opts)).text;
 
   /** Модели не указаны — спрашиваем список у провайдера и выбираем сами. */
+  /** Модели по ступеням сложности — из списка провайдера. Лёгкую и сильную,
+   *  вписанные вручную, не трогаем: подбираем только недостающие ступени. */
   async function autoModels(list) {
     const out = [];
     for (const p of list) {
-      if (p.chosen || !state.aiKeys.get(p.id)) {
+      const complete = p.chosen && p.medium && p.max;
+      if (complete || !state.aiKeys.get(p.id)) {
         out.push(p);
         continue;
       }
@@ -1075,9 +1085,12 @@ function createSupportBot(deps) {
         picked = aiMod.pickModels(await router.listModels(p), p.vendor);
       } catch (_) {
         const def = aiMod.VENDORS[p.vendor] || {};
-        picked = { light: def.light || "", heavy: def.heavy || def.light || "" };
+        const fb = def.fallback || {};
+        picked = { light: def.light || fb.light || "", heavy: def.heavy || fb.heavy || def.light || fb.light || "", medium: "", max: "", vision: "" };
       }
-      out.push({ ...p, light: picked.light || p.light, heavy: picked.heavy || p.heavy, chosen: true });
+      const light = p.chosen ? p.light : picked.light || p.light;
+      const heavy = p.chosen ? p.heavy : picked.heavy || p.heavy;
+      out.push({ ...p, light, heavy, medium: picked.medium || light, max: picked.max || heavy, vision: picked.vision || "", chosen: true, manual: p.manual || p.chosen });
     }
     return out;
   }
@@ -1487,7 +1500,7 @@ function createSupportBot(deps) {
     let used;
     try {
       // Низкая температура — меньше фантазии в путях и названиях кнопок.
-      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack }), temperature: 0.15 });
+      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack, sure, lastTier: t.lastTier || "" }), temperature: 0.15 });
       reply = parseAiReply(used.text);
       reply.text = guardReply(reply.text);
       reply.md = guardReply(reply.md);
@@ -1513,9 +1526,9 @@ function createSupportBot(deps) {
     const docNote = t.channel !== "telegram" && reply.docs.length
       ? `\n\n📄 Документы для скачивания (Word, ссылки действуют 7 дней):\n${reply.docs.map((id) => `• ${DOCS.find((d) => d.id === id).title}: ${docLink(t, id)}`).join("\n")}` : "";
     await deliver(t, `${reply.text}${docNote}`, { markup, html: mdToHtml(reply.md), md: `${reply.md}${docNote}` });
-    await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id) });
+    await patch(t, { aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id), lastTier: used.tier || "" });
     for (const d of learned) quiet(knowledgeCol().doc(d.id).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
-    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${used.tier === "heavy" ? " · сильная модель" : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
+    const aiNote = await toTopicHtml(t, `🤖 <b>ИИ ответил клиенту</b> <i>· ${h(used.provider.title)} · ${h(used.model)}${TIER_LABEL[used.tier] ? ` · ${TIER_LABEL[used.tier]}` : ""}</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>${guide.length ? `\n\n📖 <i>${h(guide.slice(0, 3).map((d) => d.title.split(" → ").pop()).join(" · "))}</i>` : ""}${learned.length ? ` · 📚 ${learned.length}` : ""}${webData ? `\n🌐 <i>${h([...new Set(webData.pages.map((p) => domainOf(p.url)))].join(" · ") || "искал в интернете")}</i>` : ""}`, { reply_markup: topicKeyboard(t) });
     await movePanel(t, aiNote);
     if (reply.escalate) await escalate(t, reply.reason, { tellClient: false });
     else if (deceit >= DECEIT_LIMIT && wary) await escalate(t, "несколько попыток обойти правила — нужен человек", { tellClient: false });
@@ -1523,13 +1536,20 @@ function createSupportBot(deps) {
 
   /** Модель под задачу: сильная — для законов, расчётов, скриншотов, ответов по
    *  найденному в интернете, недовольства и долгих диалогов; иначе лёгкая. */
-  function pickTier({ question, history, images, web: usedWeb, askedBack: answering }) {
+  /** Ступень модели под вопрос — дешевле, где хватает, сильнее, где нужно:
+   *  light  — короткий вопрос с готовым ответом в знаниях;
+   *  medium — обычный ответ;
+   *  heavy  — законы и расчёты, найденное в интернете, недовольство, долгий разговор;
+   *  max    — сильная модель уже отвечала, а клиент всё ещё недоволен. */
+  function pickTier({ question, history, images, web: usedWeb, askedBack: answering, sure = false, lastTier = "" }) {
     const mode = routing();
     if (mode === "light" || mode === "heavy") return mode;
-    if (aiMod.needsHeavy(question, history) || images || usedWeb) return "heavy";
-    if (UNHAPPY.test(norm(question))) return "heavy";
+    const unhappy = UNHAPPY.test(norm(question));
+    if (unhappy && (lastTier === "heavy" || lastTier === "max")) return "max";
+    if (aiMod.needsHeavy(question, history) || images || usedWeb || unhappy) return "heavy";
     if (answering && history.filter((m) => m.authorRole === "ai").length >= 2) return "heavy";
-    return "light";
+    if (sure && question.length < 160) return "light";
+    return "medium";
   }
 
   /** Нужен ли интернет: ИИ сам решает по вопросу (планировщик на лёгкой
@@ -2810,7 +2830,7 @@ function createSupportBot(deps) {
               { type: "text", text: `Что на скриншоте${m.text ? `? Клиент пишет: «${clip(scrubPii(m.text), 300)}»` : "?"}` },
               { type: "image_url", image_url: { url: `data:${file.type};base64,${file.buffer.toString("base64")}` } },
             ] },
-          ], { tier: "light", maxTokens: 400, temperature: 0.1, soft: true });
+          ], { tier: "vision", maxTokens: 400, temperature: 0.1, soft: true });
           const desc = clip(guardReply(scrubPii(maskSecrets(plain(r.text)))), 900);
           if (!desc) continue;
           a.desc = desc;
@@ -3026,7 +3046,8 @@ function createSupportBot(deps) {
   async function pickModelsNow() {
     const cur = providers();
     const next = await autoModels(cur);
-    if (JSON.stringify(next.map((p) => [p.light, p.heavy])) === JSON.stringify(cur.map((p) => [p.light, p.heavy]))) return;
+    const sig = (l) => JSON.stringify(l.map((p) => [p.light, p.medium, p.heavy, p.max, p.vision]));
+    if (sig(next) === sig(cur)) return;
     const ai = { ...(state.cfg.ai || {}), providers: next.map(({ title, chosen, ...p }) => p) };
     await cfgRef().set({ ai }, { merge: true });
     await reload();
@@ -3060,6 +3081,7 @@ function createSupportBot(deps) {
           const u = ((state.usage.day === today() && state.usage.byProvider) || {})[p.id] || { calls: 0, tokens: 0 };
           return {
             id: p.id, vendor: p.vendor, title: p.title, baseUrl: p.baseUrl, light: p.light, heavy: p.heavy, enabled: p.enabled,
+            medium: p.medium || "", max: p.max || "", vision: p.vision || "", manual: !!p.manual,
             hasKey: !!p.keyEnc, status: st ? { state: st.state, text: st.text, until: st.until || 0, lastOkAt: st.lastOkAt || 0, detail: st.detail || "", ms: st.ms || 0 } : null,
             usage: u,
           };
@@ -3274,6 +3296,8 @@ function createSupportBot(deps) {
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
     if (active()) setGroupCommands().catch(() => {});
+    // Ступени моделей ещё не подобраны (старые настройки) — подобрать по списку провайдера.
+    if (aiReady() && providers().some((p) => p.enabled && (!p.medium || !p.max))) pickModelsNow().catch((e) => console.error(`support-bot: подбор моделей: ${e.message || e}`));
     const dir = await db().collection("supportBot").doc("staffDir").get().catch(() => null);
     for (const [id, v] of Object.entries((dir && dir.data && dir.data()) || {})) state.staffDir[id] = { username: v.username || "", name: v.name || "" };
     setInterval(() => sweepSla().catch((e) => console.error(`support-bot: очередь сотрудников: ${e.message || e}`)), 60 * 1000).unref();

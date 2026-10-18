@@ -6487,6 +6487,7 @@ function watchSupportBotAdmin() {
                 <input class="f-sb-p" data-i="${i}" data-f="heavy" value="${esc(p.heavy || '')}" placeholder="${esc(v.heavy ? `авто: ${v.heavy}` : 'авто — выберет бот')}">
               </label>
             </div>
+            ${p.medium || p.max ? `<p class="small muted" style="margin:-4px 0 10px">Бот переключает модели по сложности вопроса: лёгкая — <b>${esc(p.light || '—')}</b>, обычная — <b>${esc(p.medium || '—')}</b>, сильная — <b>${esc(p.heavy || '—')}</b>, если не помогло — <b>${esc(p.max || '—')}</b>${p.vision ? `, скриншоты — <b>${esc(p.vision)}</b>` : ''}. Оставьте поля пустыми — бот подберёт лучшие по цене и качеству.</p>` : ''}
             <label class="field"><span>Адрес API${v.id === 'custom' ? '' : ' (необязательно)'}</span>
               <input class="f-sb-p" data-i="${i}" data-f="baseUrl" value="${esc(p.baseUrl && p.baseUrl !== v.baseUrl ? p.baseUrl : '')}" placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}">
             </label>
@@ -6518,7 +6519,7 @@ function watchSupportBotAdmin() {
         <button class="btn btn-primary" id="f-sb-save" ${saving ? 'disabled' : ''}>${saving ? 'Сохраняю…' : (s.connected ? 'Сохранить' : 'Подключить бота')}</button>
         ${s.connected ? `
           <p class="small muted" style="margin-top:10px">
-            Сегодня ИИ ответил ${Number(usage.calls) || 0} раз (${(Number(usage.tokens) || 0).toLocaleString('ru-RU')} токенов) ·
+            Сегодня ИИ ответил ${Number(usage.calls) || 0} раз (${(Number(usage.tokens) || 0).toLocaleString('ru-RU')} токенов${usage.balance ? `, с баланса ≈ ${Math.round(Number(usage.balance)).toLocaleString('ru-RU')}` : ''})${usage.byTier ? ` · ${['light', 'medium', 'heavy', 'max'].filter((k) => usage.byTier[k]).map((k) => `${{ light: 'лёгкая', medium: 'обычная', heavy: 'сильная', max: 'максимум' }[k]} ${usage.byTier[k]}`).join(', ')}` : ''} ·
             база решений: ${Number(s.knowledge) || 0} · статей в знаниях: ${Number(s.guideArticles) || 0} · файлов кода: ${Number(s.codeFiles) || 0}
           </p>` : ''}
         ${s.lastError ? `<p class="small" style="color:var(--danger)">Последняя ошибка: ${esc(s.lastError)}</p>` : ''}

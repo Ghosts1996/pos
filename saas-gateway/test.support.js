@@ -167,9 +167,18 @@ test("ИИ: старые настройки, автовыбор моделей, 
   const legacy = ai.normalizeProviders({ vendor: "tooken", baseUrl: "https://tooken.club/v1", model: "gpt-4o-mini", keyEnc: "v1:x" });
   assert.deepStrictEqual([legacy[0].id, legacy[0].light, legacy[0].heavy, legacy[0].format], ["p1", "gpt-4o-mini", "gpt-4o", "openai"]);
   assert.strictEqual(ai.normalizeProviders({ providers: [{ vendor: "anthropic", keyEnc: "k" }] })[0].format, "anthropic");
-  assert.deepStrictEqual(ai.pickModels(["text-embedding-3-small", "gpt-4o-2024-08-06", "gpt-4o", "gpt-4o-mini", "whisper-1"], "custom"), { light: "gpt-4o-mini", heavy: "gpt-4o" });
-  assert.deepStrictEqual(ai.pickModels(["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-1"], "custom"), { light: "claude-haiku-4-5-20251001", heavy: "claude-sonnet-4-5" });
-  assert.deepStrictEqual(ai.pickModels(["deepseek-chat", "deepseek-reasoner"], "deepseek"), { light: "deepseek-chat", heavy: "deepseek-reasoner" });
+  const lh = (x) => ({ light: x.light, heavy: x.heavy });
+  assert.deepStrictEqual(lh(ai.pickModels(["text-embedding-3-small", "gpt-4o-2024-08-06", "gpt-4o", "gpt-4o-mini", "whisper-1"], "custom")), { light: "gpt-4o-mini", heavy: "gpt-4o" });
+  assert.deepStrictEqual(lh(ai.pickModels(["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-1"], "custom")), { light: "claude-haiku-4-5-20251001", heavy: "claude-sonnet-4-5" });
+  assert.deepStrictEqual(lh(ai.pickModels(["deepseek-chat", "deepseek-reasoner"], "deepseek")), { light: "deepseek-chat", heavy: "deepseek-reasoner" });
+  // Tooken Club: по ступеням — лучшие по цене и качеству, дорогие (Fable, Argon) — никогда.
+  const tk = ai.pickModels(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-terra", "gpt-image-2.5-sunburst", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+    "claude-fable-5-1", "deepseek-v4.1-flash", "deepseek-v4-pro", "glm-5.3-flash", "glm-5.3", "grok-4.7", "gemini-4-argon", "gemini-3.8-flash"], "tooken");
+  assert.deepStrictEqual(tk, { light: "deepseek-v4.1-flash", medium: "gpt-6-luna", heavy: "claude-sonnet-5-5", max: "claude-opus-5-5", vision: "gemini-3.8-flash" });
+  assert.deepStrictEqual(ai.chainFor(tk, "max"), ["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6-luna"]);
+  assert.ok(ai.costOf("deepseek-v4.1-flash") < ai.costOf("gpt-6-luna") && ai.costOf("claude-opus-5-5") > ai.costOf("claude-sonnet-5-5"));
+  // Старые модели Tooken по умолчанию — не выбор человека: бот подберёт новые.
+  assert.strictEqual(legacy[0].chosen, false);
   assert.strictEqual(ai.needsHeavy("как добавить официанта"), false);
   assert.strictEqual(ai.needsHeavy("нужна ли лицензия на алкоголь и какой штраф"), true);
   assert.strictEqual(ai.needsHeavy("сравни тарифы и посчитай, что выгоднее"), true);

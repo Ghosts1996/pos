@@ -24,7 +24,9 @@ const AI_TIMEOUT_MS = 45000;
 const MAX_PROVIDERS = 8;
 
 const VENDORS = {
-  tooken: { title: "Tooken Club", baseUrl: "https://tooken.club/v1", format: "openai", light: "gpt-4o-mini", heavy: "gpt-4o", hint: "Ключ из кабинета tooken.club — один ключ к GPT, Claude и DeepSeek, оплата в рублях" },
+  // Модели Tooken Club бот выбирает сам по списку /v1/models (pickModels):
+  // лучшие по цене и качеству на каждую ступень сложности.
+  tooken: { title: "Tooken Club", baseUrl: "https://tooken.club/v1", format: "openai", light: "", heavy: "", fallback: { light: "gpt-4o-mini", heavy: "gpt-4o" }, hint: "Ключ из кабинета tooken.club — один ключ к GPT, Claude, DeepSeek, GLM и Gemini, оплата в рублях. Модели бот подберёт сам" },
   darkapi: { title: "DarkAPI", baseUrl: "https://darkapi.shop/v1", format: "openai", light: "deepseek-chat", heavy: "deepseek-chat", hint: "Ключ из кабинета darkapi.shop" },
   openrouter: { title: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", format: "openai", light: "openai/gpt-4o-mini", heavy: "openai/gpt-4o", hint: "Ключ из openrouter.ai/keys — сотни моделей по одному ключу" },
   deepseek: { title: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", format: "openai", light: "deepseek-chat", heavy: "deepseek-reasoner", hint: "Ключ из platform.deepseek.com" },
@@ -42,7 +44,7 @@ function normalizeProviders(ai) {
   let list = Array.isArray(a.providers) ? a.providers : [];
   if (!list.length && (a.keyEnc || a.baseUrl)) {
     const v = VENDORS[a.vendor] ? a.vendor : "custom";
-    list = [{ id: "p1", vendor: v, baseUrl: a.baseUrl || VENDORS[v].baseUrl, light: a.model || VENDORS[v].light, heavy: VENDORS[v].heavy || a.model || "", keyEnc: a.keyEnc || "", enabled: true }];
+    list = [{ id: "p1", vendor: v, baseUrl: a.baseUrl || VENDORS[v].baseUrl, light: a.model || VENDORS[v].light || (VENDORS[v].fallback || {}).light || "", heavy: VENDORS[v].heavy || (VENDORS[v].fallback || {}).heavy || a.model || "", keyEnc: a.keyEnc || "", enabled: true }];
   }
   return list.slice(0, MAX_PROVIDERS).map((p, i) => {
     const v = VENDORS[p.vendor] ? p.vendor : "custom";
@@ -53,21 +55,54 @@ function normalizeProviders(ai) {
       format: p.format === "anthropic" || (v === "anthropic" && p.format !== "openai") ? "anthropic" : "openai",
       // Не указали модели — проверенные модели провайдера; у «своего шлюза»
       // их нет, тогда бот подбирает по списку моделей (pickModels).
-      light: String(p.light || "").trim() || def.light, heavy: String(p.heavy || "").trim() || def.heavy || String(p.light || "").trim(),
-      chosen: !!(String(p.light || "").trim() && String(p.heavy || "").trim()),
+      light: String(p.light || "").trim() || def.light || (def.fallback || {}).light || "",
+      heavy: String(p.heavy || "").trim() || def.heavy || (def.fallback || {}).heavy || String(p.light || "").trim(),
+      // Ступени, которые бот подбирает сам (вписать вручную можно только лёгкую и сильную).
+      medium: String(p.medium || "").trim(), max: String(p.max || "").trim(), vision: String(p.vision || "").trim(),
+      // Старые модели Tooken по умолчанию (gpt-4o-mini / gpt-4o) — не выбор
+      // человека: бот заменит их лучшими из нынешнего списка.
+      chosen: !!(String(p.light || "").trim() && String(p.heavy || "").trim())
+        && !(v === "tooken" && p.light === "gpt-4o-mini" && p.heavy === "gpt-4o" && !p.manual),
+      manual: !!p.manual,
       keyEnc: p.keyEnc || "", enabled: p.enabled !== false,
     };
   });
 }
 
-// Как узнать «лёгкую» и «сильную» модель по названию из списка провайдера.
-const LIGHT_PREF = [/claude-haiku/, /gpt-4\.1-mini/, /gpt-4o-mini/, /gpt-5-mini/, /gemini[\w.-]*flash(?![\w.-]*lite)/, /deepseek-chat/, /qwen[\w.-]*(turbo|plus)/, /llama[\w.-]*(8b|70b)/, /mini/, /flash/];
-const HEAVY_PREF = [/claude-sonnet/, /gpt-5(?![\w.-]*(mini|nano))/, /gpt-4\.1(?![\w.-]*(mini|nano))/, /gpt-4o(?![\w.-]*mini)/, /gemini[\w.-]*pro/, /deepseek-(chat|v3)/, /qwen[\w.-]*max/, /claude-opus/, /llama[\w.-]*405b/];
-const SKIP = /(embed|whisper|tts|audio|image|dall|vision-preview|moderation|search|realtime|transcribe|instruct|davinci|babbage|-0301|-0314)/;
+// Ступени сложности и модели на каждую — лучшие по цене и качеству (по
+// коэффициентам Tooken Club: DeepSeek V4.1 Flash ×0,3, GPT-6 Luna ×0,5,
+// Claude Sonnet 5.5 ×1,2, Claude Opus 5.5 ×1,8, Gemini 3.8 Flash ×1):
+//  light  — короткие ответы по готовому шаблону, разбор вопроса, сжатие переписки;
+//  medium — обычный ответ клиенту;
+//  heavy  — законы, расчёты, найденное в интернете, недовольство, обман;
+//  max    — сильная модель не помогла, а клиент всё ещё недоволен;
+//  vision — посмотреть скриншот.
+// Дорогие модели (Claude Fable ×2,5, Gemini 4 Argon ×2,6) бот сам не берёт.
+const TIER_PREF = {
+  light: [/deepseek[\w.-]*v4\.?1[\w.-]*flash/, /deepseek[\w.-]*flash/, /glm[\w.-]*flash/, /gpt-?6[\w.-]*luna/, /claude[\w.-]*haiku/, /gpt-4\.1-mini/, /gpt-4o-mini/, /gpt-5-mini/, /gemini[\w.-]*flash(?![\w.-]*lite)/, /deepseek-chat/, /qwen[\w.-]*(turbo|plus)/, /mini/, /flash/],
+  medium: [/gpt-?6[\w.-]*luna/, /claude[\w.-]*haiku/, /deepseek[\w.-]*v4[\w.-]*pro/, /glm[\w.-]*5\.?3(?![\w.-]*flash)/, /gpt-?5\.6[\w.-]*terra/, /gemini[\w.-]*flash/, /gpt-4o-mini/, /deepseek-chat/],
+  heavy: [/claude[\w.-]*sonnet/, /gpt-?6\.1[\w.-]*sol/, /deepseek[\w.-]*v4[\w.-]*pro/, /gpt-?5\.6[\w.-]*terra/, /gpt-5(?![\w.-]*(mini|nano))/, /gpt-4\.1(?![\w.-]*(mini|nano))/, /gpt-4o(?![\w.-]*mini)/, /gemini[\w.-]*pro/, /deepseek-(chat|v3)/, /qwen[\w.-]*max/, /llama[\w.-]*405b/],
+  max: [/claude[\w.-]*opus/, /gpt-?6(?![\w.-]*(luna|\.1))[\w.-]*astra/, /claude[\w.-]*sonnet/, /gpt-?6\.1[\w.-]*sol/],
+  vision: [/gemini[\w.-]*flash(?![\w.-]*lite)/, /gpt-?6[\w.-]*luna/, /claude[\w.-]*haiku/, /gpt-4o-mini/, /claude[\w.-]*sonnet/, /gpt-?6\.1/, /gpt-4o/],
+};
+// Не берём сами: дорогие и не для текста.
+const PRICEY = /(fable|argon)/;
+const LIGHT_PREF = TIER_PREF.light;
+const HEAVY_PREF = TIER_PREF.heavy;
+const SKIP = /(embed|whisper|tts|audio|image|dall|vision-preview|moderation|search|realtime|transcribe|instruct|davinci|babbage|-0301|-0314|sunburst)/;
+
+/** Коэффициент списания у Tooken Club (×токены) — для учёта расхода баланса. */
+const COST = [[/fable/, 2.5], [/argon/, 2.6], [/opus/, 1.8], [/astra/, 1.8], [/sonnet/, 1.2], [/sol/, 1.2], [/haiku/, 0.7], [/terra/, 0.8], [/grok/, 0.8],
+  [/luna/, 0.5], [/deepseek[\w.-]*pro/, 0.4], [/glm[\w.-]*flash/, 0.3], [/glm/, 0.4], [/deepseek[\w.-]*flash/, 0.3], [/gemini[\w.-]*flash/, 1]];
+const costOf = (model) => {
+  const m = String(model || "").toLowerCase();
+  const hit = COST.find(([re]) => re.test(m));
+  return hit ? hit[1] : 1;
+};
 
 /** Из списка моделей провайдера — лёгкая и сильная. Короткое имя (без даты) предпочтительнее. */
 function pickModels(ids, vendor = "custom") {
-  const all = [...new Set((ids || []).map(String))].filter((id) => !SKIP.test(id.toLowerCase()));
+  const all = [...new Set((ids || []).map(String))].filter((id) => !SKIP.test(id.toLowerCase()) && !PRICEY.test(id.toLowerCase()));
   const pick = (prefs) => {
     for (const re of prefs) {
       const hits = all.filter((id) => re.test(id.toLowerCase())).sort((a, b) => a.length - b.length);
@@ -76,9 +111,24 @@ function pickModels(ids, vendor = "custom") {
     return "";
   };
   const def = VENDORS[vendor] || VENDORS.custom;
-  const light = (def.light && all.includes(def.light) ? def.light : pick(LIGHT_PREF)) || all[0] || def.light;
-  const heavy = (def.heavy && all.includes(def.heavy) ? def.heavy : pick(HEAVY_PREF)) || light;
-  return { light, heavy };
+  const light = (def.light && all.includes(def.light) ? def.light : pick(TIER_PREF.light)) || all[0] || def.light || (def.fallback || {}).light || "";
+  const heavy = (def.heavy && all.includes(def.heavy) ? def.heavy : pick(TIER_PREF.heavy)) || (all.length ? "" : (def.fallback || {}).heavy) || light;
+  const medium = pick(TIER_PREF.medium) || light;
+  const max = pick(TIER_PREF.max) || heavy;
+  const vision = pick(TIER_PREF.vision) || "";
+  return { light, medium, heavy, max, vision };
+}
+
+/** Модели по порядку для ступени: нужная, потом соседние (если её нет или она отдыхает). */
+function chainFor(p, tier) {
+  const order = {
+    light: [p.light, p.medium, p.heavy],
+    medium: [p.medium, p.light, p.heavy],
+    heavy: [p.heavy, p.medium, p.light],
+    max: [p.max, p.heavy, p.medium],
+    vision: [p.vision, p.medium, p.light, p.heavy],
+  }[tier] || [p.light, p.heavy];
+  return [...new Set(order.filter(Boolean))];
 }
 
 /** Вопрос сложный — сильная модель. Признаки, без запроса к ИИ. */
@@ -194,9 +244,7 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
         errors.push(`${p.title}: ${(status.get(p.id) || {}).text || "отдыхает"}`);
         continue;
       }
-      const want = tier === "heavy" ? p.heavy || p.light : p.light || p.heavy;
-      const other = tier === "heavy" ? p.light : p.heavy;
-      const models = [...new Set([want, other].filter(Boolean))];
+      const models = chainFor(p, tier);
       if (!models.length) continue;
       for (let i = 0; i < models.length; i++) {
         try {
@@ -204,9 +252,9 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
           const st = { state: "ok", text: "работает", until: 0, lastOkAt: now(), lastModel: models[i] };
           status.set(p.id, st);
           onStatus(p, st);
-          onUsage(p, models[i], r.tokens, tier === "heavy" && models[i] === p.heavy && p.heavy !== p.light);
+          onUsage(p, models[i], r.tokens, (tier === "heavy" || tier === "max") && models[i] !== p.light, { tier, cost: Math.round((Number(r.tokens) || 0) * costOf(models[i])) });
           if (first && first.id !== p.id) onSwitch(first, p, errors[errors.length - 1] || "");
-          return { text: r.text, provider: p, model: models[i], tokens: r.tokens };
+          return { text: r.text, provider: p, model: models[i], tokens: r.tokens, tier };
         } catch (e) {
           const c = classifyError(e.status, e.message);
           errors.push(`${p.title} (${models[i]}): ${c.text}`);
@@ -266,4 +314,4 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
   return { complete, listModels, check, status, restore: (id, st) => status.set(id, st) };
 }
 
-module.exports = { VENDORS, MAX_PROVIDERS, normalizeProviders, pickModels, needsHeavy, classifyError, toAnthropic, createAiRouter };
+module.exports = { VENDORS, MAX_PROVIDERS, TIER_PREF, normalizeProviders, pickModels, chainFor, costOf, needsHeavy, classifyError, toAnthropic, createAiRouter };
