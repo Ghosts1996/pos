@@ -22,7 +22,7 @@ Future<bool> confirmVoid(
   required String sessionId,
   String tableName = '',
 }) async {
-  final approved = await showDialog<(String, String)>(
+  final approved = await showDialog<(String, String, bool)>(
     context: context,
     builder: (_) => _VoidDialog(employee: employee, line: line),
   );
@@ -33,8 +33,23 @@ Future<bool> confirmVoid(
     sessionId: sessionId,
     tableName: tableName,
     amount: line.price,
-    details: {'item': line.displayName, 'qty': 1, 'reason': approved.$1, 'approvedBy': Pd.who(approved.$2)},
+    details: {
+      'item': line.displayName,
+      'qty': 1,
+      'reason': approved.$1,
+      'approvedBy': Pd.who(approved.$2),
+      if (approved.$3) 'stockWrittenOff': true,
+    },
   );
+  // Блюдо уже приготовили — продукты потрачены, списываем по рецепту:
+  // иначе при оплате оно не спишется (его нет в чеке) и склад «поплывёт».
+  if (approved.$3) {
+    try {
+      await FirestoreService().writeOffVoidedItem(line, why: approved.$1, employeeName: employee.name);
+    } catch (_) {
+      // Списание — учёт; отмену позиции оно не блокирует.
+    }
+  }
   return true;
 }
 
@@ -54,6 +69,8 @@ class _VoidDialogState extends State<_VoidDialog> {
   final _pin = TextEditingController();
   String _error = '';
   bool _busy = false;
+  // Уже начали готовить или приготовили — продукты, скорее всего, потрачены.
+  late bool _writeOff = widget.line.ready > 0 || widget.line.accepted > 0;
 
   bool get _selfApproves => widget.employee.role == 'admin';
 
@@ -81,7 +98,7 @@ class _VoidDialogState extends State<_VoidDialog> {
       }
       approver = admin.name;
     }
-    if (mounted) Navigator.of(context).pop((_finalReason, approver));
+    if (mounted) Navigator.of(context).pop((_finalReason, approver, _writeOff));
   }
 
   @override
@@ -127,6 +144,14 @@ class _VoidDialogState extends State<_VoidDialog> {
               maxLength: 80,
               decoration: const InputDecoration(labelText: 'Причина'),
             ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _writeOff,
+            onChanged: (v) => setState(() => _writeOff = v),
+            title: const Text('Продукты уже потрачены — списать со склада'),
+            subtitle: const Text('По рецепту блюда. Выключите, если ещё не начали готовить',
+                style: TextStyle(fontSize: 12)),
+          ),
           if (!_selfApproves) ...[
             const SizedBox(height: 8),
             TextField(

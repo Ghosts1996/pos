@@ -113,12 +113,9 @@ class AutoStopListService {
       if (inv.quantity < needInStockUnit) missing.add(inv.name);
     }
 
-    if (item.isComposite) {
-      for (final c in item.components) {
-        check(c.inventoryItemId, c.weight, c.weightUnit);
-      }
-    } else if (item.hasInventoryLink) {
-      check(item.inventoryItemId, item.weight, item.weightUnit);
+    // На порцию: брутто с отходом, делённое на число порций рецепта.
+    for (final c in item.perPortion) {
+      check(c.inventoryItemId, c.weight, c.weightUnit);
     }
     return missing;
   }

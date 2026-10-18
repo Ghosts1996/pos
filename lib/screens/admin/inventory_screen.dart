@@ -6,14 +6,15 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import 'inventory_item_detail_screen.dart';
 import 'inventory_count_screen.dart';
+import 'recipes_tab.dart';
 import '../../utils/adaptive.dart';
 
 /// Склад — отдельный от меню раздел админки. Позиции полностью
 /// произвольные (заводит и убирает сам админ) и покрывают что угодно:
 /// граммовку табака, литры/мл сиропов и алкоголя, штуки банок пива, угли,
-/// расходники и т.д. Два раздела: "Остатки" (справочник + история
-/// движений по каждой позиции) и "Инвентаризация" (периодическая сверка
-/// фактических остатков со системными).
+/// расходники и т.д. Три раздела: "Остатки" (справочник + история
+/// движений по каждой позиции), "Рецепты" (что списывает каждое блюдо меню)
+/// и "Инвентаризация" (периодическая сверка фактических остатков с системными).
 class InventoryScreen extends StatelessWidget {
   final Employee employee;
   const InventoryScreen({super.key, required this.employee});
@@ -57,7 +58,7 @@ class InventoryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Склад'),
@@ -71,6 +72,7 @@ class InventoryScreen extends StatelessWidget {
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Остатки'),
+              Tab(text: 'Рецепты'),
               Tab(text: 'Инвентаризация'),
             ],
           ),
@@ -80,6 +82,7 @@ class InventoryScreen extends StatelessWidget {
           child: TabBarView(
             children: [
               _StockTab(employee: employee),
+              const RecipesTab(),
               _CountTab(employee: employee),
             ],
           ),
@@ -354,6 +357,7 @@ class _ItemTile extends StatelessWidget {
       title: Text(item.name, style: TextStyle(color: dimmed ? AppColors.textMuted : null)),
       subtitle: Text(
         [
+          if (item.isPrepared) 'заготовка',
           if (item.minQuantity > 0) 'мин. ${item.unit.formatWithLabel(item.minQuantity)}',
           if (item.costPrice > 0) '${item.costPrice.toStringAsFixed(0)} ₽/${item.unit.priceUnit.label}',
           if (dimmed) 'отключена',

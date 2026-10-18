@@ -1406,6 +1406,24 @@ test("тарифы: подбор и смена тарифа — в знания�
   assert.ok(/Сотрудников 7 из 10 по тарифу/.test(card), card);
 });
 
+test("склад: рецепты, заготовки, списания, инвентаризация — бот находит нужную статью", async () => {
+  const h = harness();
+  await setup(h);
+  const top = (q) => sb.rankDocs(q, h.bot._state.guide, 3).map((d) => d.id);
+  const cases = [
+    ["Как сделать чтобы при продаже супа списывались ингредиенты со склада", "kb:stock-recipes"],
+    ["Как добавить техкарту на борщ на 20 порций", "kb:stock-recipes"],
+    ["Мы варим бульон заранее кастрюлей как это учитывать", "kb:stock-prepared"],
+    ["Как списать испорченные продукты и питание персонала", "kb:stock-writeoffs"],
+    ["После инвентаризации недостача по табаку что проверить", "kb:stock-count"],
+    ["Склад не списывается когда продаём", "kb:stock-troubleshoot"],
+    ["С чего начать вести склад", "kb:stock-setup"],
+  ];
+  for (const [q, id] of cases) assert.ok(top(q).includes(id), `${q} → ${top(q).join(", ")}`);
+  const doc = h.bot._state.guide.find((d) => d.id === "kb:stock-recipes");
+  assert.ok(/Отход при обработке/.test(doc.text) && /Рецепт на сколько порций/.test(doc.text));
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

@@ -58,44 +58,60 @@ class MenuCategory {
       );
 }
 
-/// Один компонент составной позиции меню (например, "Тарелка Снэков":
-/// орешки 50 г + чипсы 75 г + сухарики 75 г).
-/// При продаже для каждого компонента списывается weight × qty со склада.
+/// Одна строка рецепта (техкарты): продукт склада и сколько его идёт в
+/// блюдо. Пример — борщ: свёкла 50 г, говядина 60 г, бульон 250 мл.
+/// При продаже со склада списывается [grossWeight] × количество.
 class MenuItemComponent {
   /// ID позиции склада (InventoryItem).
   final String inventoryItemId;
 
-  /// Граммовка/объём этого компонента в единицах [weightUnit].
+  /// Сколько продукта идёт в блюдо (нетто) в единицах [weightUnit].
   final double weight;
   final InventoryUnit weightUnit;
+
+  /// Отход при обработке, %: очистка овощей, разделка мяса, уварка. Со
+  /// склада уходит брутто = нетто / (1 − отход). 0 — списывается ровно
+  /// [weight] (так работали все рецепты до появления поля).
+  final double lossPercent;
 
   MenuItemComponent({
     required this.inventoryItemId,
     required this.weight,
     this.weightUnit = InventoryUnit.g,
+    this.lossPercent = 0,
   });
+
+  /// Брутто — сколько взять со склада, с учётом отхода.
+  double get grossWeight {
+    final loss = lossPercent.clamp(0, 95).toDouble();
+    return loss <= 0 ? weight : weight / (1 - loss / 100);
+  }
 
   factory MenuItemComponent.fromMap(Map<String, dynamic> data) => MenuItemComponent(
         inventoryItemId: data['inventoryItemId'] as String? ?? '',
         weight: (data['weight'] as num?)?.toDouble() ?? 0,
         weightUnit: InventoryUnitX.fromName(data['weightUnit'] as String?),
+        lossPercent: ((data['lossPercent'] as num?)?.toDouble() ?? 0).clamp(0, 95).toDouble(),
       );
 
   Map<String, dynamic> toMap() => {
         'inventoryItemId': inventoryItemId,
         'weight': weight,
         'weightUnit': weightUnit.name,
+        if (lossPercent > 0) 'lossPercent': lossPercent,
       };
 
   MenuItemComponent copyWith({
     String? inventoryItemId,
     double? weight,
     InventoryUnit? weightUnit,
+    double? lossPercent,
   }) =>
       MenuItemComponent(
         inventoryItemId: inventoryItemId ?? this.inventoryItemId,
         weight: weight ?? this.weight,
         weightUnit: weightUnit ?? this.weightUnit,
+        lossPercent: lossPercent ?? this.lossPercent,
       );
 }
 
@@ -209,6 +225,11 @@ class MenuItem {
   /// Пример: "Тарелка Снэков" = орешки 50 г + чипсы 75 г + сухарики 75 г.
   final List<MenuItemComponent> components;
 
+  /// На сколько порций записан рецепт [components]: повар пишет техкарту
+  /// на кастрюлю («говядина 3 кг … на 20 порций»), а при продаже одной
+  /// порции списывается 1/20. 1 — рецепт на одну порцию.
+  final int recipePortions;
+
   /// Ставка НДС позиции для фискального чека ('vat22', 'vat5', 'none'…,
   /// см. FiscalVatRate). Пусто — ставка заведения по умолчанию.
   final String vat;
@@ -252,6 +273,7 @@ class MenuItem {
     this.weightUnit = InventoryUnit.g,
     this.inventoryItemId = '',
     this.components = const [],
+    this.recipePortions = 1,
     this.vat = '',
     this.fiscalSubject = 'commodity',
     this.description = '',
@@ -288,23 +310,35 @@ class MenuItem {
     return '';
   }
 
-  /// Себестоимость порции по техкарте (без модификаторов), ₽: граммовка ×
+  /// Что уходит со склада на одну порцию: строки рецепта (брутто, делённое
+  /// на число порций рецепта) или простая привязка. Единый источник для
+  /// списания при продаже, проверки остатков, себестоимости и стоп-листа.
+  List<MenuItemComponent> get perPortion {
+    if (isComposite) {
+      final n = recipePortions < 1 ? 1 : recipePortions;
+      return [
+        for (final c in components)
+          if (c.inventoryItemId.isNotEmpty && c.weight > 0)
+            MenuItemComponent(inventoryItemId: c.inventoryItemId, weight: c.grossWeight / n, weightUnit: c.weightUnit),
+      ];
+    }
+    if (!hasInventoryLink) return const [];
+    return [MenuItemComponent(inventoryItemId: inventoryItemId, weight: weight, weightUnit: weightUnit)];
+  }
+
+  /// Себестоимость порции по техкарте (без модификаторов), ₽: брутто ×
   /// цена закупки продуктов склада [stock]. null — не всё посчитать: нет
   /// привязки к складу или цены закупки у какого-то продукта.
   double? costPrice(Map<String, InventoryItem> stock) {
-    if (isComposite) {
-      var sum = 0.0;
-      for (final c in components) {
-        final inv = stock[c.inventoryItemId];
-        if (inv == null || inv.costPrice <= 0) return null;
-        sum += inv.costOf(c.weight, c.weightUnit);
-      }
-      return sum;
+    final lines = perPortion;
+    if (lines.isEmpty) return null;
+    var sum = 0.0;
+    for (final c in lines) {
+      final inv = stock[c.inventoryItemId];
+      if (inv == null || inv.costPrice <= 0) return null;
+      sum += inv.costOf(c.weight, c.weightUnit);
     }
-    if (!hasInventoryLink) return null;
-    final inv = stock[inventoryItemId];
-    if (inv == null || inv.costPrice <= 0) return null;
-    return inv.costOf(weight, weightUnit);
+    return sum;
   }
 
   /// Фудкост, % от цены: себестоимость / цена. null — не посчитать.
@@ -346,6 +380,7 @@ class MenuItem {
       components: rawComponents
           .map((e) => MenuItemComponent.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList(),
+      recipePortions: ((data['recipePortions'] as num?)?.toInt() ?? 1).clamp(1, 10000),
       vat: (data['vat'] as String?) ?? '',
       fiscalSubject: (data['fiscalSubject'] as String?) ?? 'commodity',
       description: (data['description'] as String?) ?? '',
@@ -374,6 +409,7 @@ class MenuItem {
         'weightUnit': weightUnit.name,
         'inventoryItemId': inventoryItemId,
         'components': components.map((c) => c.toMap()).toList(),
+        'recipePortions': recipePortions,
         'modifierGroups': modifierGroups.map((g) => g.toMap()).toList(),
         'staffBonus': staffBonus,
       };
@@ -388,6 +424,7 @@ class MenuItem {
     InventoryUnit? weightUnit,
     String? inventoryItemId,
     List<MenuItemComponent>? components,
+    int? recipePortions,
     String? vat,
     String? fiscalSubject,
     String? description,
@@ -413,5 +450,6 @@ class MenuItem {
         weightUnit: weightUnit ?? this.weightUnit,
         inventoryItemId: inventoryItemId ?? this.inventoryItemId,
         components: components ?? this.components,
+        recipePortions: recipePortions ?? this.recipePortions,
       );
 }

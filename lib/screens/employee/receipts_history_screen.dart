@@ -100,30 +100,50 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
   }
 
   Future<void> _confirmRefund(SessionModel s) async {
+    var restock = false;
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        scrollable: true,
-        title: const Text('Возврат чека'),
-        content: Text(
-            'Оформить возврат чека на ${rub(s.totalWithDiscount)} '
-            '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'
-            '${s.paymentCash > 0 ? '\nНаличные ${rub(s.paymentCash)} будут списаны из кассы как возврат гостю.' : ''}'
-            '\nЕсли гость копит бонусы, кешбэк за этот чек спишется, а бонусы, '
-            'которыми он платил, вернутся на его счёт.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Оформить возврат'),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          scrollable: true,
+          title: const Text('Возврат чека'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Оформить возврат чека на ${rub(s.totalWithDiscount)} '
+                  '(${s.tableName})?\nЧек больше не будет учитываться в выручке отчётов.'
+                  '${s.paymentCash > 0 ? '\nНаличные ${rub(s.paymentCash)} будут списаны из кассы как возврат гостю.' : ''}'
+                  '\nЕсли гость копит бонусы, кешбэк за этот чек спишется, а бонусы, '
+                  'которыми он платил, вернутся на его счёт.'),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: restock,
+                onChanged: (v) => setSt(() => restock = v ?? false),
+                title: const Text('Вернуть продукты на склад'),
+                subtitle: const Text(
+                    'Если товар вернулся целым — закрытая бутылка, банка. Приготовленное блюдо обратно не возвращают',
+                    style: TextStyle(fontSize: 12)),
+              ),
+            ],
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Оформить возврат'),
+            ),
+          ],
+        ),
       ),
     );
     if (confirm != true) return;
     try {
       final done = await _fs.refundSession(s.id, employeeName: widget.employee.name, employeeId: widget.employee.id);
+      if (done && restock) {
+        await _fs.restockRefundedSession(s.id, employeeName: widget.employee.name).catchError((Object _) => 0);
+      }
       _load();
       final fiscalError = done && s.fiscalReceiptPrinted ? await _sendFiscalRefund(s) : null;
       if (!mounted) return;

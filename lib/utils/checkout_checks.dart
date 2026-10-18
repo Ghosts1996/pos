@@ -1,6 +1,7 @@
 import '../models/inventory_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
+import 'recipe_math.dart';
 
 /// Чего не хватает на складе, чтобы списать проданное по чеку.
 class StockShortage {
@@ -15,33 +16,13 @@ class StockShortage {
 }
 
 /// Сколько каждой позиции склада уйдёт по строкам чека — тем же правилом,
-/// что и списание после оплаты (FirestoreService._deductInventoryForSale):
-/// граммовка позиции меню или её компонентов в единицах склада × количество.
+/// что и списание после оплаты ([saleDraws]): рецепт, модификаторы, комбо.
 Map<String, double> stockNeeds(
   Iterable<OrderItem> items,
   Map<String, MenuItem> menu,
   Map<String, InventoryItem> stock,
-) {
-  final need = <String, double>{};
-  void add(String invId, double weight, InventoryUnit weightUnit, int qty) {
-    final inv = stock[invId];
-    if (invId.isEmpty || weight <= 0 || inv == null) return;
-    need[invId] = (need[invId] ?? 0) + weightUnit.convertTo(weight, inv.unit) * qty;
-  }
-
-  for (final line in items) {
-    final m = menu[line.menuItemId];
-    if (m == null || !m.hasAnyInventoryLink) continue;
-    if (m.isComposite) {
-      for (final c in m.components) {
-        add(c.inventoryItemId, c.weight, c.weightUnit, line.qty);
-      }
-    } else {
-      add(m.inventoryItemId, m.weight, m.weightUnit, line.qty);
-    }
-  }
-  return need;
-}
+) =>
+    {for (final d in saleDraws(items, menu, stock).values) d.inventoryItemId: d.qty};
 
 /// Позиции склада, остатка которых не хватает на чек. Выключенные из учёта
 /// не проверяем.

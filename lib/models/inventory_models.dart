@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'egais_models.dart';
+import 'menu_models.dart' show MenuItemComponent;
 import '../services/people_directory.dart';
 
 /// Единицы измерения остатков склада. Одного набора достаточно, чтобы вести
@@ -104,6 +105,20 @@ extension InventoryUnitX on InventoryUnit {
 
   String formatWithLabel(double value) => '${format(value)} $label';
 
+  /// Масса с массой, объём с объёмом, штуки со штуками. Остальные пары
+  /// не переводятся: «50 г» яйца со склада в штуках списало бы 50 шт.
+  bool compatibleWith(InventoryUnit other) => family == other.family;
+
+  /// 0 — масса, 1 — объём, 2 — штуки.
+  int get family => switch (this) {
+        InventoryUnit.g || InventoryUnit.kg => 0,
+        InventoryUnit.ml || InventoryUnit.l => 1,
+        InventoryUnit.pcs => 2,
+      };
+
+  /// Единицы, в которых можно записать продукт со склада в этой единице.
+  List<InventoryUnit> get compatibleUnits => InventoryUnit.values.where(compatibleWith).toList();
+
   /// В чём удобно задавать цену закупки: граммы — за кг, мл — за литр.
   InventoryUnit get priceUnit => this == InventoryUnit.g
       ? InventoryUnit.kg
@@ -159,6 +174,15 @@ class InventoryItem {
   /// 0 — не задана: себестоимость блюд с этим продуктом не считается.
   final double costPrice;
 
+  /// Рецепт заготовки (полуфабриката): бульон, соус, тесто, борщ кастрюлей.
+  /// Готовят заранее кнопкой «Приготовить»: продукты рецепта списываются,
+  /// а заготовка приходуется. Блюда меню списывают уже саму заготовку.
+  final List<MenuItemComponent> recipe;
+
+  /// Сколько заготовки получается по [recipe], в единицах [unit]
+  /// («из этого выходит 10 л»).
+  final double recipeOutput;
+
   InventoryItem({
     required this.id,
     required this.name,
@@ -173,7 +197,12 @@ class InventoryItem {
     this.isMarked = false,
     this.gtin = '',
     this.costPrice = 0,
+    this.recipe = const [],
+    this.recipeOutput = 0,
   });
+
+  /// Позиция — заготовка со своим рецептом.
+  bool get isPrepared => recipe.isNotEmpty && recipeOutput > 0;
 
   /// Стоимость [amount] в единицах [amountUnit] по цене закупки, ₽.
   double costOf(double amount, InventoryUnit amountUnit) =>
@@ -198,6 +227,12 @@ class InventoryItem {
       isMarked: data['isMarked'] ?? false,
       gtin: data['gtin'] ?? '',
       costPrice: (data['costPrice'] as num?)?.toDouble() ?? 0,
+      recipe: ((data['recipe'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => MenuItemComponent.fromMap(Map<String, dynamic>.from(e)))
+          .where((c) => c.inventoryItemId.isNotEmpty && c.weight > 0)
+          .toList(),
+      recipeOutput: (data['recipeOutput'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -214,6 +249,8 @@ class InventoryItem {
         'isMarked': isMarked,
         'gtin': gtin,
         'costPrice': costPrice,
+        'recipe': recipe.map((c) => c.toMap()).toList(),
+        'recipeOutput': recipeOutput,
       };
 
   InventoryItem copyWith({
@@ -228,9 +265,13 @@ class InventoryItem {
     bool? isMarked,
     String? gtin,
     double? costPrice,
+    List<MenuItemComponent>? recipe,
+    double? recipeOutput,
   }) =>
       InventoryItem(
         id: id,
+        recipe: recipe ?? this.recipe,
+        recipeOutput: recipeOutput ?? this.recipeOutput,
         costPrice: costPrice ?? this.costPrice,
         name: name ?? this.name,
         category: category ?? this.category,
@@ -257,7 +298,8 @@ class InventoryMovement {
   final InventoryUnit unit;
 
   /// receipt — приход, writeoff — списание/расход, correction — ручная
-  /// корректировка, count — результат инвентаризации.
+  /// корректировка, count — результат инвентаризации, production —
+  /// приготовлена заготовка, refund — вернули на склад по возврату чека.
   final String type;
 
   /// Изменение остатка (может быть отрицательным).
@@ -298,6 +340,10 @@ class InventoryMovement {
         return 'Списание';
       case 'count':
         return 'Инвентаризация';
+      case 'production':
+        return 'Заготовка';
+      case 'refund':
+        return 'Возврат';
       default:
         return 'Корректировка';
     }

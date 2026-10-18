@@ -35,6 +35,7 @@ import 'audit_log_service.dart';
 import 'net_status.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
+import '../utils/recipe_math.dart';
 import '../utils/checkout_checks.dart';
 import '../utils/streams.dart';
 import '../models/client_models.dart';
@@ -1238,153 +1239,149 @@ class FirestoreService {
   /// Чего не хватит на складе, если закрыть чек с [orderItems]: кассир
   /// узнаёт об этом до оплаты, а не по уходу остатка в минус.
   Future<List<StockShortage>> stockShortagesFor(List<OrderItem> orderItems) async {
-    final menu = await menuItemsByIds(
-        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet());
-    final invIds = <String>{
-      for (final m in menu.values) ...[
-        if (m.inventoryItemId.isNotEmpty) m.inventoryItemId,
-        for (final c in m.components)
-          if (c.inventoryItemId.isNotEmpty) c.inventoryItemId,
-      ],
-    };
-    if (invIds.isEmpty) return const [];
-    final docs = await Future.wait(invIds.map((id) => AppScope.col('inventoryItems').doc(id).get()));
-    final stock = {for (final d in docs) if (d.exists) d.id: InventoryItem.fromDoc(d)};
+    final (menu, stock) = await _recipeDataFor(orderItems);
+    if (stock.isEmpty) return const [];
     return stockShortages(orderItems, menu, stock);
   }
 
-  /// Списывает позиции склада по проданным пунктам меню.
-  /// Поддерживает два режима:
-  /// 1. Простая позиция — одна привязка inventoryItemId + weight.
-  /// 2. Составная позиция (микс) — список components, каждый со своим
-  ///    inventoryItemId и weight. Например "Тарелка Снэков": орешки + чипсы
-  ///    + сухарики списываются независимо с указанными граммовками.
+  /// Блюда чека (с блюдами-вариантами комбо) и нужные им позиции склада.
+  Future<(Map<String, MenuItem>, Map<String, InventoryItem>)> _recipeDataFor(List<OrderItem> orderItems) async {
+    final menu = await menuItemsByIds(
+        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet());
+    final combo = comboDishIds(orderItems, menu).difference(menu.keys.toSet());
+    if (combo.isNotEmpty) menu.addAll(await menuItemsByIds(combo));
+    final invIds = stockIdsFor(menu.values);
+    if (invIds.isEmpty) return (menu, <String, InventoryItem>{});
+    final docs = await Future.wait(invIds.map((id) => AppScope.col('inventoryItems').doc(id).get()));
+    return (menu, {for (final d in docs) if (d.exists) d.id: InventoryItem.fromDoc(d)});
+  }
+
+  /// Списывает склад по проданным строкам чека: рецепт блюда (с отходом и
+  /// числом порций), простая привязка, модификаторы со своим продуктом и
+  /// блюда-варианты комбо — см. [saleDraws]. По каждой позиции склада одна
+  /// строка журнала на чек («Продажа: Борщ ×2, Бизнес-ланч ×1»).
   /// Ошибки по отдельным позициям не прерывают списание остальных.
-  Future<void> _deductInventoryForSale(
-      List<OrderItem> orderItems, String employeeName) async {
-    // Собираем уникальные menuItemId из заказа
-    final menuItemIds =
-        orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet();
-    if (menuItemIds.isEmpty) return;
+  Future<void> _deductInventoryForSale(List<OrderItem> orderItems, String employeeName) =>
+      _applyDraws(orderItems, employeeName, sign: -1, type: 'writeoff', reason: 'Продажа');
 
-    // Загружаем данные позиций меню одним батчем
-    final menuDocs = await Future.wait(menuItemIds
-        .map((id) => AppScope.col('menuItems').doc(id).get()));
-
-    // Строим карту menuItemId → MenuItem
-    final menuMap = <String, MenuItem>{};
-    for (final doc in menuDocs) {
-      if (doc.exists) menuMap[doc.id] = MenuItem.fromDoc(doc);
+  /// Движения склада по строкам чека: [sign] −1 — списать, +1 — вернуть.
+  /// Возвращает, сколько позиций склада затронуто.
+  Future<int> _applyDraws(
+    List<OrderItem> orderItems,
+    String employeeName, {
+    required int sign,
+    required String type,
+    required String reason,
+  }) async {
+    if (orderItems.isEmpty) return 0;
+    final Map<String, MenuItem> menu;
+    final Map<String, InventoryItem> stock;
+    try {
+      (menu, stock) = await _recipeDataFor(orderItems);
+    } catch (_) {
+      return 0; // Нет связи с базой — оплату не блокируем.
     }
-
-    // Для каждой строки заказа — списываем склад если настроена привязка
-    for (final orderItem in orderItems) {
-      final menuItem = menuMap[orderItem.menuItemId];
-      if (menuItem == null) continue;
-
-      // Модификаторы со складом: сироп 20 мл, доп. сыр 30 г.
-      for (final option in menuItem.optionsNamed(orderItem.mods)) {
-        if (!option.hasInventoryLink) continue;
-        try {
-          final invDoc = await AppScope.col('inventoryItems').doc(option.inventoryItemId).get();
-          if (!invDoc.exists) continue;
-          final invItem = InventoryItem.fromDoc(invDoc);
-          await adjustInventoryQuantity(
-            itemId: option.inventoryItemId,
-            itemName: invItem.name,
-            unit: invItem.unit,
-            delta: -(option.weightUnit.convertTo(option.weight, invItem.unit) * orderItem.qty),
-            type: 'writeoff',
-            employeeName: employeeName,
-            reason: 'Продажа: ${orderItem.name} ×${orderItem.qty} (${option.name})',
-          );
-        } catch (_) {
-          // Не блокируем оплату из-за ошибок списания модификатора
-        }
-      }
-
-      // Комбо: вариант — блюдо меню, списываем его техкарту.
-      for (final option in menuItem.optionsNamed(orderItem.mods)) {
-        if (option.menuItemId.isEmpty) continue;
-        try {
-          var dish = menuMap[option.menuItemId];
-          if (dish == null) {
-            final d = await AppScope.col('menuItems').doc(option.menuItemId).get();
-            if (!d.exists) continue;
-            dish = menuMap[d.id] = MenuItem.fromDoc(d);
-          }
-          await _deductMenuItem(dish, orderItem.qty, '${orderItem.name}: ${dish.name}', employeeName);
-        } catch (_) {
-          // Не блокируем оплату из-за ошибок списания
-        }
-      }
-
-      await _deductMenuItem(menuItem, orderItem.qty, orderItem.name, employeeName);
-    }
-  }
-
-  /// Списание техкарты одной позиции меню: простая привязка или состав.
-  Future<void> _deductMenuItem(MenuItem menuItem, int qty, String label, String employeeName) async {
-    if (!menuItem.hasAnyInventoryLink) return;
-
-    if (menuItem.isComposite) {
-      // Составная позиция: списываем каждый компонент отдельно
-      for (final component in menuItem.components) {
-        if (component.inventoryItemId.isEmpty || component.weight <= 0) continue;
-        try {
-          final invDoc = await AppScope.col('inventoryItems')
-              .doc(component.inventoryItemId)
-              .get();
-          if (!invDoc.exists) continue;
-          final invItem = InventoryItem.fromDoc(invDoc);
-          // Граммовка компонента задана в component.weightUnit, а остаток
-          // склада ведётся в invItem.unit — единицы могут не совпадать
-          // (например, компонент задан в мл, а сама позиция склада — в
-          // литрах), поэтому переводим количество в единицу склада перед
-          // тем, как вычесть его из остатка.
-          final qtyInStockUnit =
-              component.weightUnit.convertTo(component.weight, invItem.unit);
-          final delta = -(qtyInStockUnit * qty);
-          await adjustInventoryQuantity(
-            itemId: component.inventoryItemId,
-            itemName: invItem.name,
-            unit: invItem.unit,
-            delta: delta,
-            type: 'writeoff',
-            employeeName: employeeName,
-            reason: 'Продажа: $label ×$qty (компонент)',
-          );
-        } catch (_) {
-          // Не блокируем оплату из-за ошибок списания компонента
-        }
-      }
-    } else {
-      // Простая позиция: одна привязка к складу
+    var n = 0;
+    for (final draw in saleDraws(orderItems, menu, stock).values) {
+      final inv = stock[draw.inventoryItemId]!;
       try {
-        final invDoc = await AppScope.col('inventoryItems')
-            .doc(menuItem.inventoryItemId)
-            .get();
-        if (!invDoc.exists) return;
-        final invItem = InventoryItem.fromDoc(invDoc);
-        // Аналогично компоненту выше: граммовка позиции меню задана в
-        // menuItem.weightUnit, который админ выбирает независимо от
-        // единицы привязанной позиции склада — переводим перед списанием.
-        final qtyInStockUnit = menuItem.weightUnit.convertTo(menuItem.weight, invItem.unit);
-        final delta = -(qtyInStockUnit * qty);
         await adjustInventoryQuantity(
-          itemId: menuItem.inventoryItemId,
-          itemName: invItem.name,
-          unit: invItem.unit,
-          delta: delta,
-          type: 'writeoff',
+          itemId: inv.id,
+          itemName: inv.name,
+          unit: inv.unit,
+          delta: sign * draw.qty,
+          type: type,
           employeeName: employeeName,
-          reason: 'Продажа: $label ×$qty',
+          reason: '$reason: ${draw.sourceText}',
         );
+        n++;
       } catch (_) {
-        // Не блокируем оплату из-за ошибок списания
+        // Не блокируем оплату из-за ошибок по одной позиции склада.
       }
     }
+    return n;
   }
+
+  /// Вернуть на склад продукты по возвращённому чеку — если товар вернулся
+  /// целым (закрытая бутылка, банка). Повторно не возвращает.
+  Future<int> restockRefundedSession(String sessionId, {String employeeName = ''}) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (data == null || data['refunded'] != true || data['refundRestocked'] == true) return 0;
+    await ref.update({'refundRestocked': true});
+    final s = SessionModel.fromDoc(snap);
+    return _applyDraws(s.orderItems, employeeName, sign: 1, type: 'refund', reason: 'Возврат чека');
+  }
+
+  /// Отменили позицию, которую уже приготовили: продукты потрачены —
+  /// списываем их по рецепту, иначе инвентаризация покажет недостачу.
+  Future<int> writeOffVoidedItem(OrderItem line, {int qty = 1, String why = '', String employeeName = ''}) {
+    final one = OrderItem(
+      menuItemId: line.menuItemId,
+      name: line.name,
+      price: line.price,
+      qty: qty,
+      mods: line.mods,
+      since: line.since,
+    );
+    return _applyDraws([one], employeeName,
+        sign: -1, type: 'writeoff', reason: why.isEmpty ? 'Отмена позиции' : 'Отмена позиции ($why)');
+  }
+
+  /// Приготовить заготовку: продукты рецепта списываются, заготовка
+  /// приходуется на [output] (в её единицах). Цена закупки заготовки
+  /// пересчитывается по продуктам, если у всех есть цена.
+  Future<void> producePrepared(InventoryItem prepared, double output, {String employeeName = ''}) async {
+    if (!prepared.isPrepared || output <= 0) return;
+    final ids = {for (final c in prepared.recipe) c.inventoryItemId}..remove(prepared.id);
+    final docs = await Future.wait(ids.map((id) => AppScope.col('inventoryItems').doc(id).get()));
+    final stock = {for (final d in docs) if (d.exists) d.id: InventoryItem.fromDoc(d)};
+    final label = 'Заготовка: ${prepared.name} ${prepared.unit.formatWithLabel(output)}';
+    for (final e in productionDraws(prepared, output, stock).entries) {
+      final inv = stock[e.key]!;
+      await adjustInventoryQuantity(
+        itemId: inv.id,
+        itemName: inv.name,
+        unit: inv.unit,
+        delta: -e.value,
+        type: 'writeoff',
+        employeeName: employeeName,
+        reason: label,
+      );
+    }
+    await adjustInventoryQuantity(
+      itemId: prepared.id,
+      itemName: prepared.name,
+      unit: prepared.unit,
+      delta: output,
+      type: 'production',
+      employeeName: employeeName,
+      reason: 'Приготовили по рецепту',
+    );
+    final cost = preparedCostPrice(prepared, stock);
+    if (cost != null && (cost - prepared.costPrice).abs() > 0.005) {
+      await AppScope.col('inventoryItems').doc(prepared.id).update({'costPrice': double.parse(cost.toStringAsFixed(2))});
+    }
+  }
+
+  /// Сохранить только рецепт блюда (из вкладки «Рецепты» склада). Простая
+  /// привязка к одному товару заменяется рецептом: пустой рецепт — блюдо
+  /// больше не списывает склад.
+  Future<void> updateMenuItemRecipe(String id, List<MenuItemComponent> components, int portions) =>
+      AppScope.col('menuItems').doc(id).update({
+        'components': components.map((c) => c.toMap()).toList(),
+        'recipePortions': portions < 1 ? 1 : portions,
+        'inventoryItemId': '',
+        'weight': 0,
+      });
+
+  /// Сохранить рецепт заготовки.
+  Future<void> updatePreparedRecipe(String id, List<MenuItemComponent> recipe, double output) =>
+      AppScope.col('inventoryItems').doc(id).update({
+        'recipe': recipe.map((c) => c.toMap()).toList(),
+        'recipeOutput': output,
+      });
 
   /// Возврат закрытого чека: чек остаётся в истории с пометкой и не
   /// учитывается в выручке отчётов.
@@ -1482,10 +1479,12 @@ class FirestoreService {
   /// помечается отменённым, а гостю возвращается то, что снял возврат.
   Future<void> undoRefundSession(String sessionId, {String employeeName = ''}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
+    var restocked = false;
     await _db.runTransaction((tx) async {
       final data = (await tx.get(ref)).data();
       // Повторная отмена второй раз начислила бы гостю бонусы.
       if (data == null || data['refunded'] != true) return;
+      restocked = data['refundRestocked'] == true;
       final loyalty = data['refundLoyalty'];
       final uid = loyalty is Map ? (loyalty['uid'] as String? ?? '') : '';
       final clientRef = uid.isEmpty ? null : AppScope.loyaltyCol('clients').doc(uid);
@@ -1501,6 +1500,7 @@ class FirestoreService {
         'refundCashOut': false,
         'refundCashOpId': null,
         'refundLoyalty': FieldValue.delete(),
+        'refundRestocked': FieldValue.delete(),
       });
       if (opId.isNotEmpty) {
         tx.update(AppScope.col('cashOps').doc(opId), {
@@ -1525,6 +1525,11 @@ class FirestoreService {
         _bonusOp(tx, uid, sessionId, 'redeem', 'refund_undone', r.reclaimed, now);
       }
     });
+    // Возврат отменили, а продукты по нему вернули на склад — снова списываем.
+    if (restocked) {
+      final s = SessionModel.fromDoc(await ref.get());
+      await _applyDraws(s.orderItems, employeeName, sign: -1, type: 'writeoff', reason: 'Отмена возврата');
+    }
   }
 
   /// Гость, которому за чек начислялся кешбэк. У новых чеков он записан
@@ -2570,13 +2575,10 @@ class FirestoreService {
     var changed = false;
     for (final doc in menu.docs) {
       final item = MenuItem.fromDoc(doc);
+      // На порцию — с отходом и делением на число порций рецепта.
       double? need;
-      if (item.isComposite) {
-        for (final c in item.components) {
-          if (c.inventoryItemId == inventoryItemId && c.weight > 0) need = c.weightUnit.convertTo(c.weight, unit);
-        }
-      } else if (item.inventoryItemId == inventoryItemId && item.weight > 0) {
-        need = item.weightUnit.convertTo(item.weight, unit);
+      for (final c in item.perPortion) {
+        if (c.inventoryItemId == inventoryItemId) need = (need ?? 0) + c.weightUnit.convertTo(c.weight, unit);
       }
       if (need == null) continue;
       final stoppedBy = (doc.data()['autoStoppedBy'] ?? '').toString();

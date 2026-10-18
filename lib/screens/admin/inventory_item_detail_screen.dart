@@ -4,6 +4,9 @@ import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/recipe_math.dart';
+import '../../utils/table_label.dart';
+import '../../widgets/recipe_editor.dart';
 
 /// Карточка одной позиции склада: текущий остаток, быстрые действия
 /// (приход / списание / ручная корректировка на точное значение),
@@ -138,6 +141,8 @@ class InventoryItemDetailScreen extends StatelessWidget {
                             onPressed: () => _correctionDialog(context, fs, item),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        _PreparedCard(item: item, employee: employee),
                         const SizedBox(height: 24),
                         Text('История движений',
                             style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
@@ -192,35 +197,72 @@ class InventoryItemDetailScreen extends StatelessWidget {
   }) async {
     final amountCtrl = TextEditingController();
     final reasonCtrl = TextEditingController();
+    final costCtrl = TextEditingController();
     final isReceipt = type == 'receipt';
+    const reasons = ['Порча / истёк срок', 'Бой / брак', 'Питание персонала', 'Угощение гостю', 'Проработка блюда'];
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        title: Text(isReceipt ? 'Приход: ${item.name}' : 'Списание: ${item.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountCtrl,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(labelText: 'Количество, ${item.unit.label}'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonCtrl,
-              decoration: InputDecoration(
-                labelText: 'Причина (необязательно)',
-                hintText: isReceipt ? 'Например, поставка от 12.05' : 'Например, порча, угощение',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          scrollable: true,
+          title: Text(isReceipt ? 'Приход: ${item.name}' : 'Списание: ${item.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: amountCtrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(labelText: 'Количество, ${item.unit.label}'),
               ),
-            ),
+              const SizedBox(height: 12),
+              if (isReceipt)
+                TextField(
+                  controller: costCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'Цена закупки, ₽ за ${item.unit.priceUnit.label} (если изменилась)',
+                    helperText: item.costPrice > 0
+                        ? 'Сейчас ${item.costPrice.toStringAsFixed(item.costPrice % 1 == 0 ? 0 : 2)} ₽ — по ней считается себестоимость'
+                        : 'По ней считается себестоимость и фудкост блюд',
+                  ),
+                )
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final r in reasons)
+                      ChoiceChip(
+                        label: Text(r, style: const TextStyle(fontSize: 12)),
+                        selected: reasonCtrl.text == r,
+                        onSelected: (_) => setSt(() => reasonCtrl.text = r),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonCtrl,
+                onChanged: (_) => setSt(() {}),
+                decoration: InputDecoration(
+                  labelText: isReceipt ? 'Комментарий (необязательно)' : 'Причина',
+                  hintText: isReceipt ? 'Например, поставка от 12.05, накладная №' : 'Или своя причина',
+                ),
+              ),
+              if (!isReceipt)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('Продажи списываются сами по рецептам — здесь только то, что ушло мимо кассы.',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сохранить')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Сохранить')),
-        ],
       ),
     );
     if (ok != true) return;
@@ -241,6 +283,10 @@ class InventoryItemDetailScreen extends StatelessWidget {
       employeeName: employee.name,
       reason: reasonCtrl.text.trim(),
     );
+    final cost = double.tryParse(costCtrl.text.trim().replaceAll(',', '.'));
+    if (isReceipt && cost != null && cost > 0 && (cost - item.costPrice).abs() > 0.004) {
+      await fs.updateInventoryItem(item.copyWith(costPrice: cost));
+    }
   }
 
   Future<void> _correctionDialog(BuildContext context, FirestoreService fs, InventoryItem item) async {
@@ -412,6 +458,8 @@ class _MovementTile extends StatelessWidget {
           'receipt' => Icons.call_received,
           'writeoff' => Icons.call_made,
           'count' => Icons.fact_check_outlined,
+          'production' => Icons.soup_kitchen_outlined,
+          'refund' => Icons.undo,
           _ => Icons.tune,
         },
         color: color,
@@ -432,5 +480,124 @@ class _MovementTile extends StatelessWidget {
   String _fmtDate(DateTime d) {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(d.day)}.${two(d.month)} ${two(d.hour)}:${two(d.minute)}';
+  }
+}
+/// Заготовка (полуфабрикат): свой рецепт и кнопка «Приготовить». У обычного
+/// продукта — предложение сделать его заготовкой.
+class _PreparedCard extends StatelessWidget {
+  final InventoryItem item;
+  final Employee employee;
+  const _PreparedCard({required this.item, required this.employee});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!item.isPrepared) {
+      return SizedBox(
+        width: double.infinity,
+        child: TextButton.icon(
+          icon: const Icon(Icons.soup_kitchen_outlined),
+          label: const Text('Сделать заготовкой — готовим сами по рецепту'),
+          onPressed: () => _editRecipe(context),
+        ),
+      );
+    }
+    final n = item.recipe.length;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(Icons.soup_kitchen_outlined, color: AppColors.primary),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('Заготовка', style: TextStyle(fontWeight: FontWeight.w700))),
+            ]),
+            const SizedBox(height: 6),
+            Text('Рецепт: $n ${pluralRu(n, 'продукт', 'продукта', 'продуктов')} '
+                'на ${item.unit.formatWithLabel(item.recipeOutput)}',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                  label: const Text('Рецепт'),
+                  onPressed: () => _editRecipe(context),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.local_fire_department_outlined, size: 18),
+                  label: const Text('Приготовить'),
+                  onPressed: () => _produce(context),
+                ),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editRecipe(BuildContext context) async {
+    final r = await openRecipeEditor(context, title: 'Заготовка: ${item.name}', lines: item.recipe, prepared: item);
+    if (r == null) return;
+    await FirestoreService().updatePreparedRecipe(item.id, r.lines, r.lines.isEmpty ? 0 : r.output);
+  }
+
+  Future<void> _produce(BuildContext context) async {
+    final fs = FirestoreService();
+    final all = await fs.inventoryItemsStream().first;
+    if (!context.mounted) return;
+    final stock = {for (final i in all) i.id: i};
+    final ctrl = TextEditingController(text: item.unit.format(item.recipeOutput));
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        final out = double.tryParse(ctrl.text.trim().replaceAll(',', '.')) ?? 0;
+        final draws = productionDraws(item, out, stock);
+        return AlertDialog(
+          scrollable: true,
+          title: Text('Приготовить: ${item.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(labelText: 'Сколько приготовили, ${item.unit.label}'),
+                onChanged: (_) => setSt(() {}),
+              ),
+              const SizedBox(height: 12),
+              if (draws.isNotEmpty) ...[
+                const Text('Спишется со склада:', style: TextStyle(fontWeight: FontWeight.w600)),
+                for (final e in draws.entries)
+                  Text(
+                    '• ${stock[e.key]!.name} — ${stock[e.key]!.unit.formatWithLabel(e.value)}'
+                    '${stock[e.key]!.quantity < e.value ? ' (на складе ${stock[e.key]!.unit.formatWithLabel(stock[e.key]!.quantity)})' : ''}',
+                    style: TextStyle(
+                        fontSize: 13, color: stock[e.key]!.quantity < e.value ? AppColors.warning : null),
+                  ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(onPressed: out > 0 ? () => Navigator.pop(ctx, true) : null, child: const Text('Приготовили')),
+          ],
+        );
+      }),
+    );
+    final out = double.tryParse(ctrl.text.trim().replaceAll(',', '.')) ?? 0;
+    if (ok != true || out <= 0) return;
+    await fs.producePrepared(item, out, employeeName: employee.name);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${item.name}: +${item.unit.formatWithLabel(out)}, продукты списаны')));
+    }
   }
 }

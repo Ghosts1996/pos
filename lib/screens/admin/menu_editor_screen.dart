@@ -13,6 +13,8 @@ import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/promo_policy.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/recipe_math.dart';
+import '../../widgets/recipe_editor.dart';
 
 /// Админ-редактор меню: категории, позиции и загрузка фото для них.
 /// Фото загружается через системный выбор (галерея/камера) и хранится в
@@ -41,13 +43,15 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   @override
   void initState() {
     super.initState();
-    _fs.inventoryItemsStream().first.then((items) {
-      if (mounted) {
-        setState(() {
-          _inventoryItems = items.where((i) => i.active).toList()
-            ..sort((a, b) => a.name.compareTo(b.name));
-        });
-      }
+    _reloadInventory();
+  }
+
+  /// Перечитать склад — в рецепте могли завести новый продукт.
+  Future<void> _reloadInventory() async {
+    final items = await _fs.inventoryItemsStream().first;
+    if (!mounted) return;
+    setState(() {
+      _inventoryItems = items.where((i) => i.active).toList()..sort((a, b) => a.name.compareTo(b.name));
     });
   }
 
@@ -209,10 +213,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   String _buildItemSubtitleBase(MenuItem item) {
     final priceStr = rub(item.price);
     if (item.isComposite) {
-      // Составная позиция: показываем суммарный вес всех компонентов
-      final totalWeight = item.components.fold<double>(0, (sum, c) => sum + c.weight);
-      final unit = item.components.isNotEmpty ? item.components.first.weightUnit : InventoryUnit.g;
-      return '$priceStr · ${unit.formatWithLabel(totalWeight)} (микс 📦)';
+      final n = item.components.length;
+      return '$priceStr · рецепт: $n ${pluralRu(n, 'продукт', 'продукта', 'продуктов')} 📦';
     }
     if (item.weight > 0) {
       return '$priceStr · ${item.weightUnit.formatWithLabel(item.weight)}'
@@ -318,7 +320,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
 
     // Для составной позиции — рабочая копия списка компонентов
     final components = List<MenuItemComponent>.from(item?.components ?? []);
-    // Режим: false = простая, true = составная (микс)
+    var recipePortions = item?.recipePortions ?? 1;
+    // Режим: false — один товар склада, true — рецепт из нескольких продуктов
     bool isComposite = item?.isComposite ?? false;
     // Фискальные реквизиты позиции (54-ФЗ)
     var vat = item?.vat ?? '';
@@ -406,7 +409,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 // ---- Переключатель простая / составная ----
                 Row(
                   children: [
-                    const Expanded(child: Text('Составная позиция (микс)', style: TextStyle(fontSize: 13))),
+                    const Expanded(
+                        child: Text('Рецепт из нескольких продуктов (техкарта)', style: TextStyle(fontSize: 13))),
                     Switch(
                       value: isComposite,
                       onChanged: (v) => setDialogState(() {
@@ -438,15 +442,20 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      DropdownButton<InventoryUnit>(
-                        value: weightUnit,
-                        items: InventoryUnit.values
-                            .map((u) => DropdownMenuItem(value: u, child: Text(u.label)))
-                            .toList(),
-                        onChanged: (u) {
-                          if (u != null) setDialogState(() => weightUnit = u);
-                        },
-                      ),
+                      // Единица — только совместимая со складом: «50 г» колы
+                      // в штуках списали бы 50 банок.
+                      Builder(builder: (_) {
+                        final linked = _inventoryItems.where((i) => i.id == linkedInventoryId).firstOrNull;
+                        final units = linked == null ? InventoryUnit.values : linked.unit.compatibleUnits;
+                        if (!units.contains(weightUnit)) weightUnit = linked!.unit;
+                        return DropdownButton<InventoryUnit>(
+                          value: weightUnit,
+                          items: units.map((u) => DropdownMenuItem(value: u, child: Text(u.label))).toList(),
+                          onChanged: (u) {
+                            if (u != null) setDialogState(() => weightUnit = u);
+                          },
+                        );
+                      }),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -482,58 +491,61 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                       ),
                     ),
                 ] else ...[
-                  // ---- Составная позиция ----
-                  const Text('Компоненты микса',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  if (components.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 4),
-                      child: Text('Нет компонентов — добавьте ниже',
-                          style: TextStyle(fontSize: 13, color: Colors.grey)),
-                    ),
-                  ...components.asMap().entries.map((entry) {
-                    final idx = entry.key;
-                    final comp = entry.value;
-                    final invName = _inventoryItems
-                        .firstWhere((i) => i.id == comp.inventoryItemId,
-                            orElse: () => InventoryItem(
-                                id: '', name: '—', unit: InventoryUnit.g))
-                        .name;
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(invName,
-                          style: const TextStyle(fontSize: 13)),
-                      subtitle: Text(
-                          comp.weightUnit.formatWithLabel(comp.weight),
-                          style: const TextStyle(fontSize: 12)),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: () =>
-                            setDialogState(() => components.removeAt(idx)),
-                      ),
+                  // ---- Рецепт ----
+                  Builder(builder: (_) {
+                    final stock = {for (final i in _inventoryItems) i.id: i};
+                    final draft = MenuItem(
+                      id: '',
+                      categoryId: '',
+                      name: '',
+                      price: double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0,
+                      components: components,
+                      recipePortions: recipePortions,
+                    );
+                    final cost = draft.costPrice(stock);
+                    final fc = draft.foodCostPercent(stock);
+                    final problems = recipeProblems(components, stock);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          components.isEmpty
+                              ? 'Рецепт пуст — добавьте продукты, они спишутся со склада при продаже'
+                              : [
+                                  '${components.length} ${pluralRu(components.length, 'продукт', 'продукта', 'продуктов')}',
+                                  if (recipePortions > 1) 'на $recipePortions ${pluralRu(recipePortions, 'порцию', 'порции', 'порций')}',
+                                  if (cost != null) 'себест. ${rub(cost)}',
+                                  if (fc != null) 'фудкост ${fc.toStringAsFixed(0)} %',
+                                ].join(' · '),
+                          style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                        ),
+                        for (final p in problems)
+                          Text(p, style: TextStyle(fontSize: 12, color: AppColors.danger)),
+                        const SizedBox(height: 6),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                          label: Text(components.isEmpty ? 'Составить рецепт' : 'Открыть рецепт'),
+                          onPressed: () async {
+                            final r = await openRecipeEditor(
+                              ctx,
+                              title: nameCtrl.text.trim().isEmpty ? 'Рецепт' : 'Рецепт: ${nameCtrl.text.trim()}',
+                              lines: components,
+                              portions: recipePortions,
+                              price: double.tryParse(priceCtrl.text.replaceAll(',', '.')) ?? 0,
+                            );
+                            await _reloadInventory();
+                            if (r == null) return;
+                            setDialogState(() {
+                              components
+                                ..clear()
+                                ..addAll(r.lines);
+                              recipePortions = r.portions;
+                            });
+                          },
+                        ),
+                      ],
                     );
                   }),
-                  const SizedBox(height: 4),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Добавить компонент'),
-                    onPressed: () async {
-                      final comp = await _editComponent(ctx);
-                      if (comp != null) {
-                        setDialogState(() => components.add(comp));
-                      }
-                    },
-                  ),
-                  if (components.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        'При продаже каждый компонент спишется отдельно × количество',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                      ),
-                    ),
                 ],
 
                 // ---- Модификаторы ----
@@ -587,6 +599,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     weightUnit: weightUnit,
                     inventoryItemId: isComposite ? '' : (linkedInventoryId ?? ''),
                     components: isComposite ? List.from(components) : [],
+                    recipePortions: isComposite ? recipePortions : 1,
                     vat: vat,
                     fiscalSubject: fiscalSubject,
                     description: descCtrl.text.trim(),
@@ -611,6 +624,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         weightUnit: result.weightUnit,
         inventoryItemId: result.inventoryItemId,
         components: result.components,
+        recipePortions: result.recipePortions,
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
         description: result.description,
@@ -626,6 +640,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         weightUnit: result.weightUnit,
         inventoryItemId: result.inventoryItemId,
         components: result.components,
+        recipePortions: result.recipePortions,
         vat: result.vat,
         fiscalSubject: result.fiscalSubject,
         description: result.description,
@@ -850,94 +865,6 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     );
   }
 
-  /// Диалог добавления одного компонента составной позиции.
-  Future<MenuItemComponent?> _editComponent(BuildContext ctx) async {
-    String? selectedInvId;
-    var unit = InventoryUnit.g;
-    final weightCtrl = TextEditingController();
-
-    return showDialog<MenuItemComponent>(
-      context: ctx,
-      builder: (ctx2) => StatefulBuilder(
-        builder: (ctx2, setSt) => AlertDialog(
-          title: const Text('Компонент микса'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_inventoryItems.isEmpty)
-                const Text('Нет позиций склада',
-                    style: TextStyle(color: Colors.grey))
-              else
-                DropdownButton<String?>(
-                  value: selectedInvId,
-                  isExpanded: true,
-                  hint: const Text('Выберите позицию склада'),
-                  items: _inventoryItems
-                      .map((inv) => DropdownMenuItem<String?>(
-                            value: inv.id,
-                            child: Text('${inv.name} (${inv.unit.label})'),
-                          ))
-                      .toList(),
-                  onChanged: (v) {
-                    setSt(() {
-                      selectedInvId = v;
-                      // Автоматически ставим единицу склада
-                      if (v != null) {
-                        final inv = _inventoryItems.firstWhere((i) => i.id == v);
-                        unit = inv.unit;
-                      }
-                    });
-                  },
-                ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: weightCtrl,
-                      decoration: const InputDecoration(labelText: 'Количество'),
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  DropdownButton<InventoryUnit>(
-                    value: unit,
-                    items: InventoryUnit.values
-                        .map((u) =>
-                            DropdownMenuItem(value: u, child: Text(u.label)))
-                        .toList(),
-                    onChanged: (u) {
-                      if (u != null) setSt(() => unit = u);
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx2), child: const Text('Отмена')),
-            FilledButton(
-              onPressed: () {
-                final w = double.tryParse(weightCtrl.text.replaceAll(',', '.')) ?? 0;
-                if (selectedInvId == null || w <= 0) return;
-                Navigator.pop(
-                    ctx2,
-                    MenuItemComponent(
-                      inventoryItemId: selectedInvId!,
-                      weight: w,
-                      weightUnit: unit,
-                    ));
-              },
-              child: const Text('Добавить'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _confirmDelete(
     BuildContext context, {
     required String title,
@@ -990,6 +917,7 @@ class _ItemDialogResult {
   final InventoryUnit weightUnit;
   final String inventoryItemId;
   final List<MenuItemComponent> components;
+  final int recipePortions;
   final String vat;
   final String fiscalSubject;
   final String description;
@@ -1004,6 +932,7 @@ class _ItemDialogResult {
     required this.weightUnit,
     this.inventoryItemId = '',
     this.components = const [],
+    this.recipePortions = 1,
     this.vat = '',
     this.fiscalSubject = 'commodity',
     this.description = '',
