@@ -547,7 +547,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
         ),
         title: Text('${_fmtDate(r.startTime)} в ${_fmtTime(r.startTime)}'),
         subtitle: Text(
-          '${r.guestsCount} чел · ${r.tableName.isEmpty ? 'стол подберём' : r.tableName} · '
+          '${r.guestsCount} чел. · ${r.tableName.isEmpty ? 'стол подберём' : r.tableName} · '
           '${r.status.label}',
           style: const TextStyle(fontSize: 12),
         ),

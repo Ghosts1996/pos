@@ -105,7 +105,7 @@ class BackgroundJobsService {
           .set({'active': false}, SetOptions(merge: true));
 
       names.add('${r.guestName.isEmpty ? 'Гость' : r.guestName} '
-          '(${r.guestsCount} чел, ${r.tableName.isEmpty ? 'стол —' : tableLabel(r.tableName)})');
+          '(${r.guestsCount} чел., ${r.tableName.isEmpty ? 'стол —' : tableLabel(r.tableName)})');
     }
 
     if (names.isEmpty) return;

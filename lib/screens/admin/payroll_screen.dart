@@ -278,7 +278,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Text(
                     'Не закрыто смен: ${open.length} (${open.map((s) => s.employeeName).toSet().join(", ")}) — '
-                    'их часы не войдут в расчёт, пока смена не закрыта. Закрыть можно в "Смены сотрудников".',
+                    'их часы не войдут в расчёт, пока смена не закрыта. Закрыть её можно в разделе «Смены сотрудников».',
                     style: const TextStyle(fontSize: 12),
                   ),
                 );

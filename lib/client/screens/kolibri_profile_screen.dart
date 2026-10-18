@@ -456,7 +456,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             labelText: 'Телефон',
             helperText: _phoneLocked
                 ? 'Сменить номер можно только через администратора'
-                : 'Укажите номер в любом формате: +7, 8 или просто 9...',
+                : 'Укажите номер в любом формате: +7, 8 или просто 9…',
             suffixIcon: _phoneLocked
                 ? Icon(Icons.lock_outline, size: 18, color: KolibriColors.textMuted)
                 : null,

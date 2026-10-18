@@ -933,7 +933,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       },
       active: _printerType != 'none',
       children: [
-        const _Hint('Печатает пречек и бегунки — это не фискальный чек. '
+        const _Hint('Печатает предчек и бегунки — это не фискальный чек. '
             'Чек по 54-ФЗ — в разделе «Онлайн-касса».'),
         // На Windows Bluetooth нет: print_bluetooth_thermal там работает
         // через BLE, а дешёвые принтеры — через classic SPP, и
@@ -1102,7 +1102,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             ),
             TextField(
               controller: _kassaPaymentAddressCtrl,
-              decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. ...'),
+              decoration: const InputDecoration(labelText: 'Место расчётов', hintText: 'г. Москва, ул. …'),
             ),
           ],
           if (_kassaType == 'orange_data') ...[
