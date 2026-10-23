@@ -10,7 +10,7 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
-  getAuth, signInAnonymously, onAuthStateChanged, signOut,
+  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
@@ -33,6 +33,108 @@ async function piiPost(body) {
   });
   if (!resp.ok) throw new Error('pii ' + resp.status);
   return resp.json().catch(() => ({}));
+}
+
+// ---------- ВХОД ГОСТЯ НЕ ТЕРЯЕТСЯ ----------
+//
+// Гость входит анонимно, профиль (имя, номер, бонусы) держится на этом
+// входе. Браузер может его потерять: закрыли вкладку во встроенном браузере
+// сканера QR, почистилась память, а иконка «Домой» на iPhone — вообще
+// отдельное хранилище. Тогда раньше заводился новый пустой профиль, и номер
+// оказывался «уже зарегистрирован». Теперь, как в Android-приложении
+// (kolibri_auth_service.dart): при первом входе создаём случайный ключ,
+// сервер хранит только его хеш, ключ — в памяти телефона и в ссылке, с
+// которой открывается иконка «Домой». Потерян вход — предъявляем ключ и
+// возвращаемся в тот же профиль.
+
+const GUEST_KEY = 'zalposGuestKey_v1';
+const KEY_RE = /[#&]g=([A-Za-z0-9]{10,128})\.([A-Za-z0-9_-]{43,128})/;
+
+function readGuestKey() {
+  try {
+    const k = JSON.parse(localStorage.getItem(GUEST_KEY) || 'null');
+    return k && k.uid && k.secret ? k : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeGuestKey(k) {
+  try { localStorage.setItem(GUEST_KEY, JSON.stringify(k)); } catch (_) {}
+}
+
+/// Ключ из ссылки иконки «Домой» (#g=uid.ключ) — читаем и убираем из адреса,
+/// чтобы он не попал в ссылку, которой гость поделится.
+function keyFromUrl() {
+  const m = location.hash.match(KEY_RE);
+  if (!m) return null;
+  try { history.replaceState(null, '', `${location.pathname}${location.search}#/`); } catch (_) {}
+  return { uid: m[1], secret: m[2] };
+}
+
+function randomSecret() {
+  const b = new Uint8Array(36);
+  (window.crypto || window.msCrypto).getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/// Вернуться в свой профиль по ключу. false — ключ не подошёл или нет связи.
+async function restoreGuest(auth, k) {
+  try {
+    const resp = await fetch(`${GATEWAY}/restoreGuestSession`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: k.uid, secret: k.secret }),
+    });
+    if (!resp.ok) return false;
+    const { token } = await resp.json();
+    if (!token) return false;
+    await signInWithCustomToken(auth, token);
+    writeGuestKey({ uid: k.uid, secret: k.secret, ok: true });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Ключ текущего входа: создать и сообщить серверу один раз; иконка
+/// «Домой» получает ссылку с ним (манифест собирается на лету).
+async function rememberGuestKey(user) {
+  let k = readGuestKey();
+  if (!k || k.uid !== user.uid || !k.ok) {
+    const secret = k && k.uid === user.uid ? k.secret : randomSecret();
+    writeGuestKey({ uid: user.uid, secret, ok: false });
+    try {
+      const token = await user.getIdToken();
+      const resp = await fetch(`${GATEWAY}/registerGuestRecovery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ secret }),
+      });
+      if (resp.ok) writeGuestKey({ uid: user.uid, secret, ok: true });
+    } catch (_) {
+      // Нет связи — повторим при следующем входе.
+    }
+    k = readGuestKey();
+  }
+  if (k && k.ok) homeScreenManifest(k);
+}
+
+/// Манифест для «Добавить на экран „Домой“»: та же иконка и цвета, но
+/// стартовая ссылка с ключом — приложение с главного экрана откроется в
+/// том же профиле, а не создаст новый.
+function homeScreenManifest(k) {
+  const link = document.querySelector('link[rel="manifest"]');
+  if (!link) return;
+  const base = `${location.origin}/`;
+  const name = document.title || 'Личный кабинет гостя';
+  const m = {
+    name, short_name: name.slice(0, 12), lang: 'ru', display: 'standalone',
+    start_url: `${base}#g=${k.uid}.${k.secret}`, scope: base, id: '/',
+    background_color: '#0E1512', theme_color: document.querySelector('meta[name="theme-color"]')?.content || '#0E1512',
+    icons: [{ src: new URL('icon.png', location.href).href, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
+  };
+  link.href = `data:application/manifest+json;charset=utf-8,${encodeURIComponent(JSON.stringify(m))}`;
 }
 
 // ---------- СПРАВОЧНИК В РФ ----------
@@ -553,8 +655,23 @@ async function boot() {
   state.auth = auth;
   let routerReady = false;
 
+  // Открыли с иконки «Домой» — ключ в ссылке.
+  const urlKey = keyFromUrl();
+  if (urlKey) writeGuestKey({ ...urlKey, ok: true });
+
   onAuthStateChanged(auth, async (user) => {
+    // Иконка «Домой» привела в другой профиль, чем открыт сейчас, — в свой.
+    if (user && urlKey && user.uid !== urlKey.uid && !state.urlKeyTried) {
+      state.urlKeyTried = true;
+      if (await restoreGuest(auth, urlKey)) return;
+    }
     if (!user) {
+      // Вход потерян — сначала свой ключ, и только потом новый профиль.
+      const k = urlKey || readGuestKey();
+      if (k && !state.restoreTried) {
+        state.restoreTried = true;
+        if (await restoreGuest(auth, k)) return;
+      }
       try {
         await signInAnonymously(auth);
       } catch (e) {
@@ -573,6 +690,7 @@ async function boot() {
     clearScreen();
 
     state.uid = user.uid;
+    rememberGuestKey(user).catch(() => {});
     state.profile = null;
     state.ownPd = null;
     staffNames.clear();
@@ -3429,6 +3547,9 @@ async function deleteMyData() {
       if (btn) btn.disabled = false;
       return;
     }
+    // Ключ восстановления сервер уже удалил — и здесь его не оставляем.
+    try { localStorage.removeItem(GUEST_KEY); } catch (_) {}
+    state.restoreTried = true;
     await signOut(state.auth);
     toast('Ваши данные удалены');
   } catch (_) {
