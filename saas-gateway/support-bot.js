@@ -199,6 +199,12 @@ const HUMAN_TRIGGERS = [
 const SOFT_HUMAN = /^(просит живого человека|не хочет общаться с ботом)$/;
 const HUMAN_CONFIRM = "Специалист-человек отвечает в течение 24 часов, а я знаю о ZalPOS всё то же самое и отвечу сразу: тарифы, установка, настройка, оплата, перенос данных, законы. Позвать специалиста? Напишите «да» — позову. Или задайте вопрос мне.";
 // Нет ответа в знаниях там, где человека звать не нужно (сайт, клиент сам позвал бота).
+// Цен нет в состоянии платформы (не прочитались тарифы) — куда смотреть.
+const PLANS_FALLBACK = "Актуальные цены всех тарифов — на zalpos.ru в разделе **Тарифы**: за месяц, 6 месяцев и год, начиная с самого доступного «Старта».";
+// Ответы, без которых бот на сайте не продаёт, — автоматически не выключаются.
+const CORE_TEMPLATES = ["b_price", "b_why", "b_plan-pick", "b_what-is", "b_trial", "b_demo"];
+// Вопрос о цене — ответ шаблоном цен, даже если ИИ недоступен.
+const PRICE_Q = /(сколько стоит|стоимост|цен[аыу]|прайс|тариф|подписк[аи] стоит|по деньгам|почём|почем)/;
 const NO_ANSWER = "Точного ответа на этот вопрос у меня нет — не хочу вводить вас в заблуждение. Я помогаю со всем, что касается ZalPOS: возможности кассы, тарифы, демо, установка, настройка, оплата и перенос данных. Если вопрос про ZalPOS — уточните, пожалуйста, что именно нужно, и я помогу. Нужен специалист — напишите «оператор».";
 
 const URGENT = /(?<![а-я])(срочно|горит|стоим|не можем работать|не работает вообще|ничего не работает|гости ждут|очередь|касса не открывается|не можем пробить)/;
@@ -1543,6 +1549,15 @@ function createSupportBot(deps) {
     },
     onSwitch: (from, to) => alertAdmins(`sw:${from.id}:${to.id}`, `🔁 <b>ИИ переключился</b>: ${h(from.title)} → ${h(to.title)}. Клиенты ничего не заметили.`),
     onUsage: (p, model, tokens, heavy, extra = {}) => countUsage(tokens, p, heavy, extra),
+    // Имя модели не совпало со списком провайдера («deepseek-v4.1-flash»
+    // вместо «deepseek-v4.1-flash-1017») — роутер нашёл верное, сохраняем.
+    onModelFix: (p, from, to, fields) => {
+      const list = providers().map((x) => (x.id === p.id ? { ...x, ...Object.fromEntries(fields.map((f) => [f, to])) } : x));
+      const ai = { ...(state.cfg.ai || {}), providers: list.map(({ title, chosen, ...x }) => x) };
+      state.cfg.ai = ai;
+      quiet(cfgRef().set({ ai }, { merge: true }), "модель ИИ");
+      alertAdmins(`fix:${p.id}:${from}`, `🔧 <b>ИИ: модель исправлена</b> — у ${h(p.title)} нет «${h(from)}», беру «${h(to)}». Ничего делать не нужно.`);
+    },
   });
 
   /** Ответ ИИ целиком: текст, провайдер, модель. tier — light | heavy. */
@@ -1570,15 +1585,20 @@ function createSupportBot(deps) {
         continue;
       }
       let picked;
+      let ids = [];
       try {
-        picked = aiMod.pickModels(await router.listModels(p), p.vendor);
+        ids = await router.listModels(p);
+        picked = aiMod.pickModels(ids, p.vendor);
       } catch (_) {
         const def = aiMod.VENDORS[p.vendor] || {};
         const fb = def.fallback || {};
         picked = { light: def.light || fb.light || "", heavy: def.heavy || fb.heavy || def.light || fb.light || "", medium: "", max: "", vision: "" };
       }
-      const light = p.chosen ? p.light : picked.light || p.light;
-      const heavy = p.chosen ? p.heavy : picked.heavy || p.heavy;
+      // Модель выбрана вручную, но у провайдера она называется иначе —
+      // берём точное имя из его списка.
+      const exact = (m, tier) => (m && ids.length && !ids.includes(m) ? aiMod.closestModel(m, ids, tier) || m : m);
+      const light = p.chosen ? exact(p.light, "light") : picked.light || p.light;
+      const heavy = p.chosen ? exact(p.heavy, "heavy") : picked.heavy || p.heavy;
       out.push({ ...p, light, heavy, medium: picked.medium || light, max: picked.max || heavy, vision: picked.vision || "", chosen: true, manual: p.manual || p.chosen });
     }
     return out;
@@ -1944,6 +1964,17 @@ function createSupportBot(deps) {
     return true;
   }
 
+  /** Готовый ответ, когда ИИ недоступен: о цене — шаблон цен, иначе
+   *  ближайший шаблон (порог ниже, чем для ответа без ИИ), на сайте — рассказ
+   *  о продукте. null — подходящего нет. */
+  function offlineTemplate(question, match, audience) {
+    const ok = (tp) => tp && tp.status !== "off";
+    if (PRICE_Q.test(norm(question)) && ok(tplById("b_price"))) return tplById("b_price");
+    if (match && ok(match.template) && match.template.direct !== false && match.score >= 0.45) return match.template;
+    if (audience === "site" && ok(tplById("b_why"))) return tplById("b_why");
+    return null;
+  }
+
   /** Главный разбор нового сообщения клиента (Telegram или кабинет). */
   async function respond(t) {
     const history = await messagesOf(t);
@@ -2054,7 +2085,9 @@ function createSupportBot(deps) {
     if (lastTpl && (UNHAPPY.test(norm(question)) || humanTrigger(question) === "ИИ не помог")) {
       tplCount(lastTpl, "fails");
       const lt = tplById(lastTpl);
-      if (lt && lt.fails >= 2 && lt.fails > lt.wins) {
+      // Основные ответы (цены и рассказ о продукте) сами не выключаются — только вручную.
+      const core = CORE_TEMPLATES.includes(lastTpl);
+      if (lt && !core && lt.fails >= 2 && lt.fails > lt.wins) {
         await tplStatus(lastTpl, "off");
         await toTopicHtml(t, `📋 <b>Шаблон выключен</b> — дважды не помог: <i>${h(clip(lt.q[0], 120))}</i>. Проверьте его: кнопка ниже включит снова.`,
           { reply_markup: { inline_keyboard: [[{ text: "✅ Включить шаблон", callback_data: `sb:tplon:${lastTpl}` }]] } });
@@ -2066,14 +2099,14 @@ function createSupportBot(deps) {
     // Частый вопрос — готовым проверенным ответом, без ИИ (ноль токенов).
     const audience = t.channel === "site" ? "site" : t.channel === "telegram" ? "any" : "cabinet";
     const tplPlans = plansFrom(await platformStatus().catch(() => ""));
-    const tplFill = (a) => a.replace("{{plans}}", tplPlans || "");
+    const tplFill = (a) => a.replace("{{plans}}", tplPlans || PLANS_FALLBACK);
     // Кнопка-подсказка или сравнение с другой программой — сразу готовый ответ.
     const forced = !imagesNow && fresh.length === 1
       ? (CHIP_TEMPLATES[norm(question).replace(/ё/g, "е")] || CHIP_TEMPLATES[norm(question)] || (comparesWithOther(question) ? "compare" : ""))
       : "";
     const forcedTpl = forced ? tplById(forced.startsWith("b_") ? forced : `b_${forced}`) : null;
-    // Тарифы в таком ответе — дополнение: нет данных о ценах — ответ без них (кроме самого «Сколько стоит?»).
-    if (forcedTpl && forcedTpl.status !== "off" && (forced !== "price" || tplPlans)) {
+    // Кнопка-подсказка — всегда готовый ответ; цен нет — ссылка на «Тарифы».
+    if (forcedTpl && forcedTpl.status !== "off") {
       const reply = parseAiReply(tplFill(forcedTpl.a).trim());
       await deliver(t, reply.text, { html: mdToHtml(reply.md), md: reply.md });
       await patch(t, { lastTemplate: forcedTpl.id, lastTemplateAt: ts(now()), tplReplies: (Number(t.tplReplies) || 0) + 1 });
@@ -2105,7 +2138,7 @@ function createSupportBot(deps) {
       && tplMatch.score >= (guideTpl ? GUIDE_DIRECT : TPL_DIRECT) && tplMatch.score - tplMatch.second >= (guideTpl ? 0.15 : TPL_MARGIN)
       && !askedBack && !newsHit && !UNHAPPY.test(norm(question)) && !isUrgent(question)
       && !deceitSignals(question).length && !suspiciousLinks(question).length
-      && (!tplMatch.template.a.includes("{{plans}}") || tplPlans)) {
+      ) {
       const tp = tplMatch.template;
       const reply = parseAiReply(tplFill(tp.a));
       const markup = t.channel === "telegram" ? { inline_keyboard: [[{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
@@ -2253,6 +2286,21 @@ function createSupportBot(deps) {
       state.lastError = e.message;
       console.error(`support-bot: ИИ #${t.no}: ${e.message}`);
       await doneTyping();
+      // ИИ недоступен (ключ, баланс, сеть) — отвечаем готовым ответом, а не
+      // зовём человека: на сайте бот главный, специалист видит тему.
+      const fallback = offlineTemplate(question, tplMatch, audience);
+      if (fallback) {
+        const r = parseAiReply(tplFill(fallback.a));
+        await deliver(t, r.text, { html: mdToHtml(r.md), md: r.md });
+        await patch(t, { lastTemplate: fallback.id, lastTemplateAt: ts(now()) });
+        await toTopicHtml(t, `⚠️ <b>ИИ недоступен</b> — ответил готовым ответом «${h(clip(fallback.q[0], 80))}». ${h(clip(e.message, 200))}`);
+        return;
+      }
+      if (t.channel === "site") {
+        await deliver(t, NO_ANSWER);
+        await toTopicHtml(t, `⚠️ <b>ИИ недоступен</b>, готового ответа нет — можно ответить в этой теме. ${h(clip(e.message, 200))}`);
+        return;
+      }
       return escalate(t, "ИИ не ответил");
     }
     // Пока думали, клиент дописал что-то новое — этот ответ устарел, следующий
@@ -2750,7 +2798,14 @@ function createSupportBot(deps) {
     if (screen === "keys") {
       const lines = list.map((p, i) => {
         const pu = (u.byProvider || {})[p.id] || { calls: 0 };
-        return `<b>${i + 1}. ${h(p.title)}</b> — ${provLine(p)}\n    лёгкая: <code>${h(p.light || "авто")}</code> · сильная: <code>${h(p.heavy || "авто")}</code>\n    сегодня: ${pu.calls} ${plural(pu.calls, "ответ", "ответа", "ответов")}`;
+        const st = router.status.get(p.id) || {};
+        return [`<b>${i + 1}. ${h(p.title)}</b> — ${provLine(p)}`,
+          `    лёгкая: <code>${h(p.light || "авто")}</code> · обычная: <code>${h(p.medium || p.light || "авто")}</code>`,
+          `    сильная: <code>${h(p.heavy || "авто")}</code> · самая сильная: <code>${h(p.max || p.heavy || "авто")}</code>`,
+          `    скриншоты: <code>${h(p.vision || "не подобрана")}</code>`,
+          st.lastModel ? `    последний ответ: <code>${h(st.lastModel)}</code>` : "",
+          st.detail && st.state !== "ok" ? `    ошибка: <i>${h(clip(st.detail, 160))}</i>` : "",
+          `    сегодня: ${pu.calls} ${plural(pu.calls, "ответ", "ответа", "ответов")}`].filter(Boolean).join("\n");
       });
       const rows = list.map((p, i) => [
         btn(`${p.enabled ? "⏸ Выключить" : "▶️ Включить"} ${p.title}`, `pt:${p.id}`),
@@ -2905,7 +2960,9 @@ function createSupportBot(deps) {
     }
     if (act === "pick") {
       await answer("Подбираю модели…");
-      await saveProviders(providers().map((p) => ({ ...p, light: "", heavy: "" })));
+      // Подобрать заново все ступени — и ручной выбор тоже, иначе бот
+      // считал бы подбор уже сделанным.
+      await saveProviders(providers().map((p) => ({ ...p, light: "", heavy: "", medium: "", max: "", vision: "", manual: false })));
       await pickModelsNow();
       return adminEdit(chatId, mid, "keys");
     }

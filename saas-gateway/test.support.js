@@ -292,6 +292,7 @@ function harness() {
         flags.onAi = null;
         await f();
       }
+      if (flags.failAi) return { ok: false, status: 503, json: async () => ({ error: { message: "upstream unavailable" } }) };
       if (flags.failVision && JSON.stringify(body.messages || []).includes("image_url")) {
         return { ok: false, status: 400, json: async () => ({ error: { message: "model does not support images" } }) };
       }
@@ -314,7 +315,7 @@ function harness() {
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
   };
-  const flags = { failHtml: false, failVision: false, onAi: null };
+  const flags = { failHtml: false, failVision: false, failAi: false, onAi: null };
   const key = crypto.randomBytes(32);
   const sent = {};
   const bot = sb.createSupportBot({
@@ -1843,6 +1844,49 @@ test("подсказки чата (до и после ответа) — гото
   assert.strictEqual(h.aiCalls.length, 0, `ИИ на подсказку: ${h.aiCalls.map((c) => JSON.stringify(c.messages.filter((x) => x.role === "user").slice(-1)).slice(0, 160)).join(" | ")}`);
 });
 
+test("ИИ: модель названа неточно («deepseek-v4.1-flash») — бот берёт точное имя из списка провайдера и сохраняет", async () => {
+  const aiMod = require("./support-ai");
+  const fixes = [];
+  const calls = [];
+  const router = aiMod.createAiRouter({
+    getKey: () => "k",
+    onModelFix: (p, from, to, fields) => fixes.push([from, to, fields]),
+    fetchImpl: async (url, opts = {}) => {
+      if (url.endsWith("/models")) return { ok: true, status: 200, json: async () => ({ data: [{ id: "deepseek-v4.1-flash-1017" }, { id: "claude-sonnet-5.5" }] }) };
+      const body = JSON.parse(opts.body);
+      calls.push(body.model);
+      if (body.model !== "deepseek-v4.1-flash-1017" && body.model !== "claude-sonnet-5.5") {
+        return { ok: false, status: 400, json: async () => ({ error: { message: "upstream error" } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "Привет" } }], usage: { total_tokens: 5 } }) };
+    },
+  });
+  const p = { id: "p1", title: "Tooken Club", enabled: true, baseUrl: "https://tooken.club/v1", format: "openai", light: "deepseek-v4.1-flash", medium: "deepseek-v4.1-flash", heavy: "claude-sonnet-5", max: "claude-sonnet-5" };
+  const r = await router.complete([p], [{ role: "user", content: "привет" }], { tier: "light" });
+  assert.strictEqual(r.text, "Привет");
+  assert.strictEqual(r.model, "deepseek-v4.1-flash-1017");
+  assert.deepStrictEqual(fixes[0], ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", ["light", "medium"]]);
+  const st = await router.check({ ...p, id: "p2", light: "claude-sonnet-5" });
+  assert.strictEqual(st.state, "ok");
+  assert.ok(fixes.some((f) => f[0] === "claude-sonnet-5" && f[1] === "claude-sonnet-5.5"));
+});
+
+test("сайт: ИИ недоступен — о цене отвечает готовый ответ с тарифами и тем, что входит; человека не зовёт", async () => {
+  const h = harness();
+  await setup(h);
+  h.flags.failAi = true;
+  const req = (body, ip) => ({ body, headers: { "x-real-ip": ip } });
+  await h.bot.handleSiteSend(req({ text: "Сколько стоит?", consent: true, visitor: "p".repeat(30) }, "10.5.0.1"), {});
+  await h.bot.idle();
+  await h.bot.handleSiteSend(req({ text: "А какая у вас цена подписки для кофейни с двумя баристами и кухней?", consent: true, visitor: "r".repeat(30) }, "10.5.0.2"), {});
+  await h.bot.idle();
+  for (const t of tickets(h.store)) {
+    assert.ok(!t.escalated, `позвал человека: ${t.subject}`);
+    const ai = messagesOf(h.store, t.id).filter((m) => m.authorRole === "ai").map((m) => m.text).join("\n");
+    assert.ok(/Что входит в любой тариф/.test(ai) && /zalpos\.ru/.test(ai), `нет ответа о цене: ${ai.slice(0, 200)}`);
+  }
+});
+
 test("объявления платформы: бот знает действующую акцию и отвечает по ней, снятую — забывает", async () => {
   const h = harness();
   h.store.set("broadcasts/b1", { title: "ИИ в кассе: 10 000 000 токенов бесплатно", body: "Бонус по ссылке https://tooken.club/r/ABC — подключите Telegram на сайте tooken.club.", active: true, createdAt: { toMillis: () => Date.now() } });
@@ -1875,10 +1919,12 @@ test("сайт: «оператор» — сначала уточняем, «да
   const msgs = async () => { await h.bot.handleSiteMessages(req({ ticketId, token, after: 0 }), {}); return h.sent.body.messages; };
   assert.ok((await msgs()).some((m) => /Позвать специалиста\? Напишите «да»/.test(m.text)));
   assert.strictEqual(h.aiCalls.length, 0);
+  // Сообщения в одну миллисекунду сортируются как попало — разводим по времени.
+  await new Promise((r) => setTimeout(r, 5));
   await h.bot.handleSiteSend(req({ ticketId, token, text: "да" }), {});
   await h.bot.idle();
   t = tickets(h.store).find((x) => x.id === ticketId);
-  assert.strictEqual(t.escalated, true, "после «да» не позвал");
+  assert.strictEqual(t.escalated, true, `после «да» не позвал: ${JSON.stringify((await msgs()).map((m) => m.text.slice(0, 60)))}`);
 
   // Бот позван — отвечает сам; ИИ без ответа (только маркер) не зовёт человека снова.
   h.aiReplies.push("[[ОПЕРАТОР: нет в знаниях]]");

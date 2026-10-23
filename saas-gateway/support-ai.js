@@ -181,9 +181,58 @@ function toAnthropic(messages) {
  * Маршрутизатор ИИ. getKey(p) — расшифрованный ключ; onStatus(p, status) —
  * сохранить состояние ключа; onSwitch(from, to, reason) — сообщить админам.
  */
-function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = () => {}, onSwitch = () => {}, onUsage = () => {} }) {
+/** Имя модели без дат, версий-суффиксов и знаков: «deepseek-v4.1-flash-1017» → «deepseekv41flash». */
+const modelKey = (id) => String(id || "").toLowerCase().replace(/^models\//, "").replace(/[-_.](\d{4}|\d{6,8}|latest|preview)$/g, "").replace(/[^a-z0-9]/g, "");
+
+/** Модели нет у провайдера под таким именем — ближайшая из его списка:
+ *  то же имя с датой/суффиксом («…-flash» → «…-flash-1017»), то же имя без
+ *  знаков, иначе модель той же ступени. Пусто — подобрать нечего. */
+function closestModel(model, ids, tier = "light") {
+  const list = [...new Set((ids || []).map(String))];
+  if (!model || list.includes(model)) return model && list.includes(model) ? model : "";
+  const m = String(model).toLowerCase();
+  const byShortest = (a, b) => a.length - b.length;
+  const prefix = list.filter((id) => id.toLowerCase().startsWith(`${m}-`) || id.toLowerCase().startsWith(`${m}.`)).sort(byShortest);
+  if (prefix.length) return prefix[0];
+  const k = modelKey(model);
+  const same = list.filter((id) => modelKey(id) === k || (k.length >= 6 && modelKey(id).startsWith(k))).sort(byShortest);
+  if (same.length) return same[0];
+  const picked = pickModels(list);
+  return picked[tier] || picked.light || "";
+}
+
+function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = () => {}, onSwitch = () => {}, onUsage = () => {}, onModelFix = () => {} }) {
   const doFetch = fetchImpl || fetch;
   const status = new Map(); // id → { state, text, until, lastOkAt, lastModel }
+  // Список моделей провайдера — раз в час, для исправления имён моделей.
+  const modelLists = new Map(); // id → { at, ids }
+  async function modelsOf(p) {
+    const hit = modelLists.get(p.id);
+    if (hit && now() - hit.at < 3600 * 1000) return hit.ids;
+    const ids = await listModels(p);
+    modelLists.set(p.id, { at: now(), ids });
+    return ids;
+  }
+  const TIER_FIELDS = ["light", "medium", "heavy", "max", "vision"];
+
+  /** Модель ответила ошибкой не про ключ и баланс — есть ли у провайдера
+   *  такая модель? Нет — ближайшая из списка, и все ступени с этим именем
+   *  исправляются (onModelFix сохранит в настройки). */
+  async function fixModel(p, model, tier) {
+    let ids;
+    try {
+      ids = await modelsOf(p);
+    } catch (_) {
+      return "";
+    }
+    if (!ids.length || ids.includes(model)) return "";
+    const to = closestModel(model, ids, tier);
+    if (!to || to === model) return "";
+    const fields = TIER_FIELDS.filter((f) => p[f] === model);
+    for (const f of fields) p[f] = to;
+    onModelFix(p, model, to, fields);
+    return to;
+  }
 
   const restingUntil = (p) => Number((status.get(p.id) || {}).until) || 0;
   const usable = (p) => p.enabled && !!getKey(p) && !!p.baseUrl;
@@ -259,6 +308,23 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
           return { text: r.text, provider: p, model: models[i], tokens: r.tokens, tier };
         } catch (e) {
           const c = classifyError(e.status, e.message);
+          // Имя модели не совпало со списком провайдера — исправляем и повторяем.
+          if (c.kind !== "auth" && c.kind !== "exhausted" && !e.fixed) {
+            const to = await fixModel(p, models[i], tier);
+            if (to) {
+              try {
+                const r = await callOnce(p, to, messages, { maxTokens, temperature });
+                const st = { state: "ok", text: "работает", until: 0, lastOkAt: now(), lastModel: to };
+                status.set(p.id, st);
+                onStatus(p, st);
+                onUsage(p, to, r.tokens, (tier === "heavy" || tier === "max") && to !== p.light, { tier, cost: Math.round((Number(r.tokens) || 0) * costOf(to)) });
+                return { text: r.text, provider: p, model: to, tokens: r.tokens, tier };
+              } catch (e2) {
+                e = e2;
+                e.fixed = true;
+              }
+            }
+          }
           errors.push(`${p.title} (${models[i]}): ${c.text}`);
           if (soft) continue;
           // Модели нет — пробуем вторую модель того же провайдера.
@@ -294,11 +360,14 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
 
   /** Проверка одного ключа маленьким запросом. */
   async function check(p) {
-    const model = p.light || p.heavy;
+    let model = p.light || p.heavy;
     if (!getKey(p)) return { state: "nokey", text: "нет ключа" };
     if (!model) return { state: "model", text: "не выбрана модель" };
     const started = now();
     try {
+      // Имя модели сверяем со списком провайдера заранее — проверка ключа
+      // не должна падать из-за «deepseek-v4.1-flash» вместо «…-flash-1017».
+      model = (await fixModel(p, model, "light")) || model;
       await callOnce(p, model, [{ role: "user", content: "Ответь одним словом: ок" }], { maxTokens: 5, temperature: 0 });
       const st = { state: "ok", text: "работает", until: 0, lastOkAt: now(), lastModel: model, ms: now() - started };
       status.set(p.id, st);
@@ -316,4 +385,4 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
   return { complete, listModels, check, status, restore: (id, st) => status.set(id, st) };
 }
 
-module.exports = { VENDORS, MAX_PROVIDERS, TIER_PREF, normalizeProviders, pickModels, chainFor, costOf, needsHeavy, classifyError, toAnthropic, createAiRouter };
+module.exports = { VENDORS, MAX_PROVIDERS, TIER_PREF, normalizeProviders, pickModels, closestModel, chainFor, costOf, needsHeavy, classifyError, toAnthropic, createAiRouter };
