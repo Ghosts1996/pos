@@ -32,6 +32,8 @@ import 'time_cafe_settings_screen.dart';
 import '../login_screen.dart';
 import '../employee/receipts_history_screen.dart';
 import 'z_report_screen.dart';
+import 'devices_screen.dart';
+import '../../build_info.dart';
 import '../../utils/adaptive.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
@@ -79,6 +81,7 @@ class AdminHomeScreen extends StatelessWidget {
             (ctx) => const IntegrationsSettingsScreen()),
         _AdminTile('Звонки и сигналы', Icons.notifications_active_outlined,
             (ctx) => const SignalsSettingsScreen()),
+        if (kSaasMode) _AdminTile('Устройства', Icons.devices_outlined, (ctx) => const DevicesScreen()),
       ],
     };
 

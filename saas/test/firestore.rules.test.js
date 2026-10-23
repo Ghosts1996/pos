@@ -310,6 +310,9 @@ describe("Полный путь joinAsDevice() как реальный клие�
       platform: "android", userId: "device1", status: "active",
     });
     await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { appBuild: "412", piiReady: 1, seenAt: serverTimestamp() }));
+    // Для чего используют устройство — коротким словом.
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { usage: "Экран кухни", seenAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { usage: "x".repeat(41) }));
     await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { status: "disabled" }));
     await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { piiReady: 1, deviceName: "Чужое" }));
     await assertFails(updateDoc(doc(ctxFor("device2"), "tenants/tenantA/devices/device1"), { piiReady: 1 }));

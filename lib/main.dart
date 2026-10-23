@@ -292,7 +292,7 @@ class HookahPosApp extends StatelessWidget {
                             : ValueListenableBuilder<DeviceLimitState?>(
                                 valueListenable: DeviceLimitGate.over,
                                 builder: (context, over, _) =>
-                                    over != null ? DeviceLimitScreen(state: over) : (child ?? const SizedBox.shrink()),
+                                    over != null ? const DeviceLimitHost() : (child ?? const SizedBox.shrink()),
                               ),
                       ),
                     ),

@@ -73,6 +73,22 @@ class StaffDeviceService {
     } catch (_) {}
   }
 
+  /// Для чего используют это устройство: «Экран кухни», «Официант»,
+  /// «Администратор». Владелец видит это в кабинете («Устройства») и на
+  /// экране лимита — понятно, какой планшет можно удалить.
+  static String _lastUsage = '';
+  Future<void> reportUsage(String usage) async {
+    final u = usage.trim();
+    if (!kSaasMode || _uid.isEmpty || AppScope.tenantId == null || AppScope.isDemo || u.isEmpty || u == _lastUsage) return;
+    _lastUsage = u;
+    try {
+      await AppScope.col('devices').doc(_uid).update({
+        'usage': u.length > 40 ? u.substring(0, 40) : u,
+        'seenAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
   /// Снять регистрацию (планшет выводится из зала).
   Future<void> unregister(String uid) => AppScope.col(_collection).doc(uid).delete();
 

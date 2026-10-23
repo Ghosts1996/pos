@@ -100,6 +100,13 @@ class DeviceLimitGate {
   /// работают.
   static final ValueNotifier<DeviceLimitState?> over = ValueNotifier(null);
 
+  /// Все устройства заведения по времени подключения — для списка на
+  /// экране лимита и в Админ → «Устройства».
+  static final ValueNotifier<List<DeviceSlot>> devices = ValueNotifier(const []);
+
+  /// Это устройство.
+  static String get myId => _uid;
+
   static StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
   static List<DeviceSlot> _devices = const [];
   static String _uid = '';
@@ -111,14 +118,8 @@ class DeviceLimitGate {
     PlanCapabilitiesService.current.addListener(_recompute);
     _sub = FirebaseFirestore.instance.collection('tenants').doc(tenantId).collection('devices').snapshots().listen(
       (snap) {
-        _devices = [
-          for (final d in snap.docs)
-            DeviceSlot(
-              id: d.id,
-              active: d.data()['status'] != 'disabled',
-              joinedAt: d.data()['createdAt'] is Timestamp ? (d.data()['createdAt'] as Timestamp).toDate() : null,
-            ),
-        ];
+        _devices = [for (final d in snap.docs) DeviceSlot.fromMap(d.id, d.data())];
+        devices.value = sorted(_devices);
         _recompute();
       },
       // Нет прав или связи — кассу не блокируем.
@@ -131,11 +132,32 @@ class DeviceLimitGate {
     _sub = null;
     PlanCapabilitiesService.current.removeListener(_recompute);
     _devices = const [];
+    devices.value = const [];
     over.value = null;
   }
 
   static void _recompute() {
     over.value = check(_devices, _uid, PlanCapabilitiesService.current.value.maxDevices);
+  }
+
+  /// По времени подключения; ещё без серверного времени — только что
+  /// подключились, значит последние.
+  static List<DeviceSlot> sorted(Iterable<DeviceSlot> list) => list.toList()
+    ..sort((a, b) {
+      final ta = a.joinedAt, tb = b.joinedAt;
+      if (ta == null && tb == null) return a.id.compareTo(b.id);
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      final c = ta.compareTo(tb);
+      return c != 0 ? c : a.id.compareTo(b.id);
+    });
+
+  /// Работает ли касса на устройстве [id] при лимите [max].
+  static bool works(List<DeviceSlot> devices, String id, int max) {
+    final me = devices.where((d) => d.id == id).firstOrNull;
+    if (me == null || !me.active) return false;
+    if (max <= 0) return true;
+    return sorted(devices.where((d) => d.active)).indexWhere((d) => d.id == id) < max;
   }
 
   /// null — устройству [uid] можно работать.
@@ -147,16 +169,7 @@ class DeviceLimitGate {
     // отключение освобождало бы место, а планшет продолжал бы работать.
     if (!me.active) return DeviceLimitState(max: max, active: devices.where((d) => d.active).length, disabled: true);
     if (max <= 0) return null;
-    final active = devices.where((d) => d.active).toList()
-      ..sort((a, b) {
-        final ta = a.joinedAt, tb = b.joinedAt;
-        if (ta == null && tb == null) return a.id.compareTo(b.id);
-        // Ещё без серверного времени — только что подключились, значит последние.
-        if (ta == null) return 1;
-        if (tb == null) return -1;
-        final c = ta.compareTo(tb);
-        return c != 0 ? c : a.id.compareTo(b.id);
-      });
+    final active = sorted(devices.where((d) => d.active));
     final place = active.indexWhere((d) => d.id == uid);
     return place < max ? null : DeviceLimitState(max: max, active: active.length);
   }
@@ -166,7 +179,49 @@ class DeviceSlot {
   final String id;
   final bool active;
   final DateTime? joinedAt;
-  const DeviceSlot({required this.id, required this.active, this.joinedAt});
+
+  /// Имя, данное при подключении или в кабинете («Планшет на баре»).
+  final String name;
+
+  /// android, windows, …
+  final String platform;
+
+  /// Для чего используют: «Экран кухни и бара», «Официант».
+  final String usage;
+  final DateTime? seenAt;
+
+  const DeviceSlot({
+    required this.id,
+    required this.active,
+    this.joinedAt,
+    this.name = '',
+    this.platform = '',
+    this.usage = '',
+    this.seenAt,
+  });
+
+  factory DeviceSlot.fromMap(String id, Map<String, dynamic> d) {
+    DateTime? t(Object? v) => v is Timestamp ? v.toDate() : null;
+    final seen = [t(d['seenAt']), t(d['lastSeenAt'])].whereType<DateTime>().toList()..sort();
+    return DeviceSlot(
+      id: id,
+      active: d['status'] != 'disabled',
+      joinedAt: t(d['createdAt']),
+      name: '${d['deviceName'] ?? ''}'.trim(),
+      platform: '${d['platform'] ?? ''}',
+      usage: '${d['usage'] ?? ''}'.trim(),
+      seenAt: seen.isEmpty ? null : seen.last,
+    );
+  }
+
+  /// «Планшет на баре», а без имени — по платформе.
+  String get title => name.isNotEmpty
+      ? name
+      : switch (platform) {
+          'windows' => 'Компьютер с Windows',
+          'android' => 'Android-устройство',
+          _ => 'Устройство',
+        };
 }
 
 class DeviceLimitState {

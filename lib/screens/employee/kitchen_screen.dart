@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../services/staff_device_service.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -119,6 +120,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
     }).catchError((Object _) {});
     _alertSub = _fs.openChecksStream().listen(_checkNew, onError: (_) {});
     LanSignals.instance.deviceLabel = 'Кухня · ${widget.employee.name}';
+    unawaited(StaffDeviceService().reportUsage('Экран кухни и бара'));
     unawaited(LanSignals.instance.start());
     _lanSub = LanSignals.instance.messages.where((m) => m.kind == LanKind.kitchenOrder).listen(_onLan);
   }

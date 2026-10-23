@@ -6268,6 +6268,73 @@ async function setDeviceEnabled(req, res, enabled) {
   sendJson(res, 200, { ok: true });
 }
 
+/** Попытки PIN администратора с кассы: устройство → { n, resetAt }. */
+const DEVICE_PIN_TRIES = new Map();
+const DEVICE_PIN_MAX = 5;
+const DEVICE_PIN_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Удалить устройство из заведения: касса на нём перестаёт работать и
+ * освобождает место по тарифу. Владелец и управляющий — из кабинета;
+ * с самой кассы (например, с экрана «Лимит устройств») — по PIN
+ * администратора заведения. Удалённое устройство можно подключить заново
+ * обычным путём, оно встанет последним.
+ */
+async function handleRemoveDevice(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, uid, adminPin } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)
+      || typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new HttpError(400, "Не указано устройство");
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  let via = "cabinet";
+  if (!(await isSuperAdmin(decoded))) {
+    const member = (await firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get()).data();
+    if (!member || member.status !== "active") throw new HttpError(403, "Недостаточно прав в этом заведении");
+    if (!["owner", "admin"].includes(member.role)) {
+      // Касса: только устройство этого заведения и только с PIN администратора.
+      via = "pos";
+      if (!(await tenantRef.collection("devices").doc(decoded.uid).get()).exists) throw new HttpError(403, "Недостаточно прав в этом заведении");
+      const now = Date.now();
+      const tries = DEVICE_PIN_TRIES.get(decoded.uid);
+      if (tries && tries.resetAt > now && tries.n >= DEVICE_PIN_MAX) {
+        throw new HttpError(429, "Слишком много неверных PIN. Подождите 10 минут или удалите устройство в кабинете");
+      }
+      if (typeof adminPin !== "string" || !/^\d{4,8}$/.test(adminPin)) throw new HttpError(400, "Введите PIN администратора");
+      const hash = pinHashFor(adminPin, tenantId);
+      const found = await tenantRef.collection("employees").where("pinHash", "==", hash).limit(5).get();
+      if (!found.docs.some((d) => d.data().role === "admin")) {
+        const cur = tries && tries.resetAt > now ? tries : { n: 0, resetAt: now + DEVICE_PIN_WINDOW_MS };
+        DEVICE_PIN_TRIES.set(decoded.uid, { n: cur.n + 1, resetAt: cur.resetAt });
+        throw new HttpError(403, "Неверный PIN администратора");
+      }
+      DEVICE_PIN_TRIES.delete(decoded.uid);
+    }
+  }
+  if (uid === decoded.uid) throw new HttpError(400, "Это устройство удалить с него самого нельзя — выберите другое");
+  const deviceRef = tenantRef.collection("devices").doc(uid);
+  const deviceSnap = await deviceRef.get();
+  if (!deviceSnap.exists) throw new HttpError(404, "Устройство уже удалено");
+  const tenantDoc = await tenantRef.get();
+  await deviceRef.delete();
+  await firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`).delete().catch(() => {});
+  // Устройство точки сети может работать и в других точках — там оно
+  // остаётся; удалено отовсюду — выключаем и его вход.
+  const others = await firestore.collection("tenantMembers").where("userId", "==", uid).where("status", "==", "active").limit(1).get();
+  if (others.empty) {
+    const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
+    if (chainId) await syncChainMembership(chainId, uid, "employee", "disabled");
+    try {
+      await getFirebaseApp().auth().updateUser(uid, { disabled: true });
+      await getFirebaseApp().auth().revokeRefreshTokens(uid);
+    } catch (_) {
+      // Анонимного входа уже нет — нечего выключать.
+    }
+  }
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRemoved", metadata: { uid, via, deviceName: deviceSnap.data().deviceName || null } });
+  sendJson(res, 200, { ok: true });
+}
+
 // ------------------------------------ security: персональные данные (152-ФЗ)
 //
 // Реестр запросов субъектов ПД (dataRequests): удалить, выдать копию,
@@ -7711,6 +7778,7 @@ const ROUTES = {
   "/securityDevices": handleSecurityDevices,
   "/disableDevice": (req, res) => setDeviceEnabled(req, res, false),
   "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
+  "/removeDevice": handleRemoveDevice,
   "/createDataRequest": handleCreateDataRequest,
   "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
   "/resolveDataRequest": handleResolveDataRequest,

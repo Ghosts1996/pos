@@ -243,6 +243,10 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     final loggedInEmployee = employee;
+    // Для чего это устройство — видно владельцу в списке устройств.
+    unawaited(StaffDeviceService().reportUsage(loggedInEmployee.role == AppConstants.roleAdmin
+        ? 'Администратор'
+        : AppConstants.positionShortLabel(loggedInEmployee.position)));
     // Запоминаем вошедшего (только id, не PIN) и сообщаем фоновой службе:
     // вызовы и напоминания — по специализации этого сотрудника.
     unawaited(_session

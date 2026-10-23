@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/screens/saas/device_limit_screen.dart';
 import 'package:hookah_pos/services/plan_capabilities.dart';
 import 'package:hookah_pos/widgets/plan_upsell.dart';
 
@@ -59,6 +61,43 @@ void main() {
       expect(DeviceLimitGate.check(list, 'a', 1), isNull);
       expect(DeviceLimitGate.check(list, 'new', 1), isNotNull);
     });
+  });
+
+  test('каждое устройство считается отдельно: кухня, бар, телефон официанта', () {
+    final t = DateTime(2026, 10, 1);
+    final list = [
+      DeviceSlot.fromMap('kitchen', {'usage': 'Экран кухни и бара', 'platform': 'android', 'status': 'active'}),
+      DeviceSlot(id: 'bar', active: true, joinedAt: t, name: 'Планшет на баре'),
+      DeviceSlot(id: 'phone', active: true, joinedAt: t.add(const Duration(days: 1)), platform: 'android'),
+    ];
+    expect(DeviceLimitGate.works(list, 'bar', 2), isTrue);
+    expect(DeviceLimitGate.works(list, 'phone', 2), isTrue);
+    expect(DeviceLimitGate.works(list, 'kitchen', 2), isFalse, reason: 'подключилось последним');
+    expect(DeviceLimitGate.works(list, 'kitchen', 0), isTrue);
+    expect(list[0].title, 'Android-устройство');
+    expect(list[1].title, 'Планшет на баре');
+  });
+
+  testWidgets('экран лимита: список устройств и удаление по PIN администратора', (tester) async {
+    DeviceLimitGate.devices.value = [
+      DeviceSlot(id: 'a', active: true, joinedAt: DateTime(2026), name: 'Планшет на баре', usage: 'Бармен'),
+      DeviceSlot(id: 'b', active: true, joinedAt: DateTime(2026, 2), name: 'Планшет на кухне'),
+    ];
+    DeviceLimitGate.over.value = const DeviceLimitState(max: 1, active: 2);
+    PlanCapabilitiesService.current.value = const PlanCapabilities(maxDevices: 1);
+    await tester.binding.setSurfaceSize(const Size(500, 1400));
+    await tester.pumpWidget(const MaterialApp(home: DeviceLimitHost()));
+    await tester.pump();
+    expect(find.text('Лимит устройств тарифа'), findsOneWidget);
+    expect(find.text('Планшет на баре'), findsOneWidget);
+    expect(find.textContaining('сверх лимита'), findsOneWidget);
+    await tester.tap(find.text('Удалить').first);
+    await tester.pumpAndSettle();
+    expect(find.text('PIN администратора'), findsOneWidget, reason: 'окно открывается — у экрана свой навигатор');
+    DeviceLimitGate.over.value = null;
+    DeviceLimitGate.devices.value = const [];
+    PlanCapabilitiesService.current.value = PlanCapabilities.full;
+    await tester.binding.setSurfaceSize(null);
   });
 
   test('«до N сотрудника/сотрудников»', () {
