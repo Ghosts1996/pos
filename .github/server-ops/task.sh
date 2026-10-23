@@ -1,15 +1,14 @@
 #!/bin/bash
-# Проверка состояния сервера — только чтение, ничего не меняет.
+# Диагностика удаления устройства в кабинете — только чтение, ничего не меняет.
 set -u
 echo "== Службы"
-for s in saas-gateway pii-gateway nginx postgresql; do
+for s in saas-gateway nginx; do
   printf '%-14s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo нет)"
 done
 echo "== Версия кода: $(cat /opt/saas-gateway/VERSION 2>/dev/null || echo неизвестна)"
-echo "== Откуда сервер берёт код"
-url=$(git -C /root/pos-deploy remote get-url origin 2>/dev/null | sed -E 's#//[^@/]+@#//***@#')
-echo "origin: ${url:-не найден}"
-grep -q '^GITHUB_PAT=.' /etc/saas-gateway.env 2>/dev/null && echo "GITHUB_PAT: задан" || echo "GITHUB_PAT: НЕ задан"
-echo "== Диск"
-df -h / | tail -1
+grep -c "handleRestoreDevice" /opt/saas-gateway/server.js 2>/dev/null | sed 's/^/restoreDevice в коде сервера: /'
+echo "== Ошибки удаления и восстановления устройств за сутки (без токенов)"
+journalctl -u saas-gateway --since "-24h" --no-pager 2>/dev/null \
+  | grep -E -A12 "saas-gateway /(removeDevice|restoreDevice|setDeviceEnabled)" \
+  | grep -v -i -E "bearer|token|secret|password|key=" | tail -80
 echo "Готово."
