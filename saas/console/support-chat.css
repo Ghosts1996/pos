@@ -68,7 +68,7 @@
 .sc-body { flex: 1; overflow-y: auto; padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; overflow-anchor: none; }
 .sc-msg { display: flex; flex-direction: column; max-width: 86%; }
 .sc-msg.sc-you { align-self: flex-end; align-items: flex-end; }
-.sc-bubble { padding: 10px 14px; border-radius: 18px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.sc-bubble { padding: 10px 14px; border-radius: 18px; font-size: 14px; line-height: 1.5; overflow-wrap: break-word; min-width: 0; }
 .sc-bubble b { font-weight: 650; }
 .sc-bubble a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
 .sc-ai .sc-bubble { background: var(--surface-2); border-bottom-left-radius: 6px; }

@@ -1873,7 +1873,7 @@ function screenLanding() {
   screenEl().innerHTML = `
     <nav class="landing-nav">
       <div class="landing-inner landing-nav-inner">
-        <a class="landing-logo" href="#/" aria-label="ZalPOS, на главную">Zal<span>POS</span></a>
+        <a class="landing-logo" href="#/" aria-label="ZalPOS, на главную"><img class="landing-logo-icon" src="/icon-192.png" alt="" width="30" height="30">Zal<span>POS</span></a>
         <div class="landing-nav-links">
           <button type="button" data-scroll="landing-features">Возможности</button>
           <button type="button" data-scroll="landing-delivery">Доставка</button>
@@ -2194,10 +2194,18 @@ function screenLanding() {
     <footer class="landing-section landing-footer">
       <div class="landing-inner">
         <div class="l-footer-top">
-          <span class="landing-logo">Zal<span>POS</span></span>
+          <span class="landing-logo"><img class="landing-logo-icon" src="/icon-192.png" alt="" width="30" height="30" loading="lazy">Zal<span>POS</span></span>
           <p class="small muted">Уже есть аккаунт? <a href="#/login">Войти по паролю</a></p>
         </div>
-        ${publicFooterLinksHtml()}
+        <nav class="l-footer-cols" aria-label="Разделы сайта">
+          <div><div class="l-footer-h">Продукт</div>
+            <a href="#/guide">Инструкция</a><a href="/blog/">Блог</a><a href="#/faq">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
+          <div><div class="l-footer-h">Документы</div>
+            <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a></div>
+          <div><div class="l-footer-h">Доверие</div>
+            <span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
+        </nav>
+        <p class="small muted l-footer-pay">${PAYMENT_METHODS_TEXT}</p>
       </div>
     </footer>
 

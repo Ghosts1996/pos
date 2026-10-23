@@ -82,7 +82,7 @@ a { color: var(--primary); }
 /* Переносы и строки: длинные слова в абзацах переносятся по слогам
    (lang="ru"), абзац не заканчивается одиноким словом, заголовки делятся
    на ровные строки. Неразрывные пробелы расставляет typograf.js. */
-p, li { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word; text-wrap: pretty; }
+p, li { hyphens: manual; -webkit-hyphens: manual; overflow-wrap: break-word; text-wrap: pretty; }
 h1, h2, h3 { text-wrap: balance; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }

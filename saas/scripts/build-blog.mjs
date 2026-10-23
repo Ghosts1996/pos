@@ -247,7 +247,9 @@ function layout({ title, description, canonical, body, ogType = 'website', extra
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="${SITE}/og-image.png">
-<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="alternate" type="application/rss+xml" title="Блог ${BRAND}" href="${SITE}/blog/rss.xml">
 <link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/blog/blog.css?v=${CSS_VERSION()}">
