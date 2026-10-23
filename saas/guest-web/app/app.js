@@ -702,6 +702,7 @@ async function boot() {
     await applyBranding();
     // Уровни лояльности не ждём: до их прихода действуют пороги по умолчанию.
     applyLoyaltyTiers();
+    loadTimeCafe();
     watchProfile();
     watchVenue();
     $('tabbar').hidden = false;
@@ -819,6 +820,82 @@ async function applyLoyaltyTiers() {
   } catch (_) {
     // Нет сети/прав/документа — работаем с дефолтными порогами.
   }
+}
+
+// ---------- ТАЙМ-КАФЕ ----------
+// Тариф заведения (settings/timeCafe) и тот же расчёт, что на кассе
+// (lib/utils/time_cafe.dart): округление вверх до шага, минимум, первый
+// час по своей цене, стоп-чек за гостя. Касса пересчитывает время на
+// момент оплаты — гость видит ту же сумму заранее.
+let TIME_CAFE = null;
+const TIME_CAFE_LINE = 'timecafe';
+
+async function loadTimeCafe() {
+  try {
+    const snap = await getDoc(doc(state.root, 'settings', 'timeCafe'));
+    const m = snap.exists() ? snap.data() : {};
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
+    const round = [1, 5, 15, 30, 60].includes(Math.round(num(m.roundMinutes))) ? Math.round(num(m.roundMinutes)) : 1;
+    TIME_CAFE = m.enabled === true && num(m.pricePerHour) > 0 ? {
+      price: num(m.pricePerHour),
+      first: num(m.firstHourPrice),
+      min: Math.min(600, Math.round(num(m.minMinutes))),
+      round,
+      stop: num(m.stopCheck),
+    } : null;
+  } catch (_) {
+    TIME_CAFE = null; // нет прав или сети — время не показываем
+  }
+}
+
+function timeCafeMinutes(ms) {
+  const t = TIME_CAFE;
+  const mins = Math.ceil(Math.max(0, ms) / 60000);
+  let billed = mins <= 0 ? t.round : Math.ceil(mins / t.round) * t.round;
+  if (billed < t.min) billed = t.min;
+  return billed;
+}
+
+function timeCafeCost(ms) {
+  const t = TIME_CAFE;
+  const m = timeCafeMinutes(ms);
+  const first = t.first > 0 ? t.first : t.price;
+  const firstPart = Math.min(m, 60);
+  let c = Math.round(first * firstPart / 60 + t.price * (m - firstPart) / 60);
+  if (t.stop > 0 && c > t.stop) c = t.stop;
+  return c;
+}
+
+function timeLabel(minutes) {
+  const h = Math.floor(minutes / 60), m = minutes % 60;
+  if (h === 0) return `${m} мин`;
+  if (m === 0) return `${h} ч`;
+  return `${h} ч ${String(m).padStart(2, '0')} мин`;
+}
+
+/// Строки счёта с временем на сейчас: строку тайм-кафе по тарифу касса
+/// пересчитает при оплате, «вручную» — оставит как есть; если времени в
+/// счёте ещё нет, показываем его отдельной строкой.
+function billWithTime(s) {
+  const items = (s.orderItems || []).map((i) => ({ ...i }));
+  if (!TIME_CAFE || s.orderType) return { items, time: null };
+  const start = toDate(s.startTime);
+  if (!start) return { items, time: null };
+  const ms = Date.now() - start.getTime();
+  const per = timeCafeCost(ms);
+  const label = timeLabel(timeCafeMinutes(ms));
+  const line = items.find((i) => i.menuItemId === TIME_CAFE_LINE);
+  if (line) {
+    if (!String(line.name || '').endsWith(' · вручную')) {
+      line.price = per;
+      line.name = `Время в тайм-кафе · ${label}`;
+      line.live = true;
+    }
+    return { items, time: { per: Number(line.price) || 0, guests: Number(line.qty) || 1, label } };
+  }
+  const guests = Math.max(1, Number(s.guests) || 1);
+  items.push({ menuItemId: TIME_CAFE_LINE, name: `Время за столом · ${label}`, price: per, qty: guests, live: true, pending: true });
+  return { items, time: { per, guests, label } };
 }
 
 function tierOf(spent) {
@@ -1720,9 +1797,13 @@ function tableEmpty() {
 }
 
 function drawTable(s) {
-  const items = s.orderItems || [];
+  const { items, time } = billWithTime(s);
   const total = items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
   const discount = Number(s.discountPercent) || 0;
+  // Скидка — только на то, что можно удешевлять: кальяны и табак без
+  // скидок (как PromoPolicy на кассе).
+  const promoBase = items.filter((i) => !i.noPromo).reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+  const discountSum = promoBase * discount / 100;
   const bonus = Number((state.profile || {}).bonusBalance) || 0;
   const hookah = isHookah();
   const plannedEnd = toDate(s.plannedEnd);
@@ -1740,6 +1821,16 @@ function drawTable(s) {
     </div>
 
     ${showTimer ? `<div class="card timer" id="timer"><div class="value">—</div></div>` : ''}
+    ${time ? `<div class="card" id="timeCafe">
+      <div class="muted small">Время за столом · ${time.label}</div>
+      <div class="row" style="justify-content:space-between;margin-top:4px">
+        <b>${money(time.per)} за гостя${time.guests > 1 ? ` × ${time.guests}` : ''}</b>
+        <b>${money(time.per * time.guests)}</b>
+      </div>
+      <div class="small muted" style="margin-top:6px">Время считается до оплаты — итог в счёте обновляется сам.${
+  sbpOn && !(s.orderItems || []).some((i) => i.menuItemId === TIME_CAFE_LINE)
+    ? ` Хотите оплатить онлайн — сначала попросите ${staffWord('acc')} добавить время в счёт.` : ''}</div>
+    </div>` : ''}
 
     <button class="btn-primary" id="orderFromTable">${ic('cloche')}Сделать заказ</button>
     <p class="small muted" style="margin:8px 0 0">${orderHint()}</p>
@@ -1767,13 +1858,13 @@ function drawTable(s) {
     <div class="card">
       ${items.length ? items.map((i) => `
         <div class="bill-line">
-          <span class="grow">${esc(i.name)} ×${Number(i.qty) || 0}</span>
+          <span class="grow">${esc(i.name)} ×${Number(i.qty) || 0}${i.pending ? '<br><span class="small muted">добавится при оплате</span>' : ''}</span>
           <span class="muted">${money((Number(i.price) || 0) * (Number(i.qty) || 0))}</span>
         </div>`).join('') + `
-        ${discount > 0 ? `<div class="bill-line" style="color:var(--gold)">
+        ${discount > 0 && discountSum > 0 ? `<div class="bill-line" style="color:var(--gold)">
           <span class="grow">Скидка ${Math.round(discount)}%</span>
-          <span>−${money(total * discount / 100)}</span></div>` : ''}
-        <div class="bill-total"><span>Итого</span><span>${money(total * (1 - discount / 100))}</span></div>
+          <span>−${money(discountSum)}</span></div>` : ''}
+        <div class="bill-total"><span>Итого${time ? ' на сейчас' : ''}</span><span>${money(total - discountSum)}</span></div>
         ${guestPaid > 0 ? `<div class="bill-line" style="color:var(--gold)">
           <span class="grow">Оплачено онлайн</span><span>−${money(guestPaid)}</span></div>` : ''}
         ${bonus >= 1 ? `<div class="small" style="color:var(--gold);margin-top:10px">
@@ -1806,6 +1897,18 @@ function drawTable(s) {
     };
     tick();
     state.ticker = setInterval(tick, 1000);
+  }
+
+  // Время идёт — раз в минуту перерисовываем счёт с новой суммой. Поле
+  // ввода чаевых при этом не трогаем: если гость его заполняет, ждём.
+  if (state.timeTicker) { clearInterval(state.timeTicker); state.timeTicker = null; }
+  if (time) {
+    state.timeTicker = setInterval(() => {
+      if (!$('timeCafe')) { clearInterval(state.timeTicker); state.timeTicker = null; return; }
+      const a = document.activeElement;
+      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+      drawTable(s);
+    }, 60000);
   }
 
   $('unbind').onclick = unbind;

@@ -383,6 +383,10 @@ class SessionModel {
   /// гостю/CRM — просто текстовая метка для наглядности на карте зала.
   final String guestTag;
 
+  /// Сколько гостей за столом (0 — не указали). По нему тайм-кафе считает
+  /// время за каждого, а гость в приложении видит сумму за стол.
+  final int guests;
+
   final DateTime startTime;
   final DateTime plannedEnd;
   final int refillCount;
@@ -514,6 +518,7 @@ class SessionModel {
     required String employeeName,
     this.employeeId = '',
     this.guestTag = '',
+    this.guests = 0,
     required this.startTime,
     required this.plannedEnd,
     this.refillCount = 0,
@@ -573,6 +578,7 @@ class SessionModel {
       employeeName: asText(data['employeeName']),
       employeeId: asText(data['employeeId']),
       guestTag: asText(data['guestTag']),
+      guests: (asNum(data['guests'])?.toInt() ?? 0).clamp(0, 99),
       startTime: start is Timestamp ? start.toDate() : now,
       plannedEnd: end is Timestamp ? end.toDate() : now,
       refillCount: data['refillCount'] ?? 0,
@@ -632,6 +638,7 @@ class SessionModel {
       if (Pd.mirror) 'employeeName': employeeName,
       'employeeId': employeeId,
       'guestTag': guestTag,
+      if (guests > 0) 'guests': guests,
       if (orderType.isNotEmpty) 'orderType': orderType,
       if (Pd.mirror && customerPhone.isNotEmpty) 'customerPhone': customerPhone,
       if (Pd.mirror && deliveryAddress.isNotEmpty) 'deliveryAddress': deliveryAddress,

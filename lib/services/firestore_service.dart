@@ -561,6 +561,7 @@ class FirestoreService {
     String employeeId = '',
     int durationMinutes = AppConstants.defaultSessionMinutes,
     String guestTag = '',
+    int guests = 0,
     String? tableName,
     String orderType = '',
     String customerPhone = '',
@@ -599,6 +600,7 @@ class FirestoreService {
         startTime: now,
         plannedEnd: now.add(Duration(minutes: durationMinutes)),
         guestTag: guestTag,
+        guests: guests,
         orderType: orderType,
         customerPhone: customerPhone,
         deliveryAddress: deliveryAddress,
@@ -834,12 +836,35 @@ class FirestoreService {
 
   /// Тайм-кафе: строка «Время в тайм-кафе» по времени за столом и числу
   /// гостей. Уже есть — пересчитываем её же (см. TimeCafe.line).
-  Future<void> setTimeCafeLine(String sessionId, Duration sat, int guests, {double? perGuest}) =>
-      _editCheckItems(sessionId, (items) {
-        items.removeWhere((i) => i.menuItemId == TimeCafe.lineId);
-        items.add(TimeCafe.line(sat, guests, perGuest: perGuest));
-        return true;
-      });
+  Future<void> setTimeCafeLine(String sessionId, Duration sat, int guests, {double? perGuest}) async {
+    await _editCheckItems(sessionId, (items) {
+      items.removeWhere((i) => i.menuItemId == TimeCafe.lineId);
+      items.add(TimeCafe.line(sat, guests, perGuest: perGuest));
+      return true;
+    });
+    // За сколько гостей платят время — столько и за столом.
+    unawaited(AppScope.col('sessions').doc(sessionId).update({'guests': guests < 1 ? 1 : guests}).catchError((Object _) {}));
+  }
+
+  /// Сколько гостей за столом. Время тайм-кафе в счёте пересчитывается на
+  /// новое число гостей: по тарифу — заново, сумма «вручную» — та же за
+  /// гостя.
+  Future<void> setGuests(SessionModel s, int guests) async {
+    final n = guests.clamp(1, 99);
+    unawaited(AppScope.col('sessions').doc(s.id).update({'guests': n}).catchError((Object _) {}));
+    if (!TimeCafe.hasLine(s)) return;
+    await _editCheckItems(s.id, (items) {
+      final i = items.indexWhere((x) => x.menuItemId == TimeCafe.lineId);
+      if (i < 0 || items[i].qty == n) return false;
+      final old = items[i];
+      items[i] = old.name.endsWith(' · вручную')
+          ? OrderItem(
+              menuItemId: old.menuItemId, name: old.name, price: old.price, qty: n, kind: old.kind,
+              ready: n, sent: n, accepted: n, served: n, since: old.since)
+          : TimeCafe.line(DateTime.now().difference(s.startTime), n);
+      return true;
+    });
+  }
 
   /// Позиции от гостя по текущему меню — см. [priceGuestItems].
   Future<List<OrderItem>> menuPricedItems(List<OrderItem> items) async {

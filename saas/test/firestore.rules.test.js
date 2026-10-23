@@ -471,6 +471,21 @@ describe("Ролевая модель внутри одного заведени
     }));
   });
 
+  it("тариф тайм-кафе (settings/timeCafe) читает гость своего заведения, пишет только сотрудник", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/settings/timeCafe"), { enabled: true, pricePerHour: 300 });
+    });
+    const empDb = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/settings/timeCafe"), { enabled: true, pricePerHour: 360 }));
+    const guestDb = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(guestDb, "tenants/tenantA/settings/timeCafe")));
+    await assertFails(setDoc(doc(guestDb, "tenants/tenantA/settings/timeCafe"), { pricePerHour: 1 }));
+    // Остальные настройки гостю по-прежнему закрыты.
+    await assertFails(getDoc(doc(guestDb, "tenants/tenantA/settings/deviceInvite")));
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/timeCafe")));
+  });
+
   it("остальные settings/* (например settings/integrations) пишет любой сотрудник, но не гость и не чужое заведение", async () => {
     // Регрессия: lib/screens/admin/integrations_settings_screen.dart тоже
     // открывается с кассы и падал бы по той же причине, что и employees/

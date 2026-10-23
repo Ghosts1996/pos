@@ -444,6 +444,12 @@ service cloud.firestore {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
     }
+    // Тариф тайм-кафе читает и гость: в приложении он видит, сколько уже
+    // стоит время за столом.
+    match /tenants/{tenantId}/settings/timeCafe {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
 
     // ---- Заметки супер-админа о заведении — владельцу не видны ----
     match /tenants/{tenantId}/internal/{doc} {

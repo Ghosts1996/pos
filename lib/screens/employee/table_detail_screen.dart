@@ -89,8 +89,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   }
 
   Future<void> _startSession() async {
-    final guestTag = await _askGuestTag();
-    if (guestTag == null) return; // отменили диалог
+    final start = await _askGuestTag();
+    if (start == null) return; // отменили диалог
+    final (guestTag, guests) = start;
 
     setState(() => _busy = true);
     try {
@@ -99,6 +100,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         employeeName: widget.employee.name,
         employeeId: widget.employee.id,
         guestTag: guestTag,
+        guests: guests,
         durationMinutes: AppConstants.sessionMinutes,
       );
       if (mounted) setState(() => _sessionId = id);
@@ -112,39 +114,80 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   }
 
   /// Имя гостя, чтобы на плитке зала было видно, кто сидит за столом —
-  /// не только таймер. Поле необязательное: подтвердить можно и пустым.
+  /// не только таймер, и сколько гостей (по ним тайм-кафе считает время).
+  /// Имя необязательное: подтвердить можно и пустым.
   /// Возвращает null, если сотрудник закрыл диалог кнопкой «Отмена».
-  Future<String?> _askGuestTag() async {
+  Future<(String, int)?> _askGuestTag() async {
     final ctrl = TextEditingController();
-    final result = await showDialog<String>(
+    var guests = 1;
+    final result = await showDialog<(String, int)>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        title: const Text('Кто за столом?'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(
-            labelText: 'Имя гостя (необязательно)',
-            hintText: 'Например, Константин',
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, set) => AlertDialog(
+          scrollable: true,
+          title: const Text('Кто за столом?'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Имя гостя (необязательно)',
+                hintText: 'Например, Константин',
+              ),
+              onSubmitted: (v) => Navigator.pop(ctx, (v.trim(), guests)),
+            ),
+            const SizedBox(height: 16),
+            const Text('Сколько гостей'),
+            const SizedBox(height: 6),
+            _GuestsStepper(value: guests, onChanged: (v) => set(() => guests = v)),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, (ctrl.text.trim(), guests)),
+              child: Text(_startLabel),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: Text(_startLabel),
-          ),
-        ],
       ),
     );
     ctrl.dispose();
     return result;
+  }
+
+  /// Поменять число гостей за столом (пришли ещё, кто-то ушёл).
+  Future<void> _editGuests(SessionModel session) async {
+    var n = session.guests > 0 ? session.guests : TimeCafe.guestsIn(session);
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, set) => AlertDialog(
+          title: const Text('Сколько гостей за столом'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            _GuestsStepper(value: n, onChanged: (v) => set(() => n = v)),
+            if (TimeCafe.hasLine(session)) ...[
+              const SizedBox(height: 10),
+              Text('Время тайм-кафе в счёте пересчитается на это число гостей.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+            ],
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, n), child: const Text('Сохранить')),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    try {
+      await _fs.setGuests(session, picked);
+    } catch (e) {
+      _showError('Не удалось сохранить число гостей — проверьте интернет');
+    }
   }
 
   Future<void> _refill(SessionModel session, bool unlimited) async {
@@ -227,7 +270,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final sat = DateTime.now().difference(session.startTime);
     final calc = TimeCafe.costPerGuest(sat);
     final sumCtrl = TextEditingController(text: calc.toStringAsFixed(0));
-    var n = TimeCafe.guestsIn(session);
+    var n = TimeCafe.hasLine(session) ? TimeCafe.guestsIn(session) : (session.guests > 0 ? session.guests : 1);
     return showDialog<(int, double?)>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, set) {
@@ -241,11 +284,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             const SizedBox(height: 14),
             const Text('Сколько гостей платят за время'),
             const SizedBox(height: 6),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              IconButton.filledTonal(onPressed: n > 1 ? () => set(() => n--) : null, icon: const Icon(Icons.remove)),
-              SizedBox(width: 64, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700))),
-              IconButton.filledTonal(onPressed: n < 50 ? () => set(() => n++) : null, icon: const Icon(Icons.add)),
-            ]),
+            _GuestsStepper(value: n, onChanged: (v) => set(() => n = v)),
             const SizedBox(height: 10),
             TextField(
               controller: sumCtrl,
@@ -925,7 +964,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 if (t.isTakeaway)
                   DeliveryOrderCard(session: session, employee: widget.employee)
                 else
-                  _SessionStatusCard(session: session, showRefills: canRefill, unlimited: unlimited),
+                  _SessionStatusCard(
+                      session: session, showRefills: canRefill, unlimited: unlimited, onGuests: () => _editGuests(session)),
                 const SizedBox(height: 12),
                 _ActionGrid(actions: actions),
                 const SizedBox(height: 24),
@@ -1160,7 +1200,26 @@ class _SessionStatusCard extends StatelessWidget {
   final SessionModel session;
   final bool showRefills;
   final bool unlimited;
-  const _SessionStatusCard({required this.session, required this.showRefills, required this.unlimited});
+  final VoidCallback onGuests;
+  const _SessionStatusCard(
+      {required this.session, required this.showRefills, required this.unlimited, required this.onGuests});
+
+  /// Гостей за столом: указанное при открытии, а у старых чеков — из
+  /// строки тайм-кафе. 0 — не знаем.
+  int get _guests => session.guests > 0 ? session.guests : (TimeCafe.hasLine(session) ? TimeCafe.guestsIn(session) : 0);
+
+  String get _guestsLabel =>
+      _guests == 0 ? 'сколько гостей?' : '$_guests ${pluralRu(_guests, 'гость', 'гостя', 'гостей')}';
+
+  /// «⏱ Тайм-кафе: 1 ч 05 мин · 325 ₽ × 2 = 650 ₽».
+  String _timeCafeLine(Duration sat) {
+    final per = TimeCafe.costPerGuest(sat);
+    final mins = TimeCafe.durationLabel(TimeCafe.billedMinutes(sat));
+    final n = _guests;
+    return n > 1
+        ? '⏱ Тайм-кафе: $mins · ${per.toStringAsFixed(0)} ₽ × $n = ${(per * n).toStringAsFixed(0)} ₽'
+        : '⏱ Тайм-кафе: $mins · ${per.toStringAsFixed(0)} ₽${n == 1 ? '' : ' за гостя'}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1212,8 +1271,7 @@ class _SessionStatusCard extends StatelessWidget {
                 Text(sub, style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                 if (TimeCafe.ready) ...[
                   const SizedBox(height: 6),
-                  Text('⏱ Тайм-кафе: ${TimeCafe.costPerGuest(sat).toStringAsFixed(0)} ₽ за гостя · '
-                      '${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))}',
+                  Text(_timeCafeLine(sat),
                       style: TextStyle(color: AppColors.brass, fontSize: 14, fontWeight: FontWeight.w600)),
                 ],
               ],
@@ -1225,6 +1283,12 @@ class _SessionStatusCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               _InfoChip(icon: Icons.person_outline, text: session.employeeName.isEmpty ? '—' : session.employeeName),
+              _InfoChip(
+                icon: Icons.group_outlined,
+                text: _guestsLabel,
+                color: _guests > 0 ? null : AppColors.brass,
+                onTap: onGuests,
+              ),
               if (showRefills)
                 _InfoChip(
                   icon: Icons.refresh_rounded,
@@ -1250,30 +1314,65 @@ class _InfoChip extends StatelessWidget {
   final IconData icon;
   final String text;
   final Color color;
-  _InfoChip({required this.icon, required this.text, Color? color}) : color = color ?? AppColors.textMuted;
+  final VoidCallback? onTap;
+  _InfoChip({required this.icon, required this.text, Color? color, this.onTap}) : color = color ?? AppColors.textMuted;
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceElevated,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 180),
-              child: Text(text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color == AppColors.textMuted ? AppColors.textPrimary : color, fontSize: 13)),
-            ),
+  Widget build(BuildContext context) {
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color == AppColors.textMuted ? AppColors.textPrimary : color, fontSize: 13)),
+          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            Icon(Icons.edit_outlined, size: 14, color: AppColors.textMuted),
           ],
-        ),
-      );
+        ],
+      ),
+    );
+    if (onTap == null) return chip;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(borderRadius: BorderRadius.circular(999), onTap: onTap, child: chip),
+    );
+  }
+}
+
+/// − N + для числа гостей: от 1 до 50.
+class _GuestsStepper extends StatelessWidget {
+  final int value;
+  final ValueChanged<int> onChanged;
+  const _GuestsStepper({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        IconButton.filledTonal(
+            onPressed: value > 1 ? () => onChanged(value - 1) : null,
+            tooltip: 'Меньше',
+            icon: const Icon(Icons.remove)),
+        SizedBox(
+            width: 64,
+            child: Text('$value',
+                textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700))),
+        IconButton.filledTonal(
+            onPressed: value < 50 ? () => onChanged(value + 1) : null,
+            tooltip: 'Больше',
+            icon: const Icon(Icons.add)),
+      ]);
 }
 
 class _TableAction {
