@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../models/employee.dart';
 import '../../services/firestore_service.dart';
-import '../../services/plan_capabilities.dart';
 import '../../services/tips_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/bill_split.dart';
@@ -11,7 +10,6 @@ import 'employee_edit_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/payroll_guard.dart';
-import '../../widgets/plan_upsell.dart';
 
 class EmployeesScreen extends StatefulWidget {
   /// Кто вошёл — им подписываются правки оплаты (см. PayrollGuard).
@@ -29,7 +27,6 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   // который вводит свой PIN на входе. Чтобы посмотреть чужой PIN в
   // админке, нужно осознанно нажать на значок глаза у конкретной строки.
   // Сколько сотрудников уже есть — для лимита тарифа (см. _add).
-  int _count = 0;
   // Последний список — чтобы понять, есть ли другой администратор.
   List<Employee> _all = const [];
 
@@ -52,7 +49,6 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
             }
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
             _all = snap.data!;
-            _count = snap.data!.length;
             final employees = [...snap.data!]
               ..sort((a, b) {
                 // Сначала администраторы, дальше по имени.
@@ -185,19 +181,9 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
     return (parts[0].characters.first + parts[1].characters.first).toUpperCase();
   }
 
-  /// Новый сотрудник — в пределах тарифа заведения.
-  Future<void> _add() async {
-    final caps = PlanCapabilitiesService.current.value;
-    if (!caps.canAddEmployee(_count)) {
-      final max = caps.maxEmployees;
-      await showPlanUpsell(context,
-          title: 'Достигнут лимит сотрудников',
-          text: 'На тарифе заведения — до $max ${employeesWord(max)}. Чтобы добавить ещё, '
-              'удалите того, кто больше не работает, или перейдите на тариф с большим лимитом.');
-      return;
-    }
-    await _edit(null);
-  }
+  /// Новый сотрудник. Тариф сотрудников не ограничивает — только число
+  /// устройств с кассой (см. DeviceLimitGate).
+  Future<void> _add() => _edit(null);
 
   Future<void> _edit(Employee? emp) async {
     // Свою оплату администратор не меняет, если есть другой администратор.

@@ -1,6 +1,6 @@
 {
   "start": {
-    "maxDevices": 0,
+    "maxDevices": 2,
     "maxTables": 0,
     "maxStorageMb": 0,
     "trialDays": 7,
@@ -17,7 +17,7 @@
     "priceRub": 1790,
     "priceRubSemiannual": 9590,
     "priceRubYearly": 17190,
-    "maxEmployees": 5,
+    "maxEmployees": 0,
     "aiEnabled": false,
     "features": {
       "reservations": true,
@@ -27,7 +27,7 @@
     }
   },
   "standard": {
-    "maxDevices": 0,
+    "maxDevices": 5,
     "maxTables": 0,
     "maxStorageMb": 0,
     "trialDays": 7,
@@ -44,7 +44,7 @@
     "priceRub": 2390,
     "priceRubSemiannual": 12890,
     "priceRubYearly": 22890,
-    "maxEmployees": 10,
+    "maxEmployees": 0,
     "aiEnabled": true,
     "features": {
       "reservations": true,
@@ -81,7 +81,7 @@
     }
   },
   "chain": {
-    "maxDevices": 0,
+    "maxDevices": 5,
     "maxTables": 0,
     "maxStorageMb": 0,
     "trialDays": 7,
@@ -98,7 +98,7 @@
     "priceRub": 2590,
     "priceRubSemiannual": 13890,
     "priceRubYearly": 24790,
-    "maxEmployees": 10,
+    "maxEmployees": 0,
     "aiEnabled": true,
     "features": {
       "reservations": true,

@@ -793,7 +793,6 @@ function planName(plans, planId) {
 // Превышенные лимиты тарифа («сотрудников: 5 из 3») — повод для
 // супер-админа предложить тариф побольше.
 const PLAN_LIMIT_CHECKS = [
-  ['employees', 'maxEmployees', 'сотрудников'],
   ['devices', 'maxDevices', 'устройств'],
   ['tables', 'maxTables', 'столов'],
 ];
@@ -1260,7 +1259,7 @@ function route() {
   if (PUBLIC_ROUTES[location.hash]) {
     return PUBLIC_ROUTES[location.hash]();
   }
-  if (location.hash === '#/billing' || location.hash === '#/support') {
+  if (location.hash === '#/billing' || location.hash === '#/support' || location.hash === '#/devices') {
     try { window.localStorage.setItem(PENDING_TAB_KEY, location.hash.slice(2)); } catch (_) {}
     if (!state.uid) {
       authMode = 'login';
@@ -1332,9 +1331,8 @@ function planCaps(p) {
   return {
     guestApp: !p?.features || p.features.guestApp !== false,
     ai: p?.aiEnabled !== false,
-    maxEmployees: Math.max(0, Math.floor(Number(p?.maxEmployees) || 0)),
-    // Устройства касса не считает: число на сайте — только то, что записано
-    // в тарифе, 0 — без ограничений.
+    // Тариф ограничивает не сотрудников, а устройства с кассой: касса
+    // сверх лимита не открывается (DeviceLimitGate), 0 — без ограничений.
     maxDevices: Math.max(0, Math.floor(Number(p?.maxDevices) || 0)),
     prioritySupport: p?.prioritySupport === true,
   };
@@ -1377,14 +1375,14 @@ const rub = (n) => `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`;
 function planTagline(p) {
   const c = planCaps(p);
   if (p.isChainPlan) {
-    if (c.maxEmployees) return 'Несколько точек в одном кабинете: общие бонусы гостей и одно приложение на всю сеть';
+    if (c.maxDevices) return 'Несколько точек в одном кабинете: общие бонусы гостей и одно приложение на всю сеть';
     return c.prioritySupport
-      ? 'Сеть без ограничений по команде, с приоритетной поддержкой'
-      : 'Сеть без ограничений по команде на каждой точке';
+      ? 'Сеть без ограничений по устройствам, с приоритетной поддержкой'
+      : 'Сеть без ограничений по устройствам на каждой точке';
   }
-  if (c.maxEmployees && c.maxEmployees <= 6) return 'Кофейня, бар или небольшой зал';
-  if (c.maxEmployees) return 'Кафе и ресторан с полной сменой';
-  return 'Большой зал и команда без ограничений';
+  if (c.maxDevices && c.maxDevices <= 2) return 'Кофейня, бар или небольшой зал';
+  if (c.maxDevices) return 'Кафе и ресторан с полной сменой';
+  return 'Большой зал без ограничений по устройствам';
 }
 
 // Строки карточки тарифа — как в меню: название, отточие, значение.
@@ -1396,8 +1394,8 @@ function planFeatureRows(p, { priorityRow = p.prioritySupport === true } = {}) {
   const rows = [
     { label: 'Касса, зал, брони, склад', on: true },
     { label: 'Смены, зарплата, ЕГАИС', on: true },
-    { label: `Сотрудники${perPoint}`, value: c.maxEmployees ? `до ${c.maxEmployees}` : 'без ограничений', on: true },
-    { label: `Рабочие места${perPoint}`, value: c.maxDevices ? `до ${c.maxDevices}` : 'без ограничений', on: true },
+    { label: `Устройства с кассой${perPoint}`, value: c.maxDevices ? `до ${c.maxDevices}` : 'без ограничений', on: true },
+    { label: 'Сотрудники', value: 'без ограничений', on: true },
     { label: 'Приложение гостя', on: c.guestApp },
     { label: 'Меню по QR и заказ со стола', on: c.guestApp },
     { label: 'ИИ-помощник', on: c.ai },
@@ -1764,7 +1762,7 @@ function applyTheme(theme, { save = false } = {}) {
 // Цифры лендинга из настоящих тарифов (renderLandingPlans): «меню» первого
 // экрана, счёт «Из чего складывается цена» и список «Во всех тарифах».
 // Обещание появляется, только если оно верно для каждого продаваемого
-// тарифа: «рабочие места без ограничений» — если ни у одного тарифа нет
+// тарифа: «устройства без ограничений» — если ни у одного тарифа нет
 // лимита устройств, и так далее.
 function renderLandingFacts(plans, recommendedId, chainPlans) {
   const menu = $('landing-hero-menu');
@@ -1813,7 +1811,8 @@ function renderLandingFacts(plans, recommendedId, chainPlans) {
         ? ['Приложение гостя с вашим логотипом', 'Доставка и самовывоз из приложения', 'Онлайн-оплата гостей через ваш банк']
         : []),
       'Telegram-бот заведения',
-      ...(all((p) => planCaps(p).maxDevices === 0) ? ['Рабочие места без ограничений'] : []),
+      'Сотрудники без ограничений',
+      ...(all((p) => planCaps(p).maxDevices === 0) ? ['Устройства без ограничений'] : []),
       'Обновления без доплаты', 'Без процента с продаж',
     ];
     chips.innerHTML = items.map((t) => `<li class="pricing-chip">${LI.check}${esc(t)}</li>`).join('');
@@ -3456,7 +3455,7 @@ const FAQ_ITEMS = [
   { q: 'Можно ли сменить тариф позже?', a: 'Да, в кабинете в разделе «Тарифы», без обращения в поддержку. В пробный период — бесплатно и сразу. После оплаты новый тариф начнёт действовать сразу после его оплаты, а оставшиеся оплаченные дни не сгорят: они пересчитаются по цене нового тарифа и добавятся к сроку.' },
   { q: 'Есть ли фискализация чеков (54-ФЗ)?', a: 'Да. Касса отправляет чек с позициями, ставками НДС и способами оплаты в ваш регистратор АТОЛ в заведении или в облачную кассу (АТОЛ Онлайн, OrangeData). Саму ККТ с фискальным накопителем, договор с ОФД и регистрацию в ФНС оформляете вы: система к ним подключается, но не заменяет их. Карты у стойки принимаются через терминал любого банка: Сбер, ВТБ, Альфа-Банк, Т-Банк, Газпромбанк, ПСБ, Райффайзенбанк, Совкомбанк и ещё два десятка. Если Windows-касса подключена к терминалу кабелем, сумма уходит на него сама через программу банка (UPOS у Сбера, ARCUS 2 и другие). Нет терминала? Касса покажет QR СБП на экране. Онлайн-оплата из приложения идёт через интернет-эквайринг вашего банка. Всё настраивается в разделе «Интеграции» на кассе.' },
   { q: 'Где хранятся данные заведения?', a: 'Имена, телефоны и адреса гостей и имена сотрудников лежат только на нашем сервере в России и за границу не уходят, поэтому из-за ZalPOS подавать что-то в Роскомнадзор вам не нужно. Меню, чеки, смены и склад хранятся без персональных данных в облаке, резервная копия делается каждый день. Другие заведения платформы ваших данных не видят: это закреплено правилами доступа и проверено автотестами.' },
-  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Число сотрудников и рабочих мест (планшетов, телефонов, компьютеров) указано в карточке тарифа. За каждое рабочее место отдельно платить не нужно. Когда лимит сотрудников достигнут, касса предложит удалить уволенного сотрудника или перейти на тариф выше. Онлайн-касса (ККТ) для фискальных чеков покупается отдельно у её поставщика.' },
+  { q: 'Сколько сотрудников и устройств можно подключить?', a: 'Сотрудников — сколько угодно на любом тарифе. Число устройств с кассой (планшетов, телефонов, компьютеров) указано в карточке тарифа, отдельно за устройство платить не нужно. На устройстве сверх лимита касса не откроется: отключите неиспользуемое в кабинете на вкладке «Устройства» или перейдите на тариф с большим числом устройств. Онлайн-касса (ККТ) для фискальных чеков покупается отдельно у её поставщика.' },
   { q: 'Что будет с данными, если я перестану пользоваться?', a: 'После отмены подписки данные хранятся 10 дней (грейс-период), затем удаляются безвозвратно. Копию заведения можно скачать самостоятельно: Кабинет · Настройки → «Скачать бэкап». В файле будут меню, зал, чеки, смены, склад и бонусы. Очень большое заведение выгрузим по запросу в поддержку.' },
   { q: 'Можно ли принимать доставку через своё приложение?', a: 'Да. Включите «Заказы с собой и доставка», и в меню приложения гостя появится кнопка «Доставка или с собой». Заказ приходит на кассу с именем и телефоном гостя: вы перезваниваете, подтверждаете, и позиции встают в чек. Табак, кальяны и алкоголь в такой заказ не попадают, их нельзя продавать дистанционно. Процент с заказов мы не берём.' },
   { q: 'Куда приходят деньги, когда гость платит из приложения?', a: 'Сразу на расчётный счёт заведения, через ваш интернет-эквайринг: Т-Банк, Сбербанк, Альфа-Банк, ВТБ, МТС Банк, Райффайзенбанк (СБП), Робокассу или другой банк на шлюзе RBS. ZalPOS деньги не принимает и не хранит. Комиссию берёт банк по вашему договору, возвраты делаются в его личном кабинете. Чек по 54-ФЗ пробивает ваша онлайн-касса.' },
@@ -3642,6 +3641,7 @@ function watchDashboardData(tenantId) {
   const guideOpen = new Set();
   let tenant = null;
   let invite = null;
+  let devices = null; // кассы заведения: tenants/{id}/devices
   let branding = null;
   let subscription = null;
   let members = null;
@@ -3825,14 +3825,8 @@ function watchDashboardData(tenantId) {
         if (plan.newStock.length) result.warnings.push(`Новые продукты на складе: ${plan.newStock.length} — с нулевым остатком. Перенесите остатки или проведите приход.`);
       }
     } else if (plan.kind === 'staff') {
-      const sub = subscription || {};
-      const max = planCaps((plans || []).find((x) => x.id === sub.planId)).maxEmployees;
-      let list = plan.create;
-      if (max && (employees || []).length + list.length > max) {
-        const room = Math.max(0, max - (employees || []).length);
-        result.warnings.push(`По тарифу — до ${max} сотрудников: перенесены первые ${room}, остальные — после смены тарифа.`);
-        list = list.slice(0, room);
-      }
+      // Сотрудников тариф не ограничивает — переносим всех.
+      const list = plan.create;
       const takenHashes = new Set((employees || []).map((e) => e.pinHash).filter(Boolean));
       const taken = new Set();
       const people = [];
@@ -4274,6 +4268,43 @@ function watchDashboardData(tenantId) {
       </div>
     `;
 
+    // Подключённые кассы и лимит тарифа. Касса работает на первых
+    // подключённых в пределах лимита (lib/services/plan_capabilities.dart,
+    // DeviceLimitGate) — порядок здесь тот же.
+    const devicesListHtml = () => {
+      if (!devices) return '';
+      const max = planCaps((plans || []).find((p) => p.id === subscription?.planId)).maxDevices;
+      const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : Infinity);
+      const list = [...devices].sort((a, b) => ms(a.createdAt) - ms(b.createdAt) || a.id.localeCompare(b.id));
+      const active = list.filter((d) => d.status !== 'disabled');
+      const working = new Set(active.slice(0, max || active.length).map((d) => d.id));
+      const PLATFORM = { android: 'Android', windows: 'Windows', ios: 'iOS', web: 'браузер' };
+      const row = (d) => {
+        const off = d.status === 'disabled';
+        const over = !off && !working.has(d.id);
+        const seen = d.lastSeenAt || d.seenAt;
+        return `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)">
+          <div style="min-width:0">
+            <div style="font-weight:600">${esc(d.deviceName || 'Касса')}${d.platform ? ` <span class="muted small">· ${esc(PLATFORM[d.platform] || d.platform)}</span>` : ''}</div>
+            <div class="small muted">Подключена ${fmtDate(d.createdAt)}${seen ? ` · на связи ${fmtDateTime(seen)}` : ''}</div>
+            ${off ? '<div class="small" style="color:var(--muted)">Отключена — касса на ней не работает</div>' : ''}
+            ${over ? '<div class="small" style="color:var(--warning)">Сверх лимита тарифа — касса на ней не откроется</div>' : ''}
+          </div>
+          ${canManage ? `<button class="btn ${off ? 'btn-ghost' : 'btn-link'}" data-device-toggle="${esc(d.id)}" data-enable="${off ? '1' : ''}"
+            style="${off ? '' : 'color:var(--danger)'};flex:none">${off ? 'Включить' : 'Отключить'}</button>` : ''}
+        </div>`;
+      };
+      return `
+      <h2>Подключённые кассы</h2>
+      <div class="card">
+        <p class="small muted" style="margin-top:0">${max
+          ? `По тарифу касса работает на ${max} ${max % 10 === 1 && max % 100 !== 11 ? 'устройстве' : 'устройствах'}${tenant?.chainId ? ' этой точки' : ''}, сейчас подключено ${active.length}.`
+          : `По тарифу число устройств не ограничено, сейчас подключено ${active.length}.`}
+        Планшет больше не нужен или потерян — отключите его: касса на нём перестанет работать, а место освободится.</p>
+        ${list.length ? list.map(row).join('') : '<p class="small muted">Пока ни одной кассы. Скачайте кассу ниже — она подключится сама.</p>'}
+      </div>`;
+    };
+
     const devicesHtml = () => `
       <h2>Код приглашения устройства</h2>
       <div class="card">
@@ -4290,6 +4321,8 @@ function watchDashboardData(tenantId) {
         <p class="small muted" id="f-invite-code-hint" style="margin-top:4px">Код скрыт — нажмите на него, чтобы показать</p>
         ${canManage ? `<button class="btn btn-ghost" id="f-rotate-code" style="margin-top:12px">Обновить код</button>` : ''}
       </div>
+
+      ${devicesListHtml()}
 
       <h2>Сборка APK</h2>
       <div class="card">
@@ -5862,6 +5895,20 @@ function watchDashboardData(tenantId) {
 
     if ($('f-copy-code')) $('f-copy-code').onclick = () => copyToClipboard(invite?.code || '');
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
+    document.querySelectorAll('[data-device-toggle]').forEach((btn) => {
+      btn.onclick = async () => {
+        const enable = btn.dataset.enable === '1';
+        if (!enable && !confirm('Отключить кассу на этом устройстве? Она перестанет работать, пока вы не включите её снова.')) return;
+        btn.disabled = true;
+        try {
+          await callSaasGateway(enable ? 'enableDevice' : 'disableDevice', { tenantId, uid: btn.dataset.deviceToggle });
+          toast(enable ? 'Касса включена' : 'Касса отключена');
+        } catch (e) {
+          toast(e?.message || String(e));
+          btn.disabled = false;
+        }
+      };
+    });
     // Размытие — от взгляда через плечо, не более: в DOM код открытым текстом.
     const inviteCodeEl = $('f-invite-code');
     if (inviteCodeEl) {
@@ -6261,6 +6308,10 @@ function watchDashboardData(tenantId) {
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite'), (d) => {
     invite = d.exists() ? d.data() : null;
+    draw();
+  }, () => {}));
+  sub(onSnapshot(collection(state.db, 'tenants', tenantId, 'devices'), (snap) => {
+    devices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     draw();
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'general'), (d) => {
@@ -6743,10 +6794,10 @@ function screenSuperAdmin() {
         <h1>Тарифы</h1>
         <div class="card" style="margin-bottom:14px">
           <div style="font-weight:700;margin-bottom:4px">Рекомендованная сетка к запуску продаж</div>
-          <p class="small muted">Одно заведение: «Старт» 1 790 ₽/мес (до 5 сотрудников, приложение гостя, без ИИ),
-          «Бизнес» 2 390 ₽ (до 10 сотрудников, приложение гостя и ИИ), «Про» 2 990 ₽ (сотрудники без ограничений,
-          приоритетная поддержка). Сеть: «Сеть» 2 590 ₽ за первую точку + 990 ₽ за каждую следующую (до 10 сотрудников
-          на точке), «Сеть Про» 3 990 ₽ + 1 290 ₽ (без ограничений, приоритетная поддержка). Рабочие места везде без
+          <p class="small muted">Одно заведение: «Старт» 1 790 ₽/мес (касса на 2 устройствах, приложение гостя, без ИИ),
+          «Бизнес» 2 390 ₽ (до 5 устройств, приложение гостя и ИИ), «Про» 2 990 ₽ (устройства без ограничений,
+          приоритетная поддержка). Сеть: «Сеть» 2 590 ₽ за первую точку + 990 ₽ за каждую следующую (до 5 устройств
+          на точке), «Сеть Про» 3 990 ₽ + 1 290 ₽ (без ограничений, приоритетная поддержка). Сотрудники везде без
           ограничений. Год — выгода 20%, полгода — около 10%. Пробный период 7 дней. Тарифы вне сетки уходят в архив:
           с сайта пропадают, кто на них — остаётся на прежних условиях. Тем, кто уже платит, подорожание начнёт
           действовать через 30 дней (так в оферте) — разошлите им объявление.</p>
@@ -8357,13 +8408,12 @@ function watchPlans() {
           </div>
         </div>
         <div class="row">
-          <label class="field grow"><span>Сотрудников (0 = без лимита)</span>
-            <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxEmployees" value="${Number(p.maxEmployees) || 0}">
-          </label>
-          <label class="field grow"><span>Устройств (0 = без лимита; касса их не считает — число видно на сайте и в предупреждениях панели)</span>
+          <label class="field grow"><span>Устройств с кассой${p.isChainPlan ? ' на точке' : ''} (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxDevices" value="${Number(p.maxDevices) || 0}">
           </label>
         </div>
+        <p class="small muted" style="margin:-4px 0 10px">Касса сверх лимита не откроется, пока владелец не отключит лишнее
+        устройство в кабинете («Устройства») или не сменит тариф. Сотрудников тариф не ограничивает.</p>
         <div class="row">
           <label class="field grow"><span>Столов (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxTables" value="${Number(p.maxTables) || 0}">
@@ -8468,7 +8518,7 @@ async function applyPlanCatalog() {
       const from = r.before ? `«${r.before.name}» ${r.before.priceRub} ₽ → ` : 'новый: ';
       const extra = [
         r.after.priceRubAdditional ? `+${r.after.priceRubAdditional} ₽ за доп. точку` : '',
-        r.after.maxEmployees ? `до ${r.after.maxEmployees} сотр.` : 'без лимита сотрудников',
+        r.after.maxDevices ? `до ${r.after.maxDevices} устр.` : 'без лимита устройств',
         r.after.guestApp ? 'приложение гостя' : 'без приложения гостя',
         r.after.ai ? 'ИИ' : 'без ИИ',
         r.after.prioritySupport ? 'приоритетная поддержка' : '',

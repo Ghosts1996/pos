@@ -5214,7 +5214,7 @@ async function handleSavePlan(req, res) {
     });
   }
   // Поменялись возможности тарифа — заведения на нём узнают сразу.
-  if (!create && ["aiEnabled", "maxEmployees", "features.guestApp"].some((k) => k in changes)) {
+  if (!create && ["aiEnabled", "maxDevices", "features.guestApp"].some((k) => k in changes)) {
     syncCapabilitiesForPlan(planId).catch((e) => console.error(`saas-gateway: возможности тарифа ${planId}:`, e.message || e));
   }
   sendJson(res, 200, { ok: true, changed: Object.keys(changes).length });
@@ -5242,13 +5242,16 @@ async function handleDeletePlan(req, res) {
  * число сотрудников (0 — без лимита). Тарифа нет (удалили, ещё не
  * заведён) — возможностей у заведения не отнимаем.
  */
-const FULL_CAPABILITIES = Object.freeze({ guestApp: true, ai: true, maxEmployees: 0 });
+// Сотрудников тариф не ограничивает (maxEmployees всегда 0 — поле
+// оставлено для старых касс), ограничено число устройств с кассой.
+const FULL_CAPABILITIES = Object.freeze({ guestApp: true, ai: true, maxEmployees: 0, maxDevices: 0 });
 function planCapabilities(plan) {
   if (!plan) return { ...FULL_CAPABILITIES };
   return {
     guestApp: !plan.features || plan.features.guestApp !== false,
     ai: plan.aiEnabled !== false,
-    maxEmployees: Math.max(0, Math.floor(Number(plan.maxEmployees) || 0)),
+    maxEmployees: 0,
+    maxDevices: Math.max(0, Math.floor(Number(plan.maxDevices) || 0)),
   };
 }
 
@@ -5350,8 +5353,9 @@ function scheduleCapabilitiesCron() {
  * каждая ступень дороже на 600 ₽ и даёт больше команды: приложение гостя под
  * брендом заведения есть во всех тарифах (у облачных касс для общепита его
  * продают отдельным модулем за 2,5–5 тыс. ₽ в месяц), ИИ-помощник — с
- * «Бизнеса», приоритетная поддержка — в «Про». Рабочие места (планшеты,
- * телефоны, компьютеры) не ограничены — касса их и не ограничивает. Скидка
+ * «Бизнеса», приоритетная поддержка — в «Про». Тариф ограничивает число
+ * устройств с кассой (сверх лимита касса не открывается), сотрудники не
+ * ограничены. Скидка
  * за 6 месяцев ≈ 10 %, за год ≈ 20 %. Следующая точка сети намного дешевле
  * первой: две точки на «Сети» дешевле двух заведений на «Бизнесе».
  */
@@ -5365,13 +5369,13 @@ const PLAN_CATALOG = {
   start: {
     ...PLAN_BASE, name: "Старт",
     priceRub: 1790, priceRubSemiannual: 9590, priceRubYearly: 17190,
-    maxEmployees: 5, aiEnabled: false,
+    maxEmployees: 0, maxDevices: 2, aiEnabled: false,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   standard: {
     ...PLAN_BASE, name: "Бизнес",
     priceRub: 2390, priceRubSemiannual: 12890, priceRubYearly: 22890,
-    maxEmployees: 10, aiEnabled: true,
+    maxEmployees: 0, maxDevices: 5, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   pro: {
@@ -5385,7 +5389,7 @@ const PLAN_CATALOG = {
     isChainPlan: true, customAdditionalPrice: true,
     priceRub: 2590, priceRubSemiannual: 13890, priceRubYearly: 24790,
     priceRubAdditional: 990, priceRubAdditionalSemiannual: 5290, priceRubAdditionalYearly: 9490,
-    maxEmployees: 10, aiEnabled: true,
+    maxEmployees: 0, maxDevices: 5, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   "chain-pro": {
@@ -5410,7 +5414,7 @@ async function planCatalogDiff() {
     rows.push({ planId, action: before ? "update" : "create", before: before && {
       name: before.name || planId, priceRub: Number(before.priceRub) || 0, archived: before.archived === true,
     }, after: { name: fields.name, priceRub: fields.priceRub, priceRubYearly: fields.priceRubYearly,
-      priceRubAdditional: fields.priceRubAdditional, maxEmployees: fields.maxEmployees,
+      priceRubAdditional: fields.priceRubAdditional, maxDevices: fields.maxDevices,
       guestApp: fields.features.guestApp, ai: fields.aiEnabled, prioritySupport: fields.prioritySupport === true } });
   }
   for (const [planId, p] of plans) {
@@ -6219,14 +6223,31 @@ async function handleSecurityDevices(req, res) {
  *  потерянный планшет не сможет даже прочитать данные заведения. */
 async function setDeviceEnabled(req, res, enabled) {
   const decoded = await verifyAuth(req);
-  await requireSuperAdmin(decoded);
   const { tenantId, uid, reason } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !tenantId || typeof uid !== "string" || !uid) throw new HttpError(400, "Не указано устройство");
+  // Владелец или управляющий — кассы своего заведения (кабинет →
+  // «Устройства»), супер-админ — любые.
+  const superAdmin = await isSuperAdmin(decoded);
+  if (!superAdmin) await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  if (uid === decoded.uid) throw new HttpError(400, "Своё устройство отключить нельзя");
   const firestore = db();
   const deviceRef = firestore.collection("tenants").doc(tenantId).collection("devices").doc(uid);
   const deviceSnap = await deviceRef.get();
   if (!deviceSnap.exists) throw new HttpError(404, "Устройство не найдено");
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  // Включить сверх лимита тарифа нельзя: касса всё равно не откроется.
+  if (enabled && !superAdmin && deviceSnap.data().status === "disabled") {
+    const planId = tenantDoc.exists ? await effectivePlanId(tenantDoc) : null;
+    const plan = planId ? (await firestore.collection("plans").doc(planId).get()).data() : null;
+    const max = planCapabilities(plan).maxDevices;
+    if (max > 0) {
+      const all = await firestore.collection("tenants").doc(tenantId).collection("devices").get();
+      const active = all.docs.filter((d) => d.data().status !== "disabled").length;
+      if (active >= max) {
+        throw new HttpError(409, `По тарифу касса работает на ${max} ${max % 10 === 1 && max % 100 !== 11 ? "устройстве" : "устройствах"}, и все места заняты. Сначала отключите другое устройство или смените тариф`);
+      }
+    }
+  }
   const status = enabled ? "active" : "disabled";
   await deviceRef.set({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`);
@@ -7356,7 +7377,7 @@ async function supportVenueStatus(tenantId) {
     sub: sub ? {
       plan: plan.name || plan.title || planId || "", status: sub.status || "",
       until: ms(sub.status === "trial" ? sub.trialEndsAt : sub.currentPeriodEnd), cancelAtPeriodEnd: !!sub.cancelAtPeriodEnd,
-      maxEmployees: Math.max(0, Math.floor(Number(plan.maxEmployees) || 0)),
+      maxDevices: Math.max(0, Math.floor(Number(plan.maxDevices) || 0)),
     } : null,
     staff: staffCount,
     devices: {
@@ -7386,15 +7407,27 @@ async function supportVenueStatus(tenantId) {
 // Тарифы для ответов ИИ — из базы, как на сайте; перечитываем раз в 10 минут.
 let supportPlansCache = { at: 0, text: "" };
 async function supportPlansText() {
-  if (Date.now() - supportPlansCache.at < 10 * 60 * 1000) return supportPlansCache.text;
+  if (supportPlansCache.text && Date.now() - supportPlansCache.at < 10 * 60 * 1000) return supportPlansCache.text;
   const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
-  const snap = await db().collection("plans").get();
+  let snap;
+  try {
+    snap = await db().collection("plans").get();
+  } catch (e) {
+    // Без тарифов бот отвечал «цен у меня нет» — пишем причину в журнал и
+    // отдаём последние известные.
+    console.error("saas-gateway: тарифы для бота поддержки не прочитаны:", e.message || e);
+    return supportPlansCache.text;
+  }
   const lines = snap.docs.map((d) => d.data()).filter((p) => p.archived !== true && Number(p.priceRub) > 0)
     .sort((a, b) => Number(a.priceRub) - Number(b.priceRub))
     .map((p) => `${p.name}${p.isChainPlan ? " (сеть)" : ""}: ${rub(p.priceRub)}/мес, ${rub(p.priceRubSemiannual)}/6 мес, ${rub(p.priceRubYearly)}/год`
       + `${p.isChainPlan && Number(p.priceRubAdditional) > 0 ? `; каждая следующая точка ${rub(p.priceRubAdditional)}/мес` : ""}`
-      + `; сотрудников ${Number(p.maxEmployees) > 0 ? `до ${p.maxEmployees}` : "без ограничений"}; ИИ ${p.aiEnabled ? "есть" : "нет"}`
+      + `; устройств с кассой${p.isChainPlan ? " на точке" : ""} ${Number(p.maxDevices) > 0 ? `до ${p.maxDevices}` : "без ограничений"}`
+      + `; сотрудников без ограничений`
+      + `; приложение гостя и меню по QR ${!p.features || p.features.guestApp !== false ? "есть" : "нет"}`
+      + `; ИИ-помощник ${p.aiEnabled !== false ? "есть" : "нет"}`
       + `${p.prioritySupport ? "; приоритетная поддержка" : ""}; пробный период ${Number(p.trialDays) || 0} дн.`);
+  if (!lines.length) console.error("saas-gateway: в базе нет продаваемых тарифов (все в архиве или без цены) — бот не назовёт цены");
   supportPlansCache = { at: Date.now(), text: lines.join("\n") };
   return supportPlansCache.text;
 }

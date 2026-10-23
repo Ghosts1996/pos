@@ -73,6 +73,7 @@ Future<void> enterJoinedTenant({required String tenantId, required String uid}) 
   StartupLog.step('вход в заведение: слежение за подпиской');
   SubscriptionGate.watch(tenantId, config);
   PlanCapabilitiesService.watch(tenantId);
+  DeviceLimitGate.watch(tenantId, uid);
   DemoGate.watch(config);
   final chainId = config.tenant.chainId;
   if (chainId != null) {

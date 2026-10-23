@@ -28,6 +28,7 @@ import 'screens/pin_lock_screen.dart';
 import 'screens/saas/demo_reset_screen.dart';
 import 'screens/saas/saas_device_pairing_screen.dart';
 import 'screens/saas/saas_subscription_blocked_screen.dart';
+import 'screens/saas/device_limit_screen.dart';
 import 'screens/setup_required_screen.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
@@ -152,6 +153,8 @@ void main() async {
           SubscriptionGate.watch(config.tenant.id, config);
           // Что входит в тариф: приложение гостя, ИИ, лимит сотрудников.
           PlanCapabilitiesService.watch(config.tenant.id);
+          // Лимит устройств с кассой по тарифу.
+          if (uid != null) DeviceLimitGate.watch(config.tenant.id, uid);
           // Демо живёт 3 дня, потом сбрасывается в исходный вид.
           DemoGate.watch(config);
           final chainId = config.tenant.chainId;
@@ -284,8 +287,13 @@ class HookahPosApp extends StatelessWidget {
                       excluding: covered,
                       child: ValueListenableBuilder<bool>(
                         valueListenable: SubscriptionGate.blocked,
-                        builder: (context, isBlocked, _) =>
-                            isBlocked ? const SaasSubscriptionBlockedScreen() : (child ?? const SizedBox.shrink()),
+                        builder: (context, isBlocked, _) => isBlocked
+                            ? const SaasSubscriptionBlockedScreen()
+                            : ValueListenableBuilder<DeviceLimitState?>(
+                                valueListenable: DeviceLimitGate.over,
+                                builder: (context, over, _) =>
+                                    over != null ? DeviceLimitScreen(state: over) : (child ?? const SizedBox.shrink()),
+                              ),
                       ),
                     ),
                   ),

@@ -614,7 +614,8 @@ function matchTemplate(question, index, { audience = "any", exclude = [] } = {})
   return { template: scored[0].t, score: scored[0].score, second: scored[1] ? scored[1].score : 0 };
 }
 
-/** Тарифы из «Тарифы сейчас»: [{ name, chain, month, half, year, extra, staff (0 — без ограничений), ai, priority }]. */
+/** Тарифы из «Тарифы сейчас»: [{ name, chain, month, half, year, extra,
+ *  devices (устройств с кассой, 0 — без ограничений), guestApp, ai, priority, trial }]. */
 function parsePlans(platform) {
   const m = String(platform || "").match(/Тарифы сейчас:\n([\s\S]*?)(?:\n(?:Объявление|Сервер)|$)/);
   if (!m) return [];
@@ -622,55 +623,78 @@ function parsePlans(platform) {
   return m[1].trim().split("\n").map((l) => {
     const name = (l.match(/^([^:(]+?)(?: \(сеть\))?:/) || [])[1];
     if (!name) return null;
-    const staff = /сотрудников без ограничений/.test(l) ? 0 : Number((l.match(/сотрудников до (\d+)/) || [])[1]) || 0;
+    const devices = /устройств с кассой(?: на точке)? без ограничений/.test(l) ? 0
+      : Number((l.match(/устройств с кассой(?: на точке)? до (\d+)/) || [])[1]) || 0;
     return {
-      name: name.trim(), chain: /\(сеть\):/.test(l), staff, ai: /ИИ есть/.test(l), priority: /приоритетная поддержка/.test(l),
+      name: name.trim(), chain: /\(сеть\):/.test(l), devices,
+      guestApp: !/приложение гостя и меню по QR нет/.test(l),
+      ai: /ИИ(?:-помощник)? есть/.test(l), priority: /приоритетная поддержка/.test(l),
       month: rub(/: ([\d\s ]+) ₽\/мес/, l), half: rub(/([\d\s ]+) ₽\/6 мес/, l), year: rub(/([\d\s ]+) ₽\/год/, l),
       extra: rub(/следующая точка ([\d\s ]+) ₽\/мес/, l),
+      trial: Number((l.match(/пробный период (\d+)/) || [])[1]) || 0,
     };
   }).filter(Boolean);
 }
 
 const WORD_NUM = { один: 1, одна: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
-/** Сколько сотрудников и точек назвал клиент: { staff, points } (0 — не назвал). */
+/** Сколько сотрудников, точек и устройств с кассой назвал клиент: { staff, points, devices } (0 — не назвал). */
 function countsFrom(text) {
   const t = norm(text).replace(/(\d+)\s*-?\s*(х|ти|ть|ми|и|ро|ре|е)(?![а-я])/g, "$1");
   const num = (w) => (/^\d+$/.test(w) ? Number(w) : WORD_NUM[w] || 0);
   const N = "(\\d{1,3}|один|одна|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)";
   const staffRe = [new RegExp(`${N}\\s+(?:[а-я]+\\s+)?(сотрудник|человек|работник|официант|кальянщик|повар|бармен|чел(?![а-я]))`), new RegExp(`(сотрудник[а-я]*|человек|работник[а-я]*)\\s+(?:будет\\s+|у нас\\s+|всего\\s+)?${N}(?![а-я\\d])`)];
   const pointRe = [new RegExp(`${N}\\s+(точ|заведени|кафе|филиал|ресторан|кофейн|кальянн|бар(?![а-я]))`), new RegExp(`(точ[а-я]*|заведени[а-я]*|филиал[а-я]*)\\s+(?:будет\\s+|у нас\\s+|всего\\s+)?${N}(?![а-я\\d])`)];
+  const devRe = [new RegExp(`${N}\\s+(?:[а-я]+\\s+)?(планшет|устройств|касс(?!ир)|компьютер|ноутбук|телефон|рабочих мест|рабочее место|рабочих места|моноблок|терминал)`), new RegExp(`(планшет[а-я]*|устройств[а-я]*|касс(?!ир)[а-я]*|компьютер[а-я]*)\\s+(?:будет\\s+|у нас\\s+|всего\\s+)?${N}(?![а-я\\d])`)];
   const pick = (res) => { for (const re of res) { const m = t.match(re); if (m) return num(/^\d+$|^[а-я]+$/.test(m[1]) && num(m[1]) ? m[1] : m[2]); } return 0; };
-  return { staff: pick(staffRe), points: pick(pointRe) };
+  return { staff: pick(staffRe), points: pick(pointRe), devices: pick(devRe) };
 }
 
-/** Совет по тарифу без ИИ: «А если сотрудников 12», «у нас 2 точки и 8 человек». */
-function planAdvice(question, platform, { askedStaff = false } = {}) {
+/** Совет по тарифу без ИИ: «2 точки, по 3 планшета», «одна точка, 12 сотрудников».
+ *  Тариф ограничивает только устройства с кассой — сотрудники без ограничений. */
+function planAdvice(question, platform, { askedDevices = false } = {}) {
   const q = norm(question);
-  if (q.length > 140 || /добав|удал|как (завести|внести)|пин|зарплат|смен/.test(q)) return "";
-  let { staff, points } = countsFrom(question);
-  if (!staff && askedStaff && /^\d{1,3}$/.test(q.replace(/[^\d]/g, "")) && q.replace(/[\d\s.!?]/g, "").length <= 12) staff = Number(q.replace(/\D/g, ""));
-  if (!staff || staff > 500) return "";
-  const plans = parsePlans(platform);
+  if (q.length > 160 || /добав|удал|как (завести|внести|подключ)|пин|зарплат|смен(?!а тариф)|отключ/.test(q)) return "";
+  let { staff, points, devices } = countsFrom(question);
+  if (!devices && askedDevices && /^\d{1,3}$/.test(q.replace(/[^\d]/g, "")) && q.replace(/[\d\s.!?]/g, "").length <= 14) devices = Number(q.replace(/\D/g, ""));
+  if (!staff && !points && !devices) return "";
+  if (staff > 2000 || devices > 300 || points > 300) return "";
+  const plans = Array.isArray(platform) ? platform : parsePlans(platform);
   if (!plans.length) return "";
   const wantAi = /(?<![а-я])(ии|ai|нейросет|искусствен)/.test(q);
   const chain = (points || 1) >= 2;
-  const fit = plans.filter((p) => p.chain === chain && (!p.staff || p.staff >= staff) && (!wantAi || p.ai)).sort((a, b) => a.month - b.month)[0];
-  if (!fit) return "";
+  const own = plans.filter((p) => p.chain === chain).sort((a, b) => a.month - b.month);
+  if (!own.length) return "";
   const rub = (v) => `${Math.round(v).toLocaleString("ru-RU")} ₽`;
-  // «для 2 точек» (родительный), «за 2 точки» (винительный).
   const gen = (n) => (n % 10 === 1 && n % 100 !== 11 ? "точки" : "точек");
   const acc = (n) => (n % 10 === 1 && n % 100 !== 11 ? "точку" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "точки" : "точек");
-  const where = chain ? `${points} ${gen(points)} и до ${staff} ${staff % 10 === 1 && staff % 100 !== 11 ? "сотрудника" : "сотрудников"} на точке` : `одной точки и ${staff} ${staff % 10 === 1 && staff % 100 !== 11 ? "сотрудника" : "сотрудников"}`;
-  const lines = [`Для ${where} подойдёт тариф **${fit.name}**: ${fit.staff ? `до ${fit.staff} сотрудников на точке` : "сотрудники без ограничений"}${fit.ai ? ", ИИ-помощники включены" : ""}${fit.priority ? ", приоритетная поддержка" : ""}.`, ""];
-  if (chain && fit.extra) {
-    const total = fit.month + fit.extra * (points - 1);
-    lines.push(`Цена: **${rub(fit.month)}/мес** за первую точку + **${rub(fit.extra)}/мес** за каждую следующую — итого **${rub(total)}/мес** за ${points} ${acc(points)}.`);
-  } else {
-    lines.push(`Цена: **${rub(fit.month)}/мес**${fit.half ? `, **${rub(fit.half)}** за 6 месяцев` : ""}${fit.year ? ` или **${rub(fit.year)}** за год` : ""}.`);
+  // «для 1 устройства», «для 3 устройств» — родительный падеж.
+  const devWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? "устройства" : "устройств");
+  const devLimit = (p) => (p.devices ? `до ${p.devices} ${p.devices % 10 === 1 && p.devices % 100 !== 11 ? "устройства" : "устройств"} с кассой${p.chain ? " на точке" : ""}` : "устройства без ограничений");
+  const price = (p) => (chain && p.extra
+    ? `**${rub(p.month)}/мес** за первую точку + **${rub(p.extra)}/мес** за каждую следующую — **${rub(p.month + p.extra * (points - 1))}/мес** за ${points} ${acc(points)}`
+    : `**${rub(p.month)}/мес**${p.half ? `, **${rub(p.half)}** за 6 месяцев` : ""}${p.year ? ` или **${rub(p.year)}** за год` : ""}`);
+  const feats = (p) => [devLimit(p), "сотрудники без ограничений", p.ai ? "ИИ-помощники" : "", p.priority ? "приоритетная поддержка" : ""].filter(Boolean).join(", ");
+
+  if (!devices) {
+    // Сколько людей — неважно: тариф зависит от устройств. Показываем
+    // варианты и спрашиваем, сколько касс будет.
+    const lines = [
+      `${staff ? `Сотрудники на всех тарифах без ограничений, ${staff} человек — не проблема. ` : ""}Тариф зависит от того, на скольких устройствах${chain ? " на каждой точке" : ""} будет работать касса (планшеты, телефоны официантов, компьютер), и нужны ли ИИ-помощники.`,
+      "",
+      ...own.map((p) => `- **${p.name}** — ${feats(p)}: ${price(p)}.`),
+      "",
+      `Сколько устройств с кассой будет${chain ? " на одной точке" : ""}? Подскажу точно.`,
+    ];
+    return lines.join("\n");
   }
-  const bigger = plans.filter((p) => p.chain === chain && p.month > fit.month && (!p.staff || p.staff > (fit.staff || Infinity))).sort((a, b) => a.month - b.month)[0];
-  if (fit.staff && staff >= fit.staff - 1 && bigger) lines.push(`Вы почти у лимита — с запасом на сезон и подмены подойдёт **${bigger.name}** (${bigger.staff ? `до ${bigger.staff}` : "без ограничений"}).`);
-  lines.push("", "Попробовать можно 7 дней бесплатно, карта не нужна: zalpos.ru → **Попробовать бесплатно**.");
+  const fit = own.filter((p) => (!p.devices || p.devices >= devices) && (!wantAi || p.ai))[0];
+  if (!fit) return "";
+  const where = `${chain ? `${points} ${gen(points)} и ${devices} ${devWord(devices)} с кассой на точке` : `одной точки и ${devices} ${devWord(devices)} с кассой`}`;
+  const lines = [`Для ${where} подойдёт тариф **${fit.name}**: ${feats(fit)}.`, "", `Цена: ${price(fit)}.`];
+  const bigger = own.find((p) => p.month > fit.month && (!p.devices || p.devices > (fit.devices || Infinity)));
+  if (fit.devices && devices >= fit.devices && bigger) lines.push(`Если планируете ещё устройства — **${bigger.name}** (${devLimit(bigger)}).`);
+  const trial = fit.trial || 7;
+  lines.push("", `Попробовать можно ${trial} ${trial % 10 === 1 && trial % 100 !== 11 ? "день" : [2, 3, 4].includes(trial % 10) && ![12, 13, 14].includes(trial % 100) ? "дня" : "дней"} бесплатно, карта не нужна: zalpos.ru → **Попробовать бесплатно**.`);
   return lines.join("\n");
 }
 
@@ -848,7 +872,7 @@ const SYSTEM_PROMPT = [
   "- На «почему вы», «чем вы лучше», «почему не другие» отвечай фактами о ZalPOS из статьи «Почему ZalPOS» и тарифов: что входит, сколько стоит, что не берём, как начать. 3–5 пунктов под вопрос клиента, затем предложи пробный период или демо.",
   "- Клиент спрашивает, как выгрузить данные из своей прежней программы, — это не сравнение: можно назвать её и дать шаги по её официальной справке (раздел «Из интернета»), без оценок.",
   "- Не называй и не упоминай другие компании и программы, не сравнивай с ними и не оценивай их («у других дороже», «у них нет»). Клиент сам назвал конкурента — не обсуждай его: скажи, что рассказываешь только о ZalPOS, и дай факты. Так требуют закон «О рекламе» (ст. 5 38-ФЗ: некорректное сравнение, недостоверное превосходство) и закон «О защите конкуренции» (ст. 14.1, 14.3 135-ФЗ).",
-  "- Без превосходных степеней и обещаний без подтверждения: нельзя «лучший», «самый дешёвый», «№1», «единственный», «гарантируем рост выручки». Можно проверяемое: «процент с продаж не берём», «приложение гостя входит в тариф», «устройства не ограничены», «7 дней бесплатно без карты».",
+  "- Без превосходных степеней и обещаний без подтверждения: нельзя «лучший», «самый дешёвый», «№1», «единственный», «гарантируем рост выручки». Можно проверяемое: «процент с продаж не берём», «приложение гостя входит в тариф», «сотрудники без ограничений», «7 дней бесплатно без карты».",
   "- Не дави и не торопи. Не знаешь, подойдёт ли, — честно скажи, что проверить проще всего в демо или пробном периоде.",
   "- «Насколько выгоднее, чем …», «чем лучше …», «а у … дешевле» — специалиста не зови и не уходи от ответа. Одной фразой: другие программы не оцениваю, расскажу точно о ZalPOS. Затем цены ZalPOS из «Тарифы сейчас», что входит, и короткий список, по которому клиент сравнит сам: что входит в ежемесячную цену, берут ли процент с продаж, платят ли за каждое устройство, входят ли приложение гостя, меню по QR, склад и техкарты, есть ли бесплатный период. В конце — демо или 7 дней бесплатно.",
   "",
@@ -1061,15 +1085,13 @@ function venueCard(v, { staff = false, now = Date.now() } = {}) {
     const until = v.sub.until ? ` до ${fmtDate(v.sub.until, now)}` : "";
     L.push(`Тариф «${h(v.sub.plan || "—")}» · ${h(SUB_STATUS[v.sub.status] || v.sub.status)}${until}`);
     if (v.sub.cancelAtPeriodEnd) L.push("Автопродление выключено");
-    if (typeof v.staff === "number") {
-      const max = Number(v.sub.maxEmployees) || 0;
-      L.push(`Сотрудников ${v.staff}${max ? ` из ${max} по тарифу${v.chain ? " (на точку)" : ""}${v.staff >= max ? " — лимит исчерпан" : ""}` : " · без ограничения по тарифу"}`);
-    }
+    if (typeof v.staff === "number") L.push(`Сотрудников ${v.staff} · без ограничения по тарифу`);
   } else L.push("Нет данных");
   const d = v.devices || {};
+  const maxDev = v.sub ? Number(v.sub.maxDevices) || 0 : 0;
   L.push("", "📱 <b>Устройства</b>");
   if (d.active) {
-    L.push(`${d.active} ${plural(d.active, "подключено", "подключено", "подключено")} · ${(d.platforms || []).map((p) => PLATFORM[p] || p).join(", ")}${d.disabled ? ` · отключено ${d.disabled}` : ""}`);
+    L.push(`${d.active} ${plural(d.active, "подключено", "подключено", "подключено")}${maxDev ? ` из ${maxDev} по тарифу${v.chain ? " (на точку)" : ""}${d.active > maxDev ? " — сверх лимита касса не откроется" : d.active === maxDev ? " — лимит исчерпан" : ""}` : ""} · ${(d.platforms || []).map((p) => PLATFORM[p] || p).join(", ")}${d.disabled ? ` · отключено ${d.disabled}` : ""}`);
     if (d.lastSeen) L.push(`Последний вход: ${fmtWhen(d.lastSeen, now)}`);
     if (d.stale) L.push(`⚠️ ${d.stale} не выходили на связь больше 3 дней`);
   } else L.push("❌ Ни одной кассы не подключено");
@@ -2124,7 +2146,7 @@ function createSupportBot(deps) {
       ? matchTemplate(question, state.templates, { audience, exclude: lastTpl ? [lastTpl] : [] }) : null;
     // Подбор тарифа по числу сотрудников и точек — расчётом, без ИИ.
     const advice = !imagesNow
-      ? planAdvice(question, await platformStatus().catch(() => ""), { askedStaff: !!(prevBot && /сотрудник/i.test(String(prevBot.text || "").slice(-300)) && askedBack) })
+      ? planAdvice(question, await platformStatus().catch(() => ""), { askedDevices: !!(prevBot && /устройств/i.test(String(prevBot.text || "").slice(-300)) && askedBack) })
       : "";
     if (advice && !UNHAPPY.test(norm(question))) {
       const reply = parseAiReply(advice);
