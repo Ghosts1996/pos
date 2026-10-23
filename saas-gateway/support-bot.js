@@ -683,6 +683,9 @@ const CHIP_TEMPLATES = {
   "как закрыть смену?": "close-shift", "как провести инвентаризацию?": "inventory", "забыли pin": "forgot-pin",
   "как поставить кассу на планшет?": "install-android", "как сменить логотип и цвета?": "branding", "как оплатить по счёту для ип?": "pay-legal",
   "как добавить сотрудника?": "staff-pin", "как подключить ии-помощника?": "ai-key", "как подключить telegram-бота?": "telegram-bot",
+  // Подсказки после ответа (saas/console/support-chat.js, TEXT.*.next).
+  "работает на iphone?": "iphone-pos", "как перенести данные?": "import-all", "можно на windows?": "install-windows",
+  "как настроить зарплату?": "payroll-setup", "как перенести стол?": "table-move", "как открыть стол и принять заказ?": "open-table-order",
 };
 
 /** «Тарифы сейчас» из состояния платформы — для {{plans}} в шаблоне. */

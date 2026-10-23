@@ -871,7 +871,7 @@ test("скриншот без текста: модель без картинок
   assert.ok(ai && /разобрать его не получилось/.test(ai.text), JSON.stringify(ai));
   // Обычный вопрос после этого — ключ не «отдыхает».
   h.flags.failVision = false;
-  await h.bot.handleUpdate(pm("Как добавить стол?"));
+  await h.bot.handleUpdate(pm("После обновления касса стала долго думать при сохранении настроек"));
   await h.bot.idle();
   assert.ok(sends(h.calls, 42).some((c) => /Устройства/.test(c.body.text)), "ключ ушёл отдыхать после пробы картинки");
 });
@@ -1823,6 +1823,24 @@ test("приоритетная поддержка по тарифу: ⭐ в те
   const pings = sends(h.calls, GROUP).filter((c) => /ждёт \d+ мин/.test(c.body.text));
   assert.ok(pings.some((c) => c.body.message_thread_id === p1.topicId && /Приоритетный клиент/.test(c.body.text)), "приоритет не поднят за 5 минут");
   assert.ok(!pings.some((c) => c.body.message_thread_id === p2.topicId), "обычному напомнили раньше 15 минут");
+});
+
+test("подсказки чата (до и после ответа) — готовым ответом, без ИИ", async () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "saas", "console", "support-chat.js"), "utf8");
+  const chips = new Set();
+  for (const m of src.matchAll(/(?:suggest|next): \[([^\]]+)\]/g)) for (const q of m[1].matchAll(/'([^']+)'/g)) chips.add(q[1]);
+  assert.ok(chips.size >= 20, `подсказок мало: ${chips.size}`);
+  // Цены и подбор тарифа отвечаются шаблоном с тарифами платформы (здесь их нет),
+  // «Что ещё настроить?» — по состоянию заведения, это работа ИИ.
+  for (const q of ["Сколько стоит?", "Какой тариф мне подойдёт?", "Что ещё настроить?"]) chips.delete(q);
+  const h = harness();
+  await setup(h);
+  let ip = 0;
+  for (const q of chips) {
+    await h.bot.handleSiteSend({ body: { text: q, consent: true, visitor: `chip${ip}`.padEnd(24, "x") }, headers: { "x-real-ip": `10.9.0.${++ip}` } }, {});
+    await h.bot.idle();
+  }
+  assert.strictEqual(h.aiCalls.length, 0, `ИИ на подсказку: ${h.aiCalls.map((c) => JSON.stringify(c.messages.filter((x) => x.role === "user").slice(-1)).slice(0, 160)).join(" | ")}`);
 });
 
 test("объявления платформы: бот знает действующую акцию и отвечает по ней, снятую — забывает", async () => {
