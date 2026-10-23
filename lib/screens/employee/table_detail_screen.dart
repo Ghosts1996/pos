@@ -876,9 +876,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         ),
       if (TimeCafe.ready && !t.isTakeaway)
         _TableAction(
-          icon: Icons.timer_outlined,
-          label: TimeCafe.hasLine(session) ? 'Пересчитать время' : 'Время в счёт',
-          hint: '${TimeCafe.pricePerHour.toStringAsFixed(0)} ₽/ч за гостя',
+          icon: Icons.hourglass_bottom_rounded,
+          label: 'Тайм-кафе',
+          hint: TimeCafe.hasLine(session) ? 'пересчитать время' : 'время в счёт',
           accent: true,
           onTap: () => _addTime(session),
         ),

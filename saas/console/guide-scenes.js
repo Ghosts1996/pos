@@ -22,6 +22,7 @@ const P = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
   timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.6 2M9.5 2.5h5"/>',
+  hourglass: '<path d="M6.5 3.5h11M6.5 20.5h11M7.5 3.5c0 4 4.5 5.5 4.5 8.5S7.5 16.5 7.5 20.5M16.5 3.5c0 4-4.5 5.5-4.5 8.5s4.5 4.5 4.5 8.5M10 18.5h4"/>',
   store: '<path d="M4 9.5 5.6 4h12.8L20 9.5M4 9.5V20h16V9.5M4 9.5h16M9.5 20v-5.5h5V20"/>',
   table: '<path d="M3.5 8.5h17M6.5 8.5V19M17.5 8.5V19M8 13h8"/>',
   tray: '<path d="M3.5 17.5h17M5.5 17.5a6.5 6.5 0 0 1 13 0M12 9V7M10 7h4"/>',
@@ -301,7 +302,7 @@ function payment({ total = '1 420', tap = {}, mixed = false } = {}) {
 
 /* ---- Админ ---- */
 const ADMIN_TILES = [
-  ['chart', 'Отчёты'], ['map', 'Карта зала'], ['timer', 'Длительность сеанса'], ['fork', 'Меню'],
+  ['chart', 'Отчёты'], ['map', 'Карта зала'], ['timer', 'Длительность сеанса'], ['hourglass', 'Тайм-кафе'], ['fork', 'Меню'],
   ['box', 'Склад'], ['users', 'Сотрудники'], ['timer', 'Смены сотрудников'], ['wallet', 'Зарплата'],
 ];
 
@@ -953,6 +954,49 @@ X.sessionScreen = () => X.scr('Длительность сеанса', `<div cla
     return `<div style="display:flex;align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid var(--bd)"${i === 2 ? tp('two') : ''}>${box}<span style="font-size:15px">${t}</span></div>`;
   }).join('')}
   <div style="margin-top:14px">${field('Своя длительность, часов', { ph: 'Например, 1,5' })}</div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
+/* ---- Тайм-кафе: оплата за время ---- */
+X.timeCafeScreen = () => X.scr('Тайм-кафе', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:4px">Гость платит за время за столом. Таймер стола — отдельно, в «Длительности сеанса».</div>
+  ${switchRow('Включить тайм-кафе', '', { tap: 'on', mark: 'on' })}
+  <div class="gx-unfold"${mk('on')} style="--max:520px">
+    ${field('Цена часа за гостя, ₽', { type: 'price', style: 'height:50px;margin-bottom:8px' })}
+    ${field('Цена первого часа, ₽ (необязательно)', { ph: 'Пусто — как остальные часы', style: 'height:50px;margin-bottom:6px' })}
+    <div class="gx-mu" style="font-size:12px;margin:6px 2px">Округлять время вверх до</div>
+    ${X.chips(['минуты', '5 мин', '15 мин', '30 мин', 'часа'], -1, 2, 'r15')}
+    <div class="gx-mu" style="font-size:12px;margin:0 2px 6px">Минимальная оплата</div>
+    ${X.chips(['нет', '30 мин', '1 ч'], 0)}
+    ${field('Стоп-чек за гостя, ₽ (необязательно)', { type: 'stop', style: 'height:50px;margin-bottom:8px' })}
+    <div class="gx-unfold"${mk('ex')}>${X.card('<div style="font-size:12.5px;line-height:1.45">Сколько заплатит один гость:<br><b>20 мин — 105 ₽ · 1 ч — 300 ₽ · 1 ч 30 мин — 450 ₽ · 3 ч — 900 ₽</b></div>')}</div>
+  </div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
+
+/** Счёт стола в тайм-кафе: сколько уже набежало и кнопка «Время в счёт». */
+X.cafeTable = ({ items = [], total = '0 ₽', tap = {}, recount = false } = {}) => {
+  // Неразрывный дефис: на узкой плитке «Тайм-кафе» не делится на две строки.
+  const acts = [['hourglass', 'Тайм\u2011кафе', recount ? 'пересчитать' : 'время в счёт', tap.cafe], ...ACTIONS.filter(([icn]) => icn !== 'receipt' && icn !== 'timer').map((a) => [...a, '']), ['receipt', 'Ещё чек', 'отдельный счёт', '']].slice(0, 6);
+  return tableCheck({ items, total, tap })
+    .replace(/<div class="gx-timer">[\s\S]*?<\/div><\/div>/, `<div class="gx-timer"><small>За столом</small><strong>1:24</strong>
+      <span class="gx-mu gx-small">с 18:18</span>
+      <div style="margin-top:7px;display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--br)">${ic('hourglass', 15)}<span>Тайм-кафе: 420 ₽ за гостя · 1 ч 25 мин</span></div></div>`)
+    .replace(/<div class="gx-acts-grid">[\s\S]*?(?=<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px 10px">)/,
+      `<div class="gx-acts-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${acts.map(([icn, t, sub, k], n) => `<div class="gx-act"${tp(k)}${n === 0 ? ' style="border-color:var(--pr)"' : ''}>
+      <span style="display:flex;align-items:center;gap:6px">${ic(icn, 15)}<b>${t}</b></span><span>${sub}</span></div>`).join('')}</div>
+    `);
+};
+
+X.cafeDialog = dialog('Время в счёт', `<div class="gx-mu" style="font-size:12.5px;margin-bottom:10px">За столом 1 ч 25 мин · по тарифу 420 ₽ за гостя</div>
+  <div style="font-size:13.5px;margin-bottom:6px">Гостей платят за время</div>
+  <div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:10px">
+    <span class="gx-mu" style="width:38px;height:38px;border-radius:50%;background:var(--el);display:flex;align-items:center;justify-content:center">${ic('minus', 18)}</span>
+    <b style="font-size:28px;min-width:40px;text-align:center"><span class="gx-show"${mk('g2')}>1</span><span class="gx-alt"${mk('g2')}>2</span></b>
+    <span style="width:38px;height:38px;border-radius:50%;background:var(--el);display:flex;align-items:center;justify-content:center"${tp('plus')}>${ic('plus', 18)}</span></div>
+  ${field('Сумма за гостя, ₽', { val: '420', style: 'height:50px' })}
+  <div style="font-weight:600;font-size:14px;margin-top:10px">Итого за время: <span class="gx-show"${mk('g2')}>420 ₽</span><span class="gx-alt"${mk('g2')}>840 ₽</span></div>`,
+  `${btn('Отмена', { kind: 'text' })}${btn('В счёт', { kind: 'sm', tap: 'ok' })}`);
+
+const CAFE_ORDER = [
+  { n: 'Время в тайм-кафе · 1 ч 25 мин', p: '420 ₽', q: 2, sum: '840 ₽', note: 'не уходит на кухню' },
+  { n: 'Чай чёрный', p: '250 ₽', q: 1, sum: '250 ₽' },
+];
+
 X.venueProfile = () => X.scr('Профиль заведения', `
   ${field('Тип заведения', { val: 'Кальянная / лаунж', style: 'height:50px;margin-bottom:8px' })}
   ${field('Адрес', { type: 'addr', style: 'height:50px;margin-bottom:8px' })}
@@ -1616,6 +1660,17 @@ export const SCENES = {
       ADMIN_TO('Длительность сеанса'),
       { screen: X.sessionScreen(), enter: 'push', cap: 'Сколько обычно длится посещение — или «Без ограничений». «Сохранить».', acts: [{ tap: 'two', mark: 'two' }, { wait: 300 }, { tap: 'save' }] },
       { screen: tableCheck({ items: ORDER, total: '1 420 ₽', tap: { timer: 'time' } }), enter: 'push', cap: 'За столом идёт таймер. Прибавить или убавить — кнопка «Время»: ± 5, 10, 30 минут.', acts: [{ wait: 600 }, { tap: 'time' }, { wait: 900 }] },
+    ],
+  },
+  'time-cafe': {
+    label: 'Тайм-кафе: оплата за время',
+    frames: [
+      ADMIN_TO('Тайм-кафе'),
+      { screen: X.timeCafeScreen(), enter: 'push', cap: 'Включите «Тайм-кафе» и впишите цену часа за гостя. По желанию — цену первого часа, округление, минимальную оплату и стоп-чек.', acts: [{ tap: 'on', mark: 'on' }, { wait: 400 }, { type: 'price', text: '300' }, { tap: 'r15', mark: 'r15' }] },
+      { screen: X.timeCafeScreen(), cap: 'Внизу видно, сколько заплатит один гость. Всё верно — «Сохранить»: цена сразу меняется на всех кассах.', acts: [{ mark: 'on' }, { type: 'stop', text: '900' }, { mark: 'ex' }, { wait: 900 }, { tap: 'save' }] },
+      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽', tap: { cafe: 'cafe' } }), enter: 'push', cap: 'За столом видно, сколько уже набежало за время. Нажмите «Тайм-кафе» — время в счёт.', acts: [{ wait: 1000 }, { tap: 'cafe' }] },
+      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽' }), over: { kind: 'dialog', html: X.cafeDialog }, cap: 'Сколько гостей платят за время — кнопками «−» и «+». Сумму за гостя можно поправить. «В счёт».', acts: [{ tap: 'plus', mark: 'g2' }, { wait: 700 }, { tap: 'ok' }] },
+      { screen: X.cafeTable({ items: CAFE_ORDER, total: '1 090 ₽', tap: { close: 'close' }, recount: true }), enter: 'fade', cap: 'Время — строкой в счёте. Нажмёте «Тайм-кафе» ещё раз — пересчитается та же строка. При «Закрыть стол» время пересчитается на момент оплаты.', acts: [{ wait: 1300 }, { tap: 'close' }] },
     ],
   },
   'venue-profile': {
